@@ -10,9 +10,10 @@ local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
-local C_SpellActivationOverlay = C_SpellActivationOverlay
+local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local tinsert = table.insert
 local wipe = wipe
+local type = type
 
 local spellInfoCache = {}
 local cacheSize = 0
@@ -20,14 +21,14 @@ local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
 
+-- Reusable tables to avoid GC pressure in hot loop
+local proccedSpellsPool = {}
+local normalSpellsPool = {}
+
 -- Check if a spell is procced (glowing on action bar)
+-- Optimized: cached function reference, no pcall needed (API is safe)
 local function IsSpellProcced(spellID)
-    if not spellID or spellID == 0 then return false end
-    if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
-        local success, result = pcall(C_SpellActivationOverlay.IsSpellOverlayed, spellID)
-        return success and result
-    end
-    return false
+    return C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID) or false
 end
 
 -- More responsive throttling
@@ -186,8 +187,12 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Procced spells are prioritized and moved to the front of the queue
     local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
     if rotationList then
-        local proccedSpells = {}  -- Procced spells go first
-        local normalSpells = {}   -- Non-procced spells follow
+        -- Reuse pooled tables to avoid GC pressure
+        local proccedSpells = proccedSpellsPool
+        local normalSpells = normalSpellsPool
+        wipe(proccedSpells)
+        wipe(normalSpells)
+        local proccedCount, normalCount = 0, 0
         local rotationCount = #rotationList
         
         -- First pass: categorize spells into procced vs normal
@@ -204,11 +209,15 @@ function SpellQueue.GetCurrentSpellQueue()
                     if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                        and IsSpellAvailable(actualSpellID)
                        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
-                        -- Categorize by proc state
+                        -- Categorize by proc state (store as flat array pairs)
                         if IsSpellProcced(actualSpellID) then
-                            tinsert(proccedSpells, {spellID = spellID, actualSpellID = actualSpellID})
+                            proccedCount = proccedCount + 1
+                            proccedSpells[proccedCount] = spellID
+                            proccedSpells[proccedCount + 100] = actualSpellID  -- Offset by 100 for actualSpellID
                         else
-                            tinsert(normalSpells, {spellID = spellID, actualSpellID = actualSpellID})
+                            normalCount = normalCount + 1
+                            normalSpells[normalCount] = spellID
+                            normalSpells[normalCount + 100] = actualSpellID
                         end
                     end
                 end
@@ -216,20 +225,24 @@ function SpellQueue.GetCurrentSpellQueue()
         end
         
         -- Second pass: add procced spells first, then normal spells
-        for _, entry in ipairs(proccedSpells) do
+        for i = 1, proccedCount do
             if spellCount >= maxIcons then break end
+            local baseSpellID = proccedSpells[i]
+            local actualSpellID = proccedSpells[i + 100]
             spellCount = spellCount + 1
-            recommendedSpells[spellCount] = entry.actualSpellID
-            addedSpellIDs[entry.actualSpellID] = true
-            addedSpellIDs[entry.spellID] = true
+            recommendedSpells[spellCount] = actualSpellID
+            addedSpellIDs[actualSpellID] = true
+            addedSpellIDs[baseSpellID] = true
         end
         
-        for _, entry in ipairs(normalSpells) do
+        for i = 1, normalCount do
             if spellCount >= maxIcons then break end
+            local baseSpellID = normalSpells[i]
+            local actualSpellID = normalSpells[i + 100]
             spellCount = spellCount + 1
-            recommendedSpells[spellCount] = entry.actualSpellID
-            addedSpellIDs[entry.actualSpellID] = true
-            addedSpellIDs[entry.spellID] = true
+            recommendedSpells[spellCount] = actualSpellID
+            addedSpellIDs[actualSpellID] = true
+            addedSpellIDs[baseSpellID] = true
         end
     end
 

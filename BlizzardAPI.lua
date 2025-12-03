@@ -1,5 +1,5 @@
 -- JustAC: Blizzard API Module
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 10)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 11)
 if not BlizzardAPI then return end
 
 -- Hot path optimizations: cache frequently used functions
@@ -7,6 +7,14 @@ local GetTime = GetTime
 local pcall = pcall
 local type = type
 local wipe = wipe
+local IsSpellKnown = IsSpellKnown
+local IsPlayerSpell = IsPlayerSpell
+local C_SpellBook_IsSpellInSpellBook = C_SpellBook and C_SpellBook.IsSpellInSpellBook
+local C_Spell_IsSpellPassive = C_Spell and C_Spell.IsSpellPassive
+local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
+local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
+local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
+local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
 
 -- Cached addon reference (resolved lazily)
 local cachedAddon = nil
@@ -38,7 +46,7 @@ end
 -- Wrapper with fallback to legacy GetSpellInfo
 function BlizzardAPI.GetSpellInfo(spellID)
     if not spellID or spellID == 0 then return nil end
-    if C_Spell and C_Spell.GetSpellInfo then return C_Spell.GetSpellInfo(spellID) end
+    if C_Spell_GetSpellInfo then return C_Spell_GetSpellInfo(spellID) end
     local name, _, icon = GetSpellInfo(spellID)
     if name then return {name = name, iconID = icon} end
     return nil
@@ -229,17 +237,17 @@ function BlizzardAPI.TestAssistedCombatAPI()
 end
 
 function BlizzardAPI.GetSpellCooldown(spellID)
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local cd = C_Spell.GetSpellCooldown(spellID)
+    if C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
         if cd then
             return cd.startTime or 0, cd.duration or 0
         end
+        return 0, 0
     elseif C_SpellBook and C_SpellBook.GetSpellCooldown then
         return C_SpellBook.GetSpellCooldown(spellID)
     elseif GetSpellCooldown then
         return GetSpellCooldown(spellID)
     end
-    -- fallback
     return 0, 0
 end
 
@@ -248,9 +256,9 @@ end
 function BlizzardAPI.IsSpellUsable(spellID)
     if not spellID or spellID == 0 then return false, false end
     
-    -- Modern API (10.0+)
-    if C_Spell and C_Spell.IsSpellUsable then
-        local success, isUsable, notEnoughResources = pcall(C_Spell.IsSpellUsable, spellID)
+    -- Modern API (10.0+) - use cached reference
+    if C_Spell_IsSpellUsable then
+        local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
         if success then
             return isUsable, notEnoughResources
         end
@@ -343,8 +351,8 @@ function BlizzardAPI.IsSpellAvailable(spellID)
     end
     
     -- Fast path: check if spell is in spellbook first (most common case for known spells)
-    if C_SpellBook and C_SpellBook.IsSpellInSpellBook then
-        if C_SpellBook.IsSpellInSpellBook(spellID, Enum.SpellBookSpellBank.Player) then
+    if C_SpellBook_IsSpellInSpellBook then
+        if C_SpellBook_IsSpellInSpellBook(spellID, Enum_SpellBookSpellBank_Player) then
             spellAvailabilityCache[spellID] = true
             return true
         end
@@ -364,8 +372,8 @@ function BlizzardAPI.IsSpellAvailable(spellID)
     end
     
     -- Now do slower checks - filter out passives
-    if C_Spell and C_Spell.IsSpellPassive then
-        local isPassive = C_Spell.IsSpellPassive(spellID)
+    if C_Spell_IsSpellPassive then
+        local isPassive = C_Spell_IsSpellPassive(spellID)
         if isPassive then
             spellAvailabilityCache[spellID] = false
             return false

@@ -1,5 +1,5 @@
 -- JustAC: UI Manager Module
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 21)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 22)
 if not UIManager then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -19,7 +19,7 @@ end
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
-local C_SpellActivationOverlay = C_SpellActivationOverlay
+local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
@@ -761,10 +761,7 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     end
     
     -- Check if defensive spell has an active proc (only for spells, not items)
-    local isProc = false
-    if not isItem and C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
-        isProc = C_SpellActivationOverlay.IsSpellOverlayed(id)
-    end
+    local isProc = not isItem and C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(id) or false
     
     -- Start glow (green marching ants, or gold proc if spell is proc'd)
     StartDefensiveGlow(defensiveIcon, isProc)
@@ -1231,7 +1228,7 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Check if spell has an active proc (overlay)
-                local isProc = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed and C_SpellActivationOverlay.IsSpellOverlayed(spellID)
+                local isProc = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
 
                 if i == 1 and focusEmphasis then
                     -- First icon: blue glow normally, gold when proc'd
