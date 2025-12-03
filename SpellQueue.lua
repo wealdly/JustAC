@@ -1,5 +1,5 @@
 -- JustAC: Spell Queue Module
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 17)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 18)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -179,6 +179,25 @@ function SpellQueue.GetCurrentSpellQueue()
         recommendedSpells[spellCount] = primaryActual
         addedSpellIDs[primaryActual] = true
         addedSpellIDs[primarySpellID] = true
+    end
+
+    -- Check for procced spells on action bars that aren't in the rotation list
+    -- These should be shown immediately after position 1 (e.g., Fel Blade procs)
+    local actionBarProcs = ActionBarScanner and ActionBarScanner.GetProccedSpells and ActionBarScanner.GetProccedSpells()
+    if actionBarProcs then
+        for _, procSpellID in ipairs(actionBarProcs) do
+            if spellCount >= maxIcons then break end
+            if procSpellID and not addedSpellIDs[procSpellID] then
+                -- Apply filters: blacklist, availability, redundancy
+                if not SpellQueue.IsSpellBlacklisted(procSpellID)
+                   and IsSpellAvailable(procSpellID)
+                   and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
+                    spellCount = spellCount + 1
+                    recommendedSpells[spellCount] = procSpellID
+                    addedSpellIDs[procSpellID] = true
+                end
+            end
+        end
     end
 
     -- Positions 2+: Get the rotation spell list (priority queue)
