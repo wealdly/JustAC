@@ -142,6 +142,13 @@ local defaults = {
     },
 }
 
+-- Helper: Only print if debug mode is enabled
+function JustAC:DebugPrint(msg)
+    if self.db and self.db.profile and self.db.profile.debugMode then
+        self:Print(msg)
+    end
+end
+
 function JustAC:OnInitialize()
     -- AceDB handles per-character profiles automatically
     self.db = AceDB:New("JustACDB", defaults)
@@ -158,8 +165,6 @@ function JustAC:OnInitialize()
     if Options and Options.Initialize then
         Options.Initialize(self)
     end
-    
-    self:Print("JustAssistedCombat v" .. (self.db.global.version or "2.5") .. " initialized.")
 end
 
 function JustAC:OnEnable()
@@ -247,7 +252,6 @@ function JustAC:OnEnable()
     end
     
     if self.db.char.firstRun then
-        self:ScheduleTimer("ShowWelcomeMessage", 3)
         self.db.char.firstRun = false
     end
     
@@ -305,7 +309,7 @@ function JustAC:OnDisable()
 end
 
 function JustAC:RefreshConfig()
-    self:Print("Profile changed - refreshing configuration")
+    -- Silently refresh on profile change
     self:UpdateFrameSize()
     if self.mainFrame then
         local profile = self:GetProfile()
@@ -317,22 +321,15 @@ function JustAC:RefreshConfig()
 end
 
 function JustAC:ShowWelcomeMessage()
-    local assistedMode = GetCVarBool("assistedMode") or false
-    local assistedHighlight = GetCVarBool("assistedCombatHighlight") or false
+    -- Only show if debug mode enabled
+    if not self.db or not self.db.profile or not self.db.profile.debugMode then return end
     
+    local assistedMode = GetCVarBool("assistedMode") or false
     if assistedMode then
-        self:Print("Assisted Combat mode detected and active!")
-        if assistedHighlight then
-            self:Print("Both JustAC and Blizzard highlights are enabled - they work great together!")
-        else
-            self:Print("JustAC provides enhanced rotation display with macro parsing and hotkeys.")
-        end
+        self:Print("Assisted Combat mode active")
     else
-        self:Print("Welcome! JustAC enhances WoW's assisted combat system.")
-        self:Print("For best results, enable: /console assistedMode 1")
-        self:Print("Optional highlighting: /console assistedCombatHighlight 1")
+        self:Print("Tip: Enable /console assistedMode 1")
     end
-    self:Print("Type /jac for options, right-click icons to set custom hotkeys.")
 end
 
 -- Initialize class-specific defensive spells on first profile use
@@ -703,12 +700,12 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         profile.hotkeyOverrides[spellID] = hotkeyText:trim()
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
-        self:Print("Set custom hotkey '" .. hotkeyText:trim() .. "' for " .. spellName)
+        self:DebugPrint("Hotkey: " .. spellName .. " = '" .. hotkeyText:trim() .. "'")
     else
         profile.hotkeyOverrides[spellID] = nil
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
-        self:Print("Removed custom hotkey for " .. spellName)
+        self:DebugPrint("Hotkey removed: " .. spellName)
     end
     
     self:ForceUpdate()

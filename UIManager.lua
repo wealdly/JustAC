@@ -925,11 +925,17 @@ function UIManager.CreateGrabTab(addon)
     
     addon.grabTab:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
-            local profile = addon:GetProfile()
-            if profile then
-                profile.panelLocked = not profile.panelLocked
-                local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
-                addon:Print("Panel " .. status .. " (right-click move handle to toggle)")
+            if IsShiftKeyDown() then
+                -- Shift+Right-click: toggle lock
+                local profile = addon:GetProfile()
+                if profile then
+                    profile.panelLocked = not profile.panelLocked
+                    local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                    if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
+                end
+            else
+                -- Right-click: open options panel
+                Settings.OpenToCategory("JustAssistedCombat")
             end
         end
     end)
@@ -945,13 +951,14 @@ function UIManager.CreateGrabTab(addon)
         GameTooltip:SetOwner(addon.grabTab, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
         GameTooltip:AddLine("Drag to move", 1, 1, 1)
+        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
         GameTooltip:AddLine(" ")
         if isLocked then
             GameTooltip:AddLine("|cffff6666Panel Locked|r", 1, 1, 1)
-            GameTooltip:AddLine("Right-click to unlock", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Shift+Right-click to unlock", 0.7, 0.7, 0.7)
         else
             GameTooltip:AddLine("|cff00ff00Panel Unlocked|r", 1, 1, 1)
-            GameTooltip:AddLine("Right-click to lock", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Shift+Right-click to lock", 0.7, 0.7, 0.7)
         end
         GameTooltip:Show()
     end)

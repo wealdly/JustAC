@@ -263,7 +263,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
                 -- Check if already in list
                 for _, existingID in ipairs(spellList) do
                     if existingID == spellID then
-                        addon:Print("Spell already in " .. listName)
+                        addon:DebugPrint("Already in list")
                         return
                     end
                 end
@@ -271,10 +271,10 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
                 table.insert(spellList, spellID)
                 local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
                 local name = spellInfo and spellInfo.name or "Unknown"
-                addon:Print("Added " .. name .. " to " .. listName)
+                addon:DebugPrint("Added: " .. name)
                 Options.UpdateDefensivesOptions(addon)
             else
-                addon:Print("Invalid spell ID: " .. val)
+                addon:Print("Invalid spell ID")
             end
         end
     }
@@ -513,7 +513,7 @@ local function CreateOptionsTable(addon)
                         set = function(_, val) 
                             addon.db.profile.panelLocked = val
                             local status = val and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
-                            addon:Print("Panel " .. status)
+                            addon:DebugPrint("Panel " .. status)
                         end
                     },
                     debugMode = {
@@ -525,7 +525,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.debugMode or false end,
                         set = function(_, val) 
                             addon.db.profile.debugMode = val
-                            addon:Print("Debug mode: " .. (val and "ON" or "OFF"))
+                            addon:Print("Debug: " .. (val and "ON" or "OFF"))
                         end
                     }
                 }
@@ -768,17 +768,17 @@ local function HandleSlashCommand(addon, input)
             addon.db.profile.isManualMode = not addon.db.profile.isManualMode
             if addon.db.profile.isManualMode then
                 addon:StopUpdates()
-                addon:Print("Display paused.")
+                addon:DebugPrint("Paused")
             else
                 addon:StartUpdates()
-                addon:Print("Display resumed.")
+                addon:DebugPrint("Resumed")
             end
         end
         
     elseif command == "debug" then
         if addon.db and addon.db.profile then
             addon.db.profile.debugMode = not addon.db.profile.debugMode
-            addon:Print("Debug mode: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
+            addon:Print("Debug: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
         end
         
     elseif command == "test" or command == "apitest" then
@@ -840,7 +840,7 @@ local function HandleSlashCommand(addon, input)
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint("CENTER", 0, -150)
             addon:SavePosition()
-            addon:Print("Frame position reset")
+            addon:DebugPrint("Position reset")
         end
         
     elseif command == "profile" then

@@ -111,10 +111,10 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
     local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
     if profile.blacklistedSpells[spellID] then
         profile.blacklistedSpells[spellID] = nil
-        if addon then addon:Print("Removed " .. spellName .. " from blacklist") end
+        if addon and addon.DebugPrint then addon:DebugPrint("Unblacklisted: " .. spellName) end
     else
         profile.blacklistedSpells[spellID] = { combatAssist = true, fixedQueue = true }
-        if addon then addon:Print("Added " .. spellName .. " to blacklist") end
+        if addon and addon.DebugPrint then addon:DebugPrint("Blacklisted: " .. spellName) end
     end
 end
 
