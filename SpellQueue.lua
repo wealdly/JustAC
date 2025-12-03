@@ -1,5 +1,5 @@
 -- JustAC: Spell Queue Module
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 16)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 17)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -10,6 +10,7 @@ local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
+local C_SpellActivationOverlay = C_SpellActivationOverlay
 local tinsert = table.insert
 local wipe = wipe
 
@@ -18,6 +19,16 @@ local cacheSize = 0
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
+
+-- Check if a spell is procced (glowing on action bar)
+local function IsSpellProcced(spellID)
+    if not spellID or spellID == 0 then return false end
+    if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
+        local success, result = pcall(C_SpellActivationOverlay.IsSpellOverlayed, spellID)
+        return success and result
+    end
+    return false
+end
 
 -- More responsive throttling
 local function GetQueueThrottleInterval()
@@ -172,12 +183,15 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Positions 2+: Get the rotation spell list (priority queue)
     -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
     -- Apply all filters: no duplicates of position 1, blacklist, availability, redundancy
+    -- Procced spells are prioritized and moved to the front of the queue
     local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
     if rotationList then
+        local proccedSpells = {}  -- Procced spells go first
+        local normalSpells = {}   -- Non-procced spells follow
         local rotationCount = #rotationList
+        
+        -- First pass: categorize spells into procced vs normal
         for i = 1, rotationCount do
-            if spellCount >= maxIcons then break end  -- Early exit if at max
-            
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
                 -- Get the actual spell we'd display (might be an override)
@@ -190,13 +204,32 @@ function SpellQueue.GetCurrentSpellQueue()
                     if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                        and IsSpellAvailable(actualSpellID)
                        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
-                        spellCount = spellCount + 1
-                        recommendedSpells[spellCount] = actualSpellID
-                        addedSpellIDs[actualSpellID] = true
-                        addedSpellIDs[spellID] = true
+                        -- Categorize by proc state
+                        if IsSpellProcced(actualSpellID) then
+                            tinsert(proccedSpells, {spellID = spellID, actualSpellID = actualSpellID})
+                        else
+                            tinsert(normalSpells, {spellID = spellID, actualSpellID = actualSpellID})
+                        end
                     end
                 end
             end
+        end
+        
+        -- Second pass: add procced spells first, then normal spells
+        for _, entry in ipairs(proccedSpells) do
+            if spellCount >= maxIcons then break end
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = entry.actualSpellID
+            addedSpellIDs[entry.actualSpellID] = true
+            addedSpellIDs[entry.spellID] = true
+        end
+        
+        for _, entry in ipairs(normalSpells) do
+            if spellCount >= maxIcons then break end
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = entry.actualSpellID
+            addedSpellIDs[entry.actualSpellID] = true
+            addedSpellIDs[entry.spellID] = true
         end
     end
 
