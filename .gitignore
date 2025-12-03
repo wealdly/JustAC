@@ -1,0 +1,6 @@
+# Build artifacts
+dist/
+
+# Development files
+.luarc.json
+*.code-workspace
