@@ -80,24 +80,14 @@ function SpellQueue.CompareSpellArrays(arr1, arr2)
     return true
 end
 
-function SpellQueue.IsSpellBlacklisted(spellID, queueType)
+function SpellQueue.IsSpellBlacklisted(spellID)
     local profile = GetProfile()
-    if not spellID or not queueType or not profile or not profile.blacklistedSpells then 
+    if not spellID or not profile or not profile.blacklistedSpells then 
         return false 
     end
 
     local settings = profile.blacklistedSpells[spellID]
-    if not settings then 
-        return false
-    end
-
-    if queueType == "combatAssist" then
-        return settings.combatAssist == true
-    elseif queueType == "fixedQueue" then
-        return settings.fixedQueue == true
-    end
-
-    return false
+    return settings and settings.fixedQueue == true
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
@@ -113,7 +103,7 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
         profile.blacklistedSpells[spellID] = nil
         if addon and addon.DebugPrint then addon:DebugPrint("Unblacklisted: " .. spellName) end
     else
-        profile.blacklistedSpells[spellID] = { combatAssist = true, fixedQueue = true }
+        profile.blacklistedSpells[spellID] = { fixedQueue = true }
         if addon and addon.DebugPrint then addon:DebugPrint("Blacklisted: " .. spellName) end
     end
 end
@@ -164,6 +154,7 @@ function SpellQueue.GetCurrentSpellQueue()
     local spellCount = 0
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
+    -- NEVER filter position 1 - this is Blizzard's primary recommendation
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
@@ -171,16 +162,11 @@ function SpellQueue.GetCurrentSpellQueue()
         local primaryOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(primarySpellID)
         local primaryActual = (primaryOverride and primaryOverride ~= 0 and primaryOverride ~= primarySpellID) and primaryOverride or primarySpellID
         
-        -- Check blacklist on DISPLAYED spell only (what user sees and shift+clicks)
-        if not SpellQueue.IsSpellBlacklisted(primaryActual, "combatAssist") 
-           and IsSpellAvailable(primaryActual) then
-            if not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(primaryActual) then
-                spellCount = spellCount + 1
-                recommendedSpells[spellCount] = primaryActual
-                addedSpellIDs[primaryActual] = true
-                addedSpellIDs[primarySpellID] = true
-            end
-        end
+        -- Position 1 is always shown - no filtering
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = primaryActual
+        addedSpellIDs[primaryActual] = true
+        addedSpellIDs[primarySpellID] = true
     end
 
     -- Positions 2+: Get the rotation spell list (priority queue)
@@ -198,7 +184,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 local actualSpellID = (override and override ~= 0 and override ~= spellID) and override or spellID
                 
                 -- Check blacklist on DISPLAYED spell only (what user sees and shift+clicks)
-                if not SpellQueue.IsSpellBlacklisted(actualSpellID, "fixedQueue")
+                if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                    and IsSpellAvailable(actualSpellID) then
                     if not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID) then
                         spellCount = spellCount + 1

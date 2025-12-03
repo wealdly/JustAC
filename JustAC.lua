@@ -728,7 +728,7 @@ function JustAC:GetProfile() return self.db and self.db.profile end
 function JustAC:GetCachedSpellInfo(spellID) return SpellQueue and SpellQueue.GetCachedSpellInfo and SpellQueue.GetCachedSpellInfo(spellID) or nil end
 function JustAC:IsSpellBlacklisted(spellID)
     if not SpellQueue or not SpellQueue.IsSpellBlacklisted then return false end
-    return SpellQueue.IsSpellBlacklisted(spellID, "combatAssist") or SpellQueue.IsSpellBlacklisted(spellID, "fixedQueue")
+    return SpellQueue.IsSpellBlacklisted(spellID)
 end
 function JustAC:GetBlacklistedSpells() return SpellQueue and SpellQueue.GetBlacklistedSpells and SpellQueue.GetBlacklistedSpells() or {} end
 

@@ -53,38 +53,28 @@ function Options.UpdateBlacklistOptions(addon)
                 inline = true,
                 order = i + 2,
                 args = {
-                    combatAssist = {
+                    enabled = {
                         type = "toggle",
-                        name = "Combat Assist",
-                        desc = "Hide this spell from the primary 'Combat Assist' slot.",
+                        name = "Hide from Queue",
+                        desc = "Hide this spell from queue positions 2+. Position 1 (Blizzard's primary suggestion) is never filtered.",
                         order = 1,
-                        get = function()
-                            return blacklistedSpells[spellID] and blacklistedSpells[spellID].combatAssist
-                        end,
-                        set = function(_, val)
-                            if not blacklistedSpells[spellID] then blacklistedSpells[spellID] = {} end
-                            blacklistedSpells[spellID].combatAssist = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    fixedQueue = {
-                        type = "toggle",
-                        name = "Fixed Queue",
-                        desc = "Hide this spell from the secondary 'Fixed Queue' slots.",
-                        order = 2,
+                        width = "double",
                         get = function()
                             return blacklistedSpells[spellID] and blacklistedSpells[spellID].fixedQueue
                         end,
                         set = function(_, val)
-                            if not blacklistedSpells[spellID] then blacklistedSpells[spellID] = {} end
-                            blacklistedSpells[spellID].fixedQueue = val
+                            if val then
+                                blacklistedSpells[spellID] = { fixedQueue = true }
+                            else
+                                blacklistedSpells[spellID] = nil
+                            end
                             addon:ForceUpdate()
                         end
                     },
                     remove = {
                         type = "execute",
                         name = "Remove",
-                        order = 3,
+                        order = 2,
                         func = function()
                             blacklistedSpells[spellID] = nil
                             Options.UpdateBlacklistOptions(addon)
