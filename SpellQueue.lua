@@ -171,6 +171,7 @@ function SpellQueue.GetCurrentSpellQueue()
 
     -- Positions 2+: Get the rotation spell list (priority queue)
     -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
+    -- Apply all filters: no duplicates of position 1, blacklist, availability, redundancy
     local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
     if rotationList then
         local rotationCount = #rotationList
@@ -179,14 +180,16 @@ function SpellQueue.GetCurrentSpellQueue()
             
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
-                -- Get the actual spell we'd display (might be an override) - single API call
+                -- Get the actual spell we'd display (might be an override)
                 local override = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID)
                 local actualSpellID = (override and override ~= 0 and override ~= spellID) and override or spellID
                 
-                -- Check blacklist on DISPLAYED spell only (what user sees and shift+clicks)
-                if not SpellQueue.IsSpellBlacklisted(actualSpellID)
-                   and IsSpellAvailable(actualSpellID) then
-                    if not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID) then
+                -- Skip if this override already shown (e.g., position 1 has same spell)
+                if not addedSpellIDs[actualSpellID] then
+                    -- Apply filters: blacklist, availability, redundancy
+                    if not SpellQueue.IsSpellBlacklisted(actualSpellID)
+                       and IsSpellAvailable(actualSpellID)
+                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
                         spellCount = spellCount + 1
                         recommendedSpells[spellCount] = actualSpellID
                         addedSpellIDs[actualSpellID] = true

@@ -500,12 +500,14 @@ end
 
 -- Get the first usable spell from a given spell list
 -- Prioritizes procced spells (e.g., Victory Rush after kill, free heal procs)
+-- Filters: known, not on cooldown, not redundant (buff already active)
 function JustAC:GetBestDefensiveSpell(spellList)
     if not spellList then return nil end
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
     
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     local firstUsable = nil  -- Track first usable spell as fallback
     
     for i, spellID in ipairs(spellList) do
@@ -515,22 +517,26 @@ function JustAC:GetBestDefensiveSpell(spellList)
             local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
             
             if isKnown then
-                -- Always check usability (not on CD) - defensive suggestions must be actionable
-                local start, duration
-                if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-                    start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-                end
-                local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
-                
-                if not onCooldown then
-                    -- Prioritize procced spells immediately
-                    if IsSpellProcced(spellID) then
-                        return spellID
+                -- Skip if buff already active (redundant)
+                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
+                if not isRedundant then
+                    -- Check usability (not on CD) - defensive suggestions must be actionable
+                    local start, duration
+                    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+                        start, duration = BlizzardAPI.GetSpellCooldown(spellID)
                     end
+                    local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
                     
-                    -- Track first usable as fallback
-                    if not firstUsable then
-                        firstUsable = spellID
+                    if not onCooldown then
+                        -- Prioritize procced spells immediately
+                        if IsSpellProcced(spellID) then
+                            return spellID
+                        end
+                        
+                        -- Track first usable as fallback
+                        if not firstUsable then
+                            firstUsable = spellID
+                        end
                     end
                 end
             end
