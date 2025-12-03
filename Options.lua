@@ -1,10 +1,11 @@
 -- JustAC: Options Module
-local Options = LibStub:NewLibrary("JustAC-Options", 22)
+local Options = LibStub:NewLibrary("JustAC-Options", 23)
 if not Options then return end
 
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
+local UIManager = LibStub("JustAC-UIManager", true)
 
 function Options.UpdateBlacklistOptions(addon)
     local optionsTable = addon and addon.optionsTable
@@ -204,7 +205,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
             args = {
                 moveUp = {
                     type = "execute",
-                    name = "▲",
+                    name = "Up",
                     desc = "Move up in priority",
                     order = 1,
                     width = 0.3,
@@ -218,7 +219,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
                 },
                 moveDown = {
                     type = "execute",
-                    name = "▼",
+                    name = "Dn",
                     desc = "Move down in priority",
                     order = 2,
                     width = 0.3,
@@ -289,8 +290,8 @@ function Options.UpdateDefensivesOptions(addon)
     local staticKeys = {
         info = true, header = true, enabled = true, 
         selfHealThreshold = true, cooldownThreshold = true,
-        showOnlyInCombat = true, showOnlyUsable = true, 
-        glowHeader = true, glowColor = true, 
+        behaviorHeader = true, showOnlyInCombat = true,
+        position = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -386,13 +387,31 @@ local function CreateOptionsTable(addon)
                     firstIconScale = {
                         type = "range",
                         name = "Primary Spell Scale",
-                        desc = "Scale multiplier for the first spell icon (1.0 = same size, 2.0 = double size)",
+                        desc = "Scale multiplier for the primary (position 1) and defensive (position 0) icons",
                         min = 1.0, max = 2.0, step = 0.1,
                         order = 6,
                         width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.4 end,
+                        get = function() return addon.db.profile.firstIconScale or 1.3 end,
                         set = function(_, val)
                             addon.db.profile.firstIconScale = val
+                            addon:UpdateFrameSize()
+                        end
+                    },
+                    queueOrientation = {
+                        type = "select",
+                        name = "Queue Orientation",
+                        desc = "Direction the spell queue grows from the primary spell",
+                        order = 7,
+                        width = "normal",
+                        values = {
+                            LEFT = "Left to Right",
+                            RIGHT = "Right to Left",
+                            UP = "Bottom to Top",
+                            DOWN = "Top to Bottom",
+                        },
+                        get = function() return addon.db.profile.queueOrientation or "LEFT" end,
+                        set = function(_, val)
+                            addon.db.profile.queueOrientation = val
                             addon:UpdateFrameSize()
                         end
                     },
@@ -404,7 +423,7 @@ local function CreateOptionsTable(addon)
                     focusEmphasis = {
                         type = "toggle",
                         name = "Highlight Primary Spell",
-                        desc = "Show animation on the first recommended spell",
+                        desc = "Show animated glow on the primary spell (position 1)",
                         order = 11,
                         width = "full",
                         get = function() return addon.db.profile.focusEmphasis ~= false end,
@@ -413,23 +432,11 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
-                    greyoutNoHotkey = {
-                        type = "toggle",
-                        name = "Grey Unbound Spells",
-                        desc = "Desaturate icons without hotkeys",
-                        order = 12,
-                        width = "full",
-                        get = function() return addon.db.profile.greyoutNoHotkey ~= false end,
-                        set = function(_, val) 
-                            addon.db.profile.greyoutNoHotkey = val
-                            addon:ForceUpdate()
-                        end
-                    },
                     showTooltips = {
                         type = "toggle",
                         name = "Show Tooltips",
                         desc = "Display spell tooltips on hover",
-                        order = 13,
+                        order = 12,
                         width = "full",
                         get = function() return addon.db.profile.showTooltips ~= false end,
                         set = function(_, val)
@@ -439,8 +446,8 @@ local function CreateOptionsTable(addon)
                     tooltipsInCombat = {
                         type = "toggle",
                         name = "Tooltips in Combat",
-                        desc = "Show tooltips during combat (when tooltips are enabled)",
-                        order = 14,
+                        desc = "Show tooltips during combat (requires Show Tooltips)",
+                        order = 13,
                         width = "full",
                         disabled = function() return not addon.db.profile.showTooltips end,
                         get = function() return addon.db.profile.tooltipsInCombat or false end,
@@ -450,38 +457,19 @@ local function CreateOptionsTable(addon)
                     },
                     glowHeader = {
                         type = "header",
-                        name = "Glow Effects",
+                        name = "Visual Effects",
                         order = 20,
                     },
-                    glowAlpha = {
+                    frameOpacity = {
                         type = "range",
-                        name = "Glow Intensity",
-                        desc = "Visibility of the glow effect (0 = invisible, 1 = fully visible)",
+                        name = "Frame Opacity",
+                        desc = "Global opacity for the entire frame including defensive icon (1.0 = fully visible, 0.0 = invisible)",
                         min = 0.1, max = 1.0, step = 0.05,
                         order = 21,
                         width = "normal",
-                        get = function() return addon.db.profile.glowAlpha or 0.75 end,
+                        get = function() return addon.db.profile.frameOpacity or 1.0 end,
                         set = function(_, val)
-                            addon.db.profile.glowAlpha = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    glowColor = {
-                        type = "color",
-                        name = "Assisted Glow Color",
-                        desc = "Color tint for the primary spell highlight (proc'd spells always glow gold)",
-                        order = 22,
-                        width = "normal",
-                        hasAlpha = false,
-                        get = function()
-                            return addon.db.profile.glowColorR or 0.3,
-                                   addon.db.profile.glowColorG or 0.7,
-                                   addon.db.profile.glowColorB or 1.0
-                        end,
-                        set = function(_, r, g, b)
-                            addon.db.profile.glowColorR = r
-                            addon.db.profile.glowColorG = g
-                            addon.db.profile.glowColorB = b
+                            addon.db.profile.frameOpacity = val
                             addon:ForceUpdate()
                         end
                     },
@@ -490,11 +478,23 @@ local function CreateOptionsTable(addon)
                         name = "Queue Icon Fade",
                         desc = "Desaturation for icons in positions 2+ (0 = full color, 1 = grayscale)",
                         min = 0, max = 1.0, step = 0.05,
-                        order = 23,
+                        order = 22,
                         width = "normal",
-                        get = function() return addon.db.profile.queueIconDesaturation or 0.35 end,
+                        get = function() return addon.db.profile.queueIconDesaturation or 0 end,
                         set = function(_, val)
                             addon.db.profile.queueIconDesaturation = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    hideQueueOutOfCombat = {
+                        type = "toggle",
+                        name = "Hide Queue Out of Combat",
+                        desc = "Hide the entire spell queue when not in combat (does not affect defensive icon)",
+                        order = 23,
+                        width = "full",
+                        get = function() return addon.db.profile.hideQueueOutOfCombat end,
+                        set = function(_, val)
+                            addon.db.profile.hideQueueOutOfCombat = val
                             addon:ForceUpdate()
                         end
                     },
@@ -503,15 +503,17 @@ local function CreateOptionsTable(addon)
                         name = "System",
                         order = 30,
                     },
-                    autoEnableAssistedMode = {
+                    panelLocked = {
                         type = "toggle",
-                        name = "Auto-Enable Assisted Combat",
-                        desc = "Automatically enable Blizzard's Assisted Combat mode on login (recommended)",
+                        name = "Lock Panel",
+                        desc = "Block dragging and right-click menus (tooltips still work if enabled). Toggle via right-click on move handle.",
                         order = 31,
                         width = "full",
-                        get = function() return addon.db.profile.autoEnableAssistedMode ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.autoEnableAssistedMode = val
+                        get = function() return addon.db.profile.panelLocked or false end,
+                        set = function(_, val) 
+                            addon.db.profile.panelLocked = val
+                            local status = val and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                            addon:Print("Panel " .. status)
                         end
                     },
                     debugMode = {
@@ -571,7 +573,7 @@ local function CreateOptionsTable(addon)
                 args = {
                     info = {
                         type = "description",
-                        name = "Two-tier defensive system:\n|cff00ff00• Self-Heals|r (higher threshold): Quick abilities to weave into rotation\n|cffff6666• Major Cooldowns|r (lower threshold): Emergency defensives when critically low\n\nThe icon appears |cff00ff00left of position 1|r with a green glow.",
+                        name = "Position 0 defensive icon with two-tier priority:\n|cff00ff00\226\128\162 Self-Heals|r: Quick heals shown when health drops below threshold\n|cffff6666\226\128\162 Major Cooldowns|r: Emergency defensives when critically low\n\nIcon appears with a green glow. Out of combat behavior is controlled by 'Only In Combat' toggle.",
                         order = 1,
                         fontSize = "medium"
                     },
@@ -589,7 +591,8 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.enabled end,
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
-                            addon:ForceUpdate()
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
                         end
                     },
                     selfHealThreshold = {
@@ -602,6 +605,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.selfHealThreshold or 70 end,
                         set = function(_, val)
                             addon.db.profile.defensives.selfHealThreshold = val
+                            addon:ForceUpdateAll()
                         end
                     },
                     cooldownThreshold = {
@@ -614,6 +618,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.cooldownThreshold or 50 end,
                         set = function(_, val)
                             addon.db.profile.defensives.cooldownThreshold = val
+                            addon:ForceUpdateAll()
                         end
                     },
                     behaviorHeader = {
@@ -624,47 +629,31 @@ local function CreateOptionsTable(addon)
                     showOnlyInCombat = {
                         type = "toggle",
                         name = "Only In Combat",
-                        desc = "Only show defensive suggestions during combat",
+                        desc = "ON: Hide out of combat, show based on thresholds in combat.\nOFF: Always visible out of combat (self-heals), threshold-based in combat.",
                         order = 7,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showOnlyInCombat end,
                         set = function(_, val)
                             addon.db.profile.defensives.showOnlyInCombat = val
+                            addon:ForceUpdateAll()
                         end
                     },
-                    showOnlyUsable = {
-                        type = "toggle",
-                        name = "Only Usable Spells",
-                        desc = "Skip spells that are on cooldown",
-                        order = 8,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.showOnlyUsable end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.showOnlyUsable = val
-                        end
-                    },
-                    glowHeader = {
-                        type = "header",
-                        name = "Glow Effects",
+                    position = {
+                        type = "select",
+                        name = "Icon Position",
+                        desc = "Where to place the defensive icon relative to the spell queue",
                         order = 9,
-                    },
-                    glowColor = {
-                        type = "color",
-                        name = "Defensive Glow Color",
-                        desc = "Color for the defensive spell highlight (green by default)",
-                        order = 10,
                         width = "normal",
-                        hasAlpha = false,
-                        get = function()
-                            return addon.db.profile.defensives.glowColorR or 0.0,
-                                   addon.db.profile.defensives.glowColorG or 1.0,
-                                   addon.db.profile.defensives.glowColorB or 0.0
-                        end,
-                        set = function(_, r, g, b)
-                            addon.db.profile.defensives.glowColorR = r
-                            addon.db.profile.defensives.glowColorG = g
-                            addon.db.profile.defensives.glowColorB = b
-                            addon:ForceUpdate()
+                        values = {
+                            LEFT = "Left",
+                            ABOVE = "Above",
+                            BELOW = "Below",
+                        },
+                        get = function() return addon.db.profile.defensives.position or "LEFT" end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.position = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
                         end
                     },
                     selfHealHeader = {

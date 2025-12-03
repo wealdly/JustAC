@@ -7,39 +7,91 @@ local UIManager, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, 
 -- Class-specific defensive spell defaults (spellIDs in priority order)
 -- Two tiers: self-heals (weave into rotation) and major cooldowns (emergency)
 -- Self-heals trigger at higher threshold, cooldowns at lower threshold
+-- NOTE: Include options from multiple specs - IsSpellAvailable will filter to what player knows
 
 -- Quick self-heals: fast/cheap abilities to maintain health during combat
 local CLASS_SELFHEAL_DEFAULTS = {
-    DEATHKNIGHT = {49998, 48743},                    -- Death Strike, Death Pact
-    DEMONHUNTER = {228477, 203551},                  -- Soul Cleave (Veng), Chaos Strike (heal proc)
-    DRUID = {108238, 18562, 8936},                   -- Renewal, Swiftmend, Regrowth
-    EVOKER = {361469, 355913},                       -- Living Flame, Emerald Blossom
+    -- Death Knight: Death Strike is core, Death Pact is talent
+    DEATHKNIGHT = {49998, 48743, 48707},             -- Death Strike, Death Pact, AMS (magic absorb)
+    
+    -- Demon Hunter: Havoc has no real heals, Veng has Soul Cleave
+    -- Blur moved here as it's short CD and good mitigation
+    DEMONHUNTER = {198589, 228477, 212084},          -- Blur, Soul Cleave (Veng), Fel Devastation (Veng)
+    
+    -- Druid: Renewal (talent), Frenzied Regen (Bear), Regrowth (all specs can cast)
+    DRUID = {108238, 22842, 8936, 18562},            -- Renewal, Frenzied Regen, Regrowth, Swiftmend
+    
+    -- Evoker: Living Flame heals, Emerald Blossom, Verdant Embrace
+    EVOKER = {361469, 355913, 360995},               -- Living Flame, Emerald Blossom, Verdant Embrace
+    
+    -- Hunter: Exhilaration is main heal, Mend Pet doesn't help player
     HUNTER = {109304, 264735},                       -- Exhilaration, Survival of the Fittest
-    MAGE = {55342},                                  -- Mirror Image (damage reduction)
-    MONK = {115072, 322101, 116670},                 -- Expel Harm, Expel Harm, Vivify
-    PALADIN = {633, 19750, 85673},                   -- Lay on Hands, Flash of Light, Word of Glory
-    PRIEST = {19236, 17},                            -- Desperate Prayer, Power Word: Shield
+    
+    -- Mage: No real heals, only defensives. Ice Barrier, Blazing Barrier, Prismatic Barrier
+    MAGE = {11426, 235313, 235450},                  -- Ice Barrier, Blazing Barrier, Prismatic Barrier
+    
+    -- Monk: Expel Harm is great, Vivify for MW, Chi Wave talent
+    MONK = {322101, 116670, 115098},                 -- Expel Harm, Vivify, Chi Wave
+    
+    -- Paladin: Word of Glory (free with HP), Flash of Light, Lay on Hands (long CD but full heal)
+    PALADIN = {85673, 19750, 633},                   -- Word of Glory, Flash of Light, Lay on Hands
+    
+    -- Priest: Desperate Prayer, PW:Shield, Shadow Mend/Flash Heal
+    PRIEST = {19236, 17, 186263},                    -- Desperate Prayer, PW:Shield, Shadow Mend
+    
+    -- Rogue: Crimson Vial is the only real heal, Feint for mitigation
     ROGUE = {185311, 1966},                          -- Crimson Vial, Feint
-    SHAMAN = {8004, 188070},                         -- Healing Surge, Healing Rain
-    WARLOCK = {234153, 6789, 104773},                -- Drain Life, Mortal Coil, Unending Resolve
-    WARRIOR = {34428, 202168},                       -- Victory Rush, Impending Victory
+    
+    -- Shaman: Healing Surge works for all specs, Astral Shift is short-ish CD
+    SHAMAN = {8004, 108271},                         -- Healing Surge, Astral Shift
+    
+    -- Warlock: Drain Life, Mortal Coil, Health Funnel (if has pet)
+    WARLOCK = {234153, 6789, 755},                   -- Drain Life, Mortal Coil, Health Funnel
+    
+    -- Warrior: Victory Rush procs after kills, Impending Victory (talent), Ignore Pain
+    WARRIOR = {34428, 202168, 190456},               -- Victory Rush, Impending Victory, Ignore Pain
 }
 
 -- Major cooldowns: big defensives for dangerous situations
 local CLASS_COOLDOWN_DEFAULTS = {
-    DEATHKNIGHT = {48707, 48792, 49028, 55233},      -- AMS, IBF, Dancing Rune Weapon, Vampiric Blood
-    DEMONHUNTER = {198589, 187827, 196555},          -- Blur, Metamorphosis, Netherwalk
+    -- Death Knight: AMS for magic, IBF for physical, Vampiric Blood (Blood)
+    DEATHKNIGHT = {48792, 49028, 55233},             -- IBF, Dancing Rune Weapon (Blood), Vampiric Blood (Blood)
+    
+    -- Demon Hunter: Netherwalk (talent), Metamorphosis (Havoc has leech), Darkness
+    DEMONHUNTER = {196555, 187827, 196718},          -- Netherwalk, Metamorphosis, Darkness
+    
+    -- Druid: Barkskin (all), Survival Instincts (Feral/Guardian), Ironbark (Resto)
     DRUID = {22812, 61336, 102342},                  -- Barkskin, Survival Instincts, Ironbark
-    EVOKER = {363916, 374348, 370960},               -- Obsidian Scales, Renewing Blaze, Emerald Communion
-    HUNTER = {186265, 264735},                       -- Aspect of the Turtle, Survival of the Fittest
-    MAGE = {45438, 110909, 342245},                  -- Ice Block, Alter Time, Alter Time
-    MONK = {122278, 122783, 115203},                 -- Dampen Harm, Diffuse Magic, Fortifying Brew
+    
+    -- Evoker: Obsidian Scales, Renewing Blaze, Zephyr (raid CD)
+    EVOKER = {363916, 374348, 374227},               -- Obsidian Scales, Renewing Blaze, Zephyr
+    
+    -- Hunter: Turtle is immunity, Fortitude of the Bear (talent), Exhil in emergencies
+    HUNTER = {186265, 388035},                       -- Aspect of the Turtle, Fortitude of the Bear
+    
+    -- Mage: Ice Block, Alter Time, Greater Invisibility, Mirror Image
+    MAGE = {45438, 342245, 110959, 55342},           -- Ice Block, Alter Time, Greater Invis, Mirror Image
+    
+    -- Monk: Fortifying Brew, Dampen Harm, Diffuse Magic, Touch of Karma (WW)
+    MONK = {115203, 122278, 122783, 122470},         -- Fort Brew, Dampen Harm, Diffuse Magic, Touch of Karma
+    
+    -- Paladin: Divine Shield, Divine Protection, Ardent Defender (Prot), Guardian (Prot)
     PALADIN = {642, 498, 31850, 86659},              -- Divine Shield, Divine Protection, Ardent Defender, Guardian
-    PRIEST = {47585, 586, 33206},                    -- Dispersion, Fade, Pain Suppression
-    ROGUE = {1856, 31224, 5277},                     -- Vanish, Cloak of Shadows, Evasion
-    SHAMAN = {108271, 204331, 198103},               -- Astral Shift, Counterstrike Totem, Earth Elemental
+    
+    -- Priest: Dispersion (Shadow), Fade, Desperate Prayer (moved from heals for emergency)
+    PRIEST = {47585, 586, 213602},                   -- Dispersion, Fade, Greater Fade
+    
+    -- Rogue: Cloak of Shadows (magic), Evasion (physical), Vanish (drop aggro)
+    ROGUE = {31224, 5277, 1856},                     -- Cloak of Shadows, Evasion, Vanish
+    
+    -- Shaman: Already used Astral Shift, add Earth Elemental, Spirit Link (Resto)
+    SHAMAN = {198103, 108280, 204331},               -- Earth Elemental, Healing Tide, Counterstrike Totem
+    
+    -- Warlock: Unending Resolve, Dark Pact, Nether Ward (talent)
     WARLOCK = {104773, 108416, 212295},              -- Unending Resolve, Dark Pact, Nether Ward
-    WARRIOR = {871, 12975, 118038, 23920},           -- Shield Wall, Last Stand, Die by the Sword, Spell Reflection
+    
+    -- Warrior: Shield Wall (Prot), Die by the Sword (Arms/Fury), Rallying Cry, Spell Reflect
+    WARRIOR = {871, 118038, 97462, 23920},           -- Shield Wall, Die by the Sword, Rallying Cry, Spell Reflect
 }
 
 -- Expose defaults for Options module
@@ -55,34 +107,30 @@ local defaults = {
         },
         maxIcons = 5,
         iconSize = 36,
-        iconSpacing = 2,
+        iconSpacing = 1,
         debugMode = false,
         isManualMode = false,
         blacklistedSpells = {},
         hotkeyOverrides = {},
-        greyoutNoHotkey = true,
         showTooltips = true,
         tooltipsInCombat = false,
         focusEmphasis = true,
-        firstIconScale = 1.4,
-        glowAlpha = 0.75,
-        glowColorR = 0.3,
-        glowColorG = 0.7,
-        glowColorB = 1.0,
-        queueIconDesaturation = 0.35,
-        autoEnableAssistedMode = true,
+        firstIconScale = 1.3,
+        queueIconDesaturation = 0,
+        frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
+        hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
+        panelLocked = false,              -- Lock panel interactions in combat
+        queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
-            selfHealThreshold = 70,   -- Show self-heals when health drops below this
-            cooldownThreshold = 50,   -- Show major cooldowns when health drops below this
+            position = "LEFT",        -- LEFT, ABOVE, or BELOW the primary spell
+            selfHealThreshold = 80,   -- Show self-heals when health drops below this
+            cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
-            glowColorR = 0.0,
-            glowColorG = 1.0,
-            glowColorB = 0.0,
             showOnlyUsable = true,
-            showOnlyInCombat = true,
+            showOnlyInCombat = true,  -- false = always visible, true = only in combat with thresholds
         },
     },
     char = {
@@ -115,8 +163,6 @@ function JustAC:OnInitialize()
 end
 
 function JustAC:OnEnable()
-    self:SetupAssistedCombatCVars()
-    
     if not UIManager or not UIManager.CreateMainFrame then
         self:Print("Error: UIManager module not loaded properly")
         return
@@ -230,16 +276,6 @@ end
 
 function JustAC:DelayedValidation()
     self:ValidateAssistedCombatSetup()
-end
-
-function JustAC:SetupAssistedCombatCVars()
-    local profile = self:GetProfile()
-    if not profile or not profile.autoEnableAssistedMode then return end
-    
-    local assistedMode = GetCVarBool("assistedMode")
-    if not assistedMode then
-        SetCVar("assistedMode", "1")
-    end
 end
 
 function JustAC:OnCVarUpdate(event, cvarName, value)
@@ -360,97 +396,230 @@ function JustAC:RestoreDefensiveDefaults(listType)
     self:OnHealthChanged(nil, "player")
 end
 
--- Called on UNIT_HEALTH event - efficient, only fires when health actually changes
--- Hysteresis: once defensive icon shows, only hide when health recovers to near-full
-local DEFENSIVE_HIDE_THRESHOLD = 90  -- Must reach 90% health to hide the icon
+-- Called on UNIT_HEALTH event and ForceUpdateAll
+-- Simplified logic:
+--   "Only In Combat" ON:  Hide out of combat. In combat: threshold-based (self-heals at ≤80%, cooldowns at ≤60%)
+--   "Only In Combat" OFF: Show out of combat (self-heals). In combat: threshold-based (same as above)
 
 function JustAC:OnHealthChanged(event, unit)
     if unit ~= "player" then return end
     
     local profile = self:GetProfile()
-    if not profile or not profile.defensives or not profile.defensives.enabled then return end
-    
-    -- Only show in combat if configured
-    if profile.defensives.showOnlyInCombat and not UnitAffectingCombat("player") then
+    if not profile or not profile.defensives or not profile.defensives.enabled then 
         if UIManager and UIManager.HideDefensiveIcon then
             UIManager.HideDefensiveIcon(self)
         end
-        self.defensiveIconActive = false
+        return 
+    end
+    
+    local inCombat = UnitAffectingCombat("player")
+    local showOnlyInCombat = profile.defensives.showOnlyInCombat
+    
+    -- If "Only In Combat" is enabled and we're out of combat, hide the icon
+    if showOnlyInCombat and not inCombat then
+        if UIManager and UIManager.HideDefensiveIcon then
+            UIManager.HideDefensiveIcon(self)
+        end
         return
     end
     
     local healthPercent = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
-    if not healthPercent then return end  -- Fail-safe if secrets block access
+    if not healthPercent then return end
+    
+    local cooldownThreshold = profile.defensives.cooldownThreshold or 60
+    local selfHealThreshold = profile.defensives.selfHealThreshold or 80
     
     local defensiveSpell = nil
+    local isItem = false
     
-    -- Hysteresis: once showing, only hide when health reaches near-full (prevents flicker)
-    if self.defensiveIconActive and healthPercent >= DEFENSIVE_HIDE_THRESHOLD then
-        -- Health recovered enough, hide the icon
-        if UIManager and UIManager.HideDefensiveIcon then
-            UIManager.HideDefensiveIcon(self)
+    -- Determine which spell to show based on health
+    local isCritical = healthPercent <= cooldownThreshold
+    local isLow = healthPercent <= selfHealThreshold
+    
+    -- Out of combat with "Only In Combat" OFF: always show self-heals (switch to cooldowns if critical)
+    -- In combat (regardless of setting): threshold-based behavior
+    if not inCombat and not showOnlyInCombat then
+        -- Out of combat, always visible mode: show self-heals, cooldowns if critical
+        if isCritical then
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
+            if not defensiveSpell then
+                local potionID = self:FindHealingPotionOnActionBar()
+                if potionID then
+                    defensiveSpell = potionID
+                    isItem = true
+                end
+            end
+            if not defensiveSpell then
+                defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
+            end
+        else
+            -- Always show self-heals out of combat
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
         end
-        self.defensiveIconActive = false
-        return
-    end
-    
-    -- Two-tier priority: self-heals first (higher threshold), then cooldowns (lower threshold)
-    if healthPercent <= profile.defensives.selfHealThreshold then
-        -- First try self-heals (quick abilities to weave into rotation)
-        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-    end
-    
-    -- If no self-heal available and health is critically low, try major cooldowns
-    if not defensiveSpell and healthPercent <= profile.defensives.cooldownThreshold then
-        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
+    else
+        -- In combat: threshold-based visibility
+        -- Critical health: cooldowns > potions > self-heals
+        -- Low health: self-heals only
+        -- Above threshold: hide
+        if isCritical then
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
+            if not defensiveSpell then
+                local potionID = self:FindHealingPotionOnActionBar()
+                if potionID then
+                    defensiveSpell = potionID
+                    isItem = true
+                end
+            end
+            if not defensiveSpell then
+                defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
+            end
+        elseif isLow then
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
+        end
+        -- If health is above selfHealThreshold, defensiveSpell stays nil and icon hides
     end
     
     -- Show or hide the defensive icon
     if defensiveSpell then
         if UIManager and UIManager.ShowDefensiveIcon then
-            UIManager.ShowDefensiveIcon(self, defensiveSpell)
+            UIManager.ShowDefensiveIcon(self, defensiveSpell, isItem)
         end
-        self.defensiveIconActive = true
-    elseif not self.defensiveIconActive then
-        -- Only hide if not already in hysteresis mode (health between threshold and 90%)
+    else
         if UIManager and UIManager.HideDefensiveIcon then
             UIManager.HideDefensiveIcon(self)
         end
     end
 end
 
+-- Check if a spell has procced (Blizzard overlay glow is active)
+local function IsSpellProcced(spellID)
+    if not spellID or spellID == 0 then return false end
+    if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
+        local success, result = pcall(C_SpellActivationOverlay.IsSpellOverlayed, spellID)
+        return success and result
+    end
+    return false
+end
+
 -- Get the first usable spell from a given spell list
+-- Prioritizes procced spells (e.g., Victory Rush after kill, free heal procs)
 function JustAC:GetBestDefensiveSpell(spellList)
     if not spellList then return nil end
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
     
+    local firstUsable = nil  -- Track first usable spell as fallback
+    
     for i, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
-            -- Check if spell is known
-            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(spellID)
-            if spellInfo then
-                -- Check if usable (not on CD, has resources) if configured
-                if profile.defensives.showOnlyUsable then
-                    local isUsable = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
-                    local start, duration
-                    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-                        start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-                    end
-                    local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
-                    
-                    if isUsable and not onCooldown then
+            -- ALWAYS check if spell is actually known/available to the player
+            -- IsSpellAvailable checks spellbook, IsSpellKnown, and pet spells
+            local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+            
+            if isKnown then
+                -- Always check usability (not on CD) - defensive suggestions must be actionable
+                local start, duration
+                if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+                    start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+                end
+                local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
+                
+                if not onCooldown then
+                    -- Prioritize procced spells immediately
+                    if IsSpellProcced(spellID) then
                         return spellID
                     end
-                else
-                    return spellID
+                    
+                    -- Track first usable as fallback
+                    if not firstUsable then
+                        firstUsable = spellID
+                    end
                 end
             end
         end
     end
     
-    return nil
+    return firstUsable
+end
+
+-- Healthstone item ID (always prioritized - free resource from Warlocks)
+local HEALTHSTONE_ITEM_ID = 5512
+
+-- Check if an item is a healing consumable by examining its spell effect
+-- Returns true if the item appears to restore health
+local function IsHealingConsumable(itemID)
+    if not itemID then return false end
+    
+    -- Healthstone is always a healing consumable
+    if itemID == HEALTHSTONE_ITEM_ID then return true end
+    
+    -- Check item class/subclass: must be Consumable (0) -> Potion (1)
+    local _, _, _, _, _, _, classID, subclassID = GetItemInfo(itemID)
+    if not classID or classID ~= 0 or subclassID ~= 1 then 
+        return false 
+    end
+    
+    -- Check the item's spell - healing potions restore health
+    local spellName, spellID = GetItemSpell(itemID)
+    if not spellName then return false end
+    
+    -- Common healing potion spell names contain these keywords
+    local lowerName = spellName:lower()
+    if lowerName:find("heal") or lowerName:find("restore") or lowerName:find("life") then
+        return true
+    end
+    
+    -- Check spell description for health restoration
+    if spellID then
+        local desc = GetSpellDescription(spellID)
+        if desc then
+            local lowerDesc = desc:lower()
+            if lowerDesc:find("restore") and lowerDesc:find("health") then
+                return true
+            end
+            if lowerDesc:find("heal") then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Scan action bars for a usable healing consumable
+-- Prioritizes: 1) Healthstones (free), 2) Any healing potion found
+-- Returns: itemID, actionSlot (or nil if none found)
+function JustAC:FindHealingPotionOnActionBar()
+    local bestPotion = nil
+    local bestSlot = nil
+    
+    for slot = 1, 180 do  -- All action bar slots including bonus bars
+        local actionType, id = GetActionInfo(slot)
+        if actionType == "item" and id then
+            -- Check if we have the item and it's not on cooldown
+            local count = GetItemCount(id) or 0
+            if count > 0 then
+                local start, duration = GetItemCooldown(id)
+                local onCooldown = start and start > 0 and duration and duration > 1.5
+                
+                if not onCooldown then
+                    -- Healthstone gets highest priority (free resource)
+                    if id == HEALTHSTONE_ITEM_ID then
+                        return id, slot
+                    end
+                    
+                    -- Check if it's a healing consumable
+                    if not bestPotion and IsHealingConsumable(id) then
+                        bestPotion = id
+                        bestSlot = slot
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestPotion, bestSlot
 end
 
 function JustAC:LoadModules()
@@ -504,9 +673,16 @@ function JustAC:CreateFallbackAPI()
         end,
         IsSpellAvailable = function(spellID)
             if not spellID or spellID == 0 then return false end
-            if C_Spell and C_Spell.GetSpellInfo then
-                local info = C_Spell.GetSpellInfo(spellID)
-                return info and info.name ~= nil
+            -- Check if spell is actually known to the player
+            if IsSpellKnown then
+                if IsSpellKnown(spellID) then return true end
+                if IsSpellKnown(spellID, true) then return true end  -- Pet spells
+            end
+            -- Check spellbook
+            if C_SpellBook and C_SpellBook.IsSpellInSpellBook then
+                if C_SpellBook.IsSpellInSpellBook(spellID, Enum.SpellBookSpellBank.Player) then
+                    return true
+                end
             end
             return false
         end,
@@ -681,8 +857,12 @@ end
 
 -- Proc glow events: Blizzard shows/hides overlay for proc abilities
 -- More responsive than waiting for UNIT_AURA throttle
+-- Procs often change spell overrides (e.g., Pyroblast → Hot Streak Pyroblast)
 function JustAC:OnProcGlowChange(event, spellID)
-    -- Proc changed, refresh immediately for responsiveness
+    -- Proc changed - spell overrides may have changed, invalidate hotkey cache
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
     if SpellQueue and SpellQueue.ClearAvailabilityCache then
         SpellQueue.ClearAvailabilityCache()
     end

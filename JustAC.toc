@@ -1,10 +1,10 @@
-## Interface: 110205
+## Interface: 110207
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 2.6
+## Version: 2.8
 ## SavedVariables: JustACDB
-## OptionalDeps: Ace3, LibCustomGlow-1.0, LibPlayerSpells-1.0
+## OptionalDeps: Ace3, LibPlayerSpells-1.0, Masque
 
 ## X-Category: Combat
 
@@ -19,7 +19,6 @@ Libs\AceDB-3.0\AceDB-3.0.xml
 Libs\AceDBOptions-3.0\AceDBOptions-3.0.xml
 Libs\AceGUI-3.0\AceGUI-3.0.xml
 Libs\AceConfig-3.0\AceConfig-3.0.xml
-Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
 Libs\LibPlayerSpells-1.0\LibPlayerSpells-1.0.xml
 
 BlizzardAPI.lua

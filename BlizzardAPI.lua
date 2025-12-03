@@ -243,6 +243,31 @@ function BlizzardAPI.GetSpellCooldown(spellID)
     return 0, 0
 end
 
+-- Check if spell is usable (has resources, not on cooldown preventing cast, etc.)
+-- Returns: isUsable, notEnoughResources
+function BlizzardAPI.IsSpellUsable(spellID)
+    if not spellID or spellID == 0 then return false, false end
+    
+    -- Modern API (10.0+)
+    if C_Spell and C_Spell.IsSpellUsable then
+        local success, isUsable, notEnoughResources = pcall(C_Spell.IsSpellUsable, spellID)
+        if success then
+            return isUsable, notEnoughResources
+        end
+    end
+    
+    -- Legacy fallback
+    if IsUsableSpell then
+        local success, isUsable, notEnoughMana = pcall(IsUsableSpell, spellID)
+        if success then
+            return isUsable, notEnoughMana
+        end
+    end
+    
+    -- Default to usable if API unavailable
+    return true, false
+end
+
 --------------------------------------------------------------------------------
 -- 12.0 (Midnight) Compatibility Utilities
 -- These functions prepare for WoW 12.0 "Secret Values" system
@@ -338,15 +363,6 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         end
     end
     
-    -- Check override spells (morphed abilities like Metamorphosis)
-    if C_Spell and C_Spell.GetOverrideSpell then
-        local override = C_Spell.GetOverrideSpell(spellID)
-        if override and override ~= spellID then
-            spellAvailabilityCache[spellID] = true
-            return true
-        end
-    end
-    
     -- Now do slower checks - filter out passives
     if C_Spell and C_Spell.IsSpellPassive then
         local isPassive = C_Spell.IsSpellPassive(spellID)
@@ -365,15 +381,14 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         end
     end
     
-    -- Fallback: if we can get spell info, assume Blizzard filtered correctly
-    if C_Spell and C_Spell.GetSpellInfo then
-        local spellInfo = C_Spell.GetSpellInfo(spellID)
-        if spellInfo and spellInfo.name then
-            spellAvailabilityCache[spellID] = true
-            return true
-        end
+    -- Final check: Use IsPlayerSpell if available (most accurate for "do I have this?")
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        spellAvailabilityCache[spellID] = true
+        return true
     end
     
+    -- If we got here, the spell wasn't confirmed as known to the player
+    -- Don't rely on GetSpellInfo - it returns data for ANY valid spell ID
     spellAvailabilityCache[spellID] = false
     return false
 end

@@ -1,10 +1,20 @@
 -- JustAC: UI Manager Module
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 19)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 21)
 if not UIManager then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
+
+-- Masque support
+local Masque = LibStub("Masque", true)
+local MasqueGroup = nil
+local MasqueDefensiveGroup = nil
+
+if Masque then
+    MasqueGroup = Masque:Group("JustAssistedCombat", "Spell Queue")
+    MasqueDefensiveGroup = Masque:Group("JustAssistedCombat", "Defensive")
+end
 
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
@@ -20,10 +30,7 @@ local function GetProfile()
 end
 
 -- Visual constants (defaults, profile overrides where applicable)
-local DEFAULT_GLOW_COLOR = {0.3, 0.7, 1.0, 1}
-local DEFAULT_GLOW_ALPHA = 0.75
-local GLOW_OFFSET_MULTIPLIER = 0.07
-local DEFAULT_QUEUE_DESATURATION = 0.35
+local DEFAULT_QUEUE_DESATURATION = 0
 local QUEUE_ICON_BRIGHTNESS = 1.0
 local QUEUE_ICON_OPACITY = 1.0
 local CLICK_DARKEN_ALPHA = 0.4
@@ -33,168 +40,329 @@ local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
 
-local function GetGlowAlpha()
-    local profile = GetProfile()
-    return profile and profile.glowAlpha or DEFAULT_GLOW_ALPHA
-end
-
-local function GetGlowColor()
-    local profile = GetProfile()
-    if profile then
-        return {profile.glowColorR or 0.3, profile.glowColorG or 0.7, profile.glowColorB or 1.0, 1}
-    end
-    return DEFAULT_GLOW_COLOR
-end
-
 local function GetQueueDesaturation()
     local profile = GetProfile()
     return profile and profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
 end
 
--- Get defensive glow color (green by default)
-local function GetDefensiveGlowColor()
-    local profile = GetProfile()
-    if profile and profile.defensives then
-        return {
-            profile.defensives.glowColorR or 0.0,
-            profile.defensives.glowColorG or 1.0,
-            profile.defensives.glowColorB or 0.0,
-            1
-        }
-    end
-    return {0.0, 1.0, 0.0, 1}  -- Green default
+-- Masque API access
+function UIManager.GetMasqueGroup()
+    return MasqueGroup
+end
+
+function UIManager.GetMasqueDefensiveGroup()
+    return MasqueDefensiveGroup
+end
+
+function UIManager.IsMasqueEnabled()
+    return Masque ~= nil
 end
 
 local spellIcons = {}
-local defensiveIcon = nil  -- Single defensive icon, positioned left of position 1
+local defensiveIcon = nil  -- Position 0: defensive icon, positioned relative to position 1
 local lastFrameState = {
     shouldShow = false,
     spellCount = 0,
     lastUpdate = 0,
 }
 
-local function GetGlowColorForStyle(style)
-    if style == "PROC" then
-        return nil  -- Use default gold for procs
-    end
-    return GetGlowColor()
-end
-
-local function UpdateGlowColor(glowFrame, style)
-    if not glowFrame then return end
-    
-    local color = GetGlowColorForStyle(style)
-    if color then
-        -- Apply tint via desaturation + vertex color
-        if glowFrame.ProcStart then
-            glowFrame.ProcStart:SetDesaturated(1)
-            glowFrame.ProcStart:SetVertexColor(color[1], color[2], color[3], color[4])
-        end
-        if glowFrame.ProcLoop then
-            glowFrame.ProcLoop:SetDesaturated(1)
-            glowFrame.ProcLoop:SetVertexColor(color[1], color[2], color[3], color[4])
-        end
-    else
-        -- Default gold (no desaturation, full color)
-        if glowFrame.ProcStart then
-            glowFrame.ProcStart:SetDesaturated(nil)
-            glowFrame.ProcStart:SetVertexColor(1, 1, 1, 1)
-        end
-        if glowFrame.ProcLoop then
-            glowFrame.ProcLoop:SetDesaturated(nil)
-            glowFrame.ProcLoop:SetVertexColor(1, 1, 1, 1)
-        end
-    end
-end
-
 local isInCombat = false
 
-local function ShouldPauseAnimation()
-    return not isInCombat
+-- Forward declarations
+local StopAssistedGlow
+local StopDefensiveGlow
+
+-- Helper to create a marching ants flipbook frame (reusable for different styles)
+local function CreateMarchingAntsFrame(parent, frameKey)
+    local highlightFrame = CreateFrame("FRAME", nil, parent)
+    parent[frameKey] = highlightFrame
+    highlightFrame:SetPoint("CENTER")
+    highlightFrame:SetSize(45, 45)
+    highlightFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
+    
+    -- Create the flipbook texture
+    local flipbook = highlightFrame:CreateTexture(nil, "OVERLAY")
+    highlightFrame.Flipbook = flipbook
+    flipbook:SetAtlas("rotationhelper_ants_flipbook")
+    flipbook:SetSize(66, 66)
+    flipbook:SetPoint("CENTER")
+    
+    -- Create the animation group for the flipbook
+    local animGroup = flipbook:CreateAnimationGroup()
+    animGroup:SetLooping("REPEAT")
+    flipbook.Anim = animGroup
+    
+    -- Create the flipbook animation (30 frames in 6 rows x 5 columns)
+    local flipAnim = animGroup:CreateAnimation("FlipBook")
+    flipAnim:SetDuration(1)
+    flipAnim:SetOrder(0)
+    flipAnim:SetFlipBookRows(6)
+    flipAnim:SetFlipBookColumns(5)
+    flipAnim:SetFlipBookFrames(30)
+    flipAnim:SetFlipBookFrameWidth(0)
+    flipAnim:SetFlipBookFrameHeight(0)
+    
+    return highlightFrame
+end
+
+-- Helper to create a proc glow frame (gold spell proc animation)
+-- Created at base 45x45 size (Blizzard standard), scaled via SetScale()
+local function CreateProcGlowFrame(parent, frameKey)
+    local procFrame = CreateFrame("FRAME", nil, parent)
+    parent[frameKey] = procFrame
+    procFrame:SetPoint("CENTER")
+    procFrame:SetSize(45 * 1.4, 45 * 1.4)  -- Blizzard uses 1.4x button size
+    procFrame:SetFrameLevel(parent:GetFrameLevel() + 6)
+    procFrame:Hide()
+    
+    -- Create the start animation texture (burst)
+    local procStart = procFrame:CreateTexture(nil, "OVERLAY")
+    procFrame.ProcStartFlipbook = procStart
+    procStart:SetAtlas("UI-HUD-ActionBar-Proc-Start-Flipbook")
+    procStart:SetSize(150, 150)
+    procStart:SetPoint("CENTER")
+    procStart:SetAlpha(0)
+    
+    -- Create the loop animation texture (fills parent frame)
+    local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
+    procFrame.ProcLoopFlipbook = procLoop
+    procLoop:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
+    procLoop:SetAllPoints(procFrame)
+    procLoop:SetAlpha(0)
+    
+    -- Create the loop animation group
+    local loopGroup = procLoop:CreateAnimationGroup()
+    loopGroup:SetLooping("REPEAT")
+    procFrame.ProcLoop = loopGroup
+    
+    local loopAlpha = loopGroup:CreateAnimation("Alpha")
+    loopAlpha:SetDuration(0.001)
+    loopAlpha:SetOrder(0)
+    loopAlpha:SetFromAlpha(1)
+    loopAlpha:SetToAlpha(1)
+    
+    local loopFlip = loopGroup:CreateAnimation("FlipBook")
+    loopFlip:SetChildKey("ProcLoopFlipbook")
+    loopFlip:SetDuration(1)
+    loopFlip:SetOrder(0)
+    loopFlip:SetFlipBookRows(6)
+    loopFlip:SetFlipBookColumns(5)
+    loopFlip:SetFlipBookFrames(30)
+    loopFlip:SetFlipBookFrameWidth(0)
+    loopFlip:SetFlipBookFrameHeight(0)
+    
+    -- Create the start animation group
+    local startGroup = procStart:CreateAnimationGroup()
+    startGroup:SetToFinalAlpha(true)
+    procFrame.ProcStartAnim = startGroup
+    
+    local startAlpha1 = startGroup:CreateAnimation("Alpha")
+    startAlpha1:SetDuration(0.001)
+    startAlpha1:SetOrder(0)
+    startAlpha1:SetFromAlpha(1)
+    startAlpha1:SetToAlpha(1)
+    
+    local startFlip = startGroup:CreateAnimation("FlipBook")
+    startFlip:SetChildKey("ProcStartFlipbook")
+    startFlip:SetDuration(0.7)
+    startFlip:SetOrder(1)
+    startFlip:SetFlipBookRows(6)
+    startFlip:SetFlipBookColumns(5)
+    startFlip:SetFlipBookFrames(30)
+    startFlip:SetFlipBookFrameWidth(0)
+    startFlip:SetFlipBookFrameHeight(0)
+    
+    local startAlpha2 = startGroup:CreateAnimation("Alpha")
+    startAlpha2:SetChildKey("ProcStartFlipbook")
+    startAlpha2:SetDuration(0.001)
+    startAlpha2:SetOrder(2)
+    startAlpha2:SetFromAlpha(1)
+    startAlpha2:SetToAlpha(0)
+    
+    -- When start animation finishes, play the loop
+    startGroup:SetScript("OnFinished", function()
+        procFrame.ProcLoop:Play()
+    end)
+    
+    -- When frame hides, stop the loop
+    procFrame:SetScript("OnHide", function()
+        if procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Stop()
+        end
+    end)
+    
+    -- Initialize flipbooks to first frame (Play/Stop trick to avoid showing whole atlas)
+    startGroup:Play()
+    startGroup:Stop()
+    loopGroup:Play()
+    loopGroup:Stop()
+    
+    return procFrame
+end
+
+-- Apply color tint to marching ants flipbook
+local function TintMarchingAnts(highlightFrame, r, g, b)
+    if highlightFrame and highlightFrame.Flipbook then
+        highlightFrame.Flipbook:SetVertexColor(r, g, b, 1)
+    end
 end
 
 local function StartAssistedGlow(icon, style)
     if not icon then return end
     
     style = style or "ASSISTED"
-    local LibCustomGlow = LibStub("LibCustomGlow-1.0", true)
-    if not LibCustomGlow then return end
     
-    -- Use single key "MAIN" to avoid stop/start flicker on style changes
-    local glowKey = "MAIN"
-    local glowFrame = icon["_ProcGlow" .. glowKey]
-    
-    if glowFrame and icon.activeGlowStyle then
-        glowFrame:SetAlpha(GetGlowAlpha())
-        
-        if icon.activeGlowStyle ~= style then
-            UpdateGlowColor(glowFrame, style)
-            icon.activeGlowStyle = style
-        else
-            UpdateGlowColor(glowFrame, style)
+    if style == "PROC" then
+        -- Use native proc glow animation (gold) - only in combat
+        if not isInCombat then
+            StopAssistedGlow(icon)
+            return
         end
         
-        -- Sync animation state with combat status
-        if glowFrame.ProcLoopAnim then
-            if ShouldPauseAnimation() then
-                if glowFrame.ProcLoopAnim:IsPlaying() then
-                    glowFrame.ProcLoopAnim:Pause()
-                end
-            else
-                if not glowFrame.ProcLoopAnim:IsPlaying() then
-                    glowFrame.ProcLoopAnim:Play()
-                end
+        local procFrame = icon.ProcGlowFrame
+        if not procFrame then
+            procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
+        end
+        
+        -- Scale entire frame to match icon size (base size is 45)
+        local width = icon:GetWidth()
+        procFrame:SetScale(width / 45)
+        
+        -- Hide marching ants if showing
+        if icon.AssistedCombatHighlightFrame then
+            icon.AssistedCombatHighlightFrame:Hide()
+            icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+        end
+        
+        -- Show and play proc animation
+        procFrame:Show()
+        procFrame.ProcStartFlipbook:SetAlpha(1)
+        procFrame.ProcLoopFlipbook:SetAlpha(1)
+        if not procFrame.ProcStartAnim:IsPlaying() and not procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcStartAnim:Play()
+        end
+        
+        icon.activeGlowStyle = style
+    else
+        -- Use marching ants flipbook (ASSISTED = blue)
+        -- Show even out of combat, but freeze animation
+        local highlightFrame = icon.AssistedCombatHighlightFrame
+        if not highlightFrame then
+            highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
+        end
+        
+        -- Scale frame to match icon size (base size is 45)
+        local width = icon:GetWidth()
+        highlightFrame:SetScale(width / 45)
+        
+        -- Apply color based on style (ASSISTED = default blue/white, no tint needed)
+        TintMarchingAnts(highlightFrame, 1, 1, 1)  -- Reset to white (atlas is already blue)
+        
+        -- Hide proc glow if showing
+        if icon.ProcGlowFrame then
+            icon.ProcGlowFrame:Hide()
+            icon.ProcGlowFrame.ProcStartAnim:Stop()
+            icon.ProcGlowFrame.ProcLoop:Stop()
+        end
+        
+        highlightFrame:Show()
+        
+        -- Animate in combat, freeze (pause) out of combat
+        -- Use Play/Stop trick to freeze on a single frame (Blizzard's approach)
+        if isInCombat then
+            if not highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Play()
             end
+        else
+            -- Play then Stop freezes on current frame instead of showing whole atlas
+            if not highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Play()
+            end
+            highlightFrame.Flipbook.Anim:Stop()
         end
-        return
+        
+        icon.activeGlowStyle = style
     end
-    
-    local width, height = icon:GetSize()
-    local extraOffset = width * GLOW_OFFSET_MULTIPLIER
-    
-    LibCustomGlow.ProcGlow_Start(icon, {
-        key = glowKey,
-        color = GetGlowColorForStyle(style),
-        startAnim = false,
-        xOffset = extraOffset,
-        yOffset = extraOffset,
-    })
-    
-    glowFrame = icon["_ProcGlow" .. glowKey]
-    if glowFrame then
-        glowFrame:SetAlpha(GetGlowAlpha())
-        if ShouldPauseAnimation() and glowFrame.ProcLoopAnim then
-            glowFrame.ProcLoopAnim:Pause()
-        end
-    end
-    
-    icon.activeGlowStyle = style
 end
 
-local function StopAssistedGlow(icon)
+StopAssistedGlow = function(icon)
     if not icon then return end
     
-    local LibCustomGlow = LibStub("LibCustomGlow-1.0", true)
-    if LibCustomGlow then
-        LibCustomGlow.ProcGlow_Stop(icon, "MAIN")
+    -- Stop the marching ants flipbook
+    if icon.AssistedCombatHighlightFrame then
+        icon.AssistedCombatHighlightFrame:Hide()
+        if icon.AssistedCombatHighlightFrame.Flipbook and icon.AssistedCombatHighlightFrame.Flipbook.Anim then
+            icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+        end
+    end
+    
+    -- Stop the proc glow
+    if icon.ProcGlowFrame then
+        icon.ProcGlowFrame:Hide()
+        if icon.ProcGlowFrame.ProcStartAnim then
+            icon.ProcGlowFrame.ProcStartAnim:Stop()
+        end
+        if icon.ProcGlowFrame.ProcLoop then
+            icon.ProcGlowFrame.ProcLoop:Stop()
+        end
     end
     
     icon.activeGlowStyle = nil
 end
 
-local function SetGlowAnimationPaused(icon, paused)
-    if not icon then return end
+-- Hide all glows completely (stop and hide frames)
+local function HideAllGlows(addon)
+    if not addon or not addon.spellIcons then return end
     
-    -- Handle both MAIN (spell icons) and DEFENSIVE (defensive icon) glow keys
-    local glowKeys = {"MAIN", "DEFENSIVE"}
-    for _, key in ipairs(glowKeys) do
-        local glowFrame = icon["_ProcGlow" .. key]
-        if glowFrame and glowFrame.ProcLoopAnim then
-            if paused then
-                glowFrame.ProcLoopAnim:Pause()
-            else
-                if not glowFrame.ProcLoopAnim:IsPlaying() then
-                    glowFrame.ProcLoopAnim:Play()
+    for i = 1, #addon.spellIcons do
+        local icon = addon.spellIcons[i]
+        if icon then
+            StopAssistedGlow(icon)
+        end
+    end
+end
+
+-- Pause marching ants animations (keep frames visible but frozen on first frame)
+local function PauseAllGlows(addon)
+    if not addon or not addon.spellIcons then return end
+    
+    for i = 1, #addon.spellIcons do
+        local icon = addon.spellIcons[i]
+        if icon then
+            -- Pause marching ants animation - Play then Stop freezes on current frame
+            -- (FlipBook animations show entire atlas grid if never played, but freeze on frame if stopped mid-play)
+            if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
+                if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
+                    -- If not playing, do Play/Stop to get to first frame
+                    icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
+                end
+                icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+            end
+            -- Hide proc glow out of combat (it's too flashy when frozen)
+            if icon.ProcGlowFrame then
+                icon.ProcGlowFrame:Hide()
+                if icon.ProcGlowFrame.ProcStartAnim then
+                    icon.ProcGlowFrame.ProcStartAnim:Stop()
+                end
+                if icon.ProcGlowFrame.ProcLoop then
+                    icon.ProcGlowFrame.ProcLoop:Stop()
+                end
+            end
+        end
+    end
+end
+
+-- Resume marching ants animations
+local function ResumeAllGlows(addon)
+    if not addon or not addon.spellIcons then return end
+    
+    for i = 1, #addon.spellIcons do
+        local icon = addon.spellIcons[i]
+        if icon then
+            -- Resume marching ants animation if frame is visible
+            if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
+                if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
+                    icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
                 end
             end
         end
@@ -203,36 +371,20 @@ end
 
 function UIManager.FreezeAllGlows(addon)
     isInCombat = false
-    if not addon or not addon.spellIcons then return end
+    -- Pause animations but keep blue marching ants visible (frozen)
+    PauseAllGlows(addon)
     
-    for i = 1, #addon.spellIcons do
-        local icon = addon.spellIcons[i]
-        if icon then
-            SetGlowAnimationPaused(icon, true)
-        end
-    end
-    
-    -- Also freeze defensive icon if present
+    -- Hide defensive glow completely (not part of main queue)
     if defensiveIcon then
-        SetGlowAnimationPaused(defensiveIcon, true)
+        StopDefensiveGlow(defensiveIcon)
     end
 end
 
 function UIManager.UnfreezeAllGlows(addon)
     isInCombat = true
-    if not addon or not addon.spellIcons then return end
-    
-    for i = 1, #addon.spellIcons do
-        local icon = addon.spellIcons[i]
-        if icon then
-            SetGlowAnimationPaused(icon, false)
-        end
-    end
-    
-    -- Also unfreeze defensive icon if present
-    if defensiveIcon then
-        SetGlowAnimationPaused(defensiveIcon, false)
-    end
+    -- Resume marching ants animations
+    ResumeAllGlows(addon)
+    -- Defensive glow will be shown on next health check if needed
 end
 
 --------------------------------------------------------------------------------
@@ -240,81 +392,109 @@ end
 -- Shows a single defensive spell recommendation when health is low
 --------------------------------------------------------------------------------
 
-local function StartDefensiveGlow(icon)
+-- Start defensive glow - uses green-tinted marching ants, or proc glow if spell is proc'd
+-- Out of combat: freeze animation on frame 1 (like main queue icons)
+local function StartDefensiveGlow(icon, isProc)
     if not icon then return end
     
-    local LibCustomGlow = LibStub("LibCustomGlow-1.0", true)
-    if not LibCustomGlow then return end
-    
-    local glowKey = "DEFENSIVE"
-    local glowFrame = icon["_ProcGlow" .. glowKey]
-    
-    if glowFrame and icon.hasDefensiveGlow then
-        glowFrame:SetAlpha(GetGlowAlpha())
-        
-        -- Update color in case settings changed
-        local color = GetDefensiveGlowColor()
-        if glowFrame.ProcStart then
-            glowFrame.ProcStart:SetDesaturated(1)
-            glowFrame.ProcStart:SetVertexColor(color[1], color[2], color[3], color[4])
-        end
-        if glowFrame.ProcLoop then
-            glowFrame.ProcLoop:SetDesaturated(1)
-            glowFrame.ProcLoop:SetVertexColor(color[1], color[2], color[3], color[4])
+    if isProc then
+        -- Use native proc glow animation (gold) for proc'd defensive
+        local procFrame = icon.ProcGlowFrame
+        if not procFrame then
+            procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
         end
         
-        -- Sync animation with combat state
-        if glowFrame.ProcLoopAnim then
-            if not isInCombat then
-                if glowFrame.ProcLoopAnim:IsPlaying() then
-                    glowFrame.ProcLoopAnim:Pause()
-                end
-            else
-                if not glowFrame.ProcLoopAnim:IsPlaying() then
-                    glowFrame.ProcLoopAnim:Play()
-                end
-            end
+        -- Scale entire frame to match icon size
+        local width = icon:GetWidth()
+        procFrame:SetScale(width / 45)
+        
+        -- Hide green marching ants if showing
+        if icon.DefensiveHighlightFrame then
+            icon.DefensiveHighlightFrame:Hide()
+            icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
         end
-        return
-    end
-    
-    local width, height = icon:GetSize()
-    local extraOffset = width * GLOW_OFFSET_MULTIPLIER
-    
-    LibCustomGlow.ProcGlow_Start(icon, {
-        key = glowKey,
-        color = GetDefensiveGlowColor(),
-        startAnim = false,
-        xOffset = extraOffset,
-        yOffset = extraOffset,
-    })
-    
-    glowFrame = icon["_ProcGlow" .. glowKey]
-    if glowFrame then
-        glowFrame:SetAlpha(GetGlowAlpha())
-        if not isInCombat and glowFrame.ProcLoopAnim then
-            glowFrame.ProcLoopAnim:Pause()
+        
+        -- Show and play proc animation
+        procFrame:Show()
+        procFrame.ProcStartFlipbook:SetAlpha(1)
+        procFrame.ProcLoopFlipbook:SetAlpha(1)
+        if not procFrame.ProcStartAnim:IsPlaying() and not procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcStartAnim:Play()
         end
+        
+        icon.hasDefensiveGlow = true
+        icon.defensiveGlowStyle = "PROC"
+    else
+        -- Use green-tinted marching ants for defensive
+        local highlightFrame = icon.DefensiveHighlightFrame
+        if not highlightFrame then
+            highlightFrame = CreateMarchingAntsFrame(icon, "DefensiveHighlightFrame")
+        end
+        
+        -- Scale frame to match icon size
+        local width = icon:GetWidth()
+        highlightFrame:SetScale(width / 45)
+        
+        -- Apply green tint
+        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
+        
+        -- Hide proc glow if showing
+        if icon.ProcGlowFrame then
+            icon.ProcGlowFrame:Hide()
+            icon.ProcGlowFrame.ProcStartAnim:Stop()
+            icon.ProcGlowFrame.ProcLoop:Stop()
+        end
+        
+        highlightFrame:Show()
+        
+        -- Animate in combat, freeze (pause) out of combat (same as main queue icons)
+        if isInCombat then
+            highlightFrame.Flipbook.Anim:Play()
+        else
+            -- Play then immediately stop to show first frame (Blizzard's trick)
+            highlightFrame.Flipbook.Anim:Play()
+            highlightFrame.Flipbook.Anim:Stop()
+        end
+        
+        icon.hasDefensiveGlow = true
+        icon.defensiveGlowStyle = "DEFENSIVE"
     end
-    
-    icon.hasDefensiveGlow = true
 end
 
-local function StopDefensiveGlow(icon)
+StopDefensiveGlow = function(icon)
     if not icon then return end
     
-    local LibCustomGlow = LibStub("LibCustomGlow-1.0", true)
-    if LibCustomGlow then
-        LibCustomGlow.ProcGlow_Stop(icon, "DEFENSIVE")
+    -- Stop the green marching ants
+    if icon.DefensiveHighlightFrame then
+        icon.DefensiveHighlightFrame:Hide()
+        if icon.DefensiveHighlightFrame.Flipbook and icon.DefensiveHighlightFrame.Flipbook.Anim then
+            icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
+        end
+    end
+    
+    -- Stop the proc glow
+    if icon.ProcGlowFrame then
+        icon.ProcGlowFrame:Hide()
+        if icon.ProcGlowFrame.ProcStartAnim then
+            icon.ProcGlowFrame.ProcStartAnim:Stop()
+        end
+        if icon.ProcGlowFrame.ProcLoop then
+            icon.ProcGlowFrame.ProcLoop:Stop()
+        end
     end
     
     icon.hasDefensiveGlow = false
+    icon.defensiveGlowStyle = nil
 end
 
 -- Create the defensive icon (called from CreateSpellIcons)
 local function CreateDefensiveIcon(addon, profile)
     if defensiveIcon then
         StopDefensiveGlow(defensiveIcon)
+        -- Remove from Masque before cleanup
+        if MasqueDefensiveGroup then
+            MasqueDefensiveGroup:RemoveButton(defensiveIcon)
+        end
         defensiveIcon:Hide()
         defensiveIcon:SetParent(nil)
         defensiveIcon = nil
@@ -325,13 +505,65 @@ local function CreateDefensiveIcon(addon, profile)
     local button = CreateFrame("Button", nil, addon.mainFrame)
     if not button then return end
     
-    -- Same size as first icon (scaled)
-    local firstIconScale = profile.firstIconScale or 1.4
+    -- Same size as position 1 icon (scaled)
+    local firstIconScale = profile.firstIconScale or 1.2
     local actualIconSize = profile.iconSize * firstIconScale
     
     button:SetSize(actualIconSize, actualIconSize)
-    -- Position left of the main frame with spacing
-    button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -profile.iconSpacing - 4, 0)
+    
+    -- Position based on user preference (LEFT, ABOVE, BELOW) relative to position 1 icon
+    -- Must account for queue orientation since position 1 location changes
+    local defPosition = profile.defensives.position or "LEFT"
+    local queueOrientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing
+    local firstIconCenter = actualIconSize / 2
+    
+    -- Determine position 1's anchor point based on queue orientation
+    -- LEFT queue: pos1 at frame LEFT edge
+    -- RIGHT queue: pos1 at frame RIGHT edge
+    -- UP queue: pos1 at frame BOTTOM edge
+    -- DOWN queue: pos1 at frame TOP edge
+    
+    if queueOrientation == "LEFT" then
+        -- Queue grows left-to-right, pos1 is at LEFT of frame
+        if defPosition == "ABOVE" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, spacing)
+        elseif defPosition == "BELOW" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
+        else -- LEFT
+            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, 0)
+        end
+    elseif queueOrientation == "RIGHT" then
+        -- Queue grows right-to-left, pos1 is at RIGHT of frame
+        if defPosition == "ABOVE" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, spacing)
+        elseif defPosition == "BELOW" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter, -spacing)
+        else -- LEFT (means "before" pos1, so RIGHT side)
+            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, 0)
+        end
+    elseif queueOrientation == "UP" then
+        -- Queue grows bottom-to-top, pos1 is at BOTTOM of frame
+        if defPosition == "ABOVE" then
+            -- "Above" in vertical means before pos1, so BELOW
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing)
+        elseif defPosition == "BELOW" then
+            -- This doesn't make sense for UP orientation, treat as LEFT
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
+        else -- LEFT
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
+        end
+    elseif queueOrientation == "DOWN" then
+        -- Queue grows top-to-bottom, pos1 is at TOP of frame
+        if defPosition == "ABOVE" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing)
+        elseif defPosition == "BELOW" then
+            -- "Below" means after queue end, so treat as LEFT
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+        else -- LEFT
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+        end
+    end
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
@@ -354,22 +586,28 @@ local function CreateDefensiveIcon(addon, profile)
     hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
     button.hotkeyText = hotkeyText
     
-    -- Tooltip
+    -- Tooltip (handles both spells and items)
     button:SetScript("OnEnter", function(self)
-        if self.spellID and profile.showTooltips then
+        if (self.spellID or self.itemID) and profile.showTooltips then
             local inCombat = UnitAffectingCombat("player")
             local showTooltip = not inCombat or profile.tooltipsInCombat
             
             if showTooltip then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(self.spellID)
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("|cff00ff00DEFENSIVE SUGGESTION|r")
+                if self.itemID then
+                    GameTooltip:SetItemByID(self.itemID)
+                    GameTooltip:AddLine(" ")
+                    GameTooltip:AddLine("|cff00ff00HEALING POTION|r")
+                else
+                    GameTooltip:SetSpellByID(self.spellID)
+                    GameTooltip:AddLine(" ")
+                    GameTooltip:AddLine("|cff00ff00DEFENSIVE SUGGESTION|r")
+                end
                 GameTooltip:AddLine("|cffff6666Health is low!|r")
                 
-                local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
-                if hotkey and hotkey ~= "" then
-                    GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+                local hotkeyText = self.hotkeyText:GetText() or ""
+                if hotkeyText and hotkeyText ~= "" then
+                    GameTooltip:AddLine("|cffffff00Press " .. hotkeyText .. " to use|r")
                 end
                 GameTooltip:Show()
             end
@@ -383,15 +621,53 @@ local function CreateDefensiveIcon(addon, profile)
     button.lastCooldownStart = 0
     button.lastCooldownDuration = 0
     button.spellID = nil
+    button.itemID = nil
+    button.currentID = nil
+    button.isItem = nil
+    button:SetAlpha(0)  -- Start invisible for fade-in
     button:Hide()
+    
+    -- Create fade-in animation
+    local fadeIn = button:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.2)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    button.fadeIn = fadeIn
+    
+    -- Create fade-out animation
+    local fadeOut = button:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        button:Hide()
+        button:SetAlpha(0)
+    end)
+    button.fadeOut = fadeOut
+    
+    -- Register with Masque if available
+    if MasqueDefensiveGroup then
+        MasqueDefensiveGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            HotKey = button.hotkeyText,
+        })
+    end
     
     defensiveIcon = button
     addon.defensiveIcon = defensiveIcon
 end
 
--- Show the defensive icon with a specific spell
-function UIManager.ShowDefensiveIcon(addon, spellID)
-    if not addon or not spellID then return end
+-- Show the defensive icon with a specific spell or item
+-- isItem: true if id is an itemID (potion), false/nil if it's a spellID
+function UIManager.ShowDefensiveIcon(addon, id, isItem)
+    if not addon or not id then return end
     
     -- Create icon if it doesn't exist
     if not defensiveIcon then
@@ -403,14 +679,35 @@ function UIManager.ShowDefensiveIcon(addon, spellID)
     
     if not defensiveIcon then return end
     
-    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(spellID)
-    if not spellInfo then return end
+    local iconTexture, name
+    local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
     
-    local spellChanged = (defensiveIcon.spellID ~= spellID)
-    defensiveIcon.spellID = spellID
+    if isItem then
+        -- It's an item (healing potion)
+        local itemInfo = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(id)
+        if itemInfo then
+            iconTexture = itemInfo.iconFileID
+            name = itemInfo.itemName
+        else
+            -- Fallback to legacy API
+            name, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
+        end
+        if not iconTexture then return end
+    else
+        -- It's a spell
+        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(id)
+        if not spellInfo then return end
+        iconTexture = spellInfo.iconID
+        name = spellInfo.name
+    end
     
-    if spellChanged then
-        defensiveIcon.iconTexture:SetTexture(spellInfo.iconID)
+    defensiveIcon.currentID = id
+    defensiveIcon.spellID = not isItem and id or nil  -- Only set spellID for spells
+    defensiveIcon.itemID = isItem and id or nil
+    defensiveIcon.isItem = isItem
+    
+    if idChanged then
+        defensiveIcon.iconTexture:SetTexture(iconTexture)
         defensiveIcon.iconTexture:Show()
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
@@ -418,8 +715,10 @@ function UIManager.ShowDefensiveIcon(addon, spellID)
     
     -- Update cooldown
     local start, duration
-    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-        start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+    if isItem then
+        start, duration = GetItemCooldown(id)
+    elseif BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+        start, duration = BlizzardAPI.GetSpellCooldown(id)
     end
     if start and start > 0 and duration and duration > 0 then
         if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
@@ -436,32 +735,81 @@ function UIManager.ShowDefensiveIcon(addon, spellID)
         end
     end
     
-    -- Update hotkey
-    local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(spellID) or ""
+    -- Update hotkey (for items, find by scanning action bars)
+    local hotkey = ""
+    if isItem then
+        -- Find hotkey for item on action bar
+        for slot = 1, 180 do
+            local actionType, actionID = GetActionInfo(slot)
+            if actionType == "item" and actionID == id then
+                hotkey = GetBindingKey("ACTIONBUTTON" .. slot) or ""
+                if hotkey == "" then
+                    -- Check bonus bar bindings
+                    local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
+                    local buttonIndex = ((slot - 1) % 12) + 1
+                    hotkey = GetBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
+                end
+                break
+            end
+        end
+    else
+        hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
+    end
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
     if currentHotkey ~= hotkey then
         defensiveIcon.hotkeyText:SetText(hotkey)
     end
     
-    -- Start green glow
-    StartDefensiveGlow(defensiveIcon)
+    -- Check if defensive spell has an active proc (only for spells, not items)
+    local isProc = false
+    if not isItem and C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
+        isProc = C_SpellActivationOverlay.IsSpellOverlayed(id)
+    end
     
+    -- Start glow (green marching ants, or gold proc if spell is proc'd)
+    StartDefensiveGlow(defensiveIcon, isProc)
+    
+    -- Show with fade-in animation if not already visible
     if not defensiveIcon:IsShown() then
+        -- Stop any fade-out in progress
+        if defensiveIcon.fadeOut and defensiveIcon.fadeOut:IsPlaying() then
+            defensiveIcon.fadeOut:Stop()
+        end
         defensiveIcon:Show()
+        defensiveIcon:SetAlpha(0)
+        if defensiveIcon.fadeIn then
+            defensiveIcon.fadeIn:Play()
+        else
+            defensiveIcon:SetAlpha(1)
+        end
     end
 end
 
--- Hide the defensive icon
+-- Hide the defensive icon with fade-out animation
 function UIManager.HideDefensiveIcon(addon)
     if not defensiveIcon then return end
     
-    if defensiveIcon:IsShown() or defensiveIcon.spellID then
+    if defensiveIcon:IsShown() or defensiveIcon.currentID then
         StopDefensiveGlow(defensiveIcon)
         defensiveIcon.spellID = nil
+        defensiveIcon.itemID = nil
+        defensiveIcon.currentID = nil
+        defensiveIcon.isItem = nil
         defensiveIcon.iconTexture:Hide()
         defensiveIcon.cooldown:Hide()
         defensiveIcon.hotkeyText:SetText("")
-        defensiveIcon:Hide()
+        
+        -- Fade out instead of instant hide
+        if defensiveIcon.fadeOut and not defensiveIcon.fadeOut:IsPlaying() then
+            -- Stop any fade-in in progress
+            if defensiveIcon.fadeIn and defensiveIcon.fadeIn:IsPlaying() then
+                defensiveIcon.fadeIn:Stop()
+            end
+            defensiveIcon.fadeOut:Play()
+        else
+            defensiveIcon:Hide()
+            defensiveIcon:SetAlpha(0)
+        end
     end
 end
 
@@ -494,16 +842,33 @@ function UIManager.CreateMainFrame(addon)
     
     -- Start hidden, only show when we have spells
     addon.mainFrame:Hide()
-    
-    UIManager.CreateGrabTab(addon)
 end
 
 function UIManager.CreateGrabTab(addon)
-    addon.grabTab = CreateFrame("Frame", nil, addon.mainFrame, "BackdropTemplate")
+    addon.grabTab = CreateFrame("Button", nil, addon.mainFrame, "BackdropTemplate")
     if not addon.grabTab then return end
     
-    addon.grabTab:SetSize(12, 20)
-    addon.grabTab:SetPoint("LEFT", addon.mainFrame, "RIGHT", 2, 0)
+    local profile = addon:GetProfile()
+    local orientation = profile and profile.queueOrientation or "LEFT"
+    local isVertical = (orientation == "UP" or orientation == "DOWN")
+    
+    -- Swap dimensions for vertical orientations
+    if isVertical then
+        addon.grabTab:SetSize(20, 12)
+    else
+        addon.grabTab:SetSize(12, 20)
+    end
+    
+    -- Position at the end of the queue based on orientation
+    if orientation == "RIGHT" then
+        addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "LEFT", -2, 0)
+    elseif orientation == "UP" then
+        addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, 2)
+    elseif orientation == "DOWN" then
+        addon.grabTab:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -2)
+    else -- LEFT (default)
+        addon.grabTab:SetPoint("LEFT", addon.mainFrame, "RIGHT", 2, 0)
+    end
     
     addon.grabTab:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -517,28 +882,55 @@ function UIManager.CreateGrabTab(addon)
     addon.grabTab:SetBackdropColor(0.3, 0.3, 0.3, 0.8)
     addon.grabTab:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
     
+    -- Dots arranged based on orientation (vertical vs horizontal grab tab)
     local dot1 = addon.grabTab:CreateTexture(nil, "OVERLAY")
     dot1:SetSize(2, 2)
-    dot1:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 4)
     dot1:SetColorTexture(0.8, 0.8, 0.8, 1)
     
     local dot2 = addon.grabTab:CreateTexture(nil, "OVERLAY")
     dot2:SetSize(2, 2)
-    dot2:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 0)
     dot2:SetColorTexture(0.8, 0.8, 0.8, 1)
     
     local dot3 = addon.grabTab:CreateTexture(nil, "OVERLAY")
     dot3:SetSize(2, 2)
-    dot3:SetPoint("CENTER", addon.grabTab, "CENTER", 0, -4)
     dot3:SetColorTexture(0.8, 0.8, 0.8, 1)
     
+    if isVertical then
+        -- Horizontal dot arrangement for vertical orientations
+        dot1:SetPoint("CENTER", addon.grabTab, "CENTER", -4, 0)
+        dot2:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 0)
+        dot3:SetPoint("CENTER", addon.grabTab, "CENTER", 4, 0)
+    else
+        -- Vertical dot arrangement for horizontal orientations
+        dot1:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 4)
+        dot2:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 0)
+        dot3:SetPoint("CENTER", addon.grabTab, "CENTER", 0, -4)
+    end
+    
     addon.grabTab:EnableMouse(true)
-    addon.grabTab:SetMovable(true)
     addon.grabTab:RegisterForDrag("LeftButton")
+    addon.grabTab:RegisterForClicks("RightButtonUp")
     
     addon.grabTab:SetScript("OnDragStart", function()
-        if addon:GetProfile() then
-            addon.mainFrame:StartMoving()
+        local profile = addon:GetProfile()
+        if not profile then return end
+        
+        -- Block dragging if locked
+        if profile.panelLocked then
+            return
+        end
+        
+        addon.mainFrame:StartMoving()
+    end)
+    
+    addon.grabTab:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if profile then
+                profile.panelLocked = not profile.panelLocked
+                local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                addon:Print("Panel " .. status .. " (right-click move handle to toggle)")
+            end
         end
     end)
     addon.grabTab:SetScript("OnDragStop", function()
@@ -547,9 +939,20 @@ function UIManager.CreateGrabTab(addon)
     end)
     
     addon.grabTab:SetScript("OnEnter", function()
+        local profile = addon:GetProfile()
+        local isLocked = profile and profile.panelLocked
+        
         GameTooltip:SetOwner(addon.grabTab, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
         GameTooltip:AddLine("Drag to move", 1, 1, 1)
+        GameTooltip:AddLine(" ")
+        if isLocked then
+            GameTooltip:AddLine("|cffff6666Panel Locked|r", 1, 1, 1)
+            GameTooltip:AddLine("Right-click to unlock", 0.7, 0.7, 0.7)
+        else
+            GameTooltip:AddLine("|cff00ff00Panel Unlocked|r", 1, 1, 1)
+            GameTooltip:AddLine("Right-click to lock", 0.7, 0.7, 0.7)
+        end
         GameTooltip:Show()
     end)
     
@@ -561,8 +964,12 @@ end
 function UIManager.CreateSpellIcons(addon)
     if not addon.db or not addon.db.profile or not addon.mainFrame then return end
     
+    -- Remove old buttons from Masque before cleanup
     for i = 1, #spellIcons do
         if spellIcons[i] then
+            if MasqueGroup then
+                MasqueGroup:RemoveButton(spellIcons[i])
+            end
             if spellIcons[i].cooldown then
                 spellIcons[i].cooldown:Hide()
             end
@@ -573,20 +980,14 @@ function UIManager.CreateSpellIcons(addon)
     wipe(spellIcons)
     
     local profile = addon.db.profile
-    local currentX = 0
-    local firstIconScale = profile.firstIconScale or 1.4
+    local currentOffset = 0
     
     for i = 1, profile.maxIcons do
-        local button = UIManager.CreateSingleSpellIcon(addon, i, currentX, profile)
+        local button = UIManager.CreateSingleSpellIcon(addon, i, currentOffset, profile)
         if button then
             spellIcons[i] = button
-            -- Add extra spacing after first icon if it's scaled larger (for glow overflow)
-            local extraGlowSpacing = 0
-            if i == 1 and firstIconScale > 1.0 then
-                -- Extra spacing proportional to how much larger the first icon is
-                extraGlowSpacing = profile.iconSize * (firstIconScale - 1.0) * 0.3
-            end
-            currentX = currentX + button:GetWidth() + profile.iconSpacing + extraGlowSpacing
+            -- Consistent spacing between all icons
+            currentOffset = currentOffset + button:GetWidth() + profile.iconSpacing
         end
     end
     
@@ -597,16 +998,27 @@ function UIManager.CreateSpellIcons(addon)
 end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
-function UIManager.CreateSingleSpellIcon(addon, index, xPos, profile)
+function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     local button = CreateFrame("Button", nil, addon.mainFrame)
     if not button then return nil end
     
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.4
+    local firstIconScale = profile.firstIconScale or 1.2
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
+    local orientation = profile.queueOrientation or "LEFT"
     
     button:SetSize(actualIconSize, actualIconSize)
-    button:SetPoint("LEFT", xPos, 0)
+    
+    -- Position based on orientation
+    if orientation == "RIGHT" then
+        button:SetPoint("RIGHT", -offset, 0)
+    elseif orientation == "UP" then
+        button:SetPoint("BOTTOM", 0, offset)
+    elseif orientation == "DOWN" then
+        button:SetPoint("TOP", 0, -offset)
+    else -- LEFT (default)
+        button:SetPoint("LEFT", offset, 0)
+    end
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
@@ -618,9 +1030,6 @@ function UIManager.CreateSingleSpellIcon(addon, index, xPos, profile)
     pushedTexture:SetColorTexture(0, 0, 0, CLICK_DARKEN_ALPHA)
     pushedTexture:Hide()
     button.pushedTexture = pushedTexture
-
-    -- Proc glow is managed by LibCustomGlow, no static textures needed
-    button.hasProcGlow = false
 
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cooldown:SetAllPoints(button)
@@ -664,6 +1073,12 @@ function UIManager.CreateSingleSpellIcon(addon, index, xPos, profile)
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" and self.spellID then
+            -- Block interactions if panel is locked
+            local profile = addon:GetProfile()
+            if profile and profile.panelLocked then
+                return
+            end
+            
             if IsShiftKeyDown() then
                 addon:ToggleSpellBlacklist(self.spellID)
             else
@@ -723,6 +1138,16 @@ function UIManager.CreateSingleSpellIcon(addon, index, xPos, profile)
     button.spellID = nil
     button:Hide()
     
+    -- Register with Masque if available
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            HotKey = button.hotkeyText,
+            Pushed = button.pushedTexture,
+        })
+    end
+    
     return button
 end
 
@@ -741,6 +1166,11 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
     -- Determine if frame should be visible
     local shouldShowFrame = hasSpells
     
+    -- Hide queue out of combat if option is enabled
+    if shouldShowFrame and profile.hideQueueOutOfCombat and not isInCombat then
+        shouldShowFrame = false
+    end
+    
     -- Only update frame state if it actually changed
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
@@ -748,7 +1178,6 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
     -- Cache commonly accessed values
     local maxIcons = profile.maxIcons
     local focusEmphasis = profile.focusEmphasis
-    local greyoutNoHotkey = profile.greyoutNoHotkey
     local queueDesaturation = GetQueueDesaturation()
     
     -- Update individual icons (always do this part)
@@ -768,15 +1197,13 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                     local iconTexture = icon.iconTexture
                     iconTexture:SetTexture(spellInfo.iconID)
                     iconTexture:Show()
-                    
-                    -- Set saturation/color only on spell change
-                    if i > 1 then
-                        iconTexture:SetDesaturation(queueDesaturation)
-                        iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
-                    else
-                        iconTexture:SetDesaturation(0)
-                        iconTexture:SetVertexColor(1, 1, 1, 1)
-                    end
+                end
+                
+                -- Apply vertex color for queue icons (brightness/opacity)
+                if i > 1 then
+                    icon.iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
+                else
+                    icon.iconTexture:SetVertexColor(1, 1, 1, 1)
                 end
 
                 -- Update cooldown display (including GCD for timing feedback)
@@ -820,15 +1247,24 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                     icon.hotkeyText:SetText(hotkey)
                 end
                 
-                -- Update desaturation based on hotkey presence
-                if hotkey ~= "" then
-                    if i == 1 then
-                        icon.iconTexture:SetDesaturated(false)
+                -- Update desaturation based on:
+                -- 1. Queue position (fade setting for positions 2+)
+                -- 2. Spell usability (grey out when not enough resources in combat)
+                local iconTexture = icon.iconTexture
+                local baseDesaturation = (i > 1) and queueDesaturation or 0
+                
+                if isInCombat then
+                    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+                    if not isUsable and notEnoughResources then
+                        -- Not enough resources - full grey out (overrides fade setting)
+                        iconTexture:SetDesaturation(1.0)
+                    else
+                        -- Usable or on cooldown - apply queue fade setting
+                        iconTexture:SetDesaturation(baseDesaturation)
                     end
                 else
-                    if greyoutNoHotkey then
-                        icon.iconTexture:SetDesaturated(true)
-                    end
+                    -- Out of combat - just apply queue fade setting
+                    iconTexture:SetDesaturation(baseDesaturation)
                 end
 
                 -- Only show if not already shown
@@ -862,6 +1298,35 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
         end
     end
     
+    -- Update click-through state based on lock (check every render for responsiveness)
+    local isLocked = profile.panelLocked
+    
+    -- Main frame click-through (but grab tab stays interactive for unlock)
+    if addon.mainFrame then
+        addon.mainFrame:EnableMouse(not isLocked)
+    end
+    
+    for i = 1, maxIcons do
+        local icon = spellIconsRef[i]
+        if icon then
+            -- EnableMouse(false) = click-through, EnableMouse(true) = interactive
+            icon:EnableMouse(not isLocked)
+        end
+    end
+    if defensiveIcon then
+        defensiveIcon:EnableMouse(not isLocked)
+    end
+    
+    -- Apply global frame opacity (affects main frame and defensive icon)
+    local frameOpacity = profile.frameOpacity or 1.0
+    if addon.mainFrame then
+        addon.mainFrame:SetAlpha(frameOpacity)
+    end
+    if defensiveIcon then
+        -- Defensive icon is separate, apply same opacity
+        defensiveIcon:SetAlpha(frameOpacity)
+    end
+    
     -- Update tracking state
     lastFrameState.shouldShow = shouldShowFrame
     lastFrameState.spellCount = spellCount
@@ -875,20 +1340,30 @@ function UIManager.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.4
+    local firstIconScale = profile.firstIconScale or 1.2
+    local orientation = profile.queueOrientation or "LEFT"
 
     UIManager.CreateSpellIcons(addon)
+    
+    -- Recreate grab tab to update position/size for new orientation
+    if addon.grabTab then
+        addon.grabTab:Hide()
+        addon.grabTab:SetParent(nil)
+        addon.grabTab = nil
+    end
+    UIManager.CreateGrabTab(addon)
 
     local firstIconSize = newIconSize * firstIconScale
-    local remainingIconsWidth = (newMaxIcons > 1) and ((newMaxIcons - 1) * newIconSize) or 0
+    local remainingIconsSize = (newMaxIcons > 1) and ((newMaxIcons - 1) * newIconSize) or 0
     local totalSpacing = (newMaxIcons > 1) and ((newMaxIcons - 1) * newIconSpacing) or 0
-    -- Add extra glow spacing after first icon if scaled larger
-    local extraGlowSpacing = (firstIconScale > 1.0) and (newIconSize * (firstIconScale - 1.0) * 0.3) or 0
-    local totalWidth = firstIconSize + remainingIconsWidth + totalSpacing + extraGlowSpacing
+    local totalLength = firstIconSize + remainingIconsSize + totalSpacing
     
-    local frameHeight = firstIconSize
-    
-    addon.mainFrame:SetSize(totalWidth, frameHeight)
+    -- Swap width/height for vertical orientations
+    if orientation == "UP" or orientation == "DOWN" then
+        addon.mainFrame:SetSize(firstIconSize, totalLength)
+    else
+        addon.mainFrame:SetSize(totalLength, firstIconSize)
+    end
 end
 
 function UIManager.SavePosition(addon)

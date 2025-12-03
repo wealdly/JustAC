@@ -238,14 +238,13 @@ end
 - **Type:** Boolean
 - **Purpose:** Master enable/disable for entire system
 - **Effect:** Controls `C_AssistedCombat.IsAvailable()`
-- **JustAC:** Auto-enables in `SetupAssistedCombatCVars()` if `autoEnableAssistedMode` setting true
+- **JustAC:** Does NOT modify - respects user's setting
 
 ### `assistedCombatHighlight`
 - **Type:** Boolean
 - **Purpose:** Enable Blizzard's native button glow
 - **Effect:** Activates `AssistedCombatManager` update loop
-- **JustAC:** Independent - works with or without
-- **User Choice:** Optional complement to JustAC display
+- **JustAC:** Does NOT modify - respects user's setting
 
 ### `assistedCombatIconUpdateRate`
 - **Type:** Number (0-1)

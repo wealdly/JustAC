@@ -21,11 +21,29 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 
-# Copy root Lua/XML/TOC files
-Copy-Item (Join-Path $PSScriptRoot "*.lua") $outputDir -Force
-Copy-Item (Join-Path $PSScriptRoot "*.toc") $outputDir -Force
-$xmlFiles = Join-Path $PSScriptRoot "*.xml"
-if (Test-Path $xmlFiles) { Copy-Item $xmlFiles $outputDir -Force }
+# Core addon files (explicit list for clarity)
+$coreFiles = @(
+    "JustAC.toc",
+    "JustAC.lua",
+    "BlizzardAPI.lua",
+    "FormCache.lua",
+    "MacroParser.lua",
+    "ActionBarScanner.lua",
+    "RedundancyFilter.lua",
+    "SpellQueue.lua",
+    "UIManager.lua",
+    "DebugCommands.lua",
+    "Options.lua",
+    "LICENSE",
+    "README.md"
+)
+
+foreach ($file in $coreFiles) {
+    $src = Join-Path $PSScriptRoot $file
+    if (Test-Path $src) {
+        Copy-Item $src $outputDir -Force
+    }
+}
 
 # Copy Libs folder
 $libsDest = Join-Path $outputDir "Libs"

@@ -1,5 +1,5 @@
 -- JustAC: Action Bar Scanner Module
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 12)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 13)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -13,6 +13,8 @@ local HasAction = HasAction
 local GetBindingKey = GetBindingKey
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
+local FindBaseSpellByID = FindBaseSpellByID  -- Returns base spell from override spell
+local FindSpellOverrideByID = FindSpellOverrideByID  -- Returns override spell from base spell
 local pairs = pairs
 local ipairs = ipairs
 local wipe = wipe
@@ -295,6 +297,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                     local isMatch = (id == spellID)
                     
                     -- Check override: slot has base spell that transforms to target spell
+                    -- Example: Slot has Pyroblast, target is Hot Streak Pyroblast
                     if not isMatch and id and id ~= spellID then
                         local slotSpellOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(id)
                         if slotSpellOverride and slotSpellOverride == spellID then
@@ -303,9 +306,28 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                     end
                     
                     -- Check reverse: target spell transforms to slot's spell
+                    -- Example: Target is Pyroblast, slot has Hot Streak Pyroblast
                     if not isMatch then
                         local targetOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID)
                         if targetOverride and targetOverride ~= 0 and targetOverride ~= spellID and id == targetOverride then
+                            isMatch = true
+                        end
+                    end
+                    
+                    -- Check base spell: target is an override, slot has the base spell
+                    -- Example: Target is Hot Streak Pyroblast, slot has Pyroblast (base)
+                    if not isMatch and FindBaseSpellByID then
+                        local baseSpellID = FindBaseSpellByID(spellID)
+                        if baseSpellID and baseSpellID ~= spellID and baseSpellID == id then
+                            isMatch = true
+                        end
+                    end
+                    
+                    -- Check if slot's spell is an override and we're looking for its base
+                    -- Example: Slot has Gloomblade (override), target is Backstab (base)
+                    if not isMatch and FindBaseSpellByID and id then
+                        local slotBaseSpellID = FindBaseSpellByID(id)
+                        if slotBaseSpellID and slotBaseSpellID ~= id and slotBaseSpellID == spellID then
                             isMatch = true
                         end
                     end
@@ -524,6 +546,31 @@ function ActionBarScanner.GetSpellHotkey(spellID)
             spellHotkeyCache[spellID] = finalHotkey
             spellHotkeyCacheValid = true
             return finalHotkey
+        end
+    end
+    
+    -- Fallback: If this spell is an override, try finding the base spell
+    -- This handles cases where Assisted Combat returns the morphed spell ID
+    -- but the action bar has the base spell
+    if FindBaseSpellByID then
+        local baseSpellID = FindBaseSpellByID(spellID)
+        if baseSpellID and baseSpellID ~= spellID then
+            local baseSpellInfo = C_Spell.GetSpellInfo(baseSpellID)
+            if baseSpellInfo and baseSpellInfo.name then
+                local baseFoundSlot, baseMacroModifiers = FindSpellInActions(baseSpellID, baseSpellInfo.name)
+                if baseFoundSlot then
+                    local baseKey = GetOptimizedKeybind(baseFoundSlot)
+                    if baseKey then
+                        local abbreviatedKey = AbbreviateKeybind(baseKey)
+                        local finalHotkey = FormatHotkeyWithModifiers(abbreviatedKey, baseMacroModifiers)
+                        -- Cache both the original and base spell for faster future lookups
+                        spellHotkeyCache[spellID] = finalHotkey
+                        spellHotkeyCache[baseSpellID] = finalHotkey
+                        spellHotkeyCacheValid = true
+                        return finalHotkey
+                    end
+                end
+            end
         end
     end
 

@@ -1,7 +1,9 @@
 -- JustAC: Redundancy Filter Module
 -- Filters out spells that are redundant (already active buffs, forms, pets, etc.)
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 9)
+-- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
+--       like being in a form or having a pet. Aura refreshes are generally allowed.
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 10)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -19,7 +21,11 @@ local bit_band = bit.band
 local LPS_AURA = LibPlayerSpells and LibPlayerSpells.constants.AURA or 0
 local LPS_PET = LibPlayerSpells and LibPlayerSpells.constants.PET or 0
 local LPS_PERSONAL = LibPlayerSpells and LibPlayerSpells.constants.PERSONAL or 0
--- Reserved for future use: UNIQUE_AURA, SURVIVAL, BURST, COOLDOWN
+local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AURA or 0
+
+-- Pandemic window: allow recast when aura has less than 30% duration remaining
+-- This matches WoW's pandemic mechanic where refreshing extends duration
+local PANDEMIC_THRESHOLD = 0.30
 
 -- Cached pet state (invalidated on UNIT_PET event)
 local cachedHasPet = nil
@@ -90,6 +96,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Build cache of current player auras (by spellID, name, and icon)
+-- Now also stores duration and expiration time for pandemic window checks
 local function RefreshAuraCache()
     local now = SafeGetTime()
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
@@ -100,6 +107,7 @@ local function RefreshAuraCache()
     cachedAuras.byID = {}
     cachedAuras.byName = {}
     cachedAuras.byIcon = {}
+    cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
     
     -- Modern API (11.0+)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -108,6 +116,12 @@ local function RefreshAuraCache()
             if not auraData then break end
             if auraData.spellId then
                 cachedAuras.byID[auraData.spellId] = true
+                -- Store aura timing info for pandemic check
+                cachedAuras.auraInfo[auraData.spellId] = {
+                    duration = auraData.duration or 0,
+                    expirationTime = auraData.expirationTime or 0,
+                    count = auraData.applications or 1,  -- Stack count
+                }
             end
             if auraData.name then
                 cachedAuras.byName[auraData.name] = auraData.spellId or true
@@ -119,10 +133,15 @@ local function RefreshAuraCache()
     -- Fallback for older clients
     elseif UnitAura then
         for i = 1, 40 do
-            local ok, name, icon, _, _, _, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
+            local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
             if not ok or not name then break end
             if spellId then
                 cachedAuras.byID[spellId] = true
+                cachedAuras.auraInfo[spellId] = {
+                    duration = duration or 0,
+                    expirationTime = expirationTime or 0,
+                    count = count or 1,
+                }
             end
             if name then
                 cachedAuras.byName[name] = spellId or true
@@ -142,6 +161,33 @@ local function HasBuffBySpellID(spellID)
     if not spellID then return false end
     local auras = RefreshAuraCache()
     return auras.byID and auras.byID[spellID]
+end
+
+-- Get aura info (duration, expiration, count) by spell ID
+local function GetAuraInfo(spellID)
+    if not spellID then return nil end
+    local auras = RefreshAuraCache()
+    return auras.auraInfo and auras.auraInfo[spellID]
+end
+
+-- Check if aura is within pandemic window (last 30% of duration)
+-- Returns true if aura should be allowed to refresh
+local function IsInPandemicWindow(spellID)
+    local info = GetAuraInfo(spellID)
+    if not info then return true end  -- No aura = definitely allow
+    
+    local duration = info.duration
+    local expirationTime = info.expirationTime
+    
+    -- Auras with 0 duration are permanent/passive - don't consider them for refresh
+    if duration <= 0 then return false end
+    
+    local now = SafeGetTime()
+    local remaining = expirationTime - now
+    
+    -- Allow refresh if remaining time is less than pandemic threshold
+    local pandemicTime = duration * PANDEMIC_THRESHOLD
+    return remaining <= pandemicTime
 end
 
 -- Check if player has a buff by exact name
@@ -179,16 +225,17 @@ local function HasSpellFlag(spellID, flag)
 end
 
 -- Check if spell applies an aura (using LibPlayerSpells AURA flag)
--- Returns: isAura, isPersonalAura
+-- Returns: isAura, isPersonalAura, isUniqueAura
 local function IsAuraSpell(spellID)
-    if not LibPlayerSpells or not spellID then return false, false end
+    if not LibPlayerSpells or not spellID then return false, false, false end
     local flags = LibPlayerSpells:GetSpellInfo(spellID)
-    if not flags then return false, false end
+    if not flags then return false, false, false end
     
     local isAura = bit_band(flags, LPS_AURA) ~= 0
     local isPersonal = bit_band(flags, LPS_PERSONAL) ~= 0
+    local isUnique = bit_band(flags, LPS_UNIQUE_AURA) ~= 0
     
-    return isAura, (isAura and isPersonal)
+    return isAura, (isAura and isPersonal), isUnique
 end
 
 -- Check if spell is a pet-related ability (using LibPlayerSpells PET flag)
@@ -282,69 +329,72 @@ function RedundancyFilter.IsSpellRedundant(spellID)
     
     local spellName = spellInfo.name
     local debugMode = GetDebugMode()  -- Check debug mode after early exits
-    local isKnownAuraSpell, isPersonalAura = IsAuraSpell(spellID)
+    local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
     
     if debugMode then
         local lpsTag = ""
-        if isPersonalAura then
+        if isUniqueAura then
+            lpsTag = " [LPS:UNIQUE_AURA]"
+        elseif isPersonalAura then
             lpsTag = " [LPS:PERSONAL+AURA]"
         elseif isKnownAuraSpell then
             lpsTag = " [LPS:AURA]"
         end
-        print("|JAC| Checking redundancy for: " .. spellName .. " (ID: " .. spellID .. ")" .. lpsTag)
+        print("|cff66ccffJAC|r Checking redundancy for: " .. spellName .. " (ID: " .. spellID .. ")" .. lpsTag)
     end
     
     -- 1. FORM/STANCE REDUNDANCY
     -- If this is a form spell and we're already in that form, skip it
+    -- Forms are always unique - can't be in two forms at once
     if IsFormChangeSpell(spellID) and FormCache then
         local currentFormID = FormCache.GetActiveForm()
         local targetFormID = FormCache.GetFormIDBySpellID(spellID)
         
         if targetFormID and targetFormID == currentFormID then
             if debugMode then
-                print("|JAC| REDUNDANT: Already in target form " .. targetFormID)
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Already in target form " .. targetFormID)
             end
             return true
         end
     end
     
-    -- 2. AURA SPELL REDUNDANCY (LibPlayerSpells primary check)
-    -- If LPS knows this spell applies an aura, check if the buff is already active
+    -- 2. AURA SPELL REDUNDANCY
+    -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
+    -- Many abilities can stack (Immolation Aura, etc.) - trust Assisted Combat's judgment
     if isKnownAuraSpell then
-        -- Check by spell ID first (most accurate)
-        if HasBuffBySpellID(spellID) then
-            if debugMode then
-                print("|JAC| REDUNDANT: LPS aura spell - buff active by ID " .. spellID)
+        -- Only UNIQUE_AURA spells should be filtered when active
+        -- Non-unique auras may stack or have other reasons to recast
+        if isUniqueAura then
+            -- Check if buff is active
+            local hasBuff = HasBuffBySpellID(spellID) or HasBuffByName(spellName)
+            
+            if hasBuff then
+                -- Check pandemic window - allow refresh if aura is about to expire
+                if IsInPandemicWindow(spellID) then
+                    if debugMode then
+                        print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Unique aura in pandemic window - refresh allowed")
+                    end
+                    return false  -- Allow the cast
+                end
+                
+                if debugMode then
+                    print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Unique aura already active (not in pandemic window)")
+                end
+                return true
             end
-            return true
-        end
-        
-        -- Check by name (handles ID mismatches between cast and buff)
-        if HasBuffByName(spellName) then
-            if debugMode then
-                print("|JAC| REDUNDANT: LPS aura spell - buff active by name '" .. spellName .. "'")
+        else
+            -- Non-unique aura spells: trust Assisted Combat
+            -- These may stack, refresh for damage, or have other valid reasons
+            if debugMode and (HasBuffBySpellID(spellID) or HasBuffByName(spellName)) then
+                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Non-unique aura - may stack or have refresh benefit")
             end
-            return true
-        end
-        
-        -- Check by icon (only for PERSONAL auras where we KNOW it's a self-buff)
-        -- Non-personal auras might share icons with unrelated effects
-        if isPersonalAura and spellInfo.iconID and HasBuffByIcon(spellInfo.iconID) then
-            if debugMode then
-                print("|JAC| REDUNDANT: LPS personal aura - buff active by icon " .. spellInfo.iconID)
-            end
-            return true
-        end
-    else
-        -- 3. FALLBACK: SAME-NAME BUFF CHECK (for spells not in LPS database)
-        -- Only check by name to avoid false positives from icon matching
-        if HasSameNameBuff(spellName) then
-            if debugMode then
-                print("|JAC| REDUNDANT: Fallback - already have buff '" .. spellName .. "'")
-            end
-            return true
         end
     end
+    
+    -- 3. FALLBACK: For spells NOT in LibPlayerSpells
+    -- Be conservative - only filter if we're confident it's truly redundant
+    -- If Assisted Combat suggests it, there's probably a reason
+    -- Skip this check - trust Assisted Combat for unlisted spells
     
     -- 4. PET SUMMON REDUNDANCY
     -- Use LibPlayerSpells PET flag if available, otherwise fall back to name patterns
@@ -352,7 +402,7 @@ function RedundancyFilter.IsSpellRedundant(spellID)
     if (isPetSpellByLPS or IsPetSummonSpell(spellName)) and HasActivePet() then
         if debugMode then
             local source = isPetSpellByLPS and "LPS:PET" or "name pattern"
-            print("|JAC| REDUNDANT: Pet summon (" .. source .. ") but pet already exists")
+            print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
         end
         return true
     end
@@ -362,7 +412,7 @@ function RedundancyFilter.IsSpellRedundant(spellID)
     if IsStealthSpell(spellName) then
         if SafeIsStealthed() then
             if debugMode then
-                print("|JAC| REDUNDANT: Stealth spell but already stealthed")
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
             end
             return true
         end
@@ -375,14 +425,14 @@ function RedundancyFilter.IsSpellRedundant(spellID)
         if spellInfo.name:find("Mount") or 
            (C_MountJournal and C_MountJournal.GetMountFromSpell and C_MountJournal.GetMountFromSpell(spellID)) then
             if debugMode then
-                print("|JAC| REDUNDANT: Mount spell but already mounted")
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
             end
             return true
         end
     end
     
     if debugMode then
-        print("|JAC| Spell " .. spellName .. " -> NOT REDUNDANT")
+        print("|cff66ccffJAC|r |cff00ff00NOT REDUNDANT|r: " .. spellName)
     end
     return false
 end
