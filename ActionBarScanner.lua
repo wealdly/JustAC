@@ -1,5 +1,5 @@
 -- JustAC: Action Bar Scanner Module
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 13)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 14)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -13,6 +13,7 @@ local HasAction = HasAction
 local GetBindingKey = GetBindingKey
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
+local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local FindBaseSpellByID = FindBaseSpellByID  -- Returns base spell from override spell
 local FindSpellOverrideByID = FindSpellOverrideByID  -- Returns override spell from base spell
 local pairs = pairs
@@ -683,4 +684,51 @@ function ActionBarScanner.FindSpellInSlots(spellName)
     end
     
     return foundSlots
+end
+
+-- Cached procced spells (refreshed frequently)
+local proccedSpellsCache = {}
+local proccedSpellsCacheTime = 0
+local PROCCED_CACHE_DURATION = 0.1  -- Very short cache for responsiveness
+
+-- Find all currently procced spells on action bars
+-- Returns a list of spell IDs that are currently glowing
+function ActionBarScanner.GetProccedSpells()
+    local now = GetTime()
+    
+    -- Use short cache to avoid scanning every frame
+    if now - proccedSpellsCacheTime < PROCCED_CACHE_DURATION then
+        return proccedSpellsCache
+    end
+    
+    wipe(proccedSpellsCache)
+    proccedSpellsCacheTime = now
+    
+    if not C_SpellActivationOverlay_IsSpellOverlayed then
+        return proccedSpellsCache
+    end
+    
+    local seenSpells = {}
+    
+    -- Scan action bars for procced spells
+    for slot = 1, MAX_ACTION_SLOTS do
+        if HasAction(slot) then
+            local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
+            
+            -- Only check spells (not items, macros with spell results, etc.)
+            if actionType == "spell" and actionID and type(actionID) == "number" and actionID > 0 then
+                -- Skip if we've already checked this spell
+                if not seenSpells[actionID] then
+                    seenSpells[actionID] = true
+                    
+                    -- Check if this spell is procced (glowing)
+                    if C_SpellActivationOverlay_IsSpellOverlayed(actionID) then
+                        proccedSpellsCache[#proccedSpellsCache + 1] = actionID
+                    end
+                end
+            end
+        end
+    end
+    
+    return proccedSpellsCache
 end
