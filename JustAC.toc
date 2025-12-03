@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 2.8
+## Version: 2.9
 ## SavedVariables: JustACDB
 ## OptionalDeps: Ace3, LibPlayerSpells-1.0, Masque
 
