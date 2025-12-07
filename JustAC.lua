@@ -327,6 +327,9 @@ end
 
 function JustAC:RefreshConfig()
     -- Silently refresh on profile change
+    -- Reinitialize defensive spells if lists are empty (profile reset/change)
+    self:InitializeDefensiveSpells()
+    
     self:UpdateFrameSize()
     if self.mainFrame then
         local profile = self:GetProfile()
