@@ -190,11 +190,20 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
         local spellName = spellInfo and spellInfo.name or ("Spell " .. spellID)
         local spellIcon = spellInfo and spellInfo.iconID or 134400
         
+        -- Add cooldown info if available
+        local cooldownInfo = ""
+        if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
+            local cdInfo = C_Spell.GetSpellCooldown(spellID)
+            if cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
+                cooldownInfo = " |cff888888(" .. math.floor(cdInfo.duration) .. "s)|r"
+            end
+        end
+        
         defensivesArgs[listType .. "_" .. i] = {
             type = "group",
-            name = i .. ". |T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
+            name = i .. ". |T" .. spellIcon .. ":16:16:0:0|t " .. spellName .. cooldownInfo,
             inline = true,
-            order = baseOrder + i,
+            order = baseOrder + (i * 0.1),
             args = {
                 moveUp = {
                     type = "execute",
@@ -253,21 +262,26 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
             
             local spellID = tonumber(val)
             if spellID and spellID > 0 then
+                -- Validate spell exists
+                local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+                if not spellInfo or not spellInfo.name then
+                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
+                    return
+                end
+                
                 -- Check if already in list
                 for _, existingID in ipairs(spellList) do
                     if existingID == spellID then
-                        addon:DebugPrint("Already in list")
+                        addon:Print("Spell already in list: " .. spellInfo.name)
                         return
                     end
                 end
                 
                 table.insert(spellList, spellID)
-                local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
-                local name = spellInfo and spellInfo.name or "Unknown"
-                addon:DebugPrint("Added: " .. name)
+                addon:Print("Added: " .. spellInfo.name)
                 Options.UpdateDefensivesOptions(addon)
             else
-                addon:Print("Invalid spell ID")
+                addon:Print("Invalid spell ID (must be a positive number)")
             end
         end
     }
@@ -302,11 +316,11 @@ function Options.UpdateDefensivesOptions(addon)
     local defensives = addon.db.profile.defensives
     if not defensives then return end
 
-    -- Self-heal spells (order 22-39)
+    -- Self-heal spells (order 22.0-39.9, allowing 180 entries)
     CreateSpellListEntries(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 22)
     CreateAddSpellInput(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 40, "Self-Heals")
 
-    -- Cooldown spells (order 52-69)  
+    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
     CreateSpellListEntries(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 52)
     CreateAddSpellInput(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 70, "Cooldowns")
     
@@ -418,10 +432,22 @@ local function CreateOptionsTable(addon)
                         name = L["Highlight Primary Spell"],
                         desc = L["Highlight Primary Spell desc"],
                         order = 11,
-                        width = "full",
+                        width = "normal",
                         get = function() return addon.db.profile.focusEmphasis ~= false end,
                         set = function(_, val)
                             addon.db.profile.focusEmphasis = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    includeHiddenAbilities = {
+                        type = "toggle",
+                        name = L["Include All Available Abilities"],
+                        desc = L["Include All Available Abilities desc"],
+                        order = 12,
+                        width = "normal",
+                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.includeHiddenAbilities = val
                             addon:ForceUpdate()
                         end
                     },
@@ -429,23 +455,62 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Show Tooltips"],
                         desc = L["Show Tooltips desc"],
-                        order = 12,
-                        width = "full",
+                        order = 13,
+                        width = "normal",
                         get = function() return addon.db.profile.showTooltips ~= false end,
                         set = function(_, val)
                             addon.db.profile.showTooltips = val
                         end
                     },
+                    stabilizationWindow = {
+                        type = "range",
+                        name = L["Stabilization Window"],
+                        desc = L["Stabilization Window desc"],
+                        order = 14,
+                        width = "normal",
+                        min = 0.25,
+                        max = 0.50,
+                        step = 0.05,
+                        get = function() return addon.db.profile.stabilizationWindow or 0.50 end,
+                        set = function(_, val)
+                            addon.db.profile.stabilizationWindow = val
+                        end,
+                        disabled = function() return not addon.db.profile.includeHiddenAbilities end,
+                    },
                     tooltipsInCombat = {
                         type = "toggle",
                         name = L["Tooltips in Combat"],
                         desc = L["Tooltips in Combat desc"],
-                        order = 13,
-                        width = "full",
+                        order = 15,
+                        width = "normal",
                         disabled = function() return not addon.db.profile.showTooltips end,
                         get = function() return addon.db.profile.tooltipsInCombat or false end,
                         set = function(_, val)
                             addon.db.profile.tooltipsInCombat = val
+                        end
+                    },
+                    showSpellbookProcs = {
+                        type = "toggle",
+                        name = L["Insert Procced Abilities"],
+                        desc = L["Insert Procced Abilities desc"],
+                        order = 16,
+                        width = "normal",
+                        get = function() return addon.db.profile.showSpellbookProcs or false end,
+                        set = function(_, val)
+                            addon.db.profile.showSpellbookProcs = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    hideQueueOutOfCombat = {
+                        type = "toggle",
+                        name = L["Hide Out of Combat"],
+                        desc = L["Hide Out of Combat desc"],
+                        order = 17,
+                        width = "normal",
+                        get = function() return addon.db.profile.hideQueueOutOfCombat end,
+                        set = function(_, val)
+                            addon.db.profile.hideQueueOutOfCombat = val
+                            addon:ForceUpdate()
                         end
                     },
                     glowHeader = {
@@ -478,57 +543,6 @@ local function CreateOptionsTable(addon)
                             addon.db.profile.queueIconDesaturation = val
                             addon:ForceUpdate()
                         end
-                    },
-                    hideQueueOutOfCombat = {
-                        type = "toggle",
-                        name = L["Hide Queue Out of Combat"],
-                        desc = L["Hide Queue Out of Combat desc"],
-                        order = 23,
-                        width = "full",
-                        get = function() return addon.db.profile.hideQueueOutOfCombat end,
-                        set = function(_, val)
-                            addon.db.profile.hideQueueOutOfCombat = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    showSpellbookProcs = {
-                        type = "toggle",
-                        name = L["Show All Procced Abilities"],
-                        desc = L["Show All Procced Abilities desc"],
-                        order = 24,
-                        width = "full",
-                        get = function() return addon.db.profile.showSpellbookProcs or false end,
-                        set = function(_, val)
-                            addon.db.profile.showSpellbookProcs = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    includeHiddenAbilities = {
-                        type = "toggle",
-                        name = L["Include Hidden Abilities"],
-                        desc = L["Include Hidden Abilities desc"],
-                        order = 25,
-                        width = "full",
-                        get = function() return addon.db.profile.includeHiddenAbilities or false end,
-                        set = function(_, val)
-                            addon.db.profile.includeHiddenAbilities = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    stabilizationWindow = {
-                        type = "range",
-                        name = L["Stabilization Window"],
-                        desc = L["Stabilization Window desc"],
-                        order = 26,
-                        width = "full",
-                        min = 0.25,
-                        max = 0.50,
-                        step = 0.05,
-                        get = function() return addon.db.profile.stabilizationWindow or 0.50 end,
-                        set = function(_, val)
-                            addon.db.profile.stabilizationWindow = val
-                        end,
-                        disabled = function() return not addon.db.profile.includeHiddenAbilities end,
                     },
                     systemHeader = {
                         type = "header",
@@ -634,11 +648,12 @@ local function CreateOptionsTable(addon)
                         min = 30, max = 90, step = 5,
                         order = 4,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.selfHealThreshold or 70 end,
+                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
                         set = function(_, val)
                             addon.db.profile.defensives.selfHealThreshold = val
                             addon:ForceUpdateAll()
-                        end
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
                     cooldownThreshold = {
                         type = "range",
@@ -647,11 +662,12 @@ local function CreateOptionsTable(addon)
                         min = 10, max = 70, step = 5,
                         order = 5,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.cooldownThreshold or 50 end,
+                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
                         set = function(_, val)
                             addon.db.profile.defensives.cooldownThreshold = val
                             addon:ForceUpdateAll()
-                        end
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
                     behaviorHeader = {
                         type = "header",
@@ -668,13 +684,14 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.showOnlyInCombat = val
                             addon:ForceUpdateAll()
-                        end
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
                     position = {
                         type = "select",
                         name = L["Icon Position"],
                         desc = L["Icon Position desc"],
-                        order = 9,
+                        order = 8,
                         width = "normal",
                         values = {
                             LEFT = "Left",
@@ -686,7 +703,8 @@ local function CreateOptionsTable(addon)
                             addon.db.profile.defensives.position = val
                             UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
-                        end
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
                     selfHealHeader = {
                         type = "header",
@@ -776,6 +794,10 @@ end
 
 local function HandleSlashCommand(addon, input)
     if not input or input == "" or input:match("^%s*$") then
+        -- Ensure defensive spells initialized before opening panel
+        if addon.InitializeDefensiveSpells then
+            addon:InitializeDefensiveSpells()
+        end
         Options.UpdateBlacklistOptions(addon)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
@@ -790,6 +812,10 @@ local function HandleSlashCommand(addon, input)
     local DebugCommands = LibStub("JustAC-DebugCommands", true)
     
     if command == "config" or command == "options" then
+        -- Ensure defensive spells initialized before opening panel
+        if addon.InitializeDefensiveSpells then
+            addon:InitializeDefensiveSpells()
+        end
         Options.UpdateBlacklistOptions(addon)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
