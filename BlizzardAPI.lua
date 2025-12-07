@@ -1,5 +1,7 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 11)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 14)
 if not BlizzardAPI then return end
 
 -- Hot path optimizations: cache frequently used functions
@@ -7,6 +9,7 @@ local GetTime = GetTime
 local pcall = pcall
 local type = type
 local wipe = wipe
+local bit_band = bit.band
 local IsSpellKnown = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 local C_SpellBook_IsSpellInSpellBook = C_SpellBook and C_SpellBook.IsSpellInSpellBook
@@ -14,7 +17,25 @@ local C_Spell_IsSpellPassive = C_Spell and C_Spell.IsSpellPassive
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
+local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
+local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+
+-- LibPlayerSpells for spell type detection (lazy loaded)
+local LibPlayerSpells = nil
+local LPS_HELPFUL = 0x00004000
+local LPS_SURVIVAL = 0x00400000
+
+local function GetLibPlayerSpells()
+    if LibPlayerSpells == nil then
+        LibPlayerSpells = LibStub("LibPlayerSpells-1.0", true) or false
+        if LibPlayerSpells then
+            LPS_HELPFUL = LibPlayerSpells.constants.HELPFUL or LPS_HELPFUL
+            LPS_SURVIVAL = LibPlayerSpells.constants.SURVIVAL or LPS_SURVIVAL
+        end
+    end
+    return LibPlayerSpells
+end
 
 -- Cached addon reference (resolved lazily)
 local cachedAddon = nil
@@ -52,12 +73,19 @@ function BlizzardAPI.GetSpellInfo(spellID)
     return nil
 end
 
--- Returns spell ID from C_AssistedCombat highlight (checkForVisibleButton=true)
+-- Returns spell ID from C_AssistedCombat recommendation
+-- checkForVisibleButton controls whether hidden abilities are included:
+--   true  = Only visible action bar abilities (Blizzard default, no flickering)
+--   false = Include abilities behind macro conditionals (needs stabilization)
 function BlizzardAPI.GetNextCastSpell()
     if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
     
-    -- Use checkForVisibleButton = true (like Blizzard does for highlights)
-    local success, result = pcall(C_AssistedCombat.GetNextCastSpell, true)
+    -- Check profile setting for whether to include hidden abilities
+    local profile = BlizzardAPI.GetProfile()
+    local includeHidden = profile and profile.includeHiddenAbilities or false
+    local checkForVisibleButton = not includeHidden
+    
+    local success, result = pcall(C_AssistedCombat.GetNextCastSpell, checkForVisibleButton)
     if success and result and type(result) == "number" and result > 0 then
         return result
     end
@@ -274,6 +302,97 @@ function BlizzardAPI.IsSpellUsable(spellID)
     
     -- Default to usable if API unavailable
     return true, false
+end
+
+--------------------------------------------------------------------------------
+-- Centralized Utility Functions (used by multiple modules)
+--------------------------------------------------------------------------------
+
+-- Check if a spell is procced (has Blizzard overlay glow)
+-- Centralized to avoid duplicate implementations across modules
+function BlizzardAPI.IsSpellProcced(spellID)
+    if not spellID or spellID == 0 then return false end
+    return C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID) or false
+end
+
+-- Get the display spell ID (resolves override spells like Metamorphosis transformations)
+-- Returns the override if one exists, otherwise returns the original spellID
+function BlizzardAPI.GetDisplaySpellID(spellID)
+    if not spellID or spellID == 0 then return spellID end
+    if not C_Spell_GetOverrideSpell then return spellID end
+    
+    local override = C_Spell_GetOverrideSpell(spellID)
+    if override and override ~= 0 and override ~= spellID then
+        return override
+    end
+    return spellID
+end
+
+-- Spell type cache (shared by IsOffensiveSpell and IsDefensiveSpell)
+local spellTypeCache = {}
+
+function BlizzardAPI.ClearSpellTypeCache()
+    wipe(spellTypeCache)
+end
+
+-- Check if a spell is offensive (not a heal or defensive)
+-- Uses LibPlayerSpells: offensive = NOT (HELPFUL or SURVIVAL)
+-- Cached for hot loop performance
+function BlizzardAPI.IsOffensiveSpell(spellID)
+    if not spellID then return true end  -- Fail-open
+    
+    local cached = spellTypeCache[spellID]
+    if cached ~= nil then return cached.offensive end
+    
+    local lps = GetLibPlayerSpells()
+    if not lps then
+        spellTypeCache[spellID] = {offensive = true, defensive = false}
+        return true  -- Fail-open
+    end
+    
+    local flags = lps:GetSpellInfo(spellID)
+    if not flags then
+        spellTypeCache[spellID] = {offensive = true, defensive = false}
+        return true  -- Fail-open
+    end
+    
+    local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
+    local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
+    local isOffensive = not isHelpful and not isSurvival
+    local isDefensive = isHelpful or isSurvival
+    
+    spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
+    return isOffensive
+end
+
+-- Check if a spell is defensive (heal or survival ability)
+-- Uses LibPlayerSpells: defensive = HELPFUL or SURVIVAL
+-- Cached for hot loop performance
+function BlizzardAPI.IsDefensiveSpell(spellID)
+    if not spellID then return false end  -- Fail-closed
+    
+    local cached = spellTypeCache[spellID]
+    if cached ~= nil then return cached.defensive end
+    
+    local lps = GetLibPlayerSpells()
+    if not lps then
+        spellTypeCache[spellID] = {offensive = true, defensive = false}
+        return false  -- Fail-closed
+    end
+    
+    local flags = lps:GetSpellInfo(spellID)
+    if not flags then
+        spellTypeCache[spellID] = {offensive = true, defensive = false}
+        return false  -- Fail-closed
+    end
+    
+    local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
+    local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
+    local isOffensive = not isHelpful and not isSurvival
+    local isDefensive = isHelpful or isSurvival
+    
+    spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
+    return isDefensive
 end
 
 --------------------------------------------------------------------------------

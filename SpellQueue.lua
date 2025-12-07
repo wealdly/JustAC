@@ -1,5 +1,7 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 18)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 24)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -9,9 +11,6 @@ local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
-local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
-local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local tinsert = table.insert
 local wipe = wipe
 local type = type
 
@@ -21,28 +20,23 @@ local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
 
+-- Stabilization: prevent rapid flickering of position 1
+local lastPrimarySpellID = nil
+local lastPrimaryChangeTime = 0
+
 -- Reusable tables to avoid GC pressure in hot loop
-local proccedSpellsPool = {}
-local normalSpellsPool = {}
+-- Using paired arrays: proccedBase[i]/proccedDisplay[i] for base/display spell IDs
+local proccedBase = {}
+local proccedDisplay = {}
+local normalBase = {}
+local normalDisplay = {}
 
--- Check if a spell is procced (glowing on action bar)
--- Optimized: cached function reference, no pcall needed (API is safe)
-local function IsSpellProcced(spellID)
-    return C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID) or false
-end
-
--- More responsive throttling
+-- Throttle interval for queue updates
+-- 0.1s in combat = 10 updates/sec (fast enough for responsiveness, slow enough to reduce flicker)
+-- 0.15s out of combat = slightly more relaxed when timing doesn't matter
 local function GetQueueThrottleInterval()
     local inCombat = UnitAffectingCombat("player")
-    return inCombat and 0.03 or 0.08  -- Faster updates, especially in combat
-end
-
-local function GetDebugMode()
-    return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
-end
-
-local function GetProfile()
-    return BlizzardAPI and BlizzardAPI.GetProfile() or nil
+    return inCombat and 0.10 or 0.15
 end
 
 function SpellQueue.GetCachedSpellInfo(spellID)
@@ -93,7 +87,7 @@ function SpellQueue.CompareSpellArrays(arr1, arr2)
 end
 
 function SpellQueue.IsSpellBlacklisted(spellID)
-    local profile = GetProfile()
+    local profile = BlizzardAPI.GetProfile()
     if not spellID or not profile or not profile.blacklistedSpells then 
         return false 
     end
@@ -104,7 +98,7 @@ end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
     if not spellID or spellID == 0 then return end
-    local profile = GetProfile()
+    local profile = BlizzardAPI.GetProfile()
     if not profile then return end
 
     local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
@@ -121,7 +115,7 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
 end
 
 function SpellQueue.GetBlacklistedSpells()
-    local profile = GetProfile()
+    local profile = BlizzardAPI.GetProfile()
     if not profile then return {} end
     
     local spells = {}
@@ -146,7 +140,7 @@ local function IsSpellAvailable(spellID)
 end
 
 function SpellQueue.GetCurrentSpellQueue()
-    local profile = GetProfile()
+    local profile = BlizzardAPI.GetProfile()
     if not profile or profile.isManualMode then 
         return lastSpellIDs or {}
     end
@@ -164,37 +158,73 @@ function SpellQueue.GetCurrentSpellQueue()
     local addedSpellIDs = {}
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
+    
+    -- Check if stabilization is needed (only when includeHiddenAbilities is on)
+    local useStabilization = profile.includeHiddenAbilities or false
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
     -- NEVER filter position 1 - this is Blizzard's primary recommendation
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
-        -- Resolve override to get displayed spell (single API call)
-        local primaryOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(primarySpellID)
-        local primaryActual = (primaryOverride and primaryOverride ~= 0 and primaryOverride ~= primarySpellID) and primaryOverride or primarySpellID
+        local baseSpellID = primarySpellID
+        
+        -- Stabilization: prevent rapid flickering when includeHiddenAbilities is on
+        -- Keep showing previous spell unless: proc fired, old spell on cooldown, or window expired
+        if useStabilization and lastPrimarySpellID and lastPrimarySpellID ~= baseSpellID then
+            local stabilizationWindow = profile.stabilizationWindow or 0.50
+            if (now - lastPrimaryChangeTime) < stabilizationWindow then
+                local newSpellProcced = BlizzardAPI.IsSpellProcced(baseSpellID)
+                local oldSpellOnCooldown = false
+                if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+                    local start, duration = BlizzardAPI.GetSpellCooldown(lastPrimarySpellID)
+                    oldSpellOnCooldown = start and start > 0 and duration and duration > 1.5
+                end
+                if not newSpellProcced and not oldSpellOnCooldown then
+                    baseSpellID = lastPrimarySpellID
+                end
+            end
+        end
+        
+        -- Track base spell for stabilization
+        if baseSpellID ~= lastPrimarySpellID then
+            lastPrimarySpellID = baseSpellID
+            lastPrimaryChangeTime = now
+        end
+        
+        -- Resolve override once for display (handles morphed spells like Metamorphosis)
+        local displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
         
         -- Position 1 is always shown - no filtering
         spellCount = spellCount + 1
-        recommendedSpells[spellCount] = primaryActual
-        addedSpellIDs[primaryActual] = true
-        addedSpellIDs[primarySpellID] = true
+        recommendedSpells[spellCount] = displaySpellID
+        addedSpellIDs[displaySpellID] = true
+        addedSpellIDs[baseSpellID] = true
+    else
+        -- No spell recommended - clear stabilization state
+        lastPrimarySpellID = nil
+        lastPrimaryChangeTime = 0
     end
 
-    -- Check for procced spells on action bars that aren't in the rotation list
+    -- Check for procced spells from spellbook that aren't in the rotation list
     -- These should be shown immediately after position 1 (e.g., Fel Blade procs)
-    local actionBarProcs = ActionBarScanner and ActionBarScanner.GetProccedSpells and ActionBarScanner.GetProccedSpells()
-    if actionBarProcs then
-        for _, procSpellID in ipairs(actionBarProcs) do
-            if spellCount >= maxIcons then break end
-            if procSpellID and not addedSpellIDs[procSpellID] then
-                -- Apply filters: blacklist, availability, redundancy
-                if not SpellQueue.IsSpellBlacklisted(procSpellID)
-                   and IsSpellAvailable(procSpellID)
-                   and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
-                    spellCount = spellCount + 1
-                    recommendedSpells[spellCount] = procSpellID
-                    addedSpellIDs[procSpellID] = true
+    -- Only enabled if showSpellbookProcs setting is on
+    if profile.showSpellbookProcs then
+        local spellbookProcs = ActionBarScanner and ActionBarScanner.GetSpellbookProccedSpells and ActionBarScanner.GetSpellbookProccedSpells()
+        if spellbookProcs then
+            for _, procSpellID in ipairs(spellbookProcs) do
+                if spellCount >= maxIcons then break end
+                if procSpellID and not addedSpellIDs[procSpellID] then
+                    -- Apply filters: must be offensive, have keybind, not blacklisted, available, not redundant
+                    if BlizzardAPI.IsOffensiveSpell(procSpellID)
+                       and ActionBarScanner.HasKeybind(procSpellID)
+                       and not SpellQueue.IsSpellBlacklisted(procSpellID)
+                       and IsSpellAvailable(procSpellID)
+                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
+                        spellCount = spellCount + 1
+                        recommendedSpells[spellCount] = procSpellID
+                        addedSpellIDs[procSpellID] = true
+                    end
                 end
             end
         end
@@ -206,11 +236,11 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Procced spells are prioritized and moved to the front of the queue
     local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
     if rotationList then
-        -- Reuse pooled tables to avoid GC pressure
-        local proccedSpells = proccedSpellsPool
-        local normalSpells = normalSpellsPool
-        wipe(proccedSpells)
-        wipe(normalSpells)
+        -- Reuse pooled tables to avoid GC pressure (paired arrays for base/display spell IDs)
+        wipe(proccedBase)
+        wipe(proccedDisplay)
+        wipe(normalBase)
+        wipe(normalDisplay)
         local proccedCount, normalCount = 0, 0
         local rotationCount = #rotationList
         
@@ -219,8 +249,7 @@ function SpellQueue.GetCurrentSpellQueue()
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
                 -- Get the actual spell we'd display (might be an override)
-                local override = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID)
-                local actualSpellID = (override and override ~= 0 and override ~= spellID) and override or spellID
+                local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
                 
                 -- Skip if this override already shown (e.g., position 1 has same spell)
                 if not addedSpellIDs[actualSpellID] then
@@ -228,15 +257,15 @@ function SpellQueue.GetCurrentSpellQueue()
                     if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                        and IsSpellAvailable(actualSpellID)
                        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
-                        -- Categorize by proc state (store as flat array pairs)
-                        if IsSpellProcced(actualSpellID) then
+                        -- Categorize by proc state
+                        if BlizzardAPI.IsSpellProcced(actualSpellID) then
                             proccedCount = proccedCount + 1
-                            proccedSpells[proccedCount] = spellID
-                            proccedSpells[proccedCount + 100] = actualSpellID  -- Offset by 100 for actualSpellID
+                            proccedBase[proccedCount] = spellID
+                            proccedDisplay[proccedCount] = actualSpellID
                         else
                             normalCount = normalCount + 1
-                            normalSpells[normalCount] = spellID
-                            normalSpells[normalCount + 100] = actualSpellID
+                            normalBase[normalCount] = spellID
+                            normalDisplay[normalCount] = actualSpellID
                         end
                     end
                 end
@@ -246,22 +275,21 @@ function SpellQueue.GetCurrentSpellQueue()
         -- Second pass: add procced spells first, then normal spells
         for i = 1, proccedCount do
             if spellCount >= maxIcons then break end
-            local baseSpellID = proccedSpells[i]
-            local actualSpellID = proccedSpells[i + 100]
             spellCount = spellCount + 1
-            recommendedSpells[spellCount] = actualSpellID
-            addedSpellIDs[actualSpellID] = true
-            addedSpellIDs[baseSpellID] = true
+            recommendedSpells[spellCount] = proccedDisplay[i]
+            addedSpellIDs[proccedDisplay[i]] = true
+            addedSpellIDs[proccedBase[i]] = true
         end
         
-        for i = 1, normalCount do
-            if spellCount >= maxIcons then break end
-            local baseSpellID = normalSpells[i]
-            local actualSpellID = normalSpells[i + 100]
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = actualSpellID
-            addedSpellIDs[actualSpellID] = true
-            addedSpellIDs[baseSpellID] = true
+        -- Only process normal spells if we still have room
+        if spellCount < maxIcons then
+            for i = 1, normalCount do
+                if spellCount >= maxIcons then break end
+                spellCount = spellCount + 1
+                recommendedSpells[spellCount] = normalDisplay[i]
+                addedSpellIDs[normalDisplay[i]] = true
+                addedSpellIDs[normalBase[i]] = true
+            end
         end
     end
 
@@ -277,6 +305,9 @@ end
 
 function SpellQueue.OnSpecChange()
     SpellQueue.ClearSpellCache()
+    if BlizzardAPI.ClearSpellTypeCache then
+        BlizzardAPI.ClearSpellTypeCache()
+    end
     SpellQueue.ForceUpdate()
 end
 

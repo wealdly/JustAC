@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module
 -- Filters out spells that are redundant (already active buffs, forms, pets, etc.)
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
@@ -27,10 +29,9 @@ local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AUR
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
 
--- Cached pet state (invalidated on UNIT_PET event)
+-- Pet state is invalidated on UNIT_PET events from main addon
+-- No time-based caching needed - UnitExists() is a fast C call
 local cachedHasPet = nil
-local lastPetCheck = 0
-local PET_CACHE_DURATION = 0.5
 
 -- Cached aura data (invalidated on UNIT_AURA event)
 local cachedAuras = {}
@@ -52,7 +53,6 @@ end
 -- Invalidate cached state (called on UNIT_PET/UNIT_AURA events from main addon)
 function RedundancyFilter.InvalidateCache()
     cachedHasPet = nil
-    lastPetCheck = 0
     wipe(cachedAuras)
     lastAuraCheck = 0
 end
@@ -248,19 +248,15 @@ end
 --------------------------------------------------------------------------------
 
 local function HasActivePet()
-    local now = GetTime()
-    
-    -- Fast path: return cached value if still valid
-    if cachedHasPet ~= nil and (now - lastPetCheck) < PET_CACHE_DURATION then
+    -- Fast path: return cached value (invalidated by UNIT_PET events)
+    if cachedHasPet ~= nil then
         return cachedHasPet
     end
     
     -- Check methods in order of speed/reliability
-    -- Method 1: Standard API (fastest, most common)
     local hasPet = SafeUnitExists("pet") or SafeHasPetUI() or SafeHasPetSpells()
     
     cachedHasPet = hasPet
-    lastPetCheck = now
     return hasPet
 end
 

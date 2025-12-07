@@ -2,7 +2,9 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 2.9
+## Version: 2.96
+## License: GPL-3.0-or-later
+## IconTexture: Interface\Icons\Trade_Engineering
 ## SavedVariables: JustACDB
 ## OptionalDeps: Ace3, LibPlayerSpells-1.0, Masque
 
@@ -19,8 +21,10 @@ Libs\AceDB-3.0\AceDB-3.0.xml
 Libs\AceDBOptions-3.0\AceDBOptions-3.0.xml
 Libs\AceGUI-3.0\AceGUI-3.0.xml
 Libs\AceConfig-3.0\AceConfig-3.0.xml
+Libs\AceLocale-3.0\AceLocale-3.0.xml
 Libs\LibPlayerSpells-1.0\LibPlayerSpells-1.0.xml
 
+Locale.lua
 BlizzardAPI.lua
 FormCache.lua
 MacroParser.lua

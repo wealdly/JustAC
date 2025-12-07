@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Macro Parser Module
 local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 14)
 if not MacroParser then return end

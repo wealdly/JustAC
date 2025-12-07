@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2025 wealdly
 # Build script for JustAC distribution package
 # Run: .\build.ps1
 
@@ -25,6 +27,7 @@ Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 $coreFiles = @(
     "JustAC.toc",
     "JustAC.lua",
+    "Locale.lua",
     "BlizzardAPI.lua",
     "FormCache.lua",
     "MacroParser.lua",
