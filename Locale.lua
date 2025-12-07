@@ -778,3 +778,131 @@ if L then
     L["Defensives Info"] = "Icono defensivo posición 0 con prioridad de dos niveles:\n|cff00ff00• Autocuraciones|r: Curaciones rápidas mostradas cuando la salud cae bajo el umbral\n|cffff6666• Tiempos de reutilización mayores|r: Defensivos de emergencia cuando críticamente bajo\n\nEl icono aparece con un brillo verde. El comportamiento fuera de combate está controlado por el interruptor 'Solo en combate'."
     L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 end
+
+-------------------------------------------------------------------------------
+-- Portuguese (ptBR) - Brazil - ~8-10% of player base
+-------------------------------------------------------------------------------
+L = LibStub("AceLocale-3.0"):NewLocale("JustAssistedCombat", "ptBR")
+if L then
+    -- General UI
+    L["JustAssistedCombat"] = "JustAssistedCombat"
+    L["General"] = "Geral"
+    L["System"] = "Sistema"
+    L["Defensives"] = "Defensivos"
+    L["Blacklist"] = "Lista negra"
+    L["Hotkey Overrides"] = "Atalhos personalizados"
+
+    -- General Options
+    L["Max Icons"] = "Ícones máx"
+    L["Icon Size"] = "Tamanho do ícone"
+    L["Spacing"] = "Espaçamento"
+    L["Primary Spell Scale"] = "Escala da magia principal"
+    L["Queue Orientation"] = "Orientação da fila"
+    L["Lock Panel"] = "Travar painel"
+    L["Debug Mode"] = "Modo de depuração"
+    L["Frame Opacity"] = "Opacidade do quadro"
+    L["Queue Icon Fade"] = "Esmaecimento do ícone da fila"
+    L["Hide Queue Out of Combat"] = "Ocultar fila fora de combate"
+    L["Show All Procced Abilities"] = "Mostrar todas as habilidades ativadas"
+    L["Include Hidden Abilities"] = "Incluir habilidades ocultas"
+    L["Stabilization Window"] = "Janela de estabilização"
+    L["Highlight Primary Spell"] = "Destacar magia principal"
+    L["Show Tooltips"] = "Mostrar dicas"
+    L["Tooltips in Combat"] = "Dicas em combate"
+
+    -- Blacklist
+    L["Hide from Queue"] = "Ocultar da fila"
+    L["Remove"] = "Remover"
+    L["No spells currently blacklisted"] = "Nenhuma magia na lista negra. Shift+Clique direito em uma magia na fila para adicionar."
+    L["Blacklisted Spells"] = "Magias na lista negra"
+    L["Blacklist description"] = "Shift+Clique direito em um ícone de magia na fila para adicioná-lo a esta lista."
+    L["Hide spell desc"] = "Ocultar esta magia das posições 2+. A posição 1 nunca é filtrada."
+
+    -- Hotkey Overrides
+    L["Custom Hotkey"] = "Atalho personalizado"
+    L["No custom hotkeys set"] = "Nenhum atalho personalizado definido. Clique direito em uma magia para definir um atalho."
+    L["Custom Hotkey Displays"] = "Exibições de atalhos personalizados"
+    L["Hotkey override description"] = "Definir texto de atalho personalizado para magias.\n\n|cff00ff00Clique direito|r para definir um atalho.\n|cffff6666Shift+Clique direito|r para colocar na lista negra."
+
+    -- Defensives
+    L["Enable Defensive Suggestions"] = "Ativar sugestões defensivas"
+    L["Self-Heal Threshold"] = "Limite de autocura"
+    L["Cooldown Threshold"] = "Limite de recarga"
+    L["Only In Combat"] = "Apenas em combate"
+    L["Defensive Self-Heals"] = "Autocuras defensivas"
+    L["Defensive Cooldowns"] = "Recargas defensivas"
+    L["Defensive description"] = "Ícone defensivo com dois níveis de prioridade:\n|cff00ff00• Autocuras|r: Curas rápidas\n|cffff6666• Recargas maiores|r: Defensivos de emergência"
+    L["Add to %s"] = "Adicionar a %s"
+
+    -- Orientation values
+    L["Horizontal"] = "Horizontal"
+    L["Vertical"] = "Vertical"
+    L["Up"] = "Cima"
+    L["Dn"] = "Baixo"
+
+    -- Descriptions
+    L["General description"] = "Configurar a aparência e o comportamento da fila de magias."
+    L["Icon Layout"] = "Layout dos ícones"
+    L["Display Behavior"] = "Comportamento de exibição"
+    L["Visual Effects"] = "Efeitos visuais"
+    L["Threshold Settings"] = "Configurações de limite"
+
+    -- Detailed descriptions
+    L["Max Icons desc"] = "Número máximo de ícones de magia na fila (posição 1 = principal, 2+ = fila)"
+    L["Icon Size desc"] = "Tamanho base dos ícones de magia em pixels (maior = ícones maiores)"
+    L["Spacing desc"] = "Espaço entre ícones em pixels (maior = mais espaçamento)"
+    L["Primary Spell Scale desc"] = "Multiplicador de escala para os ícones principais (posição 1) e defensivos (posição 0)"
+    L["Queue Orientation desc"] = "Direção em que a fila de magias cresce a partir da magia principal"
+    L["Highlight Primary Spell desc"] = "Mostrar brilho animado na magia principal (posição 1)"
+    L["Show Tooltips desc"] = "Mostrar dicas de magias ao passar o cursor"
+    L["Tooltips in Combat desc"] = "Mostrar dicas durante o combate (requer Mostrar dicas)"
+    L["Frame Opacity desc"] = "Opacidade global para todo o quadro incluindo ícone defensivo (1.0 = completamente visível, 0.0 = invisível)"
+    L["Queue Icon Fade desc"] = "Dessaturação para ícones nas posições 2+ (0 = cor completa, 1 = escala de cinza)"
+    L["Hide Queue Out of Combat desc"] = "Ocultar toda a fila de magias fora de combate (não afeta o ícone defensivo)"
+    L["Show All Procced Abilities desc"] = "Escanear grimório em busca de habilidades ofensivas ativadas (brilhantes) e mostrá-las na fila. Útil para habilidades como Lâmina Vil que podem não aparecer na lista de rotação da Blizzard."
+    L["Include Hidden Abilities desc"] = "Incluir habilidades ocultas atrás de condicionais de macro (ex: [mod:shift]) nas recomendações. Ativa estabilização para reduzir oscilação. Desative se quiser apenas habilidades diretamente visíveis nas suas barras de ação."
+    L["Stabilization Window desc"] = "Quanto tempo (em segundos) esperar antes de mudar a recomendação de magia principal. Valores mais altos reduzem a oscilação mas podem parecer menos responsivos. Aplica-se apenas quando 'Incluir habilidades ocultas' está ativado."
+    L["Lock Panel desc"] = "Bloquear arrasto e menus de clique direito (as dicas ainda funcionam se ativadas). Alternar via clique direito na alça de movimento."
+    L["Debug Mode desc"] = "Mostrar informações detalhadas do addon no chat para solução de problemas"
+    L["Enable Defensive Suggestions desc"] = "Mostrar sugestão de magia defensiva quando a vida está baixa"
+    L["Self-Heal Threshold desc"] = "Mostrar sugestões de autocura quando a vida cai abaixo desta porcentagem (maior = ativa mais cedo)"
+    L["Cooldown Threshold desc"] = "Mostrar sugestões de recarga maior quando a vida cai abaixo desta porcentagem (maior = ativa mais cedo)"
+    L["Only In Combat desc"] = "ATIVADO: Ocultar fora de combate, mostrar com base nos limites em combate.\nDESATIVADO: Sempre visível fora de combate (autocuras), baseado em limites em combate."
+    L["Icon Position desc"] = "Onde colocar o ícone defensivo em relação à fila de magias"
+    L["Custom Hotkey desc"] = "Texto a ser exibido como atalho (ex: 'F1', 'Ctrl+Q', 'Mouse4')"
+    L["Move up desc"] = "Subir na prioridade"
+    L["Move down desc"] = "Descer na prioridade"
+    L["Add spell desc"] = "Digite um ID de magia (ex: 48707) para adicionar"
+    L["Restore Class Defaults desc"] = "Redefinir a lista de autocura para magias padrão da sua classe"
+    L["Restore Cooldowns Defaults desc"] = "Redefinir a lista de recargas para magias padrão da sua classe"
+
+    -- Additional sections
+    L["Icon Position"] = "Posição do ícone"
+    L["Self-Heal Priority List"] = "Lista de prioridade de autocura (verificada primeiro)"
+    L["Self-Heal Priority desc"] = "Curas rápidas/absorções para intercalar na sua rotação. A primeira magia utilizável é sugerida."
+    L["Restore Class Defaults"] = "Restaurar padrões da classe"
+    L["Major Cooldowns Priority List"] = "Lista de prioridade de recargas maiores (emergência)"
+    L["Major Cooldowns Priority desc"] = "Defensivos grandes para emergências. Verificado apenas se não houver autocura disponível e a vida estiver criticamente baixa."
+    L["Profiles"] = "Perfis"
+    L["Profiles desc"] = "Gerenciamento de perfis de personagem e especialização"
+    L["About"] = "Sobre"
+    L["About JustAssistedCombat"] = "Sobre JustAssistedCombat"
+
+    -- Orientation values (full names)
+    L["Left to Right"] = "Esquerda para direita"
+    L["Right to Left"] = "Direita para esquerda"
+    L["Bottom to Top"] = "Baixo para cima"
+    L["Top to Bottom"] = "Cima para baixo"
+
+    -- Slash commands help
+    L["Slash Commands"] = "|cffffff00Comandos:|r\n|cff88ff88/jac|r - Abrir opções\n|cff88ff88/jac toggle|r - Pausar/retomar\n|cff88ff88/jac debug|r - Alternar modo de depuração\n|cff88ff88/jac test|r - Testar API Blizzard\n|cff88ff88/jac formcheck|r - Verificar detecção de forma\n|cff88ff88/jac find <magia>|r - Localizar magia\n|cff88ff88/jac reset|r - Redefinir posição\n\nDigite |cff88ff88/jac help|r para a lista completa de comandos"
+
+    -- About text
+    L["About Text"] = "Aprimora o sistema de Combate Assistido do WoW com recursos avançados para uma melhor experiência de jogo.\n\n|cffffff00Recursos principais:|r\n• Detecção inteligente de atalhos com personalização\n• Análise avançada de macros com modificadores condicionais\n• Filtragem inteligente de magias e gerenciamento de lista negra\n• Feedback visual e dicas aprimoradas\n• Integração perfeita com destaques nativos da Blizzard\n• Zero impacto nos tempos de recarga globais\n\n|cffffff00Como funciona:|r\nJustAC detecta automaticamente sua configuração de barra de ação e exibe a rotação recomendada com os atalhos corretos. Quando a detecção automática falha, você pode definir exibições de atalhos personalizados via clique direito.\n\n|cffffff00Melhorias opcionais:|r\n|cffffffff/console assistedMode 1|r - Ativa o sistema de combate assistido da Blizzard\n|cffffffff/console assistedCombatHighlight 1|r - Adiciona destaque nativo de botões\n\nEstes comandos de console melhoram a experiência mas não são necessários para o funcionamento do JustAC."
+
+    -- Additional UI strings
+    L["Hotkey Overrides Info"] = "Definir texto de atalho personalizado para magias quando a detecção automática falha ou por preferência pessoal.\n\n|cff00ff00Clique direito|r em um ícone de magia na fila para definir um atalho personalizado.\n|cffff6666Shift+Clique direito|r para adicionar à lista negra."
+    L["Blacklist Info"] = "Shift+Clique direito em um ícone de magia na fila para adicioná-lo a esta lista. Você pode então personalizar onde ele deve ser ocultado."
+    L["Defensives Info"] = "Ícone defensivo posição 0 com prioridade de dois níveis:\n|cff00ff00• Autocuras|r: Curas rápidas mostradas quando a vida cai abaixo do limite\n|cffff6666• Recargas maiores|r: Defensivos de emergência quando criticamente baixo\n\nO ícone aparece com um brilho verde. O comportamento fora de combate é controlado pelo botão 'Apenas em combate'."
+    L["Restore Class Defaults name"] = "Restaurar padrões da classe"
+end

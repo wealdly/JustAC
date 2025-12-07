@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.97] - 2025-12-07
+
+### Added
+
+- Brazilian Portuguese (ptBR) translation - 127 strings
+- Total coverage increased to ~40-42% of non-English player base
+
 ## [2.96] - 2025-12-07
 
 ### Added
