@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
 local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 1)
 if not DebugCommands then return end

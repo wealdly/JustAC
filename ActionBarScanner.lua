@@ -1,5 +1,7 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 14)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 19)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -13,7 +15,6 @@ local HasAction = HasAction
 local GetBindingKey = GetBindingKey
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
-local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local FindBaseSpellByID = FindBaseSpellByID  -- Returns base spell from override spell
 local FindSpellOverrideByID = FindSpellOverrideByID  -- Returns override spell from base spell
 local pairs = pairs
@@ -50,8 +51,15 @@ local isRebuildingBindings = false
 local spellHotkeyCache = {}
 local spellHotkeyCacheValid = false
 
+-- Spell-to-slot cache: maps spellID → slot where it was found
+-- This allows fast hotkey lookup on spell transforms (slot doesn't change, only displayed spell)
+local spellSlotCache = {}
+
 -- Abbreviated keybind cache (reduces string operations)
 local abbreviatedKeybindCache = {}
+
+-- Cached keybind existence check (cleared when keybinds change)
+local hasKeybindCache = {}
 
 -- Cached state data
 local cachedStateData = {
@@ -64,14 +72,6 @@ local cachedStateData = {
     hash = 0,
     valid = false,
 }
-
-local function GetDebugMode()
-    return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
-end
-
-local function GetProfile()
-    return BlizzardAPI and BlizzardAPI.GetProfile() or nil
-end
 
 local function UpdateCachedState()
     cachedStateData.page = GetActionBarPage and GetActionBarPage() or 1
@@ -245,7 +245,9 @@ local function InvalidateKeybindCache()
     wipe(keybindCache)
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
+    wipe(spellSlotCache)  -- Slot mappings may have changed
     wipe(abbreviatedKeybindCache)
+    wipe(hasKeybindCache)  -- Also clear the hasKeybind cache
 end
 
 local function InvalidateBindingCache()
@@ -253,6 +255,7 @@ local function InvalidateBindingCache()
     wipe(bindingKeyCache)
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
+    wipe(spellSlotCache)  -- Slot mappings may have changed
     wipe(abbreviatedKeybindCache)
 end
 
@@ -450,10 +453,11 @@ local function FindSpellInActions(spellID, spellName)
         end
     end
     
-    local foundSlot, slotInfo = SearchSlots(prioritySlots, 1, spellID, spellName, GetDebugMode())
+    local debugMode = BlizzardAPI and BlizzardAPI.GetDebugMode() or false
+    local foundSlot, slotInfo = SearchSlots(prioritySlots, 1, spellID, spellName, debugMode)
     
     if not foundSlot and next(stanceSlots) then
-        foundSlot, slotInfo = SearchSlots(stanceSlots, 2, spellID, spellName, GetDebugMode())
+        foundSlot, slotInfo = SearchSlots(stanceSlots, 2, spellID, spellName, debugMode)
     end
     
     if foundSlot then
@@ -463,7 +467,7 @@ local function FindSpellInActions(spellID, spellName)
     return nil, nil
 end
 
--- Note: abbreviatedKeybindCache is declared at module level (line 51)
+-- Note: abbreviatedKeybindCache is declared at module level
 -- to ensure InvalidateKeybindCache() properly clears it
 
 local function AbbreviateKeybind(key)
@@ -543,19 +547,37 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         if baseKey then
             local abbreviatedKey = AbbreviateKeybind(baseKey)
             local finalHotkey = FormatHotkeyWithModifiers(abbreviatedKey, macroModifiers)
-            -- Cache the result
+            -- Cache the result and the slot for transform lookups
             spellHotkeyCache[spellID] = finalHotkey
+            spellSlotCache[spellID] = foundSlot
             spellHotkeyCacheValid = true
             return finalHotkey
         end
     end
     
-    -- Fallback: If this spell is an override, try finding the base spell
-    -- This handles cases where Assisted Combat returns the morphed spell ID
-    -- but the action bar has the base spell
+    -- Fast path for transformed spells: check if base spell has a cached slot
+    -- When a spell transforms, the slot doesn't change - only the displayed spell ID
+    -- This avoids re-scanning 200 slots on every transform
     if FindBaseSpellByID then
         local baseSpellID = FindBaseSpellByID(spellID)
         if baseSpellID and baseSpellID ~= spellID then
+            -- Check if we have a cached slot for the base spell
+            local cachedSlot = spellSlotCache[baseSpellID]
+            if cachedSlot then
+                local baseKey = GetOptimizedKeybind(cachedSlot)
+                if baseKey then
+                    local abbreviatedKey = AbbreviateKeybind(baseKey)
+                    -- Transforms don't have macro modifiers (direct spell slot)
+                    local finalHotkey = abbreviatedKey
+                    -- Cache the transformed spell too
+                    spellHotkeyCache[spellID] = finalHotkey
+                    spellSlotCache[spellID] = cachedSlot
+                    spellHotkeyCacheValid = true
+                    return finalHotkey
+                end
+            end
+            
+            -- Fallback: scan for base spell if slot not cached
             local baseSpellInfo = C_Spell.GetSpellInfo(baseSpellID)
             if baseSpellInfo and baseSpellInfo.name then
                 local baseFoundSlot, baseMacroModifiers = FindSpellInActions(baseSpellID, baseSpellInfo.name)
@@ -564,9 +586,11 @@ function ActionBarScanner.GetSpellHotkey(spellID)
                     if baseKey then
                         local abbreviatedKey = AbbreviateKeybind(baseKey)
                         local finalHotkey = FormatHotkeyWithModifiers(abbreviatedKey, baseMacroModifiers)
-                        -- Cache both the original and base spell for faster future lookups
+                        -- Cache both spells and their slots for faster future lookups
                         spellHotkeyCache[spellID] = finalHotkey
                         spellHotkeyCache[baseSpellID] = finalHotkey
+                        spellSlotCache[spellID] = baseFoundSlot
+                        spellSlotCache[baseSpellID] = baseFoundSlot
                         spellHotkeyCacheValid = true
                         return finalHotkey
                     end
@@ -686,49 +710,100 @@ function ActionBarScanner.FindSpellInSlots(spellName)
     return foundSlots
 end
 
--- Cached procced spells (refreshed frequently)
-local proccedSpellsCache = {}
-local proccedSpellsCacheTime = 0
-local PROCCED_CACHE_DURATION = 0.1  -- Very short cache for responsiveness
+--------------------------------------------------------------------------------
+-- Event-Driven Proc Tracking
+-- Instead of scanning spellbook every 0.1s, we track procs via game events
+-- SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE fire when procs change
+--------------------------------------------------------------------------------
 
--- Find all currently procced spells on action bars
--- Returns a list of spell IDs that are currently glowing
-function ActionBarScanner.GetProccedSpells()
-    local now = GetTime()
-    
-    -- Use short cache to avoid scanning every frame
-    if now - proccedSpellsCacheTime < PROCCED_CACHE_DURATION then
-        return proccedSpellsCache
+-- Active procs tracked by events (spellID -> true)
+local activeProcs = {}
+local activeProcsList = {}  -- Array form for iteration
+local procListDirty = true  -- Rebuild list when procs change
+local defensiveProcsListDirty = true  -- Separate dirty flag for defensive filtering
+
+-- Called from JustAC.lua OnProcGlowChange event handler
+function ActionBarScanner.OnProcShow(spellID)
+    if spellID and spellID > 0 and not activeProcs[spellID] then
+        activeProcs[spellID] = true
+        procListDirty = true
+        defensiveProcsListDirty = true
     end
-    
-    wipe(proccedSpellsCache)
-    proccedSpellsCacheTime = now
-    
-    if not C_SpellActivationOverlay_IsSpellOverlayed then
-        return proccedSpellsCache
+end
+
+function ActionBarScanner.OnProcHide(spellID)
+    if spellID and activeProcs[spellID] then
+        activeProcs[spellID] = nil
+        procListDirty = true
+        defensiveProcsListDirty = true
     end
+end
+
+-- Rebuild the list array from the set (only when dirty)
+local function RebuildProcList()
+    if not procListDirty then return end
     
-    local seenSpells = {}
+    wipe(activeProcsList)
+    for spellID in pairs(activeProcs) do
+        activeProcsList[#activeProcsList + 1] = spellID
+    end
+    procListDirty = false
+end
+
+-- Get all currently active procced spells (event-driven, very fast)
+-- Returns spells that have active overlay glow
+function ActionBarScanner.GetSpellbookProccedSpells()
+    RebuildProcList()
+    return activeProcsList
+end
+
+-- Check if a spell has a keybind (directly or via macro)
+-- Cached to avoid repeated expensive GetSpellHotkey calls in hot loop
+function ActionBarScanner.HasKeybind(spellID)
+    if not spellID then return false end
     
-    -- Scan action bars for procced spells
-    for slot = 1, MAX_ACTION_SLOTS do
-        if HasAction(slot) then
-            local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
-            
-            -- Only check spells (not items, macros with spell results, etc.)
-            if actionType == "spell" and actionID and type(actionID) == "number" and actionID > 0 then
-                -- Skip if we've already checked this spell
-                if not seenSpells[actionID] then
-                    seenSpells[actionID] = true
-                    
-                    -- Check if this spell is procced (glowing)
-                    if C_SpellActivationOverlay_IsSpellOverlayed(actionID) then
-                        proccedSpellsCache[#proccedSpellsCache + 1] = actionID
-                    end
-                end
-            end
+    -- Check cache first
+    local cached = hasKeybindCache[spellID]
+    if cached ~= nil then return cached end
+    
+    -- Cache miss: do the full lookup
+    local hotkey = ActionBarScanner.GetSpellHotkey(spellID)
+    local hasKey = hotkey and hotkey ~= ""
+    hasKeybindCache[spellID] = hasKey
+    return hasKey
+end
+
+-- Clear keybind cache (called when keybinds change)
+function ActionBarScanner.ClearKeybindCache()
+    wipe(hasKeybindCache)
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Proc Tracking (filters to HELPFUL/SURVIVAL spells)
+--------------------------------------------------------------------------------
+
+-- Cached defensive procs (filtered from activeProcs)
+local defensiveProcsList = {}
+
+-- Rebuild defensive proc list (only when dirty)
+local function RebuildDefensiveProcList()
+    if not defensiveProcsListDirty then return end
+    
+    wipe(defensiveProcsList)
+    for spellID in pairs(activeProcs) do
+        -- Check if it's a defensive spell, also check override
+        local actualID = BlizzardAPI.GetDisplaySpellID(spellID)
+        
+        if BlizzardAPI.IsDefensiveSpell(actualID) or BlizzardAPI.IsDefensiveSpell(spellID) then
+            defensiveProcsList[#defensiveProcsList + 1] = actualID
         end
     end
-    
-    return proccedSpellsCache
+    defensiveProcsListDirty = false
+end
+
+-- Get all currently procced defensive spells
+-- Returns spells that are HELPFUL or SURVIVAL and have active overlay glow
+function ActionBarScanner.GetDefensiveProccedSpells()
+    RebuildDefensiveProcList()
+    return defensiveProcsList
 end

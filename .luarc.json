@@ -118,7 +118,21 @@
             "GetBuildInfo",
             "issecretvalue",
             "canaccessvalue",
-            "canaccesssecrets"
+            "canaccesssecrets",
+            "FindBaseSpellByID",
+            "FindSpellOverrideByID",
+            "IsUsableSpell",
+            "GetItemInfo",
+            "GetItemSpell",
+            "GetItemCount",
+            "GetItemCooldown",
+            "GetSpellDescription",
+            "C_Item",
+            "GetMacroBody",
+            "tContains",
+            "GameFontNormal",
+            "GameFontHighlight",
+            "NumberFontNormal"
         ],
         "disable": [
             "lowercase-global",

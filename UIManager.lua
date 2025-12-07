@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Manager Module
 local UIManager = LibStub:NewLibrary("JustAC-UIManager", 22)
 if not UIManager then return end
@@ -997,7 +999,7 @@ function UIManager.CreateSpellIcons(addon)
     
     addon.spellIcons = spellIcons
     
-    -- Create defensive icon (positioned left of main frame)
+    -- Create defensive icon (positioned relative to position 1 based on user settings)
     CreateDefensiveIcon(addon, profile)
 end
 
@@ -1007,7 +1009,7 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     if not button then return nil end
     
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.3
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
     
@@ -1343,7 +1345,7 @@ function UIManager.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.3
     local orientation = profile.queueOrientation or "LEFT"
 
     UIManager.CreateSpellIcons(addon)

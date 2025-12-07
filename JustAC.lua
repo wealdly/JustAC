@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Main Addon Module
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
@@ -121,6 +123,9 @@ local defaults = {
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
         panelLocked = false,              -- Lock panel interactions in combat
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
+        showSpellbookProcs = false,       -- Show procced spells from spellbook (not just rotation list)
+        includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals (with stabilization)
+        stabilizationWindow = 0.50,       -- Seconds to wait before changing position 1 (0.25-0.50)
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
@@ -224,6 +229,9 @@ function JustAC:OnEnable()
     self:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "OnProcGlowChange")
     self:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "OnProcGlowChange")
     
+    -- Spell icon/override changes (transformations like Hot Streak Pyroblast)
+    self:RegisterEvent("SPELL_UPDATE_ICON", "OnSpellIconChanged")
+    
     -- Target changes affect execute-range abilities and macro conditionals
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
     
@@ -232,6 +240,10 @@ function JustAC:OnEnable()
     
     -- Cast completion for immediate post-cast refresh (faster than OnUpdate tick)
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
+    
+    -- Vehicle state changes invalidate action bar layout entirely
+    self:RegisterEvent("UNIT_ENTERED_VEHICLE", "OnVehicleChanged")
+    self:RegisterEvent("UNIT_EXITED_VEHICLE", "OnVehicleChanged")
     
     -- Blizzard's EventRegistry fires when recommendations change
     if EventRegistry then
@@ -242,6 +254,10 @@ function JustAC:OnEnable()
             if SpellQueue and SpellQueue.ClearAvailabilityCache then
                 SpellQueue.ClearAvailabilityCache()
             end
+            self:ForceUpdate()
+        end, self)
+        -- Primary "action spell" changed (first recommended spell)
+        EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
             self:ForceUpdate()
         end, self)
     end
@@ -301,6 +317,7 @@ function JustAC:OnDisable()
     if EventRegistry then
         EventRegistry:UnregisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", self)
         EventRegistry:UnregisterCallback("AssistedCombatManager.RotationSpellsUpdated", self)
+        EventRegistry:UnregisterCallback("AssistedCombatManager.OnSetActionSpell", self)
     end
     
     if self.mainFrame then
@@ -488,26 +505,50 @@ function JustAC:OnHealthChanged(event, unit)
     end
 end
 
--- Check if a spell has procced (Blizzard overlay glow is active)
-local function IsSpellProcced(spellID)
-    if not spellID or spellID == 0 then return false end
-    if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
-        local success, result = pcall(C_SpellActivationOverlay.IsSpellOverlayed, spellID)
-        return success and result
-    end
-    return false
-end
-
 -- Get the first usable spell from a given spell list
 -- Prioritizes procced spells (e.g., Victory Rush after kill, free heal procs)
+-- Also scans spellbook for any procced defensive abilities not in the list
 -- Filters: known, not on cooldown, not redundant (buff already active)
+
 function JustAC:GetBestDefensiveSpell(spellList)
     if not spellList then return nil end
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
     
+    -- LibStub lookups are fast table accesses, no caching wrapper needed
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    
+    -- First check: any procced defensive spells from spellbook (highest priority)
+    -- These are free/instant abilities that should be used immediately
+    if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
+        local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
+        if defensiveProcs then
+            for _, spellID in ipairs(defensiveProcs) do
+                if spellID and spellID > 0 then
+                    -- Check if known and usable
+                    local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                    if isKnown then
+                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
+                        if not isRedundant then
+                            local start, duration
+                            if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+                                start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+                            end
+                            local onCooldown = start and start > 0 and duration and duration > 1.5
+                            if not onCooldown then
+                                -- Procced defensive spell found - use it!
+                                return spellID
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Second check: configured spell list (user priority order)
     local firstUsable = nil  -- Track first usable spell as fallback
     
     for i, spellID in ipairs(spellList) do
@@ -529,7 +570,7 @@ function JustAC:GetBestDefensiveSpell(spellList)
                     
                     if not onCooldown then
                         -- Prioritize procced spells immediately
-                        if IsSpellProcced(spellID) then
+                        if BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID) then
                             return spellID
                         end
                         
@@ -798,6 +839,16 @@ function JustAC:OnSpellsChanged()
     self:ForceUpdate()
 end
 
+-- Spell icon/override changed (transformations like Pyroblast → Hot Streak)
+-- This fires when spell appearances change due to buffs, procs, or talents
+function JustAC:OnSpellIconChanged()
+    -- Invalidate hotkey cache since spell→slot mappings may have changed
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+    self:ForceUpdate()
+end
+
 function JustAC:OnShapeshiftFormChanged()
     -- Form changes affect macro conditionals and spell overrides
     if MacroParser and MacroParser.InvalidateMacroCache then
@@ -831,10 +882,9 @@ function JustAC:OnUnitAura(event, unit)
     local now = GetTime()
     if now - (self.lastAuraInvalidation or 0) > 0.5 then
         self.lastAuraInvalidation = now
-        if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
-            ActionBarScanner.InvalidateHotkeyCache()
-        end
         -- Aura changes affect RedundancyFilter's buff/form detection
+        -- Note: Hotkey cache is NOT invalidated here - auras don't move slots
+        -- SPELL_UPDATE_ICON handles spell transformations separately
         if RedundancyFilter and RedundancyFilter.InvalidateCache then
             RedundancyFilter.InvalidateCache()
         end
@@ -851,6 +901,20 @@ function JustAC:OnSpecialBarChanged()
     self:ForceUpdate()
 end
 
+-- Vehicle enter/exit completely changes actionbar layout
+function JustAC:OnVehicleChanged(event, unit)
+    if unit ~= "player" then return end
+    
+    -- Invalidate all caches: actionbar layout is completely different in vehicles
+    if ActionBarScanner and ActionBarScanner.OnSpecialBarChanged then
+        ActionBarScanner.OnSpecialBarChanged()
+    end
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    self:ForceUpdate()
+end
+
 function JustAC:OnBindingsUpdated()
     if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
         ActionBarScanner.OnKeybindsChanged()
@@ -862,10 +926,20 @@ end
 -- More responsive than waiting for UNIT_AURA throttle
 -- Procs often change spell overrides (e.g., Pyroblast → Hot Streak Pyroblast)
 function JustAC:OnProcGlowChange(event, spellID)
-    -- Proc changed - spell overrides may have changed, invalidate hotkey cache
-    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
-        ActionBarScanner.InvalidateHotkeyCache()
+    -- Update event-driven proc tracking in ActionBarScanner
+    if ActionBarScanner then
+        if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
+            if ActionBarScanner.OnProcShow then
+                ActionBarScanner.OnProcShow(spellID)
+            end
+        elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
+            if ActionBarScanner.OnProcHide then
+                ActionBarScanner.OnProcHide(spellID)
+            end
+        end
     end
+    
+    -- Proc glows don't move spells - only affects availability, not slot mappings
     if SpellQueue and SpellQueue.ClearAvailabilityCache then
         SpellQueue.ClearAvailabilityCache()
     end

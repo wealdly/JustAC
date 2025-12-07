@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
 -- JustAC: Form Cache Module
 -- Note: "Form" in macro conditionals uses stance bar index (1-N), NOT constant form IDs
 -- We use GetShapeshiftFormInfo iteration (reliable) rather than GetShapeshiftForm (unreliable during loading)
