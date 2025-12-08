@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0] - 2025-12-08
+
+### Added
+
+- Feature Availability system to detect 12.0+ "secret" values (health/aura/cooldown/proc APIs) and gracefully degrade features when blocked
+- Manual blacklist and hotkey override inputs in the Options panel for easier configuration
+
+### Changed
+
+- UI visual improvements: brighter marching ants glow, enhanced keypress flash (stacked ADD layers and slightly larger), and hotkeys always render on top
+- GCD swipe removes gold edge (now only used for full ability cooldowns)
+
+### Fixed
+
+- Fix: activation flash appearing on the wrong slot when spells move in the queue
+
 ## [2.98] - 2025-12-07
 
 ### Added
