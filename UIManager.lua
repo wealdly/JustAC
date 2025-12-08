@@ -551,15 +551,25 @@ local function StartFlash(button)
     if not button then return end
     if not button.Flash then return end
     
-    -- Force OVERLAY draw layer and white vertex color
+    -- Force OVERLAY draw layer and white vertex color on both flash layers
     button.Flash:SetDrawLayer("OVERLAY", 2)
     button.Flash:SetVertexColor(1, 1, 1, 1)
+    
+    if button.Flash2 then
+        button.Flash2:SetDrawLayer("OVERLAY", 3)
+        button.Flash2:SetVertexColor(1, 1, 1, 1)
+    end
     
     -- Always reset flash state
     button.flashing = 1
     button.flashtime = FLASH_DURATION
     button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)
     button.Flash:Show()
+    
+    if button.Flash2 then
+        button.Flash2:SetAlpha(FLASH_INITIAL_ALPHA)
+        button.Flash2:Show()
+    end
     
     -- Set OnUpdate if not already present
     if not button:GetScript("OnUpdate") then
@@ -577,6 +587,10 @@ local function StopFlash(button)
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
     end
+    if button.Flash2 then
+        button.Flash2:SetAlpha(0)
+        button.Flash2:Hide()
+    end
     -- Remove OnUpdate to eliminate per-frame overhead when not flashing
     button:SetScript("OnUpdate", nil)
 end
@@ -593,6 +607,12 @@ UpdateFlash = function(button, elapsed)
     
     -- Fade out from FLASH_INITIAL_ALPHA to 0 over FLASH_DURATION
     local progress = button.flashtime / FLASH_DURATION  -- 1.0 to 0.0
+    local alpha = FLASH_INITIAL_ALPHA * progress
+    button.Flash:SetAlpha(alpha)
+    
+    if button.Flash2 then
+        button.Flash2:SetAlpha(alpha)
+    end
     button.Flash:SetAlpha(progress * FLASH_INITIAL_ALPHA)
 end
 
@@ -711,13 +731,23 @@ local function CreateDefensiveIcon(addon, profile)
     flashFrame:SetAllPoints(button)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
     
+    -- Double-layer flash for increased brightness
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
     flashTexture:SetSize(actualIconSize + 1, actualIconSize)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
+    
+    local flashTexture2 = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    flashTexture2:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    flashTexture2:SetSize(actualIconSize + 1, actualIconSize)
+    flashTexture2:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture2:SetBlendMode("ADD")
+    flashTexture2:Hide()
+    
     button.Flash = flashTexture
+    button.Flash2 = flashTexture2
     button.FlashFrame = flashFrame
     
     -- Flash animation state
@@ -1324,13 +1354,23 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     flashFrame:SetAllPoints(button)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
     
+    -- Double-layer flash for increased brightness
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
     flashTexture:SetSize(actualIconSize + 1, actualIconSize)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
+    
+    local flashTexture2 = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    flashTexture2:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    flashTexture2:SetSize(actualIconSize + 1, actualIconSize)
+    flashTexture2:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture2:SetBlendMode("ADD")
+    flashTexture2:Hide()
+    
     button.Flash = flashTexture
+    button.Flash2 = flashTexture2
     button.FlashFrame = flashFrame
     
     -- Flash animation state

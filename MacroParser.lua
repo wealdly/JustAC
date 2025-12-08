@@ -505,6 +505,7 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     end
 
     local foundLines = {}
+    local bestMatch = nil  -- Track best match: prefer no-modifier over modifier
 
     for line in string_gmatch(macroBody, "[^\r\n]+") do
         local lowerLine = GetLowercase(line)
@@ -556,17 +557,22 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
                         local modifiers = {}
                         local conditionsMet = true
+                        local requiresModifier = false
 
                         if conditions then
-                            conditionsMet, modifiers = EvaluateConditions(conditions, currentSpec, currentForm)
+                            conditionsMet, modifiers, _, requiresModifier = EvaluateConditions(conditions, currentSpec, currentForm)
                         end
 
-                        -- We found the target spell - return it with its modifiers
-                        -- If it requires [mod], the modifiers table will contain "shift"/"ctrl"/"alt"
-                        -- so the hotkey will display as +5 (Shift+5), ^5 (Ctrl+5), etc.
                         if conditionsMet then
-                            table.insert(foundLines, {modifiers = modifiers})
-                            return true, foundLines[1].modifiers
+                            -- Prefer no-modifier clause over modifier clause
+                            -- If we haven't found anything yet, or this is better than what we have
+                            if not bestMatch then
+                                bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
+                            elseif not requiresModifier and bestMatch.requiresModifier then
+                                -- Found no-mod clause, replace the mod clause
+                                bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
+                            end
+                            -- If current best is no-mod, keep it (don't replace with mod clause)
                         end
                     end
                 end
@@ -574,6 +580,9 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
         end
     end
 
+    if bestMatch then
+        return true, bestMatch.modifiers
+    end
     return false, nil
 end
 
