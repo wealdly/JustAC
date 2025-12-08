@@ -70,6 +70,12 @@ local lastFrameState = {
 }
 
 local isInCombat = false
+local hotkeysDirty = true  -- Flag to trigger hotkey refresh when action bars change
+
+-- Invalidate hotkey cache (call when action bars or bindings change)
+function UIManager.InvalidateHotkeyCache()
+    hotkeysDirty = true
+end
 
 -- Forward declarations
 local StopAssistedGlow
@@ -90,14 +96,7 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     flipbook:SetSize(66, 66)
     flipbook:SetPoint("CENTER")
     
-    -- Create a second glow layer with ADD blend for extra brightness
-    local flipbookGlow = highlightFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    highlightFrame.FlipbookGlow = flipbookGlow
-    flipbookGlow:SetAtlas("rotationhelper_ants_flipbook")
-    flipbookGlow:SetSize(66, 66)
-    flipbookGlow:SetPoint("CENTER")
-    flipbookGlow:SetBlendMode("ADD")
-    flipbookGlow:SetAlpha(0.5)  -- Additive layer at 50% for glow effect
+    -- Note: Second glow layer removed to match Blizzard's default brightness
     
     -- Create the animation group for the flipbook
     local animGroup = flipbook:CreateAnimationGroup()
@@ -114,20 +113,6 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     flipAnim:SetFlipBookFrameWidth(0)
     flipAnim:SetFlipBookFrameHeight(0)
     
-    -- Create animation group for the glow layer (must stay synced)
-    local glowAnimGroup = flipbookGlow:CreateAnimationGroup()
-    glowAnimGroup:SetLooping("REPEAT")
-    flipbookGlow.Anim = glowAnimGroup
-    
-    local glowFlipAnim = glowAnimGroup:CreateAnimation("FlipBook")
-    glowFlipAnim:SetDuration(1)
-    glowFlipAnim:SetOrder(0)
-    glowFlipAnim:SetFlipBookRows(6)
-    glowFlipAnim:SetFlipBookColumns(5)
-    glowFlipAnim:SetFlipBookFrames(30)
-    glowFlipAnim:SetFlipBookFrameWidth(0)
-    glowFlipAnim:SetFlipBookFrameHeight(0)
-    
     return highlightFrame
 end
 
@@ -141,13 +126,7 @@ local function CreateProcGlowFrame(parent, frameKey)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 6)
     procFrame:Hide()
     
-    -- Create the start animation texture (burst)
-    local procStart = procFrame:CreateTexture(nil, "OVERLAY")
-    procFrame.ProcStartFlipbook = procStart
-    procStart:SetAtlas("UI-HUD-ActionBar-Proc-Start-Flipbook")
-    procStart:SetSize(150, 150)
-    procStart:SetPoint("CENTER")
-    procStart:SetAlpha(0)
+    -- Note: Start burst removed - using loop animation only
     
     -- Create the loop animation texture (fills parent frame)
     local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
@@ -177,39 +156,6 @@ local function CreateProcGlowFrame(parent, frameKey)
     loopFlip:SetFlipBookFrameWidth(0)
     loopFlip:SetFlipBookFrameHeight(0)
     
-    -- Create the start animation group
-    local startGroup = procStart:CreateAnimationGroup()
-    startGroup:SetToFinalAlpha(true)
-    procFrame.ProcStartAnim = startGroup
-    
-    local startAlpha1 = startGroup:CreateAnimation("Alpha")
-    startAlpha1:SetDuration(0.001)
-    startAlpha1:SetOrder(0)
-    startAlpha1:SetFromAlpha(1)
-    startAlpha1:SetToAlpha(1)
-    
-    local startFlip = startGroup:CreateAnimation("FlipBook")
-    startFlip:SetChildKey("ProcStartFlipbook")
-    startFlip:SetDuration(0.7)
-    startFlip:SetOrder(1)
-    startFlip:SetFlipBookRows(6)
-    startFlip:SetFlipBookColumns(5)
-    startFlip:SetFlipBookFrames(30)
-    startFlip:SetFlipBookFrameWidth(0)
-    startFlip:SetFlipBookFrameHeight(0)
-    
-    local startAlpha2 = startGroup:CreateAnimation("Alpha")
-    startAlpha2:SetChildKey("ProcStartFlipbook")
-    startAlpha2:SetDuration(0.001)
-    startAlpha2:SetOrder(2)
-    startAlpha2:SetFromAlpha(1)
-    startAlpha2:SetToAlpha(0)
-    
-    -- When start animation finishes, play the loop
-    startGroup:SetScript("OnFinished", function()
-        procFrame.ProcLoop:Play()
-    end)
-    
     -- When frame hides, stop the loop
     procFrame:SetScript("OnHide", function()
         if procFrame.ProcLoop:IsPlaying() then
@@ -217,9 +163,7 @@ local function CreateProcGlowFrame(parent, frameKey)
         end
     end)
     
-    -- Initialize flipbooks to first frame (Play/Stop trick to avoid showing whole atlas)
-    startGroup:Play()
-    startGroup:Stop()
+    -- Initialize flipbook to first frame (Play/Stop trick to avoid showing whole atlas)
     loopGroup:Play()
     loopGroup:Stop()
     
@@ -254,18 +198,46 @@ local function StartAssistedGlow(icon, style)
         local width = icon:GetWidth()
         procFrame:SetScale(width / 45)
         
-        -- Hide marching ants if showing
-        if icon.AssistedCombatHighlightFrame then
-            icon.AssistedCombatHighlightFrame:Hide()
-            icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+        -- Hide marching ants if showing (with fade out)
+        if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
+            local antsFrame = icon.AssistedCombatHighlightFrame
+            -- Quick fade out the ants while proc fades in
+            if not antsFrame.FadeOut then
+                antsFrame.FadeOut = antsFrame:CreateAnimationGroup()
+                local fadeAlpha = antsFrame.FadeOut:CreateAnimation("Alpha")
+                fadeAlpha:SetChildKey("Flipbook")
+                fadeAlpha:SetFromAlpha(1)
+                fadeAlpha:SetToAlpha(0)
+                fadeAlpha:SetDuration(0.15)  -- 150ms fade out
+                antsFrame.FadeOut:SetScript("OnFinished", function()
+                    antsFrame:Hide()
+                    antsFrame.Flipbook.Anim:Stop()
+                end)
+            end
+            antsFrame.FadeOut:Play()
+            
+            -- Fade in proc from 0
+            procFrame.ProcLoopFlipbook:SetAlpha(0)
+            procFrame:Show()
+            
+            -- Create fade-in on the frame (not conflicting with ProcLoop)
+            if not procFrame.FadeIn then
+                procFrame.FadeIn = procFrame:CreateAnimationGroup()
+                local fadeAlpha = procFrame.FadeIn:CreateAnimation("Alpha")
+                fadeAlpha:SetChildKey("ProcLoopFlipbook")
+                fadeAlpha:SetFromAlpha(0)
+                fadeAlpha:SetToAlpha(1)
+                fadeAlpha:SetDuration(0.15)  -- 150ms quick fade in
+            end
+            procFrame.FadeIn:Play()
+        else
+            -- No transition needed, just show at full alpha
+            procFrame.ProcLoopFlipbook:SetAlpha(1)
+            procFrame:Show()
         end
         
-        -- Show and play proc animation
-        procFrame:Show()
-        procFrame.ProcStartFlipbook:SetAlpha(1)
-        procFrame.ProcLoopFlipbook:SetAlpha(1)
-        if not procFrame.ProcStartAnim:IsPlaying() and not procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcStartAnim:Play()
+        if not procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Play()
         end
         
         icon.activeGlowStyle = style
@@ -284,14 +256,42 @@ local function StartAssistedGlow(icon, style)
         -- Apply color based on style (ASSISTED = default blue/white, no tint needed)
         TintMarchingAnts(highlightFrame, 1, 1, 1)  -- Reset to white (atlas is already blue)
         
-        -- Hide proc glow if showing
-        if icon.ProcGlowFrame then
-            icon.ProcGlowFrame:Hide()
-            icon.ProcGlowFrame.ProcStartAnim:Stop()
-            icon.ProcGlowFrame.ProcLoop:Stop()
+        -- Hide proc glow if showing (with fade out)
+        if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
+            local procFrame = icon.ProcGlowFrame
+            -- Quick fade out the proc while ants fade in
+            if not procFrame.FadeOut then
+                procFrame.FadeOut = procFrame.ProcLoopFlipbook:CreateAnimationGroup()
+                local fadeAlpha = procFrame.FadeOut:CreateAnimation("Alpha")
+                fadeAlpha:SetFromAlpha(1)
+                fadeAlpha:SetToAlpha(0)
+                fadeAlpha:SetDuration(0.15)  -- 150ms fade out
+                procFrame.FadeOut:SetScript("OnFinished", function()
+                    procFrame:Hide()
+                    procFrame.ProcLoop:Stop()
+                end)
+            end
+            procFrame.FadeOut:Play()
+            
+            -- Fade in marching ants from 0
+            highlightFrame.Flipbook:SetAlpha(0)
+            highlightFrame:Show()
+            
+            -- Create fade-in on the frame (not conflicting with Flipbook.Anim)
+            if not highlightFrame.FadeIn then
+                highlightFrame.FadeIn = highlightFrame:CreateAnimationGroup()
+                local fadeAlpha = highlightFrame.FadeIn:CreateAnimation("Alpha")
+                fadeAlpha:SetChildKey("Flipbook")
+                fadeAlpha:SetFromAlpha(0)
+                fadeAlpha:SetToAlpha(1)
+                fadeAlpha:SetDuration(0.15)  -- 150ms quick fade in
+            end
+            highlightFrame.FadeIn:Play()
+        else
+            -- No transition needed, just show at full alpha
+            highlightFrame.Flipbook:SetAlpha(1)
+            highlightFrame:Show()
         end
-        
-        highlightFrame:Show()
         
         -- Animate in combat, freeze (pause) out of combat
         -- Use Play/Stop trick to freeze on a single frame (Blizzard's approach)
@@ -541,7 +541,7 @@ StopDefensiveGlow = function(icon)
 end
 
 -- Flash animation for button press feedback (quick bright flash fade-out)
-local FLASH_DURATION = 0.25  -- Total flash duration
+local FLASH_DURATION = 0.15  -- Faster flash duration (was 0.25)
 local FLASH_INITIAL_ALPHA = 1.0  -- Full opacity for bright flash
 
 -- Forward declaration
@@ -551,19 +551,17 @@ local function StartFlash(button)
     if not button then return end
     if not button.Flash then return end
     
-    -- Always reset flash state (even if already flashing)
+    -- Force OVERLAY draw layer and white vertex color
+    button.Flash:SetDrawLayer("OVERLAY", 2)
+    button.Flash:SetVertexColor(1, 1, 1, 1)
+    
+    -- Always reset flash state
     button.flashing = 1
     button.flashtime = FLASH_DURATION
-    button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)  -- Start at high opacity for bright flash
+    button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)
     button.Flash:Show()
     
-    -- Also show the glow layer if present
-    if button.FlashGlow then
-        button.FlashGlow:SetAlpha(0.6)
-        button.FlashGlow:Show()
-    end
-    
-    -- Set OnUpdate if not already present (preserve existing flash handler)
+    -- Set OnUpdate if not already present
     if not button:GetScript("OnUpdate") then
         button:SetScript("OnUpdate", function(self, elapsed)
             UpdateFlash(self, elapsed)
@@ -578,10 +576,6 @@ local function StopFlash(button)
     if button.Flash then
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
-    end
-    if button.FlashGlow then
-        button.FlashGlow:SetAlpha(0)
-        button.FlashGlow:Hide()
     end
     -- Remove OnUpdate to eliminate per-frame overhead when not flashing
     button:SetScript("OnUpdate", nil)
@@ -600,11 +594,6 @@ UpdateFlash = function(button, elapsed)
     -- Fade out from FLASH_INITIAL_ALPHA to 0 over FLASH_DURATION
     local progress = button.flashtime / FLASH_DURATION  -- 1.0 to 0.0
     button.Flash:SetAlpha(progress * FLASH_INITIAL_ALPHA)
-    
-    -- Fade the glow layer in sync
-    if button.FlashGlow then
-        button.FlashGlow:SetAlpha(progress * 0.6)
-    end
 end
 
 -- Export functions for external access
@@ -700,6 +689,7 @@ local function CreateDefensiveIcon(addon, profile)
     local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
     slotArt:SetAllPoints(button)
     slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
     button.SlotArt = slotArt
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
@@ -716,32 +706,18 @@ local function CreateDefensiveIcon(addon, profile)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
     
-    -- Flash overlay for key press activation (on separate high-level frame)
-    -- Must be above marching ants (+5) and proc glow (+6) frames
+    -- Flash overlay on high-level frame (+10) - above all animations, below hotkey (+15)
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetAllPoints(button)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
     
-    -- Base flash texture (slightly larger than icon for visibility)
-    local flashSize = actualIconSize * 1.08  -- 8% larger to extend beyond glow effects
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY")
-    flashTexture:SetPoint("CENTER", button, "CENTER", 0, 0)
-    flashTexture:SetSize(flashSize, flashSize)
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    flashTexture:SetSize(actualIconSize + 1, actualIconSize)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetBlendMode("ADD")  -- Additive blend for brighter effect
-    flashTexture:SetAlpha(1.0)
+    flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     button.Flash = flashTexture
-    
-    -- Second flash layer for extra intensity (stacked ADD blend)
-    local flashGlow = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    flashGlow:SetPoint("CENTER", button, "CENTER", 0, 0)
-    flashGlow:SetSize(flashSize, flashSize)
-    flashGlow:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashGlow:SetBlendMode("ADD")
-    flashGlow:SetAlpha(0.6)  -- Additional brightness layer
-    flashGlow:Hide()
-    button.FlashGlow = flashGlow
     button.FlashFrame = flashFrame
     
     -- Flash animation state
@@ -851,7 +827,7 @@ local function CreateDefensiveIcon(addon, profile)
             Cooldown = button.cooldown,
             HotKey = button.hotkeyText,
             Normal = button.NormalTexture,
-            Flash = button.Flash,
+            -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
     
@@ -965,19 +941,33 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     else
         hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
     end
+    
+    -- Always normalize hotkey for key press matching (defensive icon doesn't use caching yet)
+    if hotkey ~= "" then
+        local normalized = hotkey:upper()
+        -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
+        normalized = normalized:gsub("^S%-", "SHIFT-")  -- S-5 -> SHIFT-5
+        normalized = normalized:gsub("^S([^H])", "SHIFT-%1")  -- S5 -> SHIFT-5 (but not SHIFT)
+        normalized = normalized:gsub("^C%-", "CTRL-")  -- C-5 -> CTRL-5
+        normalized = normalized:gsub("^C([^T])", "CTRL-%1")  -- C5 -> CTRL-5 (but not CTRL)
+        normalized = normalized:gsub("^A%-", "ALT-")  -- A-5 -> ALT-5
+        normalized = normalized:gsub("^A([^L])", "ALT-%1")  -- A5 -> ALT-5 (but not ALT)
+        normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
+        
+        -- Only update previous hotkey if normalized changed (for flash grace period)
+        if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
+            defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
+            defensiveIcon.hotkeyChangeTime = GetTime()
+        end
+        defensiveIcon.normalizedHotkey = normalized
+    else
+        defensiveIcon.normalizedHotkey = nil
+    end
+    
+    -- Only update hotkey text if it changed (prevents flicker)
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
     if currentHotkey ~= hotkey then
         defensiveIcon.hotkeyText:SetText(hotkey)
-        -- Cache normalized hotkey for efficient key press matching
-        if hotkey ~= "" then
-            local normalized = hotkey:upper()
-            normalized = normalized:gsub("S%-", "SHIFT-")
-            normalized = normalized:gsub("C%-", "CTRL-")
-            normalized = normalized:gsub("A%-", "ALT-")
-            defensiveIcon.normalizedHotkey = normalized
-        else
-            defensiveIcon.normalizedHotkey = nil
-        end
     end
     
     -- Check if defensive spell has an active proc (only for spells, not items)
@@ -1194,11 +1184,7 @@ function UIManager.CreateGrabTab(addon)
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 end
             else
-                -- Right-click: open options panel (blocked in combat to prevent taint)
-                if InCombatLockdown() then
-                    if addon.Print then addon:Print("Cannot open options during combat") end
-                    return
-                end
+                -- Right-click: open options panel
                 if addon.OpenOptionsPanel then
                     addon:OpenOptionsPanel()
                 else
@@ -1301,6 +1287,7 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
     slotArt:SetAllPoints(button)
     slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
     button.SlotArt = slotArt
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
@@ -1332,32 +1319,18 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     button.HighlightTexture = highlightTexture
     
-    -- Flash overlay for key press activation (on separate high-level frame)
-    -- Must be above marching ants (+5) and proc glow (+6) frames
+    -- Flash overlay on high-level frame (+10) - above all animations, below hotkey (+15)
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetAllPoints(button)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
     
-    -- Base flash texture (slightly larger than icon for visibility)
-    local flashSize = actualIconSize * 1.08  -- 8% larger to extend beyond glow effects
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY")
-    flashTexture:SetPoint("CENTER", button, "CENTER", 0, 0)
-    flashTexture:SetSize(flashSize, flashSize)
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    flashTexture:SetSize(actualIconSize + 1, actualIconSize)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetBlendMode("ADD")  -- Additive blend for brighter effect
-    flashTexture:SetAlpha(1.0)
+    flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     button.Flash = flashTexture
-    
-    -- Second flash layer for extra intensity (stacked ADD blend)
-    local flashGlow = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    flashGlow:SetPoint("CENTER", button, "CENTER", 0, 0)
-    flashGlow:SetSize(flashSize, flashSize)
-    flashGlow:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashGlow:SetBlendMode("ADD")
-    flashGlow:SetAlpha(0.6)  -- Additional brightness layer
-    flashGlow:Hide()
-    button.FlashGlow = flashGlow
     button.FlashFrame = flashFrame
     
     -- Flash animation state
@@ -1410,13 +1383,10 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" and self.spellID then
-            -- Block interactions if panel is locked or in combat (prevents taint)
+            -- Block interactions if panel is locked
             local profile = addon:GetProfile()
             if profile and profile.panelLocked then
                 return
-            end
-            if InCombatLockdown() then
-                return  -- Silently ignore - configuration not allowed in combat
             end
             
             if IsShiftKeyDown() then
@@ -1486,7 +1456,7 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
             Normal = button.NormalTexture,
             Pushed = button.PushedTexture,
             Highlight = button.HighlightTexture,
-            Flash = button.Flash,
+            -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
     
@@ -1546,14 +1516,24 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
             if spellID and spellInfo then
                 -- Only update if spell changed for this slot
                 local spellChanged = (icon.spellID ~= spellID)
+                
+                -- Track previous spell ID for grace period logic (avoid flashing spell that just moved)
+                if spellChanged and icon.spellID then
+                    icon.previousSpellID = icon.spellID
+                end
+                
                 icon.spellID = spellID
                 
                 -- Cache icon texture reference for multiple accesses
                 local iconTexture = icon.iconTexture
                 
-                -- Only set texture if spell changed (prevents flicker)
-                if spellChanged then
+                -- Set texture when spell changes OR if texture has never been set (fixes missing artwork)
+                if spellChanged or not iconTexture:GetTexture() then
                     iconTexture:SetTexture(spellInfo.iconID)
+                end
+                
+                -- Always ensure texture is shown when spell is assigned (fixes missing artwork after reload)
+                if not iconTexture:IsShown() then
                     iconTexture:Show()
                 end
                 
@@ -1610,25 +1590,43 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                     StopAssistedGlow(icon)
                 end
 
-                local hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                -- Hotkey lookup optimization: only query ActionBarScanner when action bars change
+                -- Store result in icon.cachedHotkey and reuse until invalidated by ACTIONBAR_SLOT_CHANGED/UPDATE_BINDINGS
+                local hotkey
+                if hotkeysDirty or spellChanged or not icon.cachedHotkey then
+                    hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                    icon.cachedHotkey = hotkey
+                else
+                    hotkey = icon.cachedHotkey
+                end
+                
+                -- Always normalize hotkey for key press matching (even if cached)
+                -- This ensures normalizedHotkey is set even when hotkey text hasn't changed
+                if hotkey ~= "" then
+                    local normalized = hotkey:upper()
+                    -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
+                    normalized = normalized:gsub("^S%-", "SHIFT-")  -- S-5 -> SHIFT-5
+                    normalized = normalized:gsub("^S([^H])", "SHIFT-%1")  -- S5 -> SHIFT-5 (but not SHIFT)
+                    normalized = normalized:gsub("^C%-", "CTRL-")  -- C-5 -> CTRL-5
+                    normalized = normalized:gsub("^C([^T])", "CTRL-%1")  -- C5 -> CTRL-5 (but not CTRL)
+                    normalized = normalized:gsub("^A%-", "ALT-")  -- A-5 -> ALT-5
+                    normalized = normalized:gsub("^A([^L])", "ALT-%1")  -- A5 -> ALT-5 (but not ALT)
+                    normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
+                    
+                    -- Only update previous hotkey if normalized changed (for flash grace period)
+                    if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
+                        icon.previousNormalizedHotkey = icon.normalizedHotkey
+                        icon.hotkeyChangeTime = currentTime
+                    end
+                    icon.normalizedHotkey = normalized
+                else
+                    icon.normalizedHotkey = nil
+                end
                 
                 -- Only update hotkey text if it changed (prevents flicker)
                 local currentHotkey = icon.hotkeyText:GetText() or ""
                 if currentHotkey ~= hotkey then
                     icon.hotkeyText:SetText(hotkey)
-                    -- Cache normalized hotkey for efficient key press matching
-                    -- Also preserve previous hotkey briefly so flash can match recently-changed slots
-                    icon.previousNormalizedHotkey = icon.normalizedHotkey
-                    icon.hotkeyChangeTime = currentTime
-                    if hotkey ~= "" then
-                        local normalized = hotkey:upper()
-                        normalized = normalized:gsub("S%-", "SHIFT-")
-                        normalized = normalized:gsub("C%-", "CTRL-")
-                        normalized = normalized:gsub("A%-", "ALT-")
-                        icon.normalizedHotkey = normalized
-                    else
-                        icon.normalizedHotkey = nil
-                    end
                 end
                 
                 -- Update desaturation based on:
@@ -1671,6 +1669,9 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
+    
+    -- Clear hotkey dirty flag after processing all icons
+    hotkeysDirty = false
     
     -- Update frame visibility with fade animations only when state actually changes
     if addon.mainFrame and (frameStateChanged or spellCountChanged) then
@@ -1802,14 +1803,6 @@ end
 
 function UIManager.OpenHotkeyOverrideDialog(addon, spellID)
     if not addon or not spellID then return end
-    
-    -- Prevent taint: never modify globals or show popups during combat
-    if InCombatLockdown() then
-        if addon.Print then
-            addon:Print("Cannot change hotkey during combat")
-        end
-        return
-    end
     
     local spellInfo = addon:GetCachedSpellInfo(spellID)
     if not spellInfo then return end

@@ -132,8 +132,7 @@ local defaults = {
         panelLocked = false,              -- Lock panel interactions in combat
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
-        includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals (with stabilization)
-        stabilizationWindow = 0.20,       -- Seconds to wait before changing position 1 (0-0.35)
+        includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
@@ -389,50 +388,51 @@ function JustAC:CreateKeyPressDetector()
             fullKey = pressedKey
         end
         
+        -- Helper function to check if hotkey matches pressed key (handles MOD- prefix)
+        local function HotkeyMatches(hotkey)
+            if not hotkey then return false end
+            if hotkey == fullKey then return true end
+            -- MOD- prefix matches any modifier (SHIFT/CTRL/ALT) + base key
+            if hotkey:match("^MOD%-") and (hasShift or hasCtrl or hasAlt) then
+                local baseKey = hotkey:gsub("^MOD%-", "")
+                return (pressedKey == baseKey)
+            end
+            return false
+        end
+        
         -- Flash feedback for all queue icons that match the pressed key
-        -- Special handling: don't flash slots 2+ if they match slot 1's PREVIOUS hotkey
+        -- Special handling: don't flash slots 2+ if they show the spell that WAS in slot 1
         -- (that means the spell just moved from slot 1 and we already executed it)
         local iconsToFlash = {}
         local now = GetTime()
-        local HOTKEY_GRACE_PERIOD = 0.15  -- Match previous hotkey for 150ms after change
-        local slot1PrevHotkey = nil  -- Track what slot 1's previous hotkey was
+        local HOTKEY_GRACE_PERIOD = 0.15  -- Grace period for spell position changes
+        local slot1PrevSpellID = nil  -- Track which spell was in slot 1 (to avoid flashing after move)
         
         local spellIcons = addon.spellIcons
         if spellIcons then
-            -- First check slot 1 and remember its previous hotkey
+            -- Check slot 1 and track which spell was previously there
             local icon1 = spellIcons[1]
             if icon1 and icon1:IsShown() then
-                slot1PrevHotkey = icon1.previousNormalizedHotkey
-                local cachedHotkey = icon1.normalizedHotkey
-                -- Only match against fullKey (includes modifiers)
-                -- This prevents flashing when user presses SHIFT-1 but hotkey is just "1"
-                local matched = cachedHotkey and cachedHotkey == fullKey
-                
-                -- Slot 1: also check previous hotkey (spell moved but we pressed right key)
-                if not matched and slot1PrevHotkey and icon1.hotkeyChangeTime then
-                    if (now - icon1.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                        matched = slot1PrevHotkey == fullKey
-                    end
+                -- Track which spell USED to be in slot 1 (before it moved to slot 2+)
+                if icon1.hotkeyChangeTime and (now - icon1.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                    slot1PrevSpellID = icon1.previousSpellID
                 end
                 
-                if matched then
+                if HotkeyMatches(icon1.normalizedHotkey) then
                     iconsToFlash[#iconsToFlash + 1] = icon1
                 end
             end
             
-            -- Check slots 2+ but skip if hotkey matches slot 1's previous (spell just moved)
+            -- Check slots 2+ but skip if this is the spell that just moved from slot 1
             for i = 2, #spellIcons do
                 local icon = spellIcons[i]
                 if icon and icon:IsShown() then
-                    local cachedHotkey = icon.normalizedHotkey
-                    -- Only match against fullKey (includes modifiers)
-                    local matched = cachedHotkey and cachedHotkey == fullKey
+                    local matched = HotkeyMatches(icon.normalizedHotkey)
                     
-                    -- Skip if this matches slot 1's previous hotkey (spell just moved from slot 1)
-                    if matched and slot1PrevHotkey then
-                        if cachedHotkey == slot1PrevHotkey then
-                            matched = false  -- Don't flash - this is the spell we just cast
-                        end
+                    -- Skip if this is the SAME SPELL that was in slot 1 (it just moved)
+                    -- Don't skip if it's a different spell with the same hotkey
+                    if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
+                        matched = false  -- Don't flash - this is the spell we just cast
                     end
                     
                     if matched then
@@ -445,18 +445,7 @@ function JustAC:CreateKeyPressDetector()
         -- Check defensive icon
         local defIcon = addon.defensiveIcon
         if defIcon and defIcon:IsShown() then
-            local cachedHotkey = defIcon.normalizedHotkey
-            -- Only match against fullKey (includes modifiers)
-            local matched = cachedHotkey and cachedHotkey == fullKey
-            
-            if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
-                if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                    local prevHotkey = defIcon.previousNormalizedHotkey
-                    matched = prevHotkey == fullKey
-                end
-            end
-            
-            if matched then
+            if HotkeyMatches(defIcon.normalizedHotkey) then
                 iconsToFlash[#iconsToFlash + 1] = defIcon
             end
         end
@@ -1055,8 +1044,11 @@ function JustAC:PLAYER_ENTERING_WORLD()
     
     self:ForceUpdate()
     
+    -- Force update after delay to ensure Assisted Combat API has fully initialized
+    -- The API may not return spells immediately after PLAYER_ENTERING_WORLD
+    C_Timer.After(1.0, function() self:ForceUpdate() end)
+    
     -- Check if Single-Button Assistant is placed on action bar (required for stable API behavior)
-    -- Delay check to ensure action bars are fully loaded
     C_Timer.After(2, function()
         if C_ActionBar and C_ActionBar.HasAssistedCombatActionButtons then
             local hasButton = C_ActionBar.HasAssistedCombatActionButtons()
@@ -1089,9 +1081,23 @@ function JustAC:OnCombatEvent(event)
 end
 
 function JustAC:OnSpecChange()
+    -- Spec changes affect everything: spells, macros, keybinds
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
     if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
     if SpellQueue and SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
+    
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+    
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
+    
     self.db.char.lastKnownSpec = GetSpecialization()
     self:ForceUpdate()
 end
@@ -1099,7 +1105,19 @@ end
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
     if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
-    if ActionBarScanner and ActionBarScanner.InvalidateKeybindCache then ActionBarScanner.InvalidateKeybindCache() end
+    
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if ActionBarScanner and ActionBarScanner.InvalidateKeybindCache then
+        ActionBarScanner.InvalidateKeybindCache()
+    end
+    
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
+    
     self:ForceUpdate()
 end
 
@@ -1109,6 +1127,9 @@ function JustAC:OnSpellIconChanged()
     -- Invalidate hotkey cache since spell→slot mappings may have changed
     if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
         ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
     end
     self:ForceUpdate()
 end
@@ -1120,6 +1141,9 @@ function JustAC:OnShapeshiftFormChanged()
     end
     if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
         ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
     end
     self:ForceUpdate()
 end
@@ -1136,6 +1160,9 @@ function JustAC:OnShapeshiftFormsRebuilt()
     end
     if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
         ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
     end
     self:ForceUpdate()
 end
@@ -1156,7 +1183,18 @@ function JustAC:OnUnitAura(event, unit)
 end
 
 function JustAC:OnActionBarChanged()
-    if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then ActionBarScanner.OnKeybindsChanged() end
+    if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
+        ActionBarScanner.OnKeybindsChanged()
+    end
+    
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
+    
     self:ForceUpdate()
 end
 
@@ -1262,12 +1300,6 @@ function JustAC:ForceUpdate()
 end
 
 function JustAC:OpenOptionsPanel()
-    -- Prevent taint: never open settings during combat (causes taint propagation)
-    if InCombatLockdown() then
-        self:Print("Cannot open options during combat")
-        return
-    end
-    
     -- Refresh dynamic options before opening panel
     local Options = LibStub("JustAC-Options", true)
     if Options then
