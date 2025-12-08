@@ -486,21 +486,6 @@ local function CreateOptionsTable(addon)
                             addon.db.profile.showTooltips = val
                         end
                     },
-                    stabilizationWindow = {
-                        type = "range",
-                        name = L["Stabilization Window"],
-                        desc = L["Stabilization Window desc"],
-                        order = 14,
-                        width = "normal",
-                        min = 0,
-                        max = 0.35,
-                        step = 0.05,
-                        get = function() return addon.db.profile.stabilizationWindow or 0.20 end,
-                        set = function(_, val)
-                            addon.db.profile.stabilizationWindow = val
-                        end,
-                        disabled = function() return not addon.db.profile.includeHiddenAbilities end,
-                    },
                     tooltipsInCombat = {
                         type = "toggle",
                         name = L["Tooltips in Combat"],

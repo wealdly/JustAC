@@ -11,6 +11,7 @@
 
 - Activation flash is now brighter and lasts longer for better visibility
 - Improved hotkey detection when spells change rapidly
+- Removed stabilization window setting (no longer needed)
 
 ### Fixed
 

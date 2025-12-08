@@ -20,10 +20,6 @@ local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
 
--- Stabilization: prevent rapid flickering of position 1
-local lastPrimarySpellID = nil
-local lastPrimaryChangeTime = 0
-
 -- Reusable tables to avoid GC pressure in hot loop
 -- Using paired arrays: proccedBase[i]/proccedDisplay[i] for base/display spell IDs
 local proccedBase = {}
@@ -165,10 +161,6 @@ function SpellQueue.GetCurrentSpellQueue()
     local addedSpellIDs = {}
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
-    
-    -- Check if stabilization is needed (only when includeHiddenAbilities is on AND window > 0)
-    local stabilizationWindow = profile.stabilizationWindow or 0.20
-    local useStabilization = profile.includeHiddenAbilities and stabilizationWindow > 0
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
     -- Only filter: blacklisted spells (user explicitly chose to hide these)
@@ -184,43 +176,12 @@ function SpellQueue.GetCurrentSpellQueue()
         local isBlacklisted = SpellQueue.IsSpellBlacklisted(displaySpellID) or SpellQueue.IsSpellBlacklisted(baseSpellID)
         
         if not isBlacklisted then
-            -- Stabilization: prevent rapid flickering when includeHiddenAbilities is on
-            -- Keep showing previous spell unless: proc fired, old spell on cooldown, or window expired
-            if useStabilization and lastPrimarySpellID and lastPrimarySpellID ~= baseSpellID then
-                if (now - lastPrimaryChangeTime) < stabilizationWindow then
-                    local newSpellProcced = BlizzardAPI.IsSpellProcced(baseSpellID)
-                    local oldSpellOnCooldown = false
-                    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-                        local start, duration = BlizzardAPI.GetSpellCooldown(lastPrimarySpellID)
-                        oldSpellOnCooldown = start and start > 0 and duration and duration > 1.5
-                    end
-                    if not newSpellProcced and not oldSpellOnCooldown then
-                        baseSpellID = lastPrimarySpellID
-                        displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
-                    end
-                end
-            end
-            
-            -- Track base spell for stabilization (only update time if spell actually changed)
-            if baseSpellID ~= lastPrimarySpellID then
-                lastPrimarySpellID = baseSpellID
-                lastPrimaryChangeTime = now
-            end
-            
             -- Position 1 is shown unless blacklisted
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
             addedSpellIDs[displaySpellID] = true
             addedSpellIDs[baseSpellID] = true
-        else
-            -- Spell is blacklisted - clear stabilization state
-            lastPrimarySpellID = nil
-            lastPrimaryChangeTime = 0
         end
-    else
-        -- No spell recommended - clear stabilization state
-        lastPrimarySpellID = nil
-        lastPrimaryChangeTime = 0
     end
 
     -- Check for procced spells from spellbook that aren't in the rotation list
