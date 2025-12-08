@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Manager Module
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 24)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 28)
 if not UIManager then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -90,6 +90,15 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     flipbook:SetSize(66, 66)
     flipbook:SetPoint("CENTER")
     
+    -- Create a second glow layer with ADD blend for extra brightness
+    local flipbookGlow = highlightFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    highlightFrame.FlipbookGlow = flipbookGlow
+    flipbookGlow:SetAtlas("rotationhelper_ants_flipbook")
+    flipbookGlow:SetSize(66, 66)
+    flipbookGlow:SetPoint("CENTER")
+    flipbookGlow:SetBlendMode("ADD")
+    flipbookGlow:SetAlpha(0.5)  -- Additive layer at 50% for glow effect
+    
     -- Create the animation group for the flipbook
     local animGroup = flipbook:CreateAnimationGroup()
     animGroup:SetLooping("REPEAT")
@@ -104,6 +113,20 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     flipAnim:SetFlipBookFrames(30)
     flipAnim:SetFlipBookFrameWidth(0)
     flipAnim:SetFlipBookFrameHeight(0)
+    
+    -- Create animation group for the glow layer (must stay synced)
+    local glowAnimGroup = flipbookGlow:CreateAnimationGroup()
+    glowAnimGroup:SetLooping("REPEAT")
+    flipbookGlow.Anim = glowAnimGroup
+    
+    local glowFlipAnim = glowAnimGroup:CreateAnimation("FlipBook")
+    glowFlipAnim:SetDuration(1)
+    glowFlipAnim:SetOrder(0)
+    glowFlipAnim:SetFlipBookRows(6)
+    glowFlipAnim:SetFlipBookColumns(5)
+    glowFlipAnim:SetFlipBookFrames(30)
+    glowFlipAnim:SetFlipBookFrameWidth(0)
+    glowFlipAnim:SetFlipBookFrameHeight(0)
     
     return highlightFrame
 end
@@ -254,9 +277,9 @@ local function StartAssistedGlow(icon, style)
             highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
         end
         
-        -- Scale frame to match icon size (base size is 45)
+        -- Scale frame to match icon size (base size is 45), slightly larger for visibility
         local width = icon:GetWidth()
-        highlightFrame:SetScale(width / 45)
+        highlightFrame:SetScale((width / 45) * 1.02)  -- 2% larger than icon
         
         -- Apply color based on style (ASSISTED = default blue/white, no tint needed)
         TintMarchingAnts(highlightFrame, 1, 1, 1)  -- Reset to white (atlas is already blue)
@@ -275,13 +298,22 @@ local function StartAssistedGlow(icon, style)
         if isInCombat then
             if not highlightFrame.Flipbook.Anim:IsPlaying() then
                 highlightFrame.Flipbook.Anim:Play()
+                if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                    highlightFrame.FlipbookGlow.Anim:Play()
+                end
             end
         else
             -- Play then Stop freezes on current frame instead of showing whole atlas
             if not highlightFrame.Flipbook.Anim:IsPlaying() then
                 highlightFrame.Flipbook.Anim:Play()
+                if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                    highlightFrame.FlipbookGlow.Anim:Play()
+                end
             end
             highlightFrame.Flipbook.Anim:Stop()
+            if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                highlightFrame.FlipbookGlow.Anim:Stop()
+            end
         end
         
         icon.activeGlowStyle = style
@@ -338,8 +370,14 @@ local function PauseAllGlows(addon)
                 if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
                     -- If not playing, do Play/Stop to get to first frame
                     icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
+                    if icon.AssistedCombatHighlightFrame.FlipbookGlow and icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim then
+                        icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim:Play()
+                    end
                 end
                 icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+                if icon.AssistedCombatHighlightFrame.FlipbookGlow and icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim then
+                    icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim:Stop()
+                end
             end
             -- Hide proc glow out of combat (it's too flashy when frozen)
             if icon.ProcGlowFrame then
@@ -366,6 +404,9 @@ local function ResumeAllGlows(addon)
             if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
                 if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
                     icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
+                    if icon.AssistedCombatHighlightFrame.FlipbookGlow and icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim then
+                        icon.AssistedCombatHighlightFrame.FlipbookGlow.Anim:Play()
+                    end
                 end
             end
         end
@@ -453,10 +494,19 @@ local function StartDefensiveGlow(icon, isProc)
         -- Animate in combat, freeze (pause) out of combat (same as main queue icons)
         if isInCombat then
             highlightFrame.Flipbook.Anim:Play()
+            if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                highlightFrame.FlipbookGlow.Anim:Play()
+            end
         else
             -- Play then immediately stop to show first frame (Blizzard's trick)
             highlightFrame.Flipbook.Anim:Play()
+            if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                highlightFrame.FlipbookGlow.Anim:Play()
+            end
             highlightFrame.Flipbook.Anim:Stop()
+            if highlightFrame.FlipbookGlow and highlightFrame.FlipbookGlow.Anim then
+                highlightFrame.FlipbookGlow.Anim:Stop()
+            end
         end
         
         icon.hasDefensiveGlow = true
@@ -491,8 +541,8 @@ StopDefensiveGlow = function(icon)
 end
 
 -- Flash animation for button press feedback (quick bright flash fade-out)
-local FLASH_DURATION = 0.18  -- Total flash duration (fade from 0.7 to 0 alpha)
-local FLASH_INITIAL_ALPHA = 0.7  -- Starting opacity for bright flash
+local FLASH_DURATION = 0.25  -- Total flash duration
+local FLASH_INITIAL_ALPHA = 1.0  -- Full opacity for bright flash
 
 -- Forward declaration
 local UpdateFlash
@@ -501,12 +551,19 @@ local function StartFlash(button)
     if not button then return end
     if not button.Flash then return end
     
+    -- Always reset flash state (even if already flashing)
     button.flashing = 1
     button.flashtime = FLASH_DURATION
     button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)  -- Start at high opacity for bright flash
     button.Flash:Show()
     
-    -- Only set OnUpdate when actively flashing to avoid per-frame overhead
+    -- Also show the glow layer if present
+    if button.FlashGlow then
+        button.FlashGlow:SetAlpha(0.6)
+        button.FlashGlow:Show()
+    end
+    
+    -- Set OnUpdate if not already present (preserve existing flash handler)
     if not button:GetScript("OnUpdate") then
         button:SetScript("OnUpdate", function(self, elapsed)
             UpdateFlash(self, elapsed)
@@ -521,6 +578,10 @@ local function StopFlash(button)
     if button.Flash then
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
+    end
+    if button.FlashGlow then
+        button.FlashGlow:SetAlpha(0)
+        button.FlashGlow:Hide()
     end
     -- Remove OnUpdate to eliminate per-frame overhead when not flashing
     button:SetScript("OnUpdate", nil)
@@ -539,6 +600,11 @@ UpdateFlash = function(button, elapsed)
     -- Fade out from FLASH_INITIAL_ALPHA to 0 over FLASH_DURATION
     local progress = button.flashtime / FLASH_DURATION  -- 1.0 to 0.0
     button.Flash:SetAlpha(progress * FLASH_INITIAL_ALPHA)
+    
+    -- Fade the glow layer in sync
+    if button.FlashGlow then
+        button.FlashGlow:SetAlpha(progress * 0.6)
+    end
 end
 
 -- Export functions for external access
@@ -624,42 +690,87 @@ local function CreateDefensiveIcon(addon, profile)
         end
     end
 
+    -- Slot background (Blizzard style depth effect)
+    local slotBackground = button:CreateTexture(nil, "BACKGROUND", nil, 0)
+    slotBackground:SetAllPoints(button)
+    slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
+    button.SlotBackground = slotBackground
+    
+    -- Slot art overlay
+    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+    slotArt:SetAllPoints(button)
+    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    button.SlotArt = slotArt
+
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
     iconTexture:Hide()  -- Start hidden, only show when spell is assigned
     button.iconTexture = iconTexture
     
-    -- Flash overlay for activation animation (pale orange flash when key pressed)
-    -- Use OVERLAY layer sublevel 2 (above icon and borders, below text)
-    local flashTexture = button:CreateTexture(nil, "OVERLAY", nil, 2)
-    flashTexture:SetColorTexture(1.0, 0.82, 0.6)  -- Pale orange to match action bar flash
-    flashTexture:SetBlendMode("ADD")  -- Additive blending for bright flash effect
-    -- Scale to 90% of button size to fit within borders
-    flashTexture:SetPoint("CENTER", button, "CENTER")
-    flashTexture:SetSize(actualIconSize * 0.9, actualIconSize * 0.9)
-    flashTexture:SetAlpha(0)  -- Start fully transparent
+    -- Note: Icon mask removed - atlas doesn't scale well with variable icon sizes
+    
+    -- Normal texture (button frame border - Blizzard style)
+    local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
+    normalTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    normalTexture:SetSize(actualIconSize + 1, actualIconSize)
+    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    button.NormalTexture = normalTexture
+    
+    -- Flash overlay for key press activation (on separate high-level frame)
+    -- Must be above marching ants (+5) and proc glow (+6) frames
+    local flashFrame = CreateFrame("Frame", nil, button)
+    flashFrame:SetAllPoints(button)
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
+    
+    -- Base flash texture (slightly larger than icon for visibility)
+    local flashSize = actualIconSize * 1.08  -- 8% larger to extend beyond glow effects
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY")
+    flashTexture:SetPoint("CENTER", button, "CENTER", 0, 0)
+    flashTexture:SetSize(flashSize, flashSize)
+    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture:SetBlendMode("ADD")  -- Additive blend for brighter effect
+    flashTexture:SetAlpha(1.0)
     flashTexture:Hide()
     button.Flash = flashTexture
+    
+    -- Second flash layer for extra intensity (stacked ADD blend)
+    local flashGlow = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    flashGlow:SetPoint("CENTER", button, "CENTER", 0, 0)
+    flashGlow:SetSize(flashSize, flashSize)
+    flashGlow:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashGlow:SetBlendMode("ADD")
+    flashGlow:SetAlpha(0.6)  -- Additional brightness layer
+    flashGlow:Hide()
+    button.FlashGlow = flashGlow
+    button.FlashFrame = flashFrame
     
     -- Flash animation state
     button.flashing = 0
     button.flashtime = 0
 
+    -- Cooldown frame with Blizzard-style 3px inset from icon edges
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    cooldown:SetAllPoints(button)
-    cooldown:SetDrawEdge(true)
+    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 3, -3)
+    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -3, 3)
+    cooldown:SetDrawEdge(false)  -- No gold edge for GCD swipe (only used for ability cooldowns)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
+    cooldown:SetSwipeColor(0, 0, 0, 0.8)  -- Blizzard's swipe color
     cooldown:Hide()  -- Start hidden
     button.cooldown = cooldown
     
-    local hotkeyText = button:CreateFontString(nil, "OVERLAY", nil, 3)
+    -- Hotkey text on highest frame level to ensure visibility above all animations
+    local hotkeyFrame = CreateFrame("Frame", nil, button)
+    hotkeyFrame:SetAllPoints(button)
+    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
+    local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
     local fontSize = math.max(HOTKEY_MIN_FONT_SIZE, math.floor(actualIconSize * HOTKEY_FONT_SCALE))
     hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
     hotkeyText:SetTextColor(1, 1, 1, 1)
     hotkeyText:SetJustifyH("RIGHT")
     hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
     button.hotkeyText = hotkeyText
+    button.hotkeyFrame = hotkeyFrame
     
     -- Tooltip (handles both spells and items)
     button:SetScript("OnEnter", function(self)
@@ -739,6 +850,8 @@ local function CreateDefensiveIcon(addon, profile)
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
             HotKey = button.hotkeyText,
+            Normal = button.NormalTexture,
+            Flash = button.Flash,
         })
     end
     
@@ -809,20 +922,28 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     elseif BlizzardAPI and BlizzardAPI.GetSpellCooldown then
         start, duration = BlizzardAPI.GetSpellCooldown(id)
     end
-    if start and start > 0 and duration and duration > 0 then
-        if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
-            defensiveIcon.cooldown:SetCooldown(start, duration)
-            defensiveIcon.cooldown:Show()
-            defensiveIcon.lastCooldownStart = start
-            defensiveIcon.lastCooldownDuration = duration
-        end
-    else
-        if defensiveIcon.lastCooldownDuration ~= 0 then
-            defensiveIcon.cooldown:Hide()
-            defensiveIcon.lastCooldownStart = 0
-            defensiveIcon.lastCooldownDuration = 0
+    
+    -- Early exit for secret values (12.0+): skip cooldown update if values are secret
+    local startIsSecret = issecretvalue and issecretvalue(start)
+    local durationIsSecret = issecretvalue and issecretvalue(duration)
+    
+    if not startIsSecret and not durationIsSecret then
+        if start and start > 0 and duration and duration > 0 then
+            if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
+                defensiveIcon.cooldown:SetCooldown(start, duration)
+                defensiveIcon.cooldown:Show()
+                defensiveIcon.lastCooldownStart = start
+                defensiveIcon.lastCooldownDuration = duration
+            end
+        else
+            if defensiveIcon.lastCooldownDuration ~= 0 then
+                defensiveIcon.cooldown:Hide()
+                defensiveIcon.lastCooldownStart = 0
+                defensiveIcon.lastCooldownDuration = 0
+            end
         end
     end
+    -- If values are secret, leave cooldown display unchanged (graceful degradation)
     
     -- Update hotkey (for items, find by scanning action bars)
     local hotkey = ""
@@ -861,6 +982,11 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     
     -- Check if defensive spell has an active proc (only for spells, not items)
     local isProc = not isItem and C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(id) or false
+    
+    -- Early exit for secret boolean (12.0+): treat secret as no-proc
+    if issecretvalue and issecretvalue(isProc) then
+        isProc = false  -- Graceful degradation: no proc glow if we can't check
+    end
     
     -- Start glow (green marching ants, or gold proc if spell is proc'd)
     StartDefensiveGlow(defensiveIcon, isProc)
@@ -1039,7 +1165,7 @@ function UIManager.CreateGrabTab(addon)
     addon.grabTab:RegisterForDrag("LeftButton")
     addon.grabTab:RegisterForClicks("RightButtonUp")
     
-    addon.grabTab:SetScript("OnDragStart", function()
+    addon.grabTab:SetScript("OnDragStart", function(self)
         local profile = addon:GetProfile()
         if not profile then return end
         
@@ -1048,13 +1174,19 @@ function UIManager.CreateGrabTab(addon)
             return
         end
         
+        -- Move the main frame (grab tab follows since it's anchored to it)
         addon.mainFrame:StartMoving()
+    end)
+    
+    addon.grabTab:SetScript("OnDragStop", function(self)
+        addon.mainFrame:StopMovingOrSizing()
+        UIManager.SavePosition(addon)
     end)
     
     addon.grabTab:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
             if IsShiftKeyDown() then
-                -- Shift+Right-click: toggle lock
+                -- Shift+Right-click: toggle lock (safe in combat - only modifies addon db)
                 local profile = addon:GetProfile()
                 if profile then
                     profile.panelLocked = not profile.panelLocked
@@ -1062,7 +1194,11 @@ function UIManager.CreateGrabTab(addon)
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 end
             else
-                -- Right-click: open options panel
+                -- Right-click: open options panel (blocked in combat to prevent taint)
+                if InCombatLockdown() then
+                    if addon.Print then addon:Print("Cannot open options during combat") end
+                    return
+                end
                 if addon.OpenOptionsPanel then
                     addon:OpenOptionsPanel()
                 else
@@ -1070,10 +1206,6 @@ function UIManager.CreateGrabTab(addon)
                 end
             end
         end
-    end)
-    addon.grabTab:SetScript("OnDragStop", function()
-        addon.mainFrame:StopMovingOrSizing()
-        UIManager.SavePosition(addon)
     end)
     
     addon.grabTab:SetScript("OnEnter", function()
@@ -1159,41 +1291,94 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
         button:SetPoint("LEFT", offset, 0)
     end
 
+    -- Slot background (Blizzard style depth effect)
+    local slotBackground = button:CreateTexture(nil, "BACKGROUND", nil, 0)
+    slotBackground:SetAllPoints(button)
+    slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
+    button.SlotBackground = slotBackground
+    
+    -- Slot art overlay
+    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+    slotArt:SetAllPoints(button)
+    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    button.SlotArt = slotArt
+
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
     button.iconTexture = iconTexture
     
-    -- Flash overlay for activation animation (pale orange flash when key pressed)
-    -- Use OVERLAY layer sublevel 2 (above icon and borders, below text)
-    local flashTexture = button:CreateTexture(nil, "OVERLAY", nil, 2)
-    flashTexture:SetColorTexture(1.0, 0.82, 0.6)  -- Pale orange to match action bar flash
-    flashTexture:SetBlendMode("ADD")  -- Additive blending for bright flash effect
-    -- Scale to 90% of button size to fit within borders
-    flashTexture:SetPoint("CENTER", button, "CENTER")
-    flashTexture:SetSize(actualIconSize * 0.9, actualIconSize * 0.9)
-    flashTexture:SetAlpha(0)  -- Start fully transparent
+    -- Note: Icon mask removed - atlas doesn't scale well with variable icon sizes
+    -- The NormalTexture frame border provides the visual framing instead
+    
+    -- Normal texture (button frame border - Blizzard style)
+    local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
+    normalTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    normalTexture:SetSize(actualIconSize + 1, actualIconSize)  -- Blizzard uses 46x45 for 45x45 button
+    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    button.NormalTexture = normalTexture
+    
+    -- Pushed texture (shown when button is pressed - Blizzard style)
+    local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
+    pushedTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    pushedTexture:SetSize(actualIconSize + 1, actualIconSize)
+    pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
+    pushedTexture:Hide()
+    button.PushedTexture = pushedTexture
+    
+    -- Highlight texture (shown on mouseover - Blizzard style)
+    local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
+    highlightTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
+    highlightTexture:SetSize(actualIconSize + 1, actualIconSize)
+    highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    button.HighlightTexture = highlightTexture
+    
+    -- Flash overlay for key press activation (on separate high-level frame)
+    -- Must be above marching ants (+5) and proc glow (+6) frames
+    local flashFrame = CreateFrame("Frame", nil, button)
+    flashFrame:SetAllPoints(button)
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
+    
+    -- Base flash texture (slightly larger than icon for visibility)
+    local flashSize = actualIconSize * 1.08  -- 8% larger to extend beyond glow effects
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY")
+    flashTexture:SetPoint("CENTER", button, "CENTER", 0, 0)
+    flashTexture:SetSize(flashSize, flashSize)
+    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture:SetBlendMode("ADD")  -- Additive blend for brighter effect
+    flashTexture:SetAlpha(1.0)
     flashTexture:Hide()
     button.Flash = flashTexture
+    
+    -- Second flash layer for extra intensity (stacked ADD blend)
+    local flashGlow = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    flashGlow:SetPoint("CENTER", button, "CENTER", 0, 0)
+    flashGlow:SetSize(flashSize, flashSize)
+    flashGlow:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashGlow:SetBlendMode("ADD")
+    flashGlow:SetAlpha(0.6)  -- Additional brightness layer
+    flashGlow:Hide()
+    button.FlashGlow = flashGlow
+    button.FlashFrame = flashFrame
     
     -- Flash animation state
     button.flashing = 0
     button.flashtime = 0
 
-    -- Pushed texture overlay for click feedback (darkens icon when pressed)
-    local pushedTexture = button:CreateTexture(nil, "OVERLAY")
-    pushedTexture:SetAllPoints(button)
-    pushedTexture:SetColorTexture(0, 0, 0, CLICK_DARKEN_ALPHA)
-    pushedTexture:Hide()
-    button.pushedTexture = pushedTexture
-
+    -- Cooldown frame with Blizzard-style 3px inset from icon edges
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    cooldown:SetAllPoints(button)
-    cooldown:SetDrawEdge(true)
+    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 3, -3)
+    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -3, 3)
+    cooldown:SetDrawEdge(false)  -- No gold edge for GCD swipe (only used for ability cooldowns)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
+    cooldown:SetSwipeColor(0, 0, 0, 0.8)  -- Blizzard's swipe color
     button.cooldown = cooldown
     
-    local hotkeyText = button:CreateFontString(nil, "OVERLAY", nil, 3)
+    -- Hotkey text on highest frame level to ensure visibility above all animations
+    local hotkeyFrame = CreateFrame("Frame", nil, button)
+    hotkeyFrame:SetAllPoints(button)
+    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
+    local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
     local fontSize = math.max(HOTKEY_MIN_FONT_SIZE, math.floor(actualIconSize * HOTKEY_FONT_SCALE))
     hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
     hotkeyText:SetTextColor(1, 1, 1, 1)
@@ -1206,32 +1391,32 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     end
     
     button.hotkeyText = hotkeyText
+    button.hotkeyFrame = hotkeyFrame
     
-    -- Click feedback: show pushed state on mouse down
+    -- Click feedback: show Blizzard-style pushed texture on mouse down
     button:SetScript("OnMouseDown", function(self, mouseButton)
         if mouseButton == "LeftButton" and self.spellID then
-            self.pushedTexture:Show()
-            -- Slight scale down for tactile feedback
-            self.iconTexture:SetPoint("TOPLEFT", self, "TOPLEFT", CLICK_INSET_PIXELS, -CLICK_INSET_PIXELS)
-            self.iconTexture:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", -CLICK_INSET_PIXELS, CLICK_INSET_PIXELS)
+            self.NormalTexture:Hide()
+            self.PushedTexture:Show()
         end
     end)
     
     button:SetScript("OnMouseUp", function(self, mouseButton)
-        self.pushedTexture:Hide()
-        -- Restore normal size
-        self.iconTexture:ClearAllPoints()
-        self.iconTexture:SetAllPoints(self)
+        self.PushedTexture:Hide()
+        self.NormalTexture:Show()
     end)
     
     -- SIMPLIFIED: Only right-click for configuration, no other interactions
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" and self.spellID then
-            -- Block interactions if panel is locked
+            -- Block interactions if panel is locked or in combat (prevents taint)
             local profile = addon:GetProfile()
             if profile and profile.panelLocked then
                 return
+            end
+            if InCombatLockdown() then
+                return  -- Silently ignore - configuration not allowed in combat
             end
             
             if IsShiftKeyDown() then
@@ -1298,7 +1483,10 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
             HotKey = button.hotkeyText,
-            Pushed = button.pushedTexture,
+            Normal = button.NormalTexture,
+            Pushed = button.PushedTexture,
+            Highlight = button.HighlightTexture,
+            Flash = button.Flash,
         })
     end
     
@@ -1378,24 +1566,37 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
 
                 -- Update cooldown display (including GCD for timing feedback)
                 local start, duration = GetSpellCooldown(spellID)
-                if start and start > 0 and duration and duration > 0 then
-                    -- Only update cooldown if values changed significantly
-                    if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
-                        icon.cooldown:SetCooldown(start, duration)
-                        icon.cooldown:Show()
-                        icon.lastCooldownStart = start
-                        icon.lastCooldownDuration = duration
-                    end
-                else
-                    if icon.lastCooldownDuration ~= 0 then
-                        icon.cooldown:Hide()
-                        icon.lastCooldownStart = 0
-                        icon.lastCooldownDuration = 0
+                
+                -- Early exit for secret values (12.0+): skip cooldown update if values are secret
+                local startIsSecret = issecretvalue and issecretvalue(start)
+                local durationIsSecret = issecretvalue and issecretvalue(duration)
+                
+                if not startIsSecret and not durationIsSecret then
+                    if start and start > 0 and duration and duration > 0 then
+                        -- Only update cooldown if values changed significantly
+                        if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
+                            icon.cooldown:SetCooldown(start, duration)
+                            icon.cooldown:Show()
+                            icon.lastCooldownStart = start
+                            icon.lastCooldownDuration = duration
+                        end
+                    else
+                        if icon.lastCooldownDuration ~= 0 then
+                            icon.cooldown:Hide()
+                            icon.lastCooldownStart = 0
+                            icon.lastCooldownDuration = 0
+                        end
                     end
                 end
+                -- If values are secret, leave cooldown display unchanged (graceful degradation)
 
                 -- Check if spell has an active proc (overlay)
                 local isProc = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
+                
+                -- Early exit for secret boolean (12.0+): treat secret as no-proc
+                if issecretvalue and issecretvalue(isProc) then
+                    isProc = false  -- Graceful degradation: no proc glow if we can't check
+                end
 
                 if i == 1 and focusEmphasis then
                     -- First icon: blue glow normally, gold when proc'd
@@ -1601,6 +1802,14 @@ end
 
 function UIManager.OpenHotkeyOverrideDialog(addon, spellID)
     if not addon or not spellID then return end
+    
+    -- Prevent taint: never modify globals or show popups during combat
+    if InCombatLockdown() then
+        if addon.Print then
+            addon:Print("Cannot change hotkey during combat")
+        end
+        return
+    end
     
     local spellInfo = addon:GetCachedSpellInfo(spellID)
     if not spellInfo then return end

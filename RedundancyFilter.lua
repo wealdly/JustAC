@@ -1,11 +1,11 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module
--- Filters out spells that are redundant (already active buffs, forms, pets, etc.)
+-- Filters out spells that are redundant (already active buffs, forms, pets, poisons, etc.)
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
---       like being in a form or having a pet. Aura refreshes are generally allowed.
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 10)
+--       like being in a form, having a pet, or already having weapon poisons applied.
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 13)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -29,20 +29,12 @@ local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AUR
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
 
--- Pet state is invalidated on UNIT_PET events from main addon
--- No time-based caching needed - UnitExists() is a fast C call
-local cachedHasPet = nil
-
 -- Cached aura data (invalidated on UNIT_AURA event)
 local cachedAuras = {}
 local lastAuraCheck = 0
 local AURA_CACHE_DURATION = 0.2
 
--- Safe wrapper for GetTime (use cached version in hot path)
-local function SafeGetTime()
-    return GetTime()
-end
-
+-- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
@@ -50,9 +42,9 @@ end
 local function GetCachedSpellInfo(spellID)
     return BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or nil
 end
--- Invalidate cached state (called on UNIT_PET/UNIT_AURA events from main addon)
+
+-- Invalidate cached aura state (called on UNIT_AURA events from main addon)
 function RedundancyFilter.InvalidateCache()
-    cachedHasPet = nil
     wipe(cachedAuras)
     lastAuraCheck = 0
 end
@@ -61,35 +53,19 @@ end
 -- Safe API Wrappers
 --------------------------------------------------------------------------------
 
-local function SafeUnitExists(unit)
-    if not UnitExists then return false end
-    local ok, result = pcall(UnitExists, unit)
-    return ok and result
+-- Generic safe call wrapper: returns fallback on error or if func doesn't exist
+local function SafeCall(func, fallback, ...)
+    if not func then return fallback end
+    local ok, result = pcall(func, ...)
+    return ok and result or fallback
 end
 
-local function SafeHasPetUI()
-    if not HasPetUI then return false end
-    local ok, hasUI = pcall(HasPetUI)
-    return ok and hasUI
-end
-
-local function SafeHasPetSpells()
-    if not HasPetSpells then return false end
-    local ok, result = pcall(HasPetSpells)
-    return ok and result
-end
-
-local function SafeIsMounted()
-    if not IsMounted then return false end
-    local ok, result = pcall(IsMounted)
-    return ok and result
-end
-
-local function SafeIsStealthed()
-    if not IsStealthed then return false end
-    local ok, result = pcall(IsStealthed)
-    return ok and result
-end
+-- Convenience wrappers using SafeCall
+local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
+local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
+local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
+local function SafeIsMounted() return SafeCall(IsMounted, false) end
+local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
 --------------------------------------------------------------------------------
 -- Dynamic Aura Detection
@@ -98,7 +74,7 @@ end
 -- Build cache of current player auras (by spellID, name, and icon)
 -- Now also stores duration and expiration time for pandemic window checks
 local function RefreshAuraCache()
-    local now = SafeGetTime()
+    local now = GetTime()
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
         return cachedAuras
     end
@@ -114,6 +90,16 @@ local function RefreshAuraCache()
         for i = 1, 40 do
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end
+            
+            -- Early exit: If aura data contains secrets, skip this aura (12.0+)
+            -- Check spellId first as it's the most critical field
+            if issecretvalue and (issecretvalue(auraData.spellId) or issecretvalue(auraData.name)) then
+                -- Secret values detected - cache is unreliable, early exit
+                -- Setting a flag so we know the cache is incomplete
+                cachedAuras.hasSecrets = true
+                break  -- Stop processing, cache will fail-open
+            end
+            
             if auraData.spellId then
                 cachedAuras.byID[auraData.spellId] = true
                 -- Store aura timing info for pandemic check
@@ -135,6 +121,13 @@ local function RefreshAuraCache()
         for i = 1, 40 do
             local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
             if not ok or not name then break end
+            
+            -- Early exit: If aura data contains secrets, skip processing (12.0+)
+            if issecretvalue and (issecretvalue(spellId) or issecretvalue(name)) then
+                cachedAuras.hasSecrets = true
+                break  -- Stop processing, cache will fail-open
+            end
+            
             if spellId then
                 cachedAuras.byID[spellId] = true
                 cachedAuras.auraInfo[spellId] = {
@@ -182,7 +175,7 @@ local function IsInPandemicWindow(spellID)
     -- Auras with 0 duration are permanent/passive - don't consider them for refresh
     if duration <= 0 then return false end
     
-    local now = SafeGetTime()
+    local now = GetTime()
     local remaining = expirationTime - now
     
     -- Allow refresh if remaining time is less than pandemic threshold
@@ -248,16 +241,17 @@ end
 --------------------------------------------------------------------------------
 
 local function HasActivePet()
-    -- Fast path: return cached value (invalidated by UNIT_PET events)
-    if cachedHasPet ~= nil then
-        return cachedHasPet
-    end
-    
-    -- Check methods in order of speed/reliability
-    local hasPet = SafeUnitExists("pet") or SafeHasPetUI() or SafeHasPetSpells()
-    
-    cachedHasPet = hasPet
-    return hasPet
+    -- UnitExists/HasPetUI/HasPetSpells are fast C calls, no cache needed
+    return SafeUnitExists("pet") or SafeHasPetUI() or SafeHasPetSpells()
+end
+
+-- Check if pet is alive (exists AND not dead)
+local function IsPetAlive()
+    if not SafeUnitExists("pet") then return false end
+    -- UnitIsDead returns true if unit is dead, false if alive
+    local ok, isDead = pcall(UnitIsDead, "pet")
+    if not ok then return true end  -- Fail-safe: assume alive
+    return not isDead
 end
 
 --------------------------------------------------------------------------------
@@ -307,10 +301,97 @@ local function IsPetSummonSpell(spellName)
     return false
 end
 
+-- Detect if spell is a pet revive/resurrection spell
+local function IsPetReviveSpell(spellName)
+    if not spellName then return false end
+    return spellName:find("Revive Pet") or spellName:find("Heart of the Phoenix")
+end
+
 -- Detect if spell is a stealth ability
 local function IsStealthSpell(spellName)
     if not spellName then return false end
     return spellName:find("Stealth") or spellName:find("Prowl") or spellName:find("Shadowmeld")
+end
+
+--------------------------------------------------------------------------------
+-- Rogue Poison Detection
+-- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
+-- If both slots are filled, all poison suggestions are redundant
+--------------------------------------------------------------------------------
+
+-- All Rogue poison spell IDs (the application spells)
+-- These create player buffs with the same name
+local ROGUE_POISON_SPELLS = {
+    -- Lethal Poisons
+    [2823] = true,   -- Deadly Poison
+    [8679] = true,   -- Wound Poison
+    [315584] = true, -- Instant Poison
+    [381664] = true, -- Atrophic Poison
+    -- Non-Lethal Poisons
+    [3408] = true,   -- Crippling Poison
+    [5761] = true,   -- Numbing Poison
+}
+
+-- Poison buff names to check for active auras
+local ROGUE_POISON_NAMES = {
+    "Deadly Poison",
+    "Wound Poison",
+    "Instant Poison",
+    "Atrophic Poison",
+    "Crippling Poison",
+    "Numbing Poison",
+}
+
+-- Check if a spell is a Rogue poison application spell
+local function IsRoguePoisonSpell(spellID)
+    return spellID and ROGUE_POISON_SPELLS[spellID]
+end
+
+-- Count how many poison buffs are currently active on the player
+local function CountActivePoisonBuffs()
+    local count = 0
+    for _, poisonName in ipairs(ROGUE_POISON_NAMES) do
+        if HasBuffByName(poisonName) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+--------------------------------------------------------------------------------
+-- Weapon Enchant Detection (for Shaman Imbues)
+--------------------------------------------------------------------------------
+
+-- Minimum time remaining to consider weapon enchant "active" (in milliseconds)
+-- 10 seconds = 10000 ms - if less than this, allow refresh
+local WEAPON_ENCHANT_REFRESH_THRESHOLD = 10000
+
+-- Shaman weapon imbue spell IDs
+-- Maps the spell you cast to apply the weapon enchant
+local WEAPON_ENCHANT_SPELLS = {
+    [33757] = true,  -- Windfury Weapon
+    [318038] = true, -- Flametongue Weapon (low-level version)
+    [334294] = true, -- Flametongue Weapon (retail main spell)
+}
+
+-- Check if a spell is a weapon enchant application spell (Shaman imbue)
+local function IsWeaponEnchantSpell(spellID)
+    return spellID and WEAPON_ENCHANT_SPELLS[spellID]
+end
+
+-- Check if main-hand weapon has enchant with sufficient time remaining
+-- Returns true if main-hand has active enchant, false otherwise
+local function HasActiveWeaponEnchant()
+    if not GetWeaponEnchantInfo then return false end
+    
+    local hasMainHand, mainHandExpiration = GetWeaponEnchantInfo()
+    
+    -- Main-hand enchant required
+    -- If missing or expiring soon, allow refresh
+    if not hasMainHand then return false end
+    if mainHandExpiration and mainHandExpiration < WEAPON_ENCHANT_REFRESH_THRESHOLD then return false end
+    
+    return true
 end
 
 --------------------------------------------------------------------------------
@@ -319,6 +400,18 @@ end
 
 function RedundancyFilter.IsSpellRedundant(spellID)
     if not spellID then return false end
+    
+    -- Check if aura API is accessible (12.0+ secret values may block this)
+    -- If blocked, fail-open: don't filter anything (show extra rather than hide valid)
+    if BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable() then
+        return false
+    end
+    
+    -- Early exit: If cache detected secrets during refresh, fail-open
+    local auras = RefreshAuraCache()
+    if auras and auras.hasSecrets then
+        return false  -- Fail-open: show the spell rather than incorrectly filtering
+    end
     
     local spellInfo = GetCachedSpellInfo(spellID)
     if not spellInfo or not spellInfo.name then return false end
@@ -352,8 +445,7 @@ function RedundancyFilter.IsSpellRedundant(spellID)
             end
             return true
         end
-    end
-    
+    end    
     -- 2. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
     -- Many abilities can stack (Immolation Aura, etc.) - trust Assisted Combat's judgment
@@ -392,15 +484,27 @@ function RedundancyFilter.IsSpellRedundant(spellID)
     -- If Assisted Combat suggests it, there's probably a reason
     -- Skip this check - trust Assisted Combat for unlisted spells
     
-    -- 4. PET SUMMON REDUNDANCY
-    -- Use LibPlayerSpells PET flag if available, otherwise fall back to name patterns
-    local isPetSpellByLPS = IsPetSpell(spellID)
-    if (isPetSpellByLPS or IsPetSummonSpell(spellName)) and HasActivePet() then
-        if debugMode then
-            local source = isPetSpellByLPS and "LPS:PET" or "name pattern"
-            print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
+    -- 4. PET SPELL REDUNDANCY
+    -- Revive Pet: redundant if pet is ALIVE (can't revive alive pet)
+    -- Summon Pet: redundant if pet EXISTS (alive or dead - already have a pet)
+    if IsPetReviveSpell(spellName) then
+        -- Revive is redundant only if pet is alive
+        if IsPetAlive() then
+            if debugMode then
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Revive Pet but pet is alive")
+            end
+            return true
         end
-        return true
+    else
+        -- Pet summon spells: redundant if any pet exists
+        local isPetSpellByLPS = IsPetSpell(spellID)
+        if (isPetSpellByLPS or IsPetSummonSpell(spellName)) and HasActivePet() then
+            if debugMode then
+                local source = isPetSpellByLPS and "LPS:PET" or "name pattern"
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
+            end
+            return true
+        end
     end
     
     -- 5. STEALTH REDUNDANCY
@@ -424,6 +528,39 @@ function RedundancyFilter.IsSpellRedundant(spellID)
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
             end
             return true
+        end
+    end
+    
+    -- 7. ROGUE POISON REDUNDANCY
+    -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
+    -- If both slots are filled, all poison suggestions are redundant
+    if IsRoguePoisonSpell(spellID) then
+        local activePoisons = CountActivePoisonBuffs()
+        if activePoisons >= 2 then
+            if debugMode then
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Already have " .. activePoisons .. " poisons active (max 2)")
+            end
+            return true
+        else
+            if debugMode then
+                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Poison slot available (" .. activePoisons .. "/2 active)")
+            end
+        end
+    end
+    
+    -- 8. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
+    -- If this is a Shaman imbue spell and weapon already has active enchant, skip it
+    -- Only check if enchants have sufficient time remaining (>10s)
+    if IsWeaponEnchantSpell(spellID) then
+        if HasActiveWeaponEnchant() then
+            if debugMode then
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Weapon enchant already active with time remaining")
+            end
+            return true
+        else
+            if debugMode then
+                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Weapon enchant needed (missing or expiring)")
+            end
         end
     end
     

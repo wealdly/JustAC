@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 1)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 5)
 if not DebugCommands then return end
 
 function DebugCommands.FormDetection(addon)
@@ -134,6 +134,35 @@ function DebugCommands.ModuleDiagnostics(addon)
     addon:Print("  Profile: " .. (addon.db and addon.db.profile and "|cff00ff00OK|r" or "|cffff0000FAILED|r"))
     addon:Print("  Debug Mode: " .. (addon.db and addon.db.profile and addon.db.profile.debugMode and "|cff00ff00ON|r" or "|cffaaaaaa OFF|r"))
     
+    -- Check 12.0+ Feature Availability (Secret Value handling)
+    -- Each secret type tracked independently
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.GetFeatureAvailability then
+        addon:Print("")
+        addon:Print("Feature Availability (12.0+ Secrets):")
+        local features = BlizzardAPI.GetFeatureAvailability()
+        addon:Print("  Health API (Defensives): " .. (features.healthAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
+        addon:Print("  Aura API (Redundancy):   " .. (features.auraAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
+        addon:Print("  Cooldown API (Display):  " .. (features.cooldownAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
+        addon:Print("  Proc API (Prioritize):   " .. (features.procAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
+        
+        -- Show bypass states for queue filtering
+        local bypassSlot1 = (not features.auraAccess) or (not features.procAccess)
+        local bypassRedundancy = not features.auraAccess
+        local bypassProcs = not features.procAccess
+        addon:Print("")
+        addon:Print("Queue Bypass States:")
+        addon:Print("  Slot 1 Blacklist: " .. (bypassSlot1 and "|cffffff00BYPASSED|r" or "|cff00ff00ACTIVE|r"))
+        addon:Print("  Redundancy Filter: " .. (bypassRedundancy and "|cffffff00BYPASSED|r" or "|cff00ff00ACTIVE|r"))
+        addon:Print("  Proc Prioritization: " .. (bypassProcs and "|cffffff00BYPASSED|r" or "|cff00ff00ACTIVE|r"))
+        
+        if BlizzardAPI.IsMidnightOrLater then
+            addon:Print("")
+            addon:Print("  Interface Version: " .. (BlizzardAPI.GetInterfaceVersion and BlizzardAPI.GetInterfaceVersion() or "?"))
+            addon:Print("  Midnight (12.0+): " .. (BlizzardAPI.IsMidnightOrLater() and "|cffffff00YES|r" or "NO"))
+        end
+    end
+    
     addon:Print("===========================")
 end
 
@@ -145,11 +174,107 @@ function DebugCommands.FindSpell(addon, spellName)
     end
     
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    if ActionBarScanner and ActionBarScanner.FindSpellInSlots then
-        ActionBarScanner.FindSpellInSlots(spellName)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local MacroParser = LibStub("JustAC-MacroParser", true)
+    
+    addon:Print("=== Searching for: " .. spellName .. " ===")
+    
+    -- First, try to get spell info
+    local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellName)
+    if spellInfo then
+        addon:Print("Spell ID: " .. spellInfo.spellID .. " | Name: " .. spellInfo.name)
+        
+        -- Clear the cache for this spell so we get a fresh lookup
+        if ActionBarScanner and ActionBarScanner.ClearSpellHotkeyCache then
+            ActionBarScanner.ClearSpellHotkeyCache(spellInfo.spellID)
+            addon:Print("(Cache cleared for fresh lookup)")
+        end
     else
-        addon:Print("ActionBarScanner not available")
+        addon:Print("Could not find spell info for: " .. spellName)
     end
+    
+    local lowerSpellName = spellName:lower()
+    local foundAnything = false
+    
+    for slot = 1, 180 do
+        if HasAction(slot) then
+            local actionType, actionID, subType, macroSpellID = GetActionInfo(slot)
+            
+            -- Check direct spells
+            if actionType == "spell" and actionID then
+                local slotSpellInfo = C_Spell.GetSpellInfo(actionID)
+                if slotSpellInfo and slotSpellInfo.name and slotSpellInfo.name:lower():find(lowerSpellName, 1, true) then
+                    local key = GetBindingKey("ACTIONBUTTON" .. slot) or GetBindingKey("ACTIONBUTTON" .. ((slot - 1) % 12 + 1))
+                    addon:Print("DIRECT SPELL slot " .. slot .. ": " .. slotSpellInfo.name .. " (key: " .. tostring(key or "none") .. ")")
+                    foundAnything = true
+                end
+            end
+            
+            -- Check macros - use MacroParser as the primary check, not simple string.find
+            if actionType == "macro" then
+                local macroName = GetActionText(slot)
+                if macroName then
+                    local name, icon, body = GetMacroInfo(macroName)
+                    if body and MacroParser and spellInfo then
+                        -- Use MacroParser as the authoritative check
+                        local parsedEntry = MacroParser.GetMacroSpellInfo(slot, spellInfo.spellID, spellInfo.name)
+                        if parsedEntry and parsedEntry.found then
+                            local key = GetBindingKey("ACTIONBUTTON" .. slot) or GetBindingKey("ACTIONBUTTON" .. ((slot - 1) % 12 + 1))
+                            addon:Print("MACRO slot " .. slot .. ": '" .. macroName .. "' |cff00ff00CASTS|r '" .. spellName .. "'")
+                            addon:Print("  macroSpellID from GetActionInfo: " .. tostring(macroSpellID))
+                            addon:Print("  subType: " .. tostring(subType))
+                            addon:Print("  key: " .. tostring(key or "none"))
+                            addon:Print("  |cff00ff00MacroParser: MATCH|r (score: " .. tostring(parsedEntry.qualityScore) .. ")")
+                            foundAnything = true
+                        elseif body:lower():find(lowerSpellName, 1, true) then
+                            -- String found but MacroParser says NO MATCH - likely a false positive
+                            local key = GetBindingKey("ACTIONBUTTON" .. slot) or GetBindingKey("ACTIONBUTTON" .. ((slot - 1) % 12 + 1))
+                            addon:Print("MACRO slot " .. slot .. ": '" .. macroName .. "' |cffff8800MENTIONS|r '" .. spellName .. "' (not in /cast line)")
+                            addon:Print("  key: " .. tostring(key or "none"))
+                            addon:Print("  |cffff0000MacroParser: NO MATCH|r (spell not in a castable line)")
+                            foundAnything = true
+                        end
+                    elseif body and body:lower():find(lowerSpellName, 1, true) then
+                        -- MacroParser not available, fall back to simple string find
+                        local key = GetBindingKey("ACTIONBUTTON" .. slot) or GetBindingKey("ACTIONBUTTON" .. ((slot - 1) % 12 + 1))
+                        addon:Print("MACRO slot " .. slot .. ": '" .. macroName .. "' contains '" .. spellName .. "' (MacroParser unavailable)")
+                        addon:Print("  key: " .. tostring(key or "none"))
+                        foundAnything = true
+                    end
+                end
+            end
+        end
+    end
+    
+    if not foundAnything then
+        addon:Print("No matches found")
+    end
+    
+    -- Test ActionBarScanner.GetSpellHotkey directly with verbose debug
+    if spellInfo and ActionBarScanner and ActionBarScanner.GetSpellHotkey then
+        addon:Print("")
+        addon:Print("ActionBarScanner.GetSpellHotkey(" .. spellInfo.spellID .. "):")
+        
+        -- Enable verbose debug for this call only
+        if ActionBarScanner.SetVerboseDebug then
+            ActionBarScanner.SetVerboseDebug(true)
+        end
+        
+        local hotkey = ActionBarScanner.GetSpellHotkey(spellInfo.spellID)
+        
+        -- Disable verbose debug
+        if ActionBarScanner.SetVerboseDebug then
+            ActionBarScanner.SetVerboseDebug(false)
+        end
+        
+        if hotkey and hotkey ~= "" then
+            addon:Print("  Result: '" .. hotkey .. "'")
+        else
+            addon:Print("  Result: (empty/nil)")
+        end
+    end
+    
+    addon:Print("=============================")
 end
 
 -- Profile management
@@ -190,6 +315,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac find <spell> - Find spell on action bars")
     addon:Print("/jac form - Show form debug info")
     addon:Print("/jac formcheck - Check current form detection")
+    addon:Print("/jac macrotest <name> - Test macro parsing")
+    addon:Print("/jac macrodump <name> - Dump raw macro body")
     addon:Print("/jac lps <spellID> - Show LibPlayerSpells info for spell")
     addon:Print("/jac reset - Reset frame position")
     addon:Print("/jac profile <n> - Switch profile")
@@ -203,19 +330,19 @@ end
 
 -- Show blacklisted spells
 function DebugCommands.ShowBlacklist(addon)
-    local profile = addon.db and addon.db.profile
-    if not profile then
-        addon:Print("No profile loaded")
+    local charData = addon.db and addon.db.char
+    if not charData then
+        addon:Print("No character data loaded")
         return
     end
     
-    local blacklist = profile.blacklistedSpells
+    local blacklist = charData.blacklistedSpells
     if not blacklist then
         addon:Print("Blacklist table is nil")
         return
     end
     
-    addon:Print("=== Blacklisted Spells ===")
+    addon:Print("=== Blacklisted Spells (Character-Specific) ===")
     local count = 0
     for spellID, data in pairs(blacklist) do
         local spellInfo = C_Spell.GetSpellInfo(spellID)
@@ -228,19 +355,19 @@ end
 
 -- Show hotkey overrides
 function DebugCommands.ShowOverrides(addon)
-    local profile = addon.db and addon.db.profile
-    if not profile then
-        addon:Print("No profile loaded")
+    local charData = addon.db and addon.db.char
+    if not charData then
+        addon:Print("No character data loaded")
         return
     end
     
-    local overrides = profile.hotkeyOverrides
+    local overrides = charData.hotkeyOverrides
     if not overrides then
         addon:Print("Overrides table is nil")
         return
     end
     
-    addon:Print("=== Hotkey Overrides ===")
+    addon:Print("=== Hotkey Overrides (Character-Specific) ===")
     local count = 0
     for spellID, hotkey in pairs(overrides) do
         local spellInfo = C_Spell.GetSpellInfo(spellID)
@@ -253,17 +380,17 @@ end
 
 -- Show raw saved data for debugging key types
 function DebugCommands.ShowRawData(addon)
-    local profile = addon.db and addon.db.profile
-    if not profile then
-        addon:Print("No profile loaded")
+    local charData = addon.db and addon.db.char
+    if not charData then
+        addon:Print("No character data loaded")
         return
     end
     
-    addon:Print("=== Raw Saved Data Debug ===")
+    addon:Print("=== Raw Saved Data Debug (Character-Specific) ===")
     
     -- Blacklist
     addon:Print("Blacklist:")
-    local blacklist = profile.blacklistedSpells or {}
+    local blacklist = charData.blacklistedSpells or {}
     local blCount = 0
     for key, value in pairs(blacklist) do
         local keyType = type(key)
@@ -276,7 +403,7 @@ function DebugCommands.ShowRawData(addon)
     
     -- Hotkey overrides
     addon:Print("Hotkey Overrides:")
-    local overrides = profile.hotkeyOverrides or {}
+    local overrides = charData.hotkeyOverrides or {}
     local hkCount = 0
     for key, value in pairs(overrides) do
         local keyType = type(key)
@@ -378,5 +505,108 @@ function DebugCommands.LPSInfo(addon, spellIDStr)
     end
     
     addon:Print("Raw flags value: " .. tostring(info.flags))
+    addon:Print("==========================================")
+end
+
+-- Test macro parsing for a specific spell
+function DebugCommands.TestMacroParsing(addon, macroName)
+    if not macroName or macroName == "" then
+        addon:Print("Usage: /jac macrotest <macro name>")
+        addon:Print("Tests how MacroParser handles the named macro")
+        return
+    end
+    
+    local MacroParser = LibStub("JustAC-MacroParser", true)
+    local FormCache = LibStub("JustAC-FormCache", true)
+    
+    if not MacroParser then
+        addon:Print("MacroParser module not available")
+        return
+    end
+    
+    -- Get macro body
+    local name, icon, body = GetMacroInfo(macroName)
+    if not name or not body then
+        addon:Print("Macro not found: " .. macroName)
+        return
+    end
+    
+    addon:Print("=== Macro Parse Test: " .. name .. " ===")
+    addon:Print("Body:")
+    for line in body:gmatch("[^\r\n]+") do
+        addon:Print("  " .. line)
+    end
+    
+    -- Show current state
+    local currentSpec = GetSpecialization() or 0
+    local currentForm = FormCache and FormCache.GetActiveForm() or 0
+    local inCombat = UnitAffectingCombat("player")
+    local inStealth = IsStealthed and IsStealthed() or false
+    
+    addon:Print("")
+    addon:Print("Current State:")
+    addon:Print("  Spec: " .. currentSpec)
+    addon:Print("  Form: " .. currentForm)
+    addon:Print("  Combat: " .. tostring(inCombat))
+    addon:Print("  Stealth: " .. tostring(inStealth))
+    
+    -- Test parsing against current queue
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
+    if SpellQueue and SpellQueue.GetCurrentSpellQueue then
+        local queue = SpellQueue.GetCurrentSpellQueue()
+        if queue and #queue > 0 then
+            addon:Print("")
+            addon:Print("Testing against current queue:")
+            for i, spellEntry in ipairs(queue) do
+                -- Handle both formats: simple spell ID or spell entry table
+                local spellID, spellName
+                if type(spellEntry) == "number" then
+                    spellID = spellEntry
+                    local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                    spellName = spellInfo and spellInfo.name or "Unknown"
+                else
+                    spellID = spellEntry.spellID or spellEntry
+                    spellName = spellEntry.spellName or "Unknown"
+                end
+                
+                local found, modifiers = MacroParser.ParseMacroForSpell(body, spellID, spellName)
+                local status = found and "|cff00ff00MATCH|r" or "|cffff0000NO MATCH|r"
+                addon:Print("  " .. i .. ". " .. spellName .. " (" .. spellID .. "): " .. status)
+                if found and modifiers then
+                    for k, v in pairs(modifiers) do
+                        addon:Print("      modifier: " .. k .. " = " .. tostring(v))
+                    end
+                end
+            end
+        else
+            addon:Print("No spells in queue (enter combat to test)")
+        end
+    end
+    
+    addon:Print("==========================================")
+end
+
+-- Dump raw macro body for debugging
+function DebugCommands.DumpMacroBody(addon, macroName)
+    if not macroName or macroName == "" then
+        addon:Print("Usage: /jac macrodump <macro name>")
+        addon:Print("Shows the raw macro body for debugging")
+        return
+    end
+    
+    local name, icon, body = GetMacroInfo(macroName)
+    if not name or not body then
+        addon:Print("Macro not found: " .. macroName)
+        return
+    end
+    
+    addon:Print("=== Macro Dump: " .. name .. " ===")
+    addon:Print("Raw body (" .. #body .. " chars):")
+    -- Print each line with line numbers
+    local lineNum = 0
+    for line in body:gmatch("[^\r\n]+") do
+        lineNum = lineNum + 1
+        addon:Print(string.format("  %02d: %s", lineNum, line))
+    end
     addon:Print("==========================================")
 end

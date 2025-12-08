@@ -96,9 +96,18 @@ local CLASS_COOLDOWN_DEFAULTS = {
     WARRIOR = {871, 118038, 97462, 23920},           -- Shield Wall, Die by the Sword, Rallying Cry, Spell Reflect
 }
 
+-- Pet heal spells: for classes with permanent pets (Hunter, Warlock)
+-- These are shown when PET health is low, not player health
+-- Exhilaration (109304) heals both player AND pet, so it's in both lists
+local CLASS_PETHEAL_DEFAULTS = {
+    HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
+    WARLOCK = {755},                                 -- Health Funnel
+}
+
 -- Expose defaults for Options module
 JustAC.CLASS_SELFHEAL_DEFAULTS = CLASS_SELFHEAL_DEFAULTS
 JustAC.CLASS_COOLDOWN_DEFAULTS = CLASS_COOLDOWN_DEFAULTS
+JustAC.CLASS_PETHEAL_DEFAULTS = CLASS_PETHEAL_DEFAULTS
 
 local defaults = {
     profile = {
@@ -112,8 +121,6 @@ local defaults = {
         iconSpacing = 1,
         debugMode = false,
         isManualMode = false,
-        blacklistedSpells = {},
-        hotkeyOverrides = {},
         showTooltips = true,
         tooltipsInCombat = false,
         focusEmphasis = true,
@@ -133,14 +140,18 @@ local defaults = {
             position = "LEFT",        -- LEFT, ABOVE, or BELOW the primary spell
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
+            petHealThreshold = 50,    -- Show pet heals when PET health drops below this
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
+            petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
             showOnlyInCombat = true,  -- false = always visible, true = only in combat with thresholds
         },
     },
     char = {
         lastKnownSpec = nil,
         firstRun = true,
+        blacklistedSpells = {},   -- Character-specific spell blacklist
+        hotkeyOverrides = {},     -- Character-specific hotkey overrides
     },
     global = {
         version = "2.6",
@@ -157,37 +168,65 @@ end
 -- Normalize saved data: convert string keys to numbers, simplify formats
 -- This fixes issues where SavedVariables serialize numeric keys as strings
 function JustAC:NormalizeSavedData()
-    local profile = self.db and self.db.profile
-    if not profile then return end
+    local charData = self.db and self.db.char
+    if not charData then return end
     
     -- Normalize blacklistedSpells: string keys -> number, any truthy value -> true
-    if profile.blacklistedSpells then
+    if charData.blacklistedSpells then
         local normalized = {}
-        for key, value in pairs(profile.blacklistedSpells) do
+        for key, value in pairs(charData.blacklistedSpells) do
             local spellID = tonumber(key)
             if spellID and spellID > 0 and value then
                 normalized[spellID] = true  -- Simplified format
             end
         end
-        profile.blacklistedSpells = normalized
+        charData.blacklistedSpells = normalized
     end
     
     -- Normalize hotkeyOverrides: string keys -> number
-    if profile.hotkeyOverrides then
+    if charData.hotkeyOverrides then
         local normalized = {}
-        for key, value in pairs(profile.hotkeyOverrides) do
+        for key, value in pairs(charData.hotkeyOverrides) do
             local spellID = tonumber(key)
             if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
                 normalized[spellID] = value
             end
         end
-        profile.hotkeyOverrides = normalized
+        charData.hotkeyOverrides = normalized
+    end
+    
+    -- Migration: Move old profile data to char if it exists
+    local profile = self.db and self.db.profile
+    if profile then
+        if profile.blacklistedSpells and next(profile.blacklistedSpells) then
+            for spellID, value in pairs(profile.blacklistedSpells) do
+                if not charData.blacklistedSpells[spellID] then
+                    charData.blacklistedSpells[tonumber(spellID) or spellID] = value
+                end
+            end
+            profile.blacklistedSpells = nil  -- Clear old data
+        end
+        if profile.hotkeyOverrides and next(profile.hotkeyOverrides) then
+            for spellID, value in pairs(profile.hotkeyOverrides) do
+                if not charData.hotkeyOverrides[spellID] then
+                    charData.hotkeyOverrides[tonumber(spellID) or spellID] = value
+                end
+            end
+            profile.hotkeyOverrides = nil  -- Clear old data
+        end
     end
 end
 
 function JustAC:OnInitialize()
     -- AceDB handles per-character profiles automatically
     self.db = AceDB:New("JustACDB", defaults)
+    
+    -- Initialize binding globals early (at ADDON_LOADED, before any combat)
+    -- This prevents taint from modifying _G during gameplay
+    if not _G.BINDING_NAME_JUSTAC_CAST_FIRST then
+        _G.BINDING_NAME_JUSTAC_CAST_FIRST = "JustAC: Cast First Spell"
+        _G.BINDING_HEADER_JUSTAC = "JustAssistedCombat"
+    end
     
     -- Normalize saved data (fix string keys, simplify formats)
     self:NormalizeSavedData()
@@ -299,11 +338,6 @@ function JustAC:OnEnable()
         end, self)
     end
     
-    if not _G.BINDING_NAME_JUSTAC_CAST_FIRST then
-        _G.BINDING_NAME_JUSTAC_CAST_FIRST = "JustAC: Cast First Spell"
-        _G.BINDING_HEADER_JUSTAC = "JustAssistedCombat"
-    end
-    
     if self.db.char.firstRun then
         self.db.char.firstRun = false
     end
@@ -355,67 +389,92 @@ function JustAC:CreateKeyPressDetector()
             fullKey = pressedKey
         end
         
-        -- Snapshot which icons to flash RIGHT NOW before the queue updates
-        -- This ensures we flash where the ability WAS, not where it moves to
-        local iconToFlash = nil  -- Only flash ONE icon (the first/primary match)
+        -- Flash feedback for all queue icons that match the pressed key
+        -- Special handling: don't flash slots 2+ if they match slot 1's PREVIOUS hotkey
+        -- (that means the spell just moved from slot 1 and we already executed it)
+        local iconsToFlash = {}
         local now = GetTime()
         local HOTKEY_GRACE_PERIOD = 0.15  -- Match previous hotkey for 150ms after change
+        local slot1PrevHotkey = nil  -- Track what slot 1's previous hotkey was
         
-        -- Check each visible icon's cached normalized hotkey
-        -- Priority: find the FIRST (lowest index) matching icon - that's the one Blizzard activates
         local spellIcons = addon.spellIcons
         if spellIcons then
-            for i = 1, #spellIcons do
-                local icon = spellIcons[i]
-                if icon and icon:IsShown() then
-                    local cachedHotkey = icon.normalizedHotkey
-                    local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
-                    
-                    -- Also check previous hotkey if it changed very recently
-                    -- This handles the case where spell moved out of slot just before keypress registered
-                    if not matched and icon.previousNormalizedHotkey and icon.hotkeyChangeTime then
-                        if (now - icon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                            local prevHotkey = icon.previousNormalizedHotkey
-                            matched = prevHotkey == fullKey or prevHotkey == pressedKey
-                        end
-                    end
-                    
-                    if matched then
-                        iconToFlash = icon
-                        break  -- Stop at first match - that's the primary ability
-                    end
-                end
-            end
-        end
-        
-        -- Check defensive icon only if no spell icon matched
-        if not iconToFlash then
-            local defIcon = addon.defensiveIcon
-            if defIcon and defIcon:IsShown() then
-                local cachedHotkey = defIcon.normalizedHotkey
-                local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
+            -- First check slot 1 and remember its previous hotkey
+            local icon1 = spellIcons[1]
+            if icon1 and icon1:IsShown() then
+                slot1PrevHotkey = icon1.previousNormalizedHotkey
+                local cachedHotkey = icon1.normalizedHotkey
+                -- Only match against fullKey (includes modifiers)
+                -- This prevents flashing when user presses SHIFT-1 but hotkey is just "1"
+                local matched = cachedHotkey and cachedHotkey == fullKey
                 
-                if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
-                    if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                        local prevHotkey = defIcon.previousNormalizedHotkey
-                        matched = prevHotkey == fullKey or prevHotkey == pressedKey
+                -- Slot 1: also check previous hotkey (spell moved but we pressed right key)
+                if not matched and slot1PrevHotkey and icon1.hotkeyChangeTime then
+                    if (now - icon1.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                        matched = slot1PrevHotkey == fullKey
                     end
                 end
                 
                 if matched then
-                    iconToFlash = defIcon
+                    iconsToFlash[#iconsToFlash + 1] = icon1
+                end
+            end
+            
+            -- Check slots 2+ but skip if hotkey matches slot 1's previous (spell just moved)
+            for i = 2, #spellIcons do
+                local icon = spellIcons[i]
+                if icon and icon:IsShown() then
+                    local cachedHotkey = icon.normalizedHotkey
+                    -- Only match against fullKey (includes modifiers)
+                    local matched = cachedHotkey and cachedHotkey == fullKey
+                    
+                    -- Skip if this matches slot 1's previous hotkey (spell just moved from slot 1)
+                    if matched and slot1PrevHotkey then
+                        if cachedHotkey == slot1PrevHotkey then
+                            matched = false  -- Don't flash - this is the spell we just cast
+                        end
+                    end
+                    
+                    if matched then
+                        iconsToFlash[#iconsToFlash + 1] = icon
+                    end
                 end
             end
         end
         
-        -- Flash the single matched icon
-        if iconToFlash then
-            StartFlash(iconToFlash)
+        -- Check defensive icon
+        local defIcon = addon.defensiveIcon
+        if defIcon and defIcon:IsShown() then
+            local cachedHotkey = defIcon.normalizedHotkey
+            -- Only match against fullKey (includes modifiers)
+            local matched = cachedHotkey and cachedHotkey == fullKey
+            
+            if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
+                if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                    local prevHotkey = defIcon.previousNormalizedHotkey
+                    matched = prevHotkey == fullKey
+                end
+            end
+            
+            if matched then
+                iconsToFlash[#iconsToFlash + 1] = defIcon
+            end
+        end
+        
+        -- Flash all matched icons
+        for _, icon in ipairs(iconsToFlash) do
+            StartFlash(icon)
         end
     end)
 end
 
 function JustAC:InitializeCaches()
+    -- Clear all caches for clean slate on login/reload
+    if SpellQueue then
+        if SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
+        if SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
+    end
+    
     if FormCache and FormCache.OnPlayerLogin then
         FormCache.OnPlayerLogin()
     end
@@ -432,6 +491,15 @@ function JustAC:InitializeCaches()
     
     if MacroParser and MacroParser.InvalidateMacroCache then
         MacroParser.InvalidateMacroCache()
+    end
+    
+    if RedundancyFilter and RedundancyFilter.InvalidateCache then
+        RedundancyFilter.InvalidateCache()
+    end
+    
+    -- Check feature availability (12.0+ secret values may disable some features)
+    if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
+        BlizzardAPI.RefreshFeatureAvailability()
     end
 end
 
@@ -522,6 +590,17 @@ function JustAC:InitializeDefensiveSpells()
             end
         end
     end
+    
+    -- Initialize pet heal spells if empty (Hunter/Warlock)
+    if not profile.defensives.petHealSpells or #profile.defensives.petHealSpells == 0 then
+        local petDefaults = CLASS_PETHEAL_DEFAULTS[playerClass]
+        if petDefaults then
+            profile.defensives.petHealSpells = {}
+            for i, spellID in ipairs(petDefaults) do
+                profile.defensives.petHealSpells[i] = spellID
+            end
+        end
+    end
 end
 
 -- Restore defaults for a specific defensive list (for Options UI)
@@ -548,6 +627,14 @@ function JustAC:RestoreDefensiveDefaults(listType)
                 profile.defensives.cooldownSpells[i] = spellID
             end
         end
+    elseif listType == "petheal" then
+        local petDefaults = CLASS_PETHEAL_DEFAULTS[playerClass]
+        if petDefaults then
+            profile.defensives.petHealSpells = {}
+            for i, spellID in ipairs(petDefaults) do
+                profile.defensives.petHealSpells[i] = spellID
+            end
+        end
     end
     
     -- Refresh defensive icon
@@ -560,7 +647,8 @@ end
 --   "Only In Combat" OFF: Show out of combat (self-heals). In combat: threshold-based (same as above)
 
 function JustAC:OnHealthChanged(event, unit)
-    if unit ~= "player" then return end
+    -- Respond to player or pet health changes
+    if unit ~= "player" and unit ~= "pet" then return end
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then 
@@ -568,6 +656,14 @@ function JustAC:OnHealthChanged(event, unit)
             UIManager.HideDefensiveIcon(self)
         end
         return 
+    end
+    
+    -- Check if health API is accessible (12.0+ secret values may block this)
+    if BlizzardAPI and BlizzardAPI.IsDefensivesFeatureAvailable and not BlizzardAPI.IsDefensivesFeatureAvailable() then
+        if UIManager and UIManager.HideDefensiveIcon then
+            UIManager.HideDefensiveIcon(self)
+        end
+        return
     end
     
     local inCombat = UnitAffectingCombat("player")
@@ -594,6 +690,11 @@ function JustAC:OnHealthChanged(event, unit)
     local isCritical = healthPercent <= cooldownThreshold
     local isLow = healthPercent <= selfHealThreshold
     
+    -- Check pet health for pet classes (Hunter, Warlock)
+    local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
+    local petHealThreshold = profile.defensives.petHealThreshold or 70
+    local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
+
     -- Out of combat with "Only In Combat" OFF: always show self-heals (switch to cooldowns if critical)
     -- In combat (regardless of setting): threshold-based behavior
     if not inCombat and not showOnlyInCombat then
@@ -610,6 +711,9 @@ function JustAC:OnHealthChanged(event, unit)
             if not defensiveSpell then
                 defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
             end
+        elseif petNeedsHeal then
+            -- Pet needs healing, suggest pet heal
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
         else
             -- Always show self-heals out of combat
             defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
@@ -618,6 +722,7 @@ function JustAC:OnHealthChanged(event, unit)
         -- In combat: threshold-based visibility
         -- Critical health: cooldowns > potions > self-heals
         -- Low health: self-heals only
+        -- Pet low: pet heals
         -- Above threshold: hide
         if isCritical then
             defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
@@ -633,8 +738,11 @@ function JustAC:OnHealthChanged(event, unit)
             end
         elseif isLow then
             defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
+        elseif petNeedsHeal then
+            -- Player is fine but pet needs healing
+            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
         end
-        -- If health is above selfHealThreshold, defensiveSpell stays nil and icon hides
+        -- If health is above selfHealThreshold and pet is fine, defensiveSpell stays nil and icon hides
     end
     
     -- Show or hide the defensive icon
@@ -870,20 +978,20 @@ end
 
 function JustAC:SetHotkeyOverride(spellID, hotkeyText)
     if not spellID or spellID == 0 then return end
-    local profile = self:GetProfile()
-    if not profile then return end
+    local charData = self.db and self.db.char
+    if not charData then return end
     
-    if not profile.hotkeyOverrides then
-        profile.hotkeyOverrides = {}
+    if not charData.hotkeyOverrides then
+        charData.hotkeyOverrides = {}
     end
     
     if hotkeyText and hotkeyText:trim() ~= "" then
-        profile.hotkeyOverrides[spellID] = hotkeyText:trim()
+        charData.hotkeyOverrides[spellID] = hotkeyText:trim()
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey: " .. spellName .. " = '" .. hotkeyText:trim() .. "'")
     else
-        profile.hotkeyOverrides[spellID] = nil
+        charData.hotkeyOverrides[spellID] = nil
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey removed: " .. spellName)
@@ -900,9 +1008,9 @@ end
 
 function JustAC:GetHotkeyOverride(spellID)
     if not spellID or spellID == 0 then return nil end
-    local profile = self:GetProfile()
-    if not profile or not profile.hotkeyOverrides then return nil end
-    return profile.hotkeyOverrides[spellID]
+    local charData = self.db and self.db.char
+    if not charData or not charData.hotkeyOverrides then return nil end
+    return charData.hotkeyOverrides[spellID]
 end
 
 function JustAC:OpenHotkeyOverrideDialog(spellID)
@@ -946,6 +1054,22 @@ function JustAC:PLAYER_ENTERING_WORLD()
     end
     
     self:ForceUpdate()
+    
+    -- Check if Single-Button Assistant is placed on action bar (required for stable API behavior)
+    -- Delay check to ensure action bars are fully loaded
+    C_Timer.After(2, function()
+        if C_ActionBar and C_ActionBar.HasAssistedCombatActionButtons then
+            local hasButton = C_ActionBar.HasAssistedCombatActionButtons()
+            if not hasButton then
+                local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat", true)
+                if L and L["Single-Button Assistant Warning"] then
+                    self:Print("|cffff8800" .. L["Single-Button Assistant Warning"] .. "|r")
+                else
+                    self:Print("|cffff8800Warning: Place the Single-Button Assistant on any action bar for JustAC to work properly.|r")
+                end
+            end
+        end
+    end)
 end
 
 function JustAC:OnCombatEvent(event)
@@ -1064,7 +1188,6 @@ end
 
 -- Proc glow events: Blizzard shows/hides overlay for proc abilities
 -- More responsive than waiting for UNIT_AURA throttle
--- Procs often change spell overrides (e.g., Pyroblast → Hot Streak Pyroblast)
 function JustAC:OnProcGlowChange(event, spellID)
     -- Update event-driven proc tracking in ActionBarScanner
     if ActionBarScanner then
@@ -1079,30 +1202,22 @@ function JustAC:OnProcGlowChange(event, spellID)
         end
     end
     
-    -- Proc glows don't move spells - only affects availability, not slot mappings
-    if SpellQueue and SpellQueue.ClearAvailabilityCache then
-        SpellQueue.ClearAvailabilityCache()
-    end
+    -- Procs don't change spell availability (IsSpellKnown), only priority
+    -- spellAvailabilityCache has 2s TTL which handles any edge cases
     self:ForceUpdate()
 end
 
--- Target changes affect execute-range abilities and [exists] conditionals
+-- Target changes: only ForceUpdate needed
+-- MacroParser deliberately ignores [exists], [harm], [help], [dead] conditionals
+-- for keybind detection (see MacroParser line 483), so no cache invalidation needed
 function JustAC:OnTargetChanged()
-    -- Macro conditionals may depend on target, refresh hotkey display
-    if MacroParser and MacroParser.InvalidateMacroCache then
-        MacroParser.InvalidateMacroCache()
-    end
     self:ForceUpdate()
 end
 
--- Pet summon/dismiss affects RedundancyFilter pet-related checks
+-- Pet summon/dismiss affects pet-related spell suggestions
 function JustAC:OnPetChanged(event, unit)
     if unit ~= "player" then return end
-    
-    -- Pet state changed, invalidate redundancy cache
-    if RedundancyFilter and RedundancyFilter.InvalidateCache then
-        RedundancyFilter.InvalidateCache()
-    end
+    -- Pet state changed - UnitExists("pet") is O(1), no cache to invalidate
     self:ForceUpdate()
 end
 
@@ -1147,6 +1262,12 @@ function JustAC:ForceUpdate()
 end
 
 function JustAC:OpenOptionsPanel()
+    -- Prevent taint: never open settings during combat (causes taint propagation)
+    if InCombatLockdown() then
+        self:Print("Cannot open options during combat")
+        return
+    end
+    
     -- Refresh dynamic options before opening panel
     local Options = LibStub("JustAC-Options", true)
     if Options then

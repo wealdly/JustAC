@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 26)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 28)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -15,10 +15,15 @@ local wipe = wipe
 local type = type
 
 local spellInfoCache = {}
-local cacheSize = 0
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
+
+-- Primary spell stabilization to prevent flicker during rapid transitions
+-- Holds the primary spell briefly if the new one matches what was just in slot 2
+local lastPrimarySpellID = nil
+local lastPrimaryChangeTime = 0
+local PRIMARY_STABILIZATION_WINDOW = 0.05  -- 50ms - very tight, just enough to smooth GCD transitions
 
 -- Reusable tables to avoid GC pressure in hot loop
 -- Using paired arrays: proccedBase[i]/proccedDisplay[i] for base/display spell IDs
@@ -42,24 +47,16 @@ function SpellQueue.GetCachedSpellInfo(spellID)
     local cached = spellInfoCache[spellID]
     if cached then return cached end
     
-    -- Cache miss: fetch and store
+    -- Cache miss: fetch and store (unbounded is fine, spell IDs per character are finite ~200 max)
     local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
     if not spellInfo then return nil end
     
-    -- Prevent unbounded cache growth (check before adding)
-    if cacheSize >= 100 then
-        SpellQueue.ClearSpellCache()
-    end
-    
     spellInfoCache[spellID] = spellInfo
-    cacheSize = cacheSize + 1
-    
     return spellInfo
 end
 
 function SpellQueue.ClearSpellCache()
     wipe(spellInfoCache)
-    cacheSize = 0
 end
 
 function SpellQueue.ClearAvailabilityCache()
@@ -83,30 +80,34 @@ function SpellQueue.CompareSpellArrays(arr1, arr2)
 end
 
 function SpellQueue.IsSpellBlacklisted(spellID)
-    local profile = BlizzardAPI.GetProfile()
-    if not spellID or not profile or not profile.blacklistedSpells then 
+    local charData = BlizzardAPI.GetCharData()
+    if not spellID or not charData or not charData.blacklistedSpells then 
         return false 
     end
     -- Simplified format: blacklistedSpells[spellID] = true
     -- Also handle legacy format: { fixedQueue = true }
-    local value = profile.blacklistedSpells[spellID]
+    local value = charData.blacklistedSpells[spellID]
     return value == true or (type(value) == "table" and value.fixedQueue == true)
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
     if not spellID or spellID == 0 then return end
-    local profile = BlizzardAPI.GetProfile()
-    if not profile then return end
+    local charData = BlizzardAPI.GetCharData()
+    if not charData then return end
+    
+    if not charData.blacklistedSpells then
+        charData.blacklistedSpells = {}
+    end
 
     local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
     local spellName = spellInfo and spellInfo.name or "Unknown"
 
     local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-    if profile.blacklistedSpells[spellID] then
-        profile.blacklistedSpells[spellID] = nil
+    if charData.blacklistedSpells[spellID] then
+        charData.blacklistedSpells[spellID] = nil
         if addon and addon.DebugPrint then addon:DebugPrint("Unblacklisted: " .. spellName) end
     else
-        profile.blacklistedSpells[spellID] = true  -- Simplified format
+        charData.blacklistedSpells[spellID] = true  -- Simplified format
         if addon and addon.DebugPrint then addon:DebugPrint("Blacklisted: " .. spellName) end
     end
     
@@ -118,11 +119,11 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
 end
 
 function SpellQueue.GetBlacklistedSpells()
-    local profile = BlizzardAPI.GetProfile()
-    if not profile then return {} end
+    local charData = BlizzardAPI.GetCharData()
+    if not charData then return {} end
     
     local spells = {}
-    for spellID, _ in pairs(profile.blacklistedSpells or {}) do
+    for spellID, _ in pairs(charData.blacklistedSpells or {}) do
         local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
         if spellInfo and spellInfo.name then
             spells[#spells + 1] = {
@@ -142,6 +143,12 @@ local function IsSpellAvailable(spellID)
     return BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID) or false
 end
 
+-- Helper: Check if either base or display spell ID is blacklisted
+local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
+    return SpellQueue.IsSpellBlacklisted(displaySpellID) or 
+           (baseSpellID ~= displaySpellID and SpellQueue.IsSpellBlacklisted(baseSpellID))
+end
+
 function SpellQueue.GetCurrentSpellQueue()
     local profile = BlizzardAPI.GetProfile()
     if not profile or profile.isManualMode then 
@@ -156,6 +163,23 @@ function SpellQueue.GetCurrentSpellQueue()
         return lastSpellIDs or {}
     end
     lastQueueUpdate = now
+    
+    -- Early check: determine which features are bypassed due to secrets
+    -- Track each secret type independently (Blizzard may not use all-or-nothing approach)
+    local bypassRedundancy = false
+    local bypassProcs = false
+    if BlizzardAPI then
+        if BlizzardAPI.IsRedundancyFilterAvailable then
+            bypassRedundancy = not BlizzardAPI.IsRedundancyFilterAvailable()
+        end
+        if BlizzardAPI.IsProcFeatureAvailable then
+            bypassProcs = not BlizzardAPI.IsProcFeatureAvailable()
+        end
+    end
+    
+    -- Blacklist bypass for slot 1 only when EITHER secret type blocks reliable filtering
+    -- If we can't filter the rotation properly, show Blizzard's choice for slot 1
+    local bypassSlot1Blacklist = bypassRedundancy or bypassProcs
 
     local recommendedSpells = {}
     local addedSpellIDs = {}
@@ -163,7 +187,9 @@ function SpellQueue.GetCurrentSpellQueue()
     local spellCount = 0
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
-    -- Only filter: blacklisted spells (user explicitly chose to hide these)
+    -- Normally filter blacklisted spells, BUT if secrets detected, bypass blacklist
+    -- Rationale: Blizzard's suggestion is more reliable than promoting from rotation list
+    --            when we can't properly filter the rotation due to secrets
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
@@ -172,16 +198,62 @@ function SpellQueue.GetCurrentSpellQueue()
         -- Resolve override once for display (handles morphed spells like Metamorphosis)
         local displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
         
-        -- Check if this spell is blacklisted (user explicitly chose to hide it)
-        local isBlacklisted = SpellQueue.IsSpellBlacklisted(displaySpellID) or SpellQueue.IsSpellBlacklisted(baseSpellID)
+        -- Check blacklist - but BYPASS if secrets detected (can't filter rotation reliably)
+        -- When bypassed, show Blizzard's choice even if user blacklisted it
+        local isBlacklisted = false
+        if not bypassSlot1Blacklist then
+            isBlacklisted = IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
+        end
         
-        if not isBlacklisted then
-            -- Position 1 is shown unless blacklisted
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = displaySpellID
+        if isBlacklisted then
+            -- Blacklisted spell - treat as if it doesn't exist
+            -- Reset stabilization so we don't try to hold a blacklisted spell
+            if lastPrimarySpellID == displaySpellID or lastPrimarySpellID == baseSpellID then
+                lastPrimarySpellID = nil
+                lastPrimaryChangeTime = 0
+            end
+            -- Track to prevent duplicates in rotation list
             addedSpellIDs[displaySpellID] = true
             addedSpellIDs[baseSpellID] = true
+        else
+            -- Not blacklisted - apply minimal stabilization
+            -- If primary changed to what was slot 2, hold briefly to smooth transition
+            local previousSlot2 = lastSpellIDs and lastSpellIDs[2]
+            if displaySpellID ~= lastPrimarySpellID then
+                -- Primary changed
+                if previousSlot2 and displaySpellID == previousSlot2 then
+                    -- New primary matches old slot 2 - this is a "shift up" after execution
+                    -- Hold the previous primary briefly to smooth the transition
+                    -- But only if the previous primary is not blacklisted
+                    local prevBlacklisted = lastPrimarySpellID and SpellQueue.IsSpellBlacklisted(lastPrimarySpellID)
+                    if (now - lastPrimaryChangeTime) < PRIMARY_STABILIZATION_WINDOW and lastPrimarySpellID and not prevBlacklisted then
+                        -- Still in stabilization window, use previous primary
+                        displaySpellID = lastPrimarySpellID
+                        baseSpellID = lastPrimarySpellID  -- Keep consistent
+                    else
+                        -- Stabilization window passed, first change, or prev was blacklisted
+                        lastPrimarySpellID = displaySpellID
+                        lastPrimaryChangeTime = now
+                    end
+                else
+                    -- Different change (not a shift-up), accept immediately
+                    lastPrimarySpellID = displaySpellID
+                    lastPrimaryChangeTime = now
+                end
+            end
+            
+            -- Track to prevent duplicates in rotation list
+            addedSpellIDs[displaySpellID] = true
+            addedSpellIDs[baseSpellID] = true
+            
+            -- Position 1 is shown
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = displaySpellID
         end
+    else
+        -- No primary spell, reset stabilization tracking
+        lastPrimarySpellID = nil
+        lastPrimaryChangeTime = 0
     end
 
     -- Check for procced spells from spellbook that aren't in the rotation list
@@ -193,12 +265,13 @@ function SpellQueue.GetCurrentSpellQueue()
             for _, procSpellID in ipairs(spellbookProcs) do
                 if spellCount >= maxIcons then break end
                 if procSpellID and not addedSpellIDs[procSpellID] then
-                    -- Apply filters: must be offensive, have keybind, not blacklisted, available, not redundant
+                    -- Apply filters: must be offensive, have keybind, not blacklisted, available
+                    -- Redundancy filter is bypassed if secrets detected (blacklist still works)
                     if BlizzardAPI.IsOffensiveSpell(procSpellID)
                        and ActionBarScanner.HasKeybind(procSpellID)
                        and not SpellQueue.IsSpellBlacklisted(procSpellID)
                        and IsSpellAvailable(procSpellID)
-                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
+                       and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
                         spellCount = spellCount + 1
                         recommendedSpells[spellCount] = procSpellID
                         addedSpellIDs[procSpellID] = true
@@ -227,37 +300,44 @@ function SpellQueue.GetCurrentSpellQueue()
         for i = 1, rotationCount do
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
-                -- Get the actual spell we'd display (might be an override)
-                local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
-                
-                -- Skip if this override already shown (e.g., position 1 has same spell)
-                if not addedSpellIDs[actualSpellID] then
-                    -- Apply filters: blacklist, availability, redundancy
-                    if not SpellQueue.IsSpellBlacklisted(actualSpellID)
-                       and IsSpellAvailable(actualSpellID)
-                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
-                        -- Categorize by proc state and importance
-                        if BlizzardAPI.IsSpellProcced(actualSpellID) then
-                            -- IMPORTANT procs go to front of procced list
-                            if BlizzardAPI.IsImportantSpell(actualSpellID) then
-                                importantProccedCount = importantProccedCount + 1
-                                -- Insert at front by shifting (rare, usually 0-2 important procs)
-                                for j = importantProccedCount, 2, -1 do
-                                    proccedBase[j] = proccedBase[j - 1]
-                                    proccedDisplay[j] = proccedDisplay[j - 1]
+                -- Early blacklist check on base spell ID (before GetDisplaySpellID call)
+                if not SpellQueue.IsSpellBlacklisted(spellID) then
+                    -- Get the actual spell we'd display (might be an override)
+                    local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
+                    
+                    -- Skip if this override already shown (e.g., position 1 has same spell)
+                    if not addedSpellIDs[actualSpellID] then
+                        -- Apply filters: blacklist (display ID), availability
+                        -- Redundancy filter bypassed independently if aura secrets detected
+                        if not SpellQueue.IsSpellBlacklisted(actualSpellID)
+                           and IsSpellAvailable(actualSpellID)
+                           and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
+                            -- Categorize by proc state and importance
+                            -- Proc detection bypassed independently if proc secrets detected
+                            -- When bypassed, all spells go to "normal" category (Blizzard's order)
+                            local isProcced = not bypassProcs and BlizzardAPI.IsSpellProcced(actualSpellID)
+                            if isProcced then
+                                -- IMPORTANT procs go to front of procced list
+                                if BlizzardAPI.IsImportantSpell(actualSpellID) then
+                                    importantProccedCount = importantProccedCount + 1
+                                    -- Insert at front by shifting (rare, usually 0-2 important procs)
+                                    for j = importantProccedCount, 2, -1 do
+                                        proccedBase[j] = proccedBase[j - 1]
+                                        proccedDisplay[j] = proccedDisplay[j - 1]
+                                    end
+                                    proccedBase[1] = spellID
+                                    proccedDisplay[1] = actualSpellID
+                                else
+                                    regularProccedCount = regularProccedCount + 1
+                                    local idx = importantProccedCount + regularProccedCount
+                                    proccedBase[idx] = spellID
+                                    proccedDisplay[idx] = actualSpellID
                                 end
-                                proccedBase[1] = spellID
-                                proccedDisplay[1] = actualSpellID
                             else
-                                regularProccedCount = regularProccedCount + 1
-                                local idx = importantProccedCount + regularProccedCount
-                                proccedBase[idx] = spellID
-                                proccedDisplay[idx] = actualSpellID
+                                normalCount = normalCount + 1
+                                normalBase[normalCount] = spellID
+                                normalDisplay[normalCount] = actualSpellID
                             end
-                        else
-                            normalCount = normalCount + 1
-                            normalBase[normalCount] = spellID
-                            normalDisplay[normalCount] = actualSpellID
                         end
                     end
                 end
@@ -294,14 +374,17 @@ end
 function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
     lastDisplayUpdate = 0
+    -- Reset stabilization to allow immediate response
+    lastPrimarySpellID = nil
+    lastPrimaryChangeTime = 0
     -- Don't wipe lastSpellIDs to avoid blinking
 end
 
 function SpellQueue.OnSpecChange()
     SpellQueue.ClearSpellCache()
-    if BlizzardAPI.ClearSpellTypeCache then
-        BlizzardAPI.ClearSpellTypeCache()
-    end
+    -- Reset stabilization for new spec
+    lastPrimarySpellID = nil
+    lastPrimaryChangeTime = 0
     SpellQueue.ForceUpdate()
 end
 

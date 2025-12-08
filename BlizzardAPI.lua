@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 14)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 16)
 if not BlizzardAPI then return end
 
 -- Hot path optimizations: cache frequently used functions
@@ -20,6 +20,268 @@ local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+
+--------------------------------------------------------------------------------
+-- Feature Availability System (12.0+ Secret Value Handling)
+-- When APIs return "secret" values, features that depend on them are disabled
+--------------------------------------------------------------------------------
+
+local featureAvailability = {
+    healthAccess = true,       -- Can we read player/pet health? (needed for defensives)
+    auraAccess = true,         -- Can we read player auras? (needed for redundancy filter)
+    cooldownAccess = true,     -- Can we read spell cooldowns? (needed for cooldown display)
+    procAccess = true,         -- Can we detect spell procs? (needed for proc glow)
+    lastCheck = 0,
+}
+local FEATURE_CHECK_INTERVAL = 5.0  -- Re-check every 5 seconds
+
+-- Test if we can access health values (player health for defensive suggestions)
+-- NOTE: As of 12.0 Alpha 6, UnitHealth("player") is confirmed NOT secret
+local function TestHealthAccess()
+    local health = UnitHealth("player")
+    local maxHealth = UnitHealthMax("player")
+    
+    -- Check for secrets
+    if issecretvalue then
+        if issecretvalue(health) or issecretvalue(maxHealth) then
+            return false
+        end
+    end
+    if canaccessvalue then
+        if not canaccessvalue(health) or not canaccessvalue(maxHealth) then
+            return false
+        end
+    end
+    
+    return true
+end
+
+-- Test if we can access aura data (needed for redundancy filtering)
+-- NOTE: In 12.0, aura CONTENTS may be secret, but aura VECTORS are not
+local function TestAuraAccess()
+    -- Try modern API first
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local auraData = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+        -- If we got data, check if any field is secret
+        if auraData then
+            if issecretvalue then
+                if issecretvalue(auraData.spellId) or issecretvalue(auraData.name) then
+                    return false
+                end
+            end
+            if canaccessvalue then
+                if not canaccessvalue(auraData.spellId) or not canaccessvalue(auraData.name) then
+                    return false
+                end
+            end
+        end
+        -- No aura at index 1 is fine, API is accessible
+        return true
+    end
+    
+    -- Fallback API
+    if UnitAura then
+        local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", 1, "HELPFUL")
+        if name then
+            if issecretvalue then
+                if issecretvalue(name) or issecretvalue(spellId) then
+                    return false
+                end
+            end
+            if canaccessvalue then
+                if not canaccessvalue(name) or not canaccessvalue(spellId) then
+                    return false
+                end
+            end
+        end
+        return true
+    end
+    
+    -- No aura API available
+    return false
+end
+
+-- Test if we can access cooldown data (needed for cooldown display)
+-- NOTE: In 12.0, cooldowns are being flagged spell-by-spell as non-secret
+local function TestCooldownAccess()
+    if not C_Spell_GetSpellCooldown then return true end
+    
+    -- Try to get cooldown for a common spell (global cooldown check)
+    -- We don't need a specific spell - if ANY cooldown check works, we're good
+    local ok, result = pcall(function()
+        -- Use the Assisted Combat API as a test - if that works, cooldowns are accessible
+        if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
+            local spells = C_AssistedCombat.GetRotationSpells()
+            if spells and spells[1] and spells[1].spellId then
+                local cooldownInfo = C_Spell_GetSpellCooldown(spells[1].spellId)
+                if cooldownInfo then
+                    if issecretvalue then
+                        if issecretvalue(cooldownInfo.startTime) or issecretvalue(cooldownInfo.duration) then
+                            return false
+                        end
+                    end
+                end
+            end
+        end
+        return true
+    end)
+    
+    if not ok then return true end  -- API error, assume accessible
+    return result
+end
+
+-- Test if we can detect spell procs (needed for proc glow)
+-- NOTE: In 12.0, IsSpellOverlayed may return secret boolean
+local function TestProcAccess()
+    if not C_SpellActivationOverlay_IsSpellOverlayed then return true end
+    
+    local ok, result = pcall(function()
+        if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
+            local spells = C_AssistedCombat.GetRotationSpells()
+            if spells and spells[1] and spells[1].spellId then
+                local hasProc = C_SpellActivationOverlay_IsSpellOverlayed(spells[1].spellId)
+                if hasProc ~= nil and issecretvalue then
+                    if issecretvalue(hasProc) then
+                        return false
+                    end
+                end
+            end
+        end
+        return true
+    end)
+    
+    if not ok then return true end  -- API error, assume accessible
+    return result
+end
+
+-- Refresh feature availability checks
+local function RefreshFeatureAvailability()
+    local now = GetTime()
+    if now - featureAvailability.lastCheck < FEATURE_CHECK_INTERVAL then
+        return
+    end
+    
+    local oldHealthAccess = featureAvailability.healthAccess
+    local oldAuraAccess = featureAvailability.auraAccess
+    local oldCooldownAccess = featureAvailability.cooldownAccess
+    local oldProcAccess = featureAvailability.procAccess
+    
+    featureAvailability.healthAccess = TestHealthAccess()
+    featureAvailability.auraAccess = TestAuraAccess()
+    featureAvailability.cooldownAccess = TestCooldownAccess()
+    featureAvailability.procAccess = TestProcAccess()
+    featureAvailability.lastCheck = now
+    
+    -- Log changes to debug (only when status changes)
+    local debugMode = BlizzardAPI.GetDebugMode()
+    if debugMode then
+        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        if addon and addon.Print then
+            if oldHealthAccess ~= featureAvailability.healthAccess then
+                addon:Print("Health API access: " .. (featureAvailability.healthAccess and "AVAILABLE" or "BLOCKED (secrets)"))
+            end
+            if oldAuraAccess ~= featureAvailability.auraAccess then
+                addon:Print("Aura API access: " .. (featureAvailability.auraAccess and "AVAILABLE" or "BLOCKED (secrets)"))
+            end
+            if oldCooldownAccess ~= featureAvailability.cooldownAccess then
+                addon:Print("Cooldown API access: " .. (featureAvailability.cooldownAccess and "AVAILABLE" or "BLOCKED (secrets)"))
+            end
+            if oldProcAccess ~= featureAvailability.procAccess then
+                addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED (secrets)"))
+            end
+        end
+    end
+end
+
+-- Public API: Check if defensive suggestions feature is available
+function BlizzardAPI.IsDefensivesFeatureAvailable()
+    RefreshFeatureAvailability()
+    return featureAvailability.healthAccess
+end
+
+-- Public API: Check if redundancy filtering is available
+function BlizzardAPI.IsRedundancyFilterAvailable()
+    RefreshFeatureAvailability()
+    return featureAvailability.auraAccess
+end
+
+-- Public API: Check if cooldown display feature is available
+function BlizzardAPI.IsCooldownFeatureAvailable()
+    RefreshFeatureAvailability()
+    return featureAvailability.cooldownAccess
+end
+
+-- Public API: Check if proc glow detection is available
+function BlizzardAPI.IsProcFeatureAvailable()
+    RefreshFeatureAvailability()
+    return featureAvailability.procAccess
+end
+
+-- Public API: Force re-check of feature availability (call on login/reload)
+function BlizzardAPI.RefreshFeatureAvailability()
+    featureAvailability.lastCheck = 0
+    RefreshFeatureAvailability()
+end
+
+-- Public API: Get all feature availability status (for debug commands)
+function BlizzardAPI.GetFeatureAvailability()
+    RefreshFeatureAvailability()
+    return {
+        healthAccess = featureAvailability.healthAccess,
+        auraAccess = featureAvailability.auraAccess,
+        cooldownAccess = featureAvailability.cooldownAccess,
+        procAccess = featureAvailability.procAccess,
+    }
+end
+
+--------------------------------------------------------------------------------
+-- Secret Value Utilities (12.0+ Compatibility)
+--------------------------------------------------------------------------------
+
+-- Check if a value is a secret value (12.0+)
+function BlizzardAPI.IsSecretValue(value)
+    if issecretvalue then
+        return issecretvalue(value)
+    end
+    return false
+end
+
+-- Check if we can access a value (not secret, or we have access)
+function BlizzardAPI.CanAccessValue(value)
+    if canaccessvalue then
+        return canaccessvalue(value)
+    end
+    return true  -- Pre-12.0: all values accessible
+end
+
+-- Check if the current execution context can access secrets
+function BlizzardAPI.CanAccessSecrets()
+    if canaccesssecrets then
+        return canaccesssecrets()
+    end
+    return true  -- Pre-12.0: always can access
+end
+
+-- Safely compare two values, handling secrets
+-- Returns nil if comparison not possible due to secrets
+function BlizzardAPI.SafeCompare(a, b)
+    if BlizzardAPI.IsSecretValue(a) or BlizzardAPI.IsSecretValue(b) then
+        return nil  -- Can't compare secrets in tainted code
+    end
+    return a == b
+end
+
+-- Get the WoW interface version to detect 12.0+
+-- 120000 = 12.0.0 (Midnight)
+function BlizzardAPI.GetInterfaceVersion()
+    local version = select(4, GetBuildInfo())
+    return version or 0
+end
+
+-- Check if we're running on 12.0+ (Midnight)
+function BlizzardAPI.IsMidnightOrLater()
+    return BlizzardAPI.GetInterfaceVersion() >= 120000
+end
 
 -- LibPlayerSpells for spell type detection (lazy loaded)
 local LibPlayerSpells = nil
@@ -61,10 +323,33 @@ function BlizzardAPI.GetProfile()
     return addon.db.profile
 end
 
+-- Shared character-specific data access (used for blacklist, hotkey overrides)
+function BlizzardAPI.GetCharData()
+    local addon = GetAddon()
+    if not addon or not addon.db then return nil end
+    return addon.db.char
+end
+
+-- Cached debug mode (reduces table lookups in hot paths)
+local cachedDebugMode = false
+local lastDebugModeCheck = 0
+local DEBUG_MODE_CACHE_DURATION = 1.0  -- Check actual value once per second
+
 -- Shared debug mode check (used by all JustAC modules)
+-- Cached to reduce overhead in hot loops (10-50 calls/sec in combat)
 function BlizzardAPI.GetDebugMode()
-    local profile = BlizzardAPI.GetProfile()
-    return profile and profile.debugMode or false
+    local now = GetTime()
+    if now - lastDebugModeCheck > DEBUG_MODE_CACHE_DURATION then
+        local profile = BlizzardAPI.GetProfile()
+        cachedDebugMode = profile and profile.debugMode or false
+        lastDebugModeCheck = now
+    end
+    return cachedDebugMode
+end
+
+-- Force refresh debug mode cache (call when user toggles debug)
+function BlizzardAPI.RefreshDebugMode()
+    lastDebugModeCheck = 0
 end
 
 -- Check if current spec is a healer role
@@ -326,9 +611,18 @@ end
 
 -- Check if a spell is procced (has Blizzard overlay glow)
 -- Centralized to avoid duplicate implementations across modules
+-- Returns false if the result is a secret value (12.0+ graceful degradation)
 function BlizzardAPI.IsSpellProcced(spellID)
     if not spellID or spellID == 0 then return false end
-    return C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID) or false
+    
+    local result = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
+    
+    -- Early exit for secret values (12.0+): treat as not procced
+    if issecretvalue and issecretvalue(result) then
+        return false
+    end
+    
+    return result or false
 end
 
 -- Get the display spell ID (resolves override spells like Metamorphosis transformations)
@@ -344,89 +638,43 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
     return spellID
 end
 
--- Spell type cache (shared by IsOffensiveSpell and IsDefensiveSpell)
-local spellTypeCache = {}
-
-function BlizzardAPI.ClearSpellTypeCache()
-    wipe(spellTypeCache)
-end
-
 -- Check if a spell is offensive (damage dealing or DPS buff, not utility/heal/CC)
--- Uses LibPlayerSpells:
---   Offensive if: BURST (damage cooldown) OR not (HELPFUL or SURVIVAL or CROWD_CTRL)
---   Exception: BURST + SURVIVAL = healing burst, not offensive
--- Cached for hot loop performance
+-- LibPlayerSpells data is pre-computed at load time, so no caching needed here
 function BlizzardAPI.IsOffensiveSpell(spellID)
     if not spellID then return true end  -- Fail-open
     
-    local cached = spellTypeCache[spellID]
-    if cached ~= nil then return cached.offensive end
-    
     local lps = GetLibPlayerSpells()
-    if not lps then
-        spellTypeCache[spellID] = {offensive = true, defensive = false}
-        return true  -- Fail-open
-    end
+    if not lps then return true end  -- Fail-open if LPS unavailable
     
     local flags = lps:GetSpellInfo(spellID)
-    if not flags then
-        spellTypeCache[spellID] = {offensive = true, defensive = false}
-        return true  -- Fail-open
-    end
+    if not flags then return true end  -- Unknown spell = assume offensive
     
     local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
     local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
     local isCrowdControl = bit_band(flags, LPS_CROWD_CTRL) ~= 0
     local isBurst = bit_band(flags, LPS_BURST) ~= 0
-    local isPersonal = bit_band(flags, LPS_PERSONAL) ~= 0
     
-    -- DPS burst cooldowns (like Arcane Power, Pillar of Frost) are offensive
-    -- But healing bursts (BURST + SURVIVAL) are not
+    -- DPS burst cooldowns are offensive, but healing bursts (BURST + SURVIVAL) are not
     local isDpsBurst = isBurst and not isSurvival
     
-    -- Offensive if: DPS burst OR (not helpful/survival/CC)
-    local isOffensive = isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
-    local isDefensive = isHelpful or isSurvival
-    
-    spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
-    return isOffensive
+    return isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
 end
 
 -- Check if a spell is defensive (heal or survival ability)
--- Uses LibPlayerSpells: defensive = HELPFUL or SURVIVAL
--- Cached for hot loop performance
+-- LibPlayerSpells data is pre-computed at load time, so no caching needed here
 function BlizzardAPI.IsDefensiveSpell(spellID)
     if not spellID then return false end  -- Fail-closed
     
-    local cached = spellTypeCache[spellID]
-    if cached ~= nil then return cached.defensive end
-    
     local lps = GetLibPlayerSpells()
-    if not lps then
-        spellTypeCache[spellID] = {offensive = true, defensive = false}
-        return false  -- Fail-closed
-    end
+    if not lps then return false end  -- Fail-closed if LPS unavailable
     
     local flags = lps:GetSpellInfo(spellID)
-    if not flags then
-        spellTypeCache[spellID] = {offensive = true, defensive = false}
-        return false  -- Fail-closed
-    end
+    if not flags then return false end  -- Unknown spell = assume not defensive
     
     local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
     local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
-    local isCrowdControl = bit_band(flags, LPS_CROWD_CTRL) ~= 0
-    local isBurst = bit_band(flags, LPS_BURST) ~= 0
     
-    -- Defensive = HELPFUL or SURVIVAL (heals and survival cooldowns)
-    local isDefensive = isHelpful or isSurvival
-    
-    -- Offensive = DPS burst OR (not helpful/survival/CC) - must match IsOffensiveSpell logic
-    local isDpsBurst = isBurst and not isSurvival
-    local isOffensive = isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
-    
-    spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
-    return isDefensive
+    return isHelpful or isSurvival
 end
 
 -- Check if a spell is marked as IMPORTANT (high priority proc)
@@ -442,53 +690,6 @@ function BlizzardAPI.IsImportantSpell(spellID)
     if not flags then return false end
     
     return bit_band(flags, LPS_IMPORTANT) ~= 0
-end
-
---------------------------------------------------------------------------------
--- 12.0 (Midnight) Compatibility Utilities
--- These functions prepare for WoW 12.0 "Secret Values" system
---------------------------------------------------------------------------------
-
--- Check if a value is a "secret" (opaque) value in 12.0+
--- Returns false on pre-12.0 clients where issecretvalue doesn't exist
-function BlizzardAPI.IsSecretValue(value)
-    if issecretvalue then
-        return issecretvalue(value)
-    end
-    return false
-end
-
--- Check if we can access/compare a value (not secret, or we have untainted access)
--- Returns true on pre-12.0 clients
-function BlizzardAPI.CanAccessValue(value)
-    if canaccessvalue then
-        return canaccessvalue(value)
-    end
-    return true
-end
-
--- Check if current execution context can access secrets
--- Returns true on pre-12.0 clients
-function BlizzardAPI.CanAccessSecrets()
-    if canaccesssecrets then
-        return canaccesssecrets()
-    end
-    return true
-end
-
--- Safely compare two values, handling secrets
--- Returns nil if comparison not possible due to secrets
-function BlizzardAPI.SafeCompare(a, b)
-    if BlizzardAPI.IsSecretValue(a) or BlizzardAPI.IsSecretValue(b) then
-        return nil  -- Can't compare secrets
-    end
-    return a == b
-end
-
--- Get the WoW interface version to detect 12.0+
-function BlizzardAPI.GetInterfaceVersion()
-    local version = select(4, GetBuildInfo())
-    return version or 0
 end
 
 -- Spell availability cache (checks if spell is known/castable)
@@ -569,11 +770,6 @@ function BlizzardAPI.IsSpellAvailable(spellID)
     return false
 end
 
--- Check if we're running on 12.0+ (Midnight)
-function BlizzardAPI.IsMidnightOrLater()
-    return BlizzardAPI.GetInterfaceVersion() >= 120000
-end
-
 -- Get player health as percentage (0-100), returns nil if secrets block access
 -- Safe for 12.0: UnitHealth/UnitHealthMax don't return secrets for player units
 function BlizzardAPI.GetPlayerHealthPercent()
@@ -583,6 +779,30 @@ function BlizzardAPI.GetPlayerHealthPercent()
     local maxHealth = UnitHealthMax("player")
     
     -- Handle potential secrets in 12.0+ (fail-safe)
+    if BlizzardAPI.IsSecretValue(health) or BlizzardAPI.IsSecretValue(maxHealth) then
+        return nil
+    end
+    
+    if not BlizzardAPI.CanAccessValue(health) or not BlizzardAPI.CanAccessValue(maxHealth) then
+        return nil
+    end
+    
+    if not maxHealth or maxHealth == 0 then return 100 end
+    return (health / maxHealth) * 100
+end
+
+-- Get pet health as percentage (0-100), returns nil if no pet or secrets block access
+function BlizzardAPI.GetPetHealthPercent()
+    if not UnitExists("pet") then return nil end
+    
+    -- Check if pet is dead first
+    local isDead = UnitIsDead("pet")
+    if isDead then return 0 end
+    
+    local health = UnitHealth("pet")
+    local maxHealth = UnitHealthMax("pet")
+    
+    -- Handle potential secrets in 12.0+
     if BlizzardAPI.IsSecretValue(health) or BlizzardAPI.IsSecretValue(maxHealth) then
         return nil
     end
