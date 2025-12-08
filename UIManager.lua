@@ -455,15 +455,16 @@ local function StartDefensiveGlow(icon, isProc)
         -- Hide green marching ants if showing
         if icon.DefensiveHighlightFrame then
             icon.DefensiveHighlightFrame:Hide()
-            icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
+            if icon.DefensiveHighlightFrame.Flipbook and icon.DefensiveHighlightFrame.Flipbook.Anim then
+                icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
+            end
         end
         
         -- Show and play proc animation
         procFrame:Show()
-        procFrame.ProcStartFlipbook:SetAlpha(1)
         procFrame.ProcLoopFlipbook:SetAlpha(1)
-        if not procFrame.ProcStartAnim:IsPlaying() and not procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcStartAnim:Play()
+        if not procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Play()
         end
         
         icon.hasDefensiveGlow = true
@@ -485,8 +486,9 @@ local function StartDefensiveGlow(icon, isProc)
         -- Hide proc glow if showing
         if icon.ProcGlowFrame then
             icon.ProcGlowFrame:Hide()
-            icon.ProcGlowFrame.ProcStartAnim:Stop()
-            icon.ProcGlowFrame.ProcLoop:Stop()
+            if icon.ProcGlowFrame.ProcLoop then
+                icon.ProcGlowFrame.ProcLoop:Stop()
+            end
         end
         
         highlightFrame:Show()

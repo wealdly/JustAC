@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.01] - 2025-12-08
+
+### Fixed
+
+- Fix: nil reference crash in defensive proc glow animation (removed references to deleted ProcStart animation)
+- Fix: defensive glow system now properly handles frame transitions between proc and non-proc states
+
 ## [3.0] - 2025-12-08
 
 ### Added
