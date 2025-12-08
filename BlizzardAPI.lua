@@ -24,14 +24,22 @@ local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum
 -- LibPlayerSpells for spell type detection (lazy loaded)
 local LibPlayerSpells = nil
 local LPS_HELPFUL = 0x00004000
+local LPS_PERSONAL = 0x00010000
 local LPS_SURVIVAL = 0x00400000
+local LPS_BURST = 0x00800000
+local LPS_IMPORTANT = 0x02000000
+local LPS_CROWD_CTRL = 0x40000000
 
 local function GetLibPlayerSpells()
     if LibPlayerSpells == nil then
         LibPlayerSpells = LibStub("LibPlayerSpells-1.0", true) or false
         if LibPlayerSpells then
             LPS_HELPFUL = LibPlayerSpells.constants.HELPFUL or LPS_HELPFUL
+            LPS_PERSONAL = LibPlayerSpells.constants.PERSONAL or LPS_PERSONAL
             LPS_SURVIVAL = LibPlayerSpells.constants.SURVIVAL or LPS_SURVIVAL
+            LPS_BURST = LibPlayerSpells.constants.BURST or LPS_BURST
+            LPS_IMPORTANT = LibPlayerSpells.constants.IMPORTANT or LPS_IMPORTANT
+            LPS_CROWD_CTRL = LibPlayerSpells.constants.CROWD_CTRL or LPS_CROWD_CTRL
         end
     end
     return LibPlayerSpells
@@ -57,6 +65,14 @@ end
 function BlizzardAPI.GetDebugMode()
     local profile = BlizzardAPI.GetProfile()
     return profile and profile.debugMode or false
+end
+
+-- Check if current spec is a healer role
+function BlizzardAPI.IsCurrentSpecHealer()
+    local spec = GetSpecialization()
+    if not spec then return false end
+    local _, _, _, _, role = GetSpecializationInfo(spec)
+    return role == "HEALER"
 end
 
 -- Local aliases for internal use
@@ -335,8 +351,10 @@ function BlizzardAPI.ClearSpellTypeCache()
     wipe(spellTypeCache)
 end
 
--- Check if a spell is offensive (not a heal or defensive)
--- Uses LibPlayerSpells: offensive = NOT (HELPFUL or SURVIVAL)
+-- Check if a spell is offensive (damage dealing or DPS buff, not utility/heal/CC)
+-- Uses LibPlayerSpells:
+--   Offensive if: BURST (damage cooldown) OR not (HELPFUL or SURVIVAL or CROWD_CTRL)
+--   Exception: BURST + SURVIVAL = healing burst, not offensive
 -- Cached for hot loop performance
 function BlizzardAPI.IsOffensiveSpell(spellID)
     if not spellID then return true end  -- Fail-open
@@ -358,7 +376,16 @@ function BlizzardAPI.IsOffensiveSpell(spellID)
     
     local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
     local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
-    local isOffensive = not isHelpful and not isSurvival
+    local isCrowdControl = bit_band(flags, LPS_CROWD_CTRL) ~= 0
+    local isBurst = bit_band(flags, LPS_BURST) ~= 0
+    local isPersonal = bit_band(flags, LPS_PERSONAL) ~= 0
+    
+    -- DPS burst cooldowns (like Arcane Power, Pillar of Frost) are offensive
+    -- But healing bursts (BURST + SURVIVAL) are not
+    local isDpsBurst = isBurst and not isSurvival
+    
+    -- Offensive if: DPS burst OR (not helpful/survival/CC)
+    local isOffensive = isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
     local isDefensive = isHelpful or isSurvival
     
     spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
@@ -388,11 +415,33 @@ function BlizzardAPI.IsDefensiveSpell(spellID)
     
     local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
     local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
-    local isOffensive = not isHelpful and not isSurvival
+    local isCrowdControl = bit_band(flags, LPS_CROWD_CTRL) ~= 0
+    local isBurst = bit_band(flags, LPS_BURST) ~= 0
+    
+    -- Defensive = HELPFUL or SURVIVAL (heals and survival cooldowns)
     local isDefensive = isHelpful or isSurvival
+    
+    -- Offensive = DPS burst OR (not helpful/survival/CC) - must match IsOffensiveSpell logic
+    local isDpsBurst = isBurst and not isSurvival
+    local isOffensive = isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
     
     spellTypeCache[spellID] = {offensive = isOffensive, defensive = isDefensive}
     return isDefensive
+end
+
+-- Check if a spell is marked as IMPORTANT (high priority proc)
+-- Uses LibPlayerSpells: spells players should react to immediately
+-- Used to prioritize among multiple procced spells
+function BlizzardAPI.IsImportantSpell(spellID)
+    if not spellID then return false end
+    
+    local lps = GetLibPlayerSpells()
+    if not lps then return false end
+    
+    local flags = lps:GetSpellInfo(spellID)
+    if not flags then return false end
+    
+    return bit_band(flags, LPS_IMPORTANT) ~= 0
 end
 
 --------------------------------------------------------------------------------

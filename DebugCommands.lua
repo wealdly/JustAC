@@ -196,6 +196,96 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac raw - Show raw assisted combat data")
     addon:Print("/jac modules - Check module health")
+    addon:Print("/jac blacklist - Show blacklisted spells")
+    addon:Print("/jac overrides - Show hotkey overrides")
+    addon:Print("/jac rawdata - Show raw saved data (for debugging)")
+end
+
+-- Show blacklisted spells
+function DebugCommands.ShowBlacklist(addon)
+    local profile = addon.db and addon.db.profile
+    if not profile then
+        addon:Print("No profile loaded")
+        return
+    end
+    
+    local blacklist = profile.blacklistedSpells
+    if not blacklist then
+        addon:Print("Blacklist table is nil")
+        return
+    end
+    
+    addon:Print("=== Blacklisted Spells ===")
+    local count = 0
+    for spellID, data in pairs(blacklist) do
+        local spellInfo = C_Spell.GetSpellInfo(spellID)
+        local name = spellInfo and spellInfo.name or "Unknown"
+        addon:Print(string.format("  [%s] %s = %s", tostring(spellID), name, tostring(data)))
+        count = count + 1
+    end
+    addon:Print("Total: " .. count .. " spells")
+end
+
+-- Show hotkey overrides
+function DebugCommands.ShowOverrides(addon)
+    local profile = addon.db and addon.db.profile
+    if not profile then
+        addon:Print("No profile loaded")
+        return
+    end
+    
+    local overrides = profile.hotkeyOverrides
+    if not overrides then
+        addon:Print("Overrides table is nil")
+        return
+    end
+    
+    addon:Print("=== Hotkey Overrides ===")
+    local count = 0
+    for spellID, hotkey in pairs(overrides) do
+        local spellInfo = C_Spell.GetSpellInfo(spellID)
+        local name = spellInfo and spellInfo.name or "Unknown"
+        addon:Print(string.format("  [%s] %s = '%s'", tostring(spellID), name, tostring(hotkey)))
+        count = count + 1
+    end
+    addon:Print("Total: " .. count .. " overrides")
+end
+
+-- Show raw saved data for debugging key types
+function DebugCommands.ShowRawData(addon)
+    local profile = addon.db and addon.db.profile
+    if not profile then
+        addon:Print("No profile loaded")
+        return
+    end
+    
+    addon:Print("=== Raw Saved Data Debug ===")
+    
+    -- Blacklist
+    addon:Print("Blacklist:")
+    local blacklist = profile.blacklistedSpells or {}
+    local blCount = 0
+    for key, value in pairs(blacklist) do
+        local keyType = type(key)
+        local valueType = type(value)
+        addon:Print(string.format("  key=%s (%s), value=%s (%s)", 
+            tostring(key), keyType, tostring(value), valueType))
+        blCount = blCount + 1
+    end
+    if blCount == 0 then addon:Print("  (empty)") end
+    
+    -- Hotkey overrides
+    addon:Print("Hotkey Overrides:")
+    local overrides = profile.hotkeyOverrides or {}
+    local hkCount = 0
+    for key, value in pairs(overrides) do
+        local keyType = type(key)
+        local valueType = type(value)
+        addon:Print(string.format("  key=%s (%s), value=%s (%s)", 
+            tostring(key), keyType, tostring(value), valueType))
+        hkCount = hkCount + 1
+    end
+    if hkCount == 0 then addon:Print("  (empty)") end
 end
 
 -- LibPlayerSpells spell info lookup
@@ -237,13 +327,17 @@ function DebugCommands.LPSInfo(addon, spellIDStr)
     
     -- Display flags
     local flags = {}
-    if info.isAura then table.insert(flags, "|cff00ff00AURA|r") end
-    if info.isUniqueAura then table.insert(flags, "|cff00ffffUNIQUE_AURA|r") end
-    if info.isSurvival then table.insert(flags, "|cffff8800SURVIVAL|r") end
-    if info.isBurst then table.insert(flags, "|cffff0000BURST|r") end
-    if info.isCooldown then table.insert(flags, "|cff8888ffCOOLDOWN|r") end
-    if info.isPet then table.insert(flags, "|cff88ff88PET|r") end
+    if info.isHelpful then table.insert(flags, "|cff00ff00HELPFUL|r") end
+    if info.isHarmful then table.insert(flags, "|cffff0000HARMFUL|r") end
     if info.isPersonal then table.insert(flags, "|cffffcc00PERSONAL|r") end
+    if info.isSurvival then table.insert(flags, "|cff00ffffSURVIVAL|r") end
+    if info.isBurst then table.insert(flags, "|cffff8800BURST|r") end
+    if info.isCrowdControl then table.insert(flags, "|cffff00ffCROWD_CTRL|r") end
+    if info.isImportant then table.insert(flags, "|cffffff00IMPORTANT|r") end
+    if info.isAura then table.insert(flags, "|cff8888ffAURA|r") end
+    if info.isUniqueAura then table.insert(flags, "|cff88aaffUNIQUE_AURA|r") end
+    if info.isCooldown then table.insert(flags, "|cffaaaaaa COOLDOWN|r") end
+    if info.isPet then table.insert(flags, "|cff88ff88PET|r") end
     
     if #flags > 0 then
         addon:Print("Flags: " .. table.concat(flags, ", "))

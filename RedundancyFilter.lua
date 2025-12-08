@@ -460,6 +460,10 @@ function RedundancyFilter.GetLPSInfo(spellID)
         isCooldown = bit.band(flags, constants.COOLDOWN) ~= 0,
         isPet = bit.band(flags, constants.PET) ~= 0,
         isPersonal = bit.band(flags, constants.PERSONAL) ~= 0,
+        isHelpful = bit.band(flags, constants.HELPFUL) ~= 0,
+        isHarmful = bit.band(flags, constants.HARMFUL) ~= 0,
+        isCrowdControl = bit.band(flags, constants.CROWD_CTRL) ~= 0,
+        isImportant = bit.band(flags, constants.IMPORTANT) ~= 0,
         providers = providers,
         modifiers = modifiers,
     }

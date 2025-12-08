@@ -121,11 +121,12 @@ local defaults = {
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
+        hideQueueForHealers = false,   -- Hide the entire queue when in a healer spec
         panelLocked = false,              -- Lock panel interactions in combat
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
-        showSpellbookProcs = false,       -- Show procced spells from spellbook (not just rotation list)
+        showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals (with stabilization)
-        stabilizationWindow = 0.50,       -- Seconds to wait before changing position 1 (0.25-0.50)
+        stabilizationWindow = 0.20,       -- Seconds to wait before changing position 1 (0-0.35)
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
@@ -134,7 +135,6 @@ local defaults = {
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
-            showOnlyUsable = true,
             showOnlyInCombat = true,  -- false = always visible, true = only in combat with thresholds
         },
     },
@@ -154,9 +154,43 @@ function JustAC:DebugPrint(msg)
     end
 end
 
+-- Normalize saved data: convert string keys to numbers, simplify formats
+-- This fixes issues where SavedVariables serialize numeric keys as strings
+function JustAC:NormalizeSavedData()
+    local profile = self.db and self.db.profile
+    if not profile then return end
+    
+    -- Normalize blacklistedSpells: string keys -> number, any truthy value -> true
+    if profile.blacklistedSpells then
+        local normalized = {}
+        for key, value in pairs(profile.blacklistedSpells) do
+            local spellID = tonumber(key)
+            if spellID and spellID > 0 and value then
+                normalized[spellID] = true  -- Simplified format
+            end
+        end
+        profile.blacklistedSpells = normalized
+    end
+    
+    -- Normalize hotkeyOverrides: string keys -> number
+    if profile.hotkeyOverrides then
+        local normalized = {}
+        for key, value in pairs(profile.hotkeyOverrides) do
+            local spellID = tonumber(key)
+            if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
+                normalized[spellID] = value
+            end
+        end
+        profile.hotkeyOverrides = normalized
+    end
+end
+
 function JustAC:OnInitialize()
     -- AceDB handles per-character profiles automatically
     self.db = AceDB:New("JustACDB", defaults)
+    
+    -- Normalize saved data (fix string keys, simplify formats)
+    self:NormalizeSavedData()
     
     -- Initialize class-specific defensive spells on first run
     self:InitializeDefensiveSpells()
@@ -183,6 +217,9 @@ function JustAC:OnEnable()
         self:Print("Error: Failed to create main frame")
         return
     end
+    
+    -- Create key press detection frame for activation flash
+    self:CreateKeyPressDetector()
     
     UIManager.CreateSpellIcons(self)
     
@@ -272,6 +309,106 @@ function JustAC:OnEnable()
     end
     
     self:ScheduleTimer("DelayedValidation", 2)
+end
+
+-- Monitor key presses to trigger flash on matching queue icons
+function JustAC:CreateKeyPressDetector()
+    if self.keyPressFrame then return end
+    
+    local frame = CreateFrame("Frame", nil, UIParent)
+    frame:EnableKeyboard(true)
+    frame:SetPropagateKeyboardInput(true)  -- Don't consume the key
+    self.keyPressFrame = frame
+    
+    -- Cache function references at creation time (avoid table lookups in hot path)
+    local StartFlash = UIManager and UIManager.StartFlash
+    local IsShiftKeyDown = IsShiftKeyDown
+    local IsControlKeyDown = IsControlKeyDown
+    local IsAltKeyDown = IsAltKeyDown
+    
+    frame:SetScript("OnKeyDown", function(self, key)
+        local addon = JustAC
+        if not addon or not StartFlash then return end
+        
+        -- Skip pure modifier keys early
+        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
+            return
+        end
+        
+        -- Normalize key name (WoW uses uppercase)
+        local pressedKey = key:upper()
+        
+        -- Check modifiers and build the full binding string
+        local hasShift = IsShiftKeyDown()
+        local hasCtrl = IsControlKeyDown()
+        local hasAlt = IsAltKeyDown()
+        
+        -- Build full key only if modifiers are pressed (avoid string concat otherwise)
+        local fullKey
+        if hasShift or hasCtrl or hasAlt then
+            local modPrefix = ""
+            if hasShift then modPrefix = "SHIFT-" end
+            if hasCtrl then modPrefix = modPrefix .. "CTRL-" end
+            if hasAlt then modPrefix = modPrefix .. "ALT-" end
+            fullKey = modPrefix .. pressedKey
+        else
+            fullKey = pressedKey
+        end
+        
+        -- Snapshot which icons to flash RIGHT NOW before the queue updates
+        -- This ensures we flash where the ability WAS, not where it moves to
+        local iconsToFlash = {}
+        local now = GetTime()
+        local HOTKEY_GRACE_PERIOD = 0.15  -- Match previous hotkey for 150ms after change
+        
+        -- Check each visible icon's cached normalized hotkey
+        local spellIcons = addon.spellIcons
+        if spellIcons then
+            for i = 1, #spellIcons do
+                local icon = spellIcons[i]
+                if icon and icon:IsShown() then
+                    local cachedHotkey = icon.normalizedHotkey
+                    local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
+                    
+                    -- Also check previous hotkey if it changed very recently
+                    -- This handles the case where spell moved out of slot just before keypress registered
+                    if not matched and icon.previousNormalizedHotkey and icon.hotkeyChangeTime then
+                        if (now - icon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                            local prevHotkey = icon.previousNormalizedHotkey
+                            matched = prevHotkey == fullKey or prevHotkey == pressedKey
+                        end
+                    end
+                    
+                    if matched then
+                        iconsToFlash[#iconsToFlash + 1] = icon
+                    end
+                end
+            end
+        end
+        
+        -- Check defensive icon
+        local defIcon = addon.defensiveIcon
+        if defIcon and defIcon:IsShown() then
+            local cachedHotkey = defIcon.normalizedHotkey
+            local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
+            
+            if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
+                if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                    local prevHotkey = defIcon.previousNormalizedHotkey
+                    matched = prevHotkey == fullKey or prevHotkey == pressedKey
+                end
+            end
+            
+            if matched then
+                iconsToFlash[#iconsToFlash + 1] = defIcon
+            end
+        end
+        
+        -- Now flash all captured icons (these are the positions at moment of keypress)
+        for _, icon in ipairs(iconsToFlash) do
+            StartFlash(icon)
+        end
+    end)
 end
 
 function JustAC:InitializeCaches()
@@ -535,10 +672,7 @@ function JustAC:GetBestDefensiveSpell(spellList)
                     if isKnown then
                         local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
                         if not isRedundant then
-                            local start, duration
-                            if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-                                start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-                            end
+                            local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
                             local onCooldown = start and start > 0 and duration and duration > 1.5
                             if not onCooldown then
                                 -- Procced defensive spell found - use it!
@@ -552,23 +686,17 @@ function JustAC:GetBestDefensiveSpell(spellList)
     end
     
     -- Second check: configured spell list (user priority order)
-    local firstUsable = nil  -- Track first usable spell as fallback
-    
     for i, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
-            -- ALWAYS check if spell is actually known/available to the player
-            -- IsSpellAvailable checks spellbook, IsSpellKnown, and pet spells
+            -- Check if spell is known/available
             local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
             
             if isKnown then
                 -- Skip if buff already active (redundant)
                 local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
                 if not isRedundant then
-                    -- Check usability (not on CD) - defensive suggestions must be actionable
-                    local start, duration
-                    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-                        start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-                    end
+                    -- Check if spell is off cooldown
+                    local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
                     local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
                     
                     if not onCooldown then
@@ -577,17 +705,16 @@ function JustAC:GetBestDefensiveSpell(spellList)
                             return spellID
                         end
                         
-                        -- Track first usable as fallback
-                        if not firstUsable then
-                            firstUsable = spellID
-                        end
+                        -- Return first off-cooldown, non-redundant spell
+                        return spellID
                     end
                 end
             end
         end
     end
     
-    return firstUsable
+    -- No usable spells found
+    return nil
 end
 
 -- Healthstone item ID (always prioritized - free resource from Warlocks)
@@ -756,6 +883,12 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey removed: " .. spellName)
+    end
+    
+    -- Refresh options panel if open
+    local Options = LibStub("JustAC-Options", true)
+    if Options and Options.UpdateHotkeyOverrideOptions then
+        Options.UpdateHotkeyOverrideOptions(self)
     end
     
     self:ForceUpdate()
@@ -1007,6 +1140,20 @@ function JustAC:ForceUpdate()
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
     if SpellQueue and SpellQueue.ForceUpdate then SpellQueue.ForceUpdate() end
     self:UpdateSpellQueue()
+end
+
+function JustAC:OpenOptionsPanel()
+    -- Refresh dynamic options before opening panel
+    local Options = LibStub("JustAC-Options", true)
+    if Options then
+        if self.InitializeDefensiveSpells then
+            self:InitializeDefensiveSpells()
+        end
+        if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
+        if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
+        if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
+    end
+    Settings.OpenToCategory("JustAssistedCombat")
 end
 
 function JustAC:StartUpdates()

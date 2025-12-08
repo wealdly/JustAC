@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Manager Module
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 22)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 24)
 if not UIManager then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -21,6 +21,7 @@ end
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
+local UnitChannelInfo = UnitChannelInfo
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local pairs = pairs
 local ipairs = ipairs
@@ -489,6 +490,62 @@ StopDefensiveGlow = function(icon)
     icon.defensiveGlowStyle = nil
 end
 
+-- Flash animation for button press feedback (quick bright flash fade-out)
+local FLASH_DURATION = 0.18  -- Total flash duration (fade from 0.7 to 0 alpha)
+local FLASH_INITIAL_ALPHA = 0.7  -- Starting opacity for bright flash
+
+-- Forward declaration
+local UpdateFlash
+
+local function StartFlash(button)
+    if not button then return end
+    if not button.Flash then return end
+    
+    button.flashing = 1
+    button.flashtime = FLASH_DURATION
+    button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)  -- Start at high opacity for bright flash
+    button.Flash:Show()
+    
+    -- Only set OnUpdate when actively flashing to avoid per-frame overhead
+    if not button:GetScript("OnUpdate") then
+        button:SetScript("OnUpdate", function(self, elapsed)
+            UpdateFlash(self, elapsed)
+        end)
+    end
+end
+
+local function StopFlash(button)
+    if not button then return end
+    button.flashing = 0
+    button.flashtime = 0
+    if button.Flash then
+        button.Flash:SetAlpha(0)
+        button.Flash:Hide()
+    end
+    -- Remove OnUpdate to eliminate per-frame overhead when not flashing
+    button:SetScript("OnUpdate", nil)
+end
+
+UpdateFlash = function(button, elapsed)
+    if not button or button.flashing ~= 1 or not button.Flash then return end
+    
+    button.flashtime = button.flashtime - elapsed
+    
+    if button.flashtime <= 0 then
+        StopFlash(button)
+        return
+    end
+    
+    -- Fade out from FLASH_INITIAL_ALPHA to 0 over FLASH_DURATION
+    local progress = button.flashtime / FLASH_DURATION  -- 1.0 to 0.0
+    button.Flash:SetAlpha(progress * FLASH_INITIAL_ALPHA)
+end
+
+-- Export functions for external access
+UIManager.StartFlash = StartFlash
+UIManager.StopFlash = StopFlash
+UIManager.UpdateFlash = UpdateFlash
+
 -- Create the defensive icon (called from CreateSpellIcons)
 local function CreateDefensiveIcon(addon, profile)
     if defensiveIcon then
@@ -571,6 +628,22 @@ local function CreateDefensiveIcon(addon, profile)
     iconTexture:SetAllPoints(button)
     iconTexture:Hide()  -- Start hidden, only show when spell is assigned
     button.iconTexture = iconTexture
+    
+    -- Flash overlay for activation animation (pale orange flash when key pressed)
+    -- Use OVERLAY layer sublevel 2 (above icon and borders, below text)
+    local flashTexture = button:CreateTexture(nil, "OVERLAY", nil, 2)
+    flashTexture:SetColorTexture(1.0, 0.82, 0.6)  -- Pale orange to match action bar flash
+    flashTexture:SetBlendMode("ADD")  -- Additive blending for bright flash effect
+    -- Scale to 90% of button size to fit within borders
+    flashTexture:SetPoint("CENTER", button, "CENTER")
+    flashTexture:SetSize(actualIconSize * 0.9, actualIconSize * 0.9)
+    flashTexture:SetAlpha(0)  -- Start fully transparent
+    flashTexture:Hide()
+    button.Flash = flashTexture
+    
+    -- Flash animation state
+    button.flashing = 0
+    button.flashtime = 0
 
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cooldown:SetAllPoints(button)
@@ -624,6 +697,7 @@ local function CreateDefensiveIcon(addon, profile)
     button.lastCooldownDuration = 0
     button.spellID = nil
     button.itemID = nil
+    button.itemCastSpellID = nil
     button.currentID = nil
     button.isItem = nil
     button:SetAlpha(0)  -- Start invisible for fade-in
@@ -637,6 +711,12 @@ local function CreateDefensiveIcon(addon, profile)
     fadeInAlpha:SetDuration(0.2)
     fadeInAlpha:SetSmoothing("OUT")
     fadeIn:SetToFinalAlpha(true)
+    fadeIn:SetScript("OnFinished", function()
+        -- Apply user's frame opacity after fade completes
+        local currentProfile = GetProfile()
+        local frameOpacity = currentProfile and currentProfile.frameOpacity or 1.0
+        button:SetAlpha(frameOpacity)
+    end)
     button.fadeIn = fadeIn
     
     -- Create fade-out animation
@@ -708,6 +788,13 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     defensiveIcon.itemID = isItem and id or nil
     defensiveIcon.isItem = isItem
     
+    -- For items, store the spell ID that the item casts (for flash animation matching)
+    defensiveIcon.itemCastSpellID = nil
+    if isItem then
+        local _, spellID = GetItemSpell(id)
+        defensiveIcon.itemCastSpellID = spellID
+    end
+    
     if idChanged then
         defensiveIcon.iconTexture:SetTexture(iconTexture)
         defensiveIcon.iconTexture:Show()
@@ -760,6 +847,16 @@ function UIManager.ShowDefensiveIcon(addon, id, isItem)
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
     if currentHotkey ~= hotkey then
         defensiveIcon.hotkeyText:SetText(hotkey)
+        -- Cache normalized hotkey for efficient key press matching
+        if hotkey ~= "" then
+            local normalized = hotkey:upper()
+            normalized = normalized:gsub("S%-", "SHIFT-")
+            normalized = normalized:gsub("C%-", "CTRL-")
+            normalized = normalized:gsub("A%-", "ALT-")
+            defensiveIcon.normalizedHotkey = normalized
+        else
+            defensiveIcon.normalizedHotkey = nil
+        end
     end
     
     -- Check if defensive spell has an active proc (only for spells, not items)
@@ -792,6 +889,7 @@ function UIManager.HideDefensiveIcon(addon)
         StopDefensiveGlow(defensiveIcon)
         defensiveIcon.spellID = nil
         defensiveIcon.itemID = nil
+        defensiveIcon.itemCastSpellID = nil
         defensiveIcon.currentID = nil
         defensiveIcon.isItem = nil
         defensiveIcon.iconTexture:Hide()
@@ -840,7 +938,38 @@ function UIManager.CreateMainFrame(addon)
     end)
     
     -- Start hidden, only show when we have spells
+    addon.mainFrame:SetAlpha(0)  -- Start invisible for fade-in
     addon.mainFrame:Hide()
+    
+    -- Create fade-in animation
+    local fadeIn = addon.mainFrame:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.2)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    fadeIn:SetScript("OnFinished", function()
+        -- Apply user's frame opacity after fade completes
+        local currentProfile = addon:GetProfile()
+        local frameOpacity = currentProfile and currentProfile.frameOpacity or 1.0
+        addon.mainFrame:SetAlpha(frameOpacity)
+    end)
+    addon.mainFrame.fadeIn = fadeIn
+    
+    -- Create fade-out animation
+    local fadeOut = addon.mainFrame:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        addon.mainFrame:Hide()
+        addon.mainFrame:SetAlpha(0)
+    end)
+    addon.mainFrame.fadeOut = fadeOut
 end
 
 function UIManager.CreateGrabTab(addon)
@@ -934,7 +1063,11 @@ function UIManager.CreateGrabTab(addon)
                 end
             else
                 -- Right-click: open options panel
-                Settings.OpenToCategory("JustAssistedCombat")
+                if addon.OpenOptionsPanel then
+                    addon:OpenOptionsPanel()
+                else
+                    Settings.OpenToCategory("JustAssistedCombat")
+                end
             end
         end
     end)
@@ -1029,6 +1162,22 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
     button.iconTexture = iconTexture
+    
+    -- Flash overlay for activation animation (pale orange flash when key pressed)
+    -- Use OVERLAY layer sublevel 2 (above icon and borders, below text)
+    local flashTexture = button:CreateTexture(nil, "OVERLAY", nil, 2)
+    flashTexture:SetColorTexture(1.0, 0.82, 0.6)  -- Pale orange to match action bar flash
+    flashTexture:SetBlendMode("ADD")  -- Additive blending for bright flash effect
+    -- Scale to 90% of button size to fit within borders
+    flashTexture:SetPoint("CENTER", button, "CENTER")
+    flashTexture:SetSize(actualIconSize * 0.9, actualIconSize * 0.9)
+    flashTexture:SetAlpha(0)  -- Start fully transparent
+    flashTexture:Hide()
+    button.Flash = flashTexture
+    
+    -- Flash animation state
+    button.flashing = 0
+    button.flashtime = 0
 
     -- Pushed texture overlay for click feedback (darkens icon when pressed)
     local pushedTexture = button:CreateTexture(nil, "OVERLAY")
@@ -1176,6 +1325,11 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
         shouldShowFrame = false
     end
     
+    -- Hide queue for healer specs if option is enabled
+    if shouldShowFrame and profile.hideQueueForHealers and BlizzardAPI and BlizzardAPI.IsCurrentSpecHealer and BlizzardAPI.IsCurrentSpecHealer() then
+        shouldShowFrame = false
+    end
+    
     -- Only update frame state if it actually changed
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
@@ -1185,34 +1339,45 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
     local focusEmphasis = profile.focusEmphasis
     local queueDesaturation = GetQueueDesaturation()
     
+    -- Check if player is channeling (grey out queue to emphasize not interrupting)
+    local isChanneling = UnitChannelInfo("player") ~= nil
+    
+    -- Cache frequently called functions for hot path (avoid repeated table lookups)
+    local GetSpellCooldown = BlizzardAPI.GetSpellCooldown
+    local IsSpellUsable = BlizzardAPI.IsSpellUsable
+    local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
+    local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
+    
     -- Update individual icons (always do this part)
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
         if icon then
             local spellID = hasSpells and spellIDs[i] or nil
-            local spellInfo = spellID and SpellQueue.GetCachedSpellInfo(spellID)
+            local spellInfo = spellID and GetCachedSpellInfo(spellID)
 
             if spellID and spellInfo then
                 -- Only update if spell changed for this slot
                 local spellChanged = (icon.spellID ~= spellID)
                 icon.spellID = spellID
                 
+                -- Cache icon texture reference for multiple accesses
+                local iconTexture = icon.iconTexture
+                
                 -- Only set texture if spell changed (prevents flicker)
                 if spellChanged then
-                    local iconTexture = icon.iconTexture
                     iconTexture:SetTexture(spellInfo.iconID)
                     iconTexture:Show()
                 end
                 
                 -- Apply vertex color for queue icons (brightness/opacity)
                 if i > 1 then
-                    icon.iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
+                    iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
                 else
-                    icon.iconTexture:SetVertexColor(1, 1, 1, 1)
+                    iconTexture:SetVertexColor(1, 1, 1, 1)
                 end
 
                 -- Update cooldown display (including GCD for timing feedback)
-                local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+                local start, duration = GetSpellCooldown(spellID)
                 if start and start > 0 and duration and duration > 0 then
                     -- Only update cooldown if values changed significantly
                     if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
@@ -1244,22 +1409,38 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                     StopAssistedGlow(icon)
                 end
 
-                local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(spellID) or ""
+                local hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
                 
                 -- Only update hotkey text if it changed (prevents flicker)
                 local currentHotkey = icon.hotkeyText:GetText() or ""
                 if currentHotkey ~= hotkey then
                     icon.hotkeyText:SetText(hotkey)
+                    -- Cache normalized hotkey for efficient key press matching
+                    -- Also preserve previous hotkey briefly so flash can match recently-changed slots
+                    icon.previousNormalizedHotkey = icon.normalizedHotkey
+                    icon.hotkeyChangeTime = currentTime
+                    if hotkey ~= "" then
+                        local normalized = hotkey:upper()
+                        normalized = normalized:gsub("S%-", "SHIFT-")
+                        normalized = normalized:gsub("C%-", "CTRL-")
+                        normalized = normalized:gsub("A%-", "ALT-")
+                        icon.normalizedHotkey = normalized
+                    else
+                        icon.normalizedHotkey = nil
+                    end
                 end
                 
                 -- Update desaturation based on:
-                -- 1. Queue position (fade setting for positions 2+)
-                -- 2. Spell usability (grey out when not enough resources in combat)
-                local iconTexture = icon.iconTexture
+                -- 1. Channeling (grey out all icons to emphasize not interrupting)
+                -- 2. Queue position (fade setting for positions 2+)
+                -- 3. Spell usability (grey out when not enough resources in combat)
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
                 
-                if isInCombat then
-                    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+                if isChanneling then
+                    -- Channeling - grey out entire queue to emphasize not interrupting
+                    iconTexture:SetDesaturation(1.0)
+                elseif isInCombat then
+                    local isUsable, notEnoughResources = IsSpellUsable(spellID)
                     if not isUsable and notEnoughResources then
                         -- Not enough resources - full grey out (overrides fade setting)
                         iconTexture:SetDesaturation(1.0)
@@ -1290,15 +1471,39 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
         end
     end
     
-    -- Update frame visibility only when state actually changes
+    -- Update frame visibility with fade animations only when state actually changes
     if addon.mainFrame and (frameStateChanged or spellCountChanged) then
         if shouldShowFrame then
             if not addon.mainFrame:IsShown() then
+                -- Stop any fade-out in progress
+                if addon.mainFrame.fadeOut and addon.mainFrame.fadeOut:IsPlaying() then
+                    addon.mainFrame.fadeOut:Stop()
+                end
                 addon.mainFrame:Show()
+                addon.mainFrame:SetAlpha(0)
+                if addon.mainFrame.fadeIn then
+                    addon.mainFrame.fadeIn:Play()
+                else
+                    -- Fallback if no animation (shouldn't happen)
+                    addon.mainFrame:SetAlpha(profile.frameOpacity or 1.0)
+                end
             end
         else
             if addon.mainFrame:IsShown() then
-                addon.mainFrame:Hide()
+                -- Fade out instead of instant hide
+                if addon.mainFrame.fadeOut and not addon.mainFrame.fadeOut:IsPlaying() then
+                    -- Stop any fade-in in progress
+                    if addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying() then
+                        addon.mainFrame.fadeIn:Stop()
+                    end
+                    addon.mainFrame.fadeOut:Play()
+                else
+                    -- Fallback or already fading out
+                    if not addon.mainFrame.fadeOut then
+                        addon.mainFrame:Hide()
+                        addon.mainFrame:SetAlpha(0)
+                    end
+                end
             end
         end
     end
@@ -1323,13 +1528,23 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
     end
     
     -- Apply global frame opacity (affects main frame and defensive icon)
+    -- Skip if fade animation is playing to avoid interrupting the fade
     local frameOpacity = profile.frameOpacity or 1.0
     if addon.mainFrame then
-        addon.mainFrame:SetAlpha(frameOpacity)
+        local isFading = (addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying()) or
+                         (addon.mainFrame.fadeOut and addon.mainFrame.fadeOut:IsPlaying())
+        if not isFading then
+            addon.mainFrame:SetAlpha(frameOpacity)
+        end
     end
     if defensiveIcon then
         -- Defensive icon is separate, apply same opacity
-        defensiveIcon:SetAlpha(frameOpacity)
+        -- Also skip if fading
+        local isFading = (defensiveIcon.fadeIn and defensiveIcon.fadeIn:IsPlaying()) or
+                         (defensiveIcon.fadeOut and defensiveIcon.fadeOut:IsPlaying())
+        if not isFading then
+            defensiveIcon:SetAlpha(frameOpacity)
+        end
     end
     
     -- Update tracking state
