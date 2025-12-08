@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Macro Parser Module
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 14)
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 19)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -22,27 +22,33 @@ local string_gmatch = string.gmatch
 local string_sub = string.sub
 local table_insert = table.insert
 
+-- Localize combat/stealth APIs for hot path
+local UnitAffectingCombat = UnitAffectingCombat
+local IsStealthed = IsStealthed
+local IsSpellKnown = IsSpellKnown
+local IsPlayerSpell = IsPlayerSpell
+
 -- Improved caching with better invalidation
 local parsedMacroCache = {}
 local spellOverrideCache = {}
 local lastCacheFlush = 0
 local CACHE_FLUSH_INTERVAL = 30
 
--- Cache for lowercase string conversions (avoid repeated :lower() calls)
-local lowercaseCache = {}
+-- Verbose debug mode (enabled only during /jac find or /jac macrotest commands)
+local verboseDebugMode = false
 
--- Get cached lowercase version of a string
-local function GetLowercase(str)
-    if not str then return "" end
-    local cached = lowercaseCache[str]
-    if cached then return cached end
-    local lower = string_lower(str)
-    lowercaseCache[str] = lower
-    return lower
+function MacroParser.SetVerboseDebug(enabled)
+    verboseDebugMode = enabled
 end
 
+-- Simple lowercase helper (string.lower is fast enough for macro parsing)
+local function GetLowercase(str)
+    return str and string_lower(str) or ""
+end
+
+-- Debug mode: verbose flag OR global debug (BlizzardAPI caches this)
 local function GetDebugMode()
-    return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
+    return verboseDebugMode or (BlizzardAPI and BlizzardAPI.GetDebugMode() or false)
 end
 
 -- Safe API wrappers
@@ -85,6 +91,51 @@ local function SafeGetActionText(slot)
     return ok and result or nil
 end
 
+local function SafeIsInCombat()
+    if not UnitAffectingCombat then return false end
+    local ok, result = pcall(UnitAffectingCombat, "player")
+    return ok and result or false
+end
+
+local function SafeIsStealthed()
+    if not IsStealthed then return false end
+    local ok, result = pcall(IsStealthed)
+    return ok and result or false
+end
+
+-- Check if spell is known by ID or name
+-- For [known:SpellName], we need to find the spell ID first
+-- Note: BlizzardAPI.IsSpellAvailable has its own 2-second TTL cache
+local function IsSpellKnownByIdentifier(identifier)
+    if not identifier or identifier == "" then return false end
+    
+    -- Try as spell ID first (numeric) - fast path
+    local spellID = tonumber(identifier)
+    if spellID then
+        -- Use BlizzardAPI.IsSpellAvailable (includes talent checks, has internal cache)
+        if BlizzardAPI and BlizzardAPI.IsSpellAvailable then
+            return BlizzardAPI.IsSpellAvailable(spellID)
+        elseif IsSpellKnown then
+            return IsSpellKnown(spellID) or (IsPlayerSpell and IsPlayerSpell(spellID)) or false
+        end
+    else
+        -- It's a spell name - try to find its ID via C_Spell.GetSpellInfo
+        if C_Spell and C_Spell.GetSpellInfo then
+            local ok, spellInfo = pcall(C_Spell.GetSpellInfo, identifier)
+            if ok and spellInfo and spellInfo.spellID then
+                local sid = spellInfo.spellID
+                if BlizzardAPI and BlizzardAPI.IsSpellAvailable then
+                    return BlizzardAPI.IsSpellAvailable(sid)
+                elseif IsSpellKnown then
+                    return IsSpellKnown(sid) or (IsPlayerSpell and IsPlayerSpell(sid)) or false
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
 local function SafeGetMacroInfo(macroName)
     if not macroName or not GetMacroInfo then return nil, nil, nil end
     local ok, name, icon, body = pcall(GetMacroInfo, macroName)
@@ -97,17 +148,6 @@ end
 function MacroParser.InvalidateMacroCache()
     wipe(parsedMacroCache)
     wipe(spellOverrideCache)
-    -- Also clear lowercase cache on full invalidation (keeps memory bounded)
-    if next(lowercaseCache) then
-        local count = 0
-        for _ in pairs(lowercaseCache) do
-            count = count + 1
-            if count > 200 then
-                wipe(lowercaseCache)
-                break
-            end
-        end
-    end
     lastCacheFlush = GetTime()
     
     local debugMode = GetDebugMode()
@@ -166,9 +206,22 @@ local function DoesSpellMatch(spellPart, targetSpells)
     
     local lowerSpellPart = GetLowercase(spellPart)
     
+    -- Remove target specifiers like @mouseover, @player, @cursor, @target, @focus
+    -- These appear after the spell name: "Shuriken Storm @mouseover" or "Shuriken Storm(@mouseover)"
+    local cleanSpellPart = lowerSpellPart:gsub("%s*@[%w]+%s*$", ""):gsub("%s*%(@[%w]+%)%s*$", "")
+    -- Also remove trailing (rank X) or (passive) markers
+    cleanSpellPart = cleanSpellPart:gsub("%s*%(.-%)%s*$", "")
+    -- Trim whitespace
+    cleanSpellPart = cleanSpellPart:match("^%s*(.-)%s*$") or cleanSpellPart
+    
     for spellID, spellName in pairs(targetSpells) do
         local lowerSpellName = GetLowercase(spellName)
-        if lowerSpellPart == lowerSpellName or string_find(lowerSpellPart, "^" .. lowerSpellName .. "[^a-z]") then
+        -- Exact match after cleanup
+        if cleanSpellPart == lowerSpellName then
+            return true, spellID, spellName
+        end
+        -- Also check the unmodified spellPart for exact match
+        if lowerSpellPart == lowerSpellName then
             return true, spellID, spellName
         end
     end
@@ -336,6 +389,12 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
     local modifiers = {}
     local allConditionsMet = true
     local formMatched = false
+    local requiresModifier = false  -- Track if [mod] condition is present
+
+    -- Handle empty condition string [] - always matches (fallback clause)
+    if not conditionString or conditionString == "" then
+        return true, modifiers, false, false
+    end
 
     for condition in conditionString:gmatch("[^,]+") do
         local trimmed = condition:match("^%s*(.-)%s*$")
@@ -344,6 +403,30 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             local modType = trimmed:match("^mod:?(.*)") or "any"
             if modType == "" then modType = "any" end
             modifiers.mod = modType
+            -- [mod] means this clause only activates when modifier is held
+            -- Since we're looking for the default (no modifier) keybind, 
+            -- mark this as requiring a modifier
+            requiresModifier = true
+
+        elseif trimmed:match("^nomod") then
+            -- [nomod] means this clause activates when NO modifier is held
+            -- This is what we want for default keybind detection
+            modifiers.nomod = true
+
+        elseif trimmed:match("^nospec") then
+            -- [nospec:1/2] means NOT in spec 1 or 2
+            local specList = trimmed:match("nospec:([%d/]+)")
+            if specList then
+                for specStr in specList:gmatch("([^/]+)") do
+                    local reqSpec = tonumber(specStr)
+                    if reqSpec and currentSpec == reqSpec then
+                        -- We ARE in this spec, so nospec fails
+                        allConditionsMet = false
+                        break
+                    end
+                end
+            end
+            if not allConditionsMet then break end
 
         elseif trimmed:match("^spec") then
             local match = false
@@ -358,6 +441,21 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
                 end
             end
             if not match then allConditionsMet = false; break end
+
+        elseif trimmed:match("^noform") then
+            -- [noform:1/2] means NOT in form 1 or 2
+            local formList = trimmed:match("noform:([%d/]+)")
+            if formList then
+                for formStr in formList:gmatch("([^/]+)") do
+                    local reqForm = tonumber(formStr)
+                    if reqForm and currentForm == reqForm then
+                        -- We ARE in this form, so noform fails
+                        allConditionsMet = false
+                        break
+                    end
+                end
+            end
+            if not allConditionsMet then break end
 
         elseif trimmed:match("^form") then
             local match = false
@@ -374,21 +472,21 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             end
             if not match then allConditionsMet = false; break end
 
-        elseif trimmed == "mounted" then
-            if not SafeIsMounted() then allConditionsMet = false; break end
+        elseif trimmed:match("^known") then
+            -- [known:SpellName] or [known:12345] - check if spell/talent is known
+            local spellIdentifier = trimmed:match("known:(.+)")
+            if spellIdentifier and not IsSpellKnownByIdentifier(spellIdentifier) then
+                allConditionsMet = false
+                break
+            end
 
-        elseif trimmed == "unmounted" then
-            if SafeIsMounted() then allConditionsMet = false; break end
-
-        elseif trimmed == "outdoors" then
-            if not SafeIsOutdoors() then allConditionsMet = false; break end
-
-        elseif trimmed == "indoors" then
-            if SafeIsOutdoors() then allConditionsMet = false; break end
+        -- All other conditionals (combat, stealth, mounted, target, etc.) are IGNORED
+        -- for keybind detection. We only care about spec/form/known which affect
+        -- spell availability. Context conditionals don't change which key to press.
         end
     end
 
-    return allConditionsMet, modifiers, formMatched
+    return allConditionsMet, modifiers, formMatched, requiresModifier
 end
 
 function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellName)
@@ -401,6 +499,10 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     -- Use FormCache which returns form index (1-N), not GetShapeshiftFormID which returns constant IDs
     local currentForm = FormCache and FormCache.GetActiveForm() or 0
     local debugMode = GetDebugMode()
+    
+    if debugMode then
+        print("|JAC| ParseMacroForSpell: Looking for '" .. targetSpellName .. "' (ID: " .. targetSpellID .. ")")
+    end
 
     local foundLines = {}
 
@@ -413,6 +515,9 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                             string_match(lowerLine, "/castsequence%s+(.+)")
 
             if command then
+                if debugMode then
+                    print("|JAC|   Parsing command: " .. command)
+                end
                 for spellEntry in string_gmatch(command, "[^;]+") do
                     local trimmedEntry = string_match(spellEntry, "^%s*(.-)%s*$")
                     local conditions, spellPart = nil, nil
@@ -437,6 +542,10 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                     if not spellPart or spellPart == "" then
                         spellPart = trimmedEntry
                     end
+                    
+                    if debugMode then
+                        print("|JAC|     Entry: '" .. trimmedEntry .. "' -> spellPart: '" .. (spellPart or "nil") .. "'")
+                    end
 
                     local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
 
@@ -452,9 +561,12 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                             conditionsMet, modifiers = EvaluateConditions(conditions, currentSpec, currentForm)
                         end
 
+                        -- We found the target spell - return it with its modifiers
+                        -- If it requires [mod], the modifiers table will contain "shift"/"ctrl"/"alt"
+                        -- so the hotkey will display as +5 (Shift+5), ^5 (Ctrl+5), etc.
                         if conditionsMet then
                             table.insert(foundLines, {modifiers = modifiers})
-                            return true, foundLines[1].modifiers -- Return immediately on first match
+                            return true, foundLines[1].modifiers
                         end
                     end
                 end
@@ -471,10 +583,11 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
         return nil 
     end
     
-    -- Include form and spec state in cache key for conditional macros
-    local currentForm = FormCache and FormCache.GetActiveForm() or 0
+    -- Cache key: only spec affects conditional evaluation for keybind detection
+    -- Form/stealth/combat do NOT affect the keybind - only what spell is cast
+    -- We're finding what key to press, not evaluating current macro conditions
     local currentSpec = SafeGetSpecialization()
-    local cacheKey = slot .. "_" .. targetSpellID .. "_" .. currentForm .. "_" .. currentSpec
+    local cacheKey = slot .. "_" .. targetSpellID .. "_" .. currentSpec
     
     -- Fast path: return cached result
     local cached = parsedMacroCache[cacheKey]
@@ -496,7 +609,6 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
     local entry = {
         found = true,
         modifiers = modifiers,
-        forms = { currentForm },
         qualityScore = qualityScore,
     }
     

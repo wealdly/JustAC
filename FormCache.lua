@@ -27,6 +27,7 @@ local cachedFormData = {
     valid = false,
 }
 
+-- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end

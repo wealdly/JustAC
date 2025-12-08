@@ -38,12 +38,21 @@ L["No spells currently blacklisted"] = "No spells currently blacklisted. Shift+R
 L["Blacklisted Spells"] = "Blacklisted Spells"
 L["Blacklist description"] = "Shift+Right-click a spell icon in the queue to add it to this list. You can then customize where it should be hidden."
 L["Hide spell desc"] = "Hide this spell from queue positions 2+. Position 1 (Blizzard's primary suggestion) is never filtered."
+L["Add Spell to Blacklist"] = "Add Spell to Blacklist"
+L["Spell ID"] = "Spell ID"
+L["Enter the spell ID to blacklist"] = "Enter the spell ID to blacklist (e.g., 48707)"
+L["Add"] = "Add"
 
 -- Hotkey Overrides
 L["Custom Hotkey"] = "Custom Hotkey"
 L["No custom hotkeys set"] = "No custom hotkeys set. Right-click a spell in the queue to set a custom hotkey display."
 L["Custom Hotkey Displays"] = "Custom Hotkey Displays"
 L["Hotkey override description"] = "Set custom hotkey text for spells when automatic detection fails or for personal preference.\n\n|cff00ff00Right-click|r a spell icon in the queue to set a custom hotkey.\n|cffff6666Shift+Right-click|r to blacklist a spell."
+L["Add Hotkey Override"] = "Add Hotkey Override"
+L["Enter the spell ID to add a hotkey override for"] = "Enter the spell ID for the hotkey override (e.g., 48707)"
+L["Hotkey"] = "Hotkey"
+L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Enter the hotkey text to display (e.g., 1, F1, S-2, Ctrl+Q)"
+L["Custom Hotkeys"] = "Custom Hotkeys"
 
 -- Defensives
 L["Enable Defensive Suggestions"] = "Enable Defensive Suggestions"
@@ -76,6 +85,7 @@ L["Primary Spell Scale desc"] = "Scale multiplier for the primary (position 1) a
 L["Queue Orientation desc"] = "Direction the spell queue grows from the primary spell"
 L["Highlight Primary Spell desc"] = "Show animated glow on the primary spell (position 1)"
 L["Show Tooltips desc"] = "Display spell tooltips on hover"
+L["Single-Button Assistant Warning"] = "Warning: Place the Single-Button Assistant on any action bar for JustAC to work properly."
 L["Tooltips in Combat desc"] = "Show tooltips during combat (requires Show Tooltips)"
 L["Frame Opacity desc"] = "Global opacity for the entire frame including defensive icon (1.0 = fully visible, 0.0 = invisible)"
 L["Queue Icon Fade desc"] = "Desaturation for icons in positions 2+ (0 = full color, 1 = grayscale)"

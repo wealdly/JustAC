@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 19)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 29)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -55,11 +55,12 @@ local spellHotkeyCacheValid = false
 -- This allows fast hotkey lookup on spell transforms (slot doesn't change, only displayed spell)
 local spellSlotCache = {}
 
--- Abbreviated keybind cache (reduces string operations)
-local abbreviatedKeybindCache = {}
+-- Verbose debug mode (enabled only during /jac find commands)
+local verboseDebugMode = false
 
--- Cached keybind existence check (cleared when keybinds change)
-local hasKeybindCache = {}
+function ActionBarScanner.SetVerboseDebug(enabled)
+    verboseDebugMode = enabled
+end
 
 -- Cached state data
 local cachedStateData = {
@@ -218,7 +219,9 @@ end
 
 local function ValidateAndBuildKeybindCache()
     local newKeybindHash = CalculateKeybindHash()
-    local combinedHash = newKeybindHash * 10000000
+    local stateHash = GetCachedStateHash()
+    -- Combine keybind hash with state hash so form changes trigger rebuild
+    local combinedHash = newKeybindHash * 10000000 + stateHash
 
     if keybindCacheValid and lastValidatedStateHash == combinedHash then
         return
@@ -245,18 +248,14 @@ local function InvalidateKeybindCache()
     wipe(keybindCache)
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
-    wipe(spellSlotCache)  -- Slot mappings may have changed
-    wipe(abbreviatedKeybindCache)
-    wipe(hasKeybindCache)  -- Also clear the hasKeybind cache
+    wipe(spellSlotCache)
 end
 
 local function InvalidateBindingCache()
     bindingCacheValid = false
     wipe(bindingKeyCache)
-    spellHotkeyCacheValid = false
-    wipe(spellHotkeyCache)
-    wipe(spellSlotCache)  -- Slot mappings may have changed
-    wipe(abbreviatedKeybindCache)
+    -- Delegate to InvalidateKeybindCache to avoid duplicate wipes
+    InvalidateKeybindCache()
 end
 
 local function InvalidateStateCache()
@@ -362,28 +361,14 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                     if MacroParser and MacroParser.GetMacroSpellInfo then
                         local parsedEntry = MacroParser.GetMacroSpellInfo(slot, spellID, spellName)
                         if parsedEntry and parsedEntry.found then
-                            local formMatch = true
-                            if parsedEntry.forms then
-                                formMatch = false
-                                local currentFormID = (FormCache and FormCache.GetActiveForm) and FormCache.GetActiveForm() or 0
-                                for _, formID in ipairs(parsedEntry.forms) do
-                                    if formID == currentFormID then
-                                        formMatch = true
-                                        break
-                                    end
-                                end
-                            end
-
-                            if formMatch then
-                                local baseScore = parsedEntry.qualityScore or 500
-                                candidates[#candidates + 1] = {
-                                    slot = slot,
-                                    type = "macro_conditional",
-                                    modifiers = parsedEntry.modifiers or {},
-                                    priority = priority,
-                                    score = hasHotkey and baseScore or (baseScore - 1000)
-                                }
-                            end
+                            local baseScore = parsedEntry.qualityScore or 500
+                            candidates[#candidates + 1] = {
+                                slot = slot,
+                                type = "macro_conditional",
+                                modifiers = parsedEntry.modifiers or {},
+                                priority = priority,
+                                score = hasHotkey and baseScore or (baseScore - 1000)
+                            }
                         end
                     end
                 end
@@ -424,40 +409,61 @@ local function FindSpellInActions(spellID, spellName)
     end
     local bonusOffset = cachedStateData.bonusOffset
     
-    local prioritySlots = {}
-    local stanceSlots = {}
+    -- Determine which slots are CURRENTLY VISIBLE based on form/stance
+    -- For Druids/Rogues: when bonusOffset > 0, the form bar replaces slots 1-12 visually
+    -- The keybinds "1-9,0,-,=" are bound to what's CURRENTLY shown, not the base bar
+    local currentBarSlots = {}
+    local fallbackSlots = {}
     
     if bonusOffset > 0 then
+        -- Form bar is active - it visually replaces the main bar
+        -- The form bar slots have the same keybinds as slots 1-12
         local formBarStart = 1 + (6 + bonusOffset - 1) * NUM_ACTIONBAR_BUTTONS
         for i = formBarStart, formBarStart + 11 do
             if slotMapping[i] then
-                prioritySlots[i] = true
+                currentBarSlots[i] = true
             end
         end
+        -- Base slots 1-12 are NOT visible but might still have useful macros
+        -- (for when the form ends)
         for i = 1, NUM_ACTIONBAR_BUTTONS do
             if slotMapping[i] then
-                stanceSlots[i] = true
+                fallbackSlots[i] = true
             end
         end
     else
+        -- No form bar - slots 1-12 are visible
         for i = 1, NUM_ACTIONBAR_BUTTONS do
             if slotMapping[i] then
-                prioritySlots[i] = true
+                currentBarSlots[i] = true
             end
         end
     end
     
+    -- Multi-bar slots (13+) are always visible (right bars, bottom bars, etc)
+    -- But skip form bar slots when a form is active (they're in currentBarSlots)
     for slot in pairs(slotMapping) do
-        if slot > NUM_ACTIONBAR_BUTTONS and (bonusOffset == 0 or slot < 73 or slot > 84) then
-            prioritySlots[slot] = true
+        if slot > NUM_ACTIONBAR_BUTTONS then
+            -- Skip if this is the active form bar (already in currentBarSlots)
+            local isFormBarSlot = false
+            if bonusOffset > 0 then
+                local formBarStart = 1 + (6 + bonusOffset - 1) * NUM_ACTIONBAR_BUTTONS
+                if slot >= formBarStart and slot <= formBarStart + 11 then
+                    isFormBarSlot = true
+                end
+            end
+            if not isFormBarSlot then
+                currentBarSlots[slot] = true
+            end
         end
     end
     
-    local debugMode = BlizzardAPI and BlizzardAPI.GetDebugMode() or false
-    local foundSlot, slotInfo = SearchSlots(prioritySlots, 1, spellID, spellName, debugMode)
+    -- Search currently visible bars first
+    local foundSlot, slotInfo = SearchSlots(currentBarSlots, 1, spellID, spellName, verboseDebugMode)
     
-    if not foundSlot and next(stanceSlots) then
-        foundSlot, slotInfo = SearchSlots(stanceSlots, 2, spellID, spellName, debugMode)
+    -- Fallback to hidden base bar (for macros that work across forms)
+    if not foundSlot and next(fallbackSlots) then
+        foundSlot, slotInfo = SearchSlots(fallbackSlots, 2, spellID, spellName, verboseDebugMode)
     end
     
     if foundSlot then
@@ -467,23 +473,14 @@ local function FindSpellInActions(spellID, spellName)
     return nil, nil
 end
 
--- Note: abbreviatedKeybindCache is declared at module level
--- to ensure InvalidateKeybindCache() properly clears it
-
 local function AbbreviateKeybind(key)
     if not key or key == "" then return "" end
     
-    -- Check cache first (hot path)
-    local cached = abbreviatedKeybindCache[key]
-    if cached then return cached end
-    
-    -- Do the gsub chain once and cache result
+    -- Simple gsub chain - fast on short strings, no cache needed
     local result = key
     result = string_gsub(result, "SHIFT%-", "S")
     result = string_gsub(result, "CTRL%-", "C")
     result = string_gsub(result, "ALT%-", "A")
-    
-    abbreviatedKeybindCache[key] = result
     return result
 end
 
@@ -515,27 +512,37 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         return ""
     end
 
-    -- Return cached value first (most common path)
-    if spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil then
-        -- Check for user override (rare - only if user set one)
-        local addon = GetCachedAddon()
-        if addon and addon.GetHotkeyOverride then
-            local override = addon:GetHotkeyOverride(spellID)
-            if override and override ~= "" then
-                return override
-            end
+    -- FIRST: Check for user override - this takes priority over everything
+    -- Early exit avoids expensive macro parsing and action bar scanning
+    local addon = GetCachedAddon()
+    if addon and addon.GetHotkeyOverride then
+        local override = addon:GetHotkeyOverride(spellID)
+        if override and override ~= "" then
+            return override
         end
+    end
+
+    -- Return cached value (most common path after override check)
+    -- Skip cache if verbose debug is enabled (forces fresh lookup)
+    if not verboseDebugMode and spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil then
         return spellHotkeyCache[spellID]
     end
     
     -- Cache invalid but we have a previous value - return it while we update
     -- This prevents flicker during cache refresh
     local previousValue = spellHotkeyCache[spellID]
+    
+    if verboseDebugMode then
+        print("|JAC| GetSpellHotkey(" .. spellID .. "): cache bypass, doing fresh lookup")
+    end
 
     local spellInfo = C_Spell.GetSpellInfo(spellID)
     if not spellInfo or not spellInfo.name or spellInfo.name == "" then
         -- Cache empty result too
         spellHotkeyCache[spellID] = ""
+        if verboseDebugMode then
+            print("|JAC| GetSpellHotkey(" .. spellID .. "): no spell info, returning empty")
+        end
         return previousValue or ""
     end
 
@@ -758,24 +765,26 @@ function ActionBarScanner.GetSpellbookProccedSpells()
 end
 
 -- Check if a spell has a keybind (directly or via macro)
--- Cached to avoid repeated expensive GetSpellHotkey calls in hot loop
+-- GetSpellHotkey already caches in spellHotkeyCache, no need for second cache
 function ActionBarScanner.HasKeybind(spellID)
     if not spellID then return false end
-    
-    -- Check cache first
-    local cached = hasKeybindCache[spellID]
-    if cached ~= nil then return cached end
-    
-    -- Cache miss: do the full lookup
     local hotkey = ActionBarScanner.GetSpellHotkey(spellID)
-    local hasKey = hotkey and hotkey ~= ""
-    hasKeybindCache[spellID] = hasKey
-    return hasKey
+    return hotkey and hotkey ~= ""
 end
 
--- Clear keybind cache (called when keybinds change)
-function ActionBarScanner.ClearKeybindCache()
-    wipe(hasKeybindCache)
+-- Clear hotkey cache for a specific spell (used by /jac find)
+function ActionBarScanner.ClearSpellHotkeyCache(spellID)
+    if spellID then
+        spellHotkeyCache[spellID] = nil
+        spellSlotCache[spellID] = nil
+    end
+end
+
+-- Clear all hotkey caches (full reset)
+function ActionBarScanner.ClearAllCaches()
+    wipe(spellHotkeyCache)
+    wipe(spellSlotCache)
+    spellHotkeyCacheValid = false
 end
 
 --------------------------------------------------------------------------------

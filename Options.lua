@@ -10,6 +10,11 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIManager = LibStub("JustAC-UIManager", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
+-- Storage for manual add inputs
+local addBlacklistInput = ""
+local addHotkeySpellInput = ""
+local addHotkeyValueInput = ""
+
 function Options.UpdateBlacklistOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable then return end
@@ -19,7 +24,7 @@ function Options.UpdateBlacklistOptions(addon)
     -- Clear old entries (preserve static ones)
     local keysToClear = {}
     for key, _ in pairs(blacklistArgs) do
-        if key ~= "info" and key ~= "header" then
+        if key ~= "info" then
             table.insert(keysToClear, key)
         end
     end
@@ -27,7 +32,56 @@ function Options.UpdateBlacklistOptions(addon)
         blacklistArgs[key] = nil
     end
 
-    local blacklistedSpells = addon.db.profile.blacklistedSpells or {}
+    local blacklistedSpells = addon.db.char.blacklistedSpells or {}
+    
+    -- Add spell input section
+    blacklistArgs.addHeader = {
+        type = "header",
+        name = L["Add Spell to Blacklist"],
+        order = 2,
+    }
+    blacklistArgs.addInput = {
+        type = "input",
+        name = L["Spell ID"],
+        desc = L["Enter the spell ID to blacklist"],
+        order = 2.1,
+        width = "normal",
+        get = function() return addBlacklistInput end,
+        set = function(_, val) addBlacklistInput = val or "" end,
+    }
+    blacklistArgs.addButton = {
+        type = "execute",
+        name = L["Add"],
+        order = 2.2,
+        width = "half",
+        func = function()
+            if not addBlacklistInput or addBlacklistInput:trim() == "" then return end
+            local spellID = tonumber(addBlacklistInput)
+            if spellID and spellID > 0 then
+                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                if not spellInfo or not spellInfo.name then
+                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
+                    return
+                end
+                if blacklistedSpells[spellID] then
+                    addon:Print("Spell already blacklisted: " .. spellInfo.name)
+                    return
+                end
+                blacklistedSpells[spellID] = true
+                addon:Print("Blacklisted: " .. spellInfo.name)
+                addBlacklistInput = ""
+                addon:ForceUpdate()
+                Options.UpdateBlacklistOptions(addon)
+            else
+                addon:Print("Invalid spell ID (must be a positive number)")
+            end
+        end,
+    }
+    blacklistArgs.listHeader = {
+        type = "header",
+        name = L["Blacklisted Spells"],
+        order = 2.5,
+    }
     
     -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local spellList = {}
@@ -51,38 +105,37 @@ function Options.UpdateBlacklistOptions(addon)
             name = L["No spells currently blacklisted"],
             order = 3,
         }
-        return
-    end
-
-    for i, spellID in ipairs(spellList) do
-        local spellInfo = C_Spell.GetSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
-        local spellIcon = spellInfo and spellInfo.iconID or 134400
-        
-        blacklistArgs[tostring(spellID)] = {
-            type = "group",
-            name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
-            inline = true,
-            order = i + 2,
-            args = {
-                spellInfo = {
-                    type = "description",
-                    name = "|cff888888ID: " .. spellID .. "|r",
-                    order = 1,
-                    width = "double",
-                },
-                remove = {
-                    type = "execute",
-                    name = L["Remove"],
-                    order = 2,
-                    func = function()
-                        blacklistedSpells[spellID] = nil
-                        addon:ForceUpdate()
-                        Options.UpdateBlacklistOptions(addon)
-                    end
+    else
+        for i, spellID in ipairs(spellList) do
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
+            local spellIcon = spellInfo and spellInfo.iconID or 134400
+            
+            blacklistArgs[tostring(spellID)] = {
+                type = "group",
+                name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
+                inline = true,
+                order = i + 3,
+                args = {
+                    spellInfo = {
+                        type = "description",
+                        name = "|cff888888ID: " .. spellID .. "|r",
+                        order = 1,
+                        width = "double",
+                    },
+                    remove = {
+                        type = "execute",
+                        name = L["Remove"],
+                        order = 2,
+                        func = function()
+                            blacklistedSpells[spellID] = nil
+                            addon:ForceUpdate()
+                            Options.UpdateBlacklistOptions(addon)
+                        end
+                    }
                 }
             }
-        }
+        end
     end
     
     -- Notify AceConfig that the options table changed
@@ -100,7 +153,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     -- Clear old entries (preserve static ones)
     local keysToClear = {}
     for key, _ in pairs(hotkeyArgs) do
-        if key ~= "info" and key ~= "header" then
+        if key ~= "info" then
             table.insert(keysToClear, key)
         end
     end
@@ -108,7 +161,69 @@ function Options.UpdateHotkeyOverrideOptions(addon)
         hotkeyArgs[key] = nil
     end
 
-    local hotkeyOverrides = addon.db.profile.hotkeyOverrides or {}
+    local hotkeyOverrides = addon.db.char.hotkeyOverrides or {}
+    
+    -- Add hotkey input section
+    hotkeyArgs.addHeader = {
+        type = "header",
+        name = L["Add Hotkey Override"],
+        order = 2,
+    }
+    hotkeyArgs.addSpellInput = {
+        type = "input",
+        name = L["Spell ID"],
+        desc = L["Enter the spell ID to add a hotkey override for"],
+        order = 2.1,
+        width = "normal",
+        get = function() return addHotkeySpellInput end,
+        set = function(_, val) addHotkeySpellInput = val or "" end,
+    }
+    hotkeyArgs.addHotkeyInput = {
+        type = "input",
+        name = L["Hotkey"],
+        desc = L["Enter the hotkey text to display (e.g. 1, F1, S-2)"],
+        order = 2.2,
+        width = "normal",
+        get = function() return addHotkeyValueInput end,
+        set = function(_, val) addHotkeyValueInput = val or "" end,
+    }
+    hotkeyArgs.addButton = {
+        type = "execute",
+        name = L["Add"],
+        order = 2.3,
+        width = "half",
+        func = function()
+            if not addHotkeySpellInput or addHotkeySpellInput:trim() == "" then
+                addon:Print("Please enter a spell ID")
+                return
+            end
+            if not addHotkeyValueInput or addHotkeyValueInput:trim() == "" then
+                addon:Print("Please enter a hotkey value")
+                return
+            end
+            local spellID = tonumber(addHotkeySpellInput)
+            if spellID and spellID > 0 then
+                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                if not spellInfo or not spellInfo.name then
+                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
+                    return
+                end
+                hotkeyOverrides[spellID] = addHotkeyValueInput:trim()
+                addon:Print("Hotkey set: " .. spellInfo.name .. " = '" .. addHotkeyValueInput:trim() .. "'")
+                addHotkeySpellInput = ""
+                addHotkeyValueInput = ""
+                addon:ForceUpdate()
+                Options.UpdateHotkeyOverrideOptions(addon)
+            else
+                addon:Print("Invalid spell ID (must be a positive number)")
+            end
+        end,
+    }
+    hotkeyArgs.listHeader = {
+        type = "header",
+        name = L["Custom Hotkeys"],
+        order = 2.5,
+    }
     
     -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local overrideList = {}
@@ -132,51 +247,50 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             name = L["No custom hotkeys set"],
             order = 3,
         }
-        return
-    end
-
-    for i, spellID in ipairs(overrideList) do
-        local spellInfo = C_Spell.GetSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
-        local spellIcon = spellInfo and spellInfo.iconID or 134400
-        
-        hotkeyArgs[tostring(spellID)] = {
-            type = "group",
-            name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
-            inline = true,
-            order = i + 2,
-            args = {
-                currentHotkey = {
-                    type = "input",
-                    name = L["Custom Hotkey"],
-                    desc = L["Custom Hotkey desc"],
-                    order = 1,
-                    width = "double",
-                    get = function()
-                        return hotkeyOverrides[spellID] or ""
-                    end,
-                    set = function(_, val)
-                        if val and val:trim() ~= "" then
-                            hotkeyOverrides[spellID] = val:trim()
-                        else
-                            hotkeyOverrides[spellID] = nil
+    else
+        for i, spellID in ipairs(overrideList) do
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
+            local spellIcon = spellInfo and spellInfo.iconID or 134400
+            
+            hotkeyArgs[tostring(spellID)] = {
+                type = "group",
+                name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
+                inline = true,
+                order = i + 3,
+                args = {
+                    currentHotkey = {
+                        type = "input",
+                        name = L["Custom Hotkey"],
+                        desc = L["Custom Hotkey desc"],
+                        order = 1,
+                        width = "double",
+                        get = function()
+                            return hotkeyOverrides[spellID] or ""
+                        end,
+                        set = function(_, val)
+                            if val and val:trim() ~= "" then
+                                hotkeyOverrides[spellID] = val:trim()
+                            else
+                                hotkeyOverrides[spellID] = nil
+                            end
+                            addon:ForceUpdate()
+                            Options.UpdateHotkeyOverrideOptions(addon)
                         end
-                        addon:ForceUpdate()
-                        Options.UpdateHotkeyOverrideOptions(addon)
-                    end
-                },
-                remove = {
-                    type = "execute",
-                    name = L["Remove"],
-                    order = 2,
-                    func = function()
-                        hotkeyOverrides[spellID] = nil
-                        Options.UpdateHotkeyOverrideOptions(addon)
-                        addon:ForceUpdate()
-                    end
+                    },
+                    remove = {
+                        type = "execute",
+                        name = L["Remove"],
+                        order = 2,
+                        func = function()
+                            hotkeyOverrides[spellID] = nil
+                            Options.UpdateHotkeyOverrideOptions(addon)
+                            addon:ForceUpdate()
+                        end
+                    }
                 }
             }
-        }
+        end
     end
     
     -- Notify AceConfig that the options table changed
@@ -592,6 +706,11 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.debugMode or false end,
                         set = function(_, val) 
                             addon.db.profile.debugMode = val
+                            -- Refresh cached debug mode immediately
+                            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+                            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+                                BlizzardAPI.RefreshDebugMode()
+                            end
                             addon:Print("Debug: " .. (val and "ON" or "OFF"))
                         end
                     }
@@ -608,11 +727,6 @@ local function CreateOptionsTable(addon)
                         order = 1,
                         fontSize = "medium"
                     },
-                    header = {
-                        type = "header",
-                        name = L["Custom Hotkey Displays"],
-                        order = 2,
-                    },
                 },
             },
             blacklist = {
@@ -625,11 +739,6 @@ local function CreateOptionsTable(addon)
                         name = L["Blacklist Info"],
                         order = 1,
                         fontSize = "medium"
-                    },
-                    header = {
-                        type = "header",
-                        name = L["Blacklisted Spells"],
-                        order = 2,
                     },
                 },
             },
@@ -857,6 +966,11 @@ local function HandleSlashCommand(addon, input)
     elseif command == "debug" then
         if addon.db and addon.db.profile then
             addon.db.profile.debugMode = not addon.db.profile.debugMode
+            -- Refresh cached debug mode immediately
+            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+                BlizzardAPI.RefreshDebugMode()
+            end
             addon:Print("Debug: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
         end
         
@@ -947,6 +1061,22 @@ local function HandleSlashCommand(addon, input)
     elseif command == "rawdata" then
         if DebugCommands and DebugCommands.ShowRawData then
             DebugCommands.ShowRawData(addon)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+        
+    elseif command == "macrotest" then
+        local macroName = input:match("^macrotest%s+(.+)")
+        if DebugCommands and DebugCommands.TestMacroParsing then
+            DebugCommands.TestMacroParsing(addon, macroName)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+    
+    elseif command == "macrodump" then
+        local macroName = input:match("^macrodump%s+(.+)")
+        if DebugCommands and DebugCommands.DumpMacroBody then
+            DebugCommands.DumpMacroBody(addon, macroName)
         else
             addon:Print("DebugCommands module not available")
         end
