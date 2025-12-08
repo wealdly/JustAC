@@ -357,11 +357,12 @@ function JustAC:CreateKeyPressDetector()
         
         -- Snapshot which icons to flash RIGHT NOW before the queue updates
         -- This ensures we flash where the ability WAS, not where it moves to
-        local iconsToFlash = {}
+        local iconToFlash = nil  -- Only flash ONE icon (the first/primary match)
         local now = GetTime()
         local HOTKEY_GRACE_PERIOD = 0.15  -- Match previous hotkey for 150ms after change
         
         -- Check each visible icon's cached normalized hotkey
+        -- Priority: find the FIRST (lowest index) matching icon - that's the one Blizzard activates
         local spellIcons = addon.spellIcons
         if spellIcons then
             for i = 1, #spellIcons do
@@ -380,33 +381,36 @@ function JustAC:CreateKeyPressDetector()
                     end
                     
                     if matched then
-                        iconsToFlash[#iconsToFlash + 1] = icon
+                        iconToFlash = icon
+                        break  -- Stop at first match - that's the primary ability
                     end
                 end
             end
         end
         
-        -- Check defensive icon
-        local defIcon = addon.defensiveIcon
-        if defIcon and defIcon:IsShown() then
-            local cachedHotkey = defIcon.normalizedHotkey
-            local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
-            
-            if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
-                if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                    local prevHotkey = defIcon.previousNormalizedHotkey
-                    matched = prevHotkey == fullKey or prevHotkey == pressedKey
+        -- Check defensive icon only if no spell icon matched
+        if not iconToFlash then
+            local defIcon = addon.defensiveIcon
+            if defIcon and defIcon:IsShown() then
+                local cachedHotkey = defIcon.normalizedHotkey
+                local matched = cachedHotkey and (cachedHotkey == fullKey or cachedHotkey == pressedKey)
+                
+                if not matched and defIcon.previousNormalizedHotkey and defIcon.hotkeyChangeTime then
+                    if (now - defIcon.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
+                        local prevHotkey = defIcon.previousNormalizedHotkey
+                        matched = prevHotkey == fullKey or prevHotkey == pressedKey
+                    end
                 end
-            end
-            
-            if matched then
-                iconsToFlash[#iconsToFlash + 1] = defIcon
+                
+                if matched then
+                    iconToFlash = defIcon
+                end
             end
         end
         
-        -- Now flash all captured icons (these are the positions at moment of keypress)
-        for _, icon in ipairs(iconsToFlash) do
-            StartFlash(icon)
+        -- Flash the single matched icon
+        if iconToFlash then
+            StartFlash(iconToFlash)
         end
     end)
 end
