@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.98] - 2025-12-07
+
+### Added
+
+- Important procs now display before regular procs in the queue
+- `/jac lps <spellID>` debug command to view spell classification info
+
+### Changed
+
+- Activation flash is now brighter and lasts longer for better visibility
+- Improved hotkey detection when spells change rapidly
+
+### Fixed
+
+- Slot 1 now stays stable when holding modifier keys (requires Single-Button Assistant placed on any action bar)
+
 ## [2.97] - 2025-12-07
 
 ### Added
