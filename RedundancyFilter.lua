@@ -5,8 +5,8 @@
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
--- 12.0 COMPATIBILITY: Auto-hides raid buffs when aura API is blocked by secrets
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 14)
+-- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist to show only DPS-relevant spells
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 15)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -26,6 +26,10 @@ local LPS_PET = LibPlayerSpells and LibPlayerSpells.constants.PET or 0
 local LPS_PERSONAL = LibPlayerSpells and LibPlayerSpells.constants.PERSONAL or 0
 local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AURA or 0
 local LPS_RAIDBUFF = LibPlayerSpells and LibPlayerSpells.constants.RAIDBUFF or 0
+local LPS_HARMFUL = LibPlayerSpells and LibPlayerSpells.constants.HARMFUL or 0
+local LPS_BURST = LibPlayerSpells and LibPlayerSpells.constants.BURST or 0
+local LPS_COOLDOWN = LibPlayerSpells and LibPlayerSpells.constants.COOLDOWN or 0
+local LPS_IMPORTANT = LibPlayerSpells and LibPlayerSpells.constants.IMPORTANT or 0
 
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
@@ -244,6 +248,37 @@ local function IsRaidBuff(spellID)
     return HasSpellFlag(spellID, LPS_RAIDBUFF)
 end
 
+-- Check if spell is DPS-relevant for rotation queue
+-- When aura detection is blocked, only show spells that are clearly offensive/rotational
+local function IsDPSRelevant(spellID)
+    if not LibPlayerSpells or not spellID then 
+        return true  -- Fail-open: if no LPS data, assume it's relevant
+    end
+    
+    local flags = LibPlayerSpells:GetSpellInfo(spellID)
+    if not flags then 
+        return true  -- Not in LPS database, assume relevant
+    end
+    
+    -- Exclude utility spells from DPS queue when we can't verify their state
+    if bit_band(flags, LPS_RAIDBUFF) ~= 0 then return false end  -- Raid buffs
+    if bit_band(flags, LPS_PET) ~= 0 then return false end        -- Pet summons/control
+    
+    -- Include DPS-relevant spells
+    if bit_band(flags, LPS_HARMFUL) ~= 0 then return true end     -- Offensive spells
+    if bit_band(flags, LPS_BURST) ~= 0 then return true end       -- Burst damage
+    if bit_band(flags, LPS_COOLDOWN) ~= 0 then return true end    -- Meaningful CDs
+    if bit_band(flags, LPS_IMPORTANT) ~= 0 then return true end   -- Important procs
+    
+    -- For spells with AURA flag, only include if they're offensive (HARMFUL)
+    -- This filters out forms, long buffs, but keeps damage buffs
+    if bit_band(flags, LPS_AURA) ~= 0 then
+        return bit_band(flags, LPS_HARMFUL) ~= 0
+    end
+    
+    return true  -- Default: include in queue
+end
+
 --------------------------------------------------------------------------------
 -- Pet Detection
 --------------------------------------------------------------------------------
@@ -412,31 +447,30 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
     -- Check if aura API is accessible (12.0+ secret values may block this)
     local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
     
-    -- If aura API is blocked, hide raid buffs automatically (can't detect their active state)
-    -- This prevents clutter from long-term maintenance buffs we can't check
-    if auraAPIBlocked and IsRaidBuff(spellID) then
-        if GetDebugMode() then
-            print("|cff66ccffJAC|r |cffff6666FILTERED|r: Raid buff (aura API blocked, auto-hiding)")
-        end
-        return true
-    end
-    
-    -- If aura API blocked but not a raid buff, fail-open (show it)
+    -- If aura API is blocked, use whitelist approach: only show DPS-relevant spells
+    -- This prevents clutter from forms, pets, raid buffs we can't verify
     if auraAPIBlocked then
-        return false
+        local isDPS = IsDPSRelevant(spellID)
+        if not isDPS then
+            if GetDebugMode() then
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (aura API blocked)")
+            end
+            return true  -- Hide non-DPS spells
+        end
+        return false  -- Show DPS-relevant spells
     end
     
-    -- Early exit: If cache detected secrets during refresh, fail-open
+    -- Early exit: If cache detected secrets during refresh, use same whitelist approach
     local auras = RefreshAuraCache()
     if auras and auras.hasSecrets then
-        -- Auto-hide raid buffs when secrets detected during cache refresh
-        if IsRaidBuff(spellID) then
+        local isDPS = IsDPSRelevant(spellID)
+        if not isDPS then
             if GetDebugMode() then
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Raid buff (secrets detected in cache)")
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (secrets detected in cache)")
             end
             return true
         end
-        return false  -- Fail-open: show the spell rather than incorrectly filtering
+        return false
     end
     
     local spellInfo = GetCachedSpellInfo(spellID)

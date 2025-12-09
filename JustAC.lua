@@ -794,7 +794,7 @@ function JustAC:GetBestDefensiveSpell(spellList)
             
             if isKnown then
                 -- Skip if buff already active (redundant)
-                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
+                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile)
                 if not isRedundant then
                     -- Check if spell is off cooldown
                     local start, duration = BlizzardAPI.GetSpellCooldown(spellID)

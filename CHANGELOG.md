@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.04] - 2025-12-09
+
+### Changed
+
+- **Whitelist approach for WoW 12.0**: When aura detection is blocked, only show DPS-relevant spells in queue
+- Automatically filters out forms, pets, raid buffs, and utility abilities when can't verify their state
+- Uses LibPlayerSpells flags (HARMFUL, BURST, COOLDOWN, IMPORTANT) to identify rotation-critical abilities
+- Keeps queue focused on offensive rotation when addon can't access buff information
+
 ## [3.03] - 2025-12-09
 
 ### Changed
