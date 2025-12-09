@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.07] - 2025-12-09
+
+### Added
+
+- **Version detection infrastructure**: Prepare for WoW 12.0 compatibility fixes
+- Added `BlizzardAPI.GetInterfaceVersion()` - Returns current WoW version (110207, 120000, etc.)
+- Added `BlizzardAPI.IsMidnightOrLater()` - Check if running 12.0+
+- Added `BlizzardAPI.VersionCall()` - Helper for version-aware function calls
+- Created `Documentation/VERSION_CONDITIONALS.md` - Patterns for adding version-specific code
+- Ready to accept 12.0 error reports and add conditional fixes
+
 ## [3.06] - 2025-12-09
 
 ### Changed

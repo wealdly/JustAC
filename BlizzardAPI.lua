@@ -1,8 +1,17 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 16)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 17)
 if not BlizzardAPI then return end
+
+--------------------------------------------------------------------------------
+-- Version Detection Constants
+-- Use these for conditional code paths when 12.0 introduces breaking changes
+--------------------------------------------------------------------------------
+local WOW_VERSION_11_2_7 = 110207  -- The War Within (current retail)
+local WOW_VERSION_12_0_0 = 120000  -- Midnight (beta)
+local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
+local IS_MIDNIGHT_OR_LATER = CURRENT_VERSION >= WOW_VERSION_12_0_0
 
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
@@ -272,15 +281,25 @@ function BlizzardAPI.SafeCompare(a, b)
 end
 
 -- Get the WoW interface version to detect 12.0+
--- 120000 = 12.0.0 (Midnight)
+-- Returns: version number (e.g., 110207, 120000)
 function BlizzardAPI.GetInterfaceVersion()
-    local version = select(4, GetBuildInfo())
-    return version or 0
+    return CURRENT_VERSION
 end
 
 -- Check if we're running on 12.0+ (Midnight)
+-- Use this for conditional code paths when 12.0 has breaking API changes
 function BlizzardAPI.IsMidnightOrLater()
-    return BlizzardAPI.GetInterfaceVersion() >= 120000
+    return IS_MIDNIGHT_OR_LATER
+end
+
+-- Version-aware API wrapper helper
+-- Usage: local result = BlizzardAPI.VersionCall(pre12Func, post12Func, ...args)
+function BlizzardAPI.VersionCall(pre12Func, post12Func, ...)
+    if IS_MIDNIGHT_OR_LATER then
+        return post12Func and post12Func(...) or nil
+    else
+        return pre12Func and pre12Func(...) or nil
+    end
 end
 
 -- LibPlayerSpells for spell type detection (lazy loaded)
