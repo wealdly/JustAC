@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.09] - 2025-12-09
+
+### Fixed
+
+- **WoW 12.0 raid buff filtering**: Hide Mark of the Wild and other raid buffs when aura API blocked
+- Added hardcoded list of common raid buffs (Mark of the Wild, Power Word: Fortitude, Battle Shout, Arcane Intellect)
+- These buffs now properly filtered when secrets prevent checking if already active
+- Prevents queue clutter from suggesting buffs that may already be active
+
 ## [3.08] - 2025-12-09
 
 ### Fixed

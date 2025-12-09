@@ -7,7 +7,7 @@
 --       like being in a form, having a pet, or already having weapon poisons applied.
 -- COOLDOWN FILTERING: Hides abilities on cooldown >2s, shows when ≤2s remaining (prep time)
 -- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist (HARMFUL, BURST, COOLDOWN, IMPORTANT)
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 18)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 19)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -252,7 +252,22 @@ end
 -- Check if spell is DPS-relevant for rotation queue
 -- When aura detection is blocked, only show spells that are clearly offensive/rotational
 local function IsDPSRelevant(spellID)
-    if not LibPlayerSpells or not spellID then 
+    if not spellID then return false end
+    
+    -- Hardcoded raid buff IDs (these should always be filtered when aura API blocked)
+    -- These are common buffs that may not be in LibPlayerSpells database
+    local KNOWN_RAID_BUFFS = {
+        [1126] = true,    -- Mark of the Wild (Druid)
+        [21562] = true,   -- Power Word: Fortitude (Priest)
+        [6673] = true,    -- Battle Shout (Warrior)
+        [1459] = true,    -- Arcane Intellect (Mage)
+    }
+    
+    if KNOWN_RAID_BUFFS[spellID] then
+        return false  -- Always hide raid buffs when can't check if active
+    end
+    
+    if not LibPlayerSpells then 
         return true  -- Fail-open: if no LPS data, assume it's relevant
     end
     
