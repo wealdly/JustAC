@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.06] - 2025-12-09
+
+### Changed
+
+- **Code simplification pass**: Removed duplicate logic in RedundancyFilter module
+- Removed duplicate cooldown check (was checked twice in same function)
+- Consolidated duplicate secret detection checks into single unified block
+- Improved code maintainability without affecting functionality
+
 ## [3.05] - 2025-12-09
 
 ### Changed

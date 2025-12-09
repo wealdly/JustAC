@@ -7,7 +7,7 @@
 --       like being in a form, having a pet, or already having weapon poisons applied.
 -- COOLDOWN FILTERING: Hides abilities on cooldown >2s, shows when ≤2s remaining (prep time)
 -- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist (HARMFUL, BURST, COOLDOWN, IMPORTANT)
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 17)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 18)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -461,31 +461,20 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
     end
     
     -- Check if aura API is accessible (12.0+ secret values may block this)
+    -- Test both API availability check AND cache refresh for secrets
     local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
+    local auras = RefreshAuraCache()
     
-    -- If aura API is blocked, use whitelist approach: only show DPS-relevant spells
-    if auraAPIBlocked then
-        local isDPS = IsDPSRelevant(spellID)
-        if not isDPS then
+    -- If aura API blocked OR cache detected secrets, use whitelist: only show DPS-relevant spells
+    if auraAPIBlocked or (auras and auras.hasSecrets) then
+        if not IsDPSRelevant(spellID) then
             if GetDebugMode() then
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (aura API blocked)")
+                local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (" .. reason .. ")")
             end
             return true  -- Hide non-DPS spells
         end
         return false  -- Show DPS-relevant spells
-    end
-    
-    -- Early exit: If cache detected secrets during refresh, use same whitelist approach
-    local auras = RefreshAuraCache()
-    if auras and auras.hasSecrets then
-        local isDPS = IsDPSRelevant(spellID)
-        if not isDPS then
-            if GetDebugMode() then
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (secrets detected in cache)")
-            end
-            return true
-        end
-        return false
     end
     
     local spellInfo = GetCachedSpellInfo(spellID)
@@ -554,12 +543,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 3. FALLBACK: For spells NOT in LibPlayerSpells
-    -- Be conservative - only filter if we're confident it's truly redundant
-    -- If Assisted Combat suggests it, there's probably a reason
-    -- Skip this check - trust Assisted Combat for unlisted spells
-    
-    -- 4. PET SPELL REDUNDANCY
+    -- 3. PET SPELL REDUNDANCY
     -- Revive Pet: redundant if pet is ALIVE (can't revive alive pet)
     -- Summon Pet: redundant if pet EXISTS (alive or dead - already have a pet)
     if IsPetReviveSpell(spellName) then
@@ -582,7 +566,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 5. STEALTH REDUNDANCY
+    -- 4. STEALTH REDUNDANCY
     -- Use IsStealthed() API - more reliable than buff checking
     if IsStealthSpell(spellName) then
         if SafeIsStealthed() then
@@ -593,7 +577,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 6. MOUNT REDUNDANCY
+    -- 5. MOUNT REDUNDANCY
     -- Use IsMounted() API
     if SafeIsMounted() then
         -- Check if this is a mount spell (avoid false positives)
@@ -606,7 +590,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 7. ROGUE POISON REDUNDANCY
+    -- 6. ROGUE POISON REDUNDANCY
     -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
     -- If both slots are filled, all poison suggestions are redundant
     if IsRoguePoisonSpell(spellID) then
@@ -623,7 +607,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 8. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
+    -- 7. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
     -- If this is a Shaman imbue spell and weapon already has active enchant, skip it
     -- Only check if enchants have sufficient time remaining (>10s)
     if IsWeaponEnchantSpell(spellID) then
@@ -635,22 +619,6 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         else
             if debugMode then
                 print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Weapon enchant needed (missing or expiring)")
-            end
-        end
-    end
-    
-    -- 9. COOLDOWN FILTERING (ALL MODES)
-    -- Hide abilities on long cooldowns, show when ≤2s remaining (prep time)
-    -- This keeps queue focused on immediately available abilities
-    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-        local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
-            local remaining = (start + duration) - GetTime()
-            if remaining > 2.0 then  -- Hide if more than 2s remaining
-                if debugMode then
-                    print(string.format("|cff66ccffJAC|r |cffff6666FILTERED|r: On cooldown (%.1fs remaining)", remaining))
-                end
-                return true
             end
         end
     end
