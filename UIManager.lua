@@ -1076,13 +1076,55 @@ function UIManager.CreateMainFrame(addon)
     addon.mainFrame:RegisterForDrag("LeftButton")
     
     addon.mainFrame:SetScript("OnDragStart", function()
-        if addon:GetProfile() then
-            addon.mainFrame:StartMoving()
+        local profile = addon:GetProfile()
+        if profile and not profile.panelLocked then
+            addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
         end
     end)
     addon.mainFrame:SetScript("OnDragStop", function()
         addon.mainFrame:StopMovingOrSizing()
         UIManager.SavePosition(addon)
+    end)
+    
+    -- Show/hide grab tab on hover
+    addon.mainFrame:SetScript("OnEnter", function()
+        if addon.grabTab and addon.grabTab.fadeIn then
+            -- Stop any fade-out in progress
+            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
+                addon.grabTab.fadeOut:Stop()
+            end
+            addon.grabTab:Show()
+            addon.grabTab.fadeIn:Play()
+        end
+    end)
+    
+    addon.mainFrame:SetScript("OnLeave", function()
+        if addon.grabTab and addon.grabTab.fadeOut and not addon.grabTab:IsMouseOver() and not addon.grabTab.isDragging then
+            addon.grabTab.fadeOut:Play()
+        end
+    end)
+    
+    -- Right-click on main frame (empty areas) for options
+    -- Note: Frame doesn't support RegisterForClicks, so we use OnMouseDown instead
+    addon.mainFrame:SetScript("OnMouseDown", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if not profile then return end
+            
+            if IsShiftKeyDown() then
+                -- Toggle lock
+                profile.panelLocked = not profile.panelLocked
+                local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
+            else
+                -- Open options panel
+                if addon.OpenOptionsPanel then
+                    addon:OpenOptionsPanel()
+                else
+                    Settings.OpenToCategory("JustAssistedCombat")
+                end
+            end
+        end
     end)
     
     -- Start hidden, only show when we have spells
@@ -1136,14 +1178,19 @@ function UIManager.CreateGrabTab(addon)
     end
     
     -- Position at the end of the queue based on orientation
+    -- Grab tab goes at the trailing edge with no additional offset
     if orientation == "RIGHT" then
-        addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "LEFT", -2, 0)
+        -- Icons grow left from right edge, grab tab at left
+        addon.grabTab:SetPoint("LEFT", addon.mainFrame, "LEFT", 0, 0)
     elseif orientation == "UP" then
-        addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, 2)
+        -- Icons grow down from bottom, grab tab at top
+        addon.grabTab:SetPoint("TOP", addon.mainFrame, "TOP", 0, 0)
     elseif orientation == "DOWN" then
-        addon.grabTab:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -2)
+        -- Icons grow up from top, grab tab at bottom
+        addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "BOTTOM", 0, 0)
     else -- LEFT (default)
-        addon.grabTab:SetPoint("LEFT", addon.mainFrame, "RIGHT", 2, 0)
+        -- Icons grow right from left edge, grab tab at right
+        addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "RIGHT", 0, 0)
     end
     
     addon.grabTab:SetBackdrop({
@@ -1196,13 +1243,32 @@ function UIManager.CreateGrabTab(addon)
             return
         end
         
+        -- Mark as dragging to prevent fade-out
+        self.isDragging = true
+        
+        -- Stop any fade animation and ensure fully visible
+        if self.fadeOut and self.fadeOut:IsPlaying() then
+            self.fadeOut:Stop()
+        end
+        if self.fadeIn and self.fadeIn:IsPlaying() then
+            self.fadeIn:Stop()
+        end
+        self:SetAlpha(1)
+        
         -- Move the main frame (grab tab follows since it's anchored to it)
-        addon.mainFrame:StartMoving()
+        -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
+        addon.mainFrame:StartMoving(true)
     end)
     
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIManager.SavePosition(addon)
+        
+        -- Clear dragging flag and fade out if mouse isn't over frame/tab
+        self.isDragging = false
+        if not addon.mainFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
+            self.fadeOut:Play()
+        end
     end)
     
     addon.grabTab:SetScript("OnClick", function(self, mouseButton)
@@ -1227,6 +1293,12 @@ function UIManager.CreateGrabTab(addon)
     end)
     
     addon.grabTab:SetScript("OnEnter", function()
+        -- Stop any fade-out in progress and ensure fully visible
+        if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
+            addon.grabTab.fadeOut:Stop()
+        end
+        addon.grabTab:SetAlpha(1)
+        
         local profile = addon:GetProfile()
         local isLocked = profile and profile.panelLocked
         
@@ -1245,9 +1317,41 @@ function UIManager.CreateGrabTab(addon)
         GameTooltip:Show()
     end)
     
-    addon.grabTab:SetScript("OnLeave", function()
+    addon.grabTab:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
+        -- Hide grab tab if mouse leaves and isn't over main frame or being dragged
+        if not addon.mainFrame:IsMouseOver() and not self.isDragging and addon.grabTab.fadeOut then
+            addon.grabTab.fadeOut:Play()
+        end
     end)
+    
+    -- Create fade-in animation
+    local fadeIn = addon.grabTab:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.15)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    addon.grabTab.fadeIn = fadeIn
+    
+    -- Create fade-out animation
+    local fadeOut = addon.grabTab:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        addon.grabTab:Hide()
+        addon.grabTab:SetAlpha(0)
+    end)
+    addon.grabTab.fadeOut = fadeOut
+    
+    -- Start hidden with alpha 0, show on hover
+    addon.grabTab:SetAlpha(0)
+    addon.grabTab:Hide()
 end
 
 function UIManager.CreateSpellIcons(addon)
@@ -1299,6 +1403,7 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     button:SetSize(actualIconSize, actualIconSize)
     
     -- Position based on orientation
+    -- Icons start from one edge, grab tab is at the opposite edge
     if orientation == "RIGHT" then
         button:SetPoint("RIGHT", -offset, 0)
     elseif orientation == "UP" then
@@ -1408,38 +1513,63 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
     
-    -- Click feedback: show Blizzard-style pushed texture on mouse down
-    button:SetScript("OnMouseDown", function(self, mouseButton)
-        if mouseButton == "LeftButton" and self.spellID then
-            self.NormalTexture:Hide()
-            self.PushedTexture:Show()
-        end
+    -- Enable dragging from icons (delegates to main frame)
+    button:RegisterForDrag("LeftButton")
+    button:SetScript("OnDragStart", function(self)
+        local profile = addon:GetProfile()
+        if not profile or profile.panelLocked then return end
+        addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
     end)
     
-    button:SetScript("OnMouseUp", function(self, mouseButton)
-        self.PushedTexture:Hide()
-        self.NormalTexture:Show()
+    button:SetScript("OnDragStop", function(self)
+        addon.mainFrame:StopMovingOrSizing()
+        UIManager.SavePosition(addon)
     end)
     
-    -- SIMPLIFIED: Only right-click for configuration, no other interactions
+    -- Right-click menu for configuration
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
-        if mouseButton == "RightButton" and self.spellID then
-            -- Block interactions if panel is locked
+        if mouseButton == "RightButton" then
             local profile = addon:GetProfile()
-            if profile and profile.panelLocked then
-                return
-            end
+            if profile and profile.panelLocked then return end
             
-            if IsShiftKeyDown() then
-                addon:ToggleSpellBlacklist(self.spellID)
+            if self.spellID then
+                -- Spell-specific options
+                if IsShiftKeyDown() then
+                    addon:ToggleSpellBlacklist(self.spellID)
+                else
+                    addon:OpenHotkeyOverrideDialog(self.spellID)
+                end
             else
-                addon:OpenHotkeyOverrideDialog(self.spellID)
+                -- Empty slot - show general options
+                if IsShiftKeyDown() then
+                    -- Toggle lock
+                    profile.panelLocked = not profile.panelLocked
+                    local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                    if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
+                else
+                    -- Open options panel
+                    if addon.OpenOptionsPanel then
+                        addon:OpenOptionsPanel()
+                    else
+                        Settings.OpenToCategory("JustAssistedCombat")
+                    end
+                end
             end
         end
     end)
     
     button:SetScript("OnEnter", function(self)
+        -- Show grab tab when hovering over icons
+        if addon.grabTab and addon.grabTab.fadeIn then
+            -- Stop any fade-out in progress
+            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
+                addon.grabTab.fadeOut:Stop()
+            end
+            addon.grabTab:Show()
+            addon.grabTab.fadeIn:Play()
+        end
+        
         if self.spellID and addon.db and addon.db.profile and addon.db.profile.showTooltips then
             local inCombat = UnitAffectingCombat("player")
             local showTooltip = not inCombat or addon.db.profile.tooltipsInCombat
@@ -1482,6 +1612,10 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     
     button:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
+        -- Hide grab tab if mouse isn't over main frame or grab tab, and not dragging
+        if addon.grabTab and addon.grabTab.fadeOut and not addon.mainFrame:IsMouseOver() and not addon.grabTab:IsMouseOver() and not addon.grabTab.isDragging then
+            addon.grabTab.fadeOut:Play()
+        end
     end)
     
     button.lastCooldownStart = 0
@@ -1699,14 +1833,20 @@ function UIManager.RenderSpellQueue(addon, spellIDs)
                     icon:Show()
                 end
             else
-                -- No spell for this slot - hide only if currently shown
-                if icon:IsShown() or icon.spellID then
+                -- No spell for this slot - show empty slot (background + border only)
+                if icon.spellID then
                     icon.spellID = nil
                     icon.iconTexture:Hide()
                     icon.cooldown:Hide()
                     StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
-                    icon:Hide()
+                    -- Keep SlotBackground and NormalTexture visible for empty slot appearance
+                    -- Don't hide the entire icon frame
+                end
+                
+                -- Ensure empty slot is visible (shows background texture + border)
+                if not icon:IsShown() then
+                    icon:Show()
                 end
             end
         end
@@ -1822,11 +1962,30 @@ function UIManager.UpdateFrameSize(addon)
     local totalSpacing = (newMaxIcons > 1) and ((newMaxIcons - 1) * newIconSpacing) or 0
     local totalLength = firstIconSize + remainingIconsSize + totalSpacing
     
-    -- Swap width/height for vertical orientations
-    if orientation == "UP" or orientation == "DOWN" then
-        addon.mainFrame:SetSize(firstIconSize, totalLength)
+    -- Calculate grab tab spacing: always at least as large as icon spacing
+    local isVertical = (orientation == "UP" or orientation == "DOWN")
+    local grabTabLength = 12
+
+    -- The normalTexture used for icon borders extends 1px beyond the button
+    -- width which visually reduces the gap. We want the visual gap between
+    -- the last icon and the grab tab to equal `newIconSpacing`.
+    --
+    -- Compute grabTabSpacing so that (grabTabSpacing - grabTabLength - visualOverflow) == newIconSpacing
+    local visualOverflow = 1 -- visual overflow of icon borders
+    local grabTabSpacing
+    if isVertical then
+        -- For vertical queues: spacing down/up should equal icon spacing + grab tab length
+        grabTabSpacing = newIconSpacing + grabTabLength
     else
-        addon.mainFrame:SetSize(totalLength, firstIconSize)
+        -- For horizontal queues: account for 1px icon border overflow
+        grabTabSpacing = newIconSpacing + grabTabLength + visualOverflow
+    end
+
+    -- Expand main frame to include grab tab area + consistent spacing
+    if isVertical then
+        addon.mainFrame:SetSize(firstIconSize, totalLength + grabTabSpacing)
+    else
+        addon.mainFrame:SetSize(totalLength + grabTabSpacing, firstIconSize)
     end
 end
 

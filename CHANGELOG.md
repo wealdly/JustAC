@@ -1,33 +1,6 @@
 # Changelog
 
-## [3.10] - 2025-12-09
-
-### Changed
-
-- **Cooldown filter prep window**: Increased from 2s to 5s before abilities appear
-- Abilities now show when ≤5s remaining on cooldown (was 2s)
-- Provides more preparation time for abilities coming off cooldown
-- Reduces queue flickering from short cooldowns
-
-## [3.09] - 2025-12-09
-
-### Fixed
-
-- **WoW 12.0 raid buff filtering**: Hide Mark of the Wild and other raid buffs when aura API blocked
-- Added hardcoded list of common raid buffs (Mark of the Wild, Power Word: Fortitude, Battle Shout, Arcane Intellect)
-- These buffs now properly filtered when secrets prevent checking if already active
-- Prevents queue clutter from suggesting buffs that may already be active
-
-## [3.08] - 2025-12-09
-
-### Fixed
-
-- **WoW 12.0 compatibility**: Fix Settings.OpenToCategory error when opening options panel
-- 12.0 path: Use AceConfigDialog:Open() directly (Settings API changed signature)
-- Pre-12.0 path: Keep Settings.OpenToCategory() with string parameter
-- Fixes error: "bad argument #1 to 'OpenSettingsPanel' (outside of expected range)"
-
-## [3.07] - 2025-12-09
+## [3.02] - 2025-12-09
 
 ### Added
 
@@ -38,53 +11,41 @@
 - Created `Documentation/VERSION_CONDITIONALS.md` - Patterns for adding version-specific code
 - Ready to accept 12.0 error reports and add conditional fixes
 
-## [3.06] - 2025-12-09
-
 ### Changed
 
+- **UI**: Empty slots now visible when abilities are filtered (on cooldown, blacklisted, etc.) - shows action bar background and border for unused icon positions up to maxIcons setting
+- **Cooldown filter prep window**: Increased from 2s to 5s before abilities appear
+- Abilities now show when ≤5s remaining on cooldown (was 2s)
+- Provides more preparation time for abilities coming off cooldown
+- Reduces queue flickering from short cooldowns
+- **Cooldown-aware filtering enabled always**: Hide abilities on cooldown >5s, show when coming off CD
+- Applies to both main DPS queue and defensive queue
+- Reduces queue clutter from abilities on long cooldowns
+- Keeps queue focused on immediately available or soon-ready abilities
+- **Whitelist approach for WoW 12.0**: When aura detection is blocked, only show DPS-relevant spells in queue
+- Automatically filters out forms, pets, raid buffs, and utility abilities when can't verify their state
+- Uses LibPlayerSpells flags (HARMFUL, BURST, COOLDOWN, IMPORTANT) to identify rotation-critical abilities
+- Keeps queue focused on offensive rotation when addon can't access buff information
+- Automatically hide raid buffs (Battle Shout, Arcane Intellect, etc.) from queue when WoW 12.0 blocks aura detection
+- Uses LibPlayerSpells RAIDBUFF flag to identify long-duration maintenance buffs
+- Reduces queue clutter when addon can't verify if buffs are already active
+- Forms, pets, and rotation abilities still show normally (don't require aura API)
+- Updated Interface version to 120000 for WoW 12.0 (Midnight) beta compatibility
 - **Code simplification pass**: Removed duplicate logic in RedundancyFilter module
 - Removed duplicate cooldown check (was checked twice in same function)
 - Consolidated duplicate secret detection checks into single unified block
 - Improved code maintainability without affecting functionality
 
-## [3.05] - 2025-12-09
-
-### Changed
-
-- **Cooldown-aware filtering enabled always**: Hide abilities on cooldown >2s, show when coming off CD
-- Abilities appear 2 seconds before ready, giving visual preparation time
-- Applies to both main DPS queue and defensive queue
-- Reduces queue clutter from abilities on long cooldowns
-- Keeps queue focused on immediately available or soon-ready abilities
-
-## [3.04] - 2025-12-09
-
-### Changed
-
-- **Whitelist approach for WoW 12.0**: When aura detection is blocked, only show DPS-relevant spells in queue
-- Automatically filters out forms, pets, raid buffs, and utility abilities when can't verify their state
-- Uses LibPlayerSpells flags (HARMFUL, BURST, COOLDOWN, IMPORTANT) to identify rotation-critical abilities
-- Keeps queue focused on offensive rotation when addon can't access buff information
-
-## [3.03] - 2025-12-09
-
-### Changed
-
-- Automatically hide raid buffs (Battle Shout, Arcane Intellect, etc.) from queue when WoW 12.0 blocks aura detection
-- Uses LibPlayerSpells RAIDBUFF flag to identify long-duration maintenance buffs
-- Reduces queue clutter when addon can't verify if buffs are already active
-- Forms, pets, and rotation abilities still show normally (don't require aura API)
-
-## [3.02] - 2025-12-09
-
-### Changed
-
-- Updated Interface version to 120000 for WoW 12.0 (Midnight) beta compatibility
-
-## [3.01] - 2025-12-08
-
 ### Fixed
 
+- **WoW 12.0 raid buff filtering**: Hide Mark of the Wild and other raid buffs when aura API blocked
+- Added hardcoded list of common raid buffs (Mark of the Wild, Power Word: Fortitude, Battle Shout, Arcane Intellect)
+- These buffs now properly filtered when secrets prevent checking if already active
+- Prevents queue clutter from suggesting buffs that may already be active
+- **WoW 12.0 compatibility**: Fix Settings.OpenToCategory error when opening options panel
+- 12.0 path: Use AceConfigDialog:Open() directly (Settings API changed signature)
+- Pre-12.0 path: Keep Settings.OpenToCategory() with string parameter
+- Fixes error: "bad argument #1 to 'OpenSettingsPanel' (outside of expected range)"
 - Fixed nil reference crash in defensive proc glow animation when switching between proc and non-proc states
 - Removed references to deleted ProcStartFlipbook and ProcStartAnim frame elements (cleaned up after earlier animation refactor)
 - Added defensive null checks for Flipbook.Anim frame transitions
