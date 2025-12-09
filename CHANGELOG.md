@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.10] - 2025-12-09
+
+### Changed
+
+- **Cooldown filter prep window**: Increased from 2s to 5s before abilities appear
+- Abilities now show when ≤5s remaining on cooldown (was 2s)
+- Provides more preparation time for abilities coming off cooldown
+- Reduces queue flickering from short cooldowns
+
 ## [3.09] - 2025-12-09
 
 ### Fixed
