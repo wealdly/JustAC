@@ -771,7 +771,7 @@ function JustAC:GetBestDefensiveSpell(spellList)
                     -- Check if known and usable
                     local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
                     if isKnown then
-                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID)
+                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile)
                         if not isRedundant then
                             local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
                             local onCooldown = start and start > 0 and duration and duration > 1.5

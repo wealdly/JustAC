@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.03] - 2025-12-09
+
+### Changed
+
+- Automatically hide raid buffs (Battle Shout, Arcane Intellect, etc.) from queue when WoW 12.0 blocks aura detection
+- Uses LibPlayerSpells RAIDBUFF flag to identify long-duration maintenance buffs
+- Reduces queue clutter when addon can't verify if buffs are already active
+- Forms, pets, and rotation abilities still show normally (don't require aura API)
+
 ## [3.02] - 2025-12-09
 
 ### Changed

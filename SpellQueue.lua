@@ -271,7 +271,7 @@ function SpellQueue.GetCurrentSpellQueue()
                        and ActionBarScanner.HasKeybind(procSpellID)
                        and not SpellQueue.IsSpellBlacklisted(procSpellID)
                        and IsSpellAvailable(procSpellID)
-                       and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID)) then
+                       and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID, profile)) then
                         spellCount = spellCount + 1
                         recommendedSpells[spellCount] = procSpellID
                         addedSpellIDs[procSpellID] = true
@@ -311,7 +311,7 @@ function SpellQueue.GetCurrentSpellQueue()
                         -- Redundancy filter bypassed independently if aura secrets detected
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and IsSpellAvailable(actualSpellID)
-                           and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID)) then
+                           and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID, profile)) then
                             -- Categorize by proc state and importance
                             -- Proc detection bypassed independently if proc secrets detected
                             -- When bypassed, all spells go to "normal" category (Blizzard's order)

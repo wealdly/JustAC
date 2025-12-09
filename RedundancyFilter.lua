@@ -5,7 +5,8 @@
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 13)
+-- 12.0 COMPATIBILITY: Auto-hides raid buffs when aura API is blocked by secrets
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 14)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -24,6 +25,7 @@ local LPS_AURA = LibPlayerSpells and LibPlayerSpells.constants.AURA or 0
 local LPS_PET = LibPlayerSpells and LibPlayerSpells.constants.PET or 0
 local LPS_PERSONAL = LibPlayerSpells and LibPlayerSpells.constants.PERSONAL or 0
 local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AURA or 0
+local LPS_RAIDBUFF = LibPlayerSpells and LibPlayerSpells.constants.RAIDBUFF or 0
 
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
@@ -236,6 +238,12 @@ local function IsPetSpell(spellID)
     return HasSpellFlag(spellID, LPS_PET)
 end
 
+-- Check if spell is a raid buff (using LibPlayerSpells RAIDBUFF flag)
+-- These are long-duration maintenance buffs like Battle Shout, Arcane Intellect
+local function IsRaidBuff(spellID)
+    return HasSpellFlag(spellID, LPS_RAIDBUFF)
+end
+
 --------------------------------------------------------------------------------
 -- Pet Detection
 --------------------------------------------------------------------------------
@@ -398,18 +406,36 @@ end
 -- Main Redundancy Check
 --------------------------------------------------------------------------------
 
-function RedundancyFilter.IsSpellRedundant(spellID)
+function RedundancyFilter.IsSpellRedundant(spellID, profile)
     if not spellID then return false end
     
     -- Check if aura API is accessible (12.0+ secret values may block this)
-    -- If blocked, fail-open: don't filter anything (show extra rather than hide valid)
-    if BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable() then
+    local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
+    
+    -- If aura API is blocked, hide raid buffs automatically (can't detect their active state)
+    -- This prevents clutter from long-term maintenance buffs we can't check
+    if auraAPIBlocked and IsRaidBuff(spellID) then
+        if GetDebugMode() then
+            print("|cff66ccffJAC|r |cffff6666FILTERED|r: Raid buff (aura API blocked, auto-hiding)")
+        end
+        return true
+    end
+    
+    -- If aura API blocked but not a raid buff, fail-open (show it)
+    if auraAPIBlocked then
         return false
     end
     
     -- Early exit: If cache detected secrets during refresh, fail-open
     local auras = RefreshAuraCache()
     if auras and auras.hasSecrets then
+        -- Auto-hide raid buffs when secrets detected during cache refresh
+        if IsRaidBuff(spellID) then
+            if GetDebugMode() then
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Raid buff (secrets detected in cache)")
+            end
+            return true
+        end
         return false  -- Fail-open: show the spell rather than incorrectly filtering
     end
     
