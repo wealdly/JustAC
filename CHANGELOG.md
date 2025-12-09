@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.02] - 2025-12-09
+
+### Changed
+
+- Updated Interface version to 120000 for WoW 12.0 (Midnight) beta compatibility
+
 ## [3.01] - 2025-12-08
 
 ### Fixed
