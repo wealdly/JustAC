@@ -4,8 +4,9 @@
 
 ### Fixed
 
-- Fix: nil reference crash in defensive proc glow animation (removed references to deleted ProcStart animation)
-- Fix: defensive glow system now properly handles frame transitions between proc and non-proc states
+- Fixed nil reference crash in defensive proc glow animation when switching between proc and non-proc states
+- Removed references to deleted ProcStartFlipbook and ProcStartAnim frame elements (cleaned up after earlier animation refactor)
+- Added defensive null checks for Flipbook.Anim frame transitions
 
 ## [3.0] - 2025-12-08
 
