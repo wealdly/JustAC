@@ -5,8 +5,9 @@
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
--- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist to show only DPS-relevant spells
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 15)
+-- COOLDOWN FILTERING: Hides abilities on cooldown >2s, shows when ≤2s remaining (prep time)
+-- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist (HARMFUL, BURST, COOLDOWN, IMPORTANT)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 17)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -444,11 +445,25 @@ end
 function RedundancyFilter.IsSpellRedundant(spellID, profile)
     if not spellID then return false end
     
+    -- ALWAYS check cooldown - hide abilities on CD >2s, show when coming off CD (≤2s)
+    -- This keeps queue focused on ready/soon-ready abilities regardless of secrets
+    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+        local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
+            local remaining = (start + duration) - GetTime()
+            if remaining > 2.0 then  -- Hide if more than 2s remaining
+                if GetDebugMode() then
+                    print(string.format("|cff66ccffJAC|r |cffff6666FILTERED|r: On cooldown (%.1fs remaining)", remaining))
+                end
+                return true
+            end
+        end
+    end
+    
     -- Check if aura API is accessible (12.0+ secret values may block this)
     local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
     
     -- If aura API is blocked, use whitelist approach: only show DPS-relevant spells
-    -- This prevents clutter from forms, pets, raid buffs we can't verify
     if auraAPIBlocked then
         local isDPS = IsDPSRelevant(spellID)
         if not isDPS then
@@ -620,6 +635,22 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         else
             if debugMode then
                 print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Weapon enchant needed (missing or expiring)")
+            end
+        end
+    end
+    
+    -- 9. COOLDOWN FILTERING (ALL MODES)
+    -- Hide abilities on long cooldowns, show when ≤2s remaining (prep time)
+    -- This keeps queue focused on immediately available abilities
+    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+        local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
+            local remaining = (start + duration) - GetTime()
+            if remaining > 2.0 then  -- Hide if more than 2s remaining
+                if debugMode then
+                    print(string.format("|cff66ccffJAC|r |cffff6666FILTERED|r: On cooldown (%.1fs remaining)", remaining))
+                end
+                return true
             end
         end
     end

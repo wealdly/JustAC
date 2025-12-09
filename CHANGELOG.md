@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.05] - 2025-12-09
+
+### Changed
+
+- **Cooldown-aware filtering enabled always**: Hide abilities on cooldown >2s, show when coming off CD
+- Abilities appear 2 seconds before ready, giving visual preparation time
+- Applies to both main DPS queue and defensive queue
+- Reduces queue clutter from abilities on long cooldowns
+- Keeps queue focused on immediately available or soon-ready abilities
+
 ## [3.04] - 2025-12-09
 
 ### Changed
