@@ -1114,7 +1114,8 @@ function Options.Initialize(addon)
     end
     
     AceConfig:RegisterOptionsTable("JustAssistedCombat", addon.optionsTable)
-    AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
+    -- Store the category for version-aware opening
+    addon.optionsCategoryID = AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
     
     addon:RegisterChatCommand("justac", function(input) HandleSlashCommand(addon, input) end)
     addon:RegisterChatCommand("jac", function(input) HandleSlashCommand(addon, input) end)

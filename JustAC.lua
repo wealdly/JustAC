@@ -1310,7 +1310,21 @@ function JustAC:OpenOptionsPanel()
         if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
     end
-    Settings.OpenToCategory("JustAssistedCombat")
+    
+    -- Version-aware settings panel opening
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.IsMidnightOrLater() then
+        -- 12.0+: Use AceConfigDialog directly (Settings.OpenToCategory changed signature)
+        local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)
+        if AceConfigDialog then
+            AceConfigDialog:Open("JustAssistedCombat")
+        end
+    else
+        -- Pre-12.0: Original Settings.OpenToCategory works with string
+        if Settings and Settings.OpenToCategory then
+            Settings.OpenToCategory("JustAssistedCombat")
+        end
+    end
 end
 
 function JustAC:StartUpdates()
