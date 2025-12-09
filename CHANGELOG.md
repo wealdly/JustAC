@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.08] - 2025-12-09
+
+### Fixed
+
+- **WoW 12.0 compatibility**: Fix Settings.OpenToCategory error when opening options panel
+- 12.0 path: Use AceConfigDialog:Open() directly (Settings API changed signature)
+- Pre-12.0 path: Keep Settings.OpenToCategory() with string parameter
+- Fixes error: "bad argument #1 to 'OpenSettingsPanel' (outside of expected range)"
+
 ## [3.07] - 2025-12-09
 
 ### Added
