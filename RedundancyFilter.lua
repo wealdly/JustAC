@@ -5,9 +5,9 @@
 -- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
--- COOLDOWN FILTERING: Hides abilities on cooldown >2s, shows when ≤2s remaining (prep time)
+-- COOLDOWN FILTERING: Hides abilities on cooldown >5s, shows when ≤5s remaining (prep time)
 -- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist (HARMFUL, BURST, COOLDOWN, IMPORTANT)
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 19)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 20)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -460,13 +460,13 @@ end
 function RedundancyFilter.IsSpellRedundant(spellID, profile)
     if not spellID then return false end
     
-    -- ALWAYS check cooldown - hide abilities on CD >2s, show when coming off CD (≤2s)
+    -- ALWAYS check cooldown - hide abilities on CD >5s, show when coming off CD (≤5s)
     -- This keeps queue focused on ready/soon-ready abilities regardless of secrets
     if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
         local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
         if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
             local remaining = (start + duration) - GetTime()
-            if remaining > 2.0 then  -- Hide if more than 2s remaining
+            if remaining > 5.0 then  -- Hide if more than 5s remaining
                 if GetDebugMode() then
                     print(string.format("|cff66ccffJAC|r |cffff6666FILTERED|r: On cooldown (%.1fs remaining)", remaining))
                 end
