@@ -29,7 +29,8 @@ end
 1. **NEVER guess WoW API behavior** — Verify with `/script` commands in-game or check `R:\WOW\00-SOURCE\WowUISource`
 2. **Propose before implementing** — Describe changes, ask "Should I proceed?"
 3. **Test with debug commands** — Use `/jac test`, `/jac modules`, `/jac formcheck` to validate changes
-4. **Build before release** — Run `.\build.ps1` (PowerShell) to create distributable ZIP in `dist/`
+4. **DO NOT auto-increment versions** — Track changes in `UNRELEASED.md`, only bump version on explicit instruction
+5. **DO NOT auto-build or push** — Commit changes, let user build/push manually
 
 ## Architecture (Load Order Matters)
 
@@ -138,9 +139,21 @@ Secret handling: `BlizzardAPI.IsSecretValue()` — fail-open design (shows extra
 ## Build & Release
 
 PowerShell script `build.ps1` creates distributable package:
-- Extracts version from `JustAC.toc` (currently 2.97)
+- Extracts version from `JustAC.toc` (currently 3.10)
 - Packages core `.lua` files + `Libs/` folder
 - Removes duplicate nested lib folders (common packaging error)
 - Creates `dist/JustAC-<version>.zip` ready for CurseForge/GitHub
+
+**Workflow:**
+1. Make changes and commit them
+2. Update `UNRELEASED.md` with change notes
+3. When user requests version bump:
+   - Move UNRELEASED changes to CHANGELOG.md
+   - Increment version in JustAC.toc
+   - Update library versions if breaking changes
+   - Clear UNRELEASED.md
+   - Commit version bump
+4. User runs `.\build.ps1` when ready to test
+5. User runs `git push` when ready to deploy
 
 **Before release:** Test with `/jac modules` + in-game rotation to verify all modules loaded.
