@@ -146,10 +146,11 @@ function DebugCommands.ModuleDiagnostics(addon)
         addon:Print("  Cooldown API (Display):  " .. (features.cooldownAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
         addon:Print("  Proc API (Prioritize):   " .. (features.procAccess and "|cff00ff00OK|r" or "|cffff6600SECRET|r"))
         
-        -- Show bypass states for queue filtering
-        local bypassSlot1 = (not features.auraAccess) or (not features.procAccess)
-        local bypassRedundancy = not features.auraAccess
-        local bypassProcs = not features.procAccess
+        -- Show bypass states for queue filtering (use centralized helper)
+        local flags = BlizzardAPI.GetBypassFlags and BlizzardAPI.GetBypassFlags() or {}
+        local bypassSlot1 = flags.bypassSlot1Blacklist or (flags.bypassRedundancy or flags.bypassProcs)
+        local bypassRedundancy = flags.bypassRedundancy or false
+        local bypassProcs = flags.bypassProcs or false
         addon:Print("")
         addon:Print("Queue Bypass States:")
         addon:Print("  Slot 1 Blacklist: " .. (bypassSlot1 and "|cffffff00BYPASSED|r" or "|cff00ff00ACTIVE|r"))

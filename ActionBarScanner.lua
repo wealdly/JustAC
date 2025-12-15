@@ -478,9 +478,30 @@ local function AbbreviateKeybind(key)
     
     -- Simple gsub chain - fast on short strings, no cache needed
     local result = key
+    
+    -- Abbreviate modifiers first
     result = string_gsub(result, "SHIFT%-", "S")
     result = string_gsub(result, "CTRL%-", "C")
     result = string_gsub(result, "ALT%-", "A")
+    
+    -- Abbreviate common long keybinds for better fit in hotkey overlay
+    result = string_gsub(result, "BUTTON(%d+)", "M%1")  -- BUTTON4 -> M4, BUTTON5 -> M5
+    result = string_gsub(result, "MOUSEWHEELUP", "MwU")
+    result = string_gsub(result, "MOUSEWHEELDOWN", "MwD")
+    result = string_gsub(result, "NUMPAD", "N")  -- NUMPAD1 -> N1, NUMPAD0 -> N0
+    result = string_gsub(result, "PAGEUP", "PgU")
+    result = string_gsub(result, "PAGEDOWN", "PgD")
+    result = string_gsub(result, "INSERT", "Ins")
+    result = string_gsub(result, "DELETE", "Del")
+    result = string_gsub(result, "HOME", "Hm")
+    result = string_gsub(result, "END", "End")
+    result = string_gsub(result, "BACKSPACE", "BkSp")
+    result = string_gsub(result, "CAPSLOCK", "Caps")
+    result = string_gsub(result, "ESCAPE", "Esc")
+    result = string_gsub(result, "PRINTSCREEN", "PrtSc")
+    result = string_gsub(result, "SCROLLLOCK", "ScrLk")
+    result = string_gsub(result, "SPACE", "Spc")
+    
     return result
 end
 

@@ -226,6 +226,26 @@ function BlizzardAPI.IsProcFeatureAvailable()
     return featureAvailability.procAccess
 end
 
+-- Convenience helper: centralize feature bypass flags used elsewhere
+-- Returns a table of booleans indicating which features should be bypassed
+-- (true = bypass because the underlying feature is unavailable/secret)
+function BlizzardAPI.GetBypassFlags()
+    RefreshFeatureAvailability()
+    local bypassRedundancy = not BlizzardAPI.IsRedundancyFilterAvailable()
+    local bypassProcs = not BlizzardAPI.IsProcFeatureAvailable()
+    local bypassCooldown = not BlizzardAPI.IsCooldownFeatureAvailable()
+    local bypassDefensives = not BlizzardAPI.IsDefensivesFeatureAvailable()
+    local bypassSlot1Blacklist = bypassRedundancy or bypassProcs
+
+    return {
+        bypassRedundancy = bypassRedundancy,
+        bypassProcs = bypassProcs,
+        bypassCooldown = bypassCooldown,
+        bypassDefensives = bypassDefensives,
+        bypassSlot1Blacklist = bypassSlot1Blacklist,
+    }
+end
+
 -- Public API: Force re-check of feature availability (call on login/reload)
 function BlizzardAPI.RefreshFeatureAvailability()
     featureAvailability.lastCheck = 0

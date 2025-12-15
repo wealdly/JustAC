@@ -543,8 +543,12 @@ StopDefensiveGlow = function(icon)
 end
 
 -- Flash animation for button press feedback (quick bright flash fade-out)
-local FLASH_DURATION = 0.15  -- Faster flash duration (was 0.25)
+-- Flash timing and style
+-- Mirror Blizzard actionbar behavior: strobe/toggle at ATTACK_BUTTON_FLASH_TIME for high visibility
+local FLASH_TOGGLE_TIME = 0.4  -- Matches standard actionbar ATTACK_BUTTON_FLASH_TIME for visibility
 local FLASH_INITIAL_ALPHA = 1.0  -- Full opacity for bright flash
+local FLASH_MAX_SCALE = 1.12
+local FLASH_SCALE_DURATION = 0.12  -- Quick scale back to normal
 
 -- Forward declaration
 local UpdateFlash
@@ -557,27 +561,40 @@ local function StartFlash(button)
     button.Flash:SetDrawLayer("OVERLAY", 2)
     button.Flash:SetVertexColor(1, 1, 1, 1)
     
-    if button.Flash2 then
-        button.Flash2:SetDrawLayer("OVERLAY", 3)
-        button.Flash2:SetVertexColor(1, 1, 1, 1)
-    end
+    -- Single flash layer only: set draw layer and color
     
-    -- Always reset flash state
+    -- Reset and start strobe-style flash (show/hide toggle) for good visibility
     button.flashing = 1
-    button.flashtime = FLASH_DURATION
+    button.flashtime = FLASH_TOGGLE_TIME
+    -- Start a quick scale pulse on the flash frame for extra visibility
+    button.flashScaleTimer = FLASH_SCALE_DURATION
+    if button.FlashFrame and button.FlashFrame.SetScale then
+        button.FlashFrame:SetScale(FLASH_MAX_SCALE)
+    end
     button.Flash:SetAlpha(FLASH_INITIAL_ALPHA)
     button.Flash:Show()
+
     
-    if button.Flash2 then
-        button.Flash2:SetAlpha(FLASH_INITIAL_ALPHA)
-        button.Flash2:Show()
-    end
-    
-    -- Set OnUpdate if not already present
-    if not button:GetScript("OnUpdate") then
-        button:SetScript("OnUpdate", function(self, elapsed)
-            UpdateFlash(self, elapsed)
-        end)
+    -- Set OnUpdate wrapper so UpdateFlash runs, but preserve any existing OnUpdate handler.
+    -- We store the previous handler so StopFlash can restore it later.
+    if not button._prevFlashOnUpdate then
+        local prev = button:GetScript("OnUpdate")
+        if prev then
+            -- Wrap: call UpdateFlash first, then the previous handler
+            local function wrapper(self, elapsed)
+                UpdateFlash(self, elapsed)
+                prev(self, elapsed)
+            end
+            button._prevFlashOnUpdate = prev
+            button:SetScript("OnUpdate", wrapper)
+        else
+            -- No previous handler: simple UpdateFlash runner
+            local function runner(self, elapsed)
+                UpdateFlash(self, elapsed)
+            end
+            button._prevFlashOnUpdate = nil
+            button:SetScript("OnUpdate", runner)
+        end
     end
 end
 
@@ -585,16 +602,18 @@ local function StopFlash(button)
     if not button then return end
     button.flashing = 0
     button.flashtime = 0
+    button.flashScaleTimer = nil
     if button.Flash then
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
     end
-    if button.Flash2 then
-        button.Flash2:SetAlpha(0)
-        button.Flash2:Hide()
+    -- Restore any previously existing OnUpdate handler to avoid interfering with other code
+    if button._prevFlashOnUpdate then
+        button:SetScript("OnUpdate", button._prevFlashOnUpdate)
+        button._prevFlashOnUpdate = nil
+    else
+        button:SetScript("OnUpdate", nil)
     end
-    -- Remove OnUpdate to eliminate per-frame overhead when not flashing
-    button:SetScript("OnUpdate", nil)
 end
 
 UpdateFlash = function(button, elapsed)
@@ -607,15 +626,35 @@ UpdateFlash = function(button, elapsed)
         return
     end
     
-    -- Fade out from FLASH_INITIAL_ALPHA to 0 over FLASH_DURATION
-    local progress = button.flashtime / FLASH_DURATION  -- 1.0 to 0.0
-    local alpha = FLASH_INITIAL_ALPHA * progress
-    button.Flash:SetAlpha(alpha)
-    
-    if button.Flash2 then
-        button.Flash2:SetAlpha(alpha)
+    -- Strobe / toggle behavior used by Blizzard action buttons
+    -- Check if we've crossed a toggle boundary
+    if button.flashtime <= 0 then
+        local overtime = -button.flashtime
+        if overtime >= FLASH_TOGGLE_TIME then
+            overtime = 0
+        end
+        button.flashtime = FLASH_TOGGLE_TIME - overtime
+
+        if button.Flash:IsShown() then
+            button.Flash:Hide()
+        else
+            button.Flash:Show()
+        end
     end
-    button.Flash:SetAlpha(progress * FLASH_INITIAL_ALPHA)
+
+    -- Animate scale pulse back to 1.0 (if active)
+    if button.flashScaleTimer and button.FlashFrame and button.FlashFrame.SetScale then
+        local st = button.flashScaleTimer - elapsed
+        if st <= 0 then
+            button.flashScaleTimer = nil
+            button.FlashFrame:SetScale(1)
+        else
+            button.flashScaleTimer = st
+            local progress = 1 - (st / FLASH_SCALE_DURATION)
+            local curScale = FLASH_MAX_SCALE - ((FLASH_MAX_SCALE - 1) * progress)
+            button.FlashFrame:SetScale(curScale)
+        end
+    end
 end
 
 -- Export functions for external access
@@ -730,26 +769,26 @@ local function CreateDefensiveIcon(addon, profile)
     
     -- Flash overlay on high-level frame (+10) - above all animations, below hotkey (+15)
     local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetAllPoints(button)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
+    -- Anchor and size to button center so scaling remains centered
+    -- Small nudge right to close visual gap on the right side of the flash art
+    flashFrame:SetPoint("CENTER", button, "CENTER", 1, 0)
+    -- Size the flash to match the icon (clamped to at least 1px for very small icons).
+    local flashWidth = math_max(1, actualIconSize)
+    flashFrame:SetSize(flashWidth, flashWidth)
+    -- Place flash *below* marching-ants and proc glow so those highlight layers sit above the flash
+    -- Marching ants are at +5 and proc glow at +6, so use +4 to be underneath them
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 4)
     
     -- Double-layer flash for increased brightness
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    flashTexture:SetSize(actualIconSize + 1, actualIconSize)
+    flashTexture:SetAllPoints(flashFrame)
+    flashTexture:SetSize(flashWidth, flashWidth)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     
-    local flashTexture2 = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    flashTexture2:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    flashTexture2:SetSize(actualIconSize + 1, actualIconSize)
-    flashTexture2:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture2:SetBlendMode("ADD")
-    flashTexture2:Hide()
-    
     button.Flash = flashTexture
-    button.Flash2 = flashTexture2
+    -- single-layer flash (no doubling)
     button.FlashFrame = flashFrame
     
     -- Flash animation state
@@ -1458,26 +1497,26 @@ function UIManager.CreateSingleSpellIcon(addon, index, offset, profile)
     
     -- Flash overlay on high-level frame (+10) - above all animations, below hotkey (+15)
     local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetAllPoints(button)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)
+    -- Anchor and size to button center so scaling remains centered
+    -- Small nudge right to close visual gap on the right side of the flash art
+    flashFrame:SetPoint("CENTER", button, "CENTER", 1, 0)
+    -- Defensive icon: size the flash to match the icon (clamped to at least 1px)
+    local defFlashWidth = math_max(1, actualIconSize)
+    flashFrame:SetSize(defFlashWidth, defFlashWidth)
+    -- Defensive icon: also ensure flash is underneath proc/ants overlays
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 4)
     
     -- Double-layer flash for increased brightness
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    flashTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    flashTexture:SetSize(actualIconSize + 1, actualIconSize)
+    flashTexture:SetAllPoints(flashFrame)
+    flashTexture:SetSize(defFlashWidth, defFlashWidth)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     
-    local flashTexture2 = flashFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    flashTexture2:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    flashTexture2:SetSize(actualIconSize + 1, actualIconSize)
-    flashTexture2:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture2:SetBlendMode("ADD")
-    flashTexture2:Hide()
-    
+    -- Only a single flash layer is required for defensive icons; ensure it's hidden by default
+    -- (previous code mistakenly created a second texture which remained visible)
     button.Flash = flashTexture
-    button.Flash2 = flashTexture2
     button.FlashFrame = flashFrame
     
     -- Flash animation state

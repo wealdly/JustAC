@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.03] - 2025-12-15
+
+### Added
+
+- **Keybind abbreviations**: Long keybinds now display with compact abbreviations for better fit
+  - Mouse buttons: BUTTON4→M4, BUTTON5→M5, MOUSEWHEELUP→MwU, MOUSEWHEELDOWN→MwD
+  - Numpad: NUMPAD1→N1, NUMPAD0→N0
+  - Navigation: PAGEUP→PgU, PAGEDOWN→PgD, HOME→Hm, END→End
+  - Special: SPACE→Spc, ESCAPE→Esc, BACKSPACE→BkSp, CAPSLOCK→Caps
+  - Editing: INSERT→Ins, DELETE→Del
+  - Combined examples: CTRL-BUTTON4→CM4, SHIFT-NUMPAD5→SN5
+
+### Changed
+
+- **Keypress flash improvements**: Enhanced visual feedback for button presses
+  - Flash now uses strobe/toggle behavior (like Blizzard's action buttons) for high visibility
+  - Added short scale pulse (1.12x → 1.0 over 120ms) for emphasis
+  - Flash centered on button and sized to match icon exactly
+  - Flash positioned below marching ants/proc glow layers (proper z-ordering)
+  - Single flash texture instead of doubled layers (cleaner visuals)
+- **Empty slots visibility**: Empty slots now visible when abilities are filtered
+  - Shows action bar background and border for unused positions up to maxIcons
+- **Grab tab fade**: Now fades in/out on mouse hover for cleaner appearance
+- **Grab tab persistence**: Stays visible during drag (won't disappear on fast cursor movement)
+- **Drag improvements**: Drag from anywhere on icons or main frame when unlocked
+- **Frame positioning**: Frame follows cursor precisely during drag with no offset
+- **Context menu**: Right-click on icons/empty areas for options menu access
+
+### Fixed
+
+- **Critical**: Flash timing bug causing flash to run 2x faster than intended (double elapsed subtraction)
+- **Critical**: Flash overlay staying visible after keypress (OnUpdate handler conflict)
+- **Performance**: Optimized keypress detector hot-path (eliminated redundant string concatenations)
+- **Visual**: Removed accidental duplicate flash texture on defensive icon
+- **Code quality**: Centralized bypass flag logic to eliminate duplication across modules
+- **Maintainability**: Added GetBypassFlags() helper in BlizzardAPI for consistent feature detection
+
 ## [3.02] - 2025-12-09
 
 ### Added

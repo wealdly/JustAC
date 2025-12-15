@@ -165,21 +165,14 @@ function SpellQueue.GetCurrentSpellQueue()
     lastQueueUpdate = now
     
     -- Early check: determine which features are bypassed due to secrets
-    -- Track each secret type independently (Blizzard may not use all-or-nothing approach)
-    local bypassRedundancy = false
-    local bypassProcs = false
-    if BlizzardAPI then
-        if BlizzardAPI.IsRedundancyFilterAvailable then
-            bypassRedundancy = not BlizzardAPI.IsRedundancyFilterAvailable()
-        end
-        if BlizzardAPI.IsProcFeatureAvailable then
-            bypassProcs = not BlizzardAPI.IsProcFeatureAvailable()
-        end
-    end
+    -- Centralized into a single helper so logic is not duplicated across modules
+    local flags = BlizzardAPI and BlizzardAPI.GetBypassFlags and BlizzardAPI.GetBypassFlags() or {}
+    local bypassRedundancy = flags.bypassRedundancy or false
+    local bypassProcs = flags.bypassProcs or false
     
     -- Blacklist bypass for slot 1 only when EITHER secret type blocks reliable filtering
     -- If we can't filter the rotation properly, show Blizzard's choice for slot 1
-    local bypassSlot1Blacklist = bypassRedundancy or bypassProcs
+    local bypassSlot1Blacklist = flags.bypassSlot1Blacklist or (bypassRedundancy or bypassProcs)
 
     local recommendedSpells = {}
     local addedSpellIDs = {}
