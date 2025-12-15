@@ -379,11 +379,22 @@ function JustAC:CreateKeyPressDetector()
         -- Build full key only if modifiers are pressed (avoid string concat otherwise)
         local fullKey
         if hasShift or hasCtrl or hasAlt then
-            local modPrefix = ""
-            if hasShift then modPrefix = "SHIFT-" end
-            if hasCtrl then modPrefix = modPrefix .. "CTRL-" end
-            if hasAlt then modPrefix = modPrefix .. "ALT-" end
-            fullKey = modPrefix .. pressedKey
+            -- Build modifier prefix efficiently (avoid intermediate strings)
+            if hasShift and hasCtrl and hasAlt then
+                fullKey = "SHIFT-CTRL-ALT-" .. pressedKey
+            elseif hasShift and hasCtrl then
+                fullKey = "SHIFT-CTRL-" .. pressedKey
+            elseif hasShift and hasAlt then
+                fullKey = "SHIFT-ALT-" .. pressedKey
+            elseif hasCtrl and hasAlt then
+                fullKey = "CTRL-ALT-" .. pressedKey
+            elseif hasShift then
+                fullKey = "SHIFT-" .. pressedKey
+            elseif hasCtrl then
+                fullKey = "CTRL-" .. pressedKey
+            else -- hasAlt
+                fullKey = "ALT-" .. pressedKey
+            end
         else
             fullKey = pressedKey
         end
