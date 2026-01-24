@@ -459,6 +459,7 @@ end
 
 function RedundancyFilter.IsSpellRedundant(spellID, profile)
     if not spellID then return false end
+    if InCombatLockdown() or UnitIsDeadOrGhost("player") then return false end
     
     -- ALWAYS check cooldown - hide abilities on CD >5s, show when coming off CD (≤5s)
     -- This keeps queue focused on ready/soon-ready abilities regardless of secrets
