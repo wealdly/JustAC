@@ -23,6 +23,7 @@ Libs\AceGUI-3.0\AceGUI-3.0.xml
 Libs\AceConfig-3.0\AceConfig-3.0.xml
 Libs\AceLocale-3.0\AceLocale-3.0.xml
 Libs\LibPlayerSpells-1.0\LibPlayerSpells-1.0.xml
+Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
 
 Locale.lua
 BlizzardAPI.lua
