@@ -4,33 +4,36 @@
 ## Author: wealdly
 ## Version: 3.03
 ## License: GPL-3.0-or-later
-## IconTexture: Interface\Icons\Trade_Engineering
+## IconTexture: Interface\\Icons\\Trade_Engineering
 ## SavedVariables: JustACDB
-## OptionalDeps: Ace3, LibPlayerSpells-1.0, Masque
+## OptionalDeps: Ace3, Masque
 
 ## X-Category: Combat
 
 # Embeded Library Fallback
-Libs\LibStub\LibStub.lua
-Libs\CallbackHandler-1.0\CallbackHandler-1.0.xml
-Libs\AceAddon-3.0\AceAddon-3.0.xml
-Libs\AceConsole-3.0\AceConsole-3.0.xml
-Libs\AceEvent-3.0\AceEvent-3.0.xml
-Libs\AceTimer-3.0\AceTimer-3.0.xml
-Libs\AceDB-3.0\AceDB-3.0.xml
-Libs\AceDBOptions-3.0\AceDBOptions-3.0.xml
-Libs\AceGUI-3.0\AceGUI-3.0.xml
-Libs\AceConfig-3.0\AceConfig-3.0.xml
-Libs\AceLocale-3.0\AceLocale-3.0.xml
-Libs\LibPlayerSpells-1.0\LibPlayerSpells-1.0.xml
+Libs\\LibStub\\LibStub.lua
+Libs\\CallbackHandler-1.0\\CallbackHandler-1.0.xml
+Libs\\AceAddon-3.0\\AceAddon-3.0.xml
+Libs\\AceConsole-3.0\\AceConsole-3.0.xml
+Libs\\AceEvent-3.0\\AceEvent-3.0.xml
+Libs\\AceTimer-3.0\\AceTimer-3.0.xml
+Libs\\AceDB-3.0\\AceDB-3.0.xml
+Libs\\AceDBOptions-3.0\\AceDBOptions-3.0.xml
+Libs\\AceGUI-3.0\\AceGUI-3.0.xml
+Libs\\AceConfig-3.0\\AceConfig-3.0.xml
+Libs\\AceLocale-3.0\\AceLocale-3.0.xml
 
 Locale.lua
+SpellDB.lua
 BlizzardAPI.lua
 FormCache.lua
 MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
 SpellQueue.lua
+UIAnimations.lua
+UIFrameFactory.lua
+UIRenderer.lua
 UIManager.lua
 DebugCommands.lua
 Options.lua

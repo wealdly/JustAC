@@ -3,7 +3,7 @@
 -- JustAC: Form Cache Module
 -- Note: "Form" in macro conditionals uses stance bar index (1-N), NOT constant form IDs
 -- We use GetShapeshiftFormInfo iteration (reliable) rather than GetShapeshiftForm (unreliable during loading)
-local FormCache = LibStub:NewLibrary("JustAC-FormCache", 10)
+local FormCache = LibStub:NewLibrary("JustAC-FormCache", 11)
 if not FormCache then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -352,17 +352,53 @@ function FormCache.GetFormIDBySpellID(spellID)
     
     UpdateFormCache()
     
+    -- Fast path: direct spell ID match in cached mapping
     local mapping = cachedFormData.spellToFormMap
     if mapping[spellID] then
         return mapping[spellID]
     end
     
+    -- Check available forms by spell ID
     for formID, formData in pairs(cachedFormData.availableForms) do
         if formData.spellID and formData.spellID == spellID then
             return formID
         end
     end
     
+    -- Check if this spell ID overrides to a known form spell
+    -- (Blizzard rotation may return base ID, stance bar may have override)
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local overrideID = C_Spell.GetOverrideSpell(spellID)
+        if overrideID and overrideID ~= spellID then
+            if mapping[overrideID] then
+                -- Cache the mapping for the base spell too
+                mapping[spellID] = mapping[overrideID]
+                return mapping[overrideID]
+            end
+            for formID, formData in pairs(cachedFormData.availableForms) do
+                if formData.spellID and formData.spellID == overrideID then
+                    mapping[spellID] = formID
+                    return formID
+                end
+            end
+        end
+    end
+    
+    -- Name-based fallback: get spell name and match against available forms
+    -- This handles cases where rotation returns a different spell ID for the same form
+    local spellInfo = SafeGetSpellInfo(spellID)
+    if spellInfo and spellInfo.name then
+        local spellName = spellInfo.name
+        for formID, formData in pairs(cachedFormData.availableForms) do
+            if formData.name and formData.name == spellName then
+                -- Found a match by name - cache this mapping
+                mapping[spellID] = formID
+                return formID
+            end
+        end
+    end
+    
+    -- Rebuild mapping and try one more time
     BuildSpellToFormMapping()
     mapping = cachedFormData.spellToFormMap
     return mapping[spellID]

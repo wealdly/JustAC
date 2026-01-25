@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Spell Queue Module
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 28)
+-- JustAC: Spell Queue Module v30
+-- Changed: Added usability filtering for queue positions 2+ (cooldown/resource checks)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 30)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -143,6 +144,26 @@ local function IsSpellAvailable(spellID)
     return BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID) or false
 end
 
+-- Wrapper to BlizzardAPI.IsSpellUsable - checks if spell can be cast (resources, cooldown, etc.)
+-- Returns true if usable OR if API unavailable (fail-open)
+local function IsSpellUsable(spellID)
+    if not BlizzardAPI or not BlizzardAPI.IsSpellUsable then
+        return true  -- Fail-open if API unavailable
+    end
+    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+    -- Also check cooldown - don't show spells with >2s CD remaining
+    if isUsable and BlizzardAPI.GetSafeSpellCooldown then
+        local start, duration = BlizzardAPI.GetSafeSpellCooldown(spellID)
+        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
+            local remaining = (start + duration) - GetTime()
+            if remaining > 2.0 then  -- Hide if more than 2s remaining
+                return false
+            end
+        end
+    end
+    return isUsable
+end
+
 -- Helper: Check if either base or display spell ID is blacklisted
 local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
     return SpellQueue.IsSpellBlacklisted(displaySpellID) or 
@@ -258,13 +279,14 @@ function SpellQueue.GetCurrentSpellQueue()
             for _, procSpellID in ipairs(spellbookProcs) do
                 if spellCount >= maxIcons then break end
                 if procSpellID and not addedSpellIDs[procSpellID] then
-                    -- Apply filters: must be offensive, have keybind, not blacklisted, available
-                    -- Redundancy filter is bypassed if secrets detected (blacklist still works)
+                    -- Apply filters: must be offensive, have keybind, not blacklisted, available, usable
+                    -- Always check redundancy - form/stance checks work even when aura secrets detected
                     if BlizzardAPI.IsOffensiveSpell(procSpellID)
                        and ActionBarScanner.HasKeybind(procSpellID)
                        and not SpellQueue.IsSpellBlacklisted(procSpellID)
                        and IsSpellAvailable(procSpellID)
-                       and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID, profile)) then
+                       and IsSpellUsable(procSpellID)
+                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID, profile)) then
                         spellCount = spellCount + 1
                         recommendedSpells[spellCount] = procSpellID
                         addedSpellIDs[procSpellID] = true
@@ -276,7 +298,7 @@ function SpellQueue.GetCurrentSpellQueue()
 
     -- Positions 2+: Get the rotation spell list (priority queue)
     -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
-    -- Apply all filters: no duplicates of position 1, blacklist, availability, redundancy
+    -- Apply all filters: no duplicates of position 1, blacklist, availability, usability, redundancy
     -- Procced spells are prioritized and moved to the front of the queue
     local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
     if rotationList then
@@ -300,11 +322,13 @@ function SpellQueue.GetCurrentSpellQueue()
                     
                     -- Skip if this override already shown (e.g., position 1 has same spell)
                     if not addedSpellIDs[actualSpellID] then
-                        -- Apply filters: blacklist (display ID), availability
-                        -- Redundancy filter bypassed independently if aura secrets detected
+                        -- Apply filters: blacklist (display ID), availability, usability, redundancy
+                        -- Always check redundancy - form/stance checks work even when aura secrets detected
+                        -- IsSpellRedundant handles internal bypass logic for aura-dependent checks
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and IsSpellAvailable(actualSpellID)
-                           and (bypassRedundancy or not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID, profile)) then
+                           and IsSpellUsable(actualSpellID)
+                           and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID, profile)) then
                             -- Categorize by proc state and importance
                             -- Proc detection bypassed independently if proc secrets detected
                             -- When bypassed, all spells go to "normal" category (Blizzard's order)

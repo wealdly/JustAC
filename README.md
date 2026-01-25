@@ -57,10 +57,6 @@ Library versioning system. The glue that lets libraries coexist peacefully. Publ
 *Maintained by Nevcairiel and the Ace3 Team*  
 Clean event callback system without the boilerplate.
 
-**[LibPlayerSpells-1.0](https://github.com/Adirelle/LibPlayerSpells-1.0)**  
-*Created by Adirelle*  
-Spell metadata library providing rich spell classification data (auras, cooldowns, pets, survival, etc.). Essential for intelligent redundancy filtering and defensive spell detection. Licensed under GPL v3.
-
 ### Optional Integrations
 
 **[Masque](https://github.com/SFX-WoW/Masque)**  
@@ -89,7 +85,8 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **12.0+ Compatible** — Uses only safe, non-tainted APIs
+- **12.0+ Midnight Compliant** — Uses only safe, non-tainted APIs; handles secret values gracefully
+- **No External Spell Databases** — Native spell classification replaces LibPlayerSpells for full 12.0 compatibility
 - **Modular Architecture** — 10 LibStub modules with clear separation of concerns
 - **Event-Driven** — Minimal polling, responds to game events for proc detection
 - **Cache-Smart** — Aggressive caching with proper invalidation
@@ -108,12 +105,11 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 GNU General Public License v3 (GPL-3.0-or-later) - See [LICENSE](LICENSE) for details.
 
-This addon contains a bundled copy of LibPlayerSpells-1.0 which is licensed under GPLv3. To comply with the terms of that library, the combined distributed addon is licensed under the GNU GPL v3 (or later). The embedded libraries retain their original licenses and are clearly marked in `Libs/`.
+The embedded Ace3 libraries retain their original licenses and are clearly marked in `Libs/`.
 
 Notable embedded library licenses:
 
 - **Ace3, LibStub, CallbackHandler** — Public domain / BSD-style
-- **LibPlayerSpells-1.0** — GNU GPL v3
 
 ---
 

@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Blizzard API Module
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 17)
+-- JustAC: Blizzard API Module v19
+-- Changed: Replaced LibPlayerSpells with native SpellDB for spell classification
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 19)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -300,6 +301,88 @@ function BlizzardAPI.SafeCompare(a, b)
     return a == b
 end
 
+--------------------------------------------------------------------------------
+-- Secrecy helpers (12.0+ wrappers)
+-- These provide centralized, safe access to spell secrecy APIs and cooldowns
+--------------------------------------------------------------------------------
+
+-- Wrapper for GetSpellCooldownSecrecy (if available on client)
+-- Returns a non-secret enum/string if the API exists, otherwise nil
+function BlizzardAPI.GetSpellCooldownSecrecy(spellID)
+    if GetSpellCooldownSecrecy then
+        local ok, lvl = pcall(GetSpellCooldownSecrecy, spellID)
+        if ok then return lvl end
+    end
+
+    -- Fallback heuristic: inspect the cooldown values and treat them as secret
+    if C_Spell_GetSpellCooldown then
+        local ok, start, duration = pcall(function()
+            local s, d = C_Spell_GetSpellCooldown(spellID)
+            return s, d
+        end)
+        if ok and (BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration)) then
+            return "SECRET"
+        end
+    end
+    return nil
+end
+
+-- Safe getter for spell cooldowns: returns start, duration when values are non-secret and accessible
+-- Returns nil, nil when cooldown values are secret or inaccessible
+function BlizzardAPI.GetSafeSpellCooldown(spellID)
+    -- Prefer C_Spell API when available
+    local ok, start, duration = pcall(function()
+        if C_Spell_GetSpellCooldown then
+            return C_Spell_GetSpellCooldown(spellID)
+        elseif GetSpellCooldown then
+            return GetSpellCooldown(spellID)
+        end
+        return nil, nil
+    end)
+
+    if not ok then return nil, nil end
+    if start == nil and duration == nil then return nil, nil end
+
+    -- If either value is a secret, avoid returning numeric values
+    if BlizzardAPI.IsSecretValue and (BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration)) then
+        return nil, nil
+    end
+
+    -- Respect CanAccessValue when available
+    if BlizzardAPI.CanAccessValue and ((start ~= nil and not BlizzardAPI.CanAccessValue(start)) or (duration ~= nil and not BlizzardAPI.CanAccessValue(duration))) then
+        return nil, nil
+    end
+
+    return start, duration
+end
+
+-- Wrapper for GetSpellAuraSecrecy (if available)
+function BlizzardAPI.GetSpellAuraSecrecy(spellID)
+    if GetSpellAuraSecrecy then
+        local ok, lvl = pcall(GetSpellAuraSecrecy, spellID)
+        if ok then return lvl end
+    end
+    return nil
+end
+
+-- Wrapper for GetSpellCastSecrecy (if available)
+function BlizzardAPI.GetSpellCastSecrecy(spellID)
+    if GetSpellCastSecrecy then
+        local ok, lvl = pcall(GetSpellCastSecrecy, spellID)
+        if ok then return lvl end
+    end
+    return nil
+end
+
+-- Wrapper for ShouldUnitHealthMaxBeSecret (if available)
+function BlizzardAPI.ShouldUnitHealthMaxBeSecret(unitToken)
+    if ShouldUnitHealthMaxBeSecret then
+        local ok, res = pcall(ShouldUnitHealthMaxBeSecret, unitToken)
+        if ok then return res end
+    end
+    return nil
+end
+
 -- Get the WoW interface version to detect 12.0+
 -- Returns: version number (e.g., 110207, 120000)
 function BlizzardAPI.GetInterfaceVersion()
@@ -322,29 +405,8 @@ function BlizzardAPI.VersionCall(pre12Func, post12Func, ...)
     end
 end
 
--- LibPlayerSpells for spell type detection (lazy loaded)
-local LibPlayerSpells = nil
-local LPS_HELPFUL = 0x00004000
-local LPS_PERSONAL = 0x00010000
-local LPS_SURVIVAL = 0x00400000
-local LPS_BURST = 0x00800000
-local LPS_IMPORTANT = 0x02000000
-local LPS_CROWD_CTRL = 0x40000000
-
-local function GetLibPlayerSpells()
-    if LibPlayerSpells == nil then
-        LibPlayerSpells = LibStub("LibPlayerSpells-1.0", true) or false
-        if LibPlayerSpells then
-            LPS_HELPFUL = LibPlayerSpells.constants.HELPFUL or LPS_HELPFUL
-            LPS_PERSONAL = LibPlayerSpells.constants.PERSONAL or LPS_PERSONAL
-            LPS_SURVIVAL = LibPlayerSpells.constants.SURVIVAL or LPS_SURVIVAL
-            LPS_BURST = LibPlayerSpells.constants.BURST or LPS_BURST
-            LPS_IMPORTANT = LibPlayerSpells.constants.IMPORTANT or LPS_IMPORTANT
-            LPS_CROWD_CTRL = LibPlayerSpells.constants.CROWD_CTRL or LPS_CROWD_CTRL
-        end
-    end
-    return LibPlayerSpells
-end
+-- Native spell classification (replaces LibPlayerSpells)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Cached addon reference (resolved lazily)
 local cachedAddon = nil
@@ -600,6 +662,18 @@ function BlizzardAPI.TestAssistedCombatAPI()
         print("|JAC|   /console assistedCombatHighlight 1")
         print("|JAC|   /reload")
     end
+
+    -- Secrecy API quick test: surface results for the sample spell (primary or first rotation)
+    local sample = nextCastSpell or (rotationSpells and rotationSpells[1])
+    if sample then
+        local cdLevel = BlizzardAPI.GetSpellCooldownSecrecy and BlizzardAPI.GetSpellCooldownSecrecy(sample)
+        local auraLevel = BlizzardAPI.GetSpellAuraSecrecy and BlizzardAPI.GetSpellAuraSecrecy(sample)
+        local castLevel = BlizzardAPI.GetSpellCastSecrecy and BlizzardAPI.GetSpellCastSecrecy(sample)
+        local start, dur = BlizzardAPI.GetSafeSpellCooldown and BlizzardAPI.GetSafeSpellCooldown(sample)
+        print("|JAC| Secrecy for sample spell (" .. tostring(sample) .. "):")
+        print("|JAC|   cooldown secrecy: " .. tostring(cdLevel) .. ", aura secrecy: " .. tostring(auraLevel) .. ", cast secrecy: " .. tostring(castLevel))
+        print("|JAC|   safe cooldown read: start=" .. tostring(start) .. ", duration=" .. tostring(dur))
+    end
     
     print("|JAC| =====================================")
 end
@@ -621,6 +695,7 @@ end
 
 -- Check if spell is usable (has resources, not on cooldown preventing cast, etc.)
 -- Returns: isUsable, notEnoughResources
+-- 12.0: These may return secrets in some contexts - fail-open if secrets detected
 function BlizzardAPI.IsSpellUsable(spellID)
     if not spellID or spellID == 0 then return false, false end
     
@@ -628,6 +703,10 @@ function BlizzardAPI.IsSpellUsable(spellID)
     if C_Spell_IsSpellUsable then
         local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
         if success then
+            -- 12.0: Check for secret values - fail-open (assume usable)
+            if issecretvalue and (issecretvalue(isUsable) or issecretvalue(notEnoughResources)) then
+                return true, false  -- Fail-open: assume usable
+            end
             return isUsable, notEnoughResources
         end
     end
@@ -636,6 +715,10 @@ function BlizzardAPI.IsSpellUsable(spellID)
     if IsUsableSpell then
         local success, isUsable, notEnoughMana = pcall(IsUsableSpell, spellID)
         if success then
+            -- 12.0: Check for secret values
+            if issecretvalue and (issecretvalue(isUsable) or issecretvalue(notEnoughMana)) then
+                return true, false  -- Fail-open
+            end
             return isUsable, notEnoughMana
         end
     end
@@ -678,57 +761,49 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
 end
 
 -- Check if a spell is offensive (damage dealing or DPS buff, not utility/heal/CC)
--- LibPlayerSpells data is pre-computed at load time, so no caching needed here
+-- Uses native SpellDB for 12.0 compatibility
 function BlizzardAPI.IsOffensiveSpell(spellID)
     if not spellID then return true end  -- Fail-open
-    
-    local lps = GetLibPlayerSpells()
-    if not lps then return true end  -- Fail-open if LPS unavailable
-    
-    local flags = lps:GetSpellInfo(spellID)
-    if not flags then return true end  -- Unknown spell = assume offensive
-    
-    local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
-    local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
-    local isCrowdControl = bit_band(flags, LPS_CROWD_CTRL) ~= 0
-    local isBurst = bit_band(flags, LPS_BURST) ~= 0
-    
-    -- DPS burst cooldowns are offensive, but healing bursts (BURST + SURVIVAL) are not
-    local isDpsBurst = isBurst and not isSurvival
-    
-    return isDpsBurst or (not isHelpful and not isSurvival and not isCrowdControl)
+    if not SpellDB then return true end  -- Fail-open if SpellDB unavailable
+    return SpellDB.IsOffensiveSpell(spellID)
 end
 
 -- Check if a spell is defensive (heal or survival ability)
--- LibPlayerSpells data is pre-computed at load time, so no caching needed here
+-- Uses native SpellDB for 12.0 compatibility
 function BlizzardAPI.IsDefensiveSpell(spellID)
     if not spellID then return false end  -- Fail-closed
-    
-    local lps = GetLibPlayerSpells()
-    if not lps then return false end  -- Fail-closed if LPS unavailable
-    
-    local flags = lps:GetSpellInfo(spellID)
-    if not flags then return false end  -- Unknown spell = assume not defensive
-    
-    local isHelpful = bit_band(flags, LPS_HELPFUL) ~= 0
-    local isSurvival = bit_band(flags, LPS_SURVIVAL) ~= 0
-    
-    return isHelpful or isSurvival
+    if not SpellDB then return false end
+    return SpellDB.IsDefensiveSpell(spellID) or SpellDB.IsHealingSpell(spellID)
+end
+
+-- Check if a spell is crowd control
+-- Uses native SpellDB for 12.0 compatibility
+function BlizzardAPI.IsCrowdControlSpell(spellID)
+    if not spellID then return false end
+    if not SpellDB then return false end
+    return SpellDB.IsCrowdControlSpell(spellID)
+end
+
+-- Check if a spell is utility (movement, rez, taunt, external, etc.)
+-- Uses native SpellDB for 12.0 compatibility
+function BlizzardAPI.IsUtilitySpell(spellID)
+    if not spellID then return false end
+    if not SpellDB then return false end
+    return SpellDB.IsUtilitySpell(spellID)
 end
 
 -- Check if a spell is marked as IMPORTANT (high priority proc)
--- Uses LibPlayerSpells: spells players should react to immediately
--- Used to prioritize among multiple procced spells
+-- Currently returns false - can be extended with IMPORTANT_SPELLS table if needed
 function BlizzardAPI.IsImportantSpell(spellID)
-    if not spellID then return false end
-    
-    local lps = GetLibPlayerSpells()
-    if not lps then return false end
-    
-    local flags = lps:GetSpellInfo(spellID)
-    if not flags then return false end
-    
-    return bit_band(flags, LPS_IMPORTANT) ~= 0
+    -- TODO: Add IMPORTANT_SPELLS table to SpellDB if priority sorting needed
+    return false
+end
+
+-- Get spell classification for debug purposes
+function BlizzardAPI.GetSpellClassification(spellID)
+    if not spellID then return "unknown" end
+    if not SpellDB then return "unknown" end
+    return SpellDB.GetSpellClassification(spellID)
 end
 
 -- Spell availability cache (checks if spell is known/castable)
@@ -831,12 +906,19 @@ function BlizzardAPI.GetPlayerHealthPercent()
 end
 
 -- Get pet health as percentage (0-100), returns nil if no pet or secrets block access
+-- 12.0: Pet health CAN be secret unlike player health
 function BlizzardAPI.GetPetHealthPercent()
     if not UnitExists("pet") then return nil end
     
-    -- Check if pet is dead first
-    local isDead = UnitIsDead("pet")
-    if isDead then return 0 end
+    -- Check if pet is dead first (also check for secret)
+    local ok, isDead = pcall(UnitIsDead, "pet")
+    if ok then
+        if issecretvalue and issecretvalue(isDead) then
+            -- Can't determine dead status - try to read health anyway
+        elseif isDead then
+            return 0
+        end
+    end
     
     local health = UnitHealth("pet")
     local maxHealth = UnitHealthMax("pet")
@@ -852,4 +934,36 @@ function BlizzardAPI.GetPetHealthPercent()
     
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
+end
+
+--------------------------------------------------------------------------------
+-- C_Secrets Namespace Wrappers (12.0+)
+-- New APIs for testing secrecy conditions before making API calls
+--------------------------------------------------------------------------------
+
+-- Check if a spell's cooldown would be secret (uses new 12.0 C_Secrets namespace)
+function BlizzardAPI.ShouldSpellCooldownBeSecret(spellID)
+    if C_Secrets and C_Secrets.ShouldSpellCooldownBeSecret then
+        local ok, result = pcall(C_Secrets.ShouldSpellCooldownBeSecret, spellID)
+        if ok then return result end
+    end
+    return nil  -- API not available
+end
+
+-- Check if a spell's aura would be secret
+function BlizzardAPI.ShouldSpellAuraBeSecret(spellID)
+    if C_Secrets and C_Secrets.ShouldSpellAuraBeSecret then
+        local ok, result = pcall(C_Secrets.ShouldSpellAuraBeSecret, spellID)
+        if ok then return result end
+    end
+    return nil
+end
+
+-- Check if a unit's spellcast info would be secret
+function BlizzardAPI.ShouldUnitSpellCastBeSecret(unit)
+    if C_Secrets and C_Secrets.ShouldUnitSpellCastBeSecret then
+        local ok, result = pcall(C_Secrets.ShouldUnitSpellCastBeSecret, unit)
+        if ok then return result end
+    end
+    return nil
 end
