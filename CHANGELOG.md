@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.10] - 2026-01-25
+
+### WoW 12.0 Midnight Compatibility Release
+
+Major update for full WoW 12.0 (Midnight) compatibility with comprehensive secret value handling and modernized spell classification.
+
+### Added
+
+- **SpellDB.lua**: Native spell classification database replacing LibPlayerSpells-1.0
+  - ~330 spell IDs across 4 categories: DEFENSIVE, HEALING, CROWD_CONTROL, UTILITY
+  - Fail-open design: unknown spells assumed offensive (correct for DPS filtering)
+  - Covers all classes including Evoker/Augmentation support
+- **Out-of-range indicator**: Hotkey text turns red when queue spells are out of range
+- **C_Secrets namespace wrappers**: `ShouldSpellCooldownBeSecret()`, `ShouldSpellAuraBeSecret()`, `ShouldUnitSpellCastBeSecret()` for proactive secrecy testing
+- **Enhanced `/jac formcheck`**: Shows spell ID → form ID mappings and redundancy check results
+
+### Changed
+
+- **Module architecture**: Split UIManager.lua (2025 lines) into focused modules:
+  - `UIAnimations.lua` (451 lines) - Animation/visual effects
+  - `UIFrameFactory.lua` (881 lines) - Frame creation and layout
+  - `UIRenderer.lua` (962 lines) - Rendering and update logic
+  - `UIManager.lua` (154 lines) - Thin orchestrator
+- **Resource coloring**: Now uses Blizzard's standard blue tint (0.5, 0.5, 1.0) when not enough mana/resources
+- **Flash layering**: Flash (+6) > Proc Glow (+5) > Marching Ants (+4) for better visibility
+- **Priest defensives**: Reorganized - Desperate Prayer moved to cooldowns, Vampiric Embrace added to self-heals
+
+### Fixed
+
+- **Icon artwork bleeding outside frame**: Icons now use 1px inset, SetTexCoord edge crop, and MaskTexture for beveled corners
+- **Proc glow not showing**: Fixed combat state bug in UIRenderer (was checking never-updated variable)
+- **Dead Priest spell ID**: Replaced Greater Fade (213602, removed in 10.0.0) with Desperate Prayer
+- **Secret value crashes**: Hardened all API wrappers to handle 12.0 secret values gracefully
+- **Best-effort aura detection**: Now skips individual secret auras instead of abandoning all remaining
+- **Form redundancy check**: Now runs before secret bypass, using always-safe stance bar APIs
+- **Raid buffs filtered**: Mark of the Wild, Fortitude, Battle Shout, Arcane Intellect, Blessing of the Bronze now hidden when active
+- **Usability filtering**: Queue positions 2+ now filter spells on cooldown (>2s) or lacking resources
+
+### Removed
+
+- **LibPlayerSpells-1.0**: Removed entirely (outdated since Shadowlands, missing all modern spells)
+- **Duplicate cooldown filtering**: Consolidated to SpellQueue only
+- **Unused functions**: `HasBuffByIcon()`, `HasSameNameBuff()`, `IsRaidBuff()`
+
 ## [3.03] - 2025-12-15
 
 ### Added
