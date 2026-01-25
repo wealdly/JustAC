@@ -38,8 +38,9 @@ local CLASS_SELFHEAL_DEFAULTS = {
     -- Paladin: Word of Glory (free with HP), Flash of Light, Lay on Hands (long CD but full heal)
     PALADIN = {85673, 19750, 633},                   -- Word of Glory, Flash of Light, Lay on Hands
     
-    -- Priest: Desperate Prayer, PW:Shield, Shadow Mend/Flash Heal
-    PRIEST = {19236, 17, 186263},                    -- Desperate Prayer, PW:Shield, Shadow Mend
+    -- Priest: PW:Shield, Shadow Mend/Flash Heal, Vampiric Embrace (Shadow)
+    -- NOTE: Desperate Prayer moved to cooldowns list
+    PRIEST = {17, 186263, 15286},                    -- PW:Shield, Shadow Mend, Vampiric Embrace
     
     -- Rogue: Crimson Vial is the only real heal, Feint for mitigation
     ROGUE = {185311, 1966},                          -- Crimson Vial, Feint
@@ -66,6 +67,7 @@ local CLASS_COOLDOWN_DEFAULTS = {
     DRUID = {22812, 61336, 102342},                  -- Barkskin, Survival Instincts, Ironbark
     
     -- Evoker: Obsidian Scales, Renewing Blaze, Zephyr (raid CD)
+    -- NOTE: In 12.0 Midnight, Renewing Blaze passive effect folds into Obsidian Scales
     EVOKER = {363916, 374348, 374227},               -- Obsidian Scales, Renewing Blaze, Zephyr
     
     -- Hunter: Turtle is immunity, Fortitude of the Bear (talent), Exhil in emergencies
@@ -80,8 +82,9 @@ local CLASS_COOLDOWN_DEFAULTS = {
     -- Paladin: Divine Shield, Divine Protection, Ardent Defender (Prot), Guardian (Prot)
     PALADIN = {642, 498, 31850, 86659},              -- Divine Shield, Divine Protection, Ardent Defender, Guardian
     
-    -- Priest: Dispersion (Shadow), Fade, Desperate Prayer (moved from heals for emergency)
-    PRIEST = {47585, 586, 213602},                   -- Dispersion, Fade, Greater Fade
+    -- Priest: Dispersion (Shadow), Fade, Desperate Prayer
+    -- NOTE: Greater Fade (213602) was removed in 10.0.0
+    PRIEST = {47585, 586, 19236},                    -- Dispersion, Fade, Desperate Prayer
     
     -- Rogue: Cloak of Shadows (magic), Evasion (physical), Vanish (drop aggro)
     ROGUE = {31224, 5277, 1856},                     -- Cloak of Shadows, Evasion, Vanish
