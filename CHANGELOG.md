@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.11] - 2026-01-25
+
+### Fixed
+
+- **Blue marching ants animation**: Fixed assisted combat glow (marching ants) not animating in combat
+  - UIRenderer module was never loaded via LibStub in JustAC.lua
+  - Added proper module loading and combat state propagation
+  - Animation now correctly plays in combat, freezes out of combat
+- **Secret value handling improvements**:
+  - Fixed GCD cooldown detection with secret values in WoW 12.0+
+  - Split GetSpellCooldown into raw (for UI widgets) and sanitized (for logic) versions
+  - Fixed cooldown flicker by tracking lastCooldownWasSecret flag
+  - Cooldown widgets handle secrets internally, Lua code uses sanitized values
+- **Options blacklist persistence**: Fixed blacklistedSpells table not being initialized properly
+- **Debug mode usability**: Removed extremely spammy macro parsing traces
+  - Removed per-spell, per-command, and per-entry parsing debug messages
+  - Kept useful messages: macro match results and specificity scores
+  - Debug mode now much more readable while still showing important information
+
+### Changed
+
+- **Flash brightness**: Increased flash animation brightness (1.5, 1.2, 0.3 vertex color for ADD blend)
+
 ## [3.10] - 2026-01-25
 
 ### WoW 12.0 Midnight Compatibility Release

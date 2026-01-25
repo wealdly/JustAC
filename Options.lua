@@ -32,7 +32,11 @@ function Options.UpdateBlacklistOptions(addon)
         blacklistArgs[key] = nil
     end
 
-    local blacklistedSpells = addon.db.char.blacklistedSpells or {}
+    -- Ensure blacklistedSpells table exists in saved variables
+    if not addon.db.char.blacklistedSpells then
+        addon.db.char.blacklistedSpells = {}
+    end
+    local blacklistedSpells = addon.db.char.blacklistedSpells
     
     -- Add spell input section
     blacklistArgs.addHeader = {
@@ -312,8 +316,10 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
         local cooldownInfo = ""
         if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
             local cdInfo = C_Spell.GetSpellCooldown(spellID)
-            if cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
-                cooldownInfo = " |cff888888(" .. math.floor(cdInfo.duration) .. "s)|r"
+            -- Handle secret values (WoW 12.0+) - duration may be secret in combat
+            local duration = cdInfo and cdInfo.duration
+            if duration and not issecretvalue(duration) and duration > 1.5 then
+                cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
             end
         end
         

@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIManager, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter
+local UIManager, UIRenderer, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter
 
 -- Class-specific defensive spell defaults (spellIDs in priority order)
 -- Two tiers: self-heals (weave into rotation) and major cooldowns (emergency)
@@ -810,9 +810,8 @@ function JustAC:GetBestDefensiveSpell(spellList)
                 -- Skip if buff already active (redundant)
                 local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile)
                 if not isRedundant then
-                    -- Check if spell is off cooldown
-                    local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-                    local onCooldown = start and start > 0 and duration and duration > 1.5  -- Ignore GCD
+                    -- Check if spell is on a real cooldown (not just GCD)
+                    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
                     
                     if not onCooldown then
                         -- Prioritize procced spells immediately
@@ -913,6 +912,7 @@ end
 
 function JustAC:LoadModules()
     UIManager = LibStub("JustAC-UIManager", true)
+    UIRenderer = LibStub("JustAC-UIRenderer", true)
     SpellQueue = LibStub("JustAC-SpellQueue", true)
     ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
     BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -922,6 +922,7 @@ function JustAC:LoadModules()
     RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     
     if not UIManager then self:Print("Error: UIManager module not found"); UIManager = {} end
+    if not UIRenderer then self:Print("Error: UIRenderer module not found"); UIRenderer = {} end
     if not SpellQueue then self:Print("Error: SpellQueue module not found"); SpellQueue = {} end
     if not ActionBarScanner then self:Print("Warning: ActionBarScanner module not found"); ActionBarScanner = {} end
     if not BlizzardAPI then BlizzardAPI = self:CreateFallbackAPI() end
@@ -1081,12 +1082,18 @@ end
 function JustAC:OnCombatEvent(event)
     if event == "PLAYER_REGEN_DISABLED" then
         -- Entering combat: animate glows
+        if UIRenderer and UIRenderer.SetCombatState then
+            UIRenderer.SetCombatState(true)
+        end
         if UIManager and UIManager.UnfreezeAllGlows then
             UIManager.UnfreezeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Leaving combat: freeze glows to reduce distraction
+        if UIRenderer and UIRenderer.SetCombatState then
+            UIRenderer.SetCombatState(false)
+        end
         if UIManager and UIManager.FreezeAllGlows then
             UIManager.FreezeAllGlows(self)
         end

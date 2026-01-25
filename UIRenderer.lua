@@ -85,6 +85,7 @@ CreateMarchingAntsFrame = function(parent, frameKey)
     -- Create the animation group for the flipbook
     local animGroup = flipbook:CreateAnimationGroup()
     animGroup:SetLooping("REPEAT")
+    animGroup:SetToFinalAlpha(true)  -- Critical: ensures animation plays correctly
     flipbook.Anim = animGroup
     
     -- Create the flipbook animation (30 frames in 6 rows x 5 columns)
@@ -96,6 +97,16 @@ CreateMarchingAntsFrame = function(parent, frameKey)
     flipAnim:SetFlipBookFrames(30)
     flipAnim:SetFlipBookFrameWidth(0)
     flipAnim:SetFlipBookFrameHeight(0)
+
+    -- When frame hides, stop the loop
+    highlightFrame:SetScript("OnHide", function()
+        if flipbook.Anim:IsPlaying() then
+            flipbook.Anim:Stop()
+        end
+    end)
+
+    -- Don't initialize - let it start naturally when Play() is called
+    -- (initialization can interfere with subsequent Play() calls)
     
     return highlightFrame
 end
@@ -275,14 +286,13 @@ StartAssistedGlow = function(icon, style)
             highlightFrame:Show()
         end
         
-        -- Animate in combat, freeze (pause) out of combat
-        -- Use Play/Stop trick to freeze on a single frame (Blizzard's approach)
+        -- Animate in combat, freeze out of combat
         if isInCombat then
-            if not highlightFrame.Flipbook.Anim:IsPlaying() then
-                highlightFrame.Flipbook.Anim:Play()
-            end
+            -- Always ensure animation is playing (like proc animation)
+            highlightFrame.Flipbook.Anim:Play()
         else
-            -- Play then Stop freezes on current frame instead of showing whole atlas
+            -- Stop animation, but ensure it was played at least once first
+            -- (stops on current frame instead of showing entire atlas)
             if not highlightFrame.Flipbook.Anim:IsPlaying() then
                 highlightFrame.Flipbook.Anim:Play()
             end
@@ -456,6 +466,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
         defensiveIcon.iconTexture:Show()
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
+        -- Reset cooldown cache so new spell/item's cooldown is properly applied
+        defensiveIcon.lastCooldownStart = nil
+        defensiveIcon.lastCooldownDuration = nil
+        defensiveIcon.lastCooldownWasSecret = false
     end
     
     -- Update cooldown
@@ -466,27 +480,35 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
         start, duration = BlizzardAPI.GetSpellCooldown(id)
     end
     
-    -- Early exit for secret values (12.0+): skip cooldown update if values are secret
+    -- Check if values are secret - if so, pass directly to SetCooldown
     local startIsSecret = issecretvalue and issecretvalue(start)
     local durationIsSecret = issecretvalue and issecretvalue(duration)
     
-    if not startIsSecret and not durationIsSecret then
-        if start and start > 0 and duration and duration > 0 then
-            if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
-                defensiveIcon.cooldown:SetCooldown(start, duration)
-                defensiveIcon.cooldown:Show()
-                defensiveIcon.lastCooldownStart = start
-                defensiveIcon.lastCooldownDuration = duration
-            end
-        else
-            if defensiveIcon.lastCooldownDuration ~= 0 then
-                defensiveIcon.cooldown:Hide()
-                defensiveIcon.lastCooldownStart = 0
-                defensiveIcon.lastCooldownDuration = 0
-            end
+    if startIsSecret or durationIsSecret then
+        -- Pass secret values directly to cooldown widget ONCE
+        if not defensiveIcon.lastCooldownWasSecret then
+            defensiveIcon.cooldown:SetCooldown(start, duration)
+            defensiveIcon.cooldown:Show()
+            defensiveIcon.lastCooldownWasSecret = true
+            defensiveIcon.lastCooldownStart = nil
+            defensiveIcon.lastCooldownDuration = nil
+        end
+    elseif start and start > 0 and duration and duration > 0 then
+        defensiveIcon.lastCooldownWasSecret = false
+        if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
+            defensiveIcon.cooldown:SetCooldown(start, duration)
+            defensiveIcon.cooldown:Show()
+            defensiveIcon.lastCooldownStart = start
+            defensiveIcon.lastCooldownDuration = duration
+        end
+    else
+        defensiveIcon.lastCooldownWasSecret = false
+        if defensiveIcon.lastCooldownDuration ~= 0 then
+            defensiveIcon.cooldown:Hide()
+            defensiveIcon.lastCooldownStart = 0
+            defensiveIcon.lastCooldownDuration = 0
         end
     end
-    -- If values are secret, leave cooldown display unchanged (graceful degradation)
     
     -- Update hotkey (for items, find by scanning action bars)
     local hotkey = ""
@@ -573,6 +595,9 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon.isItem = nil
         defensiveIcon.iconTexture:Hide()
         defensiveIcon.cooldown:Hide()
+        -- Reset cooldown cache for when icon gets reused
+        defensiveIcon.lastCooldownStart = nil
+        defensiveIcon.lastCooldownDuration = nil
         defensiveIcon.hotkeyText:SetText("")
         
         -- Fade out instead of instant hide
@@ -643,9 +668,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Only update if spell changed for this slot
                 local spellChanged = (icon.spellID ~= spellID)
                 
-                -- Track previous spell ID for grace period logic (avoid flashing spell that just moved)
-                if spellChanged and icon.spellID then
-                    icon.previousSpellID = icon.spellID
+                -- Reset cooldown cache when spell changes (including first-time assignment)
+                if spellChanged then
+                    -- Track previous spell ID for grace period logic (avoid flashing spell that just moved)
+                    if icon.spellID then
+                        icon.previousSpellID = icon.spellID
+                    end
+                    -- Reset cooldown cache so new spell's cooldown is properly applied
+                    icon.lastCooldownStart = nil
+                    icon.lastCooldownDuration = nil
+                    icon.lastCooldownWasSecret = false  -- Reset secret flag for new spell
                 end
                 
                 icon.spellID = spellID
@@ -671,30 +703,42 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Update cooldown display (including GCD for timing feedback)
+                -- GetSpellCooldown returns raw values which may be secret in 12.0+
+                -- The Cooldown widget can handle secret values directly
                 local start, duration = GetSpellCooldown(spellID)
                 
-                -- Early exit for secret values (12.0+): skip cooldown update if values are secret
+                -- Check if values are secret - if so, pass directly to SetCooldown
+                -- (the widget handles secrets, we just can't do comparisons on them)
                 local startIsSecret = issecretvalue and issecretvalue(start)
                 local durationIsSecret = issecretvalue and issecretvalue(duration)
                 
-                if not startIsSecret and not durationIsSecret then
-                    if start and start > 0 and duration and duration > 0 then
-                        -- Only update cooldown if values changed significantly
-                        if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
-                            icon.cooldown:SetCooldown(start, duration)
-                            icon.cooldown:Show()
-                            icon.lastCooldownStart = start
-                            icon.lastCooldownDuration = duration
-                        end
-                    else
-                        if icon.lastCooldownDuration ~= 0 then
-                            icon.cooldown:Hide()
-                            icon.lastCooldownStart = 0
-                            icon.lastCooldownDuration = 0
-                        end
+                if startIsSecret or durationIsSecret then
+                    -- Pass secret values directly to cooldown widget ONCE
+                    -- Mark as secret mode to avoid re-calling SetCooldown every frame
+                    if not icon.lastCooldownWasSecret then
+                        icon.cooldown:SetCooldown(start, duration)
+                        icon.cooldown:Show()
+                        icon.lastCooldownWasSecret = true
+                        icon.lastCooldownStart = nil
+                        icon.lastCooldownDuration = nil
+                    end
+                elseif start and start > 0 and duration and duration > 0 then
+                    -- Non-secret values: update cooldown if changed
+                    icon.lastCooldownWasSecret = false
+                    if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
+                        icon.cooldown:SetCooldown(start, duration)
+                        icon.cooldown:Show()
+                        icon.lastCooldownStart = start
+                        icon.lastCooldownDuration = duration
+                    end
+                else
+                    icon.lastCooldownWasSecret = false
+                    if icon.lastCooldownDuration ~= 0 then
+                        icon.cooldown:Hide()
+                        icon.lastCooldownStart = 0
+                        icon.lastCooldownDuration = 0
                     end
                 end
-                -- If values are secret, leave cooldown display unchanged (graceful degradation)
 
                 -- Check if spell has an active proc (overlay)
                 -- Use centralized wrapper that handles secret values
@@ -703,10 +747,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if i == 1 and focusEmphasis then
                     -- First icon: blue glow normally, gold when proc'd
                     local style = isProc and "PROC" or "ASSISTED"
-                    StartAssistedGlow(icon, style)
+                    StartAssistedGlow(icon, style, isInCombat)
                 elseif isProc then
                     -- Queue icons (2+): gold glow only when proc'd
-                    StartAssistedGlow(icon, "PROC")
+                    StartAssistedGlow(icon, "PROC", isInCombat)
                 else
                     -- No glow for non-proc'd queue icons
                     StopAssistedGlow(icon)
@@ -803,6 +847,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.spellID = nil
                     icon.iconTexture:Hide()
                     icon.cooldown:Hide()
+                    -- Reset cooldown cache for when slot gets reused
+                    icon.lastCooldownStart = nil
+                    icon.lastCooldownDuration = nil
+                    icon.lastCooldownWasSecret = false
                     StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance

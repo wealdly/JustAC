@@ -153,22 +153,19 @@ local function CreateDefensiveIcon(addon, profile)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
     
-    -- Flash overlay on high-level frame (+10) - above all animations, below hotkey (+15)
+    -- Flash overlay on high-level frame - above all animations, below hotkey
+    -- Anchored at CENTER so scale animation grows evenly in all directions
     local flashFrame = CreateFrame("Frame", nil, button)
-    -- Anchor and size to button center so scaling remains centered
-    -- Small nudge right to close visual gap on the right side of the flash art
-    flashFrame:SetPoint("CENTER", button, "CENTER", 1, 0)
-    -- Size the flash to match the icon (clamped to at least 1px for very small icons).
-    local flashWidth = math_max(1, actualIconSize)
-    flashFrame:SetSize(flashWidth, flashWidth)
-    -- Flash on top for immediate keypress feedback, above marching ants (+4) and proc glow (+5)
+    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, 0)  -- +0.5 to account for asymmetric button width
+    flashFrame:SetSize(actualIconSize + 1, actualIconSize)  -- Match icon frame size
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
     
-    -- Flash texture for keypress feedback (uses Blizzard's flash atlas)
+    -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetAllPoints(flashFrame)
-    flashTexture:SetSize(flashWidth, flashWidth)
-    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Flash")
+    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)  -- Bright gold (values >1 boost ADD blend)
+    flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     
     button.Flash = flashTexture
@@ -657,16 +654,18 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     button.HighlightTexture = highlightTexture
     
+    -- Anchored at CENTER so scale animation grows evenly in all directions
     local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetPoint("CENTER", button, "CENTER", 1, 0)
-    local flashWidth = math_max(1, actualIconSize)
-    flashFrame:SetSize(flashWidth, flashWidth)
+    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, 0)  -- +0.5 to account for asymmetric button width
+    flashFrame:SetSize(actualIconSize + 1, actualIconSize)  -- Match icon frame size
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
     
+    -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetAllPoints(flashFrame)
-    flashTexture:SetSize(flashWidth, flashWidth)
-    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Flash")
+    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)  -- Bright gold (values >1 boost ADD blend)
+    flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
     
     button.Flash = flashTexture

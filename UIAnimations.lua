@@ -199,15 +199,15 @@ local function StartAssistedGlow(icon, style, isInCombat)
             highlightFrame:Show()
         end
         
+        -- Always manage animation state based on combat status
         if isInCombat then
             if not highlightFrame.Flipbook.Anim:IsPlaying() then
                 highlightFrame.Flipbook.Anim:Play()
             end
         else
-            if not highlightFrame.Flipbook.Anim:IsPlaying() then
-                highlightFrame.Flipbook.Anim:Play()
+            if highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Stop()
             end
-            highlightFrame.Flipbook.Anim:Stop()
         end
         
         icon.activeGlowStyle = style
@@ -321,13 +321,14 @@ local function StartFlash(button)
     button.flashtime = FLASH_DURATION
     
     button.Flash:SetDrawLayer("OVERLAY", 2)
-    button.Flash:SetVertexColor(1, 1, 1, 1)
     button.Flash:SetAlpha(1.0)
     button.Flash:Show()
     
     button.flashScaleTimer = FLASH_SCALE_DURATION
     if button.FlashFrame and button.FlashFrame.SetScale then
-        button.FlashFrame:SetScale(FLASH_MAX_SCALE)
+        -- Store the base scale so we can animate relative to it
+        button._flashBaseScale = button.FlashFrame:GetScale() or 1
+        button.FlashFrame:SetScale(button._flashBaseScale * FLASH_MAX_SCALE)
     end
     
     if not button._prevFlashOnUpdate then
@@ -358,6 +359,11 @@ local function StopFlash(button)
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
     end
+    -- Restore base scale
+    if button.FlashFrame and button._flashBaseScale then
+        button.FlashFrame:SetScale(button._flashBaseScale)
+    end
+    button._flashBaseScale = nil
     if button._prevFlashOnUpdate then
         button:SetScript("OnUpdate", button._prevFlashOnUpdate)
         button._prevFlashOnUpdate = nil
@@ -377,15 +383,16 @@ UpdateFlash = function(button, elapsed)
     end
     
     if button.flashScaleTimer and button.FlashFrame and button.FlashFrame.SetScale then
+        local baseScale = button._flashBaseScale or 1
         local st = button.flashScaleTimer - elapsed
         if st <= 0 then
             button.flashScaleTimer = nil
-            button.FlashFrame:SetScale(1)
+            button.FlashFrame:SetScale(baseScale)
         else
             button.flashScaleTimer = st
             local progress = 1 - (st / FLASH_SCALE_DURATION)
             local curScale = FLASH_MAX_SCALE - ((FLASH_MAX_SCALE - 1) * progress)
-            button.FlashFrame:SetScale(curScale)
+            button.FlashFrame:SetScale(baseScale * curScale)
         end
     end
 end

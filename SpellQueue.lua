@@ -151,13 +151,15 @@ local function IsSpellUsable(spellID)
         return true  -- Fail-open if API unavailable
     end
     local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-    -- Also check cooldown - don't show spells with >2s CD remaining
-    if isUsable and BlizzardAPI.GetSafeSpellCooldown then
-        local start, duration = BlizzardAPI.GetSafeSpellCooldown(spellID)
-        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
-            local remaining = (start + duration) - GetTime()
-            if remaining > 2.0 then  -- Hide if more than 2s remaining
-                return false
+    -- Also check cooldown - don't show spells with >2s real cooldown remaining (ignore GCD)
+    if isUsable and BlizzardAPI.IsSpellOnRealCooldown then
+        if BlizzardAPI.IsSpellOnRealCooldown(spellID) then
+            local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+            if start and duration then
+                local remaining = (start + duration) - GetTime()
+                if remaining > 2.0 then  -- Hide if more than 2s remaining on real cooldown
+                    return false
+                end
             end
         end
     end

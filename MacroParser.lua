@@ -149,11 +149,6 @@ function MacroParser.InvalidateMacroCache()
     wipe(parsedMacroCache)
     wipe(spellOverrideCache)
     lastCacheFlush = GetTime()
-    
-    local debugMode = GetDebugMode()
-    if debugMode then
-        print("|JAC| Macro cache invalidated")
-    end
 end
 
 -- OPTIMIZED: Cache spell overrides to avoid repeated API calls
@@ -189,14 +184,6 @@ local function GetSpellAndOverride(spellID, spellName)
     
     -- Cache the result
     spellOverrideCache[spellID] = spells
-    
-    local debugMode = GetDebugMode()
-    if debugMode then
-        print("|JAC| Cached spell variations for " .. (spellName or "unknown") .. ":")
-        for id, name in pairs(spells) do
-            print("|JAC|   " .. name .. " (ID: " .. id .. ")")
-        end
-    end
     
     return spells
 end
@@ -499,10 +486,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     -- Use FormCache which returns form index (1-N), not GetShapeshiftFormID which returns constant IDs
     local currentForm = FormCache and FormCache.GetActiveForm() or 0
     local debugMode = GetDebugMode()
-    
-    if debugMode then
-        print("|JAC| ParseMacroForSpell: Looking for '" .. targetSpellName .. "' (ID: " .. targetSpellID .. ")")
-    end
 
     local foundLines = {}
     local bestMatch = nil  -- Track best match: prefer no-modifier over modifier
@@ -516,9 +499,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                             string_match(lowerLine, "/castsequence%s+(.+)")
 
             if command then
-                if debugMode then
-                    print("|JAC|   Parsing command: " .. command)
-                end
                 for spellEntry in string_gmatch(command, "[^;]+") do
                     local trimmedEntry = string_match(spellEntry, "^%s*(.-)%s*$")
                     local conditions, spellPart = nil, nil
@@ -542,10 +522,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
                     if not spellPart or spellPart == "" then
                         spellPart = trimmedEntry
-                    end
-                    
-                    if debugMode then
-                        print("|JAC|     Entry: '" .. trimmedEntry .. "' -> spellPart: '" .. (spellPart or "nil") .. "'")
                     end
 
                     local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
