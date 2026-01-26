@@ -90,7 +90,7 @@ local function TintMarchingAnts(highlightFrame, r, g, b)
     end
 end
 
-local function StartAssistedGlow(icon, style, isInCombat)
+local function StartAssistedGlow(icon, style, isInCombat, iconIndex)
     if not icon then return end
     
     style = style or "ASSISTED"
@@ -156,7 +156,12 @@ local function StartAssistedGlow(icon, style, isInCombat)
         local width = icon:GetWidth()
         highlightFrame:SetScale((width / 45) * 1.02)
         
-        TintMarchingAnts(highlightFrame, 1, 1, 1)
+        -- Blue for position 1, white for other positions
+        if iconIndex == 1 then
+            TintMarchingAnts(highlightFrame, 0.0, 0.5, 1.0)  -- Blue
+        else
+            TintMarchingAnts(highlightFrame, 1, 1, 1)  -- White
+        end
         
         if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
             local procFrame = icon.ProcGlowFrame
@@ -229,60 +234,32 @@ end
 local function StartDefensiveGlow(icon, isProc, isInCombat)
     if not icon then return end
     
-    if isProc then
-        local procFrame = icon.ProcGlowFrame
-        if not procFrame then
-            procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
-        end
-        
-        local width = icon:GetWidth()
-        procFrame:SetScale(width / 45)
-        
-        if icon.DefensiveHighlightFrame then
-            icon.DefensiveHighlightFrame:Hide()
-            if icon.DefensiveHighlightFrame.Flipbook and icon.DefensiveHighlightFrame.Flipbook.Anim then
-                icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
-            end
-        end
-        
-        procFrame:Show()
-        procFrame.Flipbook:SetAlpha(1)
-        if not procFrame.Anim:IsPlaying() then
-            procFrame.Anim:Play()
-        end
-        
-        icon.hasDefensiveGlow = true
-        icon.defensiveGlowStyle = "PROC"
-    else
-        local highlightFrame = icon.DefensiveHighlightFrame
-        if not highlightFrame then
-            highlightFrame = CreateMarchingAntsFrame(icon, "DefensiveHighlightFrame")
-        end
-        
-        local width = icon:GetWidth()
-        highlightFrame:SetScale(width / 45)
-        
-        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
-        
-        if icon.ProcGlowFrame then
-            icon.ProcGlowFrame:Hide()
-            if icon.ProcGlowFrame.Anim then
-                icon.ProcGlowFrame.Anim:Stop()
-            end
-        end
-        
-        highlightFrame:Show()
-        
-        if isInCombat then
-            highlightFrame.Flipbook.Anim:Play()
-        else
-            highlightFrame.Flipbook.Anim:Play()
-            highlightFrame.Flipbook.Anim:Stop()
-        end
-        
-        icon.hasDefensiveGlow = true
-        icon.defensiveGlowStyle = "DEFENSIVE"
+    local highlightFrame = icon.DefensiveHighlightFrame
+    if not highlightFrame then
+        highlightFrame = CreateMarchingAntsFrame(icon, "DefensiveHighlightFrame")
     end
+    
+    local width = icon:GetWidth()
+    highlightFrame:SetScale(width / 45)
+    
+    -- Gold for proc, green for regular defensive
+    if isProc then
+        TintMarchingAnts(highlightFrame, 1.0, 0.84, 0.0)  -- Gold
+    else
+        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)  -- Green
+    end
+    
+    highlightFrame:Show()
+    
+    if isInCombat then
+        highlightFrame.Flipbook.Anim:Play()
+    else
+        highlightFrame.Flipbook.Anim:Play()
+        highlightFrame.Flipbook.Anim:Stop()
+    end
+    
+    icon.hasDefensiveGlow = true
+    icon.defensiveGlowStyle = isProc and "PROC" or "DEFENSIVE"
 end
 
 StopDefensiveGlow = function(icon)
@@ -292,13 +269,6 @@ StopDefensiveGlow = function(icon)
         icon.DefensiveHighlightFrame:Hide()
         if icon.DefensiveHighlightFrame.Flipbook and icon.DefensiveHighlightFrame.Flipbook.Anim then
             icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
-        end
-    end
-    
-    if icon.ProcGlowFrame then
-        icon.ProcGlowFrame:Hide()
-        if icon.ProcGlowFrame.Anim then
-            icon.ProcGlowFrame.Anim:Stop()
         end
     end
     

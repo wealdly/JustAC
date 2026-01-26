@@ -847,9 +847,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 if i == 1 and focusEmphasis then
                     local style = isProc and "PROC" or "ASSISTED"
-                    StartAssistedGlow(icon, style, isInCombat)
+                    StartAssistedGlow(icon, style, isInCombat, i)
                 elseif isProc then
-                    StartAssistedGlow(icon, "PROC", isInCombat)
+                    StartAssistedGlow(icon, "PROC", isInCombat, i)
                 else
                     StopAssistedGlow(icon)
                 end
