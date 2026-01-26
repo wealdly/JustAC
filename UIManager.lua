@@ -167,6 +167,12 @@ function UIManager.UpdateHealthBar(addon)
     end
 end
 
+function UIManager.UpdateHealthBarSize(addon)
+    if UIHealthBar then
+        UIHealthBar.UpdateSize(addon)
+    end
+end
+
 function UIManager.ShowHealthBar()
     if UIHealthBar then
         UIHealthBar.Show()
