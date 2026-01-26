@@ -685,6 +685,12 @@ function JustAC:OnHealthChanged(event, unit)
         return 
     end
     
+    -- Debug: log defensive queue entry
+    if profile.debugMode then
+        self:DebugPrint("UpdateDefensiveQueue: selfHealSpells=" .. (#(profile.defensives.selfHealSpells or {}) or 0) .. 
+                       ", cooldownSpells=" .. (#(profile.defensives.cooldownSpells or {}) or 0))
+    end
+    
     -- Check if health API is accessible (12.0+ secret values may block this)
     -- Removed IsDefensivesFeatureAvailable check - we now use LowHealthFrame fallback
     -- which works even when UnitHealth() returns secrets
@@ -855,6 +861,11 @@ function JustAC:GetBestDefensiveSpell(spellList)
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
+    
+    -- Debug: log entry into this function
+    if profile.debugMode then
+        self:DebugPrint("GetBestDefensiveSpell called with " .. #spellList .. " spells in list")
+    end
     
     -- LibStub lookups are fast table accesses, no caching wrapper needed
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
