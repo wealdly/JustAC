@@ -42,7 +42,11 @@ function Options.UpdateBlacklistOptions(addon)
         blacklistArgs[key] = nil
     end
 
-    local blacklistedSpells = addon.db.char.blacklistedSpells or {}
+    -- Ensure blacklistedSpells table exists in saved variables
+    if not addon.db.char.blacklistedSpells then
+        addon.db.char.blacklistedSpells = {}
+    end
+    local blacklistedSpells = addon.db.char.blacklistedSpells
     
     -- Add spell input section
     blacklistArgs.addHeader = {
@@ -322,8 +326,10 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
         local cooldownInfo = ""
         if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
             local cdInfo = C_Spell.GetSpellCooldown(spellID)
-            if cdInfo and cdInfo.duration and cdInfo.duration > 1.5 then
-                cooldownInfo = " |cff888888(" .. math.floor(cdInfo.duration) .. "s)|r"
+            -- Handle secret values (WoW 12.0+) - duration may be secret in combat
+            local duration = cdInfo and cdInfo.duration
+            if duration and not issecretvalue(duration) and duration > 1.5 then
+                cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
             end
         end
         
@@ -443,8 +449,7 @@ function Options.UpdateDefensivesOptions(addon)
 
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
-        info = true, header = true, enabled = true, 
-        selfHealThreshold = true, cooldownThreshold = true,
+        info = true, header = true, enabled = true, thresholdInfo = true,
         behaviorHeader = true, showOnlyInCombat = true,
         position = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
@@ -655,6 +660,30 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.hideQueueForHealers end,
                         set = function(_, val)
                             addon.db.profile.hideQueueForHealers = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    hideQueueWhenMounted = {
+                        type = "toggle",
+                        name = L["Hide When Mounted"],
+                        desc = L["Hide When Mounted desc"],
+                        order = 19,
+                        width = "normal",
+                        get = function() return addon.db.profile.hideQueueWhenMounted end,
+                        set = function(_, val)
+                            addon.db.profile.hideQueueWhenMounted = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    hideItemAbilities = {
+                        type = "toggle",
+                        name = L["Hide Item Abilities"],
+                        desc = L["Hide Item Abilities desc"],
+                        order = 19.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.hideItemAbilities end,
+                        set = function(_, val)
+                            addon.db.profile.hideItemAbilities = val
                             addon:ForceUpdate()
                         end
                     },
@@ -930,7 +959,7 @@ local function CreateOptionsTable(addon)
                     },
                     header = {
                         type = "header",
-                        name = L["Threshold Settings"],
+                        name = L["Defensive Icon"],
                         order = 2,
                     },
                     enabled = {
@@ -943,36 +972,23 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
                             UIManager.CreateSpellIcons(addon)
+                            -- Also toggle health bar
+                            local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+                            if UIHealthBar then
+                                if val and addon.db.profile.defensives.showHealthBar then
+                                    UIHealthBar.Initialize(addon, addon.db.profile)
+                                else
+                                    UIHealthBar.Cleanup()
+                                end
+                            end
                             addon:ForceUpdateAll()
                         end
                     },
-                    selfHealThreshold = {
-                        type = "range",
-                        name = L["Self-Heal Threshold"],
-                        desc = L["Self-Heal Threshold desc"],
-                        min = 30, max = 90, step = 5,
+                    thresholdInfo = {
+                        type = "description",
+                        name = "|cff888888Health thresholds: ~35% for heals, ~20% for cooldowns (approximate values)|r",
                         order = 4,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.selfHealThreshold = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    cooldownThreshold = {
-                        type = "range",
-                        name = L["Cooldown Threshold"],
-                        desc = L["Cooldown Threshold desc"],
-                        min = 10, max = 70, step = 5,
-                        order = 5,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.cooldownThreshold = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                        fontSize = "small",
                     },
                     behaviorHeader = {
                         type = "header",
@@ -1011,6 +1027,7 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
+
                     selfHealHeader = {
                         type = "header",
                         name = L["Self-Heal Priority List"],
@@ -1225,7 +1242,14 @@ local function HandleSlashCommand(addon, input)
         else
             addon:Print("DebugCommands module not available")
         end
-        
+    
+    elseif command == "defensive" or command == "def" then
+        if DebugCommands and DebugCommands.DefensiveDiagnostics then
+            DebugCommands.DefensiveDiagnostics(addon)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+    
     elseif command == "overrides" then
         if DebugCommands and DebugCommands.ShowOverrides then
             DebugCommands.ShowOverrides(addon)

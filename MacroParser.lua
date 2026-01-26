@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Macro Parser Module
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 19)
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 20)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -34,6 +34,10 @@ local spellOverrideCache = {}
 local lastCacheFlush = 0
 local CACHE_FLUSH_INTERVAL = 30
 
+-- Throttle debug output (per-message timestamps)
+local lastPrintTime = {}
+local DEBUG_THROTTLE_INTERVAL = 5  -- Only print same message every 5 seconds
+
 -- Verbose debug mode (enabled only during /jac find or /jac macrotest commands)
 local verboseDebugMode = false
 
@@ -46,9 +50,10 @@ local function GetLowercase(str)
     return str and string_lower(str) or ""
 end
 
--- Debug mode: verbose flag OR global debug (BlizzardAPI caches this)
+-- Debug mode for macro parser: ONLY verbose mode (enabled via /jac find, /jac macrotest)
+-- Global debug mode generates too much spam from macro parsing during normal use
 local function GetDebugMode()
-    return verboseDebugMode or (BlizzardAPI and BlizzardAPI.GetDebugMode() or false)
+    return verboseDebugMode
 end
 
 -- Safe API wrappers
@@ -149,11 +154,6 @@ function MacroParser.InvalidateMacroCache()
     wipe(parsedMacroCache)
     wipe(spellOverrideCache)
     lastCacheFlush = GetTime()
-    
-    local debugMode = GetDebugMode()
-    if debugMode then
-        print("|JAC| Macro cache invalidated")
-    end
 end
 
 -- OPTIMIZED: Cache spell overrides to avoid repeated API calls
@@ -189,14 +189,6 @@ local function GetSpellAndOverride(spellID, spellName)
     
     -- Cache the result
     spellOverrideCache[spellID] = spells
-    
-    local debugMode = GetDebugMode()
-    if debugMode then
-        print("|JAC| Cached spell variations for " .. (spellName or "unknown") .. ":")
-        for id, name in pairs(spells) do
-            print("|JAC|   " .. name .. " (ID: " .. id .. ")")
-        end
-    end
     
     return spells
 end
@@ -377,7 +369,11 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
         
         score = score - penalty
         
-        if debugMode then
+        -- Throttle debug output (once per macro per 5 seconds)
+        local now = GetTime()
+        local throttleKey = "spec_" .. macroName
+        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
+            lastPrintTime[throttleKey] = now
             print("|JAC| Macro '" .. macroName .. "' specificity: score=" .. score .. ", penalty=" .. penalty .. ", conditions=" .. conditionCount)
         end
     end
@@ -499,10 +495,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     -- Use FormCache which returns form index (1-N), not GetShapeshiftFormID which returns constant IDs
     local currentForm = FormCache and FormCache.GetActiveForm() or 0
     local debugMode = GetDebugMode()
-    
-    if debugMode then
-        print("|JAC| ParseMacroForSpell: Looking for '" .. targetSpellName .. "' (ID: " .. targetSpellID .. ")")
-    end
 
     local foundLines = {}
     local bestMatch = nil  -- Track best match: prefer no-modifier over modifier
@@ -516,9 +508,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                             string_match(lowerLine, "/castsequence%s+(.+)")
 
             if command then
-                if debugMode then
-                    print("|JAC|   Parsing command: " .. command)
-                end
                 for spellEntry in string_gmatch(command, "[^;]+") do
                     local trimmedEntry = string_match(spellEntry, "^%s*(.-)%s*$")
                     local conditions, spellPart = nil, nil
@@ -543,15 +532,15 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                     if not spellPart or spellPart == "" then
                         spellPart = trimmedEntry
                     end
-                    
-                    if debugMode then
-                        print("|JAC|     Entry: '" .. trimmedEntry .. "' -> spellPart: '" .. (spellPart or "nil") .. "'")
-                    end
 
                     local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
 
                     if isMatch then
-                        if debugMode then
+                        -- Throttle debug output (once per spell per 5 seconds)
+                        local now = GetTime()
+                        local throttleKey = "match_" .. matchedSpellID
+                        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
+                            lastPrintTime[throttleKey] = now
                             print("|JAC| Found macro match: '" .. spellPart .. "' -> " .. matchedSpellName .. " (ID: " .. matchedSpellID .. ")")
                         end
 

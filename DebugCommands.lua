@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 5)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 8)
 if not DebugCommands then return end
 
 function DebugCommands.FormDetection(addon)
@@ -13,14 +13,14 @@ function DebugCommands.FormDetection(addon)
     addon:Print("GetShapeshiftFormID(): " .. rawFormID)
     addon:Print("GetNumShapeshiftForms(): " .. numForms)
     
-    -- Check each form slot
-    addon:Print("Form Analysis:")
+    -- Check each form slot with spell ID details
+    addon:Print("Form Analysis (stance bar spell IDs):")
     for i = 1, numForms do
         local icon, active, castable, spellID = GetShapeshiftFormInfo(i)
         if spellID then
             local spellInfo = C_Spell.GetSpellInfo(spellID)
             local name = spellInfo and spellInfo.name or "Unknown"
-            local status = active and " (ACTIVE)" or ""
+            local status = active and " |cff00ff00(ACTIVE)|r" or ""
             addon:Print("  Form " .. i .. ": " .. name .. " (ID:" .. spellID .. ")" .. status)
         end
     end
@@ -33,9 +33,33 @@ function DebugCommands.FormDetection(addon)
         addon:Print("FormCache says:")
         addon:Print("  Current form: " .. cacheFormID .. " (" .. cacheFormName .. ")")
         
-        -- Bear Form test
-        local bearFormID = FormCache.GetFormIDBySpellID(5487)
-        addon:Print("  Bear Form (5487) maps to: " .. tostring(bearFormID))
+        -- Test common form spell IDs
+        addon:Print("Spell ID -> Form ID mappings:")
+        local testSpells = {
+            {768, "Cat Form (rotation ID)"},
+            {783, "Travel Form"},
+            {5487, "Bear Form"},
+            {24858, "Moonkin Form"},
+            {197625, "Moonkin Form (Feral)"},
+        }
+        for _, test in ipairs(testSpells) do
+            local spellID, desc = test[1], test[2]
+            local formID = FormCache.GetFormIDBySpellID(spellID)
+            local color = formID and "|cff00ff00" or "|cffff0000"
+            addon:Print("  " .. desc .. " (" .. spellID .. ") -> " .. color .. tostring(formID) .. "|r")
+        end
+        
+        -- Show RedundancyFilter's view
+        local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+        if RedundancyFilter and RedundancyFilter.IsSpellRedundant then
+            addon:Print("Redundancy check (would spell be filtered?):")
+            for _, test in ipairs(testSpells) do
+                local spellID, desc = test[1], test[2]
+                local isRedundant = RedundancyFilter.IsSpellRedundant(spellID)
+                local color = isRedundant and "|cff00ff00YES|r" or "|cffff0000NO|r"
+                addon:Print("  " .. desc .. ": " .. color)
+            end
+        end
     else
         addon:Print("FormCache not available")
     end
@@ -318,7 +342,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac formcheck - Check current form detection")
     addon:Print("/jac macrotest <name> - Test macro parsing")
     addon:Print("/jac macrodump <name> - Dump raw macro body")
-    addon:Print("/jac lps <spellID> - Show LibPlayerSpells info for spell")
+    addon:Print("/jac lps <spellID> - Show native spell classification for spell")
     addon:Print("/jac reset - Reset frame position")
     addon:Print("/jac profile <n> - Switch profile")
     addon:Print("/jac profile list - List profiles")
@@ -327,6 +351,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac blacklist - Show blacklisted spells")
     addon:Print("/jac overrides - Show hotkey overrides")
     addon:Print("/jac rawdata - Show raw saved data (for debugging)")
+    addon:Print("/jac defensive - Diagnose defensive icon system")
+
 end
 
 -- Show blacklisted spells
@@ -416,6 +442,141 @@ function DebugCommands.ShowRawData(addon)
     if hkCount == 0 then addon:Print("  (empty)") end
 end
 
+-- Defensive system diagnostics
+function DebugCommands.DefensiveDiagnostics(addon)
+    addon:Print("=== Defensive System Diagnostics ===")
+    
+    local profile = addon:GetProfile()
+    if not profile then
+        addon:Print("|cffff0000ERROR: No profile loaded|r")
+        return
+    end
+    
+    -- Check defensive settings
+    addon:Print("")
+    addon:Print("Settings:")
+    local defSettings = profile.defensives or {}
+    addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+    addon:Print("  Show Only In Combat: " .. (defSettings.showOnlyInCombat and "YES" or "NO"))
+    addon:Print("  Position: " .. (defSettings.position or "LEFT"))
+    
+    -- Health Bar (module removed/abandoned)
+    addon:Print("")
+    addon:Print("Health Bar:")
+    addon:Print("  Status: |cffff0000ABANDONED|r")
+    addon:Print("  Module: |cffff0000NOT LOADED|r")
+    
+
+    
+    -- Check defensive icon status
+    addon:Print("")
+    addon:Print("Defensive Icon:")
+    if addon.defensiveIcon then
+        addon:Print("  Frame: |cff00ff00EXISTS|r")
+        addon:Print("  Visible: " .. (addon.defensiveIcon:IsShown() and "|cff00ff00YES|r" or "NO"))
+        addon:Print("  Alpha: " .. string.format("%.2f", addon.defensiveIcon:GetAlpha()))
+        addon:Print("  CurrentID: " .. tostring(addon.defensiveIcon.currentID or "nil"))
+        addon:Print("  IsItem: " .. tostring(addon.defensiveIcon.isItem or false))
+    else
+        addon:Print("  Frame: |cffff0000NOT CREATED|r (this is the bug!)")
+    end
+    
+    -- Check UIFrameFactory getter
+    local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+    if UIFrameFactory and UIFrameFactory.GetDefensiveIcon then
+        local factoryIcon = UIFrameFactory.GetDefensiveIcon()
+        addon:Print("  Factory icon: " .. (factoryIcon and "|cff00ff00EXISTS|r" or "|cffff0000nil|r"))
+    end
+    
+    -- Check BlizzardAPI health access
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    addon:Print("")
+    addon:Print("Health API:")
+    if BlizzardAPI then
+        local healthAvail = BlizzardAPI.IsDefensivesFeatureAvailable and BlizzardAPI.IsDefensivesFeatureAvailable()
+        addon:Print("  Feature Available: " .. (healthAvail and "|cff00ff00YES|r" or "|cffff0000NO (secrets)|r"))
+        
+        local healthPct = BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
+        addon:Print("  Current Health: " .. (healthPct and string.format("%.1f%%", healthPct) or "|cffff0000nil|r"))
+        
+        local petPct = BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
+        addon:Print("  Pet Health: " .. (petPct and string.format("%.1f%%", petPct) or "N/A"))
+    else
+        addon:Print("  |cffff0000BlizzardAPI not loaded|r")
+    end
+    
+    -- Check combat status
+    addon:Print("")
+    addon:Print("Combat Status:")
+    local inCombat = UnitAffectingCombat("player")
+    addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
+    
+    -- Check spell lists
+    addon:Print("")
+    addon:Print("Configured Spells:")
+    
+    local function PrintSpellList(name, list)
+        if not list or #list == 0 then
+            addon:Print("  " .. name .. ": (empty)")
+            return
+        end
+        addon:Print("  " .. name .. ":")
+        for i, spellID in ipairs(list) do
+            if spellID and spellID > 0 then
+                local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                local name = spellInfo and spellInfo.name or "Unknown"
+                local knownStr = isKnown and "|cff00ff00✓|r" or "|cffff0000✗|r"
+                addon:Print("    " .. i .. ". " .. knownStr .. " " .. name .. " (" .. spellID .. ")")
+            end
+        end
+    end
+    
+    PrintSpellList("Self-Heals", defSettings.selfHealSpells)
+    PrintSpellList("Cooldowns", defSettings.cooldownSpells)
+    PrintSpellList("Pet Heals", defSettings.petHealSpells)
+    
+    -- Test what would show right now (secret-safe)
+    addon:Print("")
+    addon:Print("Current Decision:")
+
+    -- Helper: safe percent formatter that handles secret values
+    local function fmtPercent(p)
+        if not p then return "|cffff0000nil|r" end
+        if issecretvalue and issecretvalue(p) then return "|cffff0000SECRET|r" end
+        if type(p) == "number" then return string.format("%.1f%%", p) end
+        return tostring(p)
+    end
+
+    -- Prefer procs first (would be shown at any health)
+    local procSpell = addon.GetProccedDefensiveSpell and addon:GetProccedDefensiveSpell()
+    if procSpell then
+        local sname = C_Spell.GetSpellInfo and select(1, C_Spell.GetSpellInfo(procSpell)) or tostring(procSpell)
+        addon:Print("  Result: Would show |cff00ff00PROC|r (" .. sname .. ")")
+    elseif not defSettings.enabled then
+        addon:Print("  Result: |cffff0000DISABLED|r")
+    elseif defSettings.showOnlyInCombat and not inCombat then
+        addon:Print("  Result: |cffffff00HIDDEN (out of combat, 'only in combat' enabled)|r")
+    else
+        -- Use LowHealthFrame estimation when exact percent is secret
+        local low, crit = false, false
+        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
+            low, crit = BlizzardAPI.GetLowHealthState()
+        end
+
+        if crit then
+            addon:Print("  Result: Would show |cffff0000COOLDOWN|r (critical health)")
+        elseif low then
+            addon:Print("  Result: Would show |cffffff00SELF-HEAL|r (low health)")
+        else
+            local maybePct = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
+            addon:Print("  Result: |cff00ff00HIDDEN|r (health " .. fmtPercent(maybePct) .. ")")
+        end
+    end
+
+    addon:Print("======================================")
+end
+
 -- LibPlayerSpells spell info lookup
 function DebugCommands.LPSInfo(addon, spellIDStr)
     if not spellIDStr or spellIDStr == "" then
@@ -433,79 +594,49 @@ function DebugCommands.LPSInfo(addon, spellIDStr)
     local spellInfo = C_Spell and C_Spell.GetSpellInfo(spellID)
     local spellName = spellInfo and spellInfo.name or "Unknown"
     
-    addon:Print("=== LibPlayerSpells Info: " .. spellName .. " (" .. spellID .. ") ===")
+    addon:Print("=== Spell Classification: " .. spellName .. " (" .. spellID .. ") ===")
     
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-    if not RedundancyFilter or not RedundancyFilter.GetLPSInfo then
+    if not RedundancyFilter or not RedundancyFilter.GetSpellClassification then
         addon:Print("|cffff0000RedundancyFilter not available|r")
         return
     end
     
-    local info = RedundancyFilter.GetLPSInfo(spellID)
-    
-    if not info.available then
-        addon:Print("|cffff0000LibPlayerSpells not loaded|r")
-        return
-    end
+    local info = RedundancyFilter.GetSpellClassification(spellID)
     
     if not info.known then
-        addon:Print("|cffffff00Spell not in LibPlayerSpells database|r")
+        addon:Print("|cffffff00Spell not classified|r")
         return
     end
     
-    -- Display flags
+    -- Display classification source
+    addon:Print("Source: |cff00ff00" .. (info.source or "native") .. "|r (12.0 compliant)")
+    
+    -- Display flags using native classification
     local flags = {}
-    if info.isHelpful then table.insert(flags, "|cff00ff00HELPFUL|r") end
-    if info.isHarmful then table.insert(flags, "|cffff0000HARMFUL|r") end
-    if info.isPersonal then table.insert(flags, "|cffffcc00PERSONAL|r") end
-    if info.isSurvival then table.insert(flags, "|cff00ffffSURVIVAL|r") end
-    if info.isBurst then table.insert(flags, "|cffff8800BURST|r") end
-    if info.isCrowdControl then table.insert(flags, "|cffff00ffCROWD_CTRL|r") end
-    if info.isImportant then table.insert(flags, "|cffffff00IMPORTANT|r") end
+    if info.isRaidBuff then table.insert(flags, "|cff00ff00RAID_BUFF|r") end
+    if info.isPetSummon then table.insert(flags, "|cff88ff88PET_SUMMON|r") end
     if info.isAura then table.insert(flags, "|cff8888ffAURA|r") end
-    if info.isUniqueAura then table.insert(flags, "|cff88aaffUNIQUE_AURA|r") end
-    if info.isCooldown then table.insert(flags, "|cffaaaaaa COOLDOWN|r") end
-    if info.isPet then table.insert(flags, "|cff88ff88PET|r") end
+    if info.isPersonalAura then table.insert(flags, "|cffffcc00PERSONAL|r") end
+    if info.isUniqueAura then table.insert(flags, "|cff88aaffUNIQUE|r") end
+    if info.isRoguePoison then table.insert(flags, "|cff00ff88POISON|r") end
+    if info.isWeaponEnchant then table.insert(flags, "|cffff8800WEAPON_ENCHANT|r") end
+    if info.isDPSRelevant then table.insert(flags, "|cffff0000DPS_RELEVANT|r") end
     
     if #flags > 0 then
         addon:Print("Flags: " .. table.concat(flags, ", "))
     else
-        addon:Print("Flags: (none)")
+        addon:Print("Flags: (none - will be allowed through filters)")
     end
     
-    -- Display providers
-    if info.providers then
-        if type(info.providers) == "number" then
-            local providerInfo = C_Spell and C_Spell.GetSpellInfo(info.providers)
-            local providerName = providerInfo and providerInfo.name or "Unknown"
-            addon:Print("Provider: " .. providerName .. " (" .. info.providers .. ")")
-        elseif type(info.providers) == "table" then
-            addon:Print("Providers:")
-            for _, pID in ipairs(info.providers) do
-                local pInfo = C_Spell and C_Spell.GetSpellInfo(pID)
-                local pName = pInfo and pInfo.name or "Unknown"
-                addon:Print("  - " .. pName .. " (" .. pID .. ")")
-            end
+    -- Additional info for forms
+    if FormCache then
+        local formID = FormCache.GetFormIDBySpellID(spellID)
+        if formID then
+            addon:Print("Form ID: |cff00ffff" .. formID .. "|r (maps to stance bar)")
         end
     end
     
-    -- Display modifiers
-    if info.modifiers then
-        if type(info.modifiers) == "number" then
-            local modInfo = C_Spell and C_Spell.GetSpellInfo(info.modifiers)
-            local modName = modInfo and modInfo.name or "Unknown"
-            addon:Print("Modifies: " .. modName .. " (" .. info.modifiers .. ")")
-        elseif type(info.modifiers) == "table" then
-            addon:Print("Modifies:")
-            for _, mID in ipairs(info.modifiers) do
-                local mInfo = C_Spell and C_Spell.GetSpellInfo(mID)
-                local mName = mInfo and mInfo.name or "Unknown"
-                addon:Print("  - " .. mName .. " (" .. mID .. ")")
-            end
-        end
-    end
-    
-    addon:Print("Raw flags value: " .. tostring(info.flags))
     addon:Print("==========================================")
 end
 

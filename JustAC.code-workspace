@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../../../../00-SOURCE"
+		},
+		{
+			"path": "../Dominos"
 		}
 	],
 	"settings": {}

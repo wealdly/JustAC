@@ -2,11 +2,15 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.03
+# Unreleased Changes
 
-### Changes Since 3.03
+Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-(No unreleased changes yet)
+## Current Version: 3.12
+
+### Changes Since 3.12
+
+(Empty) 
 
 ---
 

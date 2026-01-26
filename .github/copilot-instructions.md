@@ -45,10 +45,10 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | Module | Role | Key Exports | Current Version |
 |--------|------|-------------|-----------------|
 | `Locale.lua` | AceLocale-3.0 localization (6 languages) | `L` global | N/A (not LibStub) |
-| `BlizzardAPI.lua` | `C_AssistedCombat` wrappers, profile access | `GetProfile()`, `GetSpellInfo()` | v14 |
+| `BlizzardAPI.lua` | `C_AssistedCombat` wrappers, profile access | `GetProfile()`, `GetSpellInfo()` | v21 |
 | `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v5 |
 | `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v19 |
-| `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `FindSpellInSlots()` | v29 |
+| `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v30 |
 | `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | N/A |
 | `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v24 |
 | `UIManager.lua` | Icon rendering + glows, Masque integration | `RenderSpellQueue()`, frame management | v12 |

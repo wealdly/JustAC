@@ -1,36 +1,112 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module
+-- JustAC: Redundancy Filter Module v23
 -- Filters out spells that are redundant (already active buffs, forms, pets, poisons, etc.)
--- Uses dynamic aura detection and LibPlayerSpells for enhanced spell metadata
+-- Uses dynamic aura detection with native 12.0-compliant spell classification
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
--- COOLDOWN FILTERING: Hides abilities on cooldown >5s, shows when ≤5s remaining (prep time)
--- 12.0 COMPATIBILITY: When aura API blocked, uses whitelist (HARMFUL, BURST, COOLDOWN, IMPORTANT)
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 20)
+-- 12.0 COMPATIBILITY: Uses native spell tables for full Midnight compatibility
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 22)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
-local LibPlayerSpells = LibStub("LibPlayerSpells-1.0", true)
 
 -- Hot path optimizations: cache frequently used functions
 local GetTime = GetTime
 local pcall = pcall
-local pairs = pairs
 local wipe = wipe
-local bit_band = bit.band
 
--- LibPlayerSpells constants (cached for performance)
-local LPS_AURA = LibPlayerSpells and LibPlayerSpells.constants.AURA or 0
-local LPS_PET = LibPlayerSpells and LibPlayerSpells.constants.PET or 0
-local LPS_PERSONAL = LibPlayerSpells and LibPlayerSpells.constants.PERSONAL or 0
-local LPS_UNIQUE_AURA = LibPlayerSpells and LibPlayerSpells.constants.UNIQUE_AURA or 0
-local LPS_RAIDBUFF = LibPlayerSpells and LibPlayerSpells.constants.RAIDBUFF or 0
-local LPS_HARMFUL = LibPlayerSpells and LibPlayerSpells.constants.HARMFUL or 0
-local LPS_BURST = LibPlayerSpells and LibPlayerSpells.constants.BURST or 0
-local LPS_COOLDOWN = LibPlayerSpells and LibPlayerSpells.constants.COOLDOWN or 0
-local LPS_IMPORTANT = LibPlayerSpells and LibPlayerSpells.constants.IMPORTANT or 0
+
+--------------------------------------------------------------------------------
+-- Native Spell Classification (12.0 Compliant - replaces LibPlayerSpells)
+-- These tables are maintained manually but cover essential spells
+-- Unknown spells fall through to name-pattern matching
+--------------------------------------------------------------------------------
+
+-- Raid Buffs: Long-duration maintenance buffs that should be filtered when aura API blocked
+local RAID_BUFF_SPELLS = {
+    [1126] = true,    -- Mark of the Wild (Druid)
+    [21562] = true,   -- Power Word: Fortitude (Priest)
+    [6673] = true,    -- Battle Shout (Warrior)
+    [1459] = true,    -- Arcane Intellect (Mage)
+    [264761] = true,  -- Blessing of the Bronze (Evoker)
+    [381732] = true,  -- Blessing of the Bronze (alternate)
+}
+
+-- Pet Summon Spells: Spells that summon a combat pet
+local PET_SUMMON_SPELLS = {
+    -- Hunter
+    [883] = true,     -- Call Pet 1
+    [83242] = true,   -- Call Pet 2
+    [83243] = true,   -- Call Pet 3
+    [83244] = true,   -- Call Pet 4
+    [83245] = true,   -- Call Pet 5
+    -- Warlock
+    [688] = true,     -- Summon Imp
+    [697] = true,     -- Summon Voidwalker
+    [712] = true,     -- Summon Succubus
+    [691] = true,     -- Summon Felhunter
+    [30146] = true,   -- Summon Felguard
+    -- Death Knight
+    [46584] = true,   -- Raise Dead (permanent ghoul)
+    [46585] = true,   -- Raise Dead (temporary)
+    [42650] = true,   -- Army of the Dead
+    [49206] = true,   -- Summon Gargoyle
+    -- Mage
+    [31687] = true,   -- Summon Water Elemental
+    -- Shaman
+    [51533] = true,   -- Feral Spirit
+    [198103] = true,  -- Earth Elemental
+    [198067] = true,  -- Fire Elemental
+    [192249] = true,  -- Storm Elemental
+}
+
+-- Unique Aura Spells: Buffs that can only have one instance active
+-- These should be filtered when already active (outside pandemic window)
+local UNIQUE_AURA_SPELLS = {
+    -- Druid Forms
+    [768] = true,     -- Cat Form
+    [5487] = true,    -- Bear Form
+    [783] = true,     -- Travel Form
+    [24858] = true,   -- Moonkin Form
+    [197625] = true,  -- Moonkin Form (affinity)
+    [114282] = true,  -- Tree of Life
+    -- Warrior Stances
+    [386164] = true,  -- Battle Stance
+    [386208] = true,  -- Defensive Stance
+    -- Paladin Auras
+    [465] = true,     -- Devotion Aura
+    [183435] = true,  -- Retribution Aura
+    [32223] = true,   -- Crusader Aura
+    -- Rogue Stealth
+    [1784] = true,    -- Stealth
+    [115191] = true,  -- Stealth (Subterfuge)
+    -- Hunter Aspects
+    [5118] = true,    -- Aspect of the Cheetah
+    [186257] = true,  -- Aspect of the Cheetah
+    [186265] = true,  -- Aspect of the Turtle
+    [186289] = true,  -- Aspect of the Eagle
+    -- Raid Buffs (unique - can only have one active)
+    [1126] = true,    -- Mark of the Wild (Druid)
+    [21562] = true,   -- Power Word: Fortitude (Priest)
+    [6673] = true,    -- Battle Shout (Warrior)
+    [1459] = true,    -- Arcane Intellect (Mage)
+    [264761] = true,  -- Blessing of the Bronze (Evoker)
+    [381732] = true,  -- Blessing of the Bronze (alternate)
+}
+
+-- Personal Aura Spells: Self-only buffs (subset that we recognize)
+-- Used for determining if a spell applies a personal buff
+local PERSONAL_AURA_SPELLS = {
+    -- These are spells that apply personal buffs
+    -- Form spells are implicitly personal
+    [768] = true, [5487] = true, [783] = true, [24858] = true,
+    -- Stealth
+    [1784] = true, [115191] = true,
+    -- Aspects
+    [5118] = true, [186257] = true, [186265] = true, [186289] = true,
+}
 
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
@@ -40,6 +116,9 @@ local PANDEMIC_THRESHOLD = 0.30
 local cachedAuras = {}
 local lastAuraCheck = 0
 local AURA_CACHE_DURATION = 0.2
+
+-- Throttle debug prints (per-message-type timestamps)
+local lastPrintTime = {}
 
 -- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
@@ -98,29 +177,34 @@ local function RefreshAuraCache()
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end
             
-            -- Early exit: If aura data contains secrets, skip this aura (12.0+)
-            -- Check spellId first as it's the most critical field
-            if issecretvalue and (issecretvalue(auraData.spellId) or issecretvalue(auraData.name)) then
-                -- Secret values detected - cache is unreliable, early exit
-                -- Setting a flag so we know the cache is incomplete
-                cachedAuras.hasSecrets = true
-                break  -- Stop processing, cache will fail-open
-            end
+            -- Best-effort: If critical fields are secret, skip this aura but continue processing others
+            -- auraInstanceID is documented as NeverSecret in 12.0, so we can always track it
+            local spellIdIsSecret = issecretvalue and issecretvalue(auraData.spellId)
+            local nameIsSecret = issecretvalue and issecretvalue(auraData.name)
             
-            if auraData.spellId then
-                cachedAuras.byID[auraData.spellId] = true
-                -- Store aura timing info for pandemic check
-                cachedAuras.auraInfo[auraData.spellId] = {
-                    duration = auraData.duration or 0,
-                    expirationTime = auraData.expirationTime or 0,
-                    count = auraData.applications or 1,  -- Stack count
-                }
-            end
-            if auraData.name then
-                cachedAuras.byName[auraData.name] = auraData.spellId or true
-            end
-            if auraData.icon then
-                cachedAuras.byIcon[auraData.icon] = auraData.name or true
+            if spellIdIsSecret or nameIsSecret then
+                -- Mark that we encountered secrets (cache may be incomplete)
+                cachedAuras.hasSecrets = true
+                -- Continue to next aura - don't break! Best-effort: process what we can
+            else
+                -- Safe to process this aura
+                if auraData.spellId then
+                    cachedAuras.byID[auraData.spellId] = true
+                    -- Store aura timing info for pandemic check (check fields individually)
+                    local durIsSecret = issecretvalue and issecretvalue(auraData.duration)
+                    local expIsSecret = issecretvalue and issecretvalue(auraData.expirationTime)
+                    cachedAuras.auraInfo[auraData.spellId] = {
+                        duration = (not durIsSecret and auraData.duration) or 0,
+                        expirationTime = (not expIsSecret and auraData.expirationTime) or 0,
+                        count = auraData.applications or 1,  -- Stack count
+                    }
+                end
+                if auraData.name then
+                    cachedAuras.byName[auraData.name] = auraData.spellId or true
+                end
+                if auraData.icon then
+                    cachedAuras.byIcon[auraData.icon] = auraData.name or true
+                end
             end
         end
     -- Fallback for older clients
@@ -129,25 +213,30 @@ local function RefreshAuraCache()
             local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
             if not ok or not name then break end
             
-            -- Early exit: If aura data contains secrets, skip processing (12.0+)
-            if issecretvalue and (issecretvalue(spellId) or issecretvalue(name)) then
-                cachedAuras.hasSecrets = true
-                break  -- Stop processing, cache will fail-open
-            end
+            -- Best-effort: skip secret auras but continue processing others
+            local spellIdIsSecret = issecretvalue and issecretvalue(spellId)
+            local nameIsSecret = issecretvalue and issecretvalue(name)
             
-            if spellId then
-                cachedAuras.byID[spellId] = true
-                cachedAuras.auraInfo[spellId] = {
-                    duration = duration or 0,
-                    expirationTime = expirationTime or 0,
-                    count = count or 1,
-                }
-            end
-            if name then
-                cachedAuras.byName[name] = spellId or true
-            end
-            if icon then
-                cachedAuras.byIcon[icon] = name or true
+            if spellIdIsSecret or nameIsSecret then
+                cachedAuras.hasSecrets = true
+                -- Continue to next aura - don't break!
+            else
+                if spellId then
+                    cachedAuras.byID[spellId] = true
+                    local durIsSecret = issecretvalue and issecretvalue(duration)
+                    local expIsSecret = issecretvalue and issecretvalue(expirationTime)
+                    cachedAuras.auraInfo[spellId] = {
+                        duration = (not durIsSecret and duration) or 0,
+                        expirationTime = (not expIsSecret and expirationTime) or 0,
+                        count = count or 1,
+                    }
+                end
+                if name then
+                    cachedAuras.byName[name] = spellId or true
+                end
+                if icon then
+                    cachedAuras.byIcon[icon] = name or true
+                end
             end
         end
     end
@@ -197,102 +286,97 @@ local function HasBuffByName(buffName)
     return auras.byName and auras.byName[buffName]
 end
 
--- Check if player has a buff with the same icon as the spell
--- Useful for spells where buff name differs from spell name but icon is same
-local function HasBuffByIcon(iconID)
-    if not iconID then return false end
-    local auras = RefreshAuraCache()
-    return auras.byIcon and auras.byIcon[iconID]
-end
-
--- Check if casting this spell would apply a buff we already have
--- This is the key insight: if spell X applies buff X, and we have buff X, skip spell X
-local function HasSameNameBuff(spellName)
-    if not spellName then return false end
-    return HasBuffByName(spellName)
-end
-
 --------------------------------------------------------------------------------
--- LibPlayerSpells Integration
+-- Native Spell Classification Functions (12.0 Compliant)
 --------------------------------------------------------------------------------
 
--- Check if spell has a specific flag using LibPlayerSpells
-local function HasSpellFlag(spellID, flag)
-    if not LibPlayerSpells or not spellID or flag == 0 then return false end
-    local flags = LibPlayerSpells:GetSpellInfo(spellID)
-    if not flags then return false end
-    return bit_band(flags, flag) ~= 0
-end
-
--- Check if spell applies an aura (using LibPlayerSpells AURA flag)
+-- Check if spell applies an aura (using native tables + name pattern fallback)
 -- Returns: isAura, isPersonalAura, isUniqueAura
 local function IsAuraSpell(spellID)
-    if not LibPlayerSpells or not spellID then return false, false, false end
-    local flags = LibPlayerSpells:GetSpellInfo(spellID)
-    if not flags then return false, false, false end
+    if not spellID then return false, false, false end
     
-    local isAura = bit_band(flags, LPS_AURA) ~= 0
-    local isPersonal = bit_band(flags, LPS_PERSONAL) ~= 0
-    local isUnique = bit_band(flags, LPS_UNIQUE_AURA) ~= 0
+    -- Check our known unique aura table first (fast path)
+    if UNIQUE_AURA_SPELLS[spellID] then
+        local isPersonal = PERSONAL_AURA_SPELLS[spellID] or false
+        return true, isPersonal, true
+    end
     
-    return isAura, (isAura and isPersonal), isUnique
+    -- Check personal auras
+    if PERSONAL_AURA_SPELLS[spellID] then
+        return true, true, false
+    end
+    
+    -- Fallback: Name-based detection for unknown spells
+    -- Forms, Stances, Presences, Aspects are typically unique self-auras
+    local spellInfo = GetCachedSpellInfo(spellID)
+    if spellInfo and spellInfo.name then
+        local name = spellInfo.name
+        if name:match("Form$") or name:match("Stance$") or 
+           name:match("Presence$") or name:match("Aspect of") then
+            return true, true, true  -- Treat as unique personal aura
+        end
+    end
+    
+    return false, false, false
 end
 
--- Check if spell is a pet-related ability (using LibPlayerSpells PET flag)
+-- Check if spell is a pet-related ability (native table + name pattern)
 local function IsPetSpell(spellID)
-    return HasSpellFlag(spellID, LPS_PET)
-end
-
--- Check if spell is a raid buff (using LibPlayerSpells RAIDBUFF flag)
--- These are long-duration maintenance buffs like Battle Shout, Arcane Intellect
-local function IsRaidBuff(spellID)
-    return HasSpellFlag(spellID, LPS_RAIDBUFF)
+    if not spellID then return false end
+    
+    -- Check known pet summon table
+    if PET_SUMMON_SPELLS[spellID] then
+        return true
+    end
+    
+    -- Name pattern fallback handled by IsPetSummonSpell below
+    return false
 end
 
 -- Check if spell is DPS-relevant for rotation queue
 -- When aura detection is blocked, only show spells that are clearly offensive/rotational
+-- Uses name-based heuristics since we don't have LibPlayerSpells flags
 local function IsDPSRelevant(spellID)
     if not spellID then return false end
     
-    -- Hardcoded raid buff IDs (these should always be filtered when aura API blocked)
-    -- These are common buffs that may not be in LibPlayerSpells database
-    local KNOWN_RAID_BUFFS = {
-        [1126] = true,    -- Mark of the Wild (Druid)
-        [21562] = true,   -- Power Word: Fortitude (Priest)
-        [6673] = true,    -- Battle Shout (Warrior)
-        [1459] = true,    -- Arcane Intellect (Mage)
-    }
-    
-    if KNOWN_RAID_BUFFS[spellID] then
-        return false  -- Always hide raid buffs when can't check if active
+    -- Known raid buffs: Always hide when can't check if active
+    if RAID_BUFF_SPELLS[spellID] then
+        return false
     end
     
-    if not LibPlayerSpells then 
-        return true  -- Fail-open: if no LPS data, assume it's relevant
+    -- Known pet summons: Hide when can't check if pet exists
+    if PET_SUMMON_SPELLS[spellID] then
+        return false
     end
     
-    local flags = LibPlayerSpells:GetSpellInfo(spellID)
-    if not flags then 
-        return true  -- Not in LPS database, assume relevant
+    -- Known unique auras (forms/stances): Hide when can't check if active
+    if UNIQUE_AURA_SPELLS[spellID] then
+        return false
     end
     
-    -- Exclude utility spells from DPS queue when we can't verify their state
-    if bit_band(flags, LPS_RAIDBUFF) ~= 0 then return false end  -- Raid buffs
-    if bit_band(flags, LPS_PET) ~= 0 then return false end        -- Pet summons/control
-    
-    -- Include DPS-relevant spells
-    if bit_band(flags, LPS_HARMFUL) ~= 0 then return true end     -- Offensive spells
-    if bit_band(flags, LPS_BURST) ~= 0 then return true end       -- Burst damage
-    if bit_band(flags, LPS_COOLDOWN) ~= 0 then return true end    -- Meaningful CDs
-    if bit_band(flags, LPS_IMPORTANT) ~= 0 then return true end   -- Important procs
-    
-    -- For spells with AURA flag, only include if they're offensive (HARMFUL)
-    -- This filters out forms, long buffs, but keeps damage buffs
-    if bit_band(flags, LPS_AURA) ~= 0 then
-        return bit_band(flags, LPS_HARMFUL) ~= 0
+    -- Get spell info for name-based filtering
+    local spellInfo = GetCachedSpellInfo(spellID)
+    if not spellInfo or not spellInfo.name then
+        return true  -- Unknown spell, fail-open
     end
     
-    return true  -- Default: include in queue
+    local name = spellInfo.name
+    
+    -- Filter out known utility spell patterns when aura API blocked
+    if name:match("Form$") or name:match("Stance$") or name:match("Presence$") then
+        return false  -- Forms/stances should not show
+    end
+    
+    if name:match("^Summon") or name:match("^Call Pet") then
+        return false  -- Pet summons
+    end
+    
+    if name:match("Revive") and name:match("Pet") then
+        return false  -- Pet revive
+    end
+    
+    -- Default: Include in queue (fail-open for combat relevance)
+    return true
 end
 
 --------------------------------------------------------------------------------
@@ -305,11 +389,18 @@ local function HasActivePet()
 end
 
 -- Check if pet is alive (exists AND not dead)
+-- 12.0: UnitIsDead result may be secret for non-player units
 local function IsPetAlive()
     if not SafeUnitExists("pet") then return false end
     -- UnitIsDead returns true if unit is dead, false if alive
     local ok, isDead = pcall(UnitIsDead, "pet")
     if not ok then return true end  -- Fail-safe: assume alive
+    
+    -- 12.0: Check if result is secret - fail-open (assume alive if can't determine)
+    if issecretvalue and issecretvalue(isDead) then
+        return true  -- Fail-open: assume pet is alive
+    end
+    
     return not isDead
 end
 
@@ -455,26 +546,60 @@ end
 
 --------------------------------------------------------------------------------
 -- Main Redundancy Check
+-- isDefensiveCheck: optional flag to skip DPS-relevance filter (for defensive spell selection)
 --------------------------------------------------------------------------------
 
-function RedundancyFilter.IsSpellRedundant(spellID, profile)
+function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
     if InCombatLockdown() or UnitIsDeadOrGhost("player") then return false end
     
-    -- ALWAYS check cooldown - hide abilities on CD >5s, show when coming off CD (≤5s)
-    -- This keeps queue focused on ready/soon-ready abilities regardless of secrets
-    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
-        local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-        if start and duration and start > 0 and duration > 1.5 then  -- Ignore GCD
-            local remaining = (start + duration) - GetTime()
-            if remaining > 5.0 then  -- Hide if more than 5s remaining
-                if GetDebugMode() then
-                    print(string.format("|cff66ccffJAC|r |cffff6666FILTERED|r: On cooldown (%.1fs remaining)", remaining))
+    local debugMode = GetDebugMode()
+    
+    -- 1. FORM/STANCE REDUNDANCY (check FIRST - unaffected by 12.0 secrets)
+    -- Stance bar APIs are client-side UI state, always accessible
+    -- If this is a form spell and we're already in that form, skip it
+    if FormCache then
+        local targetFormID = FormCache.GetFormIDBySpellID(spellID)
+        if targetFormID then
+            local currentFormID = FormCache.GetActiveForm()
+            if targetFormID == currentFormID then
+                -- Throttle debug output (once per spell per 5 seconds)
+                local now = GetTime()
+                local throttleKey = "form_" .. spellID
+                if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                    lastPrintTime[throttleKey] = now
+                    local spellInfo = GetCachedSpellInfo(spellID)
+                    local spellName = spellInfo and spellInfo.name or tostring(spellID)
+                    print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - already in form " .. targetFormID)
                 end
                 return true
             end
+        else
+            -- Fallback: check by name patterns (Form, Stance, Presence, etc.)
+            local spellInfo = GetCachedSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                local name = spellInfo.name
+                if name:match("Form$") or name:match("Stance$") or name:match("Presence$") then
+                    -- It's a form spell but not in our mapping - check if name matches current form
+                    local currentFormName = FormCache.GetActiveFormName()
+                    if currentFormName and currentFormName == name then
+                        -- Throttle debug output
+                        local now = GetTime()
+                        local throttleKey = "form_name_" .. name
+                        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                            lastPrintTime[throttleKey] = now
+                            print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
+                        end
+                        return true
+                    end
+                end
+            end
         end
     end
+    
+    -- NOTE: Cooldown filtering moved to SpellQueue.IsSpellUsable() which uses a 2s threshold
+    -- Position 1 doesn't get usability filtering (shows what Blizzard recommends)
+    -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
     
     -- Check if aura API is accessible (12.0+ secret values may block this)
     -- Test both API availability check AND cache refresh for secrets
@@ -482,51 +607,38 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
     local auras = RefreshAuraCache()
     
     -- If aura API blocked OR cache detected secrets, use whitelist: only show DPS-relevant spells
+    -- EXCEPTION: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
     if auraAPIBlocked or (auras and auras.hasSecrets) then
-        if not IsDPSRelevant(spellID) then
-            if GetDebugMode() then
+        if not isDefensiveCheck and not IsDPSRelevant(spellID) then
+            -- Throttle this debug message to avoid spam (once per spell per 5 seconds)
+            local now = GetTime()
+            local throttleKey = "nondps_" .. spellID
+            if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                lastPrintTime[throttleKey] = now
                 local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (" .. reason .. ")")
+                local spellInfo = GetCachedSpellInfo(spellID)
+                local spellName = spellInfo and spellInfo.name or "Unknown"
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ")")
             end
             return true  -- Hide non-DPS spells
         end
-        return false  -- Show DPS-relevant spells
+        -- For defensive checks, fall through to continue other redundancy checks
+        -- For DPS-relevant spells, also fall through to check auras if possible
+        if not isDefensiveCheck then
+            return false  -- Show DPS-relevant spells (skip aura checks since API blocked)
+        end
     end
     
     local spellInfo = GetCachedSpellInfo(spellID)
     if not spellInfo or not spellInfo.name then return false end
     
     local spellName = spellInfo.name
-    local debugMode = GetDebugMode()  -- Check debug mode after early exits
     local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
     
-    if debugMode then
-        local lpsTag = ""
-        if isUniqueAura then
-            lpsTag = " [LPS:UNIQUE_AURA]"
-        elseif isPersonalAura then
-            lpsTag = " [LPS:PERSONAL+AURA]"
-        elseif isKnownAuraSpell then
-            lpsTag = " [LPS:AURA]"
-        end
-        print("|cff66ccffJAC|r Checking redundancy for: " .. spellName .. " (ID: " .. spellID .. ")" .. lpsTag)
-    end
+    -- Note: Removed verbose "Checking redundancy" debug output - was extremely spammy
+    -- Use /jac test or /jac find for diagnostics instead
     
-    -- 1. FORM/STANCE REDUNDANCY
-    -- If this is a form spell and we're already in that form, skip it
-    -- Forms are always unique - can't be in two forms at once
-    if IsFormChangeSpell(spellID) and FormCache then
-        local currentFormID = FormCache.GetActiveForm()
-        local targetFormID = FormCache.GetFormIDBySpellID(spellID)
-        
-        if targetFormID and targetFormID == currentFormID then
-            if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Already in target form " .. targetFormID)
-            end
-            return true
-        end
-    end    
-    -- 2. AURA SPELL REDUNDANCY
+    -- 3. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
     -- Many abilities can stack (Immolation Aura, etc.) - trust Assisted Combat's judgment
     if isKnownAuraSpell then
@@ -559,7 +671,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 3. PET SPELL REDUNDANCY
+    -- 4. PET SPELL REDUNDANCY
     -- Revive Pet: redundant if pet is ALIVE (can't revive alive pet)
     -- Summon Pet: redundant if pet EXISTS (alive or dead - already have a pet)
     if IsPetReviveSpell(spellName) then
@@ -572,17 +684,17 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     else
         -- Pet summon spells: redundant if any pet exists
-        local isPetSpellByLPS = IsPetSpell(spellID)
-        if (isPetSpellByLPS or IsPetSummonSpell(spellName)) and HasActivePet() then
+        local isPetSpellByTable = IsPetSpell(spellID)
+        if (isPetSpellByTable or IsPetSummonSpell(spellName)) and HasActivePet() then
             if debugMode then
-                local source = isPetSpellByLPS and "LPS:PET" or "name pattern"
+                local source = isPetSpellByTable and "native table" or "name pattern"
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
             end
             return true
         end
     end
     
-    -- 4. STEALTH REDUNDANCY
+    -- 5. STEALTH REDUNDANCY
     -- Use IsStealthed() API - more reliable than buff checking
     if IsStealthSpell(spellName) then
         if SafeIsStealthed() then
@@ -593,7 +705,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 5. MOUNT REDUNDANCY
+    -- 6. MOUNT REDUNDANCY
     -- Use IsMounted() API
     if SafeIsMounted() then
         -- Check if this is a mount spell (avoid false positives)
@@ -606,7 +718,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 6. ROGUE POISON REDUNDANCY
+    -- 7. ROGUE POISON REDUNDANCY
     -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
     -- If both slots are filled, all poison suggestions are redundant
     if IsRoguePoisonSpell(spellID) then
@@ -623,7 +735,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    -- 7. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
+    -- 8. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
     -- If this is a Shaman imbue spell and weapon already has active enchant, skip it
     -- Only check if enchants have sufficient time remaining (>10s)
     if IsWeaponEnchantSpell(spellID) then
@@ -639,9 +751,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    if debugMode then
-        print("|cff66ccffJAC|r |cff00ff00NOT REDUNDANT|r: " .. spellName)
-    end
+    -- Note: Removed verbose "NOT REDUNDANT" debug output - was extremely spammy
     return false
 end
 
@@ -649,39 +759,41 @@ end
 -- Debug / Diagnostic Functions
 --------------------------------------------------------------------------------
 
--- Get LibPlayerSpells info for a spell (for debugging)
-function RedundancyFilter.GetLPSInfo(spellID)
-    if not LibPlayerSpells or not spellID then
-        return { available = false }
+-- Get native spell classification info for a spell (for debugging)
+-- Replaces legacy GetLPSInfo - now uses native tables instead of LibPlayerSpells
+function RedundancyFilter.GetSpellClassification(spellID)
+    if not spellID then
+        return { spellID = nil, known = false }
     end
     
-    local flags, providers, modifiers = LibPlayerSpells:GetSpellInfo(spellID)
-    if not flags then
-        return { available = true, known = false }
-    end
+    local spellInfo = GetCachedSpellInfo(spellID)
+    local isAura, isPersonal, isUnique = IsAuraSpell(spellID)
     
-    local constants = LibPlayerSpells.constants
     return {
-        available = true,
+        spellID = spellID,
+        name = spellInfo and spellInfo.name or "Unknown",
         known = true,
-        flags = flags,
-        isAura = bit.band(flags, constants.AURA) ~= 0,
-        isUniqueAura = bit.band(flags, constants.UNIQUE_AURA) ~= 0,
-        isSurvival = bit.band(flags, constants.SURVIVAL) ~= 0,
-        isBurst = bit.band(flags, constants.BURST) ~= 0,
-        isCooldown = bit.band(flags, constants.COOLDOWN) ~= 0,
-        isPet = bit.band(flags, constants.PET) ~= 0,
-        isPersonal = bit.band(flags, constants.PERSONAL) ~= 0,
-        isHelpful = bit.band(flags, constants.HELPFUL) ~= 0,
-        isHarmful = bit.band(flags, constants.HARMFUL) ~= 0,
-        isCrowdControl = bit.band(flags, constants.CROWD_CTRL) ~= 0,
-        isImportant = bit.band(flags, constants.IMPORTANT) ~= 0,
-        providers = providers,
-        modifiers = modifiers,
+        -- Native classification flags
+        isRaidBuff = RAID_BUFF_SPELLS[spellID] or false,
+        isPetSummon = PET_SUMMON_SPELLS[spellID] or false,
+        isUniqueAura = isUnique,
+        isPersonalAura = isPersonal,
+        isAura = isAura,
+        -- Derived from checks
+        isDPSRelevant = IsDPSRelevant(spellID),
+        isRoguePoison = IsRoguePoisonSpell(spellID),
+        isWeaponEnchant = IsWeaponEnchantSpell(spellID),
+        -- 12.0 compliance note
+        source = "native",  -- Was "LibPlayerSpells", now "native"
     }
 end
 
--- Check if LibPlayerSpells is loaded and functional
+-- Legacy alias for backwards compatibility (was GetLPSInfo when using LibPlayerSpells)
+function RedundancyFilter.GetLPSInfo(spellID)
+    return RedundancyFilter.GetSpellClassification(spellID)
+end
+
+-- Legacy function - always returns false since we no longer use LibPlayerSpells
 function RedundancyFilter.IsLibPlayerSpellsAvailable()
-    return LibPlayerSpells ~= nil
+    return false
 end

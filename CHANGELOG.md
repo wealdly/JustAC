@@ -1,5 +1,97 @@
 # Changelog
 
+## [3.12] - 2026-01-25
+
+### Added
+- `ActionBarScanner.GetSlotForSpell(spellID)` - Returns action bar slot for a spell (v30)
+- `/jac defensive` command - Diagnose defensive icon system (DebugCommands v7)
+
+### Changed
+- **12.0 Resource Detection**: When `C_Spell.IsSpellUsable()` returns secret values, now falls back to checking `C_ActionBar.IsUsableAction()` on the action bar slot for that spell - this uses the visual icon state (desaturation) which is not secret (BlizzardAPI v21)
+- **12.0 Defensive Health Detection**: Defensive system now uses `GetPlayerHealthPercentSafe()` which tries exact health first, then falls back to visual overlay when secrets block the API. When using the visual overlay, "low" = overlay showing (~35%), "critical" = high alpha (~20%)
+- **Simplified Defensive Priority System**: Redesigned defensive spell selection: procs at any health; low (~35%) → big heals; critical (~20%) → cooldowns > potions > heals
+- **GCD Swipe**: Removed fragile `anyIconOnGCD` detection loop - GCD now always propagates when active (uses dummy spell 61304 for accurate state)
+- **Cooldown Caching**: Uses tolerance-based comparison (50ms threshold) to prevent flickering on repeated same-spell casts
+- **Debug Logging Throttled**: Reduced log spam in debug mode - form redundancy, non-DPS spell filter, and macro parser messages now throttled
+
+### Fixed
+- **Defensive Icon Not Showing**: Fixed critical bug where `addon.defensiveIcon` was never assigned after creation - the defensive icon frame was created but not exposed to UIManager, causing all defensive suggestions to silently fail (UIFrameFactory v2)
+- **Defensive Spells Filtered by DPS-Relevance**: In 12.0 when aura API is restricted (instances), the DPS-relevance filter incorrectly filtered out self-heal spells like Regrowth. Added `isDefensiveCheck` parameter to `IsSpellRedundant()` to bypass this filter for defensive spell selection
+- Fixed GCD swipe not showing when repeatedly casting the same ability (e.g., spamming Shred)
+- Fixed GCD swipe flickering caused by floating-point comparison on every frame
+- Fixed cooldown swipe inset gap - cooldowns now fill icon exactly (`SetAllPoints(iconTexture)`) matching Blizzard/WeakAuras/Dominos pattern
+- Fixed icon mask not filling button properly - now uses `SetAllPoints(button)` instead of explicit sizing
+- Fixed asymmetric frame sizing (was `actualIconSize + 1` width, `actualIconSize` height) - all textures now symmetric and centered
+- Fixed flash/highlight textures using TOPLEFT anchor with 0.5px offset compensation - now properly centered
+- **Debug Log Now Shows Spell Name**: "Non-DPS spell" filter message now includes spell name and ID for easier debugging
+
+## [3.11] - 2026-01-25
+
+### Fixed
+
+- **Blue marching ants animation**: Fixed assisted combat glow (marching ants) not animating in combat
+  - UIRenderer module was never loaded via LibStub in JustAC.lua
+  - Added proper module loading and combat state propagation
+  - Animation now correctly plays in combat, freezes out of combat
+- **Secret value handling improvements**:
+  - Fixed GCD cooldown detection with secret values in WoW 12.0+
+  - Split GetSpellCooldown into raw (for UI widgets) and sanitized (for logic) versions
+  - Fixed cooldown flicker by tracking lastCooldownWasSecret flag
+  - Cooldown widgets handle secrets internally, Lua code uses sanitized values
+- **Options blacklist persistence**: Fixed blacklistedSpells table not being initialized properly
+- **Debug mode usability**: Removed extremely spammy macro parsing traces
+  - Removed per-spell, per-command, and per-entry parsing debug messages
+  - Kept useful messages: macro match results and specificity scores
+  - Debug mode now much more readable while still showing important information
+
+### Changed
+
+- **Flash brightness**: Increased flash animation brightness (1.5, 1.2, 0.3 vertex color for ADD blend)
+
+## [3.10] - 2026-01-25
+
+### WoW 12.0 Midnight Compatibility Release
+
+Major update for full WoW 12.0 (Midnight) compatibility with comprehensive secret value handling and modernized spell classification.
+
+### Added
+
+- **SpellDB.lua**: Native spell classification database replacing LibPlayerSpells-1.0
+  - ~330 spell IDs across 4 categories: DEFENSIVE, HEALING, CROWD_CONTROL, UTILITY
+  - Fail-open design: unknown spells assumed offensive (correct for DPS filtering)
+  - Covers all classes including Evoker/Augmentation support
+- **Out-of-range indicator**: Hotkey text turns red when queue spells are out of range
+- **C_Secrets namespace wrappers**: `ShouldSpellCooldownBeSecret()`, `ShouldSpellAuraBeSecret()`, `ShouldUnitSpellCastBeSecret()` for proactive secrecy testing
+- **Enhanced `/jac formcheck`**: Shows spell ID → form ID mappings and redundancy check results
+
+### Changed
+
+- **Module architecture**: Split UIManager.lua (2025 lines) into focused modules:
+  - `UIAnimations.lua` (451 lines) - Animation/visual effects
+  - `UIFrameFactory.lua` (881 lines) - Frame creation and layout
+  - `UIRenderer.lua` (962 lines) - Rendering and update logic
+  - `UIManager.lua` (154 lines) - Thin orchestrator
+- **Resource coloring**: Now uses Blizzard's standard blue tint (0.5, 0.5, 1.0) when not enough mana/resources
+- **Flash layering**: Flash (+6) > Proc Glow (+5) > Marching Ants (+4) for better visibility
+- **Priest defensives**: Reorganized - Desperate Prayer moved to cooldowns, Vampiric Embrace added to self-heals
+
+### Fixed
+
+- **Icon artwork bleeding outside frame**: Icons now use 1px inset, SetTexCoord edge crop, and MaskTexture for beveled corners
+- **Proc glow not showing**: Fixed combat state bug in UIRenderer (was checking never-updated variable)
+- **Dead Priest spell ID**: Replaced Greater Fade (213602, removed in 10.0.0) with Desperate Prayer
+- **Secret value crashes**: Hardened all API wrappers to handle 12.0 secret values gracefully
+- **Best-effort aura detection**: Now skips individual secret auras instead of abandoning all remaining
+- **Form redundancy check**: Now runs before secret bypass, using always-safe stance bar APIs
+- **Raid buffs filtered**: Mark of the Wild, Fortitude, Battle Shout, Arcane Intellect, Blessing of the Bronze now hidden when active
+- **Usability filtering**: Queue positions 2+ now filter spells on cooldown (>2s) or lacking resources
+
+### Removed
+
+- **LibPlayerSpells-1.0**: Removed entirely (outdated since Shadowlands, missing all modern spells)
+- **Duplicate cooldown filtering**: Consolidated to SpellQueue only
+- **Unused functions**: `HasBuffByIcon()`, `HasSameNameBuff()`, `IsRaidBuff()`
+
 ## [3.03] - 2025-12-15
 
 ### Added
