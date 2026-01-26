@@ -66,14 +66,14 @@ local function CreateDefensiveIcon(addon, profile)
     
     -- Position based on user preference (LEFT, ABOVE, BELOW) relative to position 1 icon
     -- Must account for queue orientation since position 1 location changes
-    -- When position is ABOVE, must also account for health bar (5px + 2px spacing = 7px)
+    -- When position is ABOVE, must also account for health bar (5px + 2px spacing above + 2px spacing below = 9px)
     local defPosition = profile.defensives.position or "LEFT"
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     local firstIconCenter = actualIconSize / 2
     
-    -- Health bar adds 7px total (5px height + 2px spacing) when enabled
-    local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 7 or 0
+    -- Health bar adds 9px total (5px height + 4px spacing both sides) when enabled
+    local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 9 or 0
     
     -- Determine position 1's anchor point based on queue orientation
     -- LEFT queue: pos1 at frame LEFT edge
