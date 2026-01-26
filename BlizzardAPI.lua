@@ -780,34 +780,30 @@ end
 
 -- Check if a spell is on a real cooldown (longer than just GCD)
 -- Returns: true if on actual cooldown, false if only on GCD or off cooldown
--- 12.0: When secrets block cooldown API, falls back to action bar slot check
+-- 12.0: When secrets block cooldown API, falls back to usability check
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
     
     -- Use sanitized values safe for comparisons
     local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
     
-    -- If we got secrets (0, 0), try action bar fallback
+    -- If we got secrets (0, 0), try alternative detection methods
     if (not start or start == 0) and (not duration or duration == 0) then
-        -- Try to find this spell on action bars and check its cooldown there
-        local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-        if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
-            local slot = ActionBarScanner.GetSlotForSpell(spellID)
-            if slot then
-                -- Check action bar slot cooldown
-                local slotStart, slotDuration = GetActionCooldown(slot)
-                -- Check for secrets in action bar cooldown too
-                if issecretvalue and (issecretvalue(slotStart) or issecretvalue(slotDuration)) then
-                    -- Action bar also has secrets, fail-open (assume not on cooldown)
-                    return false
-                end
-                if slotStart and slotStart > 0 and slotDuration and slotDuration > 1.5 then
-                    -- Has a real cooldown (>1.5s means not just GCD)
-                    return true
-                end
+        -- Method 1: Check if spell is usable - spells on cooldown are not usable
+        -- But we need to distinguish "on cooldown" from "not enough resources"
+        local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+        
+        -- If not usable AND it's not because of resources, it's likely on cooldown
+        -- This is imperfect but better than showing cooldown spells
+        if not isUsable and not notEnoughResources then
+            -- Not usable and not because of resources = probably on cooldown
+            -- One more check: make sure it's not on GCD only
+            if not BlizzardAPI.IsSpellOnGCD(spellID) then
+                return true
             end
         end
-        -- If no action bar slot found or no cooldown there, assume not on cooldown
+        
+        -- If no action bar slot found or spell is usable, assume not on cooldown
         return false
     end
     
