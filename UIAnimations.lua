@@ -156,12 +156,8 @@ local function StartAssistedGlow(icon, style, isInCombat, iconIndex)
         local width = icon:GetWidth()
         highlightFrame:SetScale((width / 45) * 1.02)
         
-        -- Blue for position 1, white for other positions
-        if iconIndex == 1 then
-            TintMarchingAnts(highlightFrame, 0.0, 0.5, 1.0)  -- Blue
-        else
-            TintMarchingAnts(highlightFrame, 1, 1, 1)  -- White
-        end
+        -- White (untinted) for all positions
+        TintMarchingAnts(highlightFrame, 1, 1, 1)  -- White
         
         if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
             local procFrame = icon.ProcGlowFrame
