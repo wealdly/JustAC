@@ -35,6 +35,7 @@ $coreFiles = @(
     "ActionBarScanner.lua",
     "RedundancyFilter.lua",
     "SpellQueue.lua",
+    "UIHealthBar.lua",
     "UIAnimations.lua",
     "UIFrameFactory.lua",
     "UIRenderer.lua",
