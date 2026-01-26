@@ -250,6 +250,44 @@ local function CreateDefensiveIcon(addon, profile)
     button.currentID = nil
     button.isItem = nil
 
+    -- Tooltip handling (same as main queue icons)
+    button:SetScript("OnEnter", function(self)
+        if addon.db and addon.db.profile and addon.db.profile.showTooltips then
+            local inCombat = UnitAffectingCombat("player")
+            local showTooltip = not inCombat or addon.db.profile.tooltipsInCombat
+            
+            if showTooltip then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                
+                if self.isItem and self.itemID then
+                    GameTooltip:SetItemByID(self.itemID)
+                elseif self.spellID then
+                    GameTooltip:SetSpellByID(self.spellID)
+                end
+                
+                if self.spellID or (self.isItem and self.itemCastSpellID) then
+                    local lookupID = self.spellID or self.itemCastSpellID
+                    local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(lookupID) or ""
+                    
+                    if hotkey and hotkey ~= "" then
+                        GameTooltip:AddLine(" ")
+                        GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                        GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+                    else
+                        GameTooltip:AddLine(" ")
+                        GameTooltip:AddLine("|cffff6666No hotkey found|r")
+                    end
+                end
+                
+                GameTooltip:Show()
+            end
+        end
+    end)
+    
+    button:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
     -- Create fade-in animation
     local fadeIn = button:CreateAnimationGroup()
     local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
