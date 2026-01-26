@@ -1331,6 +1331,9 @@ function JustAC:OnProcGlowChange(event, spellID)
     -- Procs don't change spell availability (IsSpellKnown), only priority
     -- spellAvailabilityCache has 2s TTL which handles any edge cases
     self:ForceUpdate()
+    
+    -- CRITICAL: Also update defensive icon immediately (ForceUpdate only updates main queue)
+    self:OnHealthChanged(nil, "player")
 end
 
 -- Target changes: only ForceUpdate needed
