@@ -1,5 +1,74 @@
 # Changelog
 
+## [3.14] - 2026-01-26
+
+### Added
+- **Multiple Defensive Icons**: Can now display 1-3 defensive spells simultaneously
+  - New `defensives.maxIcons` setting (1-3, default 1) controls how many icons to show
+  - Icons layout horizontally for SIDE1/SIDE2 positions (along queue direction)
+  - Icons stack perpendicular for LEADING position
+  - Each icon has full visual parity: glow, cooldown, hotkey, tooltips
+- **Defensive Icon Scale**: New independent scaling option for defensive icons
+  - `defensives.iconScale` (1.0-2.0, default 1.2) works like Primary Spell Scale
+  - All defensive icons scale uniformly with this setting
+  - No longer tied to DPS queue's firstIconScale
+- **12.0 Local Cooldown Tracking**: When `C_Spell.GetSpellCooldown()` returns secrets in combat, defensive spell cooldowns are now tracked locally using `UNIT_SPELLCAST_SUCCEEDED` events and `GetSpellBaseCooldown()` (which is NOT secret in 12.0)
+  - Duration caching: When spells are cast out of combat, actual modified duration is captured and cached for in-combat use
+  - Cached durations cleared on talent/spec changes
+  - `BlizzardAPI.RegisterDefensiveSpell()`, `ClearTrackedDefensives()`, `IsSpellOnLocalCooldown()`
+  - `JustAC:RegisterDefensivesForTracking()` registers all configured defensive spells
+- **In-Combat Activation Tracking**: RedundancyFilter now tracks spell casts during combat via `UNIT_SPELLCAST_SUCCEEDED`
+  - Works reliably even with 12.0 combat log restrictions (mirrors proc detection system)
+  - Filters out redundant suggestions for spells cast during combat (forms, poisons, long buffs)
+  - Toggle detection: Automatically detects when toggleable auras canceled mid-combat via non-secret APIs (forms, stealth, pets, mounts)
+  - Cleared on leaving combat
+- **Charge Count Display**: Shows current charges for charge-based spells on both defensive and DPS icons
+  - Displayed in bottom-right corner at 85% of hotkey font size
+  - Only shown for multi-charge spells (Fire Blast, Frenzied Regen, Roll, etc.)
+  - Handles 12.0 secret values properly
+
+### Changed
+- **BlizzardAPI v25**: Enhanced cooldown detection system
+  - `IsSpellOnRealCooldown()` now uses 3-tier fallback: Native API → Local cooldown tracking → Action bar usability check
+  - Added charge detection for charge-based spells (filters when depleted)
+  - Secret value handling improvements
+- **RedundancyFilter v24**: In-combat activation tracking with toggle detection
+- **UIRenderer v6**: Simplified cooldown overlay handling
+  - Cooldown widget auto-expires naturally (no manual hiding on 0,0 data)
+  - Minimal change detection prevents flicker while handling secrets correctly
+  - Fixed cooldown overlays not updating reliably during combat
+- **UIFrameFactory v8**: Added charge text display to both defensive and DPS icons
+- **Defensive Spell Defaults Redesigned for 12.0**: Streamlined spell lists with fewer, better choices
+  - Removed cast-time spells and spec-specific deep talents
+  - Reordered for priority: instant heals > absorbs > damage reduction
+  - Self-heals: ~2-3 spells per class (reduced from 3-4)
+  - Cooldowns: ~2-3 big defensives per class
+- **SpellDB**: Added Word of Glory (85673) to HEALING_SPELLS for Divine Purpose proc detection
+
+### Fixed
+- **Cooldown Overlay Display**: Fixed cooldowns not updating reliably during combat with secret values
+  - Cooldown widget now expires naturally instead of being manually hidden
+  - Properly handles transitions between secret and non-secret cooldown states
+- **Defensive Proc Detection**: Fixed proc'd defensives showing gold glow even after proc ended
+  - `IsSpellProcced()` now checks both spell ID and override ID
+  - Validates procs are still active via API instead of trusting cached events
+  - Automatic cleanup of stale proc entries
+- **Multi-Defensive Icon Queue**: Fixed queue disappearing with maxIcons > 1
+  - `GetUsableDefensiveSpells` now uses local table instead of modifying caller's table
+- **Charge-Based Spell Filtering**: Fixed charge spells staying in queue when depleted
+  - `IsSpellOnRealCooldown()` now checks `C_Spell.GetSpellCharges()` for zero charges
+- **Secret Value Handling**: Fixed comparison errors with secret charge counts
+  - Check for secrets on both `maxCharges` and `currentCharges` before comparing
+
+### Technical Notes
+- Verified in-game on WoW 12.0.0 (build 65560):
+  - `GetSpellBaseCooldown()` is NOT secret in combat ✅
+  - `C_Spell.GetSpellCooldown()` is SECRET in combat ❌
+  - `C_Spell.GetSpellCharges()` is SECRET in combat ❌
+- Out-of-combat casts capture actual modified duration for later use
+- In-combat uses cached duration if available, otherwise base cooldown
+- Base cooldown ignores haste/talent modifiers (conservative approach)
+
 ## [3.13] - 2026-01-25
 
 ### Added

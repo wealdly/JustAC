@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Manager Module (Orchestrator)
 -- Coordinates between UIAnimations, UIFrameFactory, and UIRenderer modules
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 29)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 30)
 if not UIManager then return end
 
 -- Import submodules
@@ -137,7 +137,8 @@ end
 function UIManager.ShowDefensiveIcon(addon, id, isItem)
     if not addon or not addon.defensiveIcon then return end
     if UIRenderer then
-        return UIRenderer.ShowDefensiveIcon(addon, id, isItem, addon.defensiveIcon)
+        -- Legacy single-icon path always gets glow (it's slot 1)
+        return UIRenderer.ShowDefensiveIcon(addon, id, isItem, addon.defensiveIcon, true)
     end
 end
 
@@ -145,6 +146,26 @@ function UIManager.HideDefensiveIcon(addon)
     if not addon or not addon.defensiveIcon then return end
     if UIRenderer then
         UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
+    end
+end
+
+-- Show multiple defensive icons from a queue
+-- queue: array of {spellID, isItem, isProcced} entries
+function UIManager.ShowDefensiveIcons(addon, queue)
+    if not addon then return end
+    -- Require defensiveIcons array with at least one entry
+    if not addon.defensiveIcons or #addon.defensiveIcons == 0 then return end
+    if UIRenderer then
+        UIRenderer.ShowDefensiveIcons(addon, queue)
+    end
+end
+
+-- Hide all defensive icons
+function UIManager.HideDefensiveIcons(addon)
+    if not addon then return end
+    if not addon.defensiveIcons or #addon.defensiveIcons == 0 then return end
+    if UIRenderer then
+        UIRenderer.HideDefensiveIcons(addon)
     end
 end
 

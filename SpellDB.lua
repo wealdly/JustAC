@@ -232,6 +232,7 @@ local HEALING_SPELLS = {
     [19750] = true,   -- Flash of Light
     [82326] = true,   -- Holy Light
     [85222] = true,   -- Light of Dawn
+    [85673] = true,   -- Word of Glory (can proc free via Divine Purpose)
     [633] = true,     -- Lay on Hands
     [20473] = true,   -- Holy Shock
     [53563] = true,   -- Beacon of Light
