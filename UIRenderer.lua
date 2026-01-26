@@ -586,9 +586,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
     -- Check if defensive spell has an active proc (only for spells, not items)
     -- Use centralized wrapper that handles secret values
     local isProc = not isItem and BlizzardAPI.IsSpellProcced(id) or false
+    local isInCombat = UnitAffectingCombat("player")
     
     -- Start glow (green marching ants, or gold proc if spell is proc'd)
-    StartDefensiveGlow(defensiveIcon, isProc)
+    UIAnimations.StartDefensiveGlow(defensiveIcon, isProc, isInCombat)
     
     -- Show with fade-in animation if not already visible
     if not defensiveIcon:IsShown() then
@@ -611,7 +612,7 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
     if not defensiveIcon then return end
     
     if defensiveIcon:IsShown() or defensiveIcon.currentID then
-        StopDefensiveGlow(defensiveIcon)
+        UIAnimations.StopDefensiveGlow(defensiveIcon)
         defensiveIcon.spellID = nil
         defensiveIcon.itemID = nil
         defensiveIcon.itemCastSpellID = nil
