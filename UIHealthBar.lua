@@ -75,24 +75,22 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Position above position 1 icon, accounting for queue orientation and defensive position
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
-    -- Positioning offset: 25% into first icon (for horizontal) or vertical alignment (for vertical)
-    local horizontalOffset = firstIconSize * 0.25
-    local verticalOffset = firstIconSize * 0.25
+    -- Positioning offset: 25% into first icon
+    local offset = firstIconSize * 0.25
     
-    -- Health bar is always above the main queue
-    -- When defensive icon is ABOVE, defensive goes above health bar
+    -- Position health bar based on queue orientation
     if orientation == "LEFT" then
-        -- Horizontal queue left-to-right
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", horizontalOffset, BAR_SPACING)
+        -- Horizontal queue left-to-right: bar above, starting 25% into icon 1
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", offset, BAR_SPACING)
     elseif orientation == "RIGHT" then
-        -- Horizontal queue right-to-left
-        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -horizontalOffset, BAR_SPACING)
+        -- Horizontal queue right-to-left: bar above, ending 25% from icon edge
+        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -offset, BAR_SPACING)
     elseif orientation == "DOWN" then
-        -- Vertical queue downward - bar to the right, aligned with top of queue
-        frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING, -verticalOffset)
+        -- Vertical queue downward: vertical bar to the right, starting 25% down from top
+        frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING, -offset)
     else -- UP
-        -- Vertical queue upward - bar to the right, aligned with bottom of queue
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, verticalOffset)
+        -- Vertical queue upward: vertical bar to the right, starting 25% up from bottom
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset)
     end
     
     -- Create StatusBar (accepts secret values!)
