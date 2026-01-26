@@ -46,49 +46,40 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     return highlightFrame
 end
 
--- Create a proc glow frame
+-- Create a proc glow frame (gold-tinted assisted combat crawl)
 local function CreateProcGlowFrame(parent, frameKey)
     local procFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = procFrame
     procFrame:SetPoint("CENTER")
-    procFrame:SetSize(45 * 1.4, 45 * 1.4)
+    procFrame:SetSize(45, 45)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
     procFrame:Hide()
     
-    local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
-    procFrame.ProcLoopFlipbook = procLoop
-    procLoop:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
-    procLoop:SetAllPoints(procFrame)
-    procLoop:SetAlpha(0)
+    local flipbook = procFrame:CreateTexture(nil, "OVERLAY")
+    procFrame.Flipbook = flipbook
+    flipbook:SetAtlas("rotationhelper_ants_flipbook")
+    flipbook:SetSize(66, 66)
+    flipbook:SetPoint("CENTER")
+    flipbook:SetVertexColor(1.0, 0.84, 0.0, 1.0)  -- Gold tint
     
-    local loopGroup = procLoop:CreateAnimationGroup()
-    loopGroup:SetLooping("REPEAT")
-    procFrame.ProcLoop = loopGroup
+    local animGroup = flipbook:CreateAnimationGroup()
+    animGroup:SetLooping("REPEAT")
+    procFrame.Anim = animGroup
     
-    local loopAlpha = loopGroup:CreateAnimation("Alpha")
-    loopAlpha:SetDuration(0.001)
-    loopAlpha:SetOrder(0)
-    loopAlpha:SetFromAlpha(1)
-    loopAlpha:SetToAlpha(1)
-    
-    local loopFlip = loopGroup:CreateAnimation("FlipBook")
-    loopFlip:SetChildKey("ProcLoopFlipbook")
-    loopFlip:SetDuration(1)
-    loopFlip:SetOrder(0)
-    loopFlip:SetFlipBookRows(6)
-    loopFlip:SetFlipBookColumns(5)
-    loopFlip:SetFlipBookFrames(30)
-    loopFlip:SetFlipBookFrameWidth(0)
-    loopFlip:SetFlipBookFrameHeight(0)
+    local flipAnim = animGroup:CreateAnimation("FlipBook")
+    flipAnim:SetDuration(1)
+    flipAnim:SetOrder(0)
+    flipAnim:SetFlipBookRows(6)
+    flipAnim:SetFlipBookColumns(5)
+    flipAnim:SetFlipBookFrames(30)
+    flipAnim:SetFlipBookFrameWidth(0)
+    flipAnim:SetFlipBookFrameHeight(0)
     
     procFrame:SetScript("OnHide", function()
-        if procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcLoop:Stop()
+        if procFrame.Anim:IsPlaying() then
+            procFrame.Anim:Stop()
         end
     end)
-    
-    loopGroup:Play()
-    loopGroup:Stop()
     
     return procFrame
 end
@@ -134,25 +125,25 @@ local function StartAssistedGlow(icon, style, isInCombat)
             end
             antsFrame.FadeOut:Play()
             
-            procFrame.ProcLoopFlipbook:SetAlpha(0)
+            procFrame.Flipbook:SetAlpha(0)
             procFrame:Show()
             
             if not procFrame.FadeIn then
                 procFrame.FadeIn = procFrame:CreateAnimationGroup()
                 local fadeAlpha = procFrame.FadeIn:CreateAnimation("Alpha")
-                fadeAlpha:SetChildKey("ProcLoopFlipbook")
+                fadeAlpha:SetChildKey("Flipbook")
                 fadeAlpha:SetFromAlpha(0)
                 fadeAlpha:SetToAlpha(1)
                 fadeAlpha:SetDuration(0.15)
             end
             procFrame.FadeIn:Play()
         else
-            procFrame.ProcLoopFlipbook:SetAlpha(1)
+            procFrame.Flipbook:SetAlpha(1)
             procFrame:Show()
         end
         
-        if not procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcLoop:Play()
+        if not procFrame.Anim:IsPlaying() then
+            procFrame.Anim:Play()
         end
         
         icon.activeGlowStyle = style
@@ -170,14 +161,15 @@ local function StartAssistedGlow(icon, style, isInCombat)
         if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
             local procFrame = icon.ProcGlowFrame
             if not procFrame.FadeOut then
-                procFrame.FadeOut = procFrame.ProcLoopFlipbook:CreateAnimationGroup()
+                procFrame.FadeOut = procFrame:CreateAnimationGroup()
                 local fadeAlpha = procFrame.FadeOut:CreateAnimation("Alpha")
+                fadeAlpha:SetChildKey("Flipbook")
                 fadeAlpha:SetFromAlpha(1)
                 fadeAlpha:SetToAlpha(0)
                 fadeAlpha:SetDuration(0.15)
                 procFrame.FadeOut:SetScript("OnFinished", function()
                     procFrame:Hide()
-                    procFrame.ProcLoop:Stop()
+                    procFrame.Anim:Stop()
                 end)
             end
             procFrame.FadeOut:Play()
@@ -226,8 +218,8 @@ StopAssistedGlow = function(icon)
     
     if icon.ProcGlowFrame then
         icon.ProcGlowFrame:Hide()
-        if icon.ProcGlowFrame.ProcLoop then
-            icon.ProcGlowFrame.ProcLoop:Stop()
+        if icon.ProcGlowFrame.Anim then
+            icon.ProcGlowFrame.Anim:Stop()
         end
     end
     
@@ -254,9 +246,9 @@ local function StartDefensiveGlow(icon, isProc, isInCombat)
         end
         
         procFrame:Show()
-        procFrame.ProcLoopFlipbook:SetAlpha(1)
-        if not procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcLoop:Play()
+        procFrame.Flipbook:SetAlpha(1)
+        if not procFrame.Anim:IsPlaying() then
+            procFrame.Anim:Play()
         end
         
         icon.hasDefensiveGlow = true
@@ -274,8 +266,8 @@ local function StartDefensiveGlow(icon, isProc, isInCombat)
         
         if icon.ProcGlowFrame then
             icon.ProcGlowFrame:Hide()
-            if icon.ProcGlowFrame.ProcLoop then
-                icon.ProcGlowFrame.ProcLoop:Stop()
+            if icon.ProcGlowFrame.Anim then
+                icon.ProcGlowFrame.Anim:Stop()
             end
         end
         
@@ -305,8 +297,8 @@ StopDefensiveGlow = function(icon)
     
     if icon.ProcGlowFrame then
         icon.ProcGlowFrame:Hide()
-        if icon.ProcGlowFrame.ProcLoop then
-            icon.ProcGlowFrame.ProcLoop:Stop()
+        if icon.ProcGlowFrame.Anim then
+            icon.ProcGlowFrame.Anim:Stop()
         end
     end
     
@@ -422,8 +414,8 @@ local function PauseAllGlows(addon)
             end
             if icon.ProcGlowFrame then
                 icon.ProcGlowFrame:Hide()
-                if icon.ProcGlowFrame.ProcLoop then
-                    icon.ProcGlowFrame.ProcLoop:Stop()
+                if icon.ProcGlowFrame.Anim then
+                    icon.ProcGlowFrame.Anim:Stop()
                 end
             end
         end
