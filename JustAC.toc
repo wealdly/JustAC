@@ -34,6 +34,7 @@ SpellQueue.lua
 UIAnimations.lua
 UIFrameFactory.lua
 UIRenderer.lua
+UIHealthBar.lua
 UIManager.lua
 DebugCommands.lua
 Options.lua

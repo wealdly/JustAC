@@ -797,15 +797,6 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
                             UIManager.CreateSpellIcons(addon)
-                            -- Also toggle health bar
-                            local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
-                            if UIHealthBar then
-                                if val and addon.db.profile.defensives.showHealthBar then
-                                    UIHealthBar.Initialize(addon, addon.db.profile)
-                                else
-                                    UIHealthBar.Cleanup()
-                                end
-                            end
                             addon:ForceUpdateAll()
                         end
                     },
@@ -829,6 +820,23 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.showOnlyInCombat end,
                         set = function(_, val)
                             addon.db.profile.defensives.showOnlyInCombat = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    showHealthBar = {
+                        type = "toggle",
+                        name = "Show Health Bar",
+                        desc = "Display a compact health bar above the main queue (visual only, no percentage text)",
+                        order = 7.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showHealthBar end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showHealthBar = val
+                            if UIManager.DestroyHealthBar then UIManager.DestroyHealthBar() end
+                            if val and UIManager.CreateHealthBar then
+                                UIManager.CreateHealthBar(addon)
+                            end
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,

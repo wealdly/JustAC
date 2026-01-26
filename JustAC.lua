@@ -142,6 +142,7 @@ local defaults = {
         defensives = {
             enabled = true,
             position = "LEFT",        -- LEFT, ABOVE, or BELOW the primary spell
+            showHealthBar = false,    -- Display compact health bar above main queue
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             petHealThreshold = 50,    -- Show pet heals when PET health drops below this
@@ -265,6 +266,11 @@ function JustAC:OnEnable()
     self:CreateKeyPressDetector()
     
     UIManager.CreateSpellIcons(self)
+    
+    -- Create health bar if enabled (must be after CreateSpellIcons)
+    if UIManager.CreateHealthBar then
+        UIManager.CreateHealthBar(self)
+    end
     
     -- Match animation state to current combat status
     if UnitAffectingCombat("player") then
@@ -665,6 +671,11 @@ end
 function JustAC:OnHealthChanged(event, unit)
     -- Respond to player or pet health changes
     if unit ~= "player" and unit ~= "pet" then return end
+    
+    -- Update health bar if enabled
+    if UIManager and UIManager.UpdateHealthBar then
+        UIManager.UpdateHealthBar(self)
+    end
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then 
