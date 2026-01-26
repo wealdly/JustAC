@@ -204,11 +204,12 @@ function UIHealthBar.UpdateSize(addon)
     local queueDimension
     
     if maxIcons == 1 then
-        -- Single icon: span full width
-        queueDimension = firstIconSize
+        -- Single icon: span 50% of width (25% inset from each edge)
+        queueDimension = firstIconSize * 0.5
     else
-        -- Multiple icons: center of icon 1 to center of last icon
-        queueDimension = (firstIconSize - iconSize) / 2 + (maxIcons - 1) * (iconSize + iconSpacing)
+        -- Multiple icons: 25% into icon 1 to 75% into last icon
+        -- = 75% of firstIcon + middle icons + 75% of last icon
+        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
     end
     
     if orientation == "LEFT" or orientation == "RIGHT" then
