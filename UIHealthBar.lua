@@ -71,16 +71,16 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
     
-    -- Calculate width/height based on visible icons (excluding grab tab)
+    -- Calculate width/height based on visible icons (center to center)
     local orientation = profile.queueOrientation or "LEFT"
     local maxIcons = profile.maxIcons or 4
     local iconSize = profile.iconSize or 36
     local firstIconScale = profile.firstIconScale or 1.2
     local iconSpacing = profile.iconSpacing or 1
     
-    -- First icon is larger, rest are normal size
+    -- Distance from center of first icon to center of last icon
     local firstIconSize = iconSize * firstIconScale
-    local queueDimension = firstIconSize + ((maxIcons - 1) * (iconSize + iconSpacing))
+    local queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
     
     if orientation == "LEFT" or orientation == "RIGHT" then
         -- Horizontal queue: calculated width, BAR_HEIGHT for height
@@ -93,20 +93,24 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Position above position 1 icon, accounting for queue orientation and defensive position
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
+    -- Center on first icon position (offset by half first icon size)
+    local firstIconSize = iconSize * firstIconScale
+    local centerOffset = firstIconSize / 2
+    
     -- Health bar is always above the main queue
     -- When defensive icon is ABOVE, defensive goes above health bar
     if orientation == "LEFT" then
-        -- Horizontal queue left-to-right: bar above left edge
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", 0, BAR_SPACING)
+        -- Horizontal queue left-to-right: center on first icon
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", centerOffset, BAR_SPACING)
     elseif orientation == "RIGHT" then
-        -- Horizontal queue right-to-left: bar above right edge
-        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", 0, BAR_SPACING)
+        -- Horizontal queue right-to-left: center on first icon
+        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -centerOffset, BAR_SPACING)
     elseif orientation == "DOWN" then
-        -- Vertical queue downward: bar above top edge
-        frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, BAR_SPACING)
+        -- Vertical queue downward: center on first icon
+        frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, BAR_SPACING + centerOffset)
     else -- UP
-        -- Vertical queue upward: bar below bottom edge
-        frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -BAR_SPACING)
+        -- Vertical queue upward: center on first icon
+        frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -BAR_SPACING - centerOffset)
     end
     
     -- Create StatusBar (accepts secret values!)
@@ -208,7 +212,7 @@ function UIHealthBar.UpdateSize(addon)
     
     -- Calculate queue dimension (same as CreateHealthBar)
     local firstIconSize = iconSize * firstIconScale
-    local queueDimension = firstIconSize + ((maxIcons - 1) * (iconSize + iconSpacing))
+    local queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
     
     if orientation == "LEFT" or orientation == "RIGHT" then
         healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
