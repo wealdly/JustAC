@@ -15,8 +15,8 @@ local GetTime = GetTime
 
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
-local BAR_HEIGHT = 5          -- Compact height in pixels
-local BAR_SPACING = 2         -- Spacing between health bar and queue icons
+local BAR_HEIGHT = 3          -- Compact height in pixels
+local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
 -- Color gradient: Green → Yellow → Red
 local COLOR_HIGH = { r = 0.0, g = 0.8, b = 0.0 }  -- Green (100% - 50%)
@@ -71,14 +71,23 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
     
-    -- Width/height spans the full queue (mainFrame dimensions match queue size)
+    -- Calculate width/height based on visible icons (excluding grab tab)
     local orientation = profile.queueOrientation or "LEFT"
+    local maxIcons = profile.maxIcons or 4
+    local iconSize = profile.iconSize or 36
+    local firstIconScale = profile.firstIconScale or 1.2
+    local iconSpacing = profile.iconSpacing or 1
+    
+    -- First icon is larger, rest are normal size
+    local firstIconSize = iconSize * firstIconScale
+    local queueDimension = firstIconSize + ((maxIcons - 1) * (iconSize + iconSpacing))
+    
     if orientation == "LEFT" or orientation == "RIGHT" then
-        -- Horizontal queue: match mainFrame width, use BAR_HEIGHT for height
-        frame:SetSize(addon.mainFrame:GetWidth(), BAR_HEIGHT)
+        -- Horizontal queue: calculated width, BAR_HEIGHT for height
+        frame:SetSize(queueDimension, BAR_HEIGHT)
     else -- UP or DOWN
-        -- Vertical queue: use BAR_HEIGHT for width, match mainFrame height
-        frame:SetSize(BAR_HEIGHT, addon.mainFrame:GetHeight())
+        -- Vertical queue: BAR_HEIGHT for width, calculated height
+        frame:SetSize(BAR_HEIGHT, queueDimension)
     end
     
     -- Position above position 1 icon, accounting for queue orientation and defensive position
