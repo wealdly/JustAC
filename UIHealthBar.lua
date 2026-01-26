@@ -15,7 +15,7 @@ local GetTime = GetTime
 
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
-local BAR_HEIGHT = 4          -- Compact height in pixels
+local BAR_HEIGHT = 6          -- Compact height in pixels
 local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
 -- Export constants for UIFrameFactory to calculate defensive icon offset
@@ -119,9 +119,30 @@ function UIHealthBar.CreateHealthBar(addon)
     })
     border:SetBackdropBorderColor(0, 0, 0, 1)
     
+    -- Tick marks at 25%, 50%, 75% for visual percentage reference
+    local tickMarks = {}
+    for i, percent in ipairs({0.25, 0.5, 0.75}) do
+        local tick = border:CreateTexture(nil, "OVERLAY")
+        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
+        tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)  -- Grey
+        
+        if orientation == "LEFT" or orientation == "RIGHT" then
+            -- Horizontal bar: vertical tick marks
+            tick:SetSize(1, BAR_HEIGHT)
+            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
+        else
+            -- Vertical bar: horizontal tick marks
+            tick:SetSize(BAR_HEIGHT, 1)
+            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
+        end
+        
+        tickMarks[i] = tick
+    end
+    
     frame.statusBar = statusBar
     frame.background = bg
     frame.border = border
+    frame.tickMarks = tickMarks
     
     healthBarFrame = frame
     
