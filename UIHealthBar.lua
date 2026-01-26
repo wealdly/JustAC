@@ -201,34 +201,17 @@ function UIHealthBar.GetFrame()
 end
 
 -- Update health bar size to match current queue dimensions
+-- Note: Orientation changes require full recreation, so we destroy and recreate
 function UIHealthBar.UpdateSize(addon)
-    if not healthBarFrame or not addon or not addon.db or not addon.db.profile then return end
+    if not addon or not addon.db or not addon.db.profile then return end
     
-    local profile = addon.db.profile
-    local orientation = profile.queueOrientation or "LEFT"
-    local maxIcons = profile.maxIcons or 4
-    local iconSize = profile.iconSize or 36
-    local firstIconScale = profile.firstIconScale or 1.2
-    local iconSpacing = profile.iconSpacing or 1
-    
-    -- Calculate queue dimension (same as CreateHealthBar)
-    local firstIconSize = iconSize * firstIconScale
-    local queueDimension
-    
-    if maxIcons == 1 then
-        -- Single icon: span 50% of width (25% inset from each edge)
-        queueDimension = firstIconSize * 0.5
-    else
-        -- Multiple icons: 25% into icon 1 to 75% into last icon
-        -- = 75% of firstIcon + middle icons + 75% of last icon
-        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
+    -- If orientation might have changed, safer to recreate
+    -- Simple resize won't update StatusBar orientation or tick marks
+    if healthBarFrame then
+        UIHealthBar.Destroy()
     end
     
-    if orientation == "LEFT" or orientation == "RIGHT" then
-        healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
-    else
-        healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
-    end
+    UIHealthBar.CreateHealthBar(addon)
 end
 
 -- Clean up
