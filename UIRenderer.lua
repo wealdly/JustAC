@@ -580,7 +580,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.cachedHotkey = nil
                     icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil
-                    StopAssistedGlow(icon)
+                    UIAnimations.StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance
                     -- Don't hide the entire icon frame
