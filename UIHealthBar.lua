@@ -178,6 +178,28 @@ function UIHealthBar.Update(addon)
     -- Set min/max and value (both accept secrets directly)
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
+    
+    -- Color gradient: Green → Yellow → Red based on health percentage
+    -- Only update color if not dealing with secret values
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and not BlizzardAPI.IsSecretValue(health) and not BlizzardAPI.IsSecretValue(maxHealth) then
+        local healthPercent = health / maxHealth
+        local r, g, b
+        
+        if healthPercent > 0.5 then
+            -- Green to Yellow (100% → 50%)
+            r = (1.0 - healthPercent) * 2  -- 0.0 → 1.0
+            g = 0.8
+            b = 0.0
+        else
+            -- Yellow to Red (50% → 0%)
+            r = 1.0
+            g = healthPercent * 1.6  -- 0.8 → 0.0
+            b = 0.0
+        end
+        
+        statusBar:SetStatusBarColor(r, g, b, 1.0)
+    end
     -- Color stays green (set at creation) - visual fill shows health level
 end
 
