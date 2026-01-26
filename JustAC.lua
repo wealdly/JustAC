@@ -141,7 +141,7 @@ local defaults = {
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
-            position = "LEFT",        -- LEFT, ABOVE, or BELOW the primary spell
+            position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this

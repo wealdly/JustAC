@@ -75,32 +75,20 @@ local function CreateDefensiveIcon(addon, profile)
     
     button:SetSize(actualIconSize, actualIconSize)
     
-    -- Position based on user preference (LEFT, ABOVE, BELOW) relative to position 1 icon
-    -- Must account for queue orientation since position 1 location changes
-    -- When position is ABOVE, must also account for health bar (5px + 2px spacing above + 2px spacing below = 9px)
-    local defPosition = profile.defensives.position or "LEFT"
+    -- Position based on user preference (SIDE1, SIDE2, LEADING) relative to spell queue
+    -- SIDE1 = health bar side, SIDE2 = opposite perpendicular, LEADING = opposite grab tab
+    -- Position names are queue-relative and transform based on orientation
+    local defPosition = profile.defensives.position or "SIDE1"
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     local firstIconCenter = actualIconSize / 2
     
-    -- Health bar adds offset when enabled, but location depends on queue orientation:
-    -- LEFT/RIGHT queues: health bar is ABOVE (affects ABOVE position)
-    -- UP/DOWN queues: health bar is on RIGHT side
-    --   - UP: ABOVE position = right side (with health bar)
-    --   - DOWN: BELOW position = right side (with health bar)
+    -- Health bar adds offset when enabled (always on SIDE1)
     -- Calculate from UIHealthBar constants to stay in sync
     local healthBarOffset = 0
-    if profile.defensives.showHealthBar and UIHealthBar then
-        if (queueOrientation == "LEFT" or queueOrientation == "RIGHT") and defPosition == "ABOVE" then
-            -- Horizontal queues: health bar above, affects ABOVE position
-            healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
-        elseif queueOrientation == "UP" and defPosition == "ABOVE" then
-            -- UP queue: ABOVE position = right side (with health bar)
-            healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
-        elseif queueOrientation == "DOWN" and defPosition == "BELOW" then
-            -- DOWN queue: BELOW position = right side (with health bar)
-            healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
-        end
+    if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
+        -- SIDE1 is always the health bar side, regardless of orientation
+        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
     end
     local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
     
@@ -111,48 +99,52 @@ local function CreateDefensiveIcon(addon, profile)
     -- DOWN queue: pos1 at frame TOP edge
     
     if queueOrientation == "LEFT" then
-        -- Queue grows left-to-right, pos1 is at LEFT of frame
-        if defPosition == "ABOVE" then
+        -- Queue grows left-to-right (grab tab on right)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = above (health bar side)
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, effectiveSpacing)
-        elseif defPosition == "BELOW" then
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = below
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
-        else -- LEFT
+        else -- LEADING
+            -- LEADING = left side (opposite grab tab)
             button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, 0)
         end
     elseif queueOrientation == "RIGHT" then
-        -- Queue grows right-to-left, pos1 is at RIGHT of frame
-        if defPosition == "ABOVE" then
+        -- Queue grows right-to-left (grab tab on left)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = above (health bar side)
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, effectiveSpacing)
-        elseif defPosition == "BELOW" then
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = below
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter, -spacing)
-        else -- LEFT (means "before" pos1, so RIGHT side)
+        else -- LEADING
+            -- LEADING = right side (opposite grab tab)
             button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, 0)
         end
     elseif queueOrientation == "UP" then
-        -- Queue grows bottom-to-top (90° counter-clockwise from default LEFT orientation)
-        -- Position names transform: ABOVE→right, BELOW→left, LEFT→top
-        if defPosition == "ABOVE" then
-            -- ABOVE in rotated view = RIGHT side (with health bar)
+        -- Queue grows bottom-to-top (grab tab on top)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = right side (health bar side)
             button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter)
-        elseif defPosition == "BELOW" then
-            -- BELOW in rotated view = LEFT side
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = left side
             button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
-        else -- LEFT
-            -- LEFT in rotated view = TOP (after last icon)
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, spacing)
+        else -- LEADING
+            -- LEADING = bottom side (opposite grab tab, after last icon)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing)
         end
     elseif queueOrientation == "DOWN" then
-        -- Queue grows top-to-bottom (90° clockwise from default LEFT orientation)
-        -- Position names transform: ABOVE→left, BELOW→right, LEFT→bottom
-        if defPosition == "ABOVE" then
-            -- ABOVE in rotated view = LEFT side
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
-        elseif defPosition == "BELOW" then
-            -- BELOW in rotated view = RIGHT side (with health bar)
+        -- Queue grows top-to-bottom (grab tab on bottom)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = right side (health bar side)
             button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter)
-        else -- LEFT
-            -- LEFT in rotated view = BOTTOM (after last icon)
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = left side
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+        else -- LEADING
+            -- LEADING = top side (opposite grab tab, after last icon)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing)
         end
     end
 

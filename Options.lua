@@ -848,11 +848,11 @@ local function CreateOptionsTable(addon)
                         order = 9,
                         width = "normal",
                         values = {
-                            LEFT = "Left",
-                            ABOVE = "Above",
-                            BELOW = "Below",
+                            SIDE1 = L["Side 1 (Health Bar)"],
+                            SIDE2 = L["Side 2"],
+                            LEADING = L["Leading Edge"],
                         },
-                        get = function() return addon.db.profile.defensives.position or "LEFT" end,
+                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,
                         set = function(_, val)
                             addon.db.profile.defensives.position = val
                             UIManager.CreateSpellIcons(addon)
