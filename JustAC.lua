@@ -544,6 +544,14 @@ end
 
 function JustAC:RefreshConfig()
     -- Silently refresh on profile change
+    
+    -- Clear character-specific data on profile reset (blacklist, hotkey overrides)
+    -- This ensures a clean slate when resetting to defaults
+    if self.db and self.db.char then
+        self.db.char.blacklistedSpells = {}
+        self.db.char.hotkeyOverrides = {}
+    end
+    
     -- Reinitialize defensive spells if lists are empty (profile reset/change)
     self:InitializeDefensiveSpells()
     
