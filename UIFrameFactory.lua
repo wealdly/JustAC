@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Frame Factory Module v8
--- Changed: Added charge count text to DPS spell queue icons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 8)
+-- JustAC: UI Frame Factory Module v9
+-- Changed: Added separate GCD cooldown overlay frame (gcdCooldown) to each icon
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 9)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -167,7 +167,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button.flashing = 0
     button.flashtime = 0
 
-    -- Cooldown frame
+    -- Cooldown frame (spell's actual cooldown)
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
@@ -177,6 +177,18 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     cooldown:SetSwipeColor(0, 0, 0, 0.8)
     cooldown:Hide()
     button.cooldown = cooldown
+    
+    -- GCD cooldown frame (separate layer for GCD overlay)
+    local gcdCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    gcdCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
+    gcdCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    gcdCooldown:SetDrawEdge(false)
+    gcdCooldown:SetDrawSwipe(true)
+    gcdCooldown:SetReverse(false)
+    gcdCooldown:SetSwipeColor(0, 0, 0, 0.5)  -- Slightly lighter/transparent for GCD
+    gcdCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above spell cooldown
+    gcdCooldown:Hide()
+    button.gcdCooldown = gcdCooldown
     
     -- Hotkey text
     local hotkeyFrame = CreateFrame("Frame", nil, button)

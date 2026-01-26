@@ -173,6 +173,13 @@ local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
            (baseSpellID ~= displaySpellID and SpellQueue.IsSpellBlacklisted(baseSpellID))
 end
 
+-- Helper: Check if spell passes common filters (availability, usability, redundancy)
+local function PassesSpellFilters(spellID, profile)
+    return IsSpellAvailable(spellID)
+       and IsSpellUsable(spellID)
+       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
+end
+
 function SpellQueue.GetCurrentSpellQueue()
     local profile = BlizzardAPI.GetProfile()
     if not profile or profile.isManualMode then 
@@ -230,12 +237,14 @@ function SpellQueue.GetCurrentSpellQueue()
             -- Not blacklisted - apply minimal stabilization
             -- If primary changed to what was slot 2, hold briefly to smooth transition
             local previousSlot2 = lastSpellIDs and lastSpellIDs[2]
+            
+            -- Track original IDs before stabilization to prevent duplicates
+            local originalDisplaySpellID = displaySpellID
+            local originalBaseSpellID = baseSpellID
+            
             if displaySpellID ~= lastPrimarySpellID then
-                -- Primary changed
                 if previousSlot2 and displaySpellID == previousSlot2 then
-                    -- New primary matches old slot 2 - this is a "shift up" after execution
-                    -- Hold the previous primary briefly to smooth the transition
-                    -- But only if the previous primary is not blacklisted
+                    -- New primary matches old slot 2 - hold previous primary briefly (if not blacklisted)
                     local prevBlacklisted = lastPrimarySpellID and SpellQueue.IsSpellBlacklisted(lastPrimarySpellID)
                     if (now - lastPrimaryChangeTime) < PRIMARY_STABILIZATION_WINDOW and lastPrimarySpellID and not prevBlacklisted then
                         -- Still in stabilization window, use previous primary
@@ -253,9 +262,11 @@ function SpellQueue.GetCurrentSpellQueue()
                 end
             end
             
-            -- Track to prevent duplicates in rotation list
+            -- Track all IDs (display, base, original) to prevent duplicates during stabilization
             addedSpellIDs[displaySpellID] = true
             addedSpellIDs[baseSpellID] = true
+            addedSpellIDs[originalDisplaySpellID] = true
+            addedSpellIDs[originalBaseSpellID] = true
             
             -- Position 1 is shown
             spellCount = spellCount + 1
@@ -275,20 +286,24 @@ function SpellQueue.GetCurrentSpellQueue()
         if spellbookProcs then
             for _, procSpellID in ipairs(spellbookProcs) do
                 if spellCount >= maxIcons then break end
-                if procSpellID and not addedSpellIDs[procSpellID] then
-                    -- Apply filters: must be offensive, have keybind, not blacklisted, not item (if hiding), available, usable
-                    -- Always check redundancy - form/stance checks work even when aura secrets detected
+                
+                -- Get display spell ID to check for duplicates (handles overrides)
+                local displayProcSpellID = BlizzardAPI.GetDisplaySpellID(procSpellID)
+                
+                if procSpellID and not addedSpellIDs[procSpellID] and not addedSpellIDs[displayProcSpellID] then
+                    -- Filter: offensive, keybind, not blacklisted, not item, passes availability/usability/redundancy
                     local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(procSpellID)
                     if BlizzardAPI.IsOffensiveSpell(procSpellID)
                        and ActionBarScanner.HasKeybind(procSpellID)
                        and not SpellQueue.IsSpellBlacklisted(procSpellID)
+                       and not SpellQueue.IsSpellBlacklisted(displayProcSpellID)
                        and not isItemSpell
-                       and IsSpellAvailable(procSpellID)
-                       and IsSpellUsable(procSpellID)
-                       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(procSpellID, profile)) then
+                       and PassesSpellFilters(procSpellID, profile) then
                         spellCount = spellCount + 1
                         recommendedSpells[spellCount] = procSpellID
+                        -- Track both base and display IDs to prevent duplicates
                         addedSpellIDs[procSpellID] = true
+                        addedSpellIDs[displayProcSpellID] = true
                     end
                 end
             end
@@ -319,25 +334,18 @@ function SpellQueue.GetCurrentSpellQueue()
                     -- Get the actual spell we'd display (might be an override)
                     local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
                     
-                    -- Skip if this override already shown (e.g., position 1 has same spell)
+                    -- Skip if override already shown
                     if not addedSpellIDs[actualSpellID] then
-                        -- Apply filters: blacklist (display ID), item filter, availability, usability, redundancy
-                        -- Always check redundancy - form/stance checks work even when aura secrets detected
-                        -- IsSpellRedundant handles internal bypass logic for aura-dependent checks
+                        -- Filter: not blacklisted, not item, passes availability/usability/redundancy
                         local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(actualSpellID)
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and not isItemSpell
-                           and IsSpellAvailable(actualSpellID)
-                           and IsSpellUsable(actualSpellID)
-                           and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(actualSpellID, profile)) then
-                            -- Mark as added NOW to prevent duplicates within the rotation list
-                            -- (e.g., same actualSpellID from different base spell IDs)
+                           and PassesSpellFilters(actualSpellID, profile) then
+                            -- Mark as added to prevent duplicates (both actualSpellID and base spellID)
                             addedSpellIDs[actualSpellID] = true
                             addedSpellIDs[spellID] = true
                             
-                            -- Categorize by proc state and importance
-                            -- Proc detection bypassed independently if proc secrets detected
-                            -- When bypassed, all spells go to "normal" category (Blizzard's order)
+                            -- Categorize: important procs, regular procs, or normal (proc detection bypassed if secrets detected)
                             local isProcced = not bypassProcs and BlizzardAPI.IsSpellProcced(actualSpellID)
                             if isProcced then
                                 -- IMPORTANT procs go to front of procced list

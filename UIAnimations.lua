@@ -46,42 +46,81 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     return highlightFrame
 end
 
--- Create a proc glow frame (gold-tinted assisted combat crawl)
+-- Create a proc glow frame (using WoW's native proc loop atlas)
 local function CreateProcGlowFrame(parent, frameKey)
     local procFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = procFrame
     procFrame:SetPoint("CENTER")
-    procFrame:SetSize(45, 45)
+    procFrame:SetSize(45 * 1.4, 45 * 1.4)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
     procFrame:Hide()
     
-    local flipbook = procFrame:CreateTexture(nil, "OVERLAY")
-    procFrame.Flipbook = flipbook
-    flipbook:SetAtlas("rotationhelper_ants_flipbook")
-    flipbook:SetSize(66, 66)
-    flipbook:SetPoint("CENTER")
-    flipbook:SetVertexColor(1.0, 0.84, 0.0, 1.0)  -- Gold tint
+    local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
+    procFrame.ProcLoopFlipbook = procLoop
+    procLoop:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
+    procLoop:SetAllPoints(procFrame)
+    procLoop:SetAlpha(1)
     
-    local animGroup = flipbook:CreateAnimationGroup()
-    animGroup:SetLooping("REPEAT")
-    procFrame.Anim = animGroup
+    local loopGroup = procLoop:CreateAnimationGroup()
+    loopGroup:SetLooping("REPEAT")
+    procFrame.ProcLoop = loopGroup
     
-    local flipAnim = animGroup:CreateAnimation("FlipBook")
-    flipAnim:SetDuration(1)
-    flipAnim:SetOrder(0)
-    flipAnim:SetFlipBookRows(6)
-    flipAnim:SetFlipBookColumns(5)
-    flipAnim:SetFlipBookFrames(30)
-    flipAnim:SetFlipBookFrameWidth(0)
-    flipAnim:SetFlipBookFrameHeight(0)
+    local loopAlpha = loopGroup:CreateAnimation("Alpha")
+    loopAlpha:SetDuration(0.001)
+    loopAlpha:SetOrder(0)
+    loopAlpha:SetFromAlpha(1)
+    loopAlpha:SetToAlpha(1)
+    
+    local loopFlip = loopGroup:CreateAnimation("FlipBook")
+    loopFlip:SetChildKey("ProcLoopFlipbook")
+    loopFlip:SetDuration(1)
+    loopFlip:SetOrder(0)
+    loopFlip:SetFlipBookRows(6)
+    loopFlip:SetFlipBookColumns(5)
+    loopFlip:SetFlipBookFrames(30)
+    loopFlip:SetFlipBookFrameWidth(0)
+    loopFlip:SetFlipBookFrameHeight(0)
     
     procFrame:SetScript("OnHide", function()
-        if procFrame.Anim:IsPlaying() then
-            procFrame.Anim:Stop()
+        if procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Stop()
         end
     end)
     
+    loopGroup:Play()
+    loopGroup:Stop()
+    
     return procFrame
+end
+
+-- Show proc glow (native WoW gold proc animation)
+local function ShowProcGlow(icon)
+    if not icon then return end
+    
+    local procFrame = icon.ProcGlowFrame
+    if not procFrame then
+        procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
+    end
+    
+    local width = icon:GetWidth()
+    procFrame:SetScale(width / 45)
+    
+    procFrame.ProcLoopFlipbook:SetAlpha(1)
+    procFrame:Show()
+    
+    if not procFrame.ProcLoop:IsPlaying() then
+        procFrame.ProcLoop:Play()
+    end
+end
+
+-- Hide proc glow
+local function HideProcGlow(icon)
+    if not icon or not icon.ProcGlowFrame then return end
+    
+    icon.ProcGlowFrame:Hide()
+    if icon.ProcGlowFrame.ProcLoop:IsPlaying() then
+        icon.ProcGlowFrame.ProcLoop:Stop()
+    end
 end
 
 local function TintMarchingAnts(highlightFrame, r, g, b)
@@ -90,128 +129,42 @@ local function TintMarchingAnts(highlightFrame, r, g, b)
     end
 end
 
-local function StartAssistedGlow(icon, style, isInCombat, iconIndex)
+local function StartAssistedGlow(icon, isInCombat)
     if not icon then return end
     
-    style = style or "ASSISTED"
+    local highlightFrame = icon.AssistedCombatHighlightFrame
+    if not highlightFrame then
+        highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
+    end
     
-    if style == "PROC" then
-        if not isInCombat then
-            StopAssistedGlow(icon)
-            return
-        end
-        
-        local procFrame = icon.ProcGlowFrame
-        if not procFrame then
-            procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
-        end
-        
-        local width = icon:GetWidth()
-        procFrame:SetScale(width / 45)
-        
-        if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
-            local antsFrame = icon.AssistedCombatHighlightFrame
-            if not antsFrame.FadeOut then
-                antsFrame.FadeOut = antsFrame:CreateAnimationGroup()
-                local fadeAlpha = antsFrame.FadeOut:CreateAnimation("Alpha")
-                fadeAlpha:SetChildKey("Flipbook")
-                fadeAlpha:SetFromAlpha(1)
-                fadeAlpha:SetToAlpha(0)
-                fadeAlpha:SetDuration(0.15)
-                antsFrame.FadeOut:SetScript("OnFinished", function()
-                    antsFrame:Hide()
-                    antsFrame.Flipbook.Anim:Stop()
-                end)
-            end
-            antsFrame.FadeOut:Play()
-            
-            procFrame.Flipbook:SetAlpha(0)
-            procFrame:Show()
-            
-            if not procFrame.FadeIn then
-                procFrame.FadeIn = procFrame:CreateAnimationGroup()
-                local fadeAlpha = procFrame.FadeIn:CreateAnimation("Alpha")
-                fadeAlpha:SetChildKey("Flipbook")
-                fadeAlpha:SetFromAlpha(0)
-                fadeAlpha:SetToAlpha(1)
-                fadeAlpha:SetDuration(0.15)
-            end
-            procFrame.FadeIn:Play()
-        else
-            procFrame.Flipbook:SetAlpha(1)
-            procFrame:Show()
-        end
-        
-        if not procFrame.Anim:IsPlaying() then
-            procFrame.Anim:Play()
-        end
-        
-        icon.activeGlowStyle = style
-    else
-        local highlightFrame = icon.AssistedCombatHighlightFrame
-        if not highlightFrame then
-            highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
-        end
-        
-        local width = icon:GetWidth()
-        highlightFrame:SetScale((width / 45) * 1.02)
-        
-        -- White (untinted) for all positions
-        TintMarchingAnts(highlightFrame, 1, 1, 1)  -- White
-        
-        if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
-            local procFrame = icon.ProcGlowFrame
-            if not procFrame.FadeOut then
-                procFrame.FadeOut = procFrame:CreateAnimationGroup()
-                local fadeAlpha = procFrame.FadeOut:CreateAnimation("Alpha")
-                fadeAlpha:SetChildKey("Flipbook")
-                fadeAlpha:SetFromAlpha(1)
-                fadeAlpha:SetToAlpha(0)
-                fadeAlpha:SetDuration(0.15)
-                procFrame.FadeOut:SetScript("OnFinished", function()
-                    procFrame:Hide()
-                    procFrame.Anim:Stop()
-                end)
-            end
-            procFrame.FadeOut:Play()
-            
-            highlightFrame.Flipbook:SetAlpha(0)
-            highlightFrame:Show()
-            
-            if not highlightFrame.FadeIn then
-                highlightFrame.FadeIn = highlightFrame:CreateAnimationGroup()
-                local fadeAlpha = highlightFrame.FadeIn:CreateAnimation("Alpha")
-                fadeAlpha:SetChildKey("Flipbook")
-                fadeAlpha:SetFromAlpha(0)
-                fadeAlpha:SetToAlpha(1)
-                fadeAlpha:SetDuration(0.15)
-            end
-            highlightFrame.FadeIn:Play()
-        else
-            highlightFrame.Flipbook:SetAlpha(1)
-            highlightFrame:Show()
-        end
-        
-        -- Animation state based on combat status
-        -- Must play briefly first to initialize the flipbook, then freeze if out of combat
+    local width = icon:GetWidth()
+    highlightFrame:SetScale((width / 45) * 1.02)
+    
+    -- White tint for assisted combat (RGB: 1, 1, 1 = white/no tint, appears blue in-game)
+    TintMarchingAnts(highlightFrame, 1, 1, 1)
+    
+    -- Show blue/white ants frame
+    highlightFrame.Flipbook:SetAlpha(1)
+    highlightFrame:Show()
+    
+    -- Animation state based on combat status
+    if isInCombat then
+        highlightFrame.Flipbook.Anim:Play()
+        icon.assistedAnimPaused = false
+    elseif not icon.assistedAnimPaused then
+        -- Out of combat: pause after brief initialization
         if not highlightFrame.Flipbook.Anim:IsPlaying() then
             highlightFrame.Flipbook.Anim:Play()
         end
-        
-        -- If out of combat, stop after a brief moment so it freezes on a single frame
-        -- (not the raw grid). Use a tiny delay to let animation initialize.
-        if not isInCombat then
-            C_Timer.After(0.05, function()
-                if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
-                    if highlightFrame.Flipbook.Anim:IsPlaying() then
-                        highlightFrame.Flipbook.Anim:Pause()
-                    end
-                end
-            end)
-        end
-        
-        icon.activeGlowStyle = style
+        C_Timer.After(0.05, function()
+            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
+                highlightFrame.Flipbook.Anim:Pause()
+                icon.assistedAnimPaused = true
+            end
+        end)
     end
+    
+    icon.activeGlowStyle = "ASSISTED"
 end
 
 StopAssistedGlow = function(icon)
@@ -224,17 +177,14 @@ StopAssistedGlow = function(icon)
         end
     end
     
-    if icon.ProcGlowFrame then
-        icon.ProcGlowFrame:Hide()
-        if icon.ProcGlowFrame.Anim then
-            icon.ProcGlowFrame.Anim:Stop()
-        end
-    end
+    -- Hide native proc glow if present
+    HideProcGlow(icon)
     
     icon.activeGlowStyle = nil
+    icon.assistedAnimPaused = false
 end
 
-local function StartDefensiveGlow(icon, isProc, isInCombat)
+local function StartDefensiveGlow(icon, isInCombat)
     if not icon then return end
     
     local highlightFrame = icon.DefensiveHighlightFrame
@@ -245,24 +195,25 @@ local function StartDefensiveGlow(icon, isProc, isInCombat)
     local width = icon:GetWidth()
     highlightFrame:SetScale(width / 45)
     
-    -- Gold for proc, green for regular defensive
-    if isProc then
-        TintMarchingAnts(highlightFrame, 1.0, 0.84, 0.0)  -- Gold
-    else
-        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)  -- Green
-    end
+    -- Green tint for defensive queue (RGB: 0.3, 1.0, 0.3)
+    -- Note: Procs use native gold overlay glow instead of tinted crawl
+    TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
     
     highlightFrame:Show()
     
-    if isInCombat then
+    -- Animation state: play in combat, pause out of combat after brief initialization
+    if not highlightFrame.Flipbook.Anim:IsPlaying() then
         highlightFrame.Flipbook.Anim:Play()
-    else
-        highlightFrame.Flipbook.Anim:Play()
-        highlightFrame.Flipbook.Anim:Stop()
+    end
+    if not isInCombat then
+        C_Timer.After(0.05, function()
+            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim and highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Pause()
+            end
+        end)
     end
     
     icon.hasDefensiveGlow = true
-    icon.defensiveGlowStyle = isProc and "PROC" or "DEFENSIVE"
 end
 
 StopDefensiveGlow = function(icon)
@@ -275,8 +226,10 @@ StopDefensiveGlow = function(icon)
         end
     end
     
+    -- Also hide proc glow since defensive is being stopped
+    HideProcGlow(icon)
+    
     icon.hasDefensiveGlow = false
-    icon.defensiveGlowStyle = nil
 end
 
 local function StartFlash(button)
@@ -415,6 +368,8 @@ UIAnimations.StartAssistedGlow = StartAssistedGlow
 UIAnimations.StopAssistedGlow = StopAssistedGlow
 UIAnimations.StartDefensiveGlow = StartDefensiveGlow
 UIAnimations.StopDefensiveGlow = StopDefensiveGlow
+UIAnimations.ShowProcGlow = ShowProcGlow
+UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash
