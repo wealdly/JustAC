@@ -796,6 +796,11 @@ function BlizzardAPI.IsSpellOnRealCooldown(spellID)
             if slot then
                 -- Check action bar slot cooldown
                 local slotStart, slotDuration = GetActionCooldown(slot)
+                -- Check for secrets in action bar cooldown too
+                if issecretvalue and (issecretvalue(slotStart) or issecretvalue(slotDuration)) then
+                    -- Action bar also has secrets, fail-open (assume not on cooldown)
+                    return false
+                end
                 if slotStart and slotStart > 0 and slotDuration and slotDuration > 1.5 then
                     -- Has a real cooldown (>1.5s means not just GCD)
                     return true
