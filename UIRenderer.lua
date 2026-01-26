@@ -394,7 +394,7 @@ StartDefensiveGlow = function(icon, isProc)
     if not icon then return end
     
     if isProc then
-        -- Use native proc glow animation (gold) for proc'd defensive
+        -- Use native proc glow animation (green-tinted) for proc'd defensive
         local procFrame = icon.ProcGlowFrame
         if not procFrame then
             procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
@@ -403,6 +403,11 @@ StartDefensiveGlow = function(icon, isProc)
         -- Scale entire frame to match icon size
         local width = icon:GetWidth()
         procFrame:SetScale(width / 45)
+        
+        -- Tint proc glow green (R=0.3, G=1.0, B=0.3)
+        if procFrame.ProcLoopFlipbook then
+            procFrame.ProcLoopFlipbook:SetVertexColor(0.3, 1.0, 0.3, 1)
+        end
         
         -- Hide green marching ants if showing
         if icon.DefensiveHighlightFrame then
