@@ -13,7 +13,6 @@ local UIRenderer = LibStub("JustAC-UIRenderer", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
-local LSM = LibStub("LibSharedMedia-3.0")
 
 -- Masque support
 local Masque = LibStub("Masque", true)
