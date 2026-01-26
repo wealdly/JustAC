@@ -899,6 +899,15 @@ function JustAC:GetBestDefensiveSpell(spellList)
                     -- Check if spell is on a real cooldown (not just GCD)
                     local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
                     
+                    -- Debug: log cooldown check results
+                    if self.db and self.db.profile and self.db.profile.debugMode then
+                        local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+                        local spellInfo = C_Spell.GetSpellInfo(spellID)
+                        local name = spellInfo and spellInfo.name or "Unknown"
+                        self:DebugPrint(string.format("Defensive spell check: %s (%d) - onCooldown=%s, start=%s, duration=%s", 
+                            name, spellID, tostring(onCooldown), tostring(start or 0), tostring(duration or 0)))
+                    end
+                    
                     if not onCooldown then
                         -- Prioritize procced spells immediately
                         if BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID) then
