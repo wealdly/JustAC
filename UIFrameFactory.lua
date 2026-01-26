@@ -72,8 +72,9 @@ local function CreateDefensiveIcon(addon, profile)
     local spacing = profile.iconSpacing
     local firstIconCenter = actualIconSize / 2
     
-    -- Health bar adds 9px total (5px height + 4px spacing both sides) when enabled
-    local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 9 or 0
+    -- Health bar adds total height plus spacing on both sides when enabled
+    -- BAR_HEIGHT (4px) + BAR_SPACING top (4px) + BAR_SPACING bottom (4px) = 12px
+    local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 12 or 0
     
     -- Determine position 1's anchor point based on queue orientation
     -- LEFT queue: pos1 at frame LEFT edge
