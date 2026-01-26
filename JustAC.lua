@@ -1483,6 +1483,7 @@ end
 
 function JustAC:UpdateFrameSize()
     if UIManager and UIManager.UpdateFrameSize then UIManager.UpdateFrameSize(self) end
+    if UIManager and UIManager.UpdateHealthBarSize then UIManager.UpdateHealthBarSize(self) end
     self:ForceUpdate()
 end
 

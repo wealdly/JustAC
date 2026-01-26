@@ -195,6 +195,28 @@ function UIHealthBar.GetFrame()
     return healthBarFrame
 end
 
+-- Update health bar size to match current queue dimensions
+function UIHealthBar.UpdateSize(addon)
+    if not healthBarFrame or not addon or not addon.db or not addon.db.profile then return end
+    
+    local profile = addon.db.profile
+    local orientation = profile.queueOrientation or "LEFT"
+    local maxIcons = profile.maxIcons or 4
+    local iconSize = profile.iconSize or 36
+    local firstIconScale = profile.firstIconScale or 1.2
+    local iconSpacing = profile.iconSpacing or 1
+    
+    -- Calculate queue dimension (same as CreateHealthBar)
+    local firstIconSize = iconSize * firstIconScale
+    local queueDimension = firstIconSize + ((maxIcons - 1) * (iconSize + iconSpacing))
+    
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
+    else -- UP or DOWN
+        healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
+    end
+end
+
 -- Clean up
 function UIHealthBar.Destroy()
     if healthBarFrame then
