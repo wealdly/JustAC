@@ -541,7 +541,7 @@ local function CreateOptionsTable(addon)
                         min = 1.0, max = 2.0, step = 0.1,
                         order = 6,
                         width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.3 end,
+                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
                         set = function(_, val)
                             addon.db.profile.firstIconScale = val
                             addon:UpdateFrameSize()
