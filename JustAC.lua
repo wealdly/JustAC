@@ -773,16 +773,20 @@ function JustAC:GetProccedDefensiveSpell()
         if defensiveProcs and #defensiveProcs > 0 then
             for _, spellID in ipairs(defensiveProcs) do
                 if spellID and spellID > 0 then
-                    -- Check if known and usable
-                    local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
-                    if isKnown then
-                        -- Pass isDefensiveCheck=true to skip DPS-relevance filter
-                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
-                        if not isRedundant then
-                            -- Use IsSpellOnRealCooldown which handles secret values
-                            local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
-                            if not onCooldown then
-                                return spellID
+                    -- Double-check the proc is still active (guard against stale activeProcs entries)
+                    local stillProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
+                    if stillProcced then
+                        -- Check if known and usable
+                        local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                        if isKnown then
+                            -- Pass isDefensiveCheck=true to skip DPS-relevance filter
+                            local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                            if not isRedundant then
+                                -- Use IsSpellOnRealCooldown which handles secret values
+                                local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                                if not onCooldown then
+                                    return spellID
+                                end
                             end
                         end
                     end
