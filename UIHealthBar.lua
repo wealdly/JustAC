@@ -82,18 +82,18 @@ function UIHealthBar.CreateHealthBar(addon)
     
     -- Health bar is always above the main queue
     -- When defensive icon is ABOVE, defensive goes above health bar
-    if orientation == "LEFT" or orientation == "RIGHT" then
-        -- Horizontal queue: bar above icon row
+    if orientation == "LEFT" then
+        -- Horizontal queue left-to-right: bar above left edge
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", 0, BAR_SPACING)
+    elseif orientation == "RIGHT" then
+        -- Horizontal queue right-to-left: bar above right edge
+        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", 0, BAR_SPACING)
+    elseif orientation == "DOWN" then
+        -- Vertical queue downward: bar above top edge
         frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, BAR_SPACING)
-    else -- UP or DOWN
-        -- Vertical queue
-        if orientation == "DOWN" then
-            -- Icons grow downward from TOP
-            frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, BAR_SPACING)
-        else -- UP
-            -- Icons grow upward from BOTTOM
-            frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -BAR_SPACING)
-        end
+    else -- UP
+        -- Vertical queue upward: bar below bottom edge
+        frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -BAR_SPACING)
     end
     
     -- Create StatusBar (accepts secret values!)
@@ -103,6 +103,8 @@ function UIHealthBar.CreateHealthBar(addon)
     statusBar:GetStatusBarTexture():SetHorizTile(false)
     statusBar:GetStatusBarTexture():SetVertTile(false)
     statusBar:SetOrientation("HORIZONTAL")
+    -- Set initial green color (will update to gradient when health changes)
+    statusBar:SetStatusBarColor(0.0, 0.8, 0.0, 1.0)
     
     -- Background
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
