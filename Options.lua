@@ -451,7 +451,7 @@ function Options.UpdateDefensivesOptions(addon)
     local staticKeys = {
         info = true, header = true, enabled = true, thresholdInfo = true,
         behaviorHeader = true, showOnlyInCombat = true, showHealthBar = true,
-        position = true,
+        position = true, iconScale = true, maxIcons = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -1039,6 +1039,36 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
+                    iconScale = {
+                        type = "range",
+                        name = "Defensive Icon Scale",
+                        desc = "Scale multiplier for defensive icons (same as Primary Spell Scale but independent)",
+                        min = 1.0, max = 2.0, step = 0.1,
+                        order = 10,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.iconScale = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    maxIcons = {
+                        type = "range",
+                        name = "Maximum Icons",
+                        desc = "Number of defensive spells to show at once (1-3). Additional icons appear alongside the first.",
+                        min = 1, max = 3, step = 1,
+                        order = 11,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.maxIcons or 1 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.maxIcons = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
 
                     selfHealHeader = {
                         type = "header",
@@ -1160,10 +1190,10 @@ local function HandleSlashCommand(addon, input)
             addon.db.profile.isManualMode = not addon.db.profile.isManualMode
             if addon.db.profile.isManualMode then
                 addon:StopUpdates()
-                addon:DebugPrint("Paused")
+                addon:Print("Display paused")
             else
                 addon:StartUpdates()
-                addon:DebugPrint("Resumed")
+                addon:Print("Display resumed")
             end
         end
         
@@ -1175,50 +1205,11 @@ local function HandleSlashCommand(addon, input)
             if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
                 BlizzardAPI.RefreshDebugMode()
             end
-            addon:Print("Debug: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
-        end
-        
-    elseif command == "test" then
-        local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-        if BlizzardAPI and BlizzardAPI.TestAssistedCombatAPI then
-            BlizzardAPI.TestAssistedCombatAPI()
-        else
-            addon:Print("BlizzardAPI test function not available")
-        end
-        
-    elseif command == "raw" then
-        local SpellQueue = LibStub("JustAC-SpellQueue", true)
-        if SpellQueue and SpellQueue.ShowAssistedCombatRaw then
-            SpellQueue.ShowAssistedCombatRaw()
-        else
-            addon:Print("SpellQueue module not available")
-        end
-        
-    elseif command == "form" or command == "forms" then
-        local FormCache = LibStub("JustAC-FormCache", true)
-        if FormCache and FormCache.ShowFormDebugInfo then
-            FormCache.ShowFormDebugInfo()
-        else
-            addon:Print("FormCache module not available")
-        end
-        
-    elseif command == "formcheck" then
-        if DebugCommands then
-            DebugCommands.FormDetection(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-        
-    elseif command == "lps" then
-        local spellID = input:match("^lps%s+(%d+)")
-        if DebugCommands and DebugCommands.LPSInfo then
-            DebugCommands.LPSInfo(addon, spellID)
-        else
-            addon:Print("Usage: /jac lps <spellID>")
+            addon:Print("Debug mode: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
         end
         
     elseif command == "modules" or command == "diag" then
-        if DebugCommands then
+        if DebugCommands and DebugCommands.ModuleDiagnostics then
             DebugCommands.ModuleDiagnostics(addon)
         else
             addon:Print("DebugCommands module not available")
@@ -1226,7 +1217,7 @@ local function HandleSlashCommand(addon, input)
         
     elseif command == "find" then
         local spellName = input:match("^find%s+(.+)")
-        if DebugCommands then
+        if DebugCommands and DebugCommands.FindSpell then
             DebugCommands.FindSpell(addon, spellName)
         else
             addon:Print("DebugCommands module not available")
@@ -1237,20 +1228,13 @@ local function HandleSlashCommand(addon, input)
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint("CENTER", 0, -150)
             addon:SavePosition()
-            addon:DebugPrint("Position reset")
+            addon:Print("Position reset to center")
         end
         
     elseif command == "profile" then
         local profileAction = input:match("^profile%s+(.+)")
-        if DebugCommands then
+        if DebugCommands and DebugCommands.ManageProfile then
             DebugCommands.ManageProfile(addon, profileAction)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-        
-    elseif command == "blacklist" then
-        if DebugCommands and DebugCommands.ShowBlacklist then
-            DebugCommands.ShowBlacklist(addon)
         else
             addon:Print("DebugCommands module not available")
         end
@@ -1261,39 +1245,9 @@ local function HandleSlashCommand(addon, input)
         else
             addon:Print("DebugCommands module not available")
         end
-    
-    elseif command == "overrides" then
-        if DebugCommands and DebugCommands.ShowOverrides then
-            DebugCommands.ShowOverrides(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-        
-    elseif command == "rawdata" then
-        if DebugCommands and DebugCommands.ShowRawData then
-            DebugCommands.ShowRawData(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-        
-    elseif command == "macrotest" then
-        local macroName = input:match("^macrotest%s+(.+)")
-        if DebugCommands and DebugCommands.TestMacroParsing then
-            DebugCommands.TestMacroParsing(addon, macroName)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-    
-    elseif command == "macrodump" then
-        local macroName = input:match("^macrodump%s+(.+)")
-        if DebugCommands and DebugCommands.DumpMacroBody then
-            DebugCommands.DumpMacroBody(addon, macroName)
-        else
-            addon:Print("DebugCommands module not available")
-        end
         
     elseif command == "help" then
-        if DebugCommands then
+        if DebugCommands and DebugCommands.ShowHelp then
             DebugCommands.ShowHelp(addon)
         else
             addon:Print("DebugCommands module not available")

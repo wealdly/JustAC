@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Blizzard API Module v21
--- Changed: IsSpellUsable now uses C_ActionBar.IsUsableAction fallback when secrets detected
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 22)
+-- JustAC: Blizzard API Module v25
+-- Changed: Fixed TestAuraAccess to check multiple auras instead of just first one
+-- Changed: Added charge-based spell detection in IsSpellOnRealCooldown
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 25)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -26,10 +27,157 @@ local C_SpellBook_IsSpellInSpellBook = C_SpellBook and C_SpellBook.IsSpellInSpel
 local C_Spell_IsSpellPassive = C_Spell and C_Spell.IsSpellPassive
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
+local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+
+--------------------------------------------------------------------------------
+-- Local Cooldown Tracking (12.0+ Secret Value Workaround)
+-- When C_Spell.GetSpellCooldown returns secrets, we track cooldowns locally
+-- by listening to UNIT_SPELLCAST_SUCCEEDED and using GetSpellBaseCooldown
+-- (which is NOT secret even in combat)
+--
+-- Limitation: GetSpellBaseCooldown returns UNMODIFIED base cooldown.
+-- Talent/haste reductions are not reflected. This means tracking may show
+-- spells as "on cooldown" slightly longer than actual. This is conservative
+-- (safer than showing available when actually on cooldown).
+--------------------------------------------------------------------------------
+
+local localCooldowns = {}  -- [spellID] = { endTime = GetTime() + duration, duration = seconds }
+local cachedDurations = {} -- [spellID] = actual duration (captured when cast out of combat)
+local trackedDefensiveSpells = {}  -- [spellID] = true, populated from addon settings
+local cooldownEventFrame = nil
+
+-- Check if a spell is on cooldown according to our local tracking
+local function IsLocalCooldownActive(spellID)
+    local data = localCooldowns[spellID]
+    if not data then return false end
+    return GetTime() < data.endTime
+end
+
+-- Get the best available cooldown duration for a spell
+-- Priority: 1) Cached actual duration (from out-of-combat cast)
+--           2) GetSpellBaseCooldown (always works, but unmodified)
+local function GetBestCooldownDuration(spellID)
+    -- Check if we have a cached actual duration from previous out-of-combat cast
+    if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
+        return cachedDurations[spellID]
+    end
+    
+    -- Fall back to base cooldown (unmodified by talents/haste)
+    local baseCooldownMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+    if baseCooldownMs and baseCooldownMs > 0 then
+        return baseCooldownMs / 1000
+    end
+    
+    return 0
+end
+
+-- Record a spell cast for local cooldown tracking
+local function RecordSpellCooldown(spellID)
+    if not spellID or spellID == 0 then return end
+    
+    -- Only track defensive spells that we care about
+    if not trackedDefensiveSpells[spellID] then return end
+    
+    local now = GetTime()
+    local duration = 0
+    local inCombat = InCombatLockdown()
+    
+    -- If out of combat, try to capture actual modified duration from API
+    if not inCombat then
+        -- Try C_Spell.GetSpellCooldown first (gives actual modified duration)
+        if C_Spell_GetSpellCooldown then
+            local cd = C_Spell_GetSpellCooldown(spellID)
+            if cd and cd.duration and cd.duration > 0 then
+                -- Check if it's a secret value
+                if not (issecretvalue and issecretvalue(cd.duration)) then
+                    duration = cd.duration
+                    -- Cache this for future in-combat use
+                    cachedDurations[spellID] = duration
+                end
+            end
+        end
+    end
+    
+    -- If we didn't get duration from API, use best available
+    if duration == 0 then
+        duration = GetBestCooldownDuration(spellID)
+    end
+    
+    if duration > 0 then
+        localCooldowns[spellID] = {
+            endTime = now + duration,
+            duration = duration,
+            startTime = now,
+        }
+    end
+end
+
+-- Clear local cooldown tracking (on death, entering world, etc.)
+local function ClearLocalCooldowns()
+    wipe(localCooldowns)
+    -- Note: We DON'T clear cachedDurations here - those persist across combat
+end
+
+-- Clear cached durations (on spec/talent changes)
+local function ClearCachedDurations()
+    wipe(cachedDurations)
+    wipe(localCooldowns)
+end
+
+-- Initialize event frame for tracking spell casts
+local function InitCooldownTracking()
+    if cooldownEventFrame then return end
+    
+    cooldownEventFrame = CreateFrame("Frame")
+    cooldownEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    cooldownEventFrame:RegisterEvent("PLAYER_DEAD")
+    cooldownEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    -- Clear cached durations when talents/spec change (cooldowns may be different)
+    cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+    cooldownEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    
+    cooldownEventFrame:SetScript("OnEvent", function(self, event, ...)
+        if event == "UNIT_SPELLCAST_SUCCEEDED" then
+            local unit, castGUID, spellID = ...
+            if unit == "player" and spellID then
+                RecordSpellCooldown(spellID)
+            end
+        elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
+            ClearLocalCooldowns()
+        elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
+            -- Talents changed - clear cached durations as they may be different now
+            ClearCachedDurations()
+        end
+    end)
+end
+
+-- Register a spell for local cooldown tracking
+-- Called when defensive spell lists are configured
+function BlizzardAPI.RegisterDefensiveSpell(spellID)
+    if not spellID or spellID == 0 then return end
+    trackedDefensiveSpells[spellID] = true
+    
+    -- Ensure event frame is initialized
+    if not cooldownEventFrame then
+        InitCooldownTracking()
+    end
+end
+
+-- Unregister all defensive spells (for profile changes)
+function BlizzardAPI.ClearTrackedDefensives()
+    wipe(trackedDefensiveSpells)
+    wipe(localCooldowns)
+end
+
+-- Check local cooldown tracker (exported for use in IsSpellOnRealCooldown)
+function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
+    return IsLocalCooldownActive(spellID)
+end
 
 --------------------------------------------------------------------------------
 -- Feature Availability System (12.0+ Secret Value Handling)
@@ -71,40 +219,68 @@ end
 local function TestAuraAccess()
     -- Try modern API first
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        local auraData = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
-        -- If we got data, check if any field is secret
-        if auraData then
+        -- Check multiple aura slots - if ANY are accessible, API is available
+        -- (Some auras may be secret even out of combat, but most should be accessible)
+        local accessibleCount = 0
+        local secretCount = 0
+        
+        for i = 1, 5 do  -- Check first 5 auras (enough to detect API availability)
+            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            if not auraData then break end  -- No more auras
+            
+            local hasSecret = false
             if issecretvalue then
                 if issecretvalue(auraData.spellId) or issecretvalue(auraData.name) then
-                    return false
+                    hasSecret = true
+                    secretCount = secretCount + 1
                 end
             end
-            if canaccessvalue then
+            if not hasSecret and canaccessvalue then
                 if not canaccessvalue(auraData.spellId) or not canaccessvalue(auraData.name) then
-                    return false
+                    hasSecret = true
+                    secretCount = secretCount + 1
                 end
+            end
+            
+            if not hasSecret then
+                accessibleCount = accessibleCount + 1
             end
         end
-        -- No aura at index 1 is fine, API is accessible
-        return true
+        
+        -- If we found at least one accessible aura, API is available
+        -- If we checked 0 auras (none present), assume API is available
+        return accessibleCount > 0 or (accessibleCount == 0 and secretCount == 0)
     end
     
     -- Fallback API
     if UnitAura then
-        local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", 1, "HELPFUL")
-        if name then
+        local accessibleCount = 0
+        local secretCount = 0
+        
+        for i = 1, 5 do
+            local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", i, "HELPFUL")
+            if not name then break end
+            
+            local hasSecret = false
             if issecretvalue then
                 if issecretvalue(name) or issecretvalue(spellId) then
-                    return false
+                    hasSecret = true
+                    secretCount = secretCount + 1
                 end
             end
-            if canaccessvalue then
+            if not hasSecret and canaccessvalue then
                 if not canaccessvalue(name) or not canaccessvalue(spellId) then
-                    return false
+                    hasSecret = true
+                    secretCount = secretCount + 1
                 end
+            end
+            
+            if not hasSecret then
+                accessibleCount = accessibleCount + 1
             end
         end
-        return true
+        
+        return accessibleCount > 0 or (accessibleCount == 0 and secretCount == 0)
     end
     
     -- No aura API available
@@ -780,39 +956,82 @@ end
 
 -- Check if a spell is on a real cooldown (longer than just GCD)
 -- Returns: true if on actual cooldown, false if only on GCD or off cooldown
--- 12.0: When secrets block cooldown API, falls back to usability check
+-- 12.0: When secrets block cooldown API, falls back to:
+--   1. Action bar usability check (if spell is on action bar)
+--   2. Local cooldown tracking (if spell was cast and we tracked it)
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
     
     -- Use sanitized values safe for comparisons
     local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
     
-    -- If we got secrets (0, 0), try alternative detection methods
-    if (not start or start == 0) and (not duration or duration == 0) then
-        -- Method 1: Check if spell is usable - spells on cooldown are not usable
-        -- But we need to distinguish "on cooldown" from "not enough resources"
-        local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-        
-        -- If not usable AND it's not because of resources, it's likely on cooldown
-        -- This is imperfect but better than showing cooldown spells
-        if not isUsable and not notEnoughResources then
-            -- Not usable and not because of resources = probably on cooldown
-            -- One more check: make sure it's not on GCD only
-            if not BlizzardAPI.IsSpellOnGCD(spellID) then
+    -- If we got real values (non-zero), use them
+    if start and start > 0 and duration and duration > 0 then
+        -- Check if it's just the GCD
+        if BlizzardAPI.IsSpellOnGCD(spellID) then
+            return false  -- Only on GCD, not a real cooldown
+        end
+        return true  -- On actual cooldown
+    end
+    
+    -- We got 0,0 - either spell is off cooldown OR API returned secrets
+    -- Try fallback methods in order of reliability
+    
+    -- Fallback 0: Check if this is a charge-based spell with no charges
+    -- C_Spell.GetSpellCharges returns nil for non-charge spells, or chargeInfo table
+    if C_Spell_GetSpellCharges then
+        local success, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+        if success and chargeInfo then
+            -- It's a charge spell - check if currentCharges is available
+            local currentCharges = chargeInfo.currentCharges
+            if currentCharges and not (issecretvalue and issecretvalue(currentCharges)) then
+                -- We have a real value
+                if currentCharges == 0 then
+                    return true  -- No charges = on cooldown
+                else
+                    return false  -- Has charges = usable
+                end
+            end
+            -- currentCharges is secret or nil, fall through to other checks
+        end
+    end
+    
+    -- Fallback 1: Check local cooldown tracking (most reliable for tracked spells)
+    if IsLocalCooldownActive(spellID) then
+        return true
+    end
+    
+    -- Fallback 2: Check if spell is usable via action bar
+    -- If spell is on an action bar, the visual state reflects usability
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+        local slot = ActionBarScanner.GetSlotForSpell(spellID)
+        if slot and C_ActionBar and C_ActionBar.IsUsableAction then
+            local actionUsable, notEnoughMana = C_ActionBar.IsUsableAction(slot)
+            -- If action bar says not usable and not because of mana, likely on cooldown
+            if actionUsable == false and not notEnoughMana then
                 return true
             end
+            -- If action bar says usable, it's not on cooldown
+            if actionUsable == true then
+                return false
+            end
         end
-        
-        -- If no action bar slot found or spell is usable, assume not on cooldown
-        return false
     end
     
-    -- Check if it's just the GCD
-    if BlizzardAPI.IsSpellOnGCD(spellID) then
-        return false  -- Only on GCD, not a real cooldown
+    -- Fallback 3: Check C_Spell.IsSpellUsable (may also be secret, but worth trying)
+    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+    
+    -- If not usable AND it's not because of resources, it's likely on cooldown
+    if not isUsable and not notEnoughResources then
+        -- Make sure it's not on GCD only
+        if not BlizzardAPI.IsSpellOnGCD(spellID) then
+            return true
+        end
     end
     
-    return true  -- On actual cooldown
+    -- All fallbacks exhausted - assume not on cooldown (fail-open)
+    return false
 end
 
 -- Check if spell is usable (has resources, not on cooldown preventing cast, etc.)
@@ -871,17 +1090,35 @@ end
 -- Check if a spell is procced (has Blizzard overlay glow)
 -- Centralized to avoid duplicate implementations across modules
 -- Returns false if the result is a secret value (12.0+ graceful degradation)
+-- Checks BOTH the provided ID and its override ID (events may fire with different IDs)
 function BlizzardAPI.IsSpellProcced(spellID)
     if not spellID or spellID == 0 then return false end
     
+    -- Check the provided spell ID first
     local result = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
     
-    -- Early exit for secret values (12.0+): treat as not procced
+    -- Handle secret values (12.0+)
     if issecretvalue and issecretvalue(result) then
         return false
     end
     
-    return result or false
+    if result then return true end
+    
+    -- Also check the override spell ID (events may fire with base ID, UI uses override)
+    local overrideID = BlizzardAPI.GetDisplaySpellID(spellID)
+    if overrideID and overrideID ~= spellID then
+        local overrideResult = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(overrideID)
+        if issecretvalue and issecretvalue(overrideResult) then
+            return false
+        end
+        if overrideResult then return true end
+    end
+    
+    -- Check reverse direction: maybe we were passed the override, check if base is procced
+    -- This is harder because we don't have a "GetBaseSpellID" function easily
+    -- The event-driven activeProcs cache in ActionBarScanner handles this by storing both
+    
+    return false
 end
 
 -- Get the display spell ID (resolves override spells like Metamorphosis transformations)

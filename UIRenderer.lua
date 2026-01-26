@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Renderer Module v2
--- Changed: Consolidated proc detection to use BlizzardAPI.IsSpellProcced()
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 2)
+-- JustAC: UI Renderer Module v6
+-- Changed: Fixed cooldown overlay updates - always pass secret cooldowns through (was only updating once)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 6)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -19,6 +19,7 @@ end
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
@@ -42,46 +43,37 @@ local function NormalizeHotkey(hotkey)
 end
 
 -- Shared cooldown update helper (consolidates duplicate logic for main icons and defensive icon)
--- Updates icon.cooldown widget with caching to avoid redundant SetCooldown calls
--- Handles WoW 12.0 secret values gracefully
--- Uses tolerance-based comparison to prevent flickering from minor floating-point differences
-local COOLDOWN_START_TOLERANCE = 0.05  -- Only update if start time differs by more than 50ms (new GCD)
-
+-- Updates icon.cooldown widget - passes through when values change
+-- Cooldown widget automatically hides when cooldown expires - we don't need to manage that
 local function UpdateIconCooldown(icon, start, duration)
+    -- Normalize nil to 0 (nil means "no data", treat as no cooldown)
+    start = start or 0
+    duration = duration or 0
+    
+    -- Check if values are secret (can't be compared in Lua)
     local startIsSecret = issecretvalue and issecretvalue(start)
     local durationIsSecret = issecretvalue and issecretvalue(duration)
     
     if startIsSecret or durationIsSecret then
-        -- Secret values: pass to widget once, then skip until non-secret
-        if not icon.lastCooldownWasSecret then
+        -- Secret values: pass through once, then skip until non-secret or cleared
+        if not icon._cooldownIsSecret then
             icon.cooldown:SetCooldown(start, duration)
-            icon.cooldown:Show()
-            icon.lastCooldownWasSecret = true
-            icon.lastCooldownStart = nil
-            icon.lastCooldownDuration = nil
+            icon._cooldownIsSecret = true
+            icon._lastCooldownStart = nil
+            icon._lastCooldownDuration = nil
         end
-    elseif start and start > 0 and duration and duration > 0 then
-        -- Valid cooldown: update only if start time changed significantly (new GCD/cooldown)
-        -- This prevents flickering from minor floating-point variations in duration
-        icon.lastCooldownWasSecret = false
-        local lastStart = icon.lastCooldownStart or 0
-        local startChanged = math.abs(start - lastStart) > COOLDOWN_START_TOLERANCE
-        
-        if startChanged then
+    elseif start > 0 and duration > 0 then
+        -- Non-secret values with active cooldown: only update if changed or was secret
+        if icon._cooldownIsSecret or start ~= icon._lastCooldownStart or duration ~= icon._lastCooldownDuration then
             icon.cooldown:SetCooldown(start, duration)
-            icon.cooldown:Show()
-            icon.lastCooldownStart = start
-            icon.lastCooldownDuration = duration
-        end
-    else
-        -- No cooldown: hide only if was showing
-        icon.lastCooldownWasSecret = false
-        if (icon.lastCooldownDuration or 0) > 0 then
-            icon.cooldown:Hide()
-            icon.lastCooldownStart = 0
-            icon.lastCooldownDuration = 0
+            icon._lastCooldownStart = start
+            icon._lastCooldownDuration = duration
+            icon._cooldownIsSecret = false
         end
     end
+    -- Note: We don't explicitly hide cooldowns when getting 0,0 data
+    -- The cooldown widget auto-hides when the cooldown expires
+    -- This prevents prematurely clearing cooldowns due to API timing issues
 end
 
 local function GetProfile()
@@ -115,7 +107,8 @@ function UIRenderer.InvalidateHotkeyCache()
 end
 -- Show the defensive icon with a specific spell or item
 -- isItem: true if id is an itemID (potion), false/nil if it's a spellID
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
+-- showGlow: true to show green marching ants glow (only slot 1 should have this)
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -172,6 +165,29 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
     end
     UpdateIconCooldown(defensiveIcon, start, duration)
     
+    -- Update charge count display (for charge-based spells like Frenzied Regeneration)
+    if defensiveIcon.chargeText then
+        local showCharges = false
+        if not isItem and C_Spell_GetSpellCharges then
+            local success, chargeInfo = pcall(C_Spell_GetSpellCharges, id)
+            if success and chargeInfo then
+                local maxCharges = chargeInfo.maxCharges
+                local currentCharges = chargeInfo.currentCharges
+                -- Check both values are real (not secret) before comparing
+                local maxIsReal = maxCharges and not (issecretvalue and issecretvalue(maxCharges))
+                local currentIsReal = currentCharges and not (issecretvalue and issecretvalue(currentCharges))
+                if maxIsReal and currentIsReal and maxCharges > 1 then
+                    defensiveIcon.chargeText:SetText(tostring(currentCharges))
+                    defensiveIcon.chargeText:Show()
+                    showCharges = true
+                end
+            end
+        end
+        if not showCharges then
+            defensiveIcon.chargeText:Hide()
+        end
+    end
+    
     -- Update hotkey (for items, find by scanning action bars)
     local hotkey = ""
     if isItem then
@@ -214,8 +230,12 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
     local isProc = not isItem and BlizzardAPI.IsSpellProcced(id) or false
     local isInCombat = UnitAffectingCombat("player")
     
-    -- Start glow (green marching ants, or gold proc if spell is proc'd)
-    UIAnimations.StartDefensiveGlow(defensiveIcon, isProc, isInCombat)
+    -- Start glow only on slot 1 (green marching ants, or gold proc if spell is proc'd)
+    if showGlow then
+        UIAnimations.StartDefensiveGlow(defensiveIcon, isProc, isInCombat)
+    else
+        UIAnimations.StopDefensiveGlow(defensiveIcon)
+    end
     
     -- Show with fade-in animation if not already visible
     if not defensiveIcon:IsShown() then
@@ -247,9 +267,14 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon.iconTexture:Hide()
         defensiveIcon.cooldown:Hide()
         -- Reset cooldown cache for when icon gets reused
-        defensiveIcon.lastCooldownStart = nil
-        defensiveIcon.lastCooldownDuration = nil
+        defensiveIcon._lastCooldownStart = nil
+        defensiveIcon._lastCooldownDuration = nil
+        defensiveIcon._cooldownIsSecret = nil
         defensiveIcon.hotkeyText:SetText("")
+        -- Hide charge count
+        if defensiveIcon.chargeText then
+            defensiveIcon.chargeText:Hide()
+        end
         
         -- Fade out instead of instant hide
         if defensiveIcon.fadeOut and not defensiveIcon.fadeOut:IsPlaying() then
@@ -262,6 +287,36 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
             defensiveIcon:Hide()
             defensiveIcon:SetAlpha(0)
         end
+    end
+end
+
+-- Show multiple defensive icons from a queue of spells
+-- queue: array of {spellID, isItem, isProcced} entries
+function UIRenderer.ShowDefensiveIcons(addon, queue)
+    if not addon or not addon.defensiveIcons then return end
+    
+    local icons = addon.defensiveIcons
+    
+    -- Render each queue entry to corresponding icon slot
+    for i, icon in ipairs(icons) do
+        local entry = queue[i]
+        if entry and entry.spellID then
+            -- Only show glow on slot 1
+            local showGlow = (i == 1)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow)
+        else
+            -- No spell for this slot, hide it
+            UIRenderer.HideDefensiveIcon(icon)
+        end
+    end
+end
+
+-- Hide all defensive icons
+function UIRenderer.HideDefensiveIcons(addon)
+    if not addon or not addon.defensiveIcons then return end
+    
+    for _, icon in ipairs(addon.defensiveIcons) do
+        UIRenderer.HideDefensiveIcon(icon)
     end
 end
 
@@ -402,6 +457,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
         end
+        -- Note: Defensive icon GCD is handled in the dedicated section after DPS icon updates
     end
 
     -- Update individual icons (always do this part)
@@ -464,9 +520,32 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 -- Update cooldown display using precomputed values
                 local cd = iconCooldowns[i]
-                local displayStart = cd and cd.rawStart or nil
-                local displayDuration = cd and cd.rawDuration or nil
+                local displayStart = cd and cd.rawStart or 0
+                local displayDuration = cd and cd.rawDuration or 0
                 UpdateIconCooldown(icon, displayStart, displayDuration)
+                
+                -- Update charge count display (for charge-based spells)
+                if icon.chargeText then
+                    local showCharges = false
+                    if C_Spell_GetSpellCharges then
+                        local success, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+                        if success and chargeInfo then
+                            local maxCharges = chargeInfo.maxCharges
+                            local currentCharges = chargeInfo.currentCharges
+                            -- Check both values are real (not secret) before comparing
+                            local maxIsReal = maxCharges and not (issecretvalue and issecretvalue(maxCharges))
+                            local currentIsReal = currentCharges and not (issecretvalue and issecretvalue(currentCharges))
+                            if maxIsReal and currentIsReal and maxCharges > 1 then
+                                icon.chargeText:SetText(tostring(currentCharges))
+                                icon.chargeText:Show()
+                                showCharges = true
+                            end
+                        end
+                    end
+                    if not showCharges then
+                        icon.chargeText:Hide()
+                    end
+                end
 
                 -- Check if spell has an active proc (overlay)
                 -- Use centralized wrapper that handles secret values
@@ -569,10 +648,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.iconTexture:Hide()
                     icon.cooldown:Hide()
                     if icon.centerText then icon.centerText:Hide() end
+                    if icon.chargeText then icon.chargeText:Hide() end
                     -- Reset all caches for when slot gets reused
-                    icon.lastCooldownStart = nil
-                    icon.lastCooldownDuration = nil
-                    icon.lastCooldownWasSecret = false
+                    icon._lastCooldownStart = nil
+                    icon._lastCooldownDuration = nil
+                    icon._cooldownIsSecret = nil
                     icon.cachedHotkey = nil
                     icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil
@@ -592,6 +672,49 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Clear hotkey dirty flag after processing all icons
     hotkeysDirty = false
+    
+    -- Update defensive icon cooldowns (continuous update, like DPS icons)
+    -- This runs every frame to ensure GCD swipe and cooldown updates are current
+    local defensiveIconsList = addon.defensiveIcons or (addon.defensiveIcon and {addon.defensiveIcon})
+    if defensiveIconsList then
+        for _, defensiveIcon in ipairs(defensiveIconsList) do
+            if defensiveIcon and defensiveIcon:IsShown() then
+                local defSpellID = defensiveIcon.spellID
+                local isItem = defensiveIcon.isItem
+                
+                if defSpellID and not isItem then
+                    -- Spell (not item): check for GCD vs own cooldown
+                    local defStart, defDuration = BlizzardAPI.GetSpellCooldown(defSpellID)
+                    local defCmpStart, defCmpDuration = BlizzardAPI.GetSpellCooldownValues(defSpellID)
+                    
+                    -- Determine if this is GCD or own cooldown
+                    local gcdStart, gcdDuration = BlizzardAPI.GetGCDInfo()
+                    local durTol = 0.05
+                    
+                    if gcdDuration and gcdDuration > 0 then
+                        -- GCD is active
+                        local defHasLongCooldown = defCmpDuration and defCmpDuration > (gcdDuration + durTol)
+                        
+                        if defHasLongCooldown then
+                            -- Own cooldown longer than GCD - show own cooldown
+                            UpdateIconCooldown(defensiveIcon, defStart, defDuration)
+                        else
+                            -- On GCD - show GCD swipe (with early-end offset)
+                            local gcdOffset = math.min(math.max(gcdDuration * 0.1, 0.1), 0.2)
+                            UpdateIconCooldown(defensiveIcon, gcdStart, math.max(gcdDuration - gcdOffset, 0))
+                        end
+                    else
+                        -- No GCD active - show own cooldown if any
+                        UpdateIconCooldown(defensiveIcon, defStart, defDuration)
+                    end
+                elseif isItem and defensiveIcon.itemID then
+                    -- Item: use GetItemCooldown
+                    local start, duration = GetItemCooldown(defensiveIcon.itemID)
+                    UpdateIconCooldown(defensiveIcon, start, duration)
+                end
+            end
+        end
+    end
     
     -- Update frame visibility with fade animations only when state actually changes
     if addon.mainFrame and (frameStateChanged or spellCountChanged) then
@@ -723,6 +846,8 @@ end
 UIRenderer.RenderSpellQueue = UIRenderer.RenderSpellQueue
 UIRenderer.ShowDefensiveIcon = UIRenderer.ShowDefensiveIcon
 UIRenderer.HideDefensiveIcon = UIRenderer.HideDefensiveIcon
+UIRenderer.ShowDefensiveIcons = UIRenderer.ShowDefensiveIcons
+UIRenderer.HideDefensiveIcons = UIRenderer.HideDefensiveIcons
 UIRenderer.OpenHotkeyOverrideDialog = UIRenderer.OpenHotkeyOverrideDialog
 UIRenderer.InvalidateHotkeyCache = UIRenderer.InvalidateHotkeyCache
 UIRenderer.SetCombatState = UIRenderer.SetCombatState

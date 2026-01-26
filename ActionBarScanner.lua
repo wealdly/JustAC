@@ -854,24 +854,46 @@ end
 local defensiveProcsList = {}
 
 -- Rebuild defensive proc list (only when dirty)
+-- VALIDATES that procs are still active via API (guards against stale event cache)
 local function RebuildDefensiveProcList()
     if not defensiveProcsListDirty then return end
     
     wipe(defensiveProcsList)
+    local toRemove = {}
+    
     for spellID in pairs(activeProcs) do
-        -- Check if it's a defensive spell, also check override
-        local actualID = BlizzardAPI.GetDisplaySpellID(spellID)
+        -- Validate the proc is still active via API (not just cached from events)
+        local stillProcced = BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
         
-        if BlizzardAPI.IsDefensiveSpell(actualID) or BlizzardAPI.IsDefensiveSpell(spellID) then
-            defensiveProcsList[#defensiveProcsList + 1] = actualID
+        if not stillProcced then
+            -- Stale entry - mark for removal
+            toRemove[#toRemove + 1] = spellID
+        else
+            -- Check if it's a defensive spell, also check override
+            local actualID = BlizzardAPI.GetDisplaySpellID(spellID)
+            
+            if BlizzardAPI.IsDefensiveSpell(actualID) or BlizzardAPI.IsDefensiveSpell(spellID) then
+                defensiveProcsList[#defensiveProcsList + 1] = actualID
+            end
         end
     end
+    
+    -- Clean up stale entries from the activeProcs cache
+    for _, staleID in ipairs(toRemove) do
+        activeProcs[staleID] = nil
+        procListDirty = true  -- Also mark main proc list dirty
+    end
+    
     defensiveProcsListDirty = false
 end
 
 -- Get all currently procced defensive spells
 -- Returns spells that are HELPFUL or SURVIVAL and have active overlay glow
+-- NOTE: Always revalidates to catch stale procs (defensive check is infrequent)
 function ActionBarScanner.GetDefensiveProccedSpells()
+    -- Force revalidation every call - defensive procs are checked infrequently
+    -- and stale procs cause very visible issues (wrong glow color persisting)
+    defensiveProcsListDirty = true
     RebuildDefensiveProcList()
     return defensiveProcsList
 end

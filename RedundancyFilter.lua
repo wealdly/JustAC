@@ -1,12 +1,13 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v23
+-- JustAC: Redundancy Filter Module v24
+-- Changed: Added in-combat spell activation tracking via UNIT_SPELLCAST_SUCCEEDED
 -- Filters out spells that are redundant (already active buffs, forms, pets, poisons, etc.)
 -- Uses dynamic aura detection with native 12.0-compliant spell classification
 -- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
 --       like being in a form, having a pet, or already having weapon poisons applied.
 -- 12.0 COMPATIBILITY: Uses native spell tables for full Midnight compatibility
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 22)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 24)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -16,6 +17,10 @@ local FormCache = LibStub("JustAC-FormCache", true)
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
+
+-- Throttle tracking for debug output (prevent spam)
+local lastDebugPrintTime = {}
+local DEBUG_THROTTLE_INTERVAL = 5  -- Only print same message once per 5 seconds
 
 
 --------------------------------------------------------------------------------
@@ -117,6 +122,21 @@ local cachedAuras = {}
 local lastAuraCheck = 0
 local AURA_CACHE_DURATION = 0.2
 
+-- Out-of-combat trusted cache (persists into combat to handle long-duration buffs)
+-- When we check auras out of combat and they're valid, cache them longer
+-- Trust them in combat even if aura API returns secrets (handles 50min poisons, etc)
+-- Invalidated by UNIT_AURA events, so safe to keep for extended duration
+local trustedOutOfCombatCache = {}
+local lastTrustedCacheTime = 0
+local TRUSTED_CACHE_DURATION = 600  -- Trust out-of-combat checks for 10 minutes (invalidated by events)
+local nextExpirationCheck = 0  -- Throttle expiration checking to once per 5 seconds
+local EXPIRATION_CHECK_INTERVAL = 5
+
+-- In-combat activation tracking (mirrors proc detection system)
+-- When player casts a spell in combat, record it so we know they have the buff/form
+-- Cleared on leaving combat (PLAYER_REGEN_ENABLED)
+local inCombatActivations = {}
+
 -- Throttle debug prints (per-message-type timestamps)
 local lastPrintTime = {}
 
@@ -130,9 +150,108 @@ local function GetCachedSpellInfo(spellID)
 end
 
 -- Invalidate cached aura state (called on UNIT_AURA events from main addon)
+-- NOTE: Does NOT clear inCombatActivations - those persist until leaving combat
+-- UNIT_AURA confirms auras changed, but activation tracking is independent
 function RedundancyFilter.InvalidateCache()
     wipe(cachedAuras)
+    wipe(trustedOutOfCombatCache)
     lastAuraCheck = 0
+    lastTrustedCacheTime = 0
+    nextExpirationCheck = 0
+    -- Prune expired activations (handles toggleable auras being turned off)
+    RedundancyFilter.PruneExpiredActivations()
+end
+
+-- Clear activation tracking (called only on leaving combat)
+function RedundancyFilter.ClearActivationTracking()
+    wipe(inCombatActivations)
+end
+
+-- Prune expired activations by checking current aura state
+-- Called after aura cache refresh to remove toggle-off spells
+-- CRITICAL: Only prunes if aura API is accessible (not blocked by secrets)
+-- ALSO checks non-aura detection methods (forms, stealth, pets) which work in combat
+function RedundancyFilter.PruneExpiredActivations()
+    if not next(inCombatActivations) then return end
+    
+    -- Check each tracked activation
+    for spellID, timestamp in pairs(inCombatActivations) do
+        local shouldKeep = false
+        
+        -- Method 1: Form/stance detection (always works - not secret)
+        if FormCache then
+            local targetFormID = FormCache.GetFormIDBySpellID(spellID)
+            if targetFormID then
+                local currentFormID = FormCache.GetActiveForm()
+                if targetFormID == currentFormID then
+                    shouldKeep = true  -- Still in this form
+                end
+            end
+        end
+        
+        -- Method 2: Stealth detection (always works - not secret)
+        if not shouldKeep then
+            local spellInfo = GetCachedSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                local name = spellInfo.name
+                if name:match("Stealth") or name:match("Vanish") then
+                    if SafeIsStealthed() then
+                        shouldKeep = true  -- Still stealthed
+                    end
+                end
+            end
+        end
+        
+        -- Method 3: Pet detection (always works - not secret)
+        if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
+            if HasActivePet() then
+                shouldKeep = true  -- Pet still exists
+            end
+        end
+        
+        -- Method 4: Mount detection (always works - not secret)
+        if not shouldKeep then
+            local spellInfo = GetCachedSpellInfo(spellID)
+            if spellInfo and spellInfo.name and spellInfo.name:find("Mount") then
+                if SafeIsMounted() then
+                    shouldKeep = true  -- Still mounted
+                end
+            end
+        end
+        
+        -- Method 5: Aura API (only when accessible, not blocked by secrets)
+        if not shouldKeep then
+            local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
+            if auraAPIAvailable then
+                local auras = RefreshAuraCache()
+                if auras and auras.byID and not auras.hasSecrets then
+                    -- Aura data is reliable - check if buff still active
+                    if auras.byID[spellID] then
+                        shouldKeep = true  -- Aura still present
+                    end
+                else
+                    -- Aura data unreliable - keep activation (conservative)
+                    shouldKeep = true
+                end
+            else
+                -- Aura API blocked - keep activation (conservative)
+                shouldKeep = true
+            end
+        end
+        
+        -- Remove if no detection method confirms it's still active
+        if not shouldKeep then
+            inCombatActivations[spellID] = nil
+        end
+    end
+end
+
+-- Record spell activation during combat (called from UNIT_SPELLCAST_SUCCEEDED)
+-- Mirrors proc detection system - reliable even with combat log restrictions
+function RedundancyFilter.RecordSpellActivation(spellID)
+    if not spellID then return end
+    local now = GetTime()
+    inCombatActivations[spellID] = now
 end
 
 --------------------------------------------------------------------------------
@@ -161,6 +280,30 @@ local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 -- Now also stores duration and expiration time for pandemic window checks
 local function RefreshAuraCache()
     local now = GetTime()
+    local inCombat = UnitAffectingCombat("player")
+    
+    -- If in combat and we have a recent trusted out-of-combat cache, use it
+    -- But filter out any auras that have expired based on cached expiration times
+    -- Throttle expiration checks to once per 5s (UNIT_AURA handles most invalidation)
+    if inCombat and trustedOutOfCombatCache.byID and (now - lastTrustedCacheTime) < TRUSTED_CACHE_DURATION then
+        -- Only check for expired auras every 5 seconds (not every cache access)
+        if now >= nextExpirationCheck then
+            nextExpirationCheck = now + EXPIRATION_CHECK_INTERVAL
+            for spellID, auraInfo in pairs(trustedOutOfCombatCache.auraInfo or {}) do
+                if auraInfo.expirationTime and auraInfo.expirationTime > 0 and now >= auraInfo.expirationTime then
+                    -- This aura expired, remove it from trusted cache
+                    trustedOutOfCombatCache.byID[spellID] = nil
+                    trustedOutOfCombatCache.auraInfo[spellID] = nil
+                end
+            end
+        end
+        -- If we still have data, use trusted cache
+        if trustedOutOfCombatCache.byID and next(trustedOutOfCombatCache.byID) then
+            return trustedOutOfCombatCache
+        end
+        -- Trusted cache empty or fully expired, fall through to refresh
+    end
+    
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
         return cachedAuras
     end
@@ -242,12 +385,39 @@ local function RefreshAuraCache()
     end
     
     lastAuraCheck = now
+    
+    -- If out of combat and we got clean data (no secrets), save as trusted cache
+    if not inCombat and not cachedAuras.hasSecrets then
+        -- Deep copy to trusted cache
+        wipe(trustedOutOfCombatCache)
+        trustedOutOfCombatCache.byID = {}
+        trustedOutOfCombatCache.byName = {}
+        trustedOutOfCombatCache.byIcon = {}
+        trustedOutOfCombatCache.auraInfo = {}
+        for k, v in pairs(cachedAuras.byID) do trustedOutOfCombatCache.byID[k] = v end
+        for k, v in pairs(cachedAuras.byName) do trustedOutOfCombatCache.byName[k] = v end
+        for k, v in pairs(cachedAuras.byIcon) do trustedOutOfCombatCache.byIcon[k] = v end
+        for k, v in pairs(cachedAuras.auraInfo) do 
+            trustedOutOfCombatCache.auraInfo[k] = {
+                duration = v.duration,
+                expirationTime = v.expirationTime,
+                count = v.count
+            }
+        end
+        lastTrustedCacheTime = now
+    end
+    
     return cachedAuras
 end
 
 -- Check if player has a buff by spell ID
 local function HasBuffBySpellID(spellID)
     if not spellID then return false end
+    
+    -- Check in-combat activation tracking first (mirrors proc detection)
+    if inCombatActivations[spellID] then return true end
+    
+    -- Then check cached aura data
     local auras = RefreshAuraCache()
     return auras.byID and auras.byID[spellID]
 end
@@ -724,14 +894,9 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if IsRoguePoisonSpell(spellID) then
         local activePoisons = CountActivePoisonBuffs()
         if activePoisons >= 2 then
-            if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Already have " .. activePoisons .. " poisons active (max 2)")
-            end
+            -- Throttle debug output - only print once per interval
+            -- (This check runs every frame, would spam without throttle)
             return true
-        else
-            if debugMode then
-                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Poison slot available (" .. activePoisons .. "/2 active)")
-            end
         end
     end
     

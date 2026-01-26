@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Frame Factory Module
--- Contains all frame creation and layout functions
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 3)
+-- JustAC: UI Frame Factory Module v8
+-- Changed: Added charge count text to DPS spell queue icons
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 8)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -19,7 +19,7 @@ local wipe = wipe
 
 -- Local state
 local spellIcons = {}
-local defensiveIcon = nil
+local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 
 -- Helper function to set Hotkey to profile variables
 local function ApplyHotkeyProfile(addon, hotkeyText, button, isFirst)
@@ -85,116 +85,69 @@ function UIFrameFactory.InitializeMasqueAccessors(getMasqueGroupFunc, getMasqueD
     GetMasqueDefensiveGroup = getMasqueDefensiveGroupFunc
 end
 
--- Create the defensive icon (called from CreateSpellIcons)
-local function CreateDefensiveIcon(addon, profile)
-    local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
-
-    -- Preserve state before destroying old icon
-    local savedState = nil
-    if defensiveIcon and defensiveIcon.currentID then
-        savedState = {
-            id = defensiveIcon.currentID,
-            isItem = defensiveIcon.isItem,
-            isShown = defensiveIcon:IsShown(),
-        }
-    end
-
-    if defensiveIcon then
-        if StopDefensiveGlow then
-            StopDefensiveGlow(defensiveIcon)
-        end
-        -- Remove from Masque before cleanup
-        local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
-        if MasqueDefensiveGroup then
-            MasqueDefensiveGroup:RemoveButton(defensiveIcon)
-        end
-        defensiveIcon:Hide()
-        defensiveIcon:SetParent(nil)
-        defensiveIcon = nil
-        addon.defensiveIcon = nil  -- Clear addon reference
-    end
-
-    if not profile.defensives or not profile.defensives.enabled then return end
-
+-- Helper: Create a single defensive icon button at the specified index (0-based)
+-- Position offset is calculated based on index, orientation, and defensive position
+local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
     local button = CreateFrame("Button", nil, addon.mainFrame)
-    if not button then return end
-
-    -- Same size as position 1 icon (scaled)
-    local firstIconScale = profile.firstIconScale or 1.2
-    local actualIconSize = profile.iconSize * firstIconScale
+    if not button then return nil end
 
     button:SetSize(actualIconSize, actualIconSize)
 
-    -- Position based on user preference (SIDE1, SIDE2, LEADING) relative to spell queue
-    -- SIDE1 = health bar side, SIDE2 = opposite perpendicular, LEADING = opposite grab tab
-    -- Position names are queue-relative and transform based on orientation
-    local defPosition = profile.defensives.position or "SIDE1"
-    local queueOrientation = profile.queueOrientation or "LEFT"
-    local spacing = profile.iconSpacing
     local firstIconCenter = actualIconSize / 2
-
-    -- Health bar adds offset when enabled (always on SIDE1)
-    -- Calculate from UIHealthBar constants to stay in sync
-    local healthBarOffset = 0
-    if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
-        -- SIDE1 is always the health bar side, regardless of orientation
-        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
-    end
     local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
 
-    -- Determine position 1's anchor point based on queue orientation
-    -- LEFT queue: pos1 at frame LEFT edge
-    -- RIGHT queue: pos1 at frame RIGHT edge
-    -- UP queue: pos1 at frame BOTTOM edge
-    -- DOWN queue: pos1 at frame TOP edge
+    -- Calculate offset for additional icons (index 0 has no offset)
+    -- SIDE1/SIDE2: horizontal layout (along queue direction)
+    -- LEADING: stacking layout (perpendicular to leading edge)
+    local iconOffset = index * (actualIconSize + spacing)
 
     if queueOrientation == "LEFT" then
         -- Queue grows left-to-right (grab tab on right)
         if defPosition == "SIDE1" then
-            -- SIDE1 = above (health bar side)
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, effectiveSpacing)
+            -- SIDE1 = above (health bar side), icons grow rightward
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
         elseif defPosition == "SIDE2" then
-            -- SIDE2 = below
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
+            -- SIDE2 = below, icons grow rightward
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -spacing)
         else -- LEADING
-            -- LEADING = left side (opposite grab tab)
-            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, 0)
+            -- LEADING = left side, icons stack upward
+            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, iconOffset)
         end
     elseif queueOrientation == "RIGHT" then
         -- Queue grows right-to-left (grab tab on left)
         if defPosition == "SIDE1" then
-            -- SIDE1 = above (health bar side)
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, effectiveSpacing)
+            -- SIDE1 = above, icons grow leftward
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
         elseif defPosition == "SIDE2" then
-            -- SIDE2 = below
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter, -spacing)
+            -- SIDE2 = below, icons grow leftward
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -spacing)
         else -- LEADING
-            -- LEADING = right side (opposite grab tab)
-            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, 0)
+            -- LEADING = right side, icons stack upward
+            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, iconOffset)
         end
     elseif queueOrientation == "UP" then
         -- Queue grows bottom-to-top (grab tab on top)
         if defPosition == "SIDE1" then
-            -- SIDE1 = right side (health bar side)
-            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter)
+            -- SIDE1 = right side, icons grow upward
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
         elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
+            -- SIDE2 = left side, icons grow upward
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter + iconOffset)
         else -- LEADING
-            -- LEADING = bottom side (opposite grab tab, after last icon)
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing)
+            -- LEADING = bottom side, icons stack rightward
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -spacing)
         end
     elseif queueOrientation == "DOWN" then
         -- Queue grows top-to-bottom (grab tab on bottom)
         if defPosition == "SIDE1" then
-            -- SIDE1 = right side (health bar side)
-            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter)
+            -- SIDE1 = right side, icons grow downward
+            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
         elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+            -- SIDE2 = left side, icons grow downward
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter - iconOffset)
         else -- LEADING
-            -- LEADING = top side (opposite grab tab, after last icon)
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing)
+            -- LEADING = top side, icons stack rightward
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, spacing)
         end
     end
 
@@ -208,16 +161,14 @@ local function CreateDefensiveIcon(addon, profile)
     local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
     slotArt:SetAllPoints(button)
     slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
-    slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
+    slotArt:Hide()
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
-    -- Icon fills button completely
     iconTexture:SetAllPoints(button)
-    iconTexture:Hide()  -- Start hidden, only show when spell is assigned
+    iconTexture:Hide()
     button.iconTexture = iconTexture
 
-    -- Mask texture to clip icon corners to beveled frame shape
-    -- Padding scales with icon size (17% on each side compensates for atlas internal padding)
+    -- Mask texture to clip icon corners
     local maskPadding = math_floor(actualIconSize * 0.17)
     local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
     iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
@@ -226,61 +177,72 @@ local function CreateDefensiveIcon(addon, profile)
     iconTexture:AddMaskTexture(iconMask)
     button.IconMask = iconMask
 
-    -- Normal texture (button frame border - Blizzard style, centered)
-    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
+    -- Normal texture (button frame border)
     local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
     normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
     normalTexture:SetSize(actualIconSize, actualIconSize)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
 
-    -- Flash overlay on high-level frame - above all animations, below hotkey
-    -- Anchored at CENTER so scale animation grows evenly in all directions
+    -- Pushed texture
+    local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
+    pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    pushedTexture:SetSize(actualIconSize, actualIconSize)
+    pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
+    pushedTexture:Hide()
+    button.PushedTexture = pushedTexture
+
+    -- Highlight texture
+    local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
+    highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    highlightTexture:SetSize(actualIconSize, actualIconSize)
+    highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    button.HighlightTexture = highlightTexture
+
+    -- Flash overlay
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)  -- Slightly larger than icon
+    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
 
-    -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
     local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetAllPoints(flashFrame)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)  -- Bright gold (values >1 boost ADD blend)
+    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
 
     button.Flash = flashTexture
     button.FlashFrame = flashFrame
-
     button.flashing = 0
     button.flashtime = 0
 
+    -- Cooldown frame
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    -- Cooldown inset 4px from icon edges to fit within beveled corners
     cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.8)
-    cooldown:Hide()  -- Start hidden
+    cooldown:Hide()
     button.cooldown = cooldown
 
-    -- Hotkey text on highest frame level to ensure visibility above all animations
+    -- Hotkey text
     local hotkeyFrame = CreateFrame("Frame", nil, button)
     hotkeyFrame:SetAllPoints(button)
-    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
+    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
     ApplyHotkeyProfile(addon, hotkeyText, button, true)
 
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
 
-    -- Center text for "WAIT" indicator when Assisted Combat suggests waiting for resources
+    -- Center text for "WAIT" indicator
     local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
     local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
     centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
-    centerText:SetTextColor(1, 0.9, 0.2, 1)  -- Gold/yellow color
+    centerText:SetTextColor(1, 0.9, 0.2, 1)
     centerText:SetJustifyH("CENTER")
     centerText:SetJustifyV("MIDDLE")
     centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
@@ -288,6 +250,26 @@ local function CreateDefensiveIcon(addon, profile)
     centerText:Hide()
     button.centerText = centerText
 
+    -- Charge count text (bottom-right, like action bar charges)
+    local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
+    local profile = addon:GetProfile()
+
+    -- Font from profile
+    local db = profile.hotkeyText
+    local fontPath = LSM:Fetch("font", db.font or "Friz Quadrata TT")
+    local fontSize = db.size or 12
+    local flags = db.flags or "OUTLINE"
+
+    local chargeFontSize = math_floor(fontSize* 0.65)
+    chargeText:SetFont(fontPath, chargeFontSize, flags)
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    chargeText:SetText("")
+    chargeText:Hide()
+    button.chargeText = chargeText
+
+    -- State tracking
     button.lastCooldownStart = 0
     button.lastCooldownDuration = 0
     button.spellID = nil
@@ -295,8 +277,9 @@ local function CreateDefensiveIcon(addon, profile)
     button.itemCastSpellID = nil
     button.currentID = nil
     button.isItem = nil
+    button.iconIndex = index  -- Track which slot this is
 
-    -- Tooltip handling (same as main queue icons)
+    -- Tooltip handling
     button:SetScript("OnEnter", function(self)
         if addon.db and addon.db.profile and addon.db.profile.showTooltips then
             local inCombat = UnitAffectingCombat("player")
@@ -344,21 +327,20 @@ local function CreateDefensiveIcon(addon, profile)
         GameTooltip:Hide()
     end)
 
-    -- Right-click to set custom hotkey (same as main queue icons)
+    -- Right-click for hotkey override
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
             local profile = addon:GetProfile()
             if profile and profile.panelLocked then return end
 
-            -- Only allow hotkey override for spells, not items
             if self.spellID and not self.isItem then
                 addon:OpenHotkeyOverrideDialog(self.spellID)
             end
         end
     end)
 
-    -- Create fade-in animation
+    -- Fade-in animation
     local fadeIn = button:CreateAnimationGroup()
     local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
     fadeInAlpha:SetFromAlpha(0)
@@ -368,7 +350,7 @@ local function CreateDefensiveIcon(addon, profile)
     fadeIn:SetToFinalAlpha(true)
     button.fadeIn = fadeIn
 
-    -- Create fade-out animation
+    -- Fade-out animation
     local fadeOut = button:CreateAnimationGroup()
     local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
     fadeOutAlpha:SetFromAlpha(1)
@@ -396,15 +378,83 @@ local function CreateDefensiveIcon(addon, profile)
         })
     end
 
-    defensiveIcon = button
-    addon.defensiveIcon = button  -- Expose to addon for UIManager access
+    return button
+end
 
-    -- Restore saved state (if defensive icon was showing before recreation)
-    if savedState and savedState.isShown then
-        -- Use UIRenderer to restore the icon with proper animations
-        local UIRenderer = LibStub("JustAC-UIRenderer", true)
-        if UIRenderer and UIRenderer.ShowDefensiveIcon then
-            UIRenderer.ShowDefensiveIcon(addon, savedState.id, savedState.isItem, button)
+-- Create multiple defensive icons (1-3 based on maxIcons setting)
+local function CreateDefensiveIcons(addon, profile)
+    local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
+
+    -- Preserve state before destroying old icons
+    local savedStates = {}
+    for i, icon in ipairs(defensiveIcons) do
+        if icon and icon.currentID then
+            savedStates[i] = {
+                id = icon.currentID,
+                isItem = icon.isItem,
+                isShown = icon:IsShown(),
+            }
+        end
+    end
+
+    -- Cleanup all existing defensive icons
+    local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
+    for _, icon in ipairs(defensiveIcons) do
+        if icon then
+            if StopDefensiveGlow then
+                StopDefensiveGlow(icon)
+            end
+            if MasqueDefensiveGroup then
+                MasqueDefensiveGroup:RemoveButton(icon)
+            end
+            icon:Hide()
+            icon:SetParent(nil)
+        end
+    end
+    wipe(defensiveIcons)
+    addon.defensiveIcons = nil
+    addon.defensiveIcon = nil
+
+    if not profile.defensives or not profile.defensives.enabled then return end
+
+    -- Calculate shared sizing
+    local defensiveIconScale = profile.defensives.iconScale or 1.2
+    local actualIconSize = profile.iconSize * defensiveIconScale
+    local defPosition = profile.defensives.position or "SIDE1"
+    local queueOrientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing
+
+    -- Health bar offset (only affects SIDE1)
+    local healthBarOffset = 0
+    if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
+        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
+    end
+
+    -- Create maxIcons defensive buttons using a FRESH table
+    -- (Don't reuse module-level table to avoid stale reference issues)
+    local maxIcons = profile.defensives.maxIcons or 1
+    maxIcons = math.min(maxIcons, 3)  -- Cap at 3
+
+    local newIcons = {}
+    for i = 1, maxIcons do
+        local button = CreateSingleDefensiveButton(addon, profile, i - 1, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
+        if button then
+            newIcons[i] = button
+            defensiveIcons[i] = button  -- Also update module-level for cleanup on next call
+        end
+    end
+
+    -- Expose to addon (use the fresh table, not the module-level one)
+    addon.defensiveIcons = newIcons
+    addon.defensiveIcon = newIcons[1]  -- Backward compatibility
+
+    -- Restore saved states
+    local UIRenderer = LibStub("JustAC-UIRenderer", true)
+    for i, state in pairs(savedStates) do
+        if newIcons[i] and state.isShown and UIRenderer and UIRenderer.ShowDefensiveIcon then
+            -- Only show glow on slot 1
+            local showGlow = (i == 1)
+            UIRenderer.ShowDefensiveIcon(addon, state.id, state.isItem, newIcons[i], showGlow)
         end
     end
 end
@@ -738,8 +788,8 @@ function UIFrameFactory.CreateSpellIcons(addon)
 
     addon.spellIcons = spellIcons
 
-    -- Create defensive icon (positioned relative to position 1 based on user settings)
-    CreateDefensiveIcon(addon, profile)
+    -- Create defensive icons (1-3 positioned relative to position 1 based on user settings)
+    CreateDefensiveIcons(addon, profile)
 end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
@@ -868,6 +918,23 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     centerText:SetText("")
     centerText:Hide()
     button.centerText = centerText
+
+    -- Charge count text (bottom-right, like action bar charges)
+    local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
+
+    -- Font from profile
+    local db = profile.hotkeyText
+    local fontPath = LSM:Fetch("font", db.font or "Friz Quadrata TT")
+    local fontSize = db.size or 12
+    local flags = db.flags or "OUTLINE"
+    local chargeFontSize = math_floor(fontSize * 0.65)
+    chargeText:SetFont(fontPath, chargeFontSize, flags)
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    chargeText:SetText("")
+    chargeText:Hide()
+    button.chargeText = chargeText
 
     -- Enable dragging from icons (delegates to main frame)
     button:RegisterForDrag("LeftButton")

@@ -13,90 +13,95 @@ local UIManager, UIRenderer, SpellQueue, ActionBarScanner, BlizzardAPI, FormCach
 
 -- Quick self-heals: fast/cheap abilities to maintain health during combat
 local CLASS_SELFHEAL_DEFAULTS = {
-    -- Death Knight: Death Strike is core, Death Pact is talent
-    DEATHKNIGHT = {49998, 48743, 48707},             -- Death Strike, Death Pact, AMS (magic absorb)
+    -- 12.0 DESIGN: Instant-cast, self-targeted heals/absorbs that work in emergencies
+    -- Fewer spells = better tracking overhead. Prioritize class-wide abilities.
+    -- Order matters: first usable spell is shown
+    -- Exception: Spells that can PROC instant (Regrowth) are included for proc detection
     
-    -- Demon Hunter: Havoc has no real heals, Veng has Soul Cleave
-    -- Blur moved here as it's short CD and good mitigation
-    DEMONHUNTER = {198589, 228477, 212084},          -- Blur, Soul Cleave (Veng), Fel Devastation (Veng)
+    -- Death Knight: Death Strike is #1 priority (generates runic power refund at low HP)
+    DEATHKNIGHT = {49998},                           -- Death Strike
     
-    -- Druid: Renewal (talent), Frenzied Regen (Bear), Regrowth (all specs can cast)
-    DRUID = {108238, 22842, 8936, 18562},            -- Renewal, Frenzied Regen, Regrowth, Swiftmend
+    -- Demon Hunter: Blur is instant mitigation, Soul Cleave for Vengeance
+    DEMONHUNTER = {198589, 228477},                  -- Blur, Soul Cleave (Veng only)
     
-    -- Evoker: Living Flame heals, Emerald Blossom, Verdant Embrace
-    EVOKER = {361469, 355913, 360995},               -- Living Flame, Emerald Blossom, Verdant Embrace
+    -- Druid: Regrowth (Predatory Swiftness proc!), Frenzied Regen (Bear), Renewal, Barkskin
+    -- Regrowth is cast-time normally, but Predatory Swiftness makes it instant and it glows
+    DRUID = {8936, 22842, 108238, 22812},            -- Regrowth, Frenzied Regen, Renewal, Barkskin
     
-    -- Hunter: Exhilaration is main heal, Mend Pet doesn't help player
-    HUNTER = {109304, 264735},                       -- Exhilaration, Survival of the Fittest
+    -- Evoker: Obsidian Scales (instant absorb), Verdant Embrace (instant heal)
+    EVOKER = {363916, 360995},                       -- Obsidian Scales, Verdant Embrace
     
-    -- Mage: No real heals, only defensives. Ice Barrier, Blazing Barrier, Prismatic Barrier
+    -- Hunter: Exhilaration is the only real self-heal
+    HUNTER = {109304},                               -- Exhilaration
+    
+    -- Mage: Barriers are instant absorbs - pick one based on spec (talent choice)
+    -- Ice Barrier is baseline for Frost, others are spec-specific
     MAGE = {11426, 235313, 235450},                  -- Ice Barrier, Blazing Barrier, Prismatic Barrier
     
-    -- Monk: Expel Harm is great, Vivify for MW, Chi Wave talent
-    MONK = {322101, 116670, 115098},                 -- Expel Harm, Vivify, Chi Wave
+    -- Monk: Expel Harm is instant, strong heal
+    MONK = {322101},                                 -- Expel Harm
     
-    -- Paladin: Word of Glory (free with HP), Flash of Light, Lay on Hands (long CD but full heal)
-    PALADIN = {85673, 19750, 633},                   -- Word of Glory, Flash of Light, Lay on Hands
+    -- Paladin: Word of Glory (free with Holy Power), Divine Protection (instant)
+    PALADIN = {85673, 498},                          -- Word of Glory, Divine Protection
     
-    -- Priest: PW:Shield, Shadow Mend/Flash Heal, Vampiric Embrace (Shadow)
-    -- NOTE: Desperate Prayer moved to cooldowns list
-    PRIEST = {17, 186263, 15286},                    -- PW:Shield, Shadow Mend, Vampiric Embrace
+    -- Priest: Desperate Prayer (instant, strong), Power Word: Shield (instant absorb)
+    PRIEST = {19236, 17},                            -- Desperate Prayer, PW:Shield
     
-    -- Rogue: Crimson Vial is the only real heal, Feint for mitigation
+    -- Rogue: Crimson Vial is the only heal, Feint for mitigation
     ROGUE = {185311, 1966},                          -- Crimson Vial, Feint
     
-    -- Shaman: Healing Surge works for all specs, Astral Shift is short-ish CD
-    SHAMAN = {8004, 108271},                         -- Healing Surge, Astral Shift
+    -- Shaman: Healing Surge has cast time but procs instant at low health
+    -- Astral Shift is instant damage reduction
+    SHAMAN = {108271, 8004},                         -- Astral Shift, Healing Surge
     
-    -- Warlock: Drain Life, Mortal Coil, Health Funnel (if has pet)
-    WARLOCK = {234153, 6789, 755},                   -- Drain Life, Mortal Coil, Health Funnel
+    -- Warlock: Dark Pact (instant absorb), Drain Life (channeled but heals)
+    WARLOCK = {108416, 234153},                      -- Dark Pact, Drain Life
     
-    -- Warrior: Victory Rush procs after kills, Impending Victory (talent), Ignore Pain
+    -- Warrior: Victory Rush (proc), Impending Victory (talent), Ignore Pain
     WARRIOR = {34428, 202168, 190456},               -- Victory Rush, Impending Victory, Ignore Pain
 }
 
--- Major cooldowns: big defensives for dangerous situations
+-- Major cooldowns: big defensives for critical situations (~20% health)
+-- These are "oh shit" buttons - longer cooldowns, bigger impact
 local CLASS_COOLDOWN_DEFAULTS = {
-    -- Death Knight: AMS for magic, IBF for physical, Vampiric Blood (Blood)
-    DEATHKNIGHT = {48792, 49028, 55233},             -- IBF, Dancing Rune Weapon (Blood), Vampiric Blood (Blood)
+    -- Death Knight: IBF is the big one, AMS for magic damage
+    DEATHKNIGHT = {48792, 48707},                    -- Icebound Fortitude, Anti-Magic Shell
     
-    -- Demon Hunter: Netherwalk (talent), Metamorphosis (Havoc has leech), Darkness
-    DEMONHUNTER = {196555, 187827, 196718},          -- Netherwalk, Metamorphosis, Darkness
+    -- Demon Hunter: Netherwalk (immunity), Darkness (AoE DR)
+    DEMONHUNTER = {196555, 196718},                  -- Netherwalk, Darkness
     
-    -- Druid: Barkskin (all), Survival Instincts (Feral/Guardian), Ironbark (Resto)
-    DRUID = {22812, 61336, 102342},                  -- Barkskin, Survival Instincts, Ironbark
+    -- Druid: Survival Instincts (Feral/Guardian), Barkskin already in self-heals
+    DRUID = {61336},                                 -- Survival Instincts
     
-    -- Evoker: Obsidian Scales, Renewing Blaze, Zephyr (raid CD)
-    -- NOTE: In 12.0 Midnight, Renewing Blaze passive effect folds into Obsidian Scales
-    EVOKER = {363916, 374348, 374227},               -- Obsidian Scales, Renewing Blaze, Zephyr
+    -- Evoker: Renewing Blaze (heal over time + death save)
+    EVOKER = {374348},                               -- Renewing Blaze
     
-    -- Hunter: Turtle is immunity, Fortitude of the Bear (talent), Exhil in emergencies
+    -- Hunter: Turtle is immunity, Fortitude of the Bear (talent)
     HUNTER = {186265, 388035},                       -- Aspect of the Turtle, Fortitude of the Bear
     
-    -- Mage: Ice Block, Alter Time, Greater Invisibility, Mirror Image
-    MAGE = {45438, 342245, 110959, 55342},           -- Ice Block, Alter Time, Greater Invis, Mirror Image
+    -- Mage: Ice Block (immunity), Greater Invisibility (DR + threat drop)
+    MAGE = {45438, 110959},                          -- Ice Block, Greater Invisibility
     
-    -- Monk: Fortifying Brew, Dampen Harm, Diffuse Magic, Touch of Karma (WW)
-    MONK = {115203, 122278, 122783, 122470},         -- Fort Brew, Dampen Harm, Diffuse Magic, Touch of Karma
+    -- Monk: Fortifying Brew, Touch of Karma (WW), Diffuse Magic
+    MONK = {115203, 122470, 122783},                 -- Fortifying Brew, Touch of Karma, Diffuse Magic
     
-    -- Paladin: Divine Shield, Divine Protection, Ardent Defender (Prot), Guardian (Prot)
-    PALADIN = {642, 498, 31850, 86659},              -- Divine Shield, Divine Protection, Ardent Defender, Guardian
+    -- Paladin: Divine Shield (immunity), Lay on Hands (full heal)
+    PALADIN = {642, 633},                            -- Divine Shield, Lay on Hands
     
-    -- Priest: Dispersion (Shadow), Fade, Desperate Prayer
-    -- NOTE: Greater Fade (213602) was removed in 10.0.0
-    PRIEST = {47585, 586, 19236},                    -- Dispersion, Fade, Desperate Prayer
+    -- Priest: Dispersion (Shadow), Fade (threat + DR talents)
+    PRIEST = {47585, 586},                           -- Dispersion, Fade
     
-    -- Rogue: Cloak of Shadows (magic), Evasion (physical), Vanish (drop aggro)
-    ROGUE = {31224, 5277, 1856},                     -- Cloak of Shadows, Evasion, Vanish
+    -- Rogue: Cloak of Shadows (magic immunity), Evasion (dodge)
+    ROGUE = {31224, 5277},                           -- Cloak of Shadows, Evasion
     
-    -- Shaman: Already used Astral Shift, add Earth Elemental, Spirit Link (Resto)
-    SHAMAN = {198103, 108280, 204331},               -- Earth Elemental, Healing Tide, Counterstrike Totem
+    -- Shaman: Earth Elemental (taunt), already have Astral Shift in self-heals
+    SHAMAN = {198103},                               -- Earth Elemental
     
-    -- Warlock: Unending Resolve, Dark Pact, Nether Ward (talent)
-    WARLOCK = {104773, 108416, 212295},              -- Unending Resolve, Dark Pact, Nether Ward
+    -- Warlock: Unending Resolve (big DR)
+    WARLOCK = {104773},                              -- Unending Resolve
     
-    -- Warrior: Shield Wall (Prot), Die by the Sword (Arms/Fury), Rallying Cry, Spell Reflect
-    WARRIOR = {871, 118038, 97462, 23920},           -- Shield Wall, Die by the Sword, Rallying Cry, Spell Reflect
+    -- Warrior: Shield Wall (Prot), Die by the Sword (Arms/Fury), Rallying Cry
+    WARRIOR = {871, 118038, 97462},                  -- Shield Wall, Die by the Sword, Rallying Cry
 }
 
 -- Pet heal spells: for classes with permanent pets (Hunter, Warlock)
@@ -143,6 +148,8 @@ local defaults = {
             enabled = true,
             position = "LEADING",     -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
+            iconScale = 1.2,          -- Scale for defensive icons (same range as Primary Spell Scale)
+            maxIcons = 1,             -- Number of defensive icons to show (1-3)
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             petHealThreshold = 50,    -- Show pet heals when PET health drops below this
@@ -634,6 +641,45 @@ function JustAC:InitializeDefensiveSpells()
             end
         end
     end
+    
+    -- Register all defensive spells for local cooldown tracking (12.0 workaround)
+    self:RegisterDefensivesForTracking()
+end
+
+-- Register all configured defensive spells for local cooldown tracking
+-- This enables 12.0 compatibility when C_Spell.GetSpellCooldown returns secrets
+function JustAC:RegisterDefensivesForTracking()
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not BlizzardAPI or not BlizzardAPI.RegisterDefensiveSpell then return end
+    
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives then return end
+    
+    -- Clear existing registrations (for profile changes)
+    if BlizzardAPI.ClearTrackedDefensives then
+        BlizzardAPI.ClearTrackedDefensives()
+    end
+    
+    -- Register all self-heal spells
+    if profile.defensives.selfHealSpells then
+        for _, spellID in ipairs(profile.defensives.selfHealSpells) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+    
+    -- Register all cooldown spells
+    if profile.defensives.cooldownSpells then
+        for _, spellID in ipairs(profile.defensives.cooldownSpells) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+    
+    -- Register all pet heal spells
+    if profile.defensives.petHealSpells then
+        for _, spellID in ipairs(profile.defensives.petHealSpells) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
 end
 
 -- Restore defaults for a specific defensive list (for Options UI)
@@ -670,6 +716,9 @@ function JustAC:RestoreDefensiveDefaults(listType)
         end
     end
     
+    -- Re-register for local cooldown tracking after list changes
+    self:RegisterDefensivesForTracking()
+    
     -- Refresh defensive icon
     self:OnHealthChanged(nil, "player")
 end
@@ -696,12 +745,6 @@ function JustAC:OnHealthChanged(event, unit)
         return 
     end
     
-    -- Debug: log defensive queue entry
-    if profile.debugMode then
-        self:DebugPrint("UpdateDefensiveQueue: selfHealSpells=" .. (#(profile.defensives.selfHealSpells or {}) or 0) .. 
-                       ", cooldownSpells=" .. (#(profile.defensives.cooldownSpells or {}) or 0))
-    end
-    
     -- Check if health API is accessible (12.0+ secret values may block this)
     -- Removed IsDefensivesFeatureAvailable check - we now use LowHealthFrame fallback
     -- which works even when UnitHealth() returns secrets
@@ -714,9 +757,6 @@ function JustAC:OnHealthChanged(event, unit)
     if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
         healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
     end
-    
-    local defensiveSpell = nil
-    local isItem = false
     
     -- Detect low health state for defensive suggestions
     -- LowHealthFrame triggers at ~35% health, critical at ~20%
@@ -743,51 +783,33 @@ function JustAC:OnHealthChanged(event, unit)
     local petHealThreshold = profile.defensives.petHealThreshold or 70
     local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
     
-    -- NEW DESIGN: Simplified defensive priority system
-    -- 1. ALWAYS show procced defensives/heals (Victory Rush, free heal procs) at ANY health
-    -- 2. At low health (~35%): show big heals/self-heals  
-    -- 3. At critical health (~20%): prioritize cooldowns > potions > heals
-    -- 4. Pet heals when pet is low
+    -- Get defensive spell queue - pass our pre-calculated health state
+    -- This is critical because GetPlayerHealthPercentSafe returns 100 when LowHealthFrame isn't detected
+    -- but UpdateDefensiveQueue uses GetLowHealthState directly for more accurate detection
+    local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat)
     
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-    
-    -- PRIORITY 1: Check for ANY procced defensive/heal (show at any health level)
-    local proccedSpell = self:GetProccedDefensiveSpell()
-    if proccedSpell then
-        defensiveSpell = proccedSpell
-    elseif showOnlyInCombat and not inCombat then
-        -- "Only In Combat" enabled and out of combat: hide unless we have a proc
-        defensiveSpell = nil
-    elseif isCritical then
-        -- PRIORITY 2: Critical health - cooldowns > potions > heals
-        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
-        if not defensiveSpell then
-            local potionID = self:FindHealingPotionOnActionBar()
-            if potionID then
-                defensiveSpell = potionID
-                isItem = true
-            end
+    -- Pet heals: append if pet needs healing and we have room
+    local maxIcons = profile.defensives.maxIcons or 1
+    if petNeedsHeal and #defensiveQueue < maxIcons then
+        local petHeals = self:GetUsableDefensiveSpells(profile.defensives.petHealSpells, maxIcons - #defensiveQueue, {})
+        for _, entry in ipairs(petHeals) do
+            defensiveQueue[#defensiveQueue + 1] = entry
         end
-        if not defensiveSpell then
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-        end
-    elseif isLow then
-        -- PRIORITY 3: Low health - self-heals
-        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-    elseif petNeedsHeal then
-        -- PRIORITY 4: Pet needs healing
-        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
     end
-    -- Otherwise defensiveSpell stays nil and icon hides
     
-    -- Show or hide the defensive icon
-    if defensiveSpell then
-        if UIManager and UIManager.ShowDefensiveIcon then
-            UIManager.ShowDefensiveIcon(self, defensiveSpell, isItem)
+    -- Show or hide defensive icons
+    if #defensiveQueue > 0 then
+        -- Use multi-icon system if icons array exists, otherwise fall back to single icon
+        if self.defensiveIcons and #self.defensiveIcons > 0 and UIManager and UIManager.ShowDefensiveIcons then
+            UIManager.ShowDefensiveIcons(self, defensiveQueue)
+        elseif self.defensiveIcon and UIManager and UIManager.ShowDefensiveIcon then
+            -- Fallback to single icon
+            UIManager.ShowDefensiveIcon(self, defensiveQueue[1].spellID, defensiveQueue[1].isItem)
         end
     else
-        if UIManager and UIManager.HideDefensiveIcon then
+        if self.defensiveIcons and #self.defensiveIcons > 0 and UIManager and UIManager.HideDefensiveIcons then
+            UIManager.HideDefensiveIcons(self)
+        elseif self.defensiveIcon and UIManager and UIManager.HideDefensiveIcon then
             UIManager.HideDefensiveIcon(self)
         end
     end
@@ -895,7 +917,8 @@ function JustAC:GetBestDefensiveSpell(spellList)
                         -- Pass isDefensiveCheck=true to skip DPS-relevance filter
                         local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile, true)
                         if not isRedundant then
-                            local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
+                            -- Use GetSpellCooldownValues which sanitizes secrets to 0
+                            local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
                             local onCooldown = start and start > 0 and duration and duration > 1.5
                             if not onCooldown then
                                 -- Procced defensive spell found - use it!
@@ -970,6 +993,208 @@ function JustAC:GetBestDefensiveSpell(spellList)
     
     -- No usable spells found
     return nil
+end
+
+-- Get multiple usable spells from a list (for multi-icon display)
+-- Returns up to maxCount spells, prioritizing procced spells first
+-- alreadyAdded is a set of spellIDs already in the queue (to avoid duplicates)
+function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
+    if not spellList or maxCount <= 0 then return {} end
+    
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives then return {} end
+    
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    local results = {}
+    alreadyAdded = alreadyAdded or {}
+    
+    -- Track what we add locally (don't modify passed alreadyAdded - caller does that)
+    local addedHere = {}
+    
+    -- First pass: collect procced spells (highest priority)
+    for _, spellID in ipairs(spellList) do
+        if #results >= maxCount then break end
+        if spellID and spellID > 0 and not alreadyAdded[spellID] and not addedHere[spellID] then
+            local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+            if isKnown then
+                local isProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
+                if isProcced then
+                    local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                    if not isRedundant then
+                        local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                        if not onCooldown then
+                            results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
+                            addedHere[spellID] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Second pass: collect remaining usable spells
+    for _, spellID in ipairs(spellList) do
+        if #results >= maxCount then break end
+        if spellID and spellID > 0 and not alreadyAdded[spellID] and not addedHere[spellID] then
+            local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+            if isKnown then
+                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                if not isRedundant then
+                    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                    if not onCooldown then
+                        local isProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
+                        results[#results + 1] = {spellID = spellID, isItem = false, isProcced = isProcced}
+                        addedHere[spellID] = true
+                    end
+                end
+            end
+        end
+    end
+    
+    return results
+end
+
+-- Build the defensive spell queue (up to maxIcons spells)
+-- Priority order: procced spells > self-heals (if low) > cooldowns (if critical)
+-- Returns array of {spellID, isItem, isProcced} entries
+-- Parameters are optional - if not provided, will calculate internally (less accurate for secrets)
+function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat)
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives or not profile.defensives.enabled then return {} end
+    
+    local maxIcons = profile.defensives.maxIcons or 1
+    local results = {}
+    local alreadyAdded = {}
+    
+    -- Use passed values if provided (more accurate when caller has better health state info)
+    -- Otherwise calculate internally (fallback for direct calls)
+    local isLow, isCritical, inCombat
+    if passedIsLow ~= nil then
+        isLow = passedIsLow
+        isCritical = passedIsCritical or false
+        inCombat = passedInCombat or UnitAffectingCombat("player")
+    else
+        -- Fallback: calculate internally (may be inaccurate if health is secret)
+        local healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+        inCombat = UnitAffectingCombat("player")
+        if isEstimated then
+            -- When estimated, get state directly from LowHealthFrame
+            local lowState, critState = false, false
+            if BlizzardAPI.GetLowHealthState then
+                lowState, critState = BlizzardAPI.GetLowHealthState()
+            end
+            isLow = lowState
+            isCritical = critState
+        else
+            -- Using exact health: apply user-configured thresholds
+            local selfHealThreshold = profile.defensives.selfHealThreshold or 80
+            local cooldownThreshold = profile.defensives.cooldownThreshold or 60
+            isLow = healthPercent <= selfHealThreshold
+            isCritical = healthPercent <= cooldownThreshold
+        end
+    end
+    
+    local showOnlyInCombat = profile.defensives.showOnlyInCombat
+    
+    -- PRIORITY 1: Procced spells (shown at ANY health level)
+    -- Check spellbook procs first
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    
+    if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
+        local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
+        if defensiveProcs then
+            for _, spellID in ipairs(defensiveProcs) do
+                if #results >= maxIcons then break end
+                if spellID and spellID > 0 and not alreadyAdded[spellID] then
+                    local stillProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced(spellID)
+                    if stillProcced then
+                        local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable(spellID)
+                        if isKnown then
+                            local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                            if not isRedundant then
+                                local onCooldown = BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                                if not onCooldown then
+                                    results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
+                                    alreadyAdded[spellID] = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check configured lists for procced spells
+    if #results < maxIcons then
+        local procs = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+        for _, entry in ipairs(procs) do
+            if entry.isProcced then
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+    end
+    if #results < maxIcons then
+        local procs = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+        for _, entry in ipairs(procs) do
+            if entry.isProcced then
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+    end
+    
+    -- "Only In Combat" check - if out of combat and no procs, return what we have (procs only)
+    if showOnlyInCombat and not inCombat then
+        return results
+    end
+    
+    -- PRIORITY 2: Based on health level, add self-heals and cooldowns
+    if isCritical then
+        -- Critical: add cooldowns first, then self-heals
+        if #results < maxIcons then
+            local spells = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            for _, entry in ipairs(spells) do
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+        if #results < maxIcons then
+            local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+            for _, entry in ipairs(spells) do
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+        -- Add healing potion if room
+        if #results < maxIcons then
+            local potionID = self:FindHealingPotionOnActionBar()
+            if potionID and not alreadyAdded[potionID] then
+                results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
+                alreadyAdded[potionID] = true
+            end
+        end
+    elseif isLow then
+        -- Low: add self-heals, then cooldowns if room
+        if #results < maxIcons then
+            local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+            for _, entry in ipairs(spells) do
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+        if #results < maxIcons then
+            local spells = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            for _, entry in ipairs(spells) do
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+    end
+    
+    return results
 end
 
 -- Healthstone item ID (always prioritized - free resource from Warlocks)
@@ -1243,6 +1468,15 @@ function JustAC:OnCombatEvent(event)
         if UIManager and UIManager.FreezeAllGlows then
             UIManager.FreezeAllGlows(self)
         end
+        -- Invalidate aura cache to force fresh check now that aura API is available
+        local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+        if RedundancyFilter and RedundancyFilter.InvalidateCache then
+            RedundancyFilter.InvalidateCache()
+        end
+        -- Clear in-combat activation tracking (like proc detection)
+        if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
+            RedundancyFilter.ClearActivationTracking()
+        end
         self:ForceUpdateAll()  -- Update both (hide defensive if showOnlyInCombat)
     end
 end
@@ -1451,6 +1685,11 @@ end
 -- More responsive than waiting for next OnUpdate tick
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
+    
+    -- Record activation for redundancy filter (mirrors proc detection system)
+    if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
+        RedundancyFilter.RecordSpellActivation(spellID)
+    end
     
     -- Small delay to let game state settle, then refresh
     if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer) end

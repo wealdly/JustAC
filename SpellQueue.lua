@@ -154,8 +154,9 @@ local function IsSpellUsable(spellID)
     -- Also check cooldown - don't show spells with >2s real cooldown remaining (ignore GCD)
     if isUsable and BlizzardAPI.IsSpellOnRealCooldown then
         if BlizzardAPI.IsSpellOnRealCooldown(spellID) then
-            local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
-            if start and duration then
+            -- Use GetSpellCooldownValues which sanitizes secrets to 0
+            local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+            if start and start > 0 and duration and duration > 0 then
                 local remaining = (start + duration) - GetTime()
                 if remaining > 2.0 then  -- Hide if more than 2s remaining on real cooldown
                     return false
