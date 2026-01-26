@@ -18,39 +18,9 @@ local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not 
 local BAR_HEIGHT = 4          -- Compact height in pixels
 local BAR_SPACING = 4         -- Spacing between health bar and queue icons
 
--- Color gradient: Green → Yellow → Red
-local COLOR_HIGH = { r = 0.0, g = 0.8, b = 0.0 }  -- Green (100% - 50%)
-local COLOR_MID  = { r = 1.0, g = 1.0, b = 0.0 }  -- Yellow (50% - 25%)
-local COLOR_LOW  = { r = 1.0, g = 0.0, b = 0.0 }  -- Red (25% - 0%)
-
 -- Module state
 local healthBarFrame = nil
 local lastUpdate = 0
-
--- Interpolate between two colors based on ratio (0.0 to 1.0)
-local function LerpColor(c1, c2, ratio)
-    return {
-        r = c1.r + (c2.r - c1.r) * ratio,
-        g = c1.g + (c2.g - c1.g) * ratio,
-        b = c1.b + (c2.b - c1.b) * ratio
-    }
-end
-
--- Get color for health percentage (0-100)
-local function GetHealthColor(percent)
-    if percent >= 50 then
-        -- Green to Yellow (100% → 50%)
-        local ratio = (100 - percent) / 50  -- 0.0 at 100%, 1.0 at 50%
-        return LerpColor(COLOR_HIGH, COLOR_MID, ratio)
-    elseif percent >= 25 then
-        -- Yellow to Red (50% → 25%)
-        local ratio = (50 - percent) / 25  -- 0.0 at 50%, 1.0 at 25%
-        return LerpColor(COLOR_MID, COLOR_LOW, ratio)
-    else
-        -- Solid Red (25% → 0%)
-        return COLOR_LOW
-    end
-end
 
 -- Create the health bar frame
 function UIHealthBar.CreateHealthBar(addon)
@@ -177,46 +147,7 @@ function UIHealthBar.Update(addon)
     -- Set min/max and value (both accept secrets directly)
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
-    
-    -- Color gradient - calculate percentage from visual bar width
-    local percent = nil
-    
-    -- Method 1: Direct calculation if not secret
-    if not (issecretvalue and issecretvalue(health)) and not (issecretvalue and issecretvalue(maxHealth)) then
-        percent = (health / maxHealth) * 100
-    end
-    
-    -- Method 2: Try UnitPercentHealthFromGUID (may not be secret)
-    if not percent then
-        local guid = UnitGUID("player")
-        if guid then
-            local pct = UnitPercentHealthFromGUID(guid)
-            if pct and not (issecretvalue and issecretvalue(pct)) then
-                percent = pct
-            end
-        end
-    end
-    
-    -- Method 3: Calculate from texture coordinates (not affected by secrets!)
-    if not percent then
-        local barTexture = statusBar:GetStatusBarTexture()
-        if barTexture then
-            -- GetTexCoord returns 8 values: ULx, ULy, LLx, LLy, URx, URy, LRx, LRy
-            -- For horizontal fill, right edge X coords (URx, LRx) indicate fill percentage
-            local ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = barTexture:GetTexCoord()
-            if URx and LRx then
-                -- Right edge X coordinate represents fill (0.0 to 1.0)
-                -- Use URx (upper right) as it's most reliable
-                percent = URx * 100
-            end
-        end
-    end
-    
-    -- Update color if we got a valid percentage
-    if percent then
-        local color = GetHealthColor(percent)
-        statusBar:SetStatusBarColor(color.r, color.g, color.b, 1.0)
-    end
+    -- Color stays green (set at creation) - visual fill shows health level
 end
 
 -- Show the health bar
