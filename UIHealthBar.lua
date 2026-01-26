@@ -15,8 +15,8 @@ local GetTime = GetTime
 
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
-local BAR_HEIGHT = 5          -- Compact height in pixels
-local BAR_SPACING = 3         -- Spacing between health bar and queue icons
+local BAR_HEIGHT = 4          -- Compact height in pixels
+local BAR_SPACING = 4         -- Spacing between health bar and queue icons
 
 -- Color gradient: Green → Yellow → Red
 local COLOR_HIGH = { r = 0.0, g = 0.8, b = 0.0 }  -- Green (100% - 50%)
@@ -197,17 +197,17 @@ function UIHealthBar.Update(addon)
         end
     end
     
-    -- Method 3: Calculate from visual bar dimensions (works even with secrets!)
+    -- Method 3: Calculate from texture coordinates (not affected by secrets!)
     if not percent then
         local barTexture = statusBar:GetStatusBarTexture()
         if barTexture then
-            local fillWidth = barTexture:GetWidth()
-            local totalWidth = statusBar:GetWidth()
-            if fillWidth and totalWidth and totalWidth > 0 then
-                -- Check if dimensions are secret
-                if not (issecretvalue and issecretvalue(fillWidth)) and not (issecretvalue and issecretvalue(totalWidth)) then
-                    percent = (fillWidth / totalWidth) * 100
-                end
+            -- GetTexCoord returns 8 values: ULx, ULy, LLx, LLy, URx, URy, LRx, LRy
+            -- For horizontal fill, right edge X coords (URx, LRx) indicate fill percentage
+            local ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = barTexture:GetTexCoord()
+            if URx and LRx then
+                -- Right edge X coordinate represents fill (0.0 to 1.0)
+                -- Use URx (upper right) as it's most reliable
+                percent = URx * 100
             end
         end
     end
