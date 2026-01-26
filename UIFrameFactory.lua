@@ -39,6 +39,16 @@ end
 local function CreateDefensiveIcon(addon, profile)
     local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
     
+    -- Preserve state before destroying old icon
+    local savedState = nil
+    if defensiveIcon and defensiveIcon.currentID then
+        savedState = {
+            id = defensiveIcon.currentID,
+            isItem = defensiveIcon.isItem,
+            isShown = defensiveIcon:IsShown(),
+        }
+    end
+    
     if defensiveIcon then
         if StopDefensiveGlow then
             StopDefensiveGlow(defensiveIcon)
@@ -281,6 +291,15 @@ local function CreateDefensiveIcon(addon, profile)
     
     defensiveIcon = button
     addon.defensiveIcon = button  -- Expose to addon for UIManager access
+    
+    -- Restore saved state (if defensive icon was showing before recreation)
+    if savedState and savedState.isShown then
+        -- Use UIRenderer to restore the icon with proper animations
+        local UIRenderer = LibStub("JustAC-UIRenderer", true)
+        if UIRenderer and UIRenderer.ShowDefensiveIcon then
+            UIRenderer.ShowDefensiveIcon(addon, savedState.id, savedState.isItem, button)
+        end
+    end
 end
 
 function UIFrameFactory.CreateMainFrame(addon)
