@@ -828,7 +828,7 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = "Show Health Bar",
                         desc = "Display a compact health bar above the main queue (visual only, no percentage text)",
-                        order = 7.5,
+                        order = 8,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showHealthBar end,
                         set = function(_, val)
@@ -845,7 +845,7 @@ local function CreateOptionsTable(addon)
                         type = "select",
                         name = L["Icon Position"],
                         desc = L["Icon Position desc"],
-                        order = 8,
+                        order = 9,
                         width = "normal",
                         values = {
                             LEFT = "Left",
