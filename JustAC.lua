@@ -900,13 +900,32 @@ function JustAC:GetBestDefensiveSpell(spellList)
     -- Second check: configured spell list (user priority order)
     for i, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
+            -- Debug: log every spell being checked
+            if self.db and self.db.profile and self.db.profile.debugMode then
+                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                local name = spellInfo and spellInfo.name or "Unknown"
+                self:DebugPrint(string.format("Checking defensive spell %d/%d: %s (%d)", i, #spellList, name, spellID))
+            end
+            
             -- Check if spell is known/available
             local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
             
-            if isKnown then
+            if not isKnown then
+                if self.db and self.db.profile and self.db.profile.debugMode then
+                    local spellInfo = C_Spell.GetSpellInfo(spellID)
+                    local name = spellInfo and spellInfo.name or "Unknown"
+                    self:DebugPrint(string.format("  SKIP: %s - not known/available", name))
+                end
+            elseif isKnown then
                 -- Skip if buff already active (redundant) - pass isDefensiveCheck=true
                 local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile, true)
-                if not isRedundant then
+                if isRedundant then
+                    if self.db and self.db.profile and self.db.profile.debugMode then
+                        local spellInfo = C_Spell.GetSpellInfo(spellID)
+                        local name = spellInfo and spellInfo.name or "Unknown"
+                        self:DebugPrint(string.format("  SKIP: %s - redundant (buff active)", name))
+                    end
+                elseif not isRedundant then
                     -- Check if spell is on a real cooldown (not just GCD)
                     local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
                     
@@ -915,8 +934,13 @@ function JustAC:GetBestDefensiveSpell(spellList)
                         local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
                         local spellInfo = C_Spell.GetSpellInfo(spellID)
                         local name = spellInfo and spellInfo.name or "Unknown"
-                        self:DebugPrint(string.format("Defensive spell check: %s (%d) - onCooldown=%s, start=%s, duration=%s", 
-                            name, spellID, tostring(onCooldown), tostring(start or 0), tostring(duration or 0)))
+                        if onCooldown then
+                            self:DebugPrint(string.format("  SKIP: %s - on cooldown (start=%s, duration=%s)", 
+                                name, tostring(start or 0), tostring(duration or 0)))
+                        else
+                            self:DebugPrint(string.format("  PASS: %s - onCooldown=false, start=%s, duration=%s", 
+                                name, tostring(start or 0), tostring(duration or 0)))
+                        end
                     end
                     
                     if not onCooldown then
