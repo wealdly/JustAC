@@ -192,10 +192,22 @@ local function StartAssistedGlow(icon, style, isInCombat, iconIndex)
             highlightFrame:Show()
         end
         
-        -- Always start the animation - it's visual feedback for the player
-        -- Animation plays continuously whether in or out of combat
+        -- Animation state based on combat status
+        -- Must play briefly first to initialize the flipbook, then freeze if out of combat
         if not highlightFrame.Flipbook.Anim:IsPlaying() then
             highlightFrame.Flipbook.Anim:Play()
+        end
+        
+        -- If out of combat, stop after a brief moment so it freezes on a single frame
+        -- (not the raw grid). Use a tiny delay to let animation initialize.
+        if not isInCombat then
+            C_Timer.After(0.05, function()
+                if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
+                    if highlightFrame.Flipbook.Anim:IsPlaying() then
+                        highlightFrame.Flipbook.Anim:Pause()
+                    end
+                end
+            end)
         end
         
         icon.activeGlowStyle = style
