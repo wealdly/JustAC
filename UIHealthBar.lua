@@ -75,23 +75,24 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Position above position 1 icon, accounting for queue orientation and defensive position
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
-    -- Positioning offset: 25% into first icon
-    local centerOffset = (maxIcons == 1) and (firstIconSize * 0.25) or (firstIconSize * 0.25)
+    -- Positioning offset: 25% into first icon (for horizontal) or vertical alignment (for vertical)
+    local horizontalOffset = firstIconSize * 0.25
+    local verticalOffset = firstIconSize * 0.25
     
     -- Health bar is always above the main queue
     -- When defensive icon is ABOVE, defensive goes above health bar
     if orientation == "LEFT" then
         -- Horizontal queue left-to-right
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", centerOffset, BAR_SPACING)
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", horizontalOffset, BAR_SPACING)
     elseif orientation == "RIGHT" then
         -- Horizontal queue right-to-left
-        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -centerOffset, BAR_SPACING)
+        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -horizontalOffset, BAR_SPACING)
     elseif orientation == "DOWN" then
-        -- Vertical queue downward - bar is horizontal, positioned to the side
-        frame:SetPoint("LEFT", addon.mainFrame, "RIGHT", BAR_SPACING, -centerOffset)
+        -- Vertical queue downward - bar to the right, aligned with top of queue
+        frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING, -verticalOffset)
     else -- UP
-        -- Vertical queue upward - bar is horizontal, positioned to the side
-        frame:SetPoint("LEFT", addon.mainFrame, "RIGHT", BAR_SPACING, centerOffset)
+        -- Vertical queue upward - bar to the right, aligned with bottom of queue
+        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, verticalOffset)
     end
     
     -- Create StatusBar (accepts secret values!)
