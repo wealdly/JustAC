@@ -85,7 +85,7 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Single icon: span full width
         queueDimension = firstIconSize
     else
-        -- Multiple icons: span center to center
+        -- Multiple icons: center of icon 1 to far edge of last icon
         queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
     end
     
@@ -224,7 +224,7 @@ function UIHealthBar.UpdateSize(addon)
         -- Single icon: span full width
         queueDimension = firstIconSize
     else
-        -- Multiple icons: span center to center
+        -- Multiple icons: center of icon 1 to far edge of last icon
         queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
     end
     
