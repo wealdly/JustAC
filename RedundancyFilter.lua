@@ -117,6 +117,9 @@ local cachedAuras = {}
 local lastAuraCheck = 0
 local AURA_CACHE_DURATION = 0.2
 
+-- Throttle debug prints (per-message-type timestamps)
+local lastPrintTime = {}
+
 -- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
@@ -543,9 +546,10 @@ end
 
 --------------------------------------------------------------------------------
 -- Main Redundancy Check
+-- isDefensiveCheck: optional flag to skip DPS-relevance filter (for defensive spell selection)
 --------------------------------------------------------------------------------
 
-function RedundancyFilter.IsSpellRedundant(spellID, profile)
+function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
     
     local debugMode = GetDebugMode()
@@ -558,7 +562,11 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         if targetFormID then
             local currentFormID = FormCache.GetActiveForm()
             if targetFormID == currentFormID then
-                if debugMode then
+                -- Throttle debug output (once per spell per 5 seconds)
+                local now = GetTime()
+                local throttleKey = "form_" .. spellID
+                if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                    lastPrintTime[throttleKey] = now
                     local spellInfo = GetCachedSpellInfo(spellID)
                     local spellName = spellInfo and spellInfo.name or tostring(spellID)
                     print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - already in form " .. targetFormID)
@@ -574,7 +582,11 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
                     -- It's a form spell but not in our mapping - check if name matches current form
                     local currentFormName = FormCache.GetActiveFormName()
                     if currentFormName and currentFormName == name then
-                        if debugMode then
+                        -- Throttle debug output
+                        local now = GetTime()
+                        local throttleKey = "form_name_" .. name
+                        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                            lastPrintTime[throttleKey] = now
                             print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
                         end
                         return true
@@ -594,15 +606,26 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
     local auras = RefreshAuraCache()
     
     -- If aura API blocked OR cache detected secrets, use whitelist: only show DPS-relevant spells
+    -- EXCEPTION: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
     if auraAPIBlocked or (auras and auras.hasSecrets) then
-        if not IsDPSRelevant(spellID) then
-            if GetDebugMode() then
+        if not isDefensiveCheck and not IsDPSRelevant(spellID) then
+            -- Throttle this debug message to avoid spam (once per spell per 5 seconds)
+            local now = GetTime()
+            local throttleKey = "nondps_" .. spellID
+            if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                lastPrintTime[throttleKey] = now
                 local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: Non-DPS spell (" .. reason .. ")")
+                local spellInfo = GetCachedSpellInfo(spellID)
+                local spellName = spellInfo and spellInfo.name or "Unknown"
+                print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ")")
             end
             return true  -- Hide non-DPS spells
         end
-        return false  -- Show DPS-relevant spells
+        -- For defensive checks, fall through to continue other redundancy checks
+        -- For DPS-relevant spells, also fall through to check auras if possible
+        if not isDefensiveCheck then
+            return false  -- Show DPS-relevant spells (skip aura checks since API blocked)
+        end
     end
     
     local spellInfo = GetCachedSpellInfo(spellID)
@@ -611,17 +634,8 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
     local spellName = spellInfo.name
     local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
     
-    if debugMode then
-        local tag = ""
-        if isUniqueAura then
-            tag = " [UNIQUE_AURA]"
-        elseif isPersonalAura then
-            tag = " [PERSONAL_AURA]"
-        elseif isKnownAuraSpell then
-            tag = " [AURA]"
-        end
-        print("|cff66ccffJAC|r Checking redundancy for: " .. spellName .. " (ID: " .. spellID .. ")" .. tag)
-    end
+    -- Note: Removed verbose "Checking redundancy" debug output - was extremely spammy
+    -- Use /jac test or /jac find for diagnostics instead
     
     -- 3. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
@@ -736,9 +750,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile)
         end
     end
     
-    if debugMode then
-        print("|cff66ccffJAC|r |cff00ff00NOT REDUNDANT|r: " .. spellName)
-    end
+    -- Note: Removed verbose "NOT REDUNDANT" debug output - was extremely spammy
     return false
 end
 

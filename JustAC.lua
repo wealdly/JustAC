@@ -119,7 +119,7 @@ local defaults = {
             x = 0,
             y = -150,
         },
-        maxIcons = 5,
+        maxIcons = 4,
         iconSize = 36,
         iconSpacing = 1,
         debugMode = false,
@@ -132,6 +132,8 @@ local defaults = {
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
         hideQueueForHealers = false,   -- Hide the entire queue when in a healer spec
+        hideQueueWhenMounted = false,  -- Hide the queue while mounted
+        hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelLocked = false,              -- Lock panel interactions in combat
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
@@ -315,6 +317,9 @@ function JustAC:OnEnable()
     
     -- Pet state for RedundancyFilter pet-related checks
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
+    
+    -- Equipment changes affect item spell detection (trinkets, tinkers)
+    self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     
     -- Cast completion for immediate post-cast refresh (faster than OnUpdate tick)
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
@@ -662,91 +667,83 @@ function JustAC:OnHealthChanged(event, unit)
     end
     
     -- Check if health API is accessible (12.0+ secret values may block this)
-    if BlizzardAPI and BlizzardAPI.IsDefensivesFeatureAvailable and not BlizzardAPI.IsDefensivesFeatureAvailable() then
-        if UIManager and UIManager.HideDefensiveIcon then
-            UIManager.HideDefensiveIcon(self)
-        end
-        return
-    end
+    -- Removed IsDefensivesFeatureAvailable check - we now use LowHealthFrame fallback
+    -- which works even when UnitHealth() returns secrets
     
     local inCombat = UnitAffectingCombat("player")
     local showOnlyInCombat = profile.defensives.showOnlyInCombat
     
-    -- If "Only In Combat" is enabled and we're out of combat, hide the icon
-    if showOnlyInCombat and not inCombat then
-        if UIManager and UIManager.HideDefensiveIcon then
-            UIManager.HideDefensiveIcon(self)
-        end
-        return
+    -- Use safe health detection that falls back to LowHealthFrame when secrets block API
+    local healthPercent, isEstimated = nil, false
+    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
+        healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
     end
-    
-    local healthPercent = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
-    if not healthPercent then return end
-    
-    local cooldownThreshold = profile.defensives.cooldownThreshold or 60
-    local selfHealThreshold = profile.defensives.selfHealThreshold or 80
     
     local defensiveSpell = nil
     local isItem = false
     
-    -- Determine which spell to show based on health
-    local isCritical = healthPercent <= cooldownThreshold
-    local isLow = healthPercent <= selfHealThreshold
+    -- Detect low health state for defensive suggestions
+    -- LowHealthFrame triggers at ~35% health, critical at ~20%
+    local isCritical, isLow
+    if isEstimated then
+        -- Using LowHealthFrame: low = overlay showing, critical = high alpha
+        local lowState, critState = false, false
+        if BlizzardAPI.GetLowHealthState then
+            lowState, critState = BlizzardAPI.GetLowHealthState()
+        end
+        isCritical = critState
+        isLow = lowState
+    elseif healthPercent then
+        -- Using exact health: fixed 35%/20% thresholds (ignore user settings for simplicity)
+        isCritical = healthPercent <= 20
+        isLow = healthPercent <= 35
+    else
+        isCritical = false
+        isLow = false
+    end
     
     -- Check pet health for pet classes (Hunter, Warlock)
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
     local petHealThreshold = profile.defensives.petHealThreshold or 70
     local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
-
-    -- Out of combat with "Only In Combat" OFF: always show self-heals (switch to cooldowns if critical)
-    -- In combat (regardless of setting): threshold-based behavior
-    if not inCombat and not showOnlyInCombat then
-        -- Out of combat, always visible mode: show self-heals, cooldowns if critical
-        if isCritical then
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
-            if not defensiveSpell then
-                local potionID = self:FindHealingPotionOnActionBar()
-                if potionID then
-                    defensiveSpell = potionID
-                    isItem = true
-                end
+    
+    -- NEW DESIGN: Simplified defensive priority system
+    -- 1. ALWAYS show procced defensives/heals (Victory Rush, free heal procs) at ANY health
+    -- 2. At low health (~35%): show big heals/self-heals  
+    -- 3. At critical health (~20%): prioritize cooldowns > potions > heals
+    -- 4. Pet heals when pet is low
+    
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    
+    -- PRIORITY 1: Check for ANY procced defensive/heal (show at any health level)
+    local proccedSpell = self:GetProccedDefensiveSpell()
+    if proccedSpell then
+        defensiveSpell = proccedSpell
+    elseif showOnlyInCombat and not inCombat then
+        -- "Only In Combat" enabled and out of combat: hide unless we have a proc
+        defensiveSpell = nil
+    elseif isCritical then
+        -- PRIORITY 2: Critical health - cooldowns > potions > heals
+        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
+        if not defensiveSpell then
+            local potionID = self:FindHealingPotionOnActionBar()
+            if potionID then
+                defensiveSpell = potionID
+                isItem = true
             end
-            if not defensiveSpell then
-                defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-            end
-        elseif petNeedsHeal then
-            -- Pet needs healing, suggest pet heal
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
-        else
-            -- Always show self-heals out of combat
+        end
+        if not defensiveSpell then
             defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
         end
-    else
-        -- In combat: threshold-based visibility
-        -- Critical health: cooldowns > potions > self-heals
-        -- Low health: self-heals only
-        -- Pet low: pet heals
-        -- Above threshold: hide
-        if isCritical then
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.cooldownSpells)
-            if not defensiveSpell then
-                local potionID = self:FindHealingPotionOnActionBar()
-                if potionID then
-                    defensiveSpell = potionID
-                    isItem = true
-                end
-            end
-            if not defensiveSpell then
-                defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-            end
-        elseif isLow then
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
-        elseif petNeedsHeal then
-            -- Player is fine but pet needs healing
-            defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
-        end
-        -- If health is above selfHealThreshold and pet is fine, defensiveSpell stays nil and icon hides
+    elseif isLow then
+        -- PRIORITY 3: Low health - self-heals
+        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.selfHealSpells)
+    elseif petNeedsHeal then
+        -- PRIORITY 4: Pet needs healing
+        defensiveSpell = self:GetBestDefensiveSpell(profile.defensives.petHealSpells)
     end
+    -- Otherwise defensiveSpell stays nil and icon hides
     
     -- Show or hide the defensive icon
     if defensiveSpell then
@@ -758,6 +755,71 @@ function JustAC:OnHealthChanged(event, unit)
             UIManager.HideDefensiveIcon(self)
         end
     end
+end
+
+-- Get any procced defensive/heal spell (Victory Rush, free heal procs, etc.)
+-- This runs at ANY health level since procs should be used when available
+-- Returns spell ID if found, nil otherwise
+function JustAC:GetProccedDefensiveSpell()
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives then return nil end
+    
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    
+    -- Check for any procced defensive spells from spellbook
+    if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
+        local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
+        if defensiveProcs then
+            for _, spellID in ipairs(defensiveProcs) do
+                if spellID and spellID > 0 then
+                    -- Check if known and usable
+                    local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                    if isKnown then
+                        -- Pass isDefensiveCheck=true to skip DPS-relevance filter
+                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                        if not isRedundant then
+                            -- Use IsSpellOnRealCooldown which handles secret values
+                            local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                            if not onCooldown then
+                                return spellID
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Also check configured spell lists for any procced spells
+    local spellLists = {
+        profile.defensives.selfHealSpells,
+        profile.defensives.cooldownSpells,
+    }
+    for _, spellList in ipairs(spellLists) do
+        if spellList then
+            for _, spellID in ipairs(spellList) do
+                if spellID and spellID > 0 then
+                    -- Check if spell is procced (glowing)
+                    if BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID) then
+                        local isKnown = BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                        if isKnown then
+                            local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
+                            if not isRedundant then
+                                -- Use IsSpellOnRealCooldown which handles secret values
+                                local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                                if not onCooldown then
+                                    return spellID
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return nil
 end
 
 -- Get the first usable spell from a given spell list
@@ -785,7 +847,8 @@ function JustAC:GetBestDefensiveSpell(spellList)
                     -- Check if known and usable
                     local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
                     if isKnown then
-                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile)
+                        -- Pass isDefensiveCheck=true to skip DPS-relevance filter
+                        local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile, true)
                         if not isRedundant then
                             local start, duration = BlizzardAPI.GetSpellCooldown(spellID)
                             local onCooldown = start and start > 0 and duration and duration > 1.5
@@ -807,8 +870,8 @@ function JustAC:GetBestDefensiveSpell(spellList)
             local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
             
             if isKnown then
-                -- Skip if buff already active (redundant)
-                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile)
+                -- Skip if buff already active (redundant) - pass isDefensiveCheck=true
+                local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile, true)
                 if not isRedundant then
                     -- Check if spell is on a real cooldown (not just GCD)
                     local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
@@ -1277,6 +1340,16 @@ end
 function JustAC:OnPetChanged(event, unit)
     if unit ~= "player" then return end
     -- Pet state changed - UnitExists("pet") is O(1), no cache to invalidate
+    self:ForceUpdate()
+end
+
+-- Equipment change affects item spell detection (trinkets, engineering tinkers)
+function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
+    -- Refresh item spell cache if BlizzardAPI is available
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.RefreshItemSpellCache then
+        BlizzardAPI.RefreshItemSpellCache()
+    end
     self:ForceUpdate()
 end
 

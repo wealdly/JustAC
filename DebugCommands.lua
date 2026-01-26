@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 6)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 8)
 if not DebugCommands then return end
 
 function DebugCommands.FormDetection(addon)
@@ -351,6 +351,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac blacklist - Show blacklisted spells")
     addon:Print("/jac overrides - Show hotkey overrides")
     addon:Print("/jac rawdata - Show raw saved data (for debugging)")
+    addon:Print("/jac defensive - Diagnose defensive icon system")
+
 end
 
 -- Show blacklisted spells
@@ -438,6 +440,188 @@ function DebugCommands.ShowRawData(addon)
         hkCount = hkCount + 1
     end
     if hkCount == 0 then addon:Print("  (empty)") end
+end
+
+-- Defensive system diagnostics
+function DebugCommands.DefensiveDiagnostics(addon)
+    addon:Print("=== Defensive System Diagnostics ===")
+    
+    local profile = addon:GetProfile()
+    if not profile then
+        addon:Print("|cffff0000ERROR: No profile loaded|r")
+        return
+    end
+    
+    -- Check defensive settings
+    addon:Print("")
+    addon:Print("Settings:")
+    local defSettings = profile.defensives or {}
+    addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+    addon:Print("  Show Only In Combat: " .. (defSettings.showOnlyInCombat and "YES" or "NO"))
+    addon:Print("  Show Health Bar: " .. (defSettings.showHealthBar and "|cff00ff00YES|r" or "NO"))
+    addon:Print("  Position: " .. (defSettings.position or "LEFT"))
+    
+    -- Check health bar status
+    local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+    addon:Print("")
+    addon:Print("Health Bar:")
+    if UIHealthBar then
+        addon:Print("  Module: |cff00ff00LOADED|r")
+        local frame = UIHealthBar.GetFrame and UIHealthBar.GetFrame()
+        if frame then
+            addon:Print("  Frame: |cff00ff00EXISTS|r")
+            addon:Print("  Visible: " .. (frame:IsShown() and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+            addon:Print("  Width: " .. string.format("%.1f", frame:GetWidth() or 0))
+            addon:Print("  MaxFill: " .. string.format("%.1f", frame.maxFillWidth or 0))
+        else
+            addon:Print("  Frame: |cffff0000NOT CREATED|r")
+        end
+        
+        -- Get debug info
+        if UIHealthBar.GetDebugInfo then
+            local info = UIHealthBar.GetDebugInfo()
+            addon:Print("  Player Bar Found: " .. (info.playerBarFound and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+            
+            local function safeFmt(p)
+                if p == nil then return "nil" end
+                if issecretvalue and issecretvalue(p) then return "|cffff0000SECRET|r" end
+                if type(p) == "number" then return string.format("%.1f%%", p) end
+                return tostring(p)
+            end
+
+            addon:Print("  Health %: " .. safeFmt(info.healthPercent))
+            addon:Print("  Method: |cff00ff00" .. (info.method or "unknown") .. "|r")
+
+            addon:Print("  Percent Shown: " .. (info.lastPercentNumeric and "|cff00ff00YES|r" or "NO"))
+            if info.lastPercentText then
+                addon:Print("  Last Percent Text: " .. tostring(info.lastPercentText))
+            end
+            
+            -- Show raw values for debugging (converted to strings to avoid secrets)
+            if info.rawValue ~= nil then
+                local rawValStr = (issecretvalue and issecretvalue(info.rawValue)) and "|cffff0000(SECRET)|r" or tostring(info.rawValue)
+                local rawMaxStr = (issecretvalue and issecretvalue(info.rawMax)) and "|cffff0000(SECRET)|r" or tostring(info.rawMax)
+                addon:Print("  Raw Value: " .. rawValStr)
+                addon:Print("  Raw Max: " .. rawMaxStr)
+            end
+            if info.barLeft then
+                addon:Print("  Bar Left/Right: " .. string.format("%.1f / %.1f", info.barLeft, info.barRight or 0))
+                addon:Print("  Tex Right: " .. string.format("%.1f", info.texRight or 0))
+            end
+            addon:Print("  Fill Textured: " .. (info.fillIsTextured and "|cff00ff00YES|r" or "NO"))
+            addon:Print("  Fill Anchored To Source: " .. (info.fillAnchoredToSource and "|cff00ff00YES|r" or "NO"))
+        end
+    else
+        addon:Print("  Module: |cffff0000NOT LOADED|r")
+    end
+    
+    -- Check defensive icon status
+    addon:Print("")
+    addon:Print("Defensive Icon:")
+    if addon.defensiveIcon then
+        addon:Print("  Frame: |cff00ff00EXISTS|r")
+        addon:Print("  Visible: " .. (addon.defensiveIcon:IsShown() and "|cff00ff00YES|r" or "NO"))
+        addon:Print("  Alpha: " .. string.format("%.2f", addon.defensiveIcon:GetAlpha()))
+        addon:Print("  CurrentID: " .. tostring(addon.defensiveIcon.currentID or "nil"))
+        addon:Print("  IsItem: " .. tostring(addon.defensiveIcon.isItem or false))
+    else
+        addon:Print("  Frame: |cffff0000NOT CREATED|r (this is the bug!)")
+    end
+    
+    -- Check UIFrameFactory getter
+    local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+    if UIFrameFactory and UIFrameFactory.GetDefensiveIcon then
+        local factoryIcon = UIFrameFactory.GetDefensiveIcon()
+        addon:Print("  Factory icon: " .. (factoryIcon and "|cff00ff00EXISTS|r" or "|cffff0000nil|r"))
+    end
+    
+    -- Check BlizzardAPI health access
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    addon:Print("")
+    addon:Print("Health API:")
+    if BlizzardAPI then
+        local healthAvail = BlizzardAPI.IsDefensivesFeatureAvailable and BlizzardAPI.IsDefensivesFeatureAvailable()
+        addon:Print("  Feature Available: " .. (healthAvail and "|cff00ff00YES|r" or "|cffff0000NO (secrets)|r"))
+        
+        local healthPct = BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
+        addon:Print("  Current Health: " .. (healthPct and string.format("%.1f%%", healthPct) or "|cffff0000nil|r"))
+        
+        local petPct = BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
+        addon:Print("  Pet Health: " .. (petPct and string.format("%.1f%%", petPct) or "N/A"))
+    else
+        addon:Print("  |cffff0000BlizzardAPI not loaded|r")
+    end
+    
+    -- Check combat status
+    addon:Print("")
+    addon:Print("Combat Status:")
+    local inCombat = UnitAffectingCombat("player")
+    addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
+    
+    -- Check spell lists
+    addon:Print("")
+    addon:Print("Configured Spells:")
+    
+    local function PrintSpellList(name, list)
+        if not list or #list == 0 then
+            addon:Print("  " .. name .. ": (empty)")
+            return
+        end
+        addon:Print("  " .. name .. ":")
+        for i, spellID in ipairs(list) do
+            if spellID and spellID > 0 then
+                local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                local name = spellInfo and spellInfo.name or "Unknown"
+                local knownStr = isKnown and "|cff00ff00✓|r" or "|cffff0000✗|r"
+                addon:Print("    " .. i .. ". " .. knownStr .. " " .. name .. " (" .. spellID .. ")")
+            end
+        end
+    end
+    
+    PrintSpellList("Self-Heals", defSettings.selfHealSpells)
+    PrintSpellList("Cooldowns", defSettings.cooldownSpells)
+    PrintSpellList("Pet Heals", defSettings.petHealSpells)
+    
+    -- Test what would show right now (secret-safe)
+    addon:Print("")
+    addon:Print("Current Decision:")
+
+    -- Helper: safe percent formatter that handles secret values
+    local function fmtPercent(p)
+        if not p then return "|cffff0000nil|r" end
+        if issecretvalue and issecretvalue(p) then return "|cffff0000SECRET|r" end
+        if type(p) == "number" then return string.format("%.1f%%", p) end
+        return tostring(p)
+    end
+
+    -- Prefer procs first (would be shown at any health)
+    local procSpell = addon.GetProccedDefensiveSpell and addon:GetProccedDefensiveSpell()
+    if procSpell then
+        local sname = C_Spell.GetSpellInfo and select(1, C_Spell.GetSpellInfo(procSpell)) or tostring(procSpell)
+        addon:Print("  Result: Would show |cff00ff00PROC|r (" .. sname .. ")")
+    elseif not defSettings.enabled then
+        addon:Print("  Result: |cffff0000DISABLED|r")
+    elseif defSettings.showOnlyInCombat and not inCombat then
+        addon:Print("  Result: |cffffff00HIDDEN (out of combat, 'only in combat' enabled)|r")
+    else
+        -- Use LowHealthFrame estimation when exact percent is secret
+        local low, crit = false, false
+        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
+            low, crit = BlizzardAPI.GetLowHealthState()
+        end
+
+        if crit then
+            addon:Print("  Result: Would show |cffff0000COOLDOWN|r (critical health)")
+        elseif low then
+            addon:Print("  Result: Would show |cffffff00SELF-HEAL|r (low health)")
+        else
+            local maybePct = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
+            addon:Print("  Result: |cff00ff00HIDDEN|r (health " .. fmtPercent(maybePct) .. ")")
+        end
+    end
+
+    addon:Print("======================================")
 end
 
 -- LibPlayerSpells spell info lookup

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module
 -- Contains all frame creation and layout functions
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 1)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 2)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -50,6 +50,7 @@ local function CreateDefensiveIcon(addon, profile)
         defensiveIcon:Hide()
         defensiveIcon:SetParent(nil)
         defensiveIcon = nil
+        addon.defensiveIcon = nil  -- Clear addon reference
     end
     
     if not profile.defensives or not profile.defensives.enabled then return end
@@ -130,34 +131,34 @@ local function CreateDefensiveIcon(addon, profile)
     slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
-    -- Inset icon 1px from edges to stay within frame border
-    iconTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 1, -1)
-    iconTexture:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
-    -- Crop icon edges slightly (standard Blizzard inset) to prevent texture bleeding
-    iconTexture:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    -- Icon fills button completely
+    iconTexture:SetAllPoints(button)
     iconTexture:Hide()  -- Start hidden, only show when spell is assigned
     button.iconTexture = iconTexture
     
     -- Mask texture to clip icon corners to beveled frame shape
+    -- Padding scales with icon size (17% on each side compensates for atlas internal padding)
+    local maskPadding = math_floor(actualIconSize * 0.17)
     local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("CENTER", iconTexture, "CENTER", 0, 0)
-    iconMask:SetSize(actualIconSize, actualIconSize)
-    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", true)  -- useAtlasSize=true for proper scaling
+    iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
+    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", maskPadding, -maskPadding)
+    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
     iconTexture:AddMaskTexture(iconMask)
     button.IconMask = iconMask
     
-    -- Normal texture (button frame border - Blizzard style)
+    -- Normal texture (button frame border - Blizzard style, centered)
+    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
     local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    normalTexture:SetSize(actualIconSize + 1, actualIconSize)
+    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    normalTexture:SetSize(actualIconSize, actualIconSize)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
     
     -- Flash overlay on high-level frame - above all animations, below hotkey
     -- Anchored at CENTER so scale animation grows evenly in all directions
     local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, 0)  -- +0.5 to account for asymmetric button width
-    flashFrame:SetSize(actualIconSize + 1, actualIconSize)  -- Match icon frame size
+    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)  -- Slightly larger than icon
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
     
     -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
@@ -175,8 +176,9 @@ local function CreateDefensiveIcon(addon, profile)
     button.flashtime = 0
 
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 3, -3)
-    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -3, 3)
+    -- Cooldown inset 4px from icon edges to fit within beveled corners
+    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
+    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
@@ -197,6 +199,18 @@ local function CreateDefensiveIcon(addon, profile)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
+    
+    -- Center text for "WAIT" indicator when Assisted Combat suggests waiting for resources
+    local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
+    local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
+    centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
+    centerText:SetTextColor(1, 0.9, 0.2, 1)  -- Gold/yellow color
+    centerText:SetJustifyH("CENTER")
+    centerText:SetJustifyV("MIDDLE")
+    centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    centerText:SetText("")
+    centerText:Hide()
+    button.centerText = centerText
     
     button.lastCooldownStart = 0
     button.lastCooldownDuration = 0
@@ -245,6 +259,7 @@ local function CreateDefensiveIcon(addon, profile)
     end
     
     defensiveIcon = button
+    addon.defensiveIcon = button  -- Expose to addon for UIManager access
 end
 
 function UIFrameFactory.CreateMainFrame(addon)
@@ -617,47 +632,48 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
-    -- Inset icon 1px from edges to stay within frame border
-    iconTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 1, -1)
-    iconTexture:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -1, 1)
-    -- Crop icon edges slightly (standard Blizzard inset) to prevent texture bleeding
-    iconTexture:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    -- Icon fills button completely
+    iconTexture:SetAllPoints(button)
     button.iconTexture = iconTexture
     
     -- Mask texture to clip icon corners to beveled frame shape
+    -- Padding scales with icon size (17% on each side compensates for atlas internal padding)
+    local maskPadding = math_floor(actualIconSize * 0.17)
     local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("CENTER", iconTexture, "CENTER", 0, 0)
-    iconMask:SetSize(actualIconSize, actualIconSize)
-    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", true)  -- useAtlasSize=true for proper scaling
+    iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
+    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", maskPadding, -maskPadding)
+    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
     iconTexture:AddMaskTexture(iconMask)
     button.IconMask = iconMask
     
-    -- Normal texture (button frame border - Blizzard style)
+    -- Normal texture (button frame border - Blizzard style, centered)
+    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
     local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    normalTexture:SetSize(actualIconSize + 1, actualIconSize)  -- Blizzard uses 46x45 for 45x45 button
+    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    normalTexture:SetSize(actualIconSize, actualIconSize)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
     
     -- Pushed texture (shown when button is pressed - Blizzard style)
     local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
-    pushedTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    pushedTexture:SetSize(actualIconSize + 1, actualIconSize)
+    pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    pushedTexture:SetSize(actualIconSize, actualIconSize)
     pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
     pushedTexture:Hide()
     button.PushedTexture = pushedTexture
     
     -- Highlight texture (shown on mouseover - Blizzard style)
+    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
     local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
-    highlightTexture:SetPoint("TOPLEFT", button, "TOPLEFT", 0, 0)
-    highlightTexture:SetSize(actualIconSize + 1, actualIconSize)
+    highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    highlightTexture:SetSize(actualIconSize, actualIconSize)
     highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     button.HighlightTexture = highlightTexture
     
     -- Anchored at CENTER so scale animation grows evenly in all directions
     local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, 0)  -- +0.5 to account for asymmetric button width
-    flashFrame:SetSize(actualIconSize + 1, actualIconSize)  -- Match icon frame size
+    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)  -- Slightly larger than icon
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
     
     -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
@@ -675,8 +691,9 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     button.flashtime = 0
 
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 3, -3)
-    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -3, 3)
+    -- Cooldown inset 4px from icon edges to fit within beveled corners
+    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
+    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
@@ -701,6 +718,18 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
+    
+    -- Center text for "WAIT" indicator when Assisted Combat suggests waiting for resources
+    local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
+    local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
+    centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
+    centerText:SetTextColor(1, 0.9, 0.2, 1)  -- Gold/yellow color
+    centerText:SetJustifyH("CENTER")
+    centerText:SetJustifyV("MIDDLE")
+    centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    centerText:SetText("")
+    centerText:Hide()
+    button.centerText = centerText
     
     -- Enable dragging from icons (delegates to main frame)
     button:RegisterForDrag("LeftButton")

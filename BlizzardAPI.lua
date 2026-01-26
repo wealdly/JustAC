@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Blizzard API Module v19
--- Changed: Replaced LibPlayerSpells with native SpellDB for spell classification
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 19)
+-- JustAC: Blizzard API Module v21
+-- Changed: IsSpellUsable now uses C_ActionBar.IsUsableAction fallback when secrets detected
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 22)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -799,7 +799,8 @@ end
 
 -- Check if spell is usable (has resources, not on cooldown preventing cast, etc.)
 -- Returns: isUsable, notEnoughResources
--- 12.0: These may return secrets in some contexts - fail-open if secrets detected
+-- 12.0: These may return secrets in some contexts
+-- When secret, falls back to checking action bar button state (desaturation indicates unusable)
 function BlizzardAPI.IsSpellUsable(spellID)
     if not spellID or spellID == 0 then return false, false end
     
@@ -807,9 +808,23 @@ function BlizzardAPI.IsSpellUsable(spellID)
     if C_Spell_IsSpellUsable then
         local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
         if success then
-            -- 12.0: Check for secret values - fail-open (assume usable)
+            -- 12.0: Check for secret values
             if issecretvalue and (issecretvalue(isUsable) or issecretvalue(notEnoughResources)) then
-                return true, false  -- Fail-open: assume usable
+                -- Try action bar fallback: C_ActionBar.IsUsableAction reflects icon desaturation
+                -- This is visible state, not protected combat data
+                local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                if ActionBarScanner and ActionBarScanner.GetSlotForSpell and C_ActionBar and C_ActionBar.IsUsableAction then
+                    local slot = ActionBarScanner.GetSlotForSpell(spellID)
+                    if slot then
+                        local actionUsable, actionNotEnoughMana = C_ActionBar.IsUsableAction(slot)
+                        -- Only use if not secret (action bar state should be visible)
+                        if not (issecretvalue(actionUsable) or issecretvalue(actionNotEnoughMana)) then
+                            return actionUsable or false, actionNotEnoughMana or false
+                        end
+                    end
+                end
+                -- No action bar fallback available, fail-open
+                return true, false
             end
             return isUsable, notEnoughResources
         end
@@ -901,6 +916,71 @@ end
 function BlizzardAPI.IsImportantSpell(spellID)
     -- TODO: Add IMPORTANT_SPELLS table to SpellDB if priority sorting needed
     return false
+end
+
+--------------------------------------------------------------------------------
+-- Item Spell Detection
+-- Checks if a spellID belongs to an equipped item (trinket, engineering tinker, etc.)
+--------------------------------------------------------------------------------
+
+-- Equipment slots that can have on-use/activatable effects:
+-- Trinkets (most common), Belt/Cloak/Gloves (engineering tinkers)
+local ITEM_USE_SLOTS = {
+    6,   -- INVSLOT_WAIST (Belt) - engineering tinkers like Nitro Boosts
+    10,  -- INVSLOT_HAND (Gloves) - engineering tinkers like Rocket Gloves
+    13,  -- INVSLOT_TRINKET1
+    14,  -- INVSLOT_TRINKET2
+    15,  -- INVSLOT_BACK (Cloak) - engineering tinkers, some on-use cloaks
+}
+
+-- Cache for item spell lookups (itemID -> spellID)
+local itemSpellCache = {}
+local itemSpellCacheTime = 0
+local ITEM_SPELL_CACHE_DURATION = 10.0  -- Refresh every 10 seconds (gear changes are rare)
+
+-- Hot path: cache API references
+local GetInventoryItemID = GetInventoryItemID
+local GetItemSpell = GetItemSpell
+local C_Item_GetItemSpell = C_Item and C_Item.GetItemSpell
+
+-- Rebuild the item spell cache by checking equipped items
+local function RebuildItemSpellCache()
+    wipe(itemSpellCache)
+    for _, slot in ipairs(ITEM_USE_SLOTS) do
+        local itemID = GetInventoryItemID("player", slot)
+        if itemID then
+            -- Try modern API first, fallback to legacy
+            local _, spellID
+            if C_Item_GetItemSpell then
+                _, spellID = C_Item_GetItemSpell(itemID)
+            elseif GetItemSpell then
+                _, spellID = GetItemSpell(itemID)
+            end
+            if spellID and spellID > 0 then
+                itemSpellCache[spellID] = itemID
+            end
+        end
+    end
+    itemSpellCacheTime = GetTime()
+end
+
+-- Check if a spellID belongs to an equipped item
+-- Returns: true if the spell is from an equipped item, false otherwise
+function BlizzardAPI.IsItemSpell(spellID)
+    if not spellID or spellID == 0 then return false end
+    
+    -- Refresh cache if stale
+    local now = GetTime()
+    if now - itemSpellCacheTime > ITEM_SPELL_CACHE_DURATION then
+        RebuildItemSpellCache()
+    end
+    
+    return itemSpellCache[spellID] ~= nil
+end
+
+-- Force refresh item spell cache (call on PLAYER_EQUIPMENT_CHANGED)
+function BlizzardAPI.RefreshItemSpellCache()
+    itemSpellCacheTime = 0  -- Force refresh on next check
 end
 
 -- Get spell classification for debug purposes
@@ -1070,4 +1150,57 @@ function BlizzardAPI.ShouldUnitSpellCastBeSecret(unit)
         if ok then return result end
     end
     return nil
+end
+
+--------------------------------------------------------------------------------
+-- 12.0 Low Health Detection via LowHealthFrame
+-- When UnitHealth() returns secrets, we can detect low health via the visual overlay
+--------------------------------------------------------------------------------
+
+-- Check if player is in low health state (uses LowHealthFrame visual indicator)
+-- Returns: isLow, isCritical, alpha (severity 0-1, higher = more critical)
+-- This works even when UnitHealth() returns secrets
+function BlizzardAPI.GetLowHealthState()
+    local frame = LowHealthFrame
+    if not frame then
+        return false, false, 0
+    end
+    
+    local isShown = frame:IsShown()
+    if not isShown then
+        return false, false, 0
+    end
+    
+    -- Alpha indicates severity: higher = more critical
+    -- Typically ~0.3-0.5 at 35% health, ~0.8-1.0 at very low health
+    local alpha = frame:GetAlpha() or 0
+    local isCritical = alpha > 0.5  -- Roughly below 20% health
+    
+    return true, isCritical, alpha
+end
+
+-- Combined health detection: tries exact percentage first, falls back to LowHealthFrame
+-- Returns: healthPercent (0-100), isEstimated (true if using LowHealthFrame)
+-- When using LowHealthFrame: returns 30 for low, 15 for critical (estimates)
+function BlizzardAPI.GetPlayerHealthPercentSafe()
+    -- Try exact health first
+    local exactPct = BlizzardAPI.GetPlayerHealthPercent()
+    if exactPct then
+        return exactPct, false
+    end
+    
+    -- Health is secret - use LowHealthFrame
+    local isLow, isCritical, alpha = BlizzardAPI.GetLowHealthState()
+    if isCritical then
+        -- Map alpha 0.5-1.0 to roughly 5-20%
+        local pct = 20 - (alpha - 0.5) * 30
+        return math.max(5, math.min(20, pct)), true
+    elseif isLow then
+        -- Map alpha 0.0-0.5 to roughly 20-35%
+        local pct = 35 - alpha * 30
+        return math.max(20, math.min(35, pct)), true
+    else
+        -- Not showing low health overlay = above 35%
+        return 100, true  -- Assume full health if overlay not showing
+    end
 end

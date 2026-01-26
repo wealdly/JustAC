@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Action Bar Scanner Module
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 29)
+-- JustAC: Action Bar Scanner Module v30
+-- Changed: Added GetSlotForSpell() for action bar usability lookups
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 30)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -806,6 +807,26 @@ function ActionBarScanner.ClearAllCaches()
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
     spellHotkeyCacheValid = false
+end
+
+-- Get the action bar slot for a spell ID (if found on action bars)
+-- Returns: slot number or nil
+-- Uses cached slot from GetSpellHotkey lookups for performance
+function ActionBarScanner.GetSlotForSpell(spellID)
+    if not spellID then return nil end
+    
+    -- Check cache first (populated by GetSpellHotkey)
+    local cachedSlot = spellSlotCache[spellID]
+    if cachedSlot then
+        return cachedSlot
+    end
+    
+    -- Not in cache - trigger a hotkey lookup which will populate the cache
+    -- This is a deliberate side effect for efficiency
+    local _ = ActionBarScanner.GetSpellHotkey(spellID)
+    
+    -- Now check cache again
+    return spellSlotCache[spellID]
 end
 
 --------------------------------------------------------------------------------

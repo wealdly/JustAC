@@ -23,6 +23,66 @@ local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
+local string_upper = string.upper
+local string_gsub = string.gsub
+
+-- Shared hotkey normalization helper (avoids duplicate code and reduces hotpath overhead)
+-- Converts abbreviated keybinds to full format: S-5 → SHIFT-5, C-5 → CTRL-5, etc.
+local function NormalizeHotkey(hotkey)
+    if not hotkey or hotkey == "" then return nil end
+    local normalized = string_upper(hotkey)
+    normalized = string_gsub(normalized, "^S%-", "SHIFT-")  -- S-5 -> SHIFT-5
+    normalized = string_gsub(normalized, "^S([^H])", "SHIFT-%1")  -- S5 -> SHIFT-5 (but not SHIFT)
+    normalized = string_gsub(normalized, "^C%-", "CTRL-")  -- C-5 -> CTRL-5
+    normalized = string_gsub(normalized, "^C([^T])", "CTRL-%1")  -- C5 -> CTRL-5 (but not CTRL)
+    normalized = string_gsub(normalized, "^A%-", "ALT-")  -- A-5 -> ALT-5
+    normalized = string_gsub(normalized, "^A([^L])", "ALT-%1")  -- A5 -> ALT-5 (but not ALT)
+    normalized = string_gsub(normalized, "^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
+    return normalized
+end
+
+-- Shared cooldown update helper (consolidates duplicate logic for main icons and defensive icon)
+-- Updates icon.cooldown widget with caching to avoid redundant SetCooldown calls
+-- Handles WoW 12.0 secret values gracefully
+-- Uses tolerance-based comparison to prevent flickering from minor floating-point differences
+local COOLDOWN_START_TOLERANCE = 0.05  -- Only update if start time differs by more than 50ms (new GCD)
+
+local function UpdateIconCooldown(icon, start, duration)
+    local startIsSecret = issecretvalue and issecretvalue(start)
+    local durationIsSecret = issecretvalue and issecretvalue(duration)
+    
+    if startIsSecret or durationIsSecret then
+        -- Secret values: pass to widget once, then skip until non-secret
+        if not icon.lastCooldownWasSecret then
+            icon.cooldown:SetCooldown(start, duration)
+            icon.cooldown:Show()
+            icon.lastCooldownWasSecret = true
+            icon.lastCooldownStart = nil
+            icon.lastCooldownDuration = nil
+        end
+    elseif start and start > 0 and duration and duration > 0 then
+        -- Valid cooldown: update only if start time changed significantly (new GCD/cooldown)
+        -- This prevents flickering from minor floating-point variations in duration
+        icon.lastCooldownWasSecret = false
+        local lastStart = icon.lastCooldownStart or 0
+        local startChanged = math.abs(start - lastStart) > COOLDOWN_START_TOLERANCE
+        
+        if startChanged then
+            icon.cooldown:SetCooldown(start, duration)
+            icon.cooldown:Show()
+            icon.lastCooldownStart = start
+            icon.lastCooldownDuration = duration
+        end
+    else
+        -- No cooldown: hide only if was showing
+        icon.lastCooldownWasSecret = false
+        if (icon.lastCooldownDuration or 0) > 0 then
+            icon.cooldown:Hide()
+            icon.lastCooldownStart = 0
+            icon.lastCooldownDuration = 0
+        end
+    end
+end
 
 local function GetProfile()
     return BlizzardAPI and BlizzardAPI.GetProfile() or nil
@@ -472,43 +532,14 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
         defensiveIcon.lastCooldownWasSecret = false
     end
     
-    -- Update cooldown
+    -- Update cooldown using shared helper
     local start, duration
     if isItem then
         start, duration = GetItemCooldown(id)
     elseif BlizzardAPI and BlizzardAPI.GetSpellCooldown then
         start, duration = BlizzardAPI.GetSpellCooldown(id)
     end
-    
-    -- Check if values are secret - if so, pass directly to SetCooldown
-    local startIsSecret = issecretvalue and issecretvalue(start)
-    local durationIsSecret = issecretvalue and issecretvalue(duration)
-    
-    if startIsSecret or durationIsSecret then
-        -- Pass secret values directly to cooldown widget ONCE
-        if not defensiveIcon.lastCooldownWasSecret then
-            defensiveIcon.cooldown:SetCooldown(start, duration)
-            defensiveIcon.cooldown:Show()
-            defensiveIcon.lastCooldownWasSecret = true
-            defensiveIcon.lastCooldownStart = nil
-            defensiveIcon.lastCooldownDuration = nil
-        end
-    elseif start and start > 0 and duration and duration > 0 then
-        defensiveIcon.lastCooldownWasSecret = false
-        if defensiveIcon.lastCooldownStart ~= start or defensiveIcon.lastCooldownDuration ~= duration then
-            defensiveIcon.cooldown:SetCooldown(start, duration)
-            defensiveIcon.cooldown:Show()
-            defensiveIcon.lastCooldownStart = start
-            defensiveIcon.lastCooldownDuration = duration
-        end
-    else
-        defensiveIcon.lastCooldownWasSecret = false
-        if defensiveIcon.lastCooldownDuration ~= 0 then
-            defensiveIcon.cooldown:Hide()
-            defensiveIcon.lastCooldownStart = 0
-            defensiveIcon.lastCooldownDuration = 0
-        end
-    end
+    UpdateIconCooldown(defensiveIcon, start, duration)
     
     -- Update hotkey (for items, find by scanning action bars)
     local hotkey = ""
@@ -531,27 +562,15 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon)
         hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
     end
     
-    -- Always normalize hotkey for key press matching (defensive icon doesn't use caching yet)
-    if hotkey ~= "" then
-        local normalized = hotkey:upper()
-        -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
-        -- Normalize abbreviated keybinds to full format for matching: S-5 → SHIFT-5, C-5 → CTRL-5, etc.
-        normalized = normalized:gsub("^S([^H])", "SHIFT-%1")  -- S5 -> SHIFT-5 (but not SHIFT)
-        normalized = normalized:gsub("^C%-", "CTRL-")  -- C-5 -> CTRL-5
-        normalized = normalized:gsub("^C([^T])", "CTRL-%1")  -- C5 -> CTRL-5 (but not CTRL)
-        normalized = normalized:gsub("^A%-", "ALT-")  -- A-5 -> ALT-5
-        normalized = normalized:gsub("^A([^L])", "ALT-%1")  -- A5 -> ALT-5 (but not ALT)
-        normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
-        
-        -- Only update previous hotkey if normalized changed (for flash grace period)
-        if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
-            defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
-            defensiveIcon.hotkeyChangeTime = GetTime()
-        end
-        defensiveIcon.normalizedHotkey = normalized
-    else
-        defensiveIcon.normalizedHotkey = nil
+    -- Normalize hotkey for key press matching (use shared helper)
+    local normalized = NormalizeHotkey(hotkey)
+    
+    -- Only update previous hotkey if normalized changed (for flash grace period)
+    if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
+        defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
+        defensiveIcon.hotkeyChangeTime = GetTime()
     end
+    defensiveIcon.normalizedHotkey = normalized
     
     -- Only update hotkey text if it changed (prevents flicker)
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
@@ -639,6 +658,22 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         shouldShowFrame = false
     end
     
+    -- Hide queue when mounted if option is enabled
+    -- Also treats Druid Travel Form (3) and Flight Form (27) as "mounted"
+    if shouldShowFrame and profile.hideQueueWhenMounted then
+        local isMounted = IsMounted()
+        if not isMounted then
+            -- Check for Druid mount forms (Travel Form = 3, Flight Form = 27)
+            local formID = GetShapeshiftFormID()
+            if formID == 3 or formID == 27 then
+                isMounted = true
+            end
+        end
+        if isMounted then
+            shouldShowFrame = false
+        end
+    end
+    
     -- Only update frame state if it actually changed
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
@@ -657,6 +692,86 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
+    -- Pre-pass: collect cooldowns for all icons so we can detect if any icon is actively on cooldown
+    local iconCooldowns = {}
+    for i = 1, maxIcons do
+        local spellID = hasSpells and spellIDs[i] or nil
+        if spellID then
+            -- Fetch raw cooldown and sanitized values
+            local rawStart, rawDuration = GetSpellCooldown(spellID)
+            local rawStartIsSecret = issecretvalue and issecretvalue(rawStart)
+            local rawDurationIsSecret = issecretvalue and issecretvalue(rawDuration)
+
+            -- Action bar fallback for missing/secret/zero cooldowns
+            if not rawStart or not rawDuration or rawStartIsSecret or rawDurationIsSecret or rawDuration == 0 then
+                local slot = ActionBarScanner and ActionBarScanner.GetSlotForSpell and ActionBarScanner.GetSlotForSpell(spellID)
+                if slot then
+                    if C_ActionBar and C_ActionBar.GetActionCooldown then
+                        local ok, cd = pcall(C_ActionBar.GetActionCooldown, slot)
+                        if ok and cd and cd.startTime and cd.duration and not (issecretvalue and (issecretvalue(cd.startTime) or issecretvalue(cd.duration))) then
+                            rawStart = cd.startTime
+                            rawDuration = cd.duration
+                            -- Note: Removed debug output here - was extremely spammy (fires every frame)
+                        end
+                    elseif GetActionCooldown then
+                        local ok, s, d = pcall(GetActionCooldown, slot)
+                        if ok and s and d and not (issecretvalue and (issecretvalue(s) or issecretvalue(d))) then
+                            rawStart = s
+                            rawDuration = d
+                            -- Note: Removed debug output here - was extremely spammy
+                        end
+                    end
+                end
+            end
+
+            local cmpStart, cmpDuration = BlizzardAPI.GetSpellCooldownValues(spellID)
+            iconCooldowns[i] = {
+                spellID = spellID,
+                rawStart = rawStart,
+                rawDuration = rawDuration,
+                cmpStart = cmpStart,
+                cmpDuration = cmpDuration,
+            }
+        else
+            iconCooldowns[i] = nil
+        end
+    end
+
+    -- Get GCD state from dummy spell (ID 61304) - always accurate regardless of which spell triggered it
+    local gcdStart, gcdDuration = BlizzardAPI.GetGCDInfo()
+    local durTol = 0.05   -- tolerance for duration comparison when checking for long cooldowns
+
+    -- When GCD is active, propagate GCD swipe to all icons lacking their own longer cooldowns
+    -- The GCD is global - if ANY ability triggers it, ALL GCD-bound abilities share it
+    -- Previously required anyIconOnGCD=true, but that detection can fail for instant-cast abilities
+    -- whose own cooldown returns 0 even when the GCD is active
+    if gcdDuration and gcdDuration > 0 then
+        local gcdOffset = math.min(math.max(gcdDuration * 0.1, 0.1), 0.2)
+        for i = 1, maxIcons do
+            local cd = iconCooldowns[i]
+            if cd then
+                -- If icon has its own cooldown significantly longer than GCD, skip (off-GCD ability or long CD)
+                local hasLongCooldown = false
+                if cd.cmpDuration and cd.cmpDuration > (gcdDuration + durTol) then
+                    hasLongCooldown = true
+                else
+                    local rawDuration = cd.rawDuration
+                    local rawDurationIsSecret = issecretvalue and issecretvalue(rawDuration)
+                    if rawDuration and not rawDurationIsSecret and rawDuration > (gcdDuration + durTol) then
+                        hasLongCooldown = true
+                    end
+                end
+                if not hasLongCooldown then
+                    -- Propagate GCD start/duration (apply early-end offset so swipe ends slightly before GCD)
+                    cd.rawStart = gcdStart
+                    cd.rawDuration = math.max(gcdDuration - gcdOffset, 0)
+                    -- Debug output removed - was extremely spammy (fires every frame during GCD)
+                    -- Use /jac test or /jac modules for diagnostics instead
+                end
+            end
+        end
+    end
+
     -- Update individual icons (always do this part)
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
@@ -695,6 +810,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     iconTexture:Show()
                 end
                 
+                -- Check for "Waiting for..." spells (Assisted Combat's resource-wait indicator)
+                -- These spells tell the player to wait for energy/mana/rage/etc to regenerate
+                local isWaitingSpell = spellInfo.name and spellInfo.name:find("^Waiting for")
+                local centerText = icon.centerText
+                if centerText then
+                    if isWaitingSpell then
+                        centerText:SetText("WAIT")
+                        centerText:Show()
+                    else
+                        centerText:Hide()
+                    end
+                end
+                
                 -- Apply vertex color for queue icons (brightness/opacity)
                 if i > 1 then
                     iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
@@ -702,91 +830,52 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     iconTexture:SetVertexColor(1, 1, 1, 1)
                 end
 
-                -- Update cooldown display (including GCD for timing feedback)
-                -- GetSpellCooldown returns raw values which may be secret in 12.0+
-                -- The Cooldown widget can handle secret values directly
-                local start, duration = GetSpellCooldown(spellID)
-                
-                -- Check if values are secret - if so, pass directly to SetCooldown
-                -- (the widget handles secrets, we just can't do comparisons on them)
-                local startIsSecret = issecretvalue and issecretvalue(start)
-                local durationIsSecret = issecretvalue and issecretvalue(duration)
-                
-                if startIsSecret or durationIsSecret then
-                    -- Pass secret values directly to cooldown widget ONCE
-                    -- Mark as secret mode to avoid re-calling SetCooldown every frame
-                    if not icon.lastCooldownWasSecret then
-                        icon.cooldown:SetCooldown(start, duration)
-                        icon.cooldown:Show()
-                        icon.lastCooldownWasSecret = true
-                        icon.lastCooldownStart = nil
-                        icon.lastCooldownDuration = nil
-                    end
-                elseif start and start > 0 and duration and duration > 0 then
-                    -- Non-secret values: update cooldown if changed
-                    icon.lastCooldownWasSecret = false
-                    if icon.lastCooldownStart ~= start or icon.lastCooldownDuration ~= duration then
-                        icon.cooldown:SetCooldown(start, duration)
-                        icon.cooldown:Show()
-                        icon.lastCooldownStart = start
-                        icon.lastCooldownDuration = duration
-                    end
-                else
-                    icon.lastCooldownWasSecret = false
-                    if icon.lastCooldownDuration ~= 0 then
-                        icon.cooldown:Hide()
-                        icon.lastCooldownStart = 0
-                        icon.lastCooldownDuration = 0
-                    end
-                end
+                -- Update cooldown display using precomputed values
+                local cd = iconCooldowns[i]
+                local displayStart = cd and cd.rawStart or nil
+                local displayDuration = cd and cd.rawDuration or nil
+                UpdateIconCooldown(icon, displayStart, displayDuration)
 
                 -- Check if spell has an active proc (overlay)
                 -- Use centralized wrapper that handles secret values
                 local isProc = BlizzardAPI.IsSpellProcced(spellID)
 
                 if i == 1 and focusEmphasis then
-                    -- First icon: blue glow normally, gold when proc'd
                     local style = isProc and "PROC" or "ASSISTED"
                     StartAssistedGlow(icon, style, isInCombat)
                 elseif isProc then
-                    -- Queue icons (2+): gold glow only when proc'd
                     StartAssistedGlow(icon, "PROC", isInCombat)
                 else
-                    -- No glow for non-proc'd queue icons
                     StopAssistedGlow(icon)
                 end
 
                 -- Hotkey lookup optimization: only query ActionBarScanner when action bars change
                 -- Store result in icon.cachedHotkey and reuse until invalidated by ACTIONBAR_SLOT_CHANGED/UPDATE_BINDINGS
                 local hotkey
+                local hotkeyChanged = false
                 if hotkeysDirty or spellChanged or not icon.cachedHotkey then
                     hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                    hotkeyChanged = (icon.cachedHotkey ~= hotkey)
                     icon.cachedHotkey = hotkey
+                    
+                    -- Only normalize when hotkey actually changes (expensive gsub calls)
+                    if hotkeyChanged or not icon.cachedNormalizedHotkey then
+                        local normalized = NormalizeHotkey(hotkey)
+                        
+                        -- Track previous for flash grace period
+                        if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
+                            icon.previousNormalizedHotkey = icon.normalizedHotkey
+                            icon.hotkeyChangeTime = currentTime
+                        end
+                        icon.normalizedHotkey = normalized
+                        icon.cachedNormalizedHotkey = normalized
+                    end
                 else
                     hotkey = icon.cachedHotkey
-                end
-                
-                -- Always normalize hotkey for key press matching (even if cached)
-                -- This ensures normalizedHotkey is set even when hotkey text hasn't changed
-                if hotkey ~= "" then
-                    local normalized = hotkey:upper()
-                    -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
-                    normalized = normalized:gsub("^S%-", "SHIFT-")  -- S-5 -> SHIFT-5
-                    normalized = normalized:gsub("^S([^H])", "SHIFT-%1")  -- S5 -> SHIFT-5 (but not SHIFT)
-                    normalized = normalized:gsub("^C%-", "CTRL-")  -- C-5 -> CTRL-5
-                    normalized = normalized:gsub("^C([^T])", "CTRL-%1")  -- C5 -> CTRL-5 (but not CTRL)
-                    normalized = normalized:gsub("^A%-", "ALT-")  -- A-5 -> ALT-5
-                    normalized = normalized:gsub("^A([^L])", "ALT-%1")  -- A5 -> ALT-5 (but not ALT)
-                    normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
-                    
-                    -- Only update previous hotkey if normalized changed (for flash grace period)
-                    if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
-                        icon.previousNormalizedHotkey = icon.normalizedHotkey
-                        icon.hotkeyChangeTime = currentTime
+                    -- Use cached normalized value (no gsub calls)
+                    if not icon.normalizedHotkey and icon.cachedNormalizedHotkey then
+                        icon.normalizedHotkey = icon.cachedNormalizedHotkey
                     end
-                    icon.normalizedHotkey = normalized
-                else
-                    icon.normalizedHotkey = nil
                 end
                 
                 -- Only update hotkey text if it changed (prevents flicker)
@@ -847,10 +936,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.spellID = nil
                     icon.iconTexture:Hide()
                     icon.cooldown:Hide()
-                    -- Reset cooldown cache for when slot gets reused
+                    if icon.centerText then icon.centerText:Hide() end
+                    -- Reset all caches for when slot gets reused
                     icon.lastCooldownStart = nil
                     icon.lastCooldownDuration = nil
                     icon.lastCooldownWasSecret = false
+                    icon.cachedHotkey = nil
+                    icon.cachedNormalizedHotkey = nil
+                    icon.normalizedHotkey = nil
                     StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance
