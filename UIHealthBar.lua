@@ -71,13 +71,17 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
     
-    -- Width matches first icon (scaled)
-    local firstIconScale = profile.firstIconScale or 1.2
-    local barWidth = profile.iconSize * firstIconScale
-    frame:SetSize(barWidth, BAR_HEIGHT)
+    -- Width/height spans the full queue (mainFrame dimensions match queue size)
+    local orientation = profile.queueOrientation or "LEFT"
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        -- Horizontal queue: match mainFrame width, use BAR_HEIGHT for height
+        frame:SetSize(addon.mainFrame:GetWidth(), BAR_HEIGHT)
+    else -- UP or DOWN
+        -- Vertical queue: use BAR_HEIGHT for width, match mainFrame height
+        frame:SetSize(BAR_HEIGHT, addon.mainFrame:GetHeight())
+    end
     
     -- Position above position 1 icon, accounting for queue orientation and defensive position
-    local orientation = profile.queueOrientation or "LEFT"
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
     -- Health bar is always above the main queue
