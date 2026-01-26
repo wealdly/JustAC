@@ -125,7 +125,7 @@ local defaults = {
         debugMode = false,
         isManualMode = false,
         showTooltips = true,
-        tooltipsInCombat = false,
+        tooltipsInCombat = true,
         focusEmphasis = true,
         firstIconScale = 1.2,
         queueIconDesaturation = 0,
@@ -141,7 +141,7 @@ local defaults = {
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
-            position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
+            position = "LEADING",     -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
@@ -149,7 +149,7 @@ local defaults = {
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
-            showOnlyInCombat = true,  -- false = always visible, true = only in combat with thresholds
+            showOnlyInCombat = false, -- false = always visible, true = only in combat with thresholds
         },
     },
     char = {
