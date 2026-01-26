@@ -1087,6 +1087,11 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         self:DebugPrint("Hotkey removed: " .. spellName)
     end
     
+    -- Refresh defensive icon if it's showing this spell
+    if self.defensiveIcon and self.defensiveIcon:IsShown() and self.defensiveIcon.spellID == spellID then
+        UIManager.ShowDefensiveIcon(self, spellID, false)
+    end
+    
     -- Refresh options panel if open
     local Options = LibStub("JustAC-Options", true)
     if Options and Options.UpdateHotkeyOverrideOptions then
