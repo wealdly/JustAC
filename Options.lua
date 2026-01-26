@@ -440,7 +440,7 @@ function Options.UpdateDefensivesOptions(addon)
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
         info = true, header = true, enabled = true, thresholdInfo = true,
-        behaviorHeader = true, showOnlyInCombat = true,
+        behaviorHeader = true, showOnlyInCombat = true, showHealthBar = true,
         position = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
