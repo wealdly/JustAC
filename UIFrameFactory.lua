@@ -9,6 +9,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
+local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 
 -- Hot path optimizations: cache frequently used functions
 local math_max = math.max
@@ -75,8 +76,11 @@ local function CreateDefensiveIcon(addon, profile)
     -- Health bar adds total height plus spacing on both sides when enabled
     -- When health bar present: use healthBarOffset (includes spacing)
     -- When no health bar: use regular icon spacing
-    -- BAR_HEIGHT (4px) + BAR_SPACING top (3px) + BAR_SPACING bottom (3px) = 10px
-    local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 10 or 0
+    -- Calculate from UIHealthBar constants to stay in sync
+    local healthBarOffset = 0
+    if profile.defensives.showHealthBar and defPosition == "ABOVE" and UIHealthBar then
+        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
+    end
     local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
     
     -- Determine position 1's anchor point based on queue orientation

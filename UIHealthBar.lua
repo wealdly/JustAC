@@ -16,7 +16,11 @@ local GetTime = GetTime
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
 local BAR_HEIGHT = 4          -- Compact height in pixels
-local BAR_SPACING = 4         -- Spacing between health bar and queue icons
+local BAR_SPACING = 3         -- Spacing between health bar and queue icons
+
+-- Export constants for UIFrameFactory to calculate defensive icon offset
+UIHealthBar.BAR_HEIGHT = BAR_HEIGHT
+UIHealthBar.BAR_SPACING = BAR_SPACING
 
 -- Module state
 local healthBarFrame = nil
