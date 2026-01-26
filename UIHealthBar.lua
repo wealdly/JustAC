@@ -231,9 +231,6 @@ function UIHealthBar.UpdateSize(addon)
     else
         healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
     end
-    else -- UP or DOWN
-        healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
-    end
 end
 
 -- Clean up
