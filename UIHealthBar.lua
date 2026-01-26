@@ -59,9 +59,10 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Single icon: span full width
         queueDimension = firstIconSize
     else
-        -- Multiple icons: center of icon 1 to center of last icon
-        -- Distance = (firstIconSize - iconSize)/2 + (maxIcons - 1)*(iconSize + iconSpacing)
-        queueDimension = (firstIconSize - iconSize) / 2 + (maxIcons - 1) * (iconSize + iconSpacing)
+        -- Multiple icons: edge of icon 1 to edge of last icon
+        -- Distance = firstIconSize + (maxIcons - 2)*(iconSize + iconSpacing) + iconSize
+        -- Simplified: firstIconSize + (maxIcons - 1)*iconSize + (maxIcons - 2)*iconSpacing
+        queueDimension = firstIconSize + (maxIcons - 1) * iconSize + (maxIcons - 2) * iconSpacing
     end
     
     if orientation == "LEFT" or orientation == "RIGHT" then
@@ -76,7 +77,8 @@ function UIHealthBar.CreateHealthBar(addon)
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
     -- Positioning offset depends on whether we have 1 or multiple icons
-    local centerOffset = (maxIcons == 1) and 0 or (firstIconSize / 2)
+    -- No offset for single icon (starts at left edge), no offset for multiple either
+    local centerOffset = 0
     
     -- Health bar is always above the main queue
     -- When defensive icon is ABOVE, defensive goes above health bar
