@@ -702,7 +702,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     if not button then return nil end
     
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.3
+    local firstIconScale = profile.firstIconScale or 1.2
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
     
@@ -966,7 +966,7 @@ function UIFrameFactory.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.3
+    local firstIconScale = profile.firstIconScale or 1.2
     local orientation = profile.queueOrientation or "LEFT"
 
     UIFrameFactory.CreateSpellIcons(addon)
