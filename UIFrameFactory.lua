@@ -268,14 +268,24 @@ local function CreateDefensiveIcon(addon, profile)
                 if self.spellID or (self.isItem and self.itemCastSpellID) then
                     local lookupID = self.spellID or self.itemCastSpellID
                     local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(lookupID) or ""
+                    local isOverride = self.spellID and addon:GetHotkeyOverride(self.spellID) ~= nil
                     
                     if hotkey and hotkey ~= "" then
                         GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                        if isOverride then
+                            GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
+                        else
+                            GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                        end
                         GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
                     else
                         GameTooltip:AddLine(" ")
                         GameTooltip:AddLine("|cffff6666No hotkey found|r")
+                    end
+                    
+                    if not inCombat and self.spellID and not self.isItem then
+                        GameTooltip:AddLine(" ")
+                        GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
                     end
                 end
                 
@@ -286,6 +296,20 @@ local function CreateDefensiveIcon(addon, profile)
     
     button:SetScript("OnLeave", function()
         GameTooltip:Hide()
+    end)
+
+    -- Right-click to set custom hotkey (same as main queue icons)
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if profile and profile.panelLocked then return end
+            
+            -- Only allow hotkey override for spells, not items
+            if self.spellID and not self.isItem then
+                addon:OpenHotkeyOverrideDialog(self.spellID)
+            end
+        end
     end)
 
     -- Create fade-in animation
