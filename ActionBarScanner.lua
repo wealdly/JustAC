@@ -803,6 +803,23 @@ function ActionBarScanner.GetSpellbookProccedSpells()
     return activeProcsList
 end
 
+-- Check if a specific spell is currently procced (has active overlay glow)
+-- Uses the event-driven activeProcs cache for fast lookup
+function ActionBarScanner.IsSpellProcced(spellID)
+    if not spellID or spellID == 0 then return false end
+    -- Check direct match
+    if activeProcs[spellID] then return true end
+    -- Check override spell ID (proc events may fire with different ID)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.GetDisplaySpellID then
+        local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+        if displayID and displayID ~= spellID and activeProcs[displayID] then
+            return true
+        end
+    end
+    return false
+end
+
 -- Check if a spell has a keybind (directly or via macro)
 -- GetSpellHotkey already caches in spellHotkeyCache, no need for second cache
 function ActionBarScanner.HasKeybind(spellID)
