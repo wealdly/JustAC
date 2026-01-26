@@ -780,13 +780,30 @@ end
 
 -- Check if a spell is on a real cooldown (longer than just GCD)
 -- Returns: true if on actual cooldown, false if only on GCD or off cooldown
+-- 12.0: When secrets block cooldown API, falls back to action bar slot check
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
     
     -- Use sanitized values safe for comparisons
     local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not start or start == 0 or not duration or duration == 0 then
-        return false  -- Not on any cooldown
+    
+    -- If we got secrets (0, 0), try action bar fallback
+    if (not start or start == 0) and (not duration or duration == 0) then
+        -- Try to find this spell on action bars and check its cooldown there
+        local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+        if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+            local slot = ActionBarScanner.GetSlotForSpell(spellID)
+            if slot then
+                -- Check action bar slot cooldown
+                local slotStart, slotDuration = GetActionCooldown(slot)
+                if slotStart and slotStart > 0 and slotDuration and slotDuration > 1.5 then
+                    -- Has a real cooldown (>1.5s means not just GCD)
+                    return true
+                end
+            end
+        end
+        -- If no action bar slot found or no cooldown there, assume not on cooldown
+        return false
     end
     
     -- Check if it's just the GCD
