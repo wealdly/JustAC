@@ -178,19 +178,36 @@ function UIHealthBar.Update(addon)
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
     
-    -- Color gradient - try to calculate percentage even with secrets
+    -- Color gradient - calculate percentage from visual bar width
     local percent = nil
     
     -- Method 1: Direct calculation if not secret
     if not (issecretvalue and issecretvalue(health)) and not (issecretvalue and issecretvalue(maxHealth)) then
         percent = (health / maxHealth) * 100
-    else
-        -- Method 2: Try UnitPercentHealthFromGUID (may not be secret)
+    end
+    
+    -- Method 2: Try UnitPercentHealthFromGUID (may not be secret)
+    if not percent then
         local guid = UnitGUID("player")
         if guid then
             local pct = UnitPercentHealthFromGUID(guid)
             if pct and not (issecretvalue and issecretvalue(pct)) then
                 percent = pct
+            end
+        end
+    end
+    
+    -- Method 3: Calculate from visual bar dimensions (works even with secrets!)
+    if not percent then
+        local barTexture = statusBar:GetStatusBarTexture()
+        if barTexture then
+            local fillWidth = barTexture:GetWidth()
+            local totalWidth = statusBar:GetWidth()
+            if fillWidth and totalWidth and totalWidth > 0 then
+                -- Check if dimensions are secret
+                if not (issecretvalue and issecretvalue(fillWidth)) and not (issecretvalue and issecretvalue(totalWidth)) then
+                    percent = (fillWidth / totalWidth) * 100
+                end
             end
         end
     end
