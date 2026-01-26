@@ -68,8 +68,8 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Horizontal queue: calculated width, BAR_HEIGHT for height
         frame:SetSize(queueDimension, BAR_HEIGHT)
     else -- UP or DOWN
-        -- Vertical queue: BAR_HEIGHT for width, calculated height
-        frame:SetSize(BAR_HEIGHT, queueDimension)
+        -- Vertical queue: still horizontal bar, just positioned to the side
+        frame:SetSize(queueDimension, BAR_HEIGHT)
     end
     
     -- Position above position 1 icon, accounting for queue orientation and defensive position
@@ -87,11 +87,11 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Horizontal queue right-to-left
         frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -centerOffset, BAR_SPACING)
     elseif orientation == "DOWN" then
-        -- Vertical queue downward
-        frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, BAR_SPACING + centerOffset)
+        -- Vertical queue downward - bar is horizontal, positioned to the side
+        frame:SetPoint("LEFT", addon.mainFrame, "RIGHT", BAR_SPACING, -centerOffset)
     else -- UP
-        -- Vertical queue upward
-        frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -BAR_SPACING - centerOffset)
+        -- Vertical queue upward - bar is horizontal, positioned to the side
+        frame:SetPoint("LEFT", addon.mainFrame, "RIGHT", BAR_SPACING, centerOffset)
     end
     
     -- Create StatusBar (accepts secret values!)
@@ -126,15 +126,9 @@ function UIHealthBar.CreateHealthBar(addon)
         tick:SetTexture("Interface\\Buttons\\WHITE8X8")
         tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)  -- Grey
         
-        if orientation == "LEFT" or orientation == "RIGHT" then
-            -- Horizontal bar: vertical tick marks
-            tick:SetSize(1, BAR_HEIGHT)
-            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
-        else
-            -- Vertical bar: horizontal tick marks
-            tick:SetSize(BAR_HEIGHT, 1)
-            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
-        end
+        -- Health bar is always horizontal (even for vertical queues)
+        tick:SetSize(1, BAR_HEIGHT)
+        tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
         
         tickMarks[i] = tick
     end
