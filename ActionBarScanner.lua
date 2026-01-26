@@ -757,14 +757,31 @@ function ActionBarScanner.OnProcShow(spellID)
         activeProcs[spellID] = true
         procListDirty = true
         defensiveProcsListDirty = true
+        
+        -- Also track the override/display spell if different
+        local displayID = BlizzardAPI and BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID)
+        if displayID and displayID ~= spellID and displayID > 0 then
+            activeProcs[displayID] = true
+        end
     end
 end
 
 function ActionBarScanner.OnProcHide(spellID)
-    if spellID and activeProcs[spellID] then
-        activeProcs[spellID] = nil
-        procListDirty = true
-        defensiveProcsListDirty = true
+    if spellID and spellID > 0 then
+        -- Remove both the base ID and any override ID
+        local displayID = BlizzardAPI and BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID)
+        
+        if activeProcs[spellID] then
+            activeProcs[spellID] = nil
+            procListDirty = true
+            defensiveProcsListDirty = true
+        end
+        
+        if displayID and displayID ~= spellID and activeProcs[displayID] then
+            activeProcs[displayID] = nil
+            procListDirty = true
+            defensiveProcsListDirty = true
+        end
     end
 end
 

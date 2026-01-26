@@ -770,7 +770,7 @@ function JustAC:GetProccedDefensiveSpell()
     -- Check for any procced defensive spells from spellbook
     if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
         local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
-        if defensiveProcs then
+        if defensiveProcs and #defensiveProcs > 0 then
             for _, spellID in ipairs(defensiveProcs) do
                 if spellID and spellID > 0 then
                     -- Check if known and usable
