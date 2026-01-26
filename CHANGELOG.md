@@ -1,5 +1,40 @@
 # Changelog
 
+## [3.13] - 2026-01-25
+
+### Added
+- **Health Bar Display**: Optional compact health bar above main queue
+  - Green → Yellow → Red gradient based on health percentage
+  - Enable via Defensive Queue settings: "Show Health Bar"
+  - Supports edge-to-edge display for single icon mode, 25% inset for multiple icons
+  - New module: `UIHealthBar.lua` with StatusBar widget approach
+
+### Changed
+- **Position System Refactor**: Renamed defensive icon positions for clarity across orientations
+  - ABOVE → SIDE1 (health bar side)
+  - BELOW → SIDE2 (opposite perpendicular)
+  - LEFT → LEADING (opposite grab tab)
+  - Health bar always appears on SIDE1 regardless of queue orientation
+- **Animation System**: Removed blue tint from position 1 marching ants (all white except procs)
+- **Default Settings**: Updated profile defaults
+  - Tooltips in combat: enabled by default
+  - Defensive position: LEADING (opposite grab tab)
+  - Defensive visibility: always visible (not just in combat)
+  - First icon scale: standardized to 1.2 across all components
+
+### Fixed
+- **Defensive Icon Feature Parity**: Added missing features to match DPS queue
+  - Tooltip support (respects showTooltips/tooltipsInCombat settings)
+  - Custom hotkey override support (right-click to set for spells)
+  - Immediate hotkey update when override set (no reload needed)
+  - Fixed spacing when health bar toggled on/off
+- **Defensive Icon Visibility**: Fixed icon disappearing when changing queue orientation
+  - Now preserves state (id, isItem, isShown) across recreations
+- **Health Bar Sizing**: Fixed health bar not edge-to-edge in single icon mode
+  - Single icon: full width with 0 offset
+  - Multiple icons: 25% inset for visual balance
+- **Animation Cleanup**: Removed 370 lines of old unused animation functions from UIRenderer
+
 ## [3.12] - 2026-01-25
 
 ### Added
