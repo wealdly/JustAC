@@ -370,18 +370,27 @@ function SpellQueue.GetCurrentSpellQueue()
         
         -- Second pass: add procced spells first (IMPORTANT ones are already at front), then normal
         -- Note: addedSpellIDs already updated in first pass, no need to update again
+        -- Extra safety check: verify no duplicates slip through (shouldn't happen but failsafe)
         for i = 1, proccedCount do
             if spellCount >= maxIcons then break end
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = proccedDisplay[i]
+            local spellToAdd = proccedDisplay[i]
+            -- Paranoid duplicate check (should already be in addedSpellIDs)
+            if not recommendedSpells[1] or spellToAdd ~= recommendedSpells[1] then
+                spellCount = spellCount + 1
+                recommendedSpells[spellCount] = spellToAdd
+            end
         end
         
         -- Only process normal spells if we still have room
         if spellCount < maxIcons then
             for i = 1, normalCount do
                 if spellCount >= maxIcons then break end
-                spellCount = spellCount + 1
-                recommendedSpells[spellCount] = normalDisplay[i]
+                local spellToAdd = normalDisplay[i]
+                -- Paranoid duplicate check against position 1
+                if not recommendedSpells[1] or spellToAdd ~= recommendedSpells[1] then
+                    spellCount = spellCount + 1
+                    recommendedSpells[spellCount] = spellToAdd
+                end
             end
         end
     end
