@@ -31,10 +31,10 @@ MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
 SpellQueue.lua
+UIHealthBar.lua
 UIAnimations.lua
 UIFrameFactory.lua
 UIRenderer.lua
-UIHealthBar.lua
 UIManager.lua
 DebugCommands.lua
 Options.lua
