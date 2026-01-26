@@ -73,8 +73,11 @@ local function CreateDefensiveIcon(addon, profile)
     local firstIconCenter = actualIconSize / 2
     
     -- Health bar adds total height plus spacing on both sides when enabled
+    -- When health bar present: use healthBarOffset (includes spacing)
+    -- When no health bar: use regular icon spacing
     -- BAR_HEIGHT (4px) + BAR_SPACING top (4px) + BAR_SPACING bottom (4px) = 12px
     local healthBarOffset = (profile.defensives.showHealthBar and defPosition == "ABOVE") and 12 or 0
+    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
     
     -- Determine position 1's anchor point based on queue orientation
     -- LEFT queue: pos1 at frame LEFT edge
@@ -85,7 +88,7 @@ local function CreateDefensiveIcon(addon, profile)
     if queueOrientation == "LEFT" then
         -- Queue grows left-to-right, pos1 is at LEFT of frame
         if defPosition == "ABOVE" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, spacing + healthBarOffset)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, effectiveSpacing)
         elseif defPosition == "BELOW" then
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
         else -- LEFT
@@ -94,7 +97,7 @@ local function CreateDefensiveIcon(addon, profile)
     elseif queueOrientation == "RIGHT" then
         -- Queue grows right-to-left, pos1 is at RIGHT of frame
         if defPosition == "ABOVE" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, spacing + healthBarOffset)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, effectiveSpacing)
         elseif defPosition == "BELOW" then
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter, -spacing)
         else -- LEFT (means "before" pos1, so RIGHT side)
@@ -104,7 +107,7 @@ local function CreateDefensiveIcon(addon, profile)
         -- Queue grows bottom-to-top, pos1 is at BOTTOM of frame
         if defPosition == "ABOVE" then
             -- "Above" in vertical means before pos1, so BELOW (accounting for health bar)
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing - healthBarOffset)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -effectiveSpacing)
         elseif defPosition == "BELOW" then
             -- This doesn't make sense for UP orientation, treat as LEFT
             button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
@@ -114,7 +117,7 @@ local function CreateDefensiveIcon(addon, profile)
     elseif queueOrientation == "DOWN" then
         -- Queue grows top-to-bottom, pos1 is at TOP of frame
         if defPosition == "ABOVE" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing + healthBarOffset)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
         elseif defPosition == "BELOW" then
             -- "Below" means after queue end, so treat as LEFT
             button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
