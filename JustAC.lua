@@ -125,9 +125,9 @@ local defaults = {
         debugMode = false,
         isManualMode = false,
         showTooltips = true,
-        tooltipsInCombat = false,
+        tooltipsInCombat = true,
         focusEmphasis = true,
-        firstIconScale = 1.3,
+        firstIconScale = 1.2,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
@@ -141,14 +141,15 @@ local defaults = {
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
-            position = "LEFT",        -- LEFT, ABOVE, or BELOW the primary spell
+            position = "LEADING",     -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
+            showHealthBar = false,    -- Display compact health bar above main queue
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             petHealThreshold = 50,    -- Show pet heals when PET health drops below this
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
-            showOnlyInCombat = true,  -- false = always visible, true = only in combat with thresholds
+            showOnlyInCombat = false, -- false = always visible, true = only in combat with thresholds
         },
         hotkeyText = {
             font = "Friz Quadrata TT",   -- LibSharedMedia font name
@@ -276,6 +277,11 @@ function JustAC:OnEnable()
     self:CreateKeyPressDetector()
     
     UIManager.CreateSpellIcons(self)
+    
+    -- Create health bar if enabled (must be after CreateSpellIcons)
+    if UIManager.CreateHealthBar then
+        UIManager.CreateHealthBar(self)
+    end
     
     -- Match animation state to current combat status
     if UnitAffectingCombat("player") then
@@ -555,6 +561,14 @@ end
 
 function JustAC:RefreshConfig()
     -- Silently refresh on profile change
+    
+    -- Clear character-specific data on profile reset (blacklist, hotkey overrides)
+    -- This ensures a clean slate when resetting to defaults
+    if self.db and self.db.char then
+        self.db.char.blacklistedSpells = {}
+        self.db.char.hotkeyOverrides = {}
+    end
+    
     -- Reinitialize defensive spells if lists are empty (profile reset/change)
     self:InitializeDefensiveSpells()
     
@@ -669,12 +683,23 @@ function JustAC:OnHealthChanged(event, unit)
     -- Respond to player or pet health changes
     if unit ~= "player" and unit ~= "pet" then return end
     
+    -- Update health bar if enabled
+    if UIManager and UIManager.UpdateHealthBar then
+        UIManager.UpdateHealthBar(self)
+    end
+    
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then 
         if UIManager and UIManager.HideDefensiveIcon then
             UIManager.HideDefensiveIcon(self)
         end
         return 
+    end
+    
+    -- Debug: log defensive queue entry
+    if profile.debugMode then
+        self:DebugPrint("UpdateDefensiveQueue: selfHealSpells=" .. (#(profile.defensives.selfHealSpells or {}) or 0) .. 
+                       ", cooldownSpells=" .. (#(profile.defensives.cooldownSpells or {}) or 0))
     end
     
     -- Check if health API is accessible (12.0+ secret values may block this)
@@ -848,6 +873,11 @@ function JustAC:GetBestDefensiveSpell(spellList)
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
     
+    -- Debug: log entry into this function
+    if profile.debugMode then
+        self:DebugPrint("GetBestDefensiveSpell called with " .. #spellList .. " spells in list")
+    end
+    
     -- LibStub lookups are fast table accesses, no caching wrapper needed
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -881,15 +911,48 @@ function JustAC:GetBestDefensiveSpell(spellList)
     -- Second check: configured spell list (user priority order)
     for i, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
+            -- Debug: log every spell being checked
+            if self.db and self.db.profile and self.db.profile.debugMode then
+                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                local name = spellInfo and spellInfo.name or "Unknown"
+                self:DebugPrint(string.format("Checking defensive spell %d/%d: %s (%d)", i, #spellList, name, spellID))
+            end
+            
             -- Check if spell is known/available
             local isKnown = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
             
-            if isKnown then
+            if not isKnown then
+                if self.db and self.db.profile and self.db.profile.debugMode then
+                    local spellInfo = C_Spell.GetSpellInfo(spellID)
+                    local name = spellInfo and spellInfo.name or "Unknown"
+                    self:DebugPrint(string.format("  SKIP: %s - not known/available", name))
+                end
+            elseif isKnown then
                 -- Skip if buff already active (redundant) - pass isDefensiveCheck=true
                 local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, self.db.profile, true)
-                if not isRedundant then
+                if isRedundant then
+                    if self.db and self.db.profile and self.db.profile.debugMode then
+                        local spellInfo = C_Spell.GetSpellInfo(spellID)
+                        local name = spellInfo and spellInfo.name or "Unknown"
+                        self:DebugPrint(string.format("  SKIP: %s - redundant (buff active)", name))
+                    end
+                elseif not isRedundant then
                     -- Check if spell is on a real cooldown (not just GCD)
                     local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
+                    
+                    -- Debug: log cooldown check results
+                    if self.db and self.db.profile and self.db.profile.debugMode then
+                        local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+                        local spellInfo = C_Spell.GetSpellInfo(spellID)
+                        local name = spellInfo and spellInfo.name or "Unknown"
+                        if onCooldown then
+                            self:DebugPrint(string.format("  SKIP: %s - on cooldown (start=%s, duration=%s)", 
+                                name, tostring(start or 0), tostring(duration or 0)))
+                        else
+                            self:DebugPrint(string.format("  PASS: %s - onCooldown=false, start=%s, duration=%s", 
+                                name, tostring(start or 0), tostring(duration or 0)))
+                        end
+                    end
                     
                     if not onCooldown then
                         -- Prioritize procced spells immediately
@@ -1077,6 +1140,11 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey removed: " .. spellName)
+    end
+    
+    -- Refresh defensive icon if it's showing this spell
+    if self.defensiveIcon and self.defensiveIcon:IsShown() and self.defensiveIcon.spellID == spellID then
+        UIManager.ShowDefensiveIcon(self, spellID, false)
     end
     
     -- Refresh options panel if open
@@ -1483,6 +1551,7 @@ end
 
 function JustAC:UpdateFrameSize()
     if UIManager and UIManager.UpdateFrameSize then UIManager.UpdateFrameSize(self) end
+    if UIManager and UIManager.UpdateHealthBarSize then UIManager.UpdateHealthBarSize(self) end
     self:ForceUpdate()
 end
 

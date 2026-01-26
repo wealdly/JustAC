@@ -450,7 +450,7 @@ function Options.UpdateDefensivesOptions(addon)
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
         info = true, header = true, enabled = true, thresholdInfo = true,
-        behaviorHeader = true, showOnlyInCombat = true,
+        behaviorHeader = true, showOnlyInCombat = true, showHealthBar = true,
         position = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
@@ -551,7 +551,7 @@ local function CreateOptionsTable(addon)
                         min = 1.0, max = 2.0, step = 0.1,
                         order = 6,
                         width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.3 end,
+                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
                         set = function(_, val)
                             addon.db.profile.firstIconScale = val
                             addon:UpdateFrameSize()
@@ -972,15 +972,6 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
                             UIManager.CreateSpellIcons(addon)
-                            -- Also toggle health bar
-                            local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
-                            if UIHealthBar then
-                                if val and addon.db.profile.defensives.showHealthBar then
-                                    UIHealthBar.Initialize(addon, addon.db.profile)
-                                else
-                                    UIHealthBar.Cleanup()
-                                end
-                            end
                             addon:ForceUpdateAll()
                         end
                     },
@@ -1008,18 +999,39 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
+                    showHealthBar = {
+                        type = "toggle",
+                        name = "Show Health Bar",
+                        desc = "Display a compact health bar above the main queue (visual only, no percentage text)",
+                        order = 8,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showHealthBar end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showHealthBar = val
+                            if UIManager.DestroyHealthBar then UIManager.DestroyHealthBar() end
+                            if val and UIManager.CreateHealthBar then
+                                UIManager.CreateHealthBar(addon)
+                            end
+                            -- Recreate defensive icon to update spacing based on health bar state
+                            if UIManager.CreateSpellIcons then
+                                UIManager.CreateSpellIcons(addon)
+                            end
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
                     position = {
                         type = "select",
                         name = L["Icon Position"],
                         desc = L["Icon Position desc"],
-                        order = 8,
+                        order = 9,
                         width = "normal",
                         values = {
-                            LEFT = "Left",
-                            ABOVE = "Above",
-                            BELOW = "Below",
+                            SIDE1 = L["Side 1 (Health Bar)"],
+                            SIDE2 = L["Side 2"],
+                            LEADING = L["Leading Edge"],
                         },
-                        get = function() return addon.db.profile.defensives.position or "LEFT" end,
+                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,
                         set = function(_, val)
                             addon.db.profile.defensives.position = val
                             UIManager.CreateSpellIcons(addon)

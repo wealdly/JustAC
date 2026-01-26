@@ -2,13 +2,14 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Manager Module (Orchestrator)
 -- Coordinates between UIAnimations, UIFrameFactory, and UIRenderer modules
-local UIManager = LibStub:NewLibrary("JustAC-UIManager", 28)
+local UIManager = LibStub:NewLibrary("JustAC-UIManager", 29)
 if not UIManager then return end
 
 -- Import submodules
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local UIRenderer = LibStub("JustAC-UIRenderer", true)
+local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -150,5 +151,42 @@ end
 function UIManager.OpenHotkeyOverrideDialog(addon, spellID)
     if UIRenderer then
         UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
+    end
+end
+
+-- Re-export UIHealthBar functions
+function UIManager.CreateHealthBar(addon)
+    if UIHealthBar then
+        return UIHealthBar.CreateHealthBar(addon)
+    end
+end
+
+function UIManager.UpdateHealthBar(addon)
+    if UIHealthBar then
+        UIHealthBar.Update(addon)
+    end
+end
+
+function UIManager.UpdateHealthBarSize(addon)
+    if UIHealthBar then
+        UIHealthBar.UpdateSize(addon)
+    end
+end
+
+function UIManager.ShowHealthBar()
+    if UIHealthBar then
+        UIHealthBar.Show()
+    end
+end
+
+function UIManager.HideHealthBar()
+    if UIHealthBar then
+        UIHealthBar.Hide()
+    end
+end
+
+function UIManager.DestroyHealthBar()
+    if UIHealthBar then
+        UIHealthBar.Destroy()
     end
 end

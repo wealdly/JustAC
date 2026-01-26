@@ -780,13 +780,31 @@ end
 
 -- Check if a spell is on a real cooldown (longer than just GCD)
 -- Returns: true if on actual cooldown, false if only on GCD or off cooldown
+-- 12.0: When secrets block cooldown API, falls back to usability check
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
     
     -- Use sanitized values safe for comparisons
     local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not start or start == 0 or not duration or duration == 0 then
-        return false  -- Not on any cooldown
+    
+    -- If we got secrets (0, 0), try alternative detection methods
+    if (not start or start == 0) and (not duration or duration == 0) then
+        -- Method 1: Check if spell is usable - spells on cooldown are not usable
+        -- But we need to distinguish "on cooldown" from "not enough resources"
+        local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+        
+        -- If not usable AND it's not because of resources, it's likely on cooldown
+        -- This is imperfect but better than showing cooldown spells
+        if not isUsable and not notEnoughResources then
+            -- Not usable and not because of resources = probably on cooldown
+            -- One more check: make sure it's not on GCD only
+            if not BlizzardAPI.IsSpellOnGCD(spellID) then
+                return true
+            end
+        end
+        
+        -- If no action bar slot found or spell is usable, assume not on cooldown
+        return false
     end
     
     -- Check if it's just the GCD

@@ -134,7 +134,7 @@ L["Lock Panel desc"] = "Block dragging and right-click menus (tooltips still wor
 L["Debug Mode desc"] = "Show detailed addon information in chat for troubleshooting"
 L["Enable Defensive Suggestions desc"] = "Show a defensive spell suggestion when health is low. Procced abilities (Victory Rush, free heals) show at any health."
 L["Only In Combat desc"] = "ON: Hide out of combat (unless you have a proc).\nOFF: Always visible, show heals based on health."
-L["Icon Position desc"] = "Where to place the defensive icon relative to the spell queue"
+L["Icon Position desc"] = "Where to place the defensive icon relative to the spell queue (Side 1 = health bar side, Leading = opposite grab tab)"
 L["Custom Hotkey desc"] = "Text to display as hotkey (e.g., 'F1', 'Ctrl+Q', 'Mouse4')"
 L["Move up desc"] = "Move up in priority"
 L["Move down desc"] = "Move down in priority"
@@ -145,6 +145,9 @@ L["Restore Cooldowns Defaults desc"] = "Reset the cooldown list to default spell
 
 -- Additional sections
 L["Icon Position"] = "Icon Position"
+L["Side 1 (Health Bar)"] = "Side 1 (Health Bar)"
+L["Side 2"] = "Side 2"
+L["Leading Edge"] = "Leading Edge"
 L["Self-Heal Priority List"] = "Self-Heal Priority List (checked first)"
 L["Self-Heal Priority desc"] = "Quick heals/absorbs to weave into your rotation. First usable spell is suggested."
 L["Restore Class Defaults"] = "Restore Class Defaults"

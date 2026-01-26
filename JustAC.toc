@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 3.12
+## Version: 3.13
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface\\Icons\\Trade_Engineering
 ## SavedVariables: JustACDB
@@ -32,6 +32,7 @@ MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
 SpellQueue.lua
+UIHealthBar.lua
 UIAnimations.lua
 UIFrameFactory.lua
 UIRenderer.lua

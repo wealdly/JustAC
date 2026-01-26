@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module
 -- Contains all frame creation and layout functions
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 2)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 3)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -10,6 +10,7 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local LSM = LibStub("LibSharedMedia-3.0")
+local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 
 -- Hot path optimizations: cache frequently used functions
 local math_max = math.max
@@ -88,6 +89,16 @@ end
 local function CreateDefensiveIcon(addon, profile)
     local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
 
+    -- Preserve state before destroying old icon
+    local savedState = nil
+    if defensiveIcon and defensiveIcon.currentID then
+        savedState = {
+            id = defensiveIcon.currentID,
+            isItem = defensiveIcon.isItem,
+            isShown = defensiveIcon:IsShown(),
+        }
+    end
+
     if defensiveIcon then
         if StopDefensiveGlow then
             StopDefensiveGlow(defensiveIcon)
@@ -114,12 +125,22 @@ local function CreateDefensiveIcon(addon, profile)
 
     button:SetSize(actualIconSize, actualIconSize)
 
-    -- Position based on user preference (LEFT, ABOVE, BELOW) relative to position 1 icon
-    -- Must account for queue orientation since position 1 location changes
-    local defPosition = profile.defensives.position or "LEFT"
+    -- Position based on user preference (SIDE1, SIDE2, LEADING) relative to spell queue
+    -- SIDE1 = health bar side, SIDE2 = opposite perpendicular, LEADING = opposite grab tab
+    -- Position names are queue-relative and transform based on orientation
+    local defPosition = profile.defensives.position or "SIDE1"
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     local firstIconCenter = actualIconSize / 2
+
+    -- Health bar adds offset when enabled (always on SIDE1)
+    -- Calculate from UIHealthBar constants to stay in sync
+    local healthBarOffset = 0
+    if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
+        -- SIDE1 is always the health bar side, regardless of orientation
+        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
+    end
+    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
 
     -- Determine position 1's anchor point based on queue orientation
     -- LEFT queue: pos1 at frame LEFT edge
@@ -128,43 +149,52 @@ local function CreateDefensiveIcon(addon, profile)
     -- DOWN queue: pos1 at frame TOP edge
 
     if queueOrientation == "LEFT" then
-        -- Queue grows left-to-right, pos1 is at LEFT of frame
-        if defPosition == "ABOVE" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, spacing)
-        elseif defPosition == "BELOW" then
+        -- Queue grows left-to-right (grab tab on right)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = above (health bar side)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = below
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
-        else -- LEFT
+        else -- LEADING
+            -- LEADING = left side (opposite grab tab)
             button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, 0)
         end
     elseif queueOrientation == "RIGHT" then
-        -- Queue grows right-to-left, pos1 is at RIGHT of frame
-        if defPosition == "ABOVE" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, spacing)
-        elseif defPosition == "BELOW" then
+        -- Queue grows right-to-left (grab tab on left)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = above (health bar side)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = below
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter, -spacing)
-        else -- LEFT (means "before" pos1, so RIGHT side)
+        else -- LEADING
+            -- LEADING = right side (opposite grab tab)
             button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, 0)
         end
     elseif queueOrientation == "UP" then
-        -- Queue grows bottom-to-top, pos1 is at BOTTOM of frame
-        if defPosition == "ABOVE" then
-            -- "Above" in vertical means before pos1, so BELOW
+        -- Queue grows bottom-to-top (grab tab on top)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = right side (health bar side)
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter)
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = left side
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
+        else -- LEADING
+            -- LEADING = bottom side (opposite grab tab, after last icon)
             button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing)
-        elseif defPosition == "BELOW" then
-            -- This doesn't make sense for UP orientation, treat as LEFT
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
-        else -- LEFT
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
         end
     elseif queueOrientation == "DOWN" then
-        -- Queue grows top-to-bottom, pos1 is at TOP of frame
-        if defPosition == "ABOVE" then
+        -- Queue grows top-to-bottom (grab tab on bottom)
+        if defPosition == "SIDE1" then
+            -- SIDE1 = right side (health bar side)
+            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter)
+        elseif defPosition == "SIDE2" then
+            -- SIDE2 = left side
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+        else -- LEADING
+            -- LEADING = top side (opposite grab tab, after last icon)
             button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing)
-        elseif defPosition == "BELOW" then
-            -- "Below" means after queue end, so treat as LEFT
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
-        else -- LEFT
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
         end
     end
 
@@ -266,6 +296,68 @@ local function CreateDefensiveIcon(addon, profile)
     button.currentID = nil
     button.isItem = nil
 
+    -- Tooltip handling (same as main queue icons)
+    button:SetScript("OnEnter", function(self)
+        if addon.db and addon.db.profile and addon.db.profile.showTooltips then
+            local inCombat = UnitAffectingCombat("player")
+            local showTooltip = not inCombat or addon.db.profile.tooltipsInCombat
+
+            if showTooltip then
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+
+                if self.isItem and self.itemID then
+                    GameTooltip:SetItemByID(self.itemID)
+                elseif self.spellID then
+                    GameTooltip:SetSpellByID(self.spellID)
+                end
+
+                if self.spellID or (self.isItem and self.itemCastSpellID) then
+                    local lookupID = self.spellID or self.itemCastSpellID
+                    local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(lookupID) or ""
+                    local isOverride = self.spellID and addon:GetHotkeyOverride(self.spellID) ~= nil
+
+                    if hotkey and hotkey ~= "" then
+                        GameTooltip:AddLine(" ")
+                        if isOverride then
+                            GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
+                        else
+                            GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                        end
+                        GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+                    else
+                        GameTooltip:AddLine(" ")
+                        GameTooltip:AddLine("|cffff6666No hotkey found|r")
+                    end
+
+                    if not inCombat and self.spellID and not self.isItem then
+                        GameTooltip:AddLine(" ")
+                        GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
+                    end
+                end
+
+                GameTooltip:Show()
+            end
+        end
+    end)
+
+    button:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Right-click to set custom hotkey (same as main queue icons)
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if profile and profile.panelLocked then return end
+
+            -- Only allow hotkey override for spells, not items
+            if self.spellID and not self.isItem then
+                addon:OpenHotkeyOverrideDialog(self.spellID)
+            end
+        end
+    end)
+
     -- Create fade-in animation
     local fadeIn = button:CreateAnimationGroup()
     local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
@@ -306,6 +398,15 @@ local function CreateDefensiveIcon(addon, profile)
 
     defensiveIcon = button
     addon.defensiveIcon = button  -- Expose to addon for UIManager access
+
+    -- Restore saved state (if defensive icon was showing before recreation)
+    if savedState and savedState.isShown then
+        -- Use UIRenderer to restore the icon with proper animations
+        local UIRenderer = LibStub("JustAC-UIRenderer", true)
+        if UIRenderer and UIRenderer.ShowDefensiveIcon then
+            UIRenderer.ShowDefensiveIcon(addon, savedState.id, savedState.isItem, button)
+        end
+    end
 end
 
 function UIFrameFactory.CreateMainFrame(addon)
@@ -647,7 +748,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     if not button then return nil end
 
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.3
+    local firstIconScale = profile.firstIconScale or 1.2
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
 
@@ -902,7 +1003,7 @@ function UIFrameFactory.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.3
+    local firstIconScale = profile.firstIconScale or 1.2
     local orientation = profile.queueOrientation or "LEFT"
 
     UIFrameFactory.CreateSpellIcons(addon)
