@@ -56,8 +56,8 @@ function UIHealthBar.CreateHealthBar(addon)
     local queueDimension
     
     if maxIcons == 1 then
-        -- Single icon: span 50% of width (25% inset from each edge)
-        queueDimension = firstIconSize * 0.5
+        -- Single icon: full width edge-to-edge
+        queueDimension = firstIconSize
     else
         -- Multiple icons: 25% into icon 1 to 75% into last icon
         -- = 75% of firstIcon + middle icons + 75% of last icon
@@ -75,21 +75,21 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Position above position 1 icon, accounting for queue orientation and defensive position
     local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
-    -- Positioning offset: 25% into first icon
-    local offset = firstIconSize * 0.25
+    -- Positioning offset: 0 for single icon (edge-to-edge), 25% for multiple icons
+    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
     
     -- Position health bar based on queue orientation
     if orientation == "LEFT" then
-        -- Horizontal queue left-to-right: bar above, starting 25% into icon 1
+        -- Horizontal queue left-to-right: bar above, starting at offset from left
         frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", offset, BAR_SPACING)
     elseif orientation == "RIGHT" then
-        -- Horizontal queue right-to-left: bar above, ending 25% from icon edge
+        -- Horizontal queue right-to-left: bar above, ending at offset from right
         frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -offset, BAR_SPACING)
     elseif orientation == "DOWN" then
-        -- Vertical queue downward: vertical bar to the right, starting 25% down from top
+        -- Vertical queue downward: vertical bar to the right, starting at offset from top
         frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING, -offset)
     else -- UP
-        -- Vertical queue upward: vertical bar to the right, starting 25% up from bottom
+        -- Vertical queue upward: vertical bar to the right, starting at offset from bottom
         frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset)
     end
     
