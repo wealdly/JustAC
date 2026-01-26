@@ -85,7 +85,7 @@ local function CreateDefensiveIcon(addon, profile)
     
     -- Health bar adds offset when enabled, but location depends on queue orientation:
     -- LEFT/RIGHT queues: health bar is ABOVE (vertical offset, affects ABOVE position)
-    -- UP/DOWN queues: health bar is to RIGHT (doesn't affect LEFT/ABOVE/BELOW positions)
+    -- UP/DOWN queues: health bar is to RIGHT (horizontal offset, affects LEFT position)
     -- Calculate from UIHealthBar constants to stay in sync
     local healthBarOffset = 0
     if profile.defensives.showHealthBar and UIHealthBar then
@@ -93,8 +93,10 @@ local function CreateDefensiveIcon(addon, profile)
         if (queueOrientation == "LEFT" or queueOrientation == "RIGHT") and defPosition == "ABOVE" then
             -- Horizontal queues: health bar above, affects ABOVE position
             healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
+        elseif (queueOrientation == "UP" or queueOrientation == "DOWN") and defPosition == "LEFT" then
+            -- Vertical queues: health bar to right, LEFT position places icon on RIGHT side
+            healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
         end
-        -- Note: Vertical queues (UP/DOWN) have health bar to RIGHT, so LEFT position is NOT affected
     end
     local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
     
@@ -124,26 +126,26 @@ local function CreateDefensiveIcon(addon, profile)
         end
     elseif queueOrientation == "UP" then
         -- Queue grows bottom-to-top, pos1 is at BOTTOM of frame
-        -- Health bar is to the RIGHT (doesn't affect LEFT position)
+        -- Health bar is to the RIGHT (LEFT position places icon on RIGHT side)
         if defPosition == "ABOVE" then
             -- "Above" in vertical means before pos1, so BELOW
             button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -spacing)
         elseif defPosition == "BELOW" then
             -- "Below" means after last icon, at the TOP of the queue
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter, spacing)
-        else -- LEFT (to the left of pos1)
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter)
+        else -- LEFT (places icon on RIGHT side, accounting for health bar)
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter)
         end
     elseif queueOrientation == "DOWN" then
         -- Queue grows top-to-bottom, pos1 is at TOP of frame
-        -- Health bar is to the RIGHT (doesn't affect LEFT position)
+        -- Health bar is to the RIGHT (LEFT position places icon on RIGHT side)
         if defPosition == "ABOVE" then
             button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, spacing)
         elseif defPosition == "BELOW" then
             -- "Below" means after last icon, at the BOTTOM of the queue
             button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter, -spacing)
-        else -- LEFT (to the left of pos1)
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter)
+        else -- LEFT (places icon on RIGHT side, accounting for health bar)
+            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter)
         end
     end
 
