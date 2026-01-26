@@ -94,10 +94,6 @@ local QUEUE_ICON_BRIGHTNESS = 1.0
 local QUEUE_ICON_OPACITY = 1.0
 local CLICK_DARKEN_ALPHA = 0.4
 local CLICK_INSET_PIXELS = 2
-local HOTKEY_FONT_SCALE = 0.4
-local HOTKEY_MIN_FONT_SIZE = 8
-local HOTKEY_OFFSET_FIRST = -3
-local HOTKEY_OFFSET_QUEUE = -2
 
 local function GetQueueDesaturation()
     local profile = GetProfile()

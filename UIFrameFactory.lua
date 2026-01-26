@@ -15,15 +15,64 @@ local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
 
--- Visual constants (copied from UIManager.lua)
-local HOTKEY_FONT_SCALE = 0.4
-local HOTKEY_MIN_FONT_SIZE = 8
-local HOTKEY_OFFSET_FIRST = -3
-local HOTKEY_OFFSET_QUEUE = -2
-
 -- Local state
 local spellIcons = {}
 local defensiveIcon = nil
+
+-- Helper function to set Hotkey to profile variables
+local function ApplyHotkeyProfile(hotkeyText, button, isFirst)
+    local profile = GetProfile()
+
+    local db = profile.hotkeyText
+    if not db or not hotkeyText or not button then return end
+
+    -- Font
+    local fontPath = LSM:Fetch("font", db.font or "Friz Quadrata TT")
+    local fontSize = db.size or 12
+    local flags = db.flags or "OUTLINE"
+    local xOffset, yOffset
+
+    if isFirst then
+        xOffset = db.firstXOffset or -3
+        yOffset = db.firstYOffset or -3
+        local scale = profile.firstIconScale or 1.3
+        fontSize = fontSize * scale
+    else
+        xOffset = db.queueXOffset or -2
+        yOffset = db.queueYOffset or -2
+    end
+
+    hotkeyText:SetFont(fontPath, fontSize, flags)
+
+    -- Color
+    local c = db.color or { r = 1, g = 1, b = 1, a = 1 }
+    hotkeyText:SetTextColor(c.r, c.g, c.b, c.a)
+
+    -- Justification
+    hotkeyText:SetJustifyH("RIGHT")
+
+    -- Position
+    hotkeyText:ClearAllPoints()
+
+    local xOffset, yOffset
+    if isFirst then
+        xOffset = db.firstXOffset or -3
+        yOffset = db.firstYOffset or -3
+        local scale = profile.firstIconScale or 1.3
+        fontSize = fontSize * scale
+    else
+        xOffset = db.queueXOffset or -2
+        yOffset = db.queueYOffset or -2
+    end
+
+    hotkeyText:SetPoint(
+        db.anchorPoint or "TOPRIGHT", -- point on hotkey text
+        button,
+        db.anchor or "TOPRIGHT",      -- parent anchor
+        xOffset,
+        yOffset
+    )
+end
 
 -- Forward declaration for UIManager access
 local GetMasqueGroup, GetMasqueDefensiveGroup
@@ -191,12 +240,8 @@ local function CreateDefensiveIcon(addon, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
-    
+    ApplyHotkeyProfile(hotkeyText, button, true)
+
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
     
@@ -705,17 +750,8 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    
-    if isFirstIcon then
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
-    else
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_QUEUE, HOTKEY_OFFSET_QUEUE)
-    end
-    
+    ApplyHotkeyProfile(hotkeyText, button, isFirstIcon)
+
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
     
