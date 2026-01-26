@@ -173,11 +173,11 @@ end
 -- ALSO checks non-aura detection methods (forms, stealth, pets) which work in combat
 function RedundancyFilter.PruneExpiredActivations()
     if not next(inCombatActivations) then return end
-    
+
     -- Check each tracked activation
     for spellID, timestamp in pairs(inCombatActivations) do
         local shouldKeep = false
-        
+
         -- Method 1: Form/stance detection (always works - not secret)
         if FormCache then
             local targetFormID = FormCache.GetFormIDBySpellID(spellID)
@@ -188,7 +188,7 @@ function RedundancyFilter.PruneExpiredActivations()
                 end
             end
         end
-        
+
         -- Method 2: Stealth detection (always works - not secret)
         if not shouldKeep then
             local spellInfo = GetCachedSpellInfo(spellID)
@@ -201,14 +201,14 @@ function RedundancyFilter.PruneExpiredActivations()
                 end
             end
         end
-        
+
         -- Method 3: Pet detection (always works - not secret)
         if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
             if HasActivePet() then
                 shouldKeep = true  -- Pet still exists
             end
         end
-        
+
         -- Method 4: Mount detection (always works - not secret)
         if not shouldKeep then
             local spellInfo = GetCachedSpellInfo(spellID)
@@ -218,7 +218,7 @@ function RedundancyFilter.PruneExpiredActivations()
                 end
             end
         end
-        
+
         -- Method 5: Aura API (only when accessible, not blocked by secrets)
         if not shouldKeep then
             local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
@@ -238,7 +238,7 @@ function RedundancyFilter.PruneExpiredActivations()
                 shouldKeep = true
             end
         end
-        
+
         -- Remove if no detection method confirms it's still active
         if not shouldKeep then
             inCombatActivations[spellID] = nil
@@ -281,7 +281,7 @@ local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 local function RefreshAuraCache()
     local now = GetTime()
     local inCombat = UnitAffectingCombat("player")
-    
+
     -- If in combat and we have a recent trusted out-of-combat cache, use it
     -- But filter out any auras that have expired based on cached expiration times
     -- Throttle expiration checks to once per 5s (UNIT_AURA handles most invalidation)
@@ -303,28 +303,28 @@ local function RefreshAuraCache()
         end
         -- Trusted cache empty or fully expired, fall through to refresh
     end
-    
+
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
         return cachedAuras
     end
-    
+
     wipe(cachedAuras)
     cachedAuras.byID = {}
     cachedAuras.byName = {}
     cachedAuras.byIcon = {}
     cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
-    
+
     -- Modern API (11.0+)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 40 do
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end
-            
+
             -- Best-effort: If critical fields are secret, skip this aura but continue processing others
             -- auraInstanceID is documented as NeverSecret in 12.0, so we can always track it
             local spellIdIsSecret = issecretvalue and issecretvalue(auraData.spellId)
             local nameIsSecret = issecretvalue and issecretvalue(auraData.name)
-            
+
             if spellIdIsSecret or nameIsSecret then
                 -- Mark that we encountered secrets (cache may be incomplete)
                 cachedAuras.hasSecrets = true
@@ -355,11 +355,11 @@ local function RefreshAuraCache()
         for i = 1, 40 do
             local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
             if not ok or not name then break end
-            
+
             -- Best-effort: skip secret auras but continue processing others
             local spellIdIsSecret = issecretvalue and issecretvalue(spellId)
             local nameIsSecret = issecretvalue and issecretvalue(name)
-            
+
             if spellIdIsSecret or nameIsSecret then
                 cachedAuras.hasSecrets = true
                 -- Continue to next aura - don't break!
@@ -383,9 +383,9 @@ local function RefreshAuraCache()
             end
         end
     end
-    
+
     lastAuraCheck = now
-    
+
     -- If out of combat and we got clean data (no secrets), save as trusted cache
     if not inCombat and not cachedAuras.hasSecrets then
         -- Deep copy to trusted cache
@@ -397,7 +397,7 @@ local function RefreshAuraCache()
         for k, v in pairs(cachedAuras.byID) do trustedOutOfCombatCache.byID[k] = v end
         for k, v in pairs(cachedAuras.byName) do trustedOutOfCombatCache.byName[k] = v end
         for k, v in pairs(cachedAuras.byIcon) do trustedOutOfCombatCache.byIcon[k] = v end
-        for k, v in pairs(cachedAuras.auraInfo) do 
+        for k, v in pairs(cachedAuras.auraInfo) do
             trustedOutOfCombatCache.auraInfo[k] = {
                 duration = v.duration,
                 expirationTime = v.expirationTime,
@@ -406,17 +406,17 @@ local function RefreshAuraCache()
         end
         lastTrustedCacheTime = now
     end
-    
+
     return cachedAuras
 end
 
 -- Check if player has a buff by spell ID
 local function HasBuffBySpellID(spellID)
     if not spellID then return false end
-    
+
     -- Check in-combat activation tracking first (mirrors proc detection)
     if inCombatActivations[spellID] then return true end
-    
+
     -- Then check cached aura data
     local auras = RefreshAuraCache()
     return auras.byID and auras.byID[spellID]
@@ -434,16 +434,16 @@ end
 local function IsInPandemicWindow(spellID)
     local info = GetAuraInfo(spellID)
     if not info then return true end  -- No aura = definitely allow
-    
+
     local duration = info.duration
     local expirationTime = info.expirationTime
-    
+
     -- Auras with 0 duration are permanent/passive - don't consider them for refresh
     if duration <= 0 then return false end
-    
+
     local now = GetTime()
     local remaining = expirationTime - now
-    
+
     -- Allow refresh if remaining time is less than pandemic threshold
     local pandemicTime = duration * PANDEMIC_THRESHOLD
     return remaining <= pandemicTime
@@ -464,41 +464,41 @@ end
 -- Returns: isAura, isPersonalAura, isUniqueAura
 local function IsAuraSpell(spellID)
     if not spellID then return false, false, false end
-    
+
     -- Check our known unique aura table first (fast path)
     if UNIQUE_AURA_SPELLS[spellID] then
         local isPersonal = PERSONAL_AURA_SPELLS[spellID] or false
         return true, isPersonal, true
     end
-    
+
     -- Check personal auras
     if PERSONAL_AURA_SPELLS[spellID] then
         return true, true, false
     end
-    
+
     -- Fallback: Name-based detection for unknown spells
     -- Forms, Stances, Presences, Aspects are typically unique self-auras
     local spellInfo = GetCachedSpellInfo(spellID)
     if spellInfo and spellInfo.name then
         local name = spellInfo.name
-        if name:match("Form$") or name:match("Stance$") or 
+        if name:match("Form$") or name:match("Stance$") or
            name:match("Presence$") or name:match("Aspect of") then
             return true, true, true  -- Treat as unique personal aura
         end
     end
-    
+
     return false, false, false
 end
 
 -- Check if spell is a pet-related ability (native table + name pattern)
 local function IsPetSpell(spellID)
     if not spellID then return false end
-    
+
     -- Check known pet summon table
     if PET_SUMMON_SPELLS[spellID] then
         return true
     end
-    
+
     -- Name pattern fallback handled by IsPetSummonSpell below
     return false
 end
@@ -508,43 +508,43 @@ end
 -- Uses name-based heuristics since we don't have LibPlayerSpells flags
 local function IsDPSRelevant(spellID)
     if not spellID then return false end
-    
+
     -- Known raid buffs: Always hide when can't check if active
     if RAID_BUFF_SPELLS[spellID] then
         return false
     end
-    
+
     -- Known pet summons: Hide when can't check if pet exists
     if PET_SUMMON_SPELLS[spellID] then
         return false
     end
-    
+
     -- Known unique auras (forms/stances): Hide when can't check if active
     if UNIQUE_AURA_SPELLS[spellID] then
         return false
     end
-    
+
     -- Get spell info for name-based filtering
     local spellInfo = GetCachedSpellInfo(spellID)
     if not spellInfo or not spellInfo.name then
         return true  -- Unknown spell, fail-open
     end
-    
+
     local name = spellInfo.name
-    
+
     -- Filter out known utility spell patterns when aura API blocked
     if name:match("Form$") or name:match("Stance$") or name:match("Presence$") then
         return false  -- Forms/stances should not show
     end
-    
+
     if name:match("^Summon") or name:match("^Call Pet") then
         return false  -- Pet summons
     end
-    
+
     if name:match("Revive") and name:match("Pet") then
         return false  -- Pet revive
     end
-    
+
     -- Default: Include in queue (fail-open for combat relevance)
     return true
 end
@@ -565,12 +565,12 @@ local function IsPetAlive()
     -- UnitIsDead returns true if unit is dead, false if alive
     local ok, isDead = pcall(UnitIsDead, "pet")
     if not ok then return true end  -- Fail-safe: assume alive
-    
+
     -- 12.0: Check if result is secret - fail-open (assume alive if can't determine)
     if issecretvalue and issecretvalue(isDead) then
         return true  -- Fail-open: assume pet is alive
     end
-    
+
     return not isDead
 end
 
@@ -581,15 +581,15 @@ end
 local function IsFormChangeSpell(spellID)
     if not spellID then return false end
     if not FormCache then return false end
-    
+
     -- Fast path: check direct spell-to-form mapping first
     local targetFormID = FormCache.GetFormIDBySpellID(spellID)
     if targetFormID then return true end
-    
+
     -- Fallback: check by name patterns (Form, Stance, Presence, etc.)
     local spellInfo = GetCachedSpellInfo(spellID)
     if not spellInfo or not spellInfo.name then return false end
-    
+
     local name = spellInfo.name
     return name:match("Form$") or name:match("Stance$") or name:match("Presence$")
 end
@@ -601,7 +601,7 @@ end
 -- Detect if spell is a pet summon based on name patterns
 local function IsPetSummonSpell(spellName)
     if not spellName then return false end
-    
+
     -- Common pet summon patterns
     local patterns = {
         "^Call Pet",
@@ -611,7 +611,7 @@ local function IsPetSummonSpell(spellName)
         "Dire Beast",
         "Feral Spirit",
     }
-    
+
     for _, pattern in ipairs(patterns) do
         if spellName:find(pattern) then
             return true
@@ -703,14 +703,14 @@ end
 -- Returns true if main-hand has active enchant, false otherwise
 local function HasActiveWeaponEnchant()
     if not GetWeaponEnchantInfo then return false end
-    
+
     local hasMainHand, mainHandExpiration = GetWeaponEnchantInfo()
-    
+
     -- Main-hand enchant required
     -- If missing or expiring soon, allow refresh
     if not hasMainHand then return false end
     if mainHandExpiration and mainHandExpiration < WEAPON_ENCHANT_REFRESH_THRESHOLD then return false end
-    
+
     return true
 end
 
@@ -721,10 +721,9 @@ end
 
 function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
-    if InCombatLockdown() or UnitIsDeadOrGhost("player") then return false end
-    
+
     local debugMode = GetDebugMode()
-    
+
     -- 1. FORM/STANCE REDUNDANCY (check FIRST - unaffected by 12.0 secrets)
     -- Stance bar APIs are client-side UI state, always accessible
     -- If this is a form spell and we're already in that form, skip it
@@ -766,16 +765,16 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             end
         end
     end
-    
+
     -- NOTE: Cooldown filtering moved to SpellQueue.IsSpellUsable() which uses a 2s threshold
     -- Position 1 doesn't get usability filtering (shows what Blizzard recommends)
     -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
-    
+
     -- Check if aura API is accessible (12.0+ secret values may block this)
     -- Test both API availability check AND cache refresh for secrets
     local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
     local auras = RefreshAuraCache()
-    
+
     -- If aura API blocked OR cache detected secrets, use whitelist: only show DPS-relevant spells
     -- EXCEPTION: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
     if auraAPIBlocked or (auras and auras.hasSecrets) then
@@ -798,16 +797,16 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             return false  -- Show DPS-relevant spells (skip aura checks since API blocked)
         end
     end
-    
+
     local spellInfo = GetCachedSpellInfo(spellID)
     if not spellInfo or not spellInfo.name then return false end
-    
+
     local spellName = spellInfo.name
     local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
-    
+
     -- Note: Removed verbose "Checking redundancy" debug output - was extremely spammy
     -- Use /jac test or /jac find for diagnostics instead
-    
+
     -- 3. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
     -- Many abilities can stack (Immolation Aura, etc.) - trust Assisted Combat's judgment
@@ -817,7 +816,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         if isUniqueAura then
             -- Check if buff is active
             local hasBuff = HasBuffBySpellID(spellID) or HasBuffByName(spellName)
-            
+
             if hasBuff then
                 -- Check pandemic window - allow refresh if aura is about to expire
                 if IsInPandemicWindow(spellID) then
@@ -826,7 +825,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                     end
                     return false  -- Allow the cast
                 end
-                
+
                 if debugMode then
                     print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Unique aura already active (not in pandemic window)")
                 end
@@ -840,7 +839,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             end
         end
     end
-    
+
     -- 4. PET SPELL REDUNDANCY
     -- Revive Pet: redundant if pet is ALIVE (can't revive alive pet)
     -- Summon Pet: redundant if pet EXISTS (alive or dead - already have a pet)
@@ -863,7 +862,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             return true
         end
     end
-    
+
     -- 5. STEALTH REDUNDANCY
     -- Use IsStealthed() API - more reliable than buff checking
     if IsStealthSpell(spellName) then
@@ -874,12 +873,12 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             return true
         end
     end
-    
+
     -- 6. MOUNT REDUNDANCY
     -- Use IsMounted() API
     if SafeIsMounted() then
         -- Check if this is a mount spell (avoid false positives)
-        if spellInfo.name:find("Mount") or 
+        if spellInfo.name:find("Mount") or
            (C_MountJournal and C_MountJournal.GetMountFromSpell and C_MountJournal.GetMountFromSpell(spellID)) then
             if debugMode then
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
@@ -887,7 +886,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             return true
         end
     end
-    
+
     -- 7. ROGUE POISON REDUNDANCY
     -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
     -- If both slots are filled, all poison suggestions are redundant
@@ -899,7 +898,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             return true
         end
     end
-    
+
     -- 8. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
     -- If this is a Shaman imbue spell and weapon already has active enchant, skip it
     -- Only check if enchants have sufficient time remaining (>10s)
@@ -915,7 +914,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             end
         end
     end
-    
+
     -- Note: Removed verbose "NOT REDUNDANT" debug output - was extremely spammy
     return false
 end
@@ -930,10 +929,10 @@ function RedundancyFilter.GetSpellClassification(spellID)
     if not spellID then
         return { spellID = nil, known = false }
     end
-    
+
     local spellInfo = GetCachedSpellInfo(spellID)
     local isAura, isPersonal, isUnique = IsAuraSpell(spellID)
-    
+
     return {
         spellID = spellID,
         name = spellInfo and spellInfo.name or "Unknown",
