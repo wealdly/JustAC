@@ -458,62 +458,15 @@ function DebugCommands.DefensiveDiagnostics(addon)
     local defSettings = profile.defensives or {}
     addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
     addon:Print("  Show Only In Combat: " .. (defSettings.showOnlyInCombat and "YES" or "NO"))
-    addon:Print("  Show Health Bar: " .. (defSettings.showHealthBar and "|cff00ff00YES|r" or "NO"))
     addon:Print("  Position: " .. (defSettings.position or "LEFT"))
     
-    -- Check health bar status
-    local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+    -- Health Bar (module removed/abandoned)
     addon:Print("")
     addon:Print("Health Bar:")
-    if UIHealthBar then
-        addon:Print("  Module: |cff00ff00LOADED|r")
-        local frame = UIHealthBar.GetFrame and UIHealthBar.GetFrame()
-        if frame then
-            addon:Print("  Frame: |cff00ff00EXISTS|r")
-            addon:Print("  Visible: " .. (frame:IsShown() and "|cff00ff00YES|r" or "|cffff0000NO|r"))
-            addon:Print("  Width: " .. string.format("%.1f", frame:GetWidth() or 0))
-            addon:Print("  MaxFill: " .. string.format("%.1f", frame.maxFillWidth or 0))
-        else
-            addon:Print("  Frame: |cffff0000NOT CREATED|r")
-        end
-        
-        -- Get debug info
-        if UIHealthBar.GetDebugInfo then
-            local info = UIHealthBar.GetDebugInfo()
-            addon:Print("  Player Bar Found: " .. (info.playerBarFound and "|cff00ff00YES|r" or "|cffff0000NO|r"))
-            
-            local function safeFmt(p)
-                if p == nil then return "nil" end
-                if issecretvalue and issecretvalue(p) then return "|cffff0000SECRET|r" end
-                if type(p) == "number" then return string.format("%.1f%%", p) end
-                return tostring(p)
-            end
+    addon:Print("  Status: |cffff0000ABANDONED|r")
+    addon:Print("  Module: |cffff0000NOT LOADED|r")
+    
 
-            addon:Print("  Health %: " .. safeFmt(info.healthPercent))
-            addon:Print("  Method: |cff00ff00" .. (info.method or "unknown") .. "|r")
-
-            addon:Print("  Percent Shown: " .. (info.lastPercentNumeric and "|cff00ff00YES|r" or "NO"))
-            if info.lastPercentText then
-                addon:Print("  Last Percent Text: " .. tostring(info.lastPercentText))
-            end
-            
-            -- Show raw values for debugging (converted to strings to avoid secrets)
-            if info.rawValue ~= nil then
-                local rawValStr = (issecretvalue and issecretvalue(info.rawValue)) and "|cffff0000(SECRET)|r" or tostring(info.rawValue)
-                local rawMaxStr = (issecretvalue and issecretvalue(info.rawMax)) and "|cffff0000(SECRET)|r" or tostring(info.rawMax)
-                addon:Print("  Raw Value: " .. rawValStr)
-                addon:Print("  Raw Max: " .. rawMaxStr)
-            end
-            if info.barLeft then
-                addon:Print("  Bar Left/Right: " .. string.format("%.1f / %.1f", info.barLeft, info.barRight or 0))
-                addon:Print("  Tex Right: " .. string.format("%.1f", info.texRight or 0))
-            end
-            addon:Print("  Fill Textured: " .. (info.fillIsTextured and "|cff00ff00YES|r" or "NO"))
-            addon:Print("  Fill Anchored To Source: " .. (info.fillAnchoredToSource and "|cff00ff00YES|r" or "NO"))
-        end
-    else
-        addon:Print("  Module: |cffff0000NOT LOADED|r")
-    end
     
     -- Check defensive icon status
     addon:Print("")
