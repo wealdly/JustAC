@@ -837,6 +837,10 @@ local function CreateOptionsTable(addon)
                             if val and UIManager.CreateHealthBar then
                                 UIManager.CreateHealthBar(addon)
                             end
+                            -- Recreate defensive icon to update spacing based on health bar state
+                            if UIManager.CreateSpellIcons then
+                                UIManager.CreateSpellIcons(addon)
+                            end
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
