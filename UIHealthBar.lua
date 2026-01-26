@@ -15,7 +15,7 @@ local GetTime = GetTime
 
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
-local BAR_HEIGHT = 3          -- Compact height in pixels
+local BAR_HEIGHT = 5          -- Compact height in pixels
 local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
 -- Color gradient: Green → Yellow → Red
@@ -178,10 +178,25 @@ function UIHealthBar.Update(addon)
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
     
-    -- Color gradient (only if we can calculate percentage)
-    -- If values are secret, skip color update (bar will keep last color)
+    -- Color gradient - try to calculate percentage even with secrets
+    local percent = nil
+    
+    -- Method 1: Direct calculation if not secret
     if not (issecretvalue and issecretvalue(health)) and not (issecretvalue and issecretvalue(maxHealth)) then
-        local percent = (health / maxHealth) * 100
+        percent = (health / maxHealth) * 100
+    else
+        -- Method 2: Try UnitPercentHealthFromGUID (may not be secret)
+        local guid = UnitGUID("player")
+        if guid then
+            local pct = UnitPercentHealthFromGUID(guid)
+            if pct and not (issecretvalue and issecretvalue(pct)) then
+                percent = pct
+            end
+        end
+    end
+    
+    -- Update color if we got a valid percentage
+    if percent then
         local color = GetHealthColor(percent)
         statusBar:SetStatusBarColor(color.r, color.g, color.b, 1.0)
     end
