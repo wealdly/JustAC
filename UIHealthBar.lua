@@ -85,8 +85,9 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Single icon: span full width
         queueDimension = firstIconSize
     else
-        -- Multiple icons: center of icon 1 to far edge of last icon
-        queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
+        -- Multiple icons: center of icon 1 to center of last icon
+        -- Distance = (firstIconSize - iconSize)/2 + (maxIcons - 1)*(iconSize + iconSpacing)
+        queueDimension = (firstIconSize - iconSize) / 2 + (maxIcons - 1) * (iconSize + iconSpacing)
     end
     
     if orientation == "LEFT" or orientation == "RIGHT" then
@@ -224,8 +225,8 @@ function UIHealthBar.UpdateSize(addon)
         -- Single icon: span full width
         queueDimension = firstIconSize
     else
-        -- Multiple icons: center of icon 1 to far edge of last icon
-        queueDimension = (firstIconSize / 2) + ((maxIcons - 1) * (iconSize + iconSpacing))
+        -- Multiple icons: center of icon 1 to center of last icon
+        queueDimension = (firstIconSize - iconSize) / 2 + (maxIcons - 1) * (iconSize + iconSpacing)
     end
     
     if orientation == "LEFT" or orientation == "RIGHT" then
