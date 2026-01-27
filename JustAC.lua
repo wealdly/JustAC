@@ -157,6 +157,7 @@ local defaults = {
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
             showOnlyInCombat = false, -- false = always visible, true = only in combat with thresholds
+            alwaysShowDefensive = false, -- true = show defensive queue even at full health (shows procs/off-cooldown spells)
         },
         hotkeyText = {
             font = "Friz Quadrata TT",   -- LibSharedMedia font name
@@ -1148,6 +1149,28 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
     
     -- "Only In Combat" check - if out of combat and no procs, return what we have (procs only)
     if showOnlyInCombat and not inCombat then
+        return results
+    end
+    
+    -- "Always Show" check - if enabled and we have room, add available spells regardless of health
+    -- This shows off-cooldown defensives even at full health (useful for proactive play)
+    local alwaysShow = profile.defensives.alwaysShowDefensive
+    if alwaysShow and not isLow and not isCritical and #results < maxIcons then
+        -- Add self-heals first (typically shorter cooldowns)
+        local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+        for _, entry in ipairs(spells) do
+            results[#results + 1] = entry
+            alreadyAdded[entry.spellID] = true
+        end
+        -- Then cooldowns if still have room
+        if #results < maxIcons then
+            local cooldowns = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            for _, entry in ipairs(cooldowns) do
+                results[#results + 1] = entry
+                alreadyAdded[entry.spellID] = true
+            end
+        end
+        -- Return early - we've added what's available at full health
         return results
     end
     

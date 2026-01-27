@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module v6
 -- Changed: Fixed cooldown overlay updates - always pass secret cooldowns through (was only updating once)
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 6)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 7)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -26,6 +26,15 @@ local math_max = math.max
 local math_floor = math.floor
 local string_upper = string.upper
 local string_gsub = string.gsub
+
+-- Helper: Check if spell is procced using both BlizzardAPI and ActionBarScanner
+local function IsSpellProcced(spellID)
+    if BlizzardAPI.IsSpellProcced(spellID) then return true end
+    if ActionBarScanner and ActionBarScanner.IsSpellProcced then
+        return ActionBarScanner.IsSpellProcced(spellID)
+    end
+    return false
+end
 
 -- Shared hotkey normalization helper (avoids duplicate code and reduces hotpath overhead)
 -- Converts abbreviated keybinds to full format: S-5 → SHIFT-5, C-5 → CTRL-5, etc.
@@ -188,16 +197,14 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         end
     end
     
-    -- Update hotkey (for items, find by scanning action bars)
+    -- Find hotkey for item by scanning action bars
     local hotkey = ""
     if isItem then
-        -- Find hotkey for item on action bar
         for slot = 1, 180 do
             local actionType, actionID = GetActionInfo(slot)
             if actionType == "item" and actionID == id then
                 hotkey = GetBindingKey("ACTIONBUTTON" .. slot) or ""
                 if hotkey == "" then
-                    -- Check bonus bar bindings
                     local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
                     local buttonIndex = ((slot - 1) % 12) + 1
                     hotkey = GetBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
@@ -225,16 +232,23 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.hotkeyText:SetText(hotkey)
     end
     
-    -- Check if defensive spell has an active proc (only for spells, not items)
-    -- Use centralized wrapper that handles secret values
-    local isProc = not isItem and BlizzardAPI.IsSpellProcced(id) or false
     local isInCombat = UnitAffectingCombat("player")
     
-    -- Start glow only on slot 1 (green marching ants, or gold proc if spell is proc'd)
+    -- Start green crawl glow on slot 1
     if showGlow then
-        UIAnimations.StartDefensiveGlow(defensiveIcon, isProc, isInCombat)
+        UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
     else
         UIAnimations.StopDefensiveGlow(defensiveIcon)
+    end
+    
+    -- Check if defensive spell has an active proc (only for spells, not items)
+    local isProc = not isItem and IsSpellProcced(id)
+    
+    -- Show custom proc glow if spell is procced
+    if isProc then
+        UIAnimations.ShowProcGlow(defensiveIcon)
+    else
+        UIAnimations.HideProcGlow(defensiveIcon)
     end
     
     -- Show with fade-in animation if not already visible
@@ -259,6 +273,7 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
     
     if defensiveIcon:IsShown() or defensiveIcon.currentID then
         UIAnimations.StopDefensiveGlow(defensiveIcon)
+        UIAnimations.HideProcGlow(defensiveIcon)
         defensiveIcon.spellID = nil
         defensiveIcon.itemID = nil
         defensiveIcon.itemCastSpellID = nil
@@ -428,36 +443,44 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local gcdStart, gcdDuration = BlizzardAPI.GetGCDInfo()
     local durTol = 0.05   -- tolerance for duration comparison when checking for long cooldowns
 
-    -- When GCD is active, propagate GCD swipe to all icons lacking their own longer cooldowns
-    -- The GCD is global - if ANY ability triggers it, ALL GCD-bound abilities share it
-    -- Previously required anyIconOnGCD=true, but that detection can fail for instant-cast abilities
-    -- whose own cooldown returns 0 even when the GCD is active
+    -- When GCD is active, apply GCD to icons that don't have their own longer cooldown
+    -- This uses the same cooldown frame as spell cooldowns - simpler and more reliable
+    -- Icons with long cooldowns keep their spell cooldown, icons without get GCD applied
     if gcdDuration and gcdDuration > 0 then
         local gcdOffset = math.min(math.max(gcdDuration * 0.1, 0.1), 0.2)
         for i = 1, maxIcons do
             local cd = iconCooldowns[i]
-            if cd then
-                -- If icon has its own cooldown significantly longer than GCD, skip (off-GCD ability or long CD)
+            local icon = spellIconsRef[i]
+            if cd and icon then
+                -- Check if icon has its own cooldown longer than GCD
+                -- Check BOTH current API data AND currently displayed cooldown (prevents flicker on cast)
                 local hasLongCooldown = false
-                if cd.cmpDuration and cd.cmpDuration > (gcdDuration + durTol) then
+                local rawDuration = cd.rawDuration
+                local rawDurationIsSecret = issecretvalue and issecretvalue(rawDuration)
+                
+                -- Check current API data
+                if rawDuration and not rawDurationIsSecret and rawDuration > (gcdDuration + durTol) then
                     hasLongCooldown = true
-                else
-                    local rawDuration = cd.rawDuration
-                    local rawDurationIsSecret = issecretvalue and issecretvalue(rawDuration)
-                    if rawDuration and not rawDurationIsSecret and rawDuration > (gcdDuration + durTol) then
+                elseif cd.cmpDuration and cd.cmpDuration > (gcdDuration + durTol) then
+                    hasLongCooldown = true
+                end
+                
+                -- Also check currently displayed cooldown (prevents overwriting during brief API gaps)
+                if not hasLongCooldown and icon._lastCooldownDuration then
+                    local displayedDuration = icon._lastCooldownDuration
+                    if not (issecretvalue and issecretvalue(displayedDuration)) and displayedDuration > (gcdDuration + durTol) then
                         hasLongCooldown = true
                     end
                 end
+                
                 if not hasLongCooldown then
-                    -- Propagate GCD start/duration (apply early-end offset so swipe ends slightly before GCD)
+                    -- No long cooldown: apply GCD to this icon's cooldown data
                     cd.rawStart = gcdStart
                     cd.rawDuration = math.max(gcdDuration - gcdOffset, 0)
-                    -- Debug output removed - was extremely spammy (fires every frame during GCD)
-                    -- Use /jac test or /jac modules for diagnostics instead
                 end
+                -- Icons with long cooldowns keep their original cd.rawStart/rawDuration
             end
         end
-        -- Note: Defensive icon GCD is handled in the dedicated section after DPS icon updates
     end
 
     -- Update individual icons (always do this part)
@@ -548,16 +571,25 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Check if spell has an active proc (overlay)
-                -- Use centralized wrapper that handles secret values
-                local isProc = BlizzardAPI.IsSpellProcced(spellID)
+                local isProc = IsSpellProcced(spellID)
 
-                if i == 1 and focusEmphasis then
-                    local style = isProc and "PROC" or "ASSISTED"
-                    UIAnimations.StartAssistedGlow(icon, style, isInCombat, i)
-                elseif isProc then
-                    UIAnimations.StartAssistedGlow(icon, "PROC", isInCombat, i)
-                else
+                -- Show blue/white assisted crawl on position 1 if focus emphasis enabled
+                local shouldShowAssisted = (i == 1 and focusEmphasis)
+                if shouldShowAssisted and not icon.hasAssistedGlow then
+                    UIAnimations.StartAssistedGlow(icon, isInCombat)
+                    icon.hasAssistedGlow = true
+                elseif not shouldShowAssisted and icon.hasAssistedGlow then
                     UIAnimations.StopAssistedGlow(icon)
+                    icon.hasAssistedGlow = false
+                end
+                
+                -- Show custom proc glow if spell is procced (any position)
+                if isProc and not icon.hasProcGlow then
+                    UIAnimations.ShowProcGlow(icon)
+                    icon.hasProcGlow = true
+                elseif not isProc and icon.hasProcGlow then
+                    UIAnimations.HideProcGlow(icon)
+                    icon.hasProcGlow = false
                 end
 
                 -- Hotkey lookup optimization: only query ActionBarScanner when action bars change
@@ -595,37 +627,22 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.hotkeyText:SetText(hotkey)
                 end
                 
-                -- Out-of-range indicator
-                if hotkey ~= "" and C_Spell_IsSpellInRange then
-                    local inRange = C_Spell_IsSpellInRange(spellID)
-                    if inRange == false then
-                        -- Out of range - red hotkey text (Blizzard standard)
-                        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
-                    else
-                        -- In range or no target - white hotkey text
-                        icon.hotkeyText:SetTextColor(1, 1, 1, 1)
-                    end
-                else
-                    -- No hotkey or API unavailable - default white
-                    icon.hotkeyText:SetTextColor(1, 1, 1, 1)
-                end
+                -- Out-of-range indicator: red text if out of range, white otherwise
+                local inRange = hotkey ~= "" and C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(spellID)
+                icon.hotkeyText:SetTextColor(inRange == false and 1 or 1, inRange == false and 0 or 1, inRange == false and 0 or 1, 1)
                 
-                -- Update icon color/desaturation based on:
-                -- 1. Channeling (grey out all icons to emphasize not interrupting)
-                -- 2. Queue position (fade setting for positions 2+)
-                -- 3. Spell usability (blue tint when not enough resources, Blizzard standard)
+                -- Icon appearance: grey when channeling, blue tint when not enough resources, fade based on position
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
                 
                 if isChanneling then
-                    -- Channeling - grey out entire queue to emphasize not interrupting
                     iconTexture:SetDesaturation(1.0)
-                    iconTexture:SetVertexColor(1, 1, 1)  -- Reset color
+                    iconTexture:SetVertexColor(1, 1, 1)
                 elseif isInCombat then
                     local isUsable, notEnoughResources = IsSpellUsable(spellID)
                     if not isUsable and notEnoughResources then
-                        -- Not enough resources - darker blue tint (vs Blizzard's lighter 0.5, 0.5, 1.0)
-                        iconTexture:SetDesaturation(0)  -- Remove desaturation
-                        iconTexture:SetVertexColor(0.3, 0.3, 0.8)  -- Darker blue tint
+                        -- Not enough resources - darker blue tint
+                        iconTexture:SetDesaturation(0)
+                        iconTexture:SetVertexColor(0.3, 0.3, 0.8)
                     else
                         -- Usable or on cooldown - normal color, apply queue fade setting
                         iconTexture:SetDesaturation(baseDesaturation)
@@ -656,6 +673,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.cachedHotkey = nil
                     icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil
+                    icon.hasAssistedGlow = false
+                    icon.hasProcGlow = false
                     UIAnimations.StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance
@@ -764,12 +783,24 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
         if icon then
-            -- EnableMouse(false) = click-through, EnableMouse(true) = interactive
-            icon:EnableMouse(not isLocked)
+            -- Icons always need mouse enabled for tooltips
+            -- When locked, RegisterForClicks("") prevents clicks while keeping tooltips
+            icon:EnableMouse(true)
+            if isLocked then
+                icon:RegisterForClicks()  -- No clicks = locked but tooltips work
+            else
+                icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+            end
         end
     end
     if addon.defensiveIcon then
-        addon.defensiveIcon:EnableMouse(not isLocked)
+        -- Defensive icon also needs mouse enabled for tooltips
+        addon.defensiveIcon:EnableMouse(true)
+        if isLocked then
+            addon.defensiveIcon:RegisterForClicks()  -- No clicks = locked but tooltips work
+        else
+            addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+        end
     end
     
     -- Apply global frame opacity (affects main frame and defensive icon)

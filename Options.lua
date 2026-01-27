@@ -450,7 +450,7 @@ function Options.UpdateDefensivesOptions(addon)
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
         info = true, header = true, enabled = true, thresholdInfo = true,
-        behaviorHeader = true, showOnlyInCombat = true, showHealthBar = true,
+        behaviorHeader = true, showOnlyInCombat = true, alwaysShowDefensive = true, showHealthBar = true,
         position = true, iconScale = true, maxIcons = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
@@ -995,6 +995,19 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.showOnlyInCombat end,
                         set = function(_, val)
                             addon.db.profile.defensives.showOnlyInCombat = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    alwaysShowDefensive = {
+                        type = "toggle",
+                        name = "Always Show Defensive Queue",
+                        desc = "Show defensive queue even at full health (displays available defensive/heal abilities and procs). Useful for proactive defensive play.",
+                        order = 7.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.alwaysShowDefensive end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.alwaysShowDefensive = val
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,

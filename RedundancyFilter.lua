@@ -140,6 +140,10 @@ local inCombatActivations = {}
 -- Throttle debug prints (per-message-type timestamps)
 local lastPrintTime = {}
 
+-- Forward declaration for RefreshAuraCache (defined in Dynamic Aura Detection section)
+-- Required because PruneExpiredActivations uses it before the full definition
+local RefreshAuraCache
+
 -- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
@@ -222,7 +226,7 @@ function RedundancyFilter.PruneExpiredActivations()
         -- Method 5: Aura API (only when accessible, not blocked by secrets)
         if not shouldKeep then
             local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
-            if auraAPIAvailable then
+            if auraAPIAvailable and RefreshAuraCache then
                 local auras = RefreshAuraCache()
                 if auras and auras.byID and not auras.hasSecrets then
                     -- Aura data is reliable - check if buff still active
@@ -278,7 +282,7 @@ local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
 -- Build cache of current player auras (by spellID, name, and icon)
 -- Now also stores duration and expiration time for pandemic window checks
-local function RefreshAuraCache()
+RefreshAuraCache = function()
     local now = GetTime()
     local inCombat = UnitAffectingCombat("player")
 
@@ -775,8 +779,9 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
     local auras = RefreshAuraCache()
 
-    -- If aura API blocked OR cache detected secrets, use whitelist: only show DPS-relevant spells
+    -- If aura API blocked OR cache detected secrets, filter non-DPS spells
     -- EXCEPTION: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
+    -- IMPORTANT: Continue to remaining checks (pet/stealth/mount/etc) even when aura API blocked
     if auraAPIBlocked or (auras and auras.hasSecrets) then
         if not isDefensiveCheck and not IsDPSRelevant(spellID) then
             -- Throttle this debug message to avoid spam (once per spell per 5 seconds)
@@ -791,11 +796,8 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             end
             return true  -- Hide non-DPS spells
         end
-        -- For defensive checks, fall through to continue other redundancy checks
-        -- For DPS-relevant spells, also fall through to check auras if possible
-        if not isDefensiveCheck then
-            return false  -- Show DPS-relevant spells (skip aura checks since API blocked)
-        end
+        -- Fall through for both defensive checks AND DPS-relevant spells
+        -- Continue to pet/stealth/mount checks even when aura checks are blocked
     end
 
     local spellInfo = GetCachedSpellInfo(spellID)
