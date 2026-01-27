@@ -226,7 +226,7 @@ function RedundancyFilter.PruneExpiredActivations()
         -- Method 5: Aura API (only when accessible, not blocked by secrets)
         if not shouldKeep then
             local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
-            if auraAPIAvailable then
+            if auraAPIAvailable and RefreshAuraCache then
                 local auras = RefreshAuraCache()
                 if auras and auras.byID and not auras.hasSecrets then
                     -- Aura data is reliable - check if buff still active
