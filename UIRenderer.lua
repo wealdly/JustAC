@@ -77,8 +77,17 @@ local function UpdateButtonCooldowns(button)
         chargeInfo = nil  -- Items don't have charges
     else
         -- Spells: use C_Spell APIs (same as Blizzard's ActionButton line 871-872)
-        cooldownInfo = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(id)
-        chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(id)
+        -- Check for override spell ID (e.g., Victory Rush -> Impending Victory)
+        -- The cooldown may be tracked on the override, not the base spell
+        local cooldownID = id
+        if C_Spell and C_Spell.GetOverrideSpell then
+            local override = C_Spell.GetOverrideSpell(id)
+            if override and override ~= 0 and override ~= id then
+                cooldownID = override
+            end
+        end
+        cooldownInfo = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(cooldownID)
+        chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(cooldownID)
     end
 
     -- ALWAYS pass values to cooldown widgets without checking them
@@ -87,11 +96,24 @@ local function UpdateButtonCooldowns(button)
 
     if button.cooldown and cooldownInfo then
         -- Main cooldown (spell cooldown OR GCD, decided by Blizzard's API)
-        button.cooldown:SetCooldown(
-            cooldownInfo.startTime or 0,
-            cooldownInfo.duration or 0,
-            cooldownInfo.modRate or 1
-        )
+        local startTime = cooldownInfo.startTime or 0
+        local duration = cooldownInfo.duration or 0
+        local modRate = cooldownInfo.modRate or 1
+
+        -- Use SetCooldown - the cooldown widget handles display
+        button.cooldown:SetCooldown(startTime, duration, modRate)
+
+        -- Force swipe visibility (in case it got reset) and ensure frame is shown
+        -- Use pcall because duration comparison may fail with secret values
+        local hasCooldown = false
+        pcall(function() hasCooldown = duration > 0 end)
+        if hasCooldown then
+            button.cooldown:SetDrawSwipe(true)
+            button.cooldown:Show()
+        end
+    elseif button.cooldown then
+        -- No cooldown info - clear the display
+        button.cooldown:Clear()
     end
 
     -- Charge cooldown edge animation: Pass values directly, let widget handle display
@@ -223,7 +245,12 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     
     -- Update cooldowns using Blizzard's logic (handles GCD, spell CD, and charges)
     UpdateButtonCooldowns(defensiveIcon)
-    
+
+    -- Ensure cooldown frame is visible (may have been hidden by HideDefensiveIcon)
+    if defensiveIcon.cooldown then
+        defensiveIcon.cooldown:Show()
+    end
+
     -- Find hotkey for item by scanning action bars
     local hotkey = ""
     if isItem then
@@ -307,7 +334,15 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon.currentID = nil
         defensiveIcon.isItem = nil
         defensiveIcon.iconTexture:Hide()
-        defensiveIcon.cooldown:Hide()
+        -- Hide and clear cooldown frames to ensure clean state on reuse
+        if defensiveIcon.cooldown then
+            defensiveIcon.cooldown:Hide()
+            defensiveIcon.cooldown:Clear()
+        end
+        if defensiveIcon.chargeCooldown then
+            defensiveIcon.chargeCooldown:Hide()
+            defensiveIcon.chargeCooldown:Clear()
+        end
         -- Reset cooldown cache for when icon gets reused
         defensiveIcon._lastCooldownStart = nil
         defensiveIcon._lastCooldownDuration = nil
@@ -763,3 +798,4 @@ UIRenderer.HideDefensiveIcons = UIRenderer.HideDefensiveIcons
 UIRenderer.OpenHotkeyOverrideDialog = UIRenderer.OpenHotkeyOverrideDialog
 UIRenderer.InvalidateHotkeyCache = UIRenderer.InvalidateHotkeyCache
 UIRenderer.SetCombatState = UIRenderer.SetCombatState
+UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
