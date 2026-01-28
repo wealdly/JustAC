@@ -14,6 +14,7 @@ local FormCache = LibStub("JustAC-FormCache", true)
 local GetTime = GetTime
 local HasAction = HasAction
 local GetBindingKey = GetBindingKey
+local GetActionCooldown = GetActionCooldown
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local FindBaseSpellByID = FindBaseSpellByID  -- Returns base spell from override spell
@@ -848,19 +849,38 @@ end
 -- Uses cached slot from GetSpellHotkey lookups for performance
 function ActionBarScanner.GetSlotForSpell(spellID)
     if not spellID then return nil end
-    
+
     -- Check cache first (populated by GetSpellHotkey)
     local cachedSlot = spellSlotCache[spellID]
     if cachedSlot then
         return cachedSlot
     end
-    
+
     -- Not in cache - trigger a hotkey lookup which will populate the cache
     -- This is a deliberate side effect for efficiency
     local _ = ActionBarScanner.GetSpellHotkey(spellID)
-    
+
     -- Now check cache again
     return spellSlotCache[spellID]
+end
+
+-- Get cooldown directly from action bar button (Blizzard's ground truth)
+-- Returns: start, duration (raw values, may be secret - but correct GCD vs long cooldown logic)
+-- Returns nil, nil if spell not on action bar
+function ActionBarScanner.GetActionBarCooldown(spellID)
+    if not spellID then return nil, nil end
+
+    local slot = ActionBarScanner.GetSlotForSpell(spellID)
+    if not slot then return nil, nil end
+
+    -- GetActionCooldown returns the cooldown shown on the action bar button
+    -- Blizzard's code already handles GCD vs spell cooldown correctly
+    -- This is the "ground truth" - what the player sees on their action bars
+    if GetActionCooldown then
+        return GetActionCooldown(slot)
+    end
+
+    return nil, nil
 end
 
 --------------------------------------------------------------------------------

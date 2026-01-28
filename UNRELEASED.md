@@ -2,15 +2,9 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.14
+## Current Version: 3.16
 
-### Changes Since 3.14
-
-#### Added
-
-#### Changed
-
-#### Fixed
+### Changes Since 3.16
 
 ---
 

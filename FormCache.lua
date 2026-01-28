@@ -32,13 +32,6 @@ local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
 
--- Safe wrapper for C_Spell.GetSpellInfo
-local function SafeGetSpellInfo(spellID)
-    if not spellID or not C_Spell or not C_Spell.GetSpellInfo then return nil end
-    local ok, result = pcall(C_Spell.GetSpellInfo, spellID)
-    return ok and result or nil
-end
-
 local function GetModernSpellTabInfo(tabIndex)
     if C_SpellBook and C_SpellBook.GetSpellBookSkillLineInfo then
         local skillLineInfo = C_SpellBook.GetSpellBookSkillLineInfo(tabIndex)
@@ -108,7 +101,7 @@ local function ScanSpellbookForFormSpells()
                 local spellType, spellID = GetModernSpellBookItemInfo(spellIndex)
                 
                 if (spellType == "SPELL" or spellType == 1) and spellID then
-                    local spellInfo = SafeGetSpellInfo(spellID)
+                    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
                     if spellInfo and spellInfo.name then
                         local spellName = spellInfo.name
                         
@@ -221,7 +214,7 @@ local function UpdateFormCache()
     if stanceIndex > 0 and stanceIndex <= numForms then
         local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(stanceIndex)
         if spellID then
-            local spellInfo = SafeGetSpellInfo(spellID)
+            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
             if spellInfo and spellInfo.name then
                 formName = spellInfo.name
             end
@@ -256,7 +249,7 @@ local function UpdateFormCache()
     for i = 1, numForms do
         local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(i)
         if icon and spellID then
-            local spellInfo = SafeGetSpellInfo(spellID)
+            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
             local name = spellInfo and spellInfo.name or ("Form " .. i)
             
             availableForms[i] = {
@@ -386,7 +379,7 @@ function FormCache.GetFormIDBySpellID(spellID)
     
     -- Name-based fallback: get spell name and match against available forms
     -- This handles cases where rotation returns a different spell ID for the same form
-    local spellInfo = SafeGetSpellInfo(spellID)
+    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
     if spellInfo and spellInfo.name then
         local spellName = spellInfo.name
         for formID, formData in pairs(cachedFormData.availableForms) do
@@ -426,7 +419,7 @@ function FormCache.ShowFormDebugInfo()
     local mapping = cachedFormData.spellToFormMap
     local count = 0
     for spellID, formIndex in pairs(mapping) do
-        local spellInfo = SafeGetSpellInfo(spellID)
+        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         print("|JAC|   " .. spellName .. " (" .. spellID .. ") -> stance index " .. formIndex)
         count = count + 1

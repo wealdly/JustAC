@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Frame Factory Module v9
--- Changed: Added separate GCD cooldown overlay frame (gcdCooldown) to each icon
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 9)
+-- JustAC: UI Frame Factory Module v10
+-- Changed: Refactored cooldown frames to match Blizzard's ActionButtonTemplate (cooldown + chargeCooldown)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 10)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -217,7 +217,8 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button.flashing = 0
     button.flashtime = 0
 
-    -- Cooldown frame (spell's actual cooldown)
+    -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
+    -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
@@ -225,20 +226,32 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.8)
+
+    -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
+    -- Access the countdown text region and modify its appearance
+    local cooldownText = cooldown:GetRegions()
+    if cooldownText and cooldownText.SetFont then
+        local font, _, flags = cooldownText:GetFont()
+        if font then
+            local smallerSize = math_floor(actualIconSize * 0.25)  -- 25% of icon size (was ~33%)
+            cooldownText:SetFont(font, smallerSize, flags)
+            cooldownText:SetTextColor(1, 1, 1, 0.5)  -- 50% alpha (more transparent)
+        end
+    end
+
     cooldown:Hide()
     button.cooldown = cooldown
 
-    -- GCD cooldown frame (separate layer for GCD overlay)
-    local gcdCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    gcdCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    gcdCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
-    gcdCooldown:SetDrawEdge(false)
-    gcdCooldown:SetDrawSwipe(true)
-    gcdCooldown:SetReverse(false)
-    gcdCooldown:SetSwipeColor(0, 0, 0, 0.5)  -- Slightly lighter/transparent for GCD
-    gcdCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above spell cooldown
-    gcdCooldown:Hide()
-    button.gcdCooldown = gcdCooldown
+    -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
+    local chargeCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
+    chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    chargeCooldown:SetDrawEdge(true)
+    chargeCooldown:SetDrawSwipe(false)  -- Only edge, no swipe
+    chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
+    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
+    chargeCooldown:Hide()
+    button.chargeCooldown = chargeCooldown
 
     -- Hotkey text
     local hotkeyFrame = CreateFrame("Frame", nil, button)
@@ -900,14 +913,39 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     button.flashtime = 0
 
     local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    -- Cooldown inset 4px from icon edges to fit within beveled corners
+    -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
+    -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
     cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.8)
+
+    -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
+    -- Access the countdown text region and modify its appearance
+    local cooldownText = cooldown:GetRegions()
+    if cooldownText and cooldownText.SetFont then
+        local font, _, flags = cooldownText:GetFont()
+        if font then
+            local smallerSize = math_floor(actualIconSize * 0.25)  -- 25% of icon size (was ~33%)
+            cooldownText:SetFont(font, smallerSize, flags)
+            cooldownText:SetTextColor(1, 1, 1, 0.5)  -- 50% alpha (more transparent)
+        end
+    end
+
     button.cooldown = cooldown
+
+    -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
+    local chargeCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
+    chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    chargeCooldown:SetDrawEdge(true)
+    chargeCooldown:SetDrawSwipe(false)  -- Only edge, no swipe
+    chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
+    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
+    chargeCooldown:Hide()
+    button.chargeCooldown = chargeCooldown
 
     -- Hotkey text on highest frame level to ensure visibility above all animations
     local hotkeyFrame = CreateFrame("Frame", nil, button)
@@ -947,6 +985,8 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
+
+
 
     -- Enable dragging from icons (delegates to main frame)
     button:RegisterForDrag("LeftButton")

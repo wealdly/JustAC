@@ -760,7 +760,10 @@ function JustAC:OnHealthChanged(event, unit)
     end
     
     -- Detect low health state for defensive suggestions
-    -- LowHealthFrame triggers at ~35% health, critical at ~20%
+    -- Get thresholds from profile settings
+    local selfHealThreshold = profile.defensives.selfHealThreshold or 80
+    local cooldownThreshold = profile.defensives.cooldownThreshold or 60
+
     local isCritical, isLow
     if isEstimated then
         -- Using LowHealthFrame: low = overlay showing, critical = high alpha
@@ -771,9 +774,9 @@ function JustAC:OnHealthChanged(event, unit)
         isCritical = critState
         isLow = lowState
     elseif healthPercent then
-        -- Using exact health: fixed 35%/20% thresholds (ignore user settings for simplicity)
-        isCritical = healthPercent <= 20
-        isLow = healthPercent <= 35
+        -- Using exact health: apply user-configured thresholds
+        isLow = healthPercent <= selfHealThreshold
+        isCritical = healthPercent <= cooldownThreshold
     else
         isCritical = false
         isLow = false
@@ -787,7 +790,19 @@ function JustAC:OnHealthChanged(event, unit)
     -- Get defensive spell queue - pass our pre-calculated health state
     -- This is critical because GetPlayerHealthPercentSafe returns 100 when LowHealthFrame isn't detected
     -- but UpdateDefensiveQueue uses GetLowHealthState directly for more accurate detection
-    local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat)
+    -- Exclude spells showing in VISIBLE DPS queue slots (avoid duplication)
+    local dpsQueueExclusions = {}
+    if SpellQueue and SpellQueue.GetCurrentSpellQueue then
+        local dpsQueue = SpellQueue.GetCurrentSpellQueue()
+        local maxDpsIcons = profile.maxIcons or 4
+        -- Only exclude spells in visible slots (1 through maxIcons)
+        for i = 1, math.min(#dpsQueue, maxDpsIcons) do
+            if dpsQueue[i] then
+                dpsQueueExclusions[dpsQueue[i]] = true
+            end
+        end
+    end
+    local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions)
     
     -- Pet heals: append if pet needs healing and we have room
     local maxIcons = profile.defensives.maxIcons or 1
@@ -1022,11 +1037,9 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
                 if isProcced then
                     local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
                     if not isRedundant then
-                        local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
-                        if not onCooldown then
-                            results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
-                            addedHere[spellID] = true
-                        end
+                        -- For defensives: show procced spells even if on cooldown (cooldown will display on icon)
+                        results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
+                        addedHere[spellID] = true
                     end
                 end
             end
@@ -1041,12 +1054,10 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
             if isKnown then
                 local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant and RedundancyFilter.IsSpellRedundant(spellID, profile, true)
                 if not isRedundant then
-                    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown and BlizzardAPI.IsSpellOnRealCooldown(spellID)
-                    if not onCooldown then
-                        local isProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
-                        results[#results + 1] = {spellID = spellID, isItem = false, isProcced = isProcced}
-                        addedHere[spellID] = true
-                    end
+                    -- For defensives: show spells even if on cooldown (cooldown displays on icon)
+                    local isProcced = BlizzardAPI and BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
+                    results[#results + 1] = {spellID = spellID, isItem = false, isProcced = isProcced}
+                    addedHere[spellID] = true
                 end
             end
         end
@@ -1059,13 +1070,21 @@ end
 -- Priority order: procced spells > self-heals (if low) > cooldowns (if critical)
 -- Returns array of {spellID, isItem, isProcced} entries
 -- Parameters are optional - if not provided, will calculate internally (less accurate for secrets)
-function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat)
+-- passedExclusions: optional table of spellIDs to exclude (e.g., spells already in DPS queue)
+function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat, passedExclusions)
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then return {} end
-    
+
     local maxIcons = profile.defensives.maxIcons or 1
     local results = {}
     local alreadyAdded = {}
+
+    -- Copy exclusions into alreadyAdded set (avoid duplicating spells from DPS queue)
+    if passedExclusions then
+        for spellID, _ in pairs(passedExclusions) do
+            alreadyAdded[spellID] = true
+        end
+    end
     
     -- Use passed values if provided (more accurate when caller has better health state info)
     -- Otherwise calculate internally (fallback for direct calls)

@@ -8,6 +8,7 @@ local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIManager = LibStub("JustAC-UIManager", true)
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local LSM = LibStub("LibSharedMedia-3.0")
 
@@ -72,7 +73,7 @@ function Options.UpdateBlacklistOptions(addon)
             if not addBlacklistInput or addBlacklistInput:trim() == "" then return end
             local spellID = tonumber(addBlacklistInput)
             if spellID and spellID > 0 then
-                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
                 if not spellInfo or not spellInfo.name then
                     addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
                     return
@@ -106,8 +107,8 @@ function Options.UpdateBlacklistOptions(addon)
     end
 
     table.sort(spellList, function(a, b)
-        local infoA = C_Spell.GetSpellInfo(a)
-        local infoB = C_Spell.GetSpellInfo(b)
+        local infoA = BlizzardAPI and BlizzardAPI.GetSpellInfo(a) or C_Spell.GetSpellInfo(a)
+        local infoB = BlizzardAPI and BlizzardAPI.GetSpellInfo(b) or C_Spell.GetSpellInfo(b)
         local nameA = infoA and infoA.name or ""
         local nameB = infoB and infoB.name or ""
         return nameA < nameB
@@ -121,7 +122,7 @@ function Options.UpdateBlacklistOptions(addon)
         }
     else
         for i, spellID in ipairs(spellList) do
-            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
             
@@ -217,7 +218,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             end
             local spellID = tonumber(addHotkeySpellInput)
             if spellID and spellID > 0 then
-                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
                 if not spellInfo or not spellInfo.name then
                     addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
                     return
@@ -248,8 +249,8 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     end
 
     table.sort(overrideList, function(a, b)
-        local infoA = C_Spell.GetSpellInfo(a)
-        local infoB = C_Spell.GetSpellInfo(b)
+        local infoA = BlizzardAPI and BlizzardAPI.GetSpellInfo(a) or C_Spell.GetSpellInfo(a)
+        local infoB = BlizzardAPI and BlizzardAPI.GetSpellInfo(b) or C_Spell.GetSpellInfo(b)
         local nameA = infoA and infoA.name or ""
         local nameB = infoB and infoB.name or ""
         return nameA < nameB
@@ -263,7 +264,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
         }
     else
         for i, spellID in ipairs(overrideList) do
-            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
             
@@ -328,7 +329,8 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
             local cdInfo = C_Spell.GetSpellCooldown(spellID)
             -- Handle secret values (WoW 12.0+) - duration may be secret in combat
             local duration = cdInfo and cdInfo.duration
-            if duration and not issecretvalue(duration) and duration > 1.5 then
+            local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+            if duration and not isSecret and duration > 1.5 then
                 cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
             end
         end
@@ -911,7 +913,6 @@ local function CreateOptionsTable(addon)
                         set = function(_, val) 
                             addon.db.profile.debugMode = val
                             -- Refresh cached debug mode immediately
-                            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
                             if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
                                 BlizzardAPI.RefreshDebugMode()
                             end
@@ -975,10 +976,57 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdateAll()
                         end
                     },
-                    thresholdInfo = {
-                        type = "description",
-                        name = "|cff888888Health thresholds: ~35% for heals, ~20% for cooldowns (approximate values)|r",
+                    thresholdHeader = {
+                        type = "header",
+                        name = "Health Thresholds",
                         order = 4,
+                    },
+                    selfHealThreshold = {
+                        type = "range",
+                        name = "Self-Heal Threshold",
+                        desc = "Show self-heal abilities when health drops below this percentage",
+                        min = 1, max = 100, step = 1,
+                        order = 4.1,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.selfHealThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    cooldownThreshold = {
+                        type = "range",
+                        name = "Major Cooldown Threshold",
+                        desc = "Show major defensive cooldowns when health drops below this percentage",
+                        min = 1, max = 100, step = 1,
+                        order = 4.2,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.cooldownThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    petHealThreshold = {
+                        type = "range",
+                        name = "Pet Heal Threshold",
+                        desc = "Show pet heal abilities when PET health drops below this percentage",
+                        min = 1, max = 100, step = 1,
+                        order = 4.3,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.petHealThreshold or 50 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.petHealThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    thresholdNote = {
+                        type = "description",
+                        name = "|cff888888Note: When in combat, health may be a 'secret' value. In this case, the addon falls back to detecting the red low-health overlay (~35%) instead of using these exact thresholds.|r",
+                        order = 4.9,
                         fontSize = "small",
                     },
                     behaviorHeader = {
@@ -1214,7 +1262,6 @@ local function HandleSlashCommand(addon, input)
         if addon.db and addon.db.profile then
             addon.db.profile.debugMode = not addon.db.profile.debugMode
             -- Refresh cached debug mode immediately
-            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
             if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
                 BlizzardAPI.RefreshDebugMode()
             end
@@ -1235,7 +1282,15 @@ local function HandleSlashCommand(addon, input)
         else
             addon:Print("DebugCommands module not available")
         end
-        
+
+    elseif command == "testcd" then
+        local spellName = input:match("^testcd%s+(.+)")
+        if DebugCommands and DebugCommands.TestCooldownAPIs then
+            DebugCommands.TestCooldownAPIs(addon, spellName)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+
     elseif command == "reset" then
         if addon.mainFrame then
             addon.mainFrame:ClearAllPoints()

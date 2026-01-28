@@ -18,6 +18,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac modules - Check module health")
     addon:Print("/jac find <spell> - Find spell on action bars")
+    addon:Print("/jac testcd <spell> - Test cooldown APIs for a spell")
     addon:Print("/jac defensive - Diagnose defensive system")
     addon:Print("/jac help - Show this help")
 end
@@ -239,7 +240,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
     if BlizzardAPI then
         local healthPct = BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
         if healthPct then
-            if issecretvalue and issecretvalue(healthPct) then
+            if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(healthPct) then
                 addon:Print("  Current Health: |cffff6600SECRET|r")
             else
                 addon:Print("  Current Health: " .. string.format("%.1f%%", healthPct))
@@ -262,4 +263,174 @@ function DebugCommands.DefensiveDiagnostics(addon)
     addon:Print("  Cooldowns: " .. #cooldowns .. " spells")
     
     addon:Print("======================================")
+end
+
+--------------------------------------------------------------------------------
+-- Cooldown API Testing (diagnose GCD vs spell cooldown issues)
+--------------------------------------------------------------------------------
+function DebugCommands.TestCooldownAPIs(addon, spellName)
+    if not spellName then
+        addon:Print("Usage: /jac testcd <spellname>")
+        addon:Print("Example: /jac testcd Sinister Strike")
+        addon:Print("")
+        addon:Print("This command shows what cooldown values different APIs return.")
+        addon:Print("Cast the spell right before running this to see GCD vs spell cooldown behavior.")
+        return
+    end
+
+    -- Find spell by name - search player's spellbook first
+    local spellID = nil
+
+    -- Method 1: Search player's spellbook (most accurate for known spells)
+    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+        -- Iterate through player's spellbook slots
+        for i = 1, 1000 do
+            local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+            if not spellInfo then
+                break -- End of spellbook
+            end
+            if spellInfo.name and spellInfo.name:lower() == spellName:lower() then
+                spellID = spellInfo.spellID
+                break
+            end
+        end
+    end
+
+    -- Method 2: Fallback to wide ID search if not found in spellbook
+    if not spellID and C_Spell and C_Spell.GetSpellInfo then
+        for i = 1, 500000 do
+            local spellInfo = C_Spell.GetSpellInfo(i)
+            if spellInfo and spellInfo.name and spellInfo.name:lower() == spellName:lower() then
+                spellID = i
+                break
+            end
+        end
+    end
+
+    if not spellID then
+        addon:Print("|cffff0000Spell not found:|r " .. spellName)
+        addon:Print("Tip: Make sure the spell is in your spellbook or try the exact spell name")
+        return
+    end
+
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+
+    -- Helper to safely format values (secret values can't be used in string operations)
+    local function SafeFormat(value, isSecret)
+        if isSecret then
+            return "SECRET"
+        elseif value == nil then
+            return "nil"
+        else
+            -- Use pcall to safely convert to string
+            local ok, result = pcall(tostring, value)
+            return ok and result or "ERROR"
+        end
+    end
+
+    addon:Print("=== Cooldown API Test: " .. spellName .. " (ID: " .. spellID .. ") ===")
+    addon:Print("")
+
+    -- Test 1: C_SpellBook.GetSpellCooldown
+    addon:Print("1. C_SpellBook.GetSpellCooldown:")
+    if C_SpellBook and C_SpellBook.GetSpellCooldown then
+        local ok, cd = pcall(C_SpellBook.GetSpellCooldown, spellID)
+        if ok and cd then
+            local startSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(cd.startTime)
+            local durSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(cd.duration)
+
+            addon:Print("   startTime: " .. SafeFormat(cd.startTime, startSecret) ..
+                (startSecret and " |cffff6600(SECRET)|r" or ""))
+            addon:Print("   duration: " .. SafeFormat(cd.duration, durSecret) ..
+                (durSecret and " |cffff6600(SECRET)|r" or ""))
+
+            if not startSecret and not durSecret and cd.startTime and cd.duration and cd.duration > 0 then
+                local remaining = (cd.startTime + cd.duration) - GetTime()
+                addon:Print(string.format("   remaining: %.2fs", remaining))
+            end
+        else
+            addon:Print("   |cffff0000ERROR or nil|r")
+        end
+    else
+        addon:Print("   |cffff0000API not available|r")
+    end
+
+    addon:Print("")
+
+    -- Test 2: BlizzardAPI.GetSpellCooldown (C_Spell API)
+    addon:Print("2. BlizzardAPI.GetSpellCooldown (C_Spell):")
+    if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
+        local start, dur = BlizzardAPI.GetSpellCooldown(spellID)
+        local startSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+        local durSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(dur)
+
+        addon:Print("   start: " .. SafeFormat(start, startSecret) ..
+            (startSecret and " |cffff6600(SECRET)|r" or ""))
+        addon:Print("   duration: " .. SafeFormat(dur, durSecret) ..
+            (durSecret and " |cffff6600(SECRET)|r" or ""))
+
+        if not startSecret and not durSecret and start and dur and dur > 0 then
+            local remaining = (start + dur) - GetTime()
+            addon:Print(string.format("   remaining: %.2fs", remaining))
+        end
+    else
+        addon:Print("   |cffff0000API not available|r")
+    end
+
+    addon:Print("")
+
+    -- Test 3: Action Bar Cooldown (if on action bar)
+    addon:Print("3. Action Bar Cooldown:")
+    if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+        local slot = ActionBarScanner.GetSlotForSpell(spellID)
+        if slot then
+            addon:Print("   Slot: " .. slot)
+            if ActionBarScanner.GetActionBarCooldown then
+                local start, dur = ActionBarScanner.GetActionBarCooldown(spellID)
+                local startSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+                local durSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(dur)
+
+                addon:Print("   start: " .. SafeFormat(start, startSecret) ..
+                    (startSecret and " |cffff6600(SECRET)|r" or ""))
+                addon:Print("   duration: " .. SafeFormat(dur, durSecret) ..
+                    (durSecret and " |cffff6600(SECRET)|r" or ""))
+
+                if not startSecret and not durSecret and start and dur and dur > 0 then
+                    local remaining = (start + dur) - GetTime()
+                    addon:Print(string.format("   remaining: %.2fs", remaining))
+                end
+            end
+        else
+            addon:Print("   |cff888888Not on action bar|r")
+        end
+    else
+        addon:Print("   |cffff0000ActionBarScanner not available|r")
+    end
+
+    addon:Print("")
+
+    -- Test 4: GCD from dummy spell
+    addon:Print("4. GCD (dummy spell 61304):")
+    if BlizzardAPI and BlizzardAPI.GetGCDInfo then
+        local gcdStart, gcdDur = BlizzardAPI.GetGCDInfo()
+        local startSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(gcdStart)
+        local durSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(gcdDur)
+
+        addon:Print("   start: " .. SafeFormat(gcdStart, startSecret) ..
+            (startSecret and " |cffff6600(SECRET)|r" or ""))
+        addon:Print("   duration: " .. SafeFormat(gcdDur, durSecret) ..
+            (durSecret and " |cffff6600(SECRET)|r" or ""))
+
+        if not startSecret and not durSecret and gcdStart and gcdDur and gcdDur > 0 then
+            local remaining = (gcdStart + gcdDur) - GetTime()
+            addon:Print(string.format("   remaining: %.2fs", remaining))
+        end
+    else
+        addon:Print("   |cffff0000API not available|r")
+    end
+
+    addon:Print("")
+    addon:Print("Cast the spell and run this command again to see cooldown behavior!")
+    addon:Print("===========================================")
 end
