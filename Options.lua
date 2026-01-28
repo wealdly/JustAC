@@ -12,9 +12,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local LSM = LibStub("LibSharedMedia-3.0")
 
--- Storage for manual add inputs
-local addBlacklistInput = ""
-local addHotkeySpellInput = ""
+-- Storage for hotkey value input (not spell search)
 local addHotkeyValueInput = ""
 
 local function fontValues()
@@ -24,6 +22,128 @@ local function fontValues()
         values[name] = name -- key = label
     end
     return values
+-- Spellbook cache for autocomplete (populated on first options open)
+local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
+local spellbookCacheBuilt = false
+
+-- Filter state for spell search (all panels)
+local spellSearchFilter = {
+    selfheal = "",
+    cooldown = "",
+    blacklist = "",
+    hotkey = "",
+}
+
+-- Preview state: first result shown in dropdown (not yet added)
+local spellSearchPreview = {
+    selfheal = nil,
+    cooldown = nil,
+    blacklist = nil,
+    hotkey = nil,
+}
+
+-- Build spellbook cache (called once when options panel opens)
+local function BuildSpellbookCache()
+    if spellbookCacheBuilt then return end
+
+    if not C_SpellBook or not C_SpellBook.GetSpellBookItemInfo then
+        return
+    end
+
+    -- Scan player spellbook
+    for i = 1, 500 do
+        local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+        if not spellInfo then break end
+
+        -- Only cache actual spells (not flyouts, petactions, etc.)
+        if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
+            -- Skip passive spells
+            local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
+            if not isPassive then
+                local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
+                if fullInfo and fullInfo.name then
+                    spellbookCache[spellInfo.spellID] = {
+                        name = fullInfo.name,
+                        icon = fullInfo.iconID,
+                    }
+                end
+            end
+        end
+    end
+
+    spellbookCacheBuilt = true
+end
+
+-- Get filtered spells for dropdown based on search text
+local function GetFilteredSpellbookSpells(filterText, excludeList)
+    local results = {}
+    local filter = (filterText or ""):trim()
+    local filterLower = filter:lower()
+
+    -- Build exclusion set
+    local excluded = {}
+    if excludeList then
+        for _, spellID in ipairs(excludeList) do
+            excluded[spellID] = true
+        end
+    end
+
+    -- If filter is too short, return empty (avoid huge dropdown)
+    if filter == "" or #filter < 2 then
+        return results
+    end
+
+    -- Check if filter is a spell ID (numeric)
+    local filterAsID = tonumber(filter)
+    if filterAsID and filterAsID > 0 and not excluded[filterAsID] then
+        -- Try to get spell info for this ID
+        local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(filterAsID)
+        if spellInfo and spellInfo.name then
+            results[filterAsID] = spellInfo.name .. " (ID: " .. filterAsID .. ")"
+            return results  -- Exact ID match, return just this
+        end
+    end
+
+    -- Search cache by name (and partial ID match)
+    local count = 0
+    for spellID, info in pairs(spellbookCache) do
+        if not excluded[spellID] then
+            local nameLower = info.name:lower()
+            local idString = tostring(spellID)
+            -- Match by name OR by spell ID prefix
+            if nameLower:find(filterLower, 1, true) or idString:find(filter, 1, true) then
+                results[spellID] = info.name .. " (" .. spellID .. ")"
+                count = count + 1
+                if count >= 15 then break end  -- Limit dropdown size
+            end
+        end
+    end
+
+    return results
+end
+
+-- Helper to look up spell ID from name
+local function LookupSpellByName(spellName)
+    if not spellName or spellName == "" then return nil end
+
+    local nameLower = spellName:lower():trim()
+
+    -- Search spellbook cache first
+    for spellID, info in pairs(spellbookCache) do
+        if info.name:lower() == nameLower then
+            return spellID
+        end
+    end
+
+    -- Try C_Spell.GetSpellInfo with the name directly (might work for some spells)
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(spellName)
+        if info and info.spellID then
+            return info.spellID
+        end
+    end
+
+    return nil
 end
 
 function Options.UpdateBlacklistOptions(addon)
@@ -48,48 +168,118 @@ function Options.UpdateBlacklistOptions(addon)
         addon.db.char.blacklistedSpells = {}
     end
     local blacklistedSpells = addon.db.char.blacklistedSpells
-    
-    -- Add spell input section
+
+    -- Ensure spellbook cache is built
+    BuildSpellbookCache()
+
+    -- Initialize filter storage
+    spellSearchFilter.blacklist = spellSearchFilter.blacklist or ""
+
+    -- Add spell input section with autocomplete
     blacklistArgs.addHeader = {
         type = "header",
         name = L["Add Spell to Blacklist"],
         order = 2,
     }
-    blacklistArgs.addInput = {
+    blacklistArgs.searchInput = {
         type = "input",
-        name = L["Spell ID"],
-        desc = L["Enter the spell ID to blacklist"],
+        name = "Search spell name or ID",
+        desc = "Type spell name or ID (2+ chars to search)",
         order = 2.1,
-        width = "normal",
-        get = function() return addBlacklistInput end,
-        set = function(_, val) addBlacklistInput = val or "" end,
+        width = "double",
+        get = function() return spellSearchFilter.blacklist or "" end,
+        set = function(_, val)
+            spellSearchFilter.blacklist = val or ""
+            if AceConfigRegistry then
+                AceConfigRegistry:NotifyChange("JustAssistedCombat")
+            end
+        end
+    }
+    blacklistArgs.searchDropdown = {
+        type = "select",
+        name = "",
+        desc = "Select a spell from the filtered results to blacklist it",
+        order = 2.2,
+        width = "double",
+        values = function()
+            -- Convert blacklist dict to array for exclusion
+            local excludeList = {}
+            for spellID, _ in pairs(blacklistedSpells) do
+                table.insert(excludeList, spellID)
+            end
+            local results = GetFilteredSpellbookSpells(spellSearchFilter.blacklist, excludeList)
+            local filter = (spellSearchFilter.blacklist or ""):trim()
+            if next(results) == nil and #filter >= 2 then
+                spellSearchPreview.blacklist = nil
+                return {[0] = "|cff888888No matches - try a different search|r"}
+            end
+            -- Set preview to first result (shown in dropdown, not yet added)
+            spellSearchPreview.blacklist = next(results)
+            return results
+        end,
+        get = function() return spellSearchPreview.blacklist end,
+        set = function(_, spellID)
+            if spellID == 0 then return end
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                blacklistedSpells[spellID] = true
+                addon:Print("Blacklisted: " .. spellInfo.name)
+                spellSearchFilter.blacklist = ""
+                addon:ForceUpdate()
+                Options.UpdateBlacklistOptions(addon)
+            end
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter.blacklist or ""):trim()
+            return #filter < 2
+        end,
     }
     blacklistArgs.addButton = {
         type = "execute",
         name = L["Add"],
-        order = 2.2,
+        desc = "Add spell by ID or exact name",
+        order = 2.3,
         width = "half",
         func = function()
-            if not addBlacklistInput or addBlacklistInput:trim() == "" then return end
-            local spellID = tonumber(addBlacklistInput)
-            if spellID and spellID > 0 then
-                local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
-                if not spellInfo or not spellInfo.name then
-                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
-                    return
+            local val = (spellSearchFilter.blacklist or ""):trim()
+            if val == "" then return end
+
+            local spellID = tonumber(val)
+            if not spellID then
+                spellID = LookupSpellByName(val)
+                if not spellID and C_Spell and C_Spell.GetSpellInfo then
+                    local info = C_Spell.GetSpellInfo(val)
+                    if info and info.spellID then
+                        spellID = info.spellID
+                    end
                 end
-                if blacklistedSpells[spellID] then
-                    addon:Print("Spell already blacklisted: " .. spellInfo.name)
-                    return
-                end
-                blacklistedSpells[spellID] = true
-                addon:Print("Blacklisted: " .. spellInfo.name)
-                addBlacklistInput = ""
-                addon:ForceUpdate()
-                Options.UpdateBlacklistOptions(addon)
-            else
-                addon:Print("Invalid spell ID (must be a positive number)")
             end
+
+            if not spellID then
+                addon:Print("Spell not found: " .. val)
+                return
+            end
+
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if not spellInfo or not spellInfo.name then
+                addon:Print("Invalid spell ID: " .. spellID)
+                return
+            end
+
+            if blacklistedSpells[spellID] then
+                addon:Print("Spell already blacklisted: " .. spellInfo.name)
+                return
+            end
+
+            blacklistedSpells[spellID] = true
+            addon:Print("Blacklisted: " .. spellInfo.name)
+            spellSearchFilter.blacklist = ""
+            addon:ForceUpdate()
+            Options.UpdateBlacklistOptions(addon)
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter.blacklist or ""):trim()
+            return #filter < 1
         end,
     }
     blacklistArgs.listHeader = {
@@ -97,7 +287,7 @@ function Options.UpdateBlacklistOptions(addon)
         name = L["Blacklisted Spells"],
         order = 2.5,
     }
-    
+
     -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local spellList = {}
     for spellID, _ in pairs(blacklistedSpells) do
@@ -125,7 +315,7 @@ function Options.UpdateBlacklistOptions(addon)
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
-            
+
             blacklistArgs[tostring(spellID)] = {
                 type = "group",
                 name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
@@ -152,7 +342,7 @@ function Options.UpdateBlacklistOptions(addon)
             }
         end
     end
-    
+
     -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
@@ -177,27 +367,78 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     end
 
     local hotkeyOverrides = addon.db.char.hotkeyOverrides or {}
-    
-    -- Add hotkey input section
+
+    -- Ensure spellbook cache is built
+    BuildSpellbookCache()
+
+    -- Initialize filter storage
+    spellSearchFilter.hotkey = spellSearchFilter.hotkey or ""
+
+    -- Add hotkey input section with autocomplete
     hotkeyArgs.addHeader = {
         type = "header",
         name = L["Add Hotkey Override"],
         order = 2,
     }
-    hotkeyArgs.addSpellInput = {
+    hotkeyArgs.searchInput = {
         type = "input",
-        name = L["Spell ID"],
-        desc = L["Enter the spell ID to add a hotkey override for"],
+        name = "Search spell name or ID",
+        desc = "Type spell name or ID (2+ chars to search)",
         order = 2.1,
-        width = "normal",
-        get = function() return addHotkeySpellInput end,
-        set = function(_, val) addHotkeySpellInput = val or "" end,
+        width = "double",
+        get = function() return spellSearchFilter.hotkey or "" end,
+        set = function(_, val)
+            spellSearchFilter.hotkey = val or ""
+            if AceConfigRegistry then
+                AceConfigRegistry:NotifyChange("JustAssistedCombat")
+            end
+        end
+    }
+    hotkeyArgs.searchDropdown = {
+        type = "select",
+        name = "",
+        desc = "Select a spell from the filtered results",
+        order = 2.2,
+        width = "double",
+        values = function()
+            -- Convert overrides dict to array for exclusion
+            local excludeList = {}
+            for spellID, _ in pairs(hotkeyOverrides) do
+                table.insert(excludeList, spellID)
+            end
+            local results = GetFilteredSpellbookSpells(spellSearchFilter.hotkey, excludeList)
+            local filter = (spellSearchFilter.hotkey or ""):trim()
+            if next(results) == nil and #filter >= 2 then
+                spellSearchPreview.hotkey = nil
+                return {[0] = "|cff888888No matches - try a different search|r"}
+            end
+            -- Set preview to first result (shown in dropdown, not yet added)
+            spellSearchPreview.hotkey = next(results)
+            return results
+        end,
+        get = function() return spellSearchPreview.hotkey end,
+        set = function(_, spellID)
+            if spellID == 0 then return end
+            -- When spell selected from dropdown, put it in search field for Add button
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                spellSearchFilter.hotkey = tostring(spellID)
+                spellSearchPreview.hotkey = spellID  -- Update preview to match selection
+                if AceConfigRegistry then
+                    AceConfigRegistry:NotifyChange("JustAssistedCombat")
+                end
+            end
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter.hotkey or ""):trim()
+            return #filter < 2
+        end,
     }
     hotkeyArgs.addHotkeyInput = {
         type = "input",
         name = L["Hotkey"],
         desc = L["Enter the hotkey text to display (e.g. 1, F1, S-2)"],
-        order = 2.2,
+        order = 2.3,
         width = "normal",
         get = function() return addHotkeyValueInput end,
         set = function(_, val) addHotkeyValueInput = val or "" end,
@@ -205,33 +446,52 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     hotkeyArgs.addButton = {
         type = "execute",
         name = L["Add"],
-        order = 2.3,
+        desc = "Add hotkey override for the selected spell",
+        order = 2.4,
         width = "half",
         func = function()
-            if not addHotkeySpellInput or addHotkeySpellInput:trim() == "" then
-                addon:Print("Please enter a spell ID")
+            local val = (spellSearchFilter.hotkey or ""):trim()
+            if val == "" then
+                addon:Print("Please search and select a spell first")
                 return
             end
             if not addHotkeyValueInput or addHotkeyValueInput:trim() == "" then
                 addon:Print("Please enter a hotkey value")
                 return
             end
-            local spellID = tonumber(addHotkeySpellInput)
-            if spellID and spellID > 0 then
-                local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
-                if not spellInfo or not spellInfo.name then
-                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
-                    return
+
+            local spellID = tonumber(val)
+            if not spellID then
+                spellID = LookupSpellByName(val)
+                if not spellID and C_Spell and C_Spell.GetSpellInfo then
+                    local info = C_Spell.GetSpellInfo(val)
+                    if info and info.spellID then
+                        spellID = info.spellID
+                    end
                 end
-                hotkeyOverrides[spellID] = addHotkeyValueInput:trim()
-                addon:Print("Hotkey set: " .. spellInfo.name .. " = '" .. addHotkeyValueInput:trim() .. "'")
-                addHotkeySpellInput = ""
-                addHotkeyValueInput = ""
-                addon:ForceUpdate()
-                Options.UpdateHotkeyOverrideOptions(addon)
-            else
-                addon:Print("Invalid spell ID (must be a positive number)")
             end
+
+            if not spellID then
+                addon:Print("Spell not found: " .. val)
+                return
+            end
+
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if not spellInfo or not spellInfo.name then
+                addon:Print("Invalid spell ID: " .. spellID)
+                return
+            end
+
+            hotkeyOverrides[spellID] = addHotkeyValueInput:trim()
+            addon:Print("Hotkey set: " .. spellInfo.name .. " = '" .. addHotkeyValueInput:trim() .. "'")
+            spellSearchFilter.hotkey = ""
+            addHotkeyValueInput = ""
+            addon:ForceUpdate()
+            Options.UpdateHotkeyOverrideOptions(addon)
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter.hotkey or ""):trim()
+            return #filter < 1
         end,
     }
     hotkeyArgs.listHeader = {
@@ -239,7 +499,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
         name = L["Custom Hotkeys"],
         order = 2.5,
     }
-    
+
     -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local overrideList = {}
     for spellID, hotkeyValue in pairs(hotkeyOverrides) do
@@ -267,7 +527,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
-            
+
             hotkeyArgs[tostring(spellID)] = {
                 type = "group",
                 name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
@@ -307,7 +567,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             }
         end
     end
-    
+
     -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
@@ -317,12 +577,12 @@ end
 -- Helper to create spell list entries for a given list
 local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType, baseOrder)
     if not spellList then return end
-    
+
     for i, spellID in ipairs(spellList) do
         local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or ("Spell " .. spellID)
         local spellIcon = spellInfo and spellInfo.iconID or 134400
-        
+
         -- Add cooldown info if available
         local cooldownInfo = ""
         if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
@@ -334,7 +594,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
                 cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
             end
         end
-        
+
         defensivesArgs[listType .. "_" .. i] = {
             type = "group",
             name = i .. ". |T" .. spellIcon .. ":16:16:0:0|t " .. spellName .. cooldownInfo,
@@ -384,62 +644,129 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
     end
 end
 
--- Temporary storage for add spell input values
-local addSpellInputValues = {}
+-- Helper to add a spell to a list (used by both dropdown and manual input)
+local function AddSpellToList(addon, spellList, spellID)
+    if not spellID or spellID <= 0 then return false end
 
--- Helper to create add spell input with Add button for a list
+    -- Validate spell exists
+    local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+    if not spellInfo or not spellInfo.name then
+        addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
+        return false
+    end
+
+    -- Check if already in list
+    for _, existingID in ipairs(spellList) do
+        if existingID == spellID then
+            addon:Print("Spell already in list: " .. spellInfo.name)
+            return false
+        end
+    end
+
+    table.insert(spellList, spellID)
+    addon:Print("Added: " .. spellInfo.name)
+    return true
+end
+
+-- Helper to create add spell input with autocomplete dropdown
 local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, order, listName)
-    -- Initialize input value storage
-    addSpellInputValues[listType] = addSpellInputValues[listType] or ""
-    
-    -- Input field for spell ID
-    defensivesArgs["add_input_" .. listType] = {
+    -- Ensure spellbook cache is built
+    BuildSpellbookCache()
+
+    -- Initialize filter storage
+    spellSearchFilter[listType] = spellSearchFilter[listType] or ""
+
+    -- Search input field (type to filter by name or ID)
+    defensivesArgs["search_input_" .. listType] = {
         type = "input",
         name = L["Add to %s"]:format(listName),
-        desc = L["Add spell desc"],
+        desc = "Type spell name or ID (2+ chars to search)",
         order = order,
-        width = "normal",
-        get = function() return addSpellInputValues[listType] or "" end,
+        width = "double",
+        get = function() return spellSearchFilter[listType] or "" end,
         set = function(_, val)
-            addSpellInputValues[listType] = val or ""
+            spellSearchFilter[listType] = val or ""
+            -- Refresh options to update dropdown
+            if AceConfigRegistry then
+                AceConfigRegistry:NotifyChange("JustAssistedCombat")
+            end
         end
     }
-    
-    -- Add button to submit the spell ID
+
+    -- Dynamic dropdown showing filtered spells
+    defensivesArgs["search_dropdown_" .. listType] = {
+        type = "select",
+        name = "",
+        desc = "Select a spell from the filtered results to add it",
+        order = order + 0.1,
+        width = "double",
+        values = function()
+            local results = GetFilteredSpellbookSpells(spellSearchFilter[listType], spellList)
+            -- If no results and filter looks like valid input, show helper text
+            local filter = (spellSearchFilter[listType] or ""):trim()
+            if next(results) == nil and #filter >= 2 then
+                spellSearchPreview[listType] = nil
+                return {[0] = "|cff888888No matches - try a different search|r"}
+            end
+            -- Set preview to first result (shown in dropdown, not yet added)
+            spellSearchPreview[listType] = next(results)
+            return results
+        end,
+        get = function() return spellSearchPreview[listType] end,  -- Show first result as preview
+        set = function(_, spellID)
+            if spellID == 0 then return end  -- Ignore "no matches" placeholder
+            if AddSpellToList(addon, spellList, spellID) then
+                spellSearchFilter[listType] = ""  -- Clear search
+                spellSearchPreview[listType] = nil  -- Clear preview
+                Options.UpdateDefensivesOptions(addon)
+            end
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter[listType] or ""):trim()
+            return #filter < 2
+        end,
+    }
+
+    -- Add button for manual entry (spell ID or exact name not in spellbook)
     defensivesArgs["add_button_" .. listType] = {
         type = "execute",
         name = L["Add"],
-        order = order + 0.1,
+        desc = "Add spell by ID or exact name (for spells not in dropdown)",
+        order = order + 0.2,
         width = "half",
         func = function()
-            local val = addSpellInputValues[listType]
-            if not val or val:trim() == "" then return end
-            
+            local val = (spellSearchFilter[listType] or ""):trim()
+            if val == "" then return end
+
             local spellID = tonumber(val)
-            if spellID and spellID > 0 then
-                -- Validate spell exists
-                local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
-                if not spellInfo or not spellInfo.name then
-                    addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
-                    return
-                end
-                
-                -- Check if already in list
-                for _, existingID in ipairs(spellList) do
-                    if existingID == spellID then
-                        addon:Print("Spell already in list: " .. spellInfo.name)
-                        return
+
+            -- If not a number, try looking up by name
+            if not spellID then
+                spellID = LookupSpellByName(val)
+                if not spellID then
+                    -- Try C_Spell directly for spells not in cache
+                    if C_Spell and C_Spell.GetSpellInfo then
+                        local info = C_Spell.GetSpellInfo(val)
+                        if info and info.spellID then
+                            spellID = info.spellID
+                        end
                     end
                 end
-                
-                table.insert(spellList, spellID)
-                addon:Print("Added: " .. spellInfo.name)
-                addSpellInputValues[listType] = ""  -- Clear input after successful add
-                Options.UpdateDefensivesOptions(addon)
-            else
-                addon:Print("Invalid spell ID (must be a positive number)")
+                if not spellID then
+                    addon:Print("Spell not found: " .. val)
+                    return
+                end
             end
-        end
+
+            if AddSpellToList(addon, spellList, spellID) then
+                spellSearchFilter[listType] = ""  -- Clear input
+                Options.UpdateDefensivesOptions(addon)
+            end
+        end,
+        disabled = function()
+            local filter = (spellSearchFilter[listType] or ""):trim()
+            return #filter < 1
+        end,
     }
 end
 
@@ -457,7 +784,7 @@ function Options.UpdateDefensivesOptions(addon)
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
-    
+
     local keysToClear = {}
     for key, _ in pairs(defensivesArgs) do
         if not staticKeys[key] then
@@ -475,10 +802,10 @@ function Options.UpdateDefensivesOptions(addon)
     CreateSpellListEntries(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 22)
     CreateAddSpellInput(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 40, "Self-Heals")
 
-    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
+    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)
     CreateSpellListEntries(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 52)
     CreateAddSpellInput(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 70, "Cooldowns")
-    
+
     -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
@@ -515,7 +842,7 @@ local function CreateOptionsTable(addon)
                         order = 3,
                         width = "normal",
                         get = function() return addon.db.profile.maxIcons or 5 end,
-                        set = function(_, val) 
+                        set = function(_, val)
                             addon.db.profile.maxIcons = val
                             addon:UpdateFrameSize()
                         end
@@ -528,7 +855,7 @@ local function CreateOptionsTable(addon)
                         order = 4,
                         width = "normal",
                         get = function() return addon.db.profile.iconSize or 36 end,
-                        set = function(_, val) 
+                        set = function(_, val)
                             addon.db.profile.iconSize = val
                             addon:UpdateFrameSize()
                         end
@@ -541,7 +868,7 @@ local function CreateOptionsTable(addon)
                         order = 5,
                         width = "normal",
                         get = function() return addon.db.profile.iconSpacing or 2 end,
-                        set = function(_, val) 
+                        set = function(_, val)
                             addon.db.profile.iconSpacing = val
                             addon:UpdateFrameSize()
                         end
@@ -735,7 +1062,7 @@ local function CreateOptionsTable(addon)
                             return addon.db.profile.hotkeyText.font or "Friz Quadrata TT"
                         end,
                         set = function(_, val)
-                            addon.db.profile.hotkeyText.font = val                        
+                            addon.db.profile.hotkeyText.font = val
                             addon:OnHotkeyProfileUpdate()
                         end,
                     },
@@ -897,7 +1224,7 @@ local function CreateOptionsTable(addon)
                         order = 91,
                         width = "full",
                         get = function() return addon.db.profile.panelLocked or false end,
-                        set = function(_, val) 
+                        set = function(_, val)
                             addon.db.profile.panelLocked = val
                             local status = val and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                             addon:DebugPrint("Panel " .. status)
@@ -910,7 +1237,7 @@ local function CreateOptionsTable(addon)
                         order = 92,
                         width = "full",
                         get = function() return addon.db.profile.debugMode or false end,
-                        set = function(_, val) 
+                        set = function(_, val)
                             addon.db.profile.debugMode = val
                             -- Refresh cached debug mode immediately
                             if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
@@ -1229,13 +1556,13 @@ local function HandleSlashCommand(addon, input)
         AceConfigDialog:Open("JustAssistedCombat")
         return
     end
-    
+
     local command, arg = input:match("^(%S+)%s*(.-)$")
     if not command then return end
     command = command:lower()
-    
+
     local DebugCommands = LibStub("JustAC-DebugCommands", true)
-    
+
     if command == "config" or command == "options" then
         -- Ensure defensive spells initialized before opening panel
         if addon.InitializeDefensiveSpells then
@@ -1245,7 +1572,7 @@ local function HandleSlashCommand(addon, input)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
-        
+
     elseif command == "toggle" then
         if addon.db and addon.db.profile then
             addon.db.profile.isManualMode = not addon.db.profile.isManualMode
@@ -1257,7 +1584,7 @@ local function HandleSlashCommand(addon, input)
                 addon:Print("Display resumed")
             end
         end
-        
+
     elseif command == "debug" then
         if addon.db and addon.db.profile then
             addon.db.profile.debugMode = not addon.db.profile.debugMode
@@ -1267,14 +1594,14 @@ local function HandleSlashCommand(addon, input)
             end
             addon:Print("Debug mode: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
         end
-        
+
     elseif command == "modules" or command == "diag" then
         if DebugCommands and DebugCommands.ModuleDiagnostics then
             DebugCommands.ModuleDiagnostics(addon)
         else
             addon:Print("DebugCommands module not available")
         end
-        
+
     elseif command == "find" then
         local spellName = input:match("^find%s+(.+)")
         if DebugCommands and DebugCommands.FindSpell then
@@ -1298,7 +1625,7 @@ local function HandleSlashCommand(addon, input)
             addon:SavePosition()
             addon:Print("Position reset to center")
         end
-        
+
     elseif command == "profile" then
         local profileAction = input:match("^profile%s+(.+)")
         if DebugCommands and DebugCommands.ManageProfile then
@@ -1306,21 +1633,21 @@ local function HandleSlashCommand(addon, input)
         else
             addon:Print("DebugCommands module not available")
         end
-    
+
     elseif command == "defensive" or command == "def" then
         if DebugCommands and DebugCommands.DefensiveDiagnostics then
             DebugCommands.DefensiveDiagnostics(addon)
         else
             addon:Print("DebugCommands module not available")
         end
-        
+
     elseif command == "help" then
         if DebugCommands and DebugCommands.ShowHelp then
             DebugCommands.ShowHelp(addon)
         else
             addon:Print("DebugCommands module not available")
         end
-        
+
     else
         addon:Print("Unknown command. Type '/jac help' for available commands.")
     end
@@ -1329,7 +1656,7 @@ end
 function Options.Initialize(addon)
     local AceConfig = LibStub("AceConfig-3.0")
     local AceDBOptions = LibStub("AceDBOptions-3.0")
-    
+
     if not AceConfig or not AceConfigDialog then
         if addon.Print then
             addon:Print("Warning: AceConfig dependencies not found. Options panel will not be available.")
@@ -1338,18 +1665,18 @@ function Options.Initialize(addon)
         addon:RegisterChatCommand("jac", function(input) HandleSlashCommand(addon, input) end)
         return
     end
-    
+
     addon.optionsTable = CreateOptionsTable(addon)
-    
+
     if AceDBOptions then
         addon.optionsTable.args.profiles = AceDBOptions:GetOptionsTable(addon.db)
         addon.optionsTable.args.profiles.order = 10
     end
-    
+
     AceConfig:RegisterOptionsTable("JustAssistedCombat", addon.optionsTable)
     -- Store the category for version-aware opening
     addon.optionsCategoryID = AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
-    
+
     addon:RegisterChatCommand("justac", function(input) HandleSlashCommand(addon, input) end)
     addon:RegisterChatCommand("jac", function(input) HandleSlashCommand(addon, input) end)
 end

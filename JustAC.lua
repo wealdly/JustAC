@@ -1470,11 +1470,11 @@ function JustAC:PLAYER_ENTERING_WORLD()
         self.db.char.lastKnownSpec = currentSpec
     end
     
-    self:ForceUpdate()
-    
+    self:ForceUpdateAll()
+
     -- Force update after delay to ensure Assisted Combat API has fully initialized
     -- The API may not return spells immediately after PLAYER_ENTERING_WORLD
-    C_Timer.After(1.0, function() self:ForceUpdate() end)
+    C_Timer.After(1.0, function() self:ForceUpdateAll() end)
     
     -- Check if Single-Button Assistant is placed on action bar (required for stable API behavior)
     C_Timer.After(2, function()
