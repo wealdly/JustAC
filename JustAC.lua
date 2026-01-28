@@ -1124,6 +1124,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
                             if not isRedundant then
                                 local onCooldown = BlizzardAPI.IsSpellOnRealCooldown(spellID)
                                 if not onCooldown then
+                                    -- For defensives: show procced spells even if on cooldown (cooldown will display on icon)
                                     results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
                                     alreadyAdded[spellID] = true
                                 end
@@ -1445,6 +1446,23 @@ function JustAC:UpdateSpellQueue()
 
     local currentSpells = SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue() or {}
     UIManager.RenderSpellQueue(self, currentSpells)
+end
+
+function JustAC:UpdateDefensiveCooldowns()
+    if not self.db or not self.db.profile or self.db.profile.isManualMode then return end
+    
+    -- Update cooldowns on all visible defensive icons
+    -- This ensures cooldown layers appear/disappear as quickly as the main queue
+    if self.defensiveIcons and #self.defensiveIcons > 0 then
+        for _, icon in ipairs(self.defensiveIcons) do
+            if icon and icon:IsShown() then
+                UIRenderer.UpdateButtonCooldowns(icon)
+            end
+        end
+    elseif self.defensiveIcon and self.defensiveIcon:IsShown() then
+        -- Legacy single defensive icon support
+        UIRenderer.UpdateButtonCooldowns(self.defensiveIcon)
+    end
 end
 
 function JustAC:PLAYER_ENTERING_WORLD()
@@ -1800,6 +1818,7 @@ function JustAC:StartUpdates()
         if self.updateTimeLeft <= 0 then
             self.updateTimeLeft = updateRate
             self:UpdateSpellQueue()
+            self:UpdateDefensiveCooldowns()
         end
     end)
 end
