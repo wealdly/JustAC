@@ -1,35 +1,24 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v24
--- Changed: Added in-combat spell activation tracking via UNIT_SPELLCAST_SUCCEEDED
--- Filters out spells that are redundant (already active buffs, forms, pets, poisons, etc.)
--- Uses dynamic aura detection with native 12.0-compliant spell classification
--- NOTE: We trust Assisted Combat's suggestions - only filter truly redundant casts
---       like being in a form, having a pet, or already having weapon poisons applied.
--- 12.0 COMPATIBILITY: Uses native spell tables for full Midnight compatibility
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 24)
+-- JustAC: Redundancy Filter Module v25
+-- Changed: Migrated to BlizzardAPI.IsSecretValue() and GetAuraTiming() for centralized secret handling
+-- Changed: Field-level secret checks allow partial aura data when some fields are secret
+-- 12.0 COMPATIBILITY: Uses API-specific helpers for incremental API access
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 25)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Hot path optimizations: cache frequently used functions
+-- Hot path optimizations
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
 
--- Throttle tracking for debug output (prevent spam)
-local lastDebugPrintTime = {}
-local DEBUG_THROTTLE_INTERVAL = 5  -- Only print same message once per 5 seconds
 
+-- Spell classification tables (manual, covers essential spells)
 
---------------------------------------------------------------------------------
--- Native Spell Classification (12.0 Compliant - replaces LibPlayerSpells)
--- These tables are maintained manually but cover essential spells
--- Unknown spells fall through to name-pattern matching
---------------------------------------------------------------------------------
-
--- Raid Buffs: Long-duration maintenance buffs that should be filtered when aura API blocked
+-- Raid buffs
 local RAID_BUFF_SPELLS = {
     [1126] = true,    -- Mark of the Wild (Druid)
     [21562] = true,   -- Power Word: Fortitude (Priest)
@@ -39,7 +28,7 @@ local RAID_BUFF_SPELLS = {
     [381732] = true,  -- Blessing of the Bronze (alternate)
 }
 
--- Pet Summon Spells: Spells that summon a combat pet
+-- Pet summon spells
 local PET_SUMMON_SPELLS = {
     -- Hunter
     [883] = true,     -- Call Pet 1
@@ -326,8 +315,8 @@ RefreshAuraCache = function()
             
             -- Best-effort: If critical fields are secret, skip this aura but continue processing others
             -- auraInstanceID is documented as NeverSecret in 12.0, so we can always track it
-            local spellIdIsSecret = issecretvalue and issecretvalue(auraData.spellId)
-            local nameIsSecret = issecretvalue and issecretvalue(auraData.name)
+            local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
+            local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
             
             if spellIdIsSecret or nameIsSecret then
                 -- Mark that we encountered secrets (cache may be incomplete)
@@ -337,12 +326,11 @@ RefreshAuraCache = function()
                 -- Safe to process this aura
                 if auraData.spellId then
                     cachedAuras.byID[auraData.spellId] = true
-                    -- Store aura timing info for pandemic check (check fields individually)
-                    local durIsSecret = issecretvalue and issecretvalue(auraData.duration)
-                    local expIsSecret = issecretvalue and issecretvalue(auraData.expirationTime)
+                    -- Store aura timing info for pandemic check (use API-specific helper)
+                    local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
                     cachedAuras.auraInfo[auraData.spellId] = {
-                        duration = (not durIsSecret and auraData.duration) or 0,
-                        expirationTime = (not expIsSecret and auraData.expirationTime) or 0,
+                        duration = dur or 0,
+                        expirationTime = exp or 0,
                         count = auraData.applications or 1,  -- Stack count
                     }
                 end
@@ -361,8 +349,8 @@ RefreshAuraCache = function()
             if not ok or not name then break end
             
             -- Best-effort: skip secret auras but continue processing others
-            local spellIdIsSecret = issecretvalue and issecretvalue(spellId)
-            local nameIsSecret = issecretvalue and issecretvalue(name)
+            local spellIdIsSecret = BlizzardAPI.IsSecretValue(spellId)
+            local nameIsSecret = BlizzardAPI.IsSecretValue(name)
             
             if spellIdIsSecret or nameIsSecret then
                 cachedAuras.hasSecrets = true
@@ -370,8 +358,8 @@ RefreshAuraCache = function()
             else
                 if spellId then
                     cachedAuras.byID[spellId] = true
-                    local durIsSecret = issecretvalue and issecretvalue(duration)
-                    local expIsSecret = issecretvalue and issecretvalue(expirationTime)
+                    local durIsSecret = BlizzardAPI.IsSecretValue(duration)
+                    local expIsSecret = BlizzardAPI.IsSecretValue(expirationTime)
                     cachedAuras.auraInfo[spellId] = {
                         duration = (not durIsSecret and duration) or 0,
                         expirationTime = (not expIsSecret and expirationTime) or 0,
@@ -571,7 +559,7 @@ local function IsPetAlive()
     if not ok then return true end  -- Fail-safe: assume alive
     
     -- 12.0: Check if result is secret - fail-open (assume alive if can't determine)
-    if issecretvalue and issecretvalue(isDead) then
+    if BlizzardAPI.IsSecretValue(isDead) then
         return true  -- Fail-open: assume pet is alive
     end
     

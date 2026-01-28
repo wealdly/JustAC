@@ -181,7 +181,6 @@ function UIHealthBar.Update(addon)
     
     -- Color gradient: Green → Yellow → Red based on health percentage
     -- Only update color if not dealing with secret values
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI and not BlizzardAPI.IsSecretValue(health) and not BlizzardAPI.IsSecretValue(maxHealth) then
         local healthPercent = health / maxHealth
         local r, g, b

@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Blizzard API Module v25
--- Changed: Fixed TestAuraAccess to check multiple auras instead of just first one
--- Changed: Added charge-based spell detection in IsSpellOnRealCooldown
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 25)
+-- JustAC: Blizzard API Module v26
+-- Changed: Added API-specific secret helpers (GetCooldownForDisplay, IsSpellReady, GetAuraTiming, GetSpellCharges)
+-- Changed: Purpose-specific helpers check only needed fields for incremental 12.0 API access
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 26)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -34,32 +34,21 @@ local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
 
 --------------------------------------------------------------------------------
--- Local Cooldown Tracking (12.0+ Secret Value Workaround)
--- When C_Spell.GetSpellCooldown returns secrets, we track cooldowns locally
--- by listening to UNIT_SPELLCAST_SUCCEEDED and using GetSpellBaseCooldown
--- (which is NOT secret even in combat)
---
--- Limitation: GetSpellBaseCooldown returns UNMODIFIED base cooldown.
--- Talent/haste reductions are not reflected. This means tracking may show
--- spells as "on cooldown" slightly longer than actual. This is conservative
--- (safer than showing available when actually on cooldown).
---------------------------------------------------------------------------------
-
-local localCooldowns = {}  -- [spellID] = { endTime = GetTime() + duration, duration = seconds }
-local cachedDurations = {} -- [spellID] = actual duration (captured when cast out of combat)
-local trackedDefensiveSpells = {}  -- [spellID] = true, populated from addon settings
+-- Local cooldown tracking (workaround for 12.0+ secret values)
+-- Limitation: Uses GetSpellBaseCooldown (no talent/haste mods) when API secret
+local localCooldowns = {}  -- [spellID] = { endTime, duration }
+local cachedDurations = {} -- [spellID] = actual duration (from cast)
+local trackedDefensiveSpells = {}  -- [spellID] = true
 local cooldownEventFrame = nil
 
--- Check if a spell is on cooldown according to our local tracking
+-- Check if spell is on cooldown (local tracking)
 local function IsLocalCooldownActive(spellID)
     local data = localCooldowns[spellID]
     if not data then return false end
     return GetTime() < data.endTime
 end
 
--- Get the best available cooldown duration for a spell
--- Priority: 1) Cached actual duration (from out-of-combat cast)
---           2) GetSpellBaseCooldown (always works, but unmodified)
+-- Get cooldown duration (prioritize cached actual, fallback to base)
 local function GetBestCooldownDuration(spellID)
     -- Check if we have a cached actual duration from previous out-of-combat cast
     if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
@@ -75,34 +64,25 @@ local function GetBestCooldownDuration(spellID)
     return 0
 end
 
--- Record a spell cast for local cooldown tracking
+-- Record spell cast for cooldown tracking
 local function RecordSpellCooldown(spellID)
     if not spellID or spellID == 0 then return end
-    
-    -- Only track defensive spells that we care about
     if not trackedDefensiveSpells[spellID] then return end
     
     local now = GetTime()
     local duration = 0
     local inCombat = InCombatLockdown()
     
-    -- If out of combat, try to capture actual modified duration from API
-    if not inCombat then
-        -- Try C_Spell.GetSpellCooldown first (gives actual modified duration)
-        if C_Spell_GetSpellCooldown then
-            local cd = C_Spell_GetSpellCooldown(spellID)
-            if cd and cd.duration and cd.duration > 0 then
-                -- Check if it's a secret value
-                if not (issecretvalue and issecretvalue(cd.duration)) then
-                    duration = cd.duration
-                    -- Cache this for future in-combat use
-                    cachedDurations[spellID] = duration
-                end
+    if not inCombat and C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
+        if cd and cd.duration and cd.duration > 0 then
+            if not (issecretvalue and issecretvalue(cd.duration)) then
+                duration = cd.duration
+                cachedDurations[spellID] = duration
             end
         end
     end
     
-    -- If we didn't get duration from API, use best available
     if duration == 0 then
         duration = GetBestCooldownDuration(spellID)
     end
@@ -116,13 +96,12 @@ local function RecordSpellCooldown(spellID)
     end
 end
 
--- Clear local cooldown tracking (on death, entering world, etc.)
+-- Clear local cooldown tracking
 local function ClearLocalCooldowns()
     wipe(localCooldowns)
-    -- Note: We DON'T clear cachedDurations here - those persist across combat
 end
 
--- Clear cached durations (on spec/talent changes)
+-- Clear cached durations (on spec/talent change)
 local function ClearCachedDurations()
     wipe(cachedDurations)
     wipe(localCooldowns)
@@ -136,7 +115,6 @@ local function InitCooldownTracking()
     cooldownEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
     cooldownEventFrame:RegisterEvent("PLAYER_DEAD")
     cooldownEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    -- Clear cached durations when talents/spec change (cooldowns may be different)
     cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     cooldownEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
@@ -475,6 +453,72 @@ function BlizzardAPI.SafeCompare(a, b)
         return nil  -- Can't compare secrets in tainted code
     end
     return a == b
+end
+
+--------------------------------------------------------------------------------
+-- API-Specific Secret-Aware Helpers
+-- Each helper checks only the fields it needs for its specific use case
+-- Allows field-level granularity as Blizzard releases API access incrementally
+--------------------------------------------------------------------------------
+
+-- Get cooldown info for display (UI rendering)
+-- Returns: startTime, duration (either may be nil if secret)
+function BlizzardAPI.GetCooldownForDisplay(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return nil, nil end
+    local cd = C_Spell_GetSpellCooldown(spellID)
+    if not cd then return nil, nil end
+    
+    local start = BlizzardAPI.IsSecretValue(cd.startTime) and nil or cd.startTime
+    local dur = BlizzardAPI.IsSecretValue(cd.duration) and nil or cd.duration
+    return start, dur
+end
+
+-- Check if spell is ready (usability check)
+-- Returns: boolean, fail-open if secret (true = assume ready)
+function BlizzardAPI.IsSpellReady(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return true end
+    local cd = C_Spell_GetSpellCooldown(spellID)
+    if not cd then return true end
+    
+    -- If startTime is secret, we can't know - fail-open (assume ready)
+    if BlizzardAPI.IsSecretValue(cd.startTime) then return true end
+    return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
+end
+
+-- Get aura spell ID (for redundancy filtering)
+-- Returns: spellID or nil
+function BlizzardAPI.GetAuraSpellID(unit, index, filter)
+    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil end
+    local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
+    if not aura then return nil end
+    
+    -- Check if spellId is secret
+    if BlizzardAPI.IsSecretValue(aura.spellId) then return nil end
+    return aura.spellId
+end
+
+-- Get aura timing info (for pandemic window calculations)
+-- Returns: duration, expirationTime (either may be nil if secret)
+function BlizzardAPI.GetAuraTiming(unit, index, filter)
+    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end
+    local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
+    if not aura then return nil, nil end
+    
+    local dur = BlizzardAPI.IsSecretValue(aura.duration) and nil or aura.duration
+    local exp = BlizzardAPI.IsSecretValue(aura.expirationTime) and nil or aura.expirationTime
+    return dur, exp
+end
+
+-- Get spell charge info (for charge-based abilities)
+-- Returns: currentCharges, maxCharges (either may be nil if secret)
+function BlizzardAPI.GetSpellCharges(spellID)
+    if not spellID or not C_Spell_GetSpellCharges then return nil, nil end
+    local chargeInfo = C_Spell_GetSpellCharges(spellID)
+    if not chargeInfo then return nil, nil end
+    
+    local current = BlizzardAPI.IsSecretValue(chargeInfo.currentCharges) and nil or chargeInfo.currentCharges
+    local max = BlizzardAPI.IsSecretValue(chargeInfo.maxCharges) and nil or chargeInfo.maxCharges
+    return current, max
 end
 
 --------------------------------------------------------------------------------
@@ -1443,7 +1487,7 @@ function BlizzardAPI.GetPlayerHealthPercentSafe()
     if exactPct then
         return exactPct, false
     end
-    
+
     -- Health is secret - use LowHealthFrame
     local isLow, isCritical, alpha = BlizzardAPI.GetLowHealthState()
     if isCritical then
