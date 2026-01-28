@@ -197,7 +197,7 @@ function RedundancyFilter.PruneExpiredActivations()
         
         -- Method 3: Pet detection (always works - not secret)
         if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
-            if HasActivePet() then
+            if SafeHasPetUI() then
                 shouldKeep = true  -- Pet still exists
             end
         end
@@ -844,7 +844,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     else
         -- Pet summon spells: redundant if any pet exists
         local isPetSpellByTable = IsPetSpell(spellID)
-        if (isPetSpellByTable or IsPetSummonSpell(spellName)) and HasActivePet() then
+        if (isPetSpellByTable or IsPetSummonSpell(spellName)) and SafeHasPetUI() then
             if debugMode then
                 local source = isPetSpellByTable and "native table" or "name pattern"
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
