@@ -114,7 +114,7 @@ function UIHealthBar.CreateHealthBar(addon)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    bg:SetVertexColor(0.2, 0.2, 0.2, 0.8)  -- Dark background
+    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
     
     -- Border frame for visual definition
     local border = CreateFrame("Frame", nil, frame, "BackdropTemplate")

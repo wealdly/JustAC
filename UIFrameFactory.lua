@@ -40,11 +40,14 @@ end
 local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
     local button = CreateFrame("Button", nil, addon.mainFrame)
     if not button then return nil end
-    
+
     button:SetSize(actualIconSize, actualIconSize)
-    
+
     local firstIconCenter = actualIconSize / 2
-    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or spacing
+    -- Use health bar offset for SIDE1 when health bar shown, otherwise use consistent base spacing
+    -- Base spacing is BAR_SPACING (3px) minimum to visually separate from the queue
+    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or math.max(spacing, baseSpacing)
     
     -- Calculate offset for additional icons (index 0 has no offset)
     -- SIDE1/SIDE2: horizontal layout (along queue direction)
@@ -58,10 +61,10 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
         elseif defPosition == "SIDE2" then
             -- SIDE2 = below, icons grow rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -spacing)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
         else -- LEADING
             -- LEADING = left side, icons stack upward
-            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -spacing, iconOffset)
+            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
         end
     elseif queueOrientation == "RIGHT" then
         -- Queue grows right-to-left (grab tab on left)
@@ -70,10 +73,10 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
         elseif defPosition == "SIDE2" then
             -- SIDE2 = below, icons grow leftward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -spacing)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -effectiveSpacing)
         else -- LEADING
             -- LEADING = right side, icons stack upward
-            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", spacing, iconOffset)
+            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
         end
     elseif queueOrientation == "UP" then
         -- Queue grows bottom-to-top (grab tab on top)
@@ -82,10 +85,10 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
             button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
         elseif defPosition == "SIDE2" then
             -- SIDE2 = left side, icons grow upward
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -spacing, firstIconCenter + iconOffset)
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset)
         else -- LEADING
             -- LEADING = bottom side, icons stack rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -spacing)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
         end
     elseif queueOrientation == "DOWN" then
         -- Queue grows top-to-bottom (grab tab on bottom)
@@ -94,10 +97,10 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
             button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
         elseif defPosition == "SIDE2" then
             -- SIDE2 = left side, icons grow downward
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -spacing, -firstIconCenter - iconOffset)
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
         else -- LEADING
             -- LEADING = top side, icons stack rightward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, spacing)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
         end
     end
 
@@ -395,10 +398,17 @@ local function CreateDefensiveIcons(addon, profile)
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     
-    -- Health bar offset (only affects SIDE1)
+    -- Health bar offset calculation:
+    -- Health bar bottom = BAR_SPACING above mainFrame
+    -- Health bar top = BAR_SPACING + BAR_HEIGHT above mainFrame
+    -- Defensive bottom = BAR_SPACING above health bar top
+    -- So: defensive bottom = BAR_SPACING + BAR_HEIGHT + BAR_SPACING = BAR_HEIGHT + 2*BAR_SPACING
+    -- Add 1px visual compensation for Blizzard's -0.5px texture offset on both elements
     local healthBarOffset = 0
     if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
-        healthBarOffset = UIHealthBar.BAR_HEIGHT + (UIHealthBar.BAR_SPACING * 2)
+        local barSpacing = UIHealthBar.BAR_SPACING
+        local barHeight = UIHealthBar.BAR_HEIGHT
+        healthBarOffset = barHeight + (barSpacing * 2)
     end
     
     -- Create maxIcons defensive buttons using a FRESH table
