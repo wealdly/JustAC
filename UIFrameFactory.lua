@@ -192,7 +192,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end
 
-    cooldown:Hide()
     button.cooldown = cooldown
 
     -- Charge cooldown frame (shows charge regeneration for multi-charge spells)

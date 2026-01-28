@@ -222,15 +222,45 @@ function DebugCommands.DefensiveDiagnostics(addon)
     addon:Print("  Show Only In Combat: " .. (defSettings.showOnlyInCombat and "YES" or "NO"))
     addon:Print("  Position: " .. (defSettings.position or "LEFT"))
     
-    -- Defensive icon frame
+    -- Defensive icon frames (all positions)
     addon:Print("")
-    addon:Print("Defensive Icon:")
-    if addon.defensiveIcon then
-        addon:Print("  Frame: |cff00ff00EXISTS|r")
-        addon:Print("  Visible: " .. (addon.defensiveIcon:IsShown() and "|cff00ff00YES|r" or "NO"))
-        addon:Print("  CurrentID: " .. tostring(addon.defensiveIcon.currentID or "nil"))
+    addon:Print("Defensive Icons:")
+    local defensiveIcons = addon.defensiveIcons or (addon.defensiveIcon and {addon.defensiveIcon}) or {}
+    if #defensiveIcons == 0 then
+        addon:Print("  Frames: |cffff0000NOT CREATED|r")
     else
-        addon:Print("  Frame: |cffff0000NOT CREATED|r")
+        for i, icon in ipairs(defensiveIcons) do
+            addon:Print("  [Position " .. i .. "]")
+            addon:Print("    Visible: " .. (icon:IsShown() and "|cff00ff00YES|r" or "NO"))
+            addon:Print("    CurrentID: " .. tostring(icon.currentID or "nil"))
+            addon:Print("    SpellID: " .. tostring(icon.spellID or "nil"))
+            addon:Print("    isItem: " .. tostring(icon.isItem or "nil"))
+
+            -- Cooldown frame diagnostics
+            if icon.cooldown then
+                addon:Print("    Cooldown frame: |cff00ff00EXISTS|r")
+                addon:Print("      CD Visible: " .. (icon.cooldown:IsShown() and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+                addon:Print("      DrawSwipe: " .. tostring(icon.cooldown:GetDrawSwipe()))
+                addon:Print("      DrawEdge: " .. tostring(icon.cooldown:GetDrawEdge()))
+
+                -- Get current cooldown state
+                local cdStart, cdDuration = icon.cooldown:GetCooldownTimes()
+                if cdStart and cdDuration then
+                    cdStart = cdStart / 1000  -- Convert from ms
+                    cdDuration = cdDuration / 1000
+                    if cdDuration > 0 then
+                        local remaining = (cdStart + cdDuration) - GetTime()
+                        addon:Print(string.format("      CD Active: |cff00ff00YES|r (%.1fs remaining)", remaining))
+                    else
+                        addon:Print("      CD Active: NO (duration=0)")
+                    end
+                else
+                    addon:Print("      CD Active: NO (no times)")
+                end
+            else
+                addon:Print("    Cooldown frame: |cffff0000MISSING|r")
+            end
+        end
     end
     
     -- Health API status
