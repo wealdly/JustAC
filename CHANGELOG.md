@@ -1,5 +1,69 @@
 # Changelog
 
+## [3.15] - 2026-01-27
+
+### Added
+- **BlizzardAPI v26**: API-specific secret helpers for incremental 12.0 compatibility
+  - `GetCooldownForDisplay(spellID)` - Returns start, duration (nil if secret)
+  - `IsSpellReady(spellID)` - Boolean usability check, fail-open if secret  
+  - `GetAuraTiming(unit, index, filter)` - Returns duration, expiration (field-level checks)
+  - `GetSpellCharges(spellID)` - Returns current, max charges (field-level checks)
+  - Purpose-specific helpers check only needed fields as Blizzard releases API access incrementally
+
+- **MacroParser v21**: [stealth] and [combat] conditional evaluation
+  - Implemented `[stealth]`, `[nostealth]`, `[combat]`, `[nocombat]` conditional checks
+  - Fixes Rogue/Druid keybind detection for macros like `/cast [stealth] Cheap Shot; Sinister Strike`
+
+### Changed
+- **UIRenderer v9**: Migrated to centralized secret handling and Blizzard's cooldown logic
+  - All secret checks now use `BlizzardAPI.IsSecretValue()`
+  - Using API-specific helpers for field-level granularity (30+ call sites simplified)
+  - Refactored to use Blizzard's ActionButtonTemplate cooldown logic (mimics ActionButton_UpdateCooldown)
+  - Removed manual GCD/cooldown management, now using C_Spell APIs directly like Blizzard
+
+- **RedundancyFilter v25**: Migrated to centralized secret handling  
+  - All secret checks now use `BlizzardAPI.IsSecretValue()`
+  - Using `GetAuraTiming()` for field-level aura access
+  - Allows partial aura data when some fields are secret (best-effort processing)
+
+- **Options.lua**: Migrated to centralized secret handling and added configurable health thresholds
+  - Cooldown display now uses `BlizzardAPI.IsSecretValue()`
+  - All spell info lookups use `BlizzardAPI.GetSpellInfo()` for consistent secret handling
+  - Removed redundant LibStub lookups inside functions
+  - Added configurable health thresholds: selfHealThreshold, cooldownThreshold, petHealThreshold
+
+- **DebugCommands.lua**: Migrated to centralized secret handling
+  - Health API status now uses `BlizzardAPI.IsSecretValue()`
+
+- **UIFrameFactory v10**: Refactored cooldown frames to match Blizzard's ActionButtonTemplate
+  - Separate cooldown and chargeCooldown frames (matching Blizzard's structure)
+  - Smaller, more transparent countdown numbers to avoid overlapping hotkey text
+
+- **JustAC.lua**: Added configurable health thresholds for defensive spells
+  - Self-heal threshold (default 80%), cooldown threshold (default 60%), pet heal threshold (default 50%)
+  - Uses exact health when available, falls back to LowHealthFrame overlay when secret
+
+### Removed
+- **Code consolidation**: Removed duplicate `SafeGetSpellInfo` implementations (-18 lines)
+  - Deleted from MacroParser.lua - now uses `BlizzardAPI.GetSpellInfo()`
+  - Deleted from FormCache.lua - now uses `BlizzardAPI.GetSpellInfo()`
+  - All spell info access consolidated through BlizzardAPI for consistent secret handling
+
+- **RedundancyFilter**: Removed unused debug variables (-3 lines)
+  - Deleted unused `lastDebugPrintTime` table
+  - Deleted unused `DEBUG_THROTTLE_INTERVAL` constant
+
+### Fixed
+- **MacroParser v21**: Removed dead code (-12 lines)
+  - Deleted `SafeIsMounted()` - defined but never called
+  - Deleted `SafeIsOutdoors()` - defined but never called
+
+### Performance
+- **Comment cleanup**: Condensed verbose comments across 4 core modules (-80 lines)
+  - Removed multi-line explanations that restated obvious code
+  - Kept all operational guidance and critical API compatibility notes
+  - MacroParser, BlizzardAPI, UIRenderer, RedundancyFilter now more concise
+
 ## [3.14] - 2026-01-26
 
 ### Added
