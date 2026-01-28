@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 3.16
+## Version: 3.17
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface\\Icons\\Trade_Engineering
 ## SavedVariables: JustACDB

@@ -253,7 +253,22 @@ function DebugCommands.DefensiveDiagnostics(addon)
     -- Combat status
     local inCombat = UnitAffectingCombat("player")
     addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
-    
+
+    -- Positioning debug info
+    addon:Print("")
+    addon:Print("Positioning (pixels):")
+    local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+    if UIHealthBar then
+        local barSpacing = UIHealthBar.BAR_SPACING or 3
+        local barHeight = UIHealthBar.BAR_HEIGHT or 6
+        local healthBarOffset = barHeight + (barSpacing * 2)
+        addon:Print("  BAR_SPACING: " .. barSpacing)
+        addon:Print("  BAR_HEIGHT: " .. barHeight)
+        addon:Print("  Gap DPS->HealthBar: " .. barSpacing .. "px")
+        addon:Print("  Gap HealthBar->Defensive: " .. (healthBarOffset - barSpacing - barHeight) .. "px")
+        addon:Print("  (Should be equal: " .. barSpacing .. "px each)")
+    end
+
     -- Configured spells summary
     addon:Print("")
     addon:Print("Configured Spells:")
