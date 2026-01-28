@@ -1,7 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Macro Parser Module
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 20)
+-- JustAC: Macro Parser Module v21
+-- Changed: Implemented [stealth], [nostealth], [combat], [nocombat] conditional evaluation
+-- Changed: Removed dead code (SafeIsMounted, SafeIsOutdoors) - 12 lines
+-- Fixed: Rogue/Druid stealth macros now correctly detect keybinds
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 21)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -28,30 +31,26 @@ local IsStealthed = IsStealthed
 local IsSpellKnown = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 
--- Improved caching with better invalidation
+-- Caching with periodical flush (30s interval)
 local parsedMacroCache = {}
 local spellOverrideCache = {}
 local lastCacheFlush = 0
 local CACHE_FLUSH_INTERVAL = 30
-
--- Throttle debug output (per-message timestamps)
 local lastPrintTime = {}
-local DEBUG_THROTTLE_INTERVAL = 5  -- Only print same message every 5 seconds
+local DEBUG_THROTTLE_INTERVAL = 5
 
--- Verbose debug mode (enabled only during /jac find or /jac macrotest commands)
+-- Verbose debug mode (for /jac find, /jac macrotest)
 local verboseDebugMode = false
 
 function MacroParser.SetVerboseDebug(enabled)
     verboseDebugMode = enabled
 end
 
--- Simple lowercase helper (string.lower is fast enough for macro parsing)
 local function GetLowercase(str)
     return str and string_lower(str) or ""
 end
 
--- Debug mode for macro parser: ONLY verbose mode (enabled via /jac find, /jac macrotest)
--- Global debug mode generates too much spam from macro parsing during normal use
+-- Verbose debug only (avoid spam during normal use)
 local function GetDebugMode()
     return verboseDebugMode
 end
@@ -66,28 +65,10 @@ local function SafeGetOverrideSpell(spellID)
     return nil
 end
 
-local function SafeGetSpellInfo(spellID)
-    if not spellID or not C_Spell or not C_Spell.GetSpellInfo then return nil end
-    local ok, result = pcall(C_Spell.GetSpellInfo, spellID)
-    return ok and result or nil
-end
-
 local function SafeGetSpecialization()
     if not GetSpecialization then return 0 end
     local ok, result = pcall(GetSpecialization)
     return ok and result or 0
-end
-
-local function SafeIsMounted()
-    if not IsMounted then return false end
-    local ok, result = pcall(IsMounted)
-    return ok and result or false
-end
-
-local function SafeIsOutdoors()
-    if not IsOutdoors then return false end
-    local ok, result = pcall(IsOutdoors)
-    return ok and result or false
 end
 
 local function SafeGetActionText(slot)
@@ -96,21 +77,16 @@ local function SafeGetActionText(slot)
     return ok and result or nil
 end
 
-local function SafeIsInCombat()
-    if not UnitAffectingCombat then return false end
-    local ok, result = pcall(UnitAffectingCombat, "player")
-    return ok and result or false
+-- Used for [combat] and [stealth] conditional evaluation
+local function IsInCombat()
+    return UnitAffectingCombat and UnitAffectingCombat("player") or false
 end
 
-local function SafeIsStealthed()
-    if not IsStealthed then return false end
-    local ok, result = pcall(IsStealthed)
-    return ok and result or false
+local function IsInStealth()
+    return IsStealthed and IsStealthed() or false
 end
 
--- Check if spell is known by ID or name
--- For [known:SpellName], we need to find the spell ID first
--- Note: BlizzardAPI.IsSpellAvailable has its own 2-second TTL cache
+-- Check if spell is known (by ID or name)
 local function IsSpellKnownByIdentifier(identifier)
     if not identifier or identifier == "" then return false end
     
@@ -178,10 +154,10 @@ local function GetSpellAndOverride(spellID, spellName)
         spells[spellID] = spellName
     end
     
-    -- Add the override spell using safe wrapper
+    -- Add the override spell
     local overrideSpellID = SafeGetOverrideSpell(spellID)
-    if overrideSpellID then
-        local overrideSpellInfo = SafeGetSpellInfo(overrideSpellID)
+    if overrideSpellID and BlizzardAPI then
+        local overrideSpellInfo = BlizzardAPI.GetSpellInfo(overrideSpellID)
         if overrideSpellInfo and overrideSpellInfo.name then
             spells[overrideSpellID] = overrideSpellInfo.name
         end
@@ -410,13 +386,11 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             modifiers.nomod = true
 
         elseif trimmed:match("^nospec") then
-            -- [nospec:1/2] means NOT in spec 1 or 2
             local specList = trimmed:match("nospec:([%d/]+)")
             if specList then
                 for specStr in specList:gmatch("([^/]+)") do
                     local reqSpec = tonumber(specStr)
                     if reqSpec and currentSpec == reqSpec then
-                        -- We ARE in this spec, so nospec fails
                         allConditionsMet = false
                         break
                     end
@@ -439,13 +413,11 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             if not match then allConditionsMet = false; break end
 
         elseif trimmed:match("^noform") then
-            -- [noform:1/2] means NOT in form 1 or 2
             local formList = trimmed:match("noform:([%d/]+)")
             if formList then
                 for formStr in formList:gmatch("([^/]+)") do
                     local reqForm = tonumber(formStr)
                     if reqForm and currentForm == reqForm then
-                        -- We ARE in this form, so noform fails
                         allConditionsMet = false
                         break
                     end
@@ -469,16 +441,38 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             if not match then allConditionsMet = false; break end
 
         elseif trimmed:match("^known") then
-            -- [known:SpellName] or [known:12345] - check if spell/talent is known
             local spellIdentifier = trimmed:match("known:(.+)")
             if spellIdentifier and not IsSpellKnownByIdentifier(spellIdentifier) then
                 allConditionsMet = false
                 break
             end
 
-        -- All other conditionals (combat, stealth, mounted, target, etc.) are IGNORED
-        -- for keybind detection. We only care about spec/form/known which affect
-        -- spell availability. Context conditionals don't change which key to press.
+        elseif trimmed:match("^combat") then
+            if not IsInCombat() then
+                allConditionsMet = false
+                break
+            end
+
+        elseif trimmed:match("^nocombat") then
+            if IsInCombat() then
+                allConditionsMet = false
+                break
+            end
+
+        elseif trimmed:match("^stealth") then
+            if not IsInStealth() then
+                allConditionsMet = false
+                break
+            end
+
+        elseif trimmed:match("^nostealth") then
+            if IsInStealth() then
+                allConditionsMet = false
+                break
+            end
+
+        -- Other conditionals (mounted, outdoors, target, etc.) are IGNORED
+        -- for keybind detection. Target selection doesn't change which key to press.
         end
     end
 
