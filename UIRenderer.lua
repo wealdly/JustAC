@@ -101,12 +101,13 @@ local function UpdateButtonCooldowns(button)
         local modRate = cooldownInfo.modRate or 1
 
         -- Use SetCooldownFromExpirationTime for 12.0+ compatibility (handles secret values better)
-        if button.cooldown.SetCooldownFromExpirationTime then
-            -- 12.0+ method: Pass expiration time directly
+        if button.cooldown.SetCooldownFromExpirationTime and 
+           not (BlizzardAPI.IsSecretValue(startTime) or BlizzardAPI.IsSecretValue(duration)) then
+            -- 12.0+ method: Pass expiration time directly (only if values are not secret)
             local expirationTime = startTime + duration
             button.cooldown:SetCooldownFromExpirationTime(expirationTime, duration, modRate)
         else
-            -- Legacy method for older WoW versions
+            -- Legacy method for older WoW versions or when values are secret
             button.cooldown:SetCooldown(startTime, duration, modRate)
         end
 
