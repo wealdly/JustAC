@@ -449,7 +449,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             shouldShowFrame = false
         end
     end
-    
+
+    -- Hide queue if no hostile target when option is enabled (only applies out of combat)
+    if shouldShowFrame and profile.requireHostileTarget and not isInCombat then
+        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
+        if not hasHostileTarget then
+            shouldShowFrame = false
+        end
+    end
+
     -- Only update frame state if it actually changed
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
