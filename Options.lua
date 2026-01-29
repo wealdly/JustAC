@@ -22,6 +22,7 @@ local function fontValues()
         values[name] = name -- key = label
     end
     return values
+end
 -- Spellbook cache for autocomplete (populated on first options open)
 local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
 local spellbookCacheBuilt = false
