@@ -129,8 +129,7 @@ local defaults = {
         iconSpacing = 1,
         debugMode = false,
         isManualMode = false,
-        showTooltips = true,
-        tooltipsInCombat = true,
+        tooltipMode = "always",       -- "never", "outOfCombat", or "always"
         focusEmphasis = true,
         firstIconScale = 1.2,
         queueIconDesaturation = 0,
@@ -138,6 +137,7 @@ local defaults = {
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
         hideQueueForHealers = false,   -- Hide the entire queue when in a healer spec
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
+        requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelLocked = false,              -- Lock panel interactions in combat
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -146,18 +146,17 @@ local defaults = {
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
-            position = "LEADING",     -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
-            showHealthBar = false,    -- Display compact health bar above main queue
+            position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
+            showHealthBar = true,     -- Display compact health bar above main queue
             iconScale = 1.2,          -- Scale for defensive icons (same range as Primary Spell Scale)
-            maxIcons = 1,             -- Number of defensive icons to show (1-3)
+            maxIcons = 3,             -- Number of defensive icons to show (1-3)
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
             cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
             petHealThreshold = 50,    -- Show pet heals when PET health drops below this
             selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
             cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
-            showOnlyInCombat = false, -- false = always visible, true = only in combat with thresholds
-            alwaysShowDefensive = false, -- true = show defensive queue even at full health (shows procs/off-cooldown spells)
+            displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
     },
     char = {
@@ -740,8 +739,7 @@ function JustAC:OnHealthChanged(event, unit)
     -- which works even when UnitHealth() returns secrets
     
     local inCombat = UnitAffectingCombat("player")
-    local showOnlyInCombat = profile.defensives.showOnlyInCombat
-    
+
     -- Use safe health detection that falls back to LowHealthFrame when secrets block API
     local healthPercent, isEstimated = nil, false
     if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
@@ -1103,8 +1101,21 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
     
-    local showOnlyInCombat = profile.defensives.showOnlyInCombat
-    
+    -- Get display mode (with migration from old settings)
+    local displayMode = profile.defensives.displayMode
+    if not displayMode then
+        -- Migrate from old settings
+        local showOnlyInCombat = profile.defensives.showOnlyInCombat
+        local alwaysShow = profile.defensives.alwaysShowDefensive
+        if alwaysShow and showOnlyInCombat then
+            displayMode = "combatOnly"
+        elseif alwaysShow then
+            displayMode = "always"
+        else
+            displayMode = "healthBased"
+        end
+    end
+
     -- PRIORITY 1: Procced spells (shown at ANY health level)
     -- Check spellbook procs first
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -1156,15 +1167,15 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
     
-    -- "Only In Combat" check - if out of combat and no procs, return what we have (procs only)
-    if showOnlyInCombat and not inCombat then
+    -- Display mode checks
+    -- "combatOnly" - if out of combat, return procs only
+    if displayMode == "combatOnly" and not inCombat then
         return results
     end
-    
-    -- "Always Show" check - if enabled and we have room, add available spells regardless of health
-    -- This shows off-cooldown defensives even at full health (useful for proactive play)
-    local alwaysShow = profile.defensives.alwaysShowDefensive
-    if alwaysShow and not isLow and not isCritical and #results < maxIcons then
+
+    -- "always" or "combatOnly" (in combat) - add available spells regardless of health
+    local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
+    if showAllAvailable and not isLow and not isCritical and #results < maxIcons then
         -- Add self-heals first (typically shorter cooldowns)
         local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
         for _, entry in ipairs(spells) do
