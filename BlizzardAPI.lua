@@ -10,8 +10,8 @@ if not BlizzardAPI then return end
 -- Version Detection Constants
 -- Use these for conditional code paths when 12.0 introduces breaking changes
 --------------------------------------------------------------------------------
-local WOW_VERSION_11_2_7 = 110207  -- The War Within (current retail)
-local WOW_VERSION_12_0_0 = 120000  -- Midnight (beta)
+local WOW_VERSION_11_0_0 = 110000  -- The War Within (current retail)
+local WOW_VERSION_12_0_0 = 120000  -- Midnight (upcoming)
 local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
 local IS_MIDNIGHT_OR_LATER = CURRENT_VERSION >= WOW_VERSION_12_0_0
 
