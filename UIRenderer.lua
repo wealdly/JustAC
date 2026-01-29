@@ -100,8 +100,16 @@ local function UpdateButtonCooldowns(button)
         local duration = cooldownInfo.duration or 0
         local modRate = cooldownInfo.modRate or 1
 
-        -- Use SetCooldown - the cooldown widget handles display
-        button.cooldown:SetCooldown(startTime, duration, modRate)
+        -- Use SetCooldownFromExpirationTime for 12.0+ compatibility (handles secret values better)
+        if button.cooldown.SetCooldownFromExpirationTime and 
+           not (BlizzardAPI.IsSecretValue(startTime) or BlizzardAPI.IsSecretValue(duration)) then
+            -- 12.0+ method: Pass expiration time directly (only if values are not secret)
+            local expirationTime = startTime + duration
+            button.cooldown:SetCooldownFromExpirationTime(expirationTime, duration, modRate)
+        else
+            -- Legacy method for older WoW versions or when values are secret
+            button.cooldown:SetCooldown(startTime, duration, modRate)
+        end
 
         -- Force swipe visibility (in case it got reset) and ensure frame is shown
         -- Use pcall because duration comparison may fail with secret values
