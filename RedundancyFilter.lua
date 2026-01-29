@@ -1,10 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v29
+-- JustAC: Redundancy Filter Module v33
 -- Changed: Migrated to BlizzardAPI.IsSecretValue() and GetAuraTiming() for centralized secret handling
 -- Changed: Field-level secret checks allow partial aura data when some fields are secret
 -- 12.0 COMPATIBILITY: Uses API-specific helpers for incremental API access
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 29)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 33)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -638,30 +638,42 @@ end
 -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
 -- With Dragon-Tempered Blades talent: 2 lethal + 2 non-lethal (4 total)
 -- If slots are filled, poison suggestions are redundant
+--
+-- WOW 12.0 CAST-BASED INFERENCE:
+-- Poisons are HOUR-LONG buffs (Category A - Always Safe for cast inference)
+-- Once cast is observed via UNIT_SPELLCAST_SUCCEEDED, assume active until
+-- combat ends. No need to query aura state which may return secrets.
 --------------------------------------------------------------------------------
 
 -- Poison CAST spell IDs (what C_AssistedCombat recommends)
--- Used to identify if a recommended spell is a poison
+-- These are tracked via UNIT_SPELLCAST_SUCCEEDED -> inCombatActivations
+-- Duration: 1 HOUR - safe to assume active once cast observed
 local ROGUE_POISON_CAST_IDS = {
-    [2823] = true,   -- Deadly Poison
-    [8679] = true,   -- Wound Poison
-    [315584] = true, -- Instant Poison
-    [381664] = true, -- Atrophic Poison
-    [3408] = true,   -- Crippling Poison
-    [5761] = true,   -- Numbing Poison
+    [2823] = true,   -- Deadly Poison (Lethal)
+    [8679] = true,   -- Wound Poison (Lethal)
+    [315584] = true, -- Instant Poison (Lethal)
+    [381664] = true, -- Atrophic Poison (Lethal)
+    [3408] = true,   -- Crippling Poison (Non-Lethal)
+    [5761] = true,   -- Numbing Poison (Non-Lethal)
 }
 
 -- Poison BUFF spell IDs (what appears in the player's aura list)
--- Note: Some buffs have different IDs than the cast spell!
+-- Include BOTH cast IDs and known alternate IDs for aura cache fallback
+-- Note: Primary detection is via inCombatActivations (cast tracking)
 local ROGUE_POISON_BUFF_IDS = {
-    -- Lethal Poisons (buff IDs)
-    [2823] = true,   -- Deadly Poison (same as cast)
-    [8679] = true,   -- Wound Poison (same as cast)
-    [315584] = true, -- Instant Poison (same as cast)
-    [381637] = true, -- Atrophic Poison BUFF (cast is 381664!)
-    -- Non-Lethal Poisons (buff IDs)
-    [3408] = true,   -- Crippling Poison (same as cast)
-    [5761] = true,   -- Numbing Poison (same as cast)
+    -- Lethal Poisons
+    [2823] = true,   -- Deadly Poison (cast ID)
+    [2818] = true,   -- Deadly Poison (possible buff ID)
+    [8679] = true,   -- Wound Poison (cast ID)
+    [8680] = true,   -- Wound Poison (possible buff ID)
+    [315584] = true, -- Instant Poison (same for cast/buff)
+    [381637] = true, -- Atrophic Poison (confirmed buff ID)
+    [381664] = true, -- Atrophic Poison (cast ID)
+    -- Non-Lethal Poisons
+    [3408] = true,   -- Crippling Poison (cast ID)
+    [3409] = true,   -- Crippling Poison (possible buff ID)
+    [5761] = true,   -- Numbing Poison (cast ID)
+    [5760] = true,   -- Numbing Poison (possible buff ID)
 }
 
 -- Poison buff names (fallback detection)
@@ -680,27 +692,42 @@ local function IsRoguePoisonSpell(spellID)
 end
 
 -- Count how many poison buffs are currently active on the player
--- Returns count of active poison buffs
+-- Count active poison buffs using cast-based inference (12.0 compatible)
+-- Priority: Cast tracking > Aura cache by ID > Aura cache by name
+-- Poisons are 1-hour buffs, safe to assume active once cast is observed
 local function CountActivePoisonBuffs()
     local auras = RefreshAuraCache()
     local count = 0
-    local foundNames = {}  -- Track poison names we've already counted
+    local foundNames = {}  -- Track poison names to avoid double-counting
 
-    -- Primary method: Check by spell ID (more reliable in combat with secret values)
+    -- PRIMARY: Cast-based inference via UNIT_SPELLCAST_SUCCEEDED
+    -- Most reliable in combat - doesn't depend on aura API (may return secrets)
+    -- Poisons are hour-long buffs, safe to assume active until combat ends
+    for spellID in pairs(ROGUE_POISON_CAST_IDS) do
+        if inCombatActivations[spellID] then
+            count = count + 1
+            local spellInfo = GetCachedSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                foundNames[spellInfo.name] = true
+            end
+        end
+    end
+
+    -- FALLBACK 1: Aura cache by buff spell ID (works out of combat, pre-combat buffs)
     if auras.byID then
         for spellID in pairs(ROGUE_POISON_BUFF_IDS) do
             if auras.byID[spellID] then
-                count = count + 1
-                -- Record the name so we don't double-count in fallback
                 local spellInfo = GetCachedSpellInfo(spellID)
-                if spellInfo and spellInfo.name then
-                    foundNames[spellInfo.name] = true
+                local name = spellInfo and spellInfo.name
+                if name and not foundNames[name] then
+                    count = count + 1
+                    foundNames[name] = true
                 end
             end
         end
     end
 
-    -- Fallback: Check by name for any we missed (e.g., unknown buff IDs)
+    -- FALLBACK 2: Aura cache by name (catches unknown buff IDs)
     if auras.byName then
         for poisonName in pairs(ROGUE_POISON_NAMES) do
             if auras.byName[poisonName] and not foundNames[poisonName] then
