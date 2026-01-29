@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
 -- Consolidated diagnostic commands - for ad-hoc debugging, use /script in-game
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 12)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 14)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -520,14 +520,19 @@ function DebugCommands.PoisonDiagnostics(addon)
     addon:Print("  byID entries: " .. countTable(auras.byID))
     addon:Print("  byName entries: " .. countTable(auras.byName))
 
-    -- Known poison BUFF spell IDs (what appears in aura cache)
+    -- All possible poison BUFF spell IDs (cast + alternates)
     local POISON_BUFF_IDS = {
-        [2823] = "Deadly Poison",
-        [8679] = "Wound Poison",
+        [2823] = "Deadly Poison (cast)",
+        [2818] = "Deadly Poison (alt)",
+        [8679] = "Wound Poison (cast)",
+        [8680] = "Wound Poison (alt)",
         [315584] = "Instant Poison",
-        [381637] = "Atrophic Poison (BUFF)",
-        [3408] = "Crippling Poison",
-        [5761] = "Numbing Poison",
+        [381664] = "Atrophic Poison (cast)",
+        [381637] = "Atrophic Poison (buff)",
+        [3408] = "Crippling Poison (cast)",
+        [3409] = "Crippling Poison (alt)",
+        [5761] = "Numbing Poison (cast)",
+        [5760] = "Numbing Poison (alt)",
     }
 
     addon:Print("")
