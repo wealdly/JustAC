@@ -160,6 +160,24 @@ function RedundancyFilter.ClearActivationTracking()
     wipe(inCombatActivations)
 end
 
+--------------------------------------------------------------------------------
+-- Safe API Wrappers
+--------------------------------------------------------------------------------
+
+-- Generic safe call wrapper: returns fallback on error or if func doesn't exist
+local function SafeCall(func, fallback, ...)
+    if not func then return fallback end
+    local ok, result = pcall(func, ...)
+    return ok and result or fallback
+end
+
+-- Convenience wrappers using SafeCall
+local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
+local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
+local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
+local function SafeIsMounted() return SafeCall(IsMounted, false) end
+local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
+
 -- Prune expired activations by checking current aura state
 -- Called after aura cache refresh to remove toggle-off spells
 -- CRITICAL: Only prunes if aura API is accessible (not blocked by secrets)
@@ -246,24 +264,6 @@ function RedundancyFilter.RecordSpellActivation(spellID)
     local now = GetTime()
     inCombatActivations[spellID] = now
 end
-
---------------------------------------------------------------------------------
--- Safe API Wrappers
---------------------------------------------------------------------------------
-
--- Generic safe call wrapper: returns fallback on error or if func doesn't exist
-local function SafeCall(func, fallback, ...)
-    if not func then return fallback end
-    local ok, result = pcall(func, ...)
-    return ok and result or fallback
-end
-
--- Convenience wrappers using SafeCall
-local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
-local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
-local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
-local function SafeIsMounted() return SafeCall(IsMounted, false) end
-local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
 --------------------------------------------------------------------------------
 -- Dynamic Aura Detection
