@@ -61,7 +61,7 @@ L["Defensive Icon"] = "Defensive Icon"
 L["Only In Combat"] = "Only In Combat"
 L["Defensive Self-Heals"] = "Defensive Self-Heals"
 L["Defensive Cooldowns"] = "Defensive Cooldowns"
-L["Defensive description"] = "Shows a defensive spell suggestion when health is low.\n|cff00ff00• Procced abilities|r: Victory Rush, free heals shown at ANY health\n|cff00ff00• Self-Heals|r: Quick heals shown at ~35% health\n|cffff6666• Major Cooldowns|r: Emergency defensives at ~20% health"
+L["Defensive description"] = "Shows defensive spell suggestions based on your health and display mode settings.\n|cff00ff00• Procced abilities|r: Victory Rush, free heals shown at ANY health\n|cff00ff00• Self-Heals|r: Quick heals shown below Self-Heal Threshold\n|cffff6666• Major Cooldowns|r: Emergency defensives below Cooldown Threshold"
 L["Add to %s"] = "Add to %s"
 
 -- Orientation values
@@ -73,29 +73,47 @@ L["Dn"] = "Dn"
 -- Descriptions
 L["General description"] = "Configure the appearance and behavior of the spell queue display."
 L["Icon Layout"] = "Icon Layout"
+L["Visibility"] = "Visibility"
+L["Queue Content"] = "Queue Content"
+L["Appearance"] = "Appearance"
 L["Display Behavior"] = "Display Behavior"
 L["Visual Effects"] = "Visual Effects"
 L["Threshold Settings"] = "Threshold Settings"
+
+-- Tooltip mode dropdown
+L["Tooltips"] = "Tooltips"
+L["Tooltips desc"] = "When to show spell tooltips on hover"
+L["Never"] = "Never"
+L["Out of Combat Only"] = "Out of Combat Only"
+L["Always"] = "Always"
+
+-- Defensive display mode dropdown
+L["Defensive Display Mode"] = "Display Mode"
+L["Defensive Display Mode desc"] = "When Health Low: Show only when health drops below thresholds\nIn Combat Only: Always show while in combat\nAlways: Show at all times"
+L["When Health Low"] = "When Health Low"
+L["In Combat Only"] = "In Combat Only"
 
 -- Detailed descriptions
 L["Max Icons desc"] = "Maximum number of spell icons to show in the queue (position 1 is primary, 2+ is queue)"
 L["Icon Size desc"] = "Base size of spell icons in pixels (higher = larger icons)"
 L["Spacing desc"] = "Space between icons in pixels (higher = more spread out)"
 L["UI Scale desc"] = "Scale multiplier for the entire UI frame (0.5 = half size, 2.0 = double size)"
-L["Primary Spell Scale desc"] = "Scale multiplier for the primary (position 1) and defensive (position 0) icons"
+L["Primary Spell Scale desc"] = "Scale multiplier for the primary spell icon (position 1). Defensive icons have their own scale setting."
 L["Queue Orientation desc"] = "Direction the spell queue grows from the primary spell"
 L["Highlight Primary Spell desc"] = "Show animated glow on the primary spell (position 1)"
 L["Show Tooltips desc"] = "Display spell tooltips on hover"
 L["Single-Button Assistant Warning"] = "Warning: Place the Single-Button Assistant on any action bar for JustAC to work properly."
 L["Tooltips in Combat desc"] = "Show tooltips during combat (requires Show Tooltips)"
-L["Frame Opacity desc"] = "Global opacity for the entire frame including defensive icon (1.0 = fully visible, 0.0 = invisible)"
+L["Frame Opacity desc"] = "Global opacity for the entire frame including defensive icons (1.0 = fully visible, 0.0 = invisible)"
 L["Queue Icon Fade desc"] = "Desaturation for icons in positions 2+ (0 = full color, 1 = grayscale)"
 L["Hide Out of Combat"] = "Hide Out of Combat"
-L["Hide Out of Combat desc"] = "Hide the entire spell queue when not in combat (does not affect defensive icon)"
+L["Hide Out of Combat desc"] = "Hide the entire spell queue when not in combat (defensive icons have their own Display Mode setting)"
 L["Hide for Healer Specs"] = "Hide for Healer Specs"
 L["Hide for Healer Specs desc"] = "Automatically hide the spell queue when you are in a healer specialization"
 L["Hide When Mounted"] = "Hide When Mounted"
 L["Hide When Mounted desc"] = "Hide the spell queue while mounted"
+L["Require Hostile Target"] = "Require Hostile Target"
+L["Require Hostile Target desc"] = "Out of combat: only show the queue when targeting a hostile unit. In combat: always show."
 L["Hide Item Abilities"] = "Hide Item Abilities"
 L["Hide Item Abilities desc"] = "Hide abilities from equipped items (trinkets, engineering tinkers) from the queue"
 L["Insert Procced Abilities desc"] = "Insert procced (glowing) offensive abilities from your spellbook into the queue. Useful for abilities like Fel Blade that may not appear in Blizzard's rotation list."
@@ -103,9 +121,9 @@ L["Include All Available Abilities desc"] = "Include abilities hidden behind mac
 L["Stabilization Window desc"] = "How long (in seconds) to wait before changing the primary spell recommendation. Higher values reduce flickering but may feel less responsive. Only applies when 'Include All Available Abilities' is enabled."
 L["Lock Panel desc"] = "Block dragging and right-click menus (tooltips still work if enabled). Toggle via right-click on move handle."
 L["Debug Mode desc"] = "Show detailed addon information in chat for troubleshooting"
-L["Enable Defensive Suggestions desc"] = "Show a defensive spell suggestion when health is low. Procced abilities (Victory Rush, free heals) show at any health."
-L["Only In Combat desc"] = "ON: Hide out of combat (unless you have a proc).\nOFF: Always visible, show heals based on health."
-L["Icon Position desc"] = "Where to place the defensive icon relative to the spell queue (Side 1 = health bar side, Leading = opposite grab tab)"
+L["Enable Defensive Suggestions desc"] = "Show defensive spell suggestions based on health thresholds. Procced abilities (Victory Rush, free heals) show at any health level."
+L["Only In Combat desc"] = "Only show defensive suggestions while in combat (procced abilities still show at any time)."
+L["Icon Position desc"] = "Where to place defensive icons relative to the spell queue:\nSide 1 = same side as health bar\nSide 2 = opposite side\nLeading Edge = opposite the grab tab"
 L["Custom Hotkey desc"] = "Text to display as hotkey (e.g., 'F1', 'Ctrl+Q', 'Mouse4')"
 L["Move up desc"] = "Move up in priority"
 L["Move down desc"] = "Move down in priority"
@@ -150,7 +168,7 @@ L["Blacklist"] = "Blacklist"
 L["Blacklist Info"] = "Hide spells from the suggestion queue.\n\n|cffff6666Shift+Right-click|r a spell icon in the queue to add or remove it from the blacklist."
 L["Blacklisted Spells"] = "Blacklisted Spells"
 L["Defensives"] = "Defensives"
-L["Defensives Info"] = "Position 0 defensive icon with two-tier priority:\n|cff00ff00• Self-Heals|r: Quick heals shown when health drops below threshold\n|cffff6666• Major Cooldowns|r: Emergency defensives when critically low\n\nIcon appears with a green glow. Out of combat behavior is controlled by 'Only In Combat' toggle."
+L["Defensives Info"] = "Defensive icons with two-tier priority:\n|cff00ff00• Self-Heals|r: Quick heals shown when health drops below threshold\n|cffff6666• Major Cooldowns|r: Emergency defensives when critically low\n\nUse Display Mode to control when icons appear (health-based, in combat, or always)."
 L["Display Behavior"] = "Display Behavior"
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 L["Restore Class Defaults desc"] = "Reset the cooldown list to default spells for your class"
@@ -221,9 +239,19 @@ if L then
     -- Descriptions
     L["General description"] = "Aussehen und Verhalten der Zauber-Warteschlange konfigurieren."
     L["Icon Layout"] = "Symbol-Layout"
+    L["Visibility"] = "Sichtbarkeit"
+    L["Queue Content"] = "Warteschlangen-Inhalt"
+    L["Appearance"] = "Aussehen"
     L["Display Behavior"] = "Anzeigeverhalten"
     L["Visual Effects"] = "Visuelle Effekte"
     L["Threshold Settings"] = "Schwellenwert-Einstellungen"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Tooltips"
+    L["Tooltips desc"] = "Wann Zauber-Tooltips beim Überfahren angezeigt werden sollen"
+    L["Never"] = "Nie"
+    L["Out of Combat Only"] = "Nur außerhalb des Kampfes"
+    L["Always"] = "Immer"
 
     -- Detailed descriptions (new)
     L["Max Icons desc"] = "Maximale Anzahl von Zaubersymbolen in der Warteschlange (Position 1 = Hauptzauber, 2+ = Warteschlange)"
@@ -353,9 +381,19 @@ if L then
     -- Descriptions
     L["General description"] = "Configurer l'apparence et le comportement de la file de sorts."
     L["Icon Layout"] = "Disposition des icônes"
+    L["Visibility"] = "Visibilité"
+    L["Queue Content"] = "Contenu de la file"
+    L["Appearance"] = "Apparence"
     L["Display Behavior"] = "Comportement d'affichage"
     L["Visual Effects"] = "Effets visuels"
     L["Threshold Settings"] = "Paramètres de seuil"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Infobulles"
+    L["Tooltips desc"] = "Quand afficher les infobulles de sort au survol"
+    L["Never"] = "Jamais"
+    L["Out of Combat Only"] = "Hors combat uniquement"
+    L["Always"] = "Toujours"
 
     -- Detailed descriptions (new)
     L["Max Icons desc"] = "Nombre maximum d'icônes de sort dans la file (position 1 = sort principal, 2+ = file d'attente)"
@@ -485,9 +523,19 @@ if L then
     -- Descriptions
     L["General description"] = "Настроить внешний вид и поведение очереди заклинаний."
     L["Icon Layout"] = "Расположение иконок"
+    L["Visibility"] = "Видимость"
+    L["Queue Content"] = "Содержимое очереди"
+    L["Appearance"] = "Внешний вид"
     L["Display Behavior"] = "Поведение отображения"
     L["Visual Effects"] = "Визуальные эффекты"
     L["Threshold Settings"] = "Настройки порогов"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Подсказки"
+    L["Tooltips desc"] = "Когда показывать подсказки заклинаний при наведении"
+    L["Never"] = "Никогда"
+    L["Out of Combat Only"] = "Только вне боя"
+    L["Always"] = "Всегда"
 
     -- Detailed descriptions (new)
     L["Max Icons desc"] = "Максимальное количество иконок заклинаний в очереди (позиция 1 = основное, 2+ = очередь)"
@@ -617,9 +665,19 @@ if L then
     -- Descriptions
     L["General description"] = "Configurar la apariencia y el comportamiento de la cola de hechizos."
     L["Icon Layout"] = "Diseño de iconos"
+    L["Visibility"] = "Visibilidad"
+    L["Queue Content"] = "Contenido de cola"
+    L["Appearance"] = "Apariencia"
     L["Display Behavior"] = "Comportamiento de visualización"
     L["Visual Effects"] = "Efectos visuales"
     L["Threshold Settings"] = "Configuración de umbrales"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Tooltips"
+    L["Tooltips desc"] = "Cuándo mostrar información de hechizos al pasar el cursor"
+    L["Never"] = "Nunca"
+    L["Out of Combat Only"] = "Solo fuera de combate"
+    L["Always"] = "Siempre"
 
     -- Detailed descriptions (new)
     L["Max Icons desc"] = "Número máximo de iconos de hechizo en la cola (posición 1 = principal, 2+ = cola)"
@@ -751,9 +809,19 @@ if L then
     -- Descriptions
     L["General description"] = "Configurar la apariencia y el comportamiento de la cola de hechizos."
     L["Icon Layout"] = "Diseño de iconos"
+    L["Visibility"] = "Visibilidad"
+    L["Queue Content"] = "Contenido de cola"
+    L["Appearance"] = "Apariencia"
     L["Display Behavior"] = "Comportamiento de visualización"
     L["Visual Effects"] = "Efectos visuales"
     L["Threshold Settings"] = "Configuración de umbrales"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Tooltips"
+    L["Tooltips desc"] = "Cuándo mostrar información de hechizos al pasar el cursor"
+    L["Never"] = "Nunca"
+    L["Out of Combat Only"] = "Solo fuera de combate"
+    L["Always"] = "Siempre"
 
     -- Detailed descriptions (same as esES)
     L["Max Icons desc"] = "Número máximo de iconos de hechizo en la cola (posición 1 = principal, 2+ = cola)"
@@ -881,9 +949,19 @@ if L then
     -- Descriptions
     L["General description"] = "Configurar a aparência e o comportamento da fila de magias."
     L["Icon Layout"] = "Layout dos ícones"
+    L["Visibility"] = "Visibilidade"
+    L["Queue Content"] = "Conteúdo da fila"
+    L["Appearance"] = "Aparência"
     L["Display Behavior"] = "Comportamento de exibição"
     L["Visual Effects"] = "Efeitos visuais"
     L["Threshold Settings"] = "Configurações de limite"
+
+    -- Tooltip mode dropdown
+    L["Tooltips"] = "Dicas"
+    L["Tooltips desc"] = "Quando mostrar dicas de magias ao passar o cursor"
+    L["Never"] = "Nunca"
+    L["Out of Combat Only"] = "Apenas fora de combate"
+    L["Always"] = "Sempre"
 
     -- Detailed descriptions
     L["Max Icons desc"] = "Número máximo de ícones de magia na fila (posição 1 = principal, 2+ = fila)"
