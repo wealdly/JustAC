@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module
 -- Consolidated diagnostic commands - for ad-hoc debugging, use /script in-game
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 9)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 12)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -20,6 +20,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac find <spell> - Find spell on action bars")
     addon:Print("/jac testcd <spell> - Test cooldown APIs for a spell")
     addon:Print("/jac defensive - Diagnose defensive system")
+    addon:Print("/jac poisons - Diagnose rogue poison detection")
     addon:Print("/jac help - Show this help")
 end
 
@@ -219,7 +220,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
     -- Settings
     addon:Print("Settings:")
     addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
-    addon:Print("  Show Only In Combat: " .. (defSettings.showOnlyInCombat and "YES" or "NO"))
+    addon:Print("  Display Mode: " .. (defSettings.displayMode or "healthBased"))
     addon:Print("  Position: " .. (defSettings.position or "LEFT"))
     
     -- Defensive icon frames (all positions)
@@ -478,4 +479,106 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     addon:Print("")
     addon:Print("Cast the spell and run this command again to see cooldown behavior!")
     addon:Print("===========================================")
+end
+
+--------------------------------------------------------------------------------
+-- Poison Diagnostics (Rogue)
+--------------------------------------------------------------------------------
+function DebugCommands.PoisonDiagnostics(addon)
+    addon:Print("=== Rogue Poison Diagnostics ===")
+
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    if not RedundancyFilter then
+        addon:Print("|cffff0000RedundancyFilter not loaded|r")
+        return
+    end
+
+    -- Get aura cache
+    local auras = nil
+    if RedundancyFilter.GetAuraCache then
+        auras = RedundancyFilter.GetAuraCache()
+    end
+
+    if not auras then
+        addon:Print("|cffff0000Could not access aura cache|r")
+        return
+    end
+
+    -- Count table entries helper
+    local function countTable(t)
+        if not t then return 0 end
+        local n = 0
+        for _ in pairs(t) do n = n + 1 end
+        return n
+    end
+
+    local inCombat = UnitAffectingCombat("player")
+    addon:Print("")
+    addon:Print("Aura Cache Status:")
+    addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
+    addon:Print("  hasSecrets: " .. tostring(auras.hasSecrets or false))
+    addon:Print("  byID entries: " .. countTable(auras.byID))
+    addon:Print("  byName entries: " .. countTable(auras.byName))
+
+    -- Known poison BUFF spell IDs (what appears in aura cache)
+    local POISON_BUFF_IDS = {
+        [2823] = "Deadly Poison",
+        [8679] = "Wound Poison",
+        [315584] = "Instant Poison",
+        [381637] = "Atrophic Poison (BUFF)",
+        [3408] = "Crippling Poison",
+        [5761] = "Numbing Poison",
+    }
+
+    addon:Print("")
+    addon:Print("Checking poison BUFF IDs in aura cache:")
+    for spellID, name in pairs(POISON_BUFF_IDS) do
+        local found = auras.byID and auras.byID[spellID]
+        local status = found and "|cff00ff00FOUND|r" or "|cff888888not found|r"
+        addon:Print("  " .. spellID .. " (" .. name .. "): " .. status)
+    end
+
+    -- Check by name
+    local POISON_NAMES = {
+        "Deadly Poison", "Wound Poison", "Instant Poison", "Atrophic Poison",
+        "Crippling Poison", "Numbing Poison"
+    }
+
+    addon:Print("")
+    addon:Print("Checking poison names in aura cache:")
+    for _, name in ipairs(POISON_NAMES) do
+        local found = auras.byName and auras.byName[name]
+        local status = found and "|cff00ff00FOUND|r" or "|cff888888not found|r"
+        addon:Print("  " .. name .. ": " .. status)
+    end
+
+    -- Dump all buffs for inspection
+    addon:Print("")
+    addon:Print("All player buffs (first 20):")
+    local count = 0
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 40 do
+            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            if not auraData then break end
+            count = count + 1
+            if count <= 20 then
+                local spellId = auraData.spellId or "?"
+                local name = auraData.name or "SECRET"
+                addon:Print("  [" .. i .. "] ID:" .. tostring(spellId) .. " Name:" .. tostring(name))
+            end
+        end
+    else
+        -- Fallback to UnitAura
+        for i = 1, 40 do
+            local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", i, "HELPFUL")
+            if not name and not spellId then break end
+            count = count + 1
+            if count <= 20 then
+                addon:Print("  [" .. i .. "] ID:" .. tostring(spellId or "?") .. " Name:" .. tostring(name or "SECRET"))
+            end
+        end
+    end
+    addon:Print("  Total buffs: " .. count)
+
+    addon:Print("================================")
 end
