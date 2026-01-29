@@ -1,10 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v25
+-- JustAC: Redundancy Filter Module v26
 -- Changed: Migrated to BlizzardAPI.IsSecretValue() and GetAuraTiming() for centralized secret handling
 -- Changed: Field-level secret checks allow partial aura data when some fields are secret
 -- 12.0 COMPATIBILITY: Uses API-specific helpers for incremental API access
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 25)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 26)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
