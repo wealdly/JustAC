@@ -1,10 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v33
--- Changed: Migrated to BlizzardAPI.IsSecretValue() and GetAuraTiming() for centralized secret handling
--- Changed: Field-level secret checks allow partial aura data when some fields are secret
+-- JustAC: Redundancy Filter Module v35
+-- Changed: Added alternate aura IDs for group buffs from 12.0 Midnight Exclusion Whitelist
+-- Changed: Fixed 264761 label (Battle Shout alternate, not Blessing of the Bronze)
 -- 12.0 COMPATIBILITY: Uses API-specific helpers for incremental API access
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 33)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 35)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -18,14 +18,17 @@ local wipe = wipe
 
 -- Spell classification tables (manual, covers essential spells)
 
--- Raid buffs
+-- Raid buffs (includes alternate IDs from 12.0 Midnight Exclusion Whitelist)
 local RAID_BUFF_SPELLS = {
     [1126] = true,    -- Mark of the Wild (Druid)
+    [264778] = true,  -- Mark of the Wild (alternate)
     [21562] = true,   -- Power Word: Fortitude (Priest)
+    [264764] = true,  -- Power Word: Fortitude (alternate)
     [6673] = true,    -- Battle Shout (Warrior)
+    [264761] = true,  -- Battle Shout (alternate)
     [1459] = true,    -- Arcane Intellect (Mage)
-    [264761] = true,  -- Blessing of the Bronze (Evoker)
-    [381732] = true,  -- Blessing of the Bronze (alternate)
+    [264760] = true,  -- Arcane Intellect (alternate)
+    [381732] = true,  -- Blessing of the Bronze (Evoker)
 }
 
 -- Pet summon spells
@@ -82,12 +85,16 @@ local UNIQUE_AURA_SPELLS = {
     [186265] = true,  -- Aspect of the Turtle
     [186289] = true,  -- Aspect of the Eagle
     -- Raid Buffs (unique - can only have one active)
+    -- Includes alternate IDs from 12.0 Midnight Exclusion Whitelist
     [1126] = true,    -- Mark of the Wild (Druid)
+    [264778] = true,  -- Mark of the Wild (alternate)
     [21562] = true,   -- Power Word: Fortitude (Priest)
+    [264764] = true,  -- Power Word: Fortitude (alternate)
     [6673] = true,    -- Battle Shout (Warrior)
+    [264761] = true,  -- Battle Shout (alternate)
     [1459] = true,    -- Arcane Intellect (Mage)
-    [264761] = true,  -- Blessing of the Bronze (Evoker)
-    [381732] = true,  -- Blessing of the Bronze (alternate)
+    [264760] = true,  -- Arcane Intellect (alternate)
+    [381732] = true,  -- Blessing of the Bronze (Evoker)
 }
 
 -- Personal Aura Spells: Self-only buffs (subset that we recognize)
@@ -648,32 +655,29 @@ end
 -- Poison CAST spell IDs (what C_AssistedCombat recommends)
 -- These are tracked via UNIT_SPELLCAST_SUCCEEDED -> inCombatActivations
 -- Duration: 1 HOUR - safe to assume active once cast observed
+-- Source: 12.0 Midnight Exclusion Whitelist
 local ROGUE_POISON_CAST_IDS = {
     [2823] = true,   -- Deadly Poison (Lethal)
     [8679] = true,   -- Wound Poison (Lethal)
     [315584] = true, -- Instant Poison (Lethal)
-    [381664] = true, -- Atrophic Poison (Lethal)
+    [381664] = true, -- Atrophic Poison (Lethal) - C_AssistedCombat uses this
+    [381637] = true, -- Atrophic Poison (Lethal) - alternate cast ID
     [3408] = true,   -- Crippling Poison (Non-Lethal)
     [5761] = true,   -- Numbing Poison (Non-Lethal)
 }
 
--- Poison BUFF spell IDs (what appears in the player's aura list)
--- Include BOTH cast IDs and known alternate IDs for aura cache fallback
+-- Poison AURA spell IDs (what appears in the player's buff list)
+-- Source: 12.0 Midnight Exclusion Whitelist (authoritative)
 -- Note: Primary detection is via inCombatActivations (cast tracking)
 local ROGUE_POISON_BUFF_IDS = {
-    -- Lethal Poisons
-    [2823] = true,   -- Deadly Poison (cast ID)
-    [2818] = true,   -- Deadly Poison (possible buff ID)
-    [8679] = true,   -- Wound Poison (cast ID)
-    [8680] = true,   -- Wound Poison (possible buff ID)
-    [315584] = true, -- Instant Poison (same for cast/buff)
-    [381637] = true, -- Atrophic Poison (confirmed buff ID)
-    [381664] = true, -- Atrophic Poison (cast ID)
-    -- Non-Lethal Poisons
-    [3408] = true,   -- Crippling Poison (cast ID)
-    [3409] = true,   -- Crippling Poison (possible buff ID)
-    [5761] = true,   -- Numbing Poison (cast ID)
-    [5760] = true,   -- Numbing Poison (possible buff ID)
+    -- Lethal Poisons (aura IDs from whitelist)
+    [2823] = true,   -- Deadly Poison
+    [8679] = true,   -- Wound Poison
+    [315584] = true, -- Instant Poison
+    [381637] = true, -- Atrophic Poison
+    -- Non-Lethal Poisons (aura IDs from whitelist)
+    [3408] = true,   -- Crippling Poison
+    [5761] = true,   -- Numbing Poison
 }
 
 -- Poison buff names (fallback detection)
@@ -748,12 +752,14 @@ end
 -- 10 seconds = 10000 ms - if less than this, allow refresh
 local WEAPON_ENCHANT_REFRESH_THRESHOLD = 10000
 
--- Shaman weapon imbue spell IDs
+-- Shaman weapon imbue spell IDs (1 hour duration)
+-- Source: 12.0 Midnight Exclusion Whitelist
 -- Maps the spell you cast to apply the weapon enchant
 local WEAPON_ENCHANT_SPELLS = {
-    [33757] = true,  -- Windfury Weapon
-    [318038] = true, -- Flametongue Weapon (low-level version)
-    [334294] = true, -- Flametongue Weapon (retail main spell)
+    [33757] = true,   -- Windfury Weapon
+    [318038] = true,  -- Flametongue Weapon
+    [196834] = true,  -- Frostbrand Weapon
+    [382021] = true,  -- Earthliving Weapon
 }
 
 -- Check if a spell is a weapon enchant application spell (Shaman imbue)
