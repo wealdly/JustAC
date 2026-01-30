@@ -2,6 +2,13 @@
 
 ## [3.197] - 2026-01-29
 
+### Added
+- **Per-Spec Profile Selection**: Automatic profile switching based on specialization
+  - Enable/disable via "Auto-switch profile by spec" toggle in Profiles section
+  - Assign different profiles to each spec, or set to "(Disabled)" to hide addon for that spec
+  - Healer specs are automatically set to "disabled" by default on first run
+  - Profile switching occurs when changing specs or logging in
+
 ### Changed
 - **Options.lua**: Removed verbose instructions from Profiles section to save vertical space
   - Clear description fields for desc, descreset, choosedesc, copydesc, deldesc, resetdesc
