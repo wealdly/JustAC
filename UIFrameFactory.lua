@@ -10,7 +10,7 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
-
+local ProfileHelpers = LibStub("JustAC-ProfileHelpers", true)
 -- Hot path optimizations: cache frequently used functions
 local math_max = math.max
 local math_floor = math.floor
@@ -210,11 +210,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
+    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, true)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -233,11 +229,8 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
-    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
-    chargeText:SetTextColor(1, 1, 1, 1)
-    chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
+    
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -918,16 +911,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    
-    if isFirstIcon then
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
-    else
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_QUEUE, HOTKEY_OFFSET_QUEUE)
-    end
+    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirstIcon)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -946,11 +930,8 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
-    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
-    chargeText:SetTextColor(1, 1, 1, 1)
-    chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
+    
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText

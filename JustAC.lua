@@ -158,6 +158,17 @@ local defaults = {
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
             displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
+        hotkeyText = {
+            font = "Friz Quadrata TT",   -- LibSharedMedia font name
+            size = 12,                    -- Font size
+            color = { r = 1, g = 1, b = 1, a = 1 },  -- White by default
+            anchor = "TOPRIGHT",          -- Text anchoring relative to icon
+            anchorPoint = "TOPRIGHT",     -- Text anchor point
+            firstXOffset = -3,            -- First icon X offset
+            firstYOffset = -3,            -- First icon Y offset
+            queueXOffset = -2,            -- Queue icons X offset
+            queueYOffset = -2,            -- Queue icons Y offset
+        },
     },
     char = {
         lastKnownSpec = nil,
@@ -1657,6 +1668,14 @@ function JustAC:OnActionBarChanged()
     end
     
     self:ForceUpdate()
+end
+
+-- This is expensive, avoid calling unless necessary
+function JustAC:OnHotkeyProfileUpdate()
+    if UIManager and UIManager.CreateSpellIcons then
+        UIManager.CreateSpellIcons(self)
+    end
+    self:ForceUpdate()    
 end
 
 function JustAC:OnSpecialBarChanged()

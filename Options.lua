@@ -10,9 +10,20 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIManager = LibStub("JustAC-UIManager", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+local LSM = LibStub("LibSharedMedia-3.0")
 
 -- Storage for hotkey value input (not spell search)
 local addHotkeyValueInput = ""
+
+-- Fonts from LSM
+local function fontValues()
+    local fonts = LSM:HashTable("font")
+    local values = {}
+    for name, _ in pairs(fonts) do
+        values[name] = name -- key = label
+    end
+    return values
+end
 
 -- Spellbook cache for autocomplete (populated on first options open)
 local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
@@ -1070,17 +1081,182 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
-                    -- SYSTEM (50-59)
+                    hotkeyOptionsHeader = {
+                        type = "header",
+                        name = L["Hotkey Options"],
+                        order = 50,
+                    },
+                    hotkeyFont = {
+                        type = "select",
+                        name = L["Hotkey Font"],
+                        desc = L["Font for hotkey text"],
+                        order = 51,
+                        values = function() return fontValues() end,
+                        get = function()
+                            return addon.db.profile.hotkeyText.font or "Friz Quadrata TT"
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.font = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    hotkeyFontFlags = {
+                        type = "select",
+                        name = L["Outline Mode"],
+                        desc = L["Font outline and rendering flags for hotkey text"],
+                        order = 52,
+                        values = {
+                            [""] = L["None"],
+                            ["OUTLINE"] = L["Outline"],
+                            ["THICKOUTLINE"] = L["Thick Outline"],
+                            ["MONOCHROME"] = L["Monochrome"],
+                            ["OUTLINE,MONOCHROME"] = L["Outline + Monochrome"],
+                            ["THICKOUTLINE,MONOCHROME"] = L["Thick Outline + Monochrome"],
+                        },
+                        get = function()
+                            return addon.db.profile.hotkeyText.flags or "OUTLINE"
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.flags = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    hotkeySize = {
+                        type = "range",
+                        name = L["Hotkey Size"],
+                        desc = L["Size of hotkey text"],
+                        order = 53,
+                        min = 1, max = 64, step = 1,
+                        get = function()
+                            return addon.db.profile.hotkeyText.size or 12
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.size = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    hotkeyColor = {
+                        type = "color",
+                        name = L["Hotkey Color"],
+                        desc = L["Color of hotkey text"],
+                        order = 54,
+                        hasAlpha = true,
+                        get = function()
+                            local c = addon.db.profile.hotkeyText.color or { r = 1, g = 1, b = 1, a = 1 }
+                            return c.r, c.g, c.b, c.a
+                        end,
+                        set = function(_, r, g, b, a)
+                            addon.db.profile.hotkeyText.color = { r = r, g = g, b = b, a = a }
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    hotkeyAnchor = {
+                        type = "select",
+                        name = L["Parent Anchor"],
+                        desc = L["Anchor point of hotkey text relative to icon"],
+                        order = 55,
+                        values = {
+                            TOPLEFT = "TOPLEFT",
+                            TOP = "TOP",
+                            TOPRIGHT = "TOPRIGHT",
+                            LEFT = "LEFT",
+                            CENTER = "CENTER",
+                            RIGHT = "RIGHT",
+                            BOTTOMLEFT = "BOTTOMLEFT",
+                            BOTTOM = "BOTTOM",
+                            BOTTOMRIGHT = "BOTTOMRIGHT",
+                        },
+                        get = function()
+                            return addon.db.profile.hotkeyText.anchor or "TOPRIGHT"
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.anchor = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    hotkeyAnchorPoint = {
+                        type = "select",
+                        name = L["Hotkey Anchor"],
+                        desc = L["Which point on the hotkey text attaches to the anchor"],
+                        order = 56,
+                        values = {
+                            TOPLEFT = "TOPLEFT",
+                            TOP = "TOP",
+                            TOPRIGHT = "TOPRIGHT",
+                            LEFT = "LEFT",
+                            CENTER = "CENTER",
+                            RIGHT = "RIGHT",
+                            BOTTOMLEFT = "BOTTOMLEFT",
+                            BOTTOM = "BOTTOM",
+                            BOTTOMRIGHT = "BOTTOMRIGHT",
+                        },
+                        get = function()
+                            return addon.db.profile.hotkeyText.anchorPoint or "TOPRIGHT"
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.anchorPoint = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    firstXOffset = {
+                        type = "range",
+                        name = L["First X Offset"],
+                        desc = L["Horizontal offset for first icon hotkey text"],
+                        order = 57,
+                        min = -20, max = 20, step = 1,
+                        get = function() return addon.db.profile.hotkeyText.firstXOffset or -3 end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.firstXOffset = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    firstYOffset = {
+                        type = "range",
+                        name = L["First Y Offset"],
+                        desc = L["Vertical offset for first icon hotkey text"],
+                        order = 58,
+                        min = -20, max = 20, step = 1,
+                        get = function() return addon.db.profile.hotkeyText.firstYOffset or -3 end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.firstYOffset = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    queueXOffset = {
+                        type = "range",
+                        name = L["Queue X Offset"],
+                        desc = L["Horizontal offset for queued icons hotkey text"],
+                        order = 59,
+                        min = -20, max = 20, step = 1,
+                        get = function() return addon.db.profile.hotkeyText.queueXOffset or -2 end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.queueXOffset = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    queueYOffset = {
+                        type = "range",
+                        name = L["Queue Y Offset"],
+                        desc = L["Vertical offset for queued icons hotkey text"],
+                        order = 60,
+                        min = -20, max = 20, step = 1,
+                        get = function() return addon.db.profile.hotkeyText.queueYOffset or -2 end,
+                        set = function(_, val)
+                            addon.db.profile.hotkeyText.queueYOffset = val
+                            addon:OnHotkeyProfileUpdate()
+                        end,
+                    },
+                    -- SYSTEM (90-99)
                     systemHeader = {
                         type = "header",
                         name = L["System"],
-                        order = 50,
+                        order = 90,
                     },
                     panelLocked = {
                         type = "toggle",
                         name = L["Lock Panel"],
                         desc = L["Lock Panel desc"],
-                        order = 51,
+                        order = 91,
                         width = "full",
                         get = function() return addon.db.profile.panelLocked or false end,
                         set = function(_, val)
@@ -1093,7 +1269,7 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Debug Mode"],
                         desc = L["Debug Mode desc"],
-                        order = 52,
+                        order = 92,
                         width = "full",
                         get = function() return addon.db.profile.debugMode or false end,
                         set = function(_, val)
