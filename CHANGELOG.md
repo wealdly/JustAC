@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.197] - 2026-01-29
+
+### Added
+- **Per-Spec Profile Selection**: Automatic profile switching based on specialization
+  - Enable/disable via "Auto-switch profile by spec" toggle in Profiles section
+  - Assign different profiles to each spec, or set to "(Disabled)" to hide addon for that spec
+  - Healer specs are automatically set to "disabled" by default on first run
+  - Profile switching occurs when changing specs or logging in
+
+### Changed
+- **Options.lua**: Removed verbose instructions from Profiles section to save vertical space
+  - Clear description fields for desc, descreset, choosedesc, copydesc, deldesc, resetdesc
+  - Maintains functionality while reducing UI clutter
+
+## [3.195] - 2026-01-29
+
+### Changed
+- **RedundancyFilter v35**: Add alternate aura IDs from 12.0 Midnight Exclusion Whitelist
+  - Add alternate IDs for group buffs: Mark of the Wild (264778), Power Word: Fortitude (264764), Battle Shout (264761)
+  - Fix mislabeled 264761 (Battle Shout alternate, not Blessing of the Bronze)
+  - Add Frostbrand Weapon (196834) and Earthliving Weapon (382021) to shaman imbues
+  - Clean up poison buff IDs to match whitelist exactly
+
+## [3.194] - 2026-01-29
+
+### Changed
+- **RedundancyFilter v34**: Poison detection - cast-based inference for 12.0 compatibility
+  - Use UNIT_SPELLCAST_SUCCEEDED for primary detection (not aura API)
+  - Poisons are hour-long buffs (Category A) - safe for cast-based inference
+  - Include both cast IDs and possible buff IDs for fallback detection
+  - Preserve trusted aura cache in combat (don't wipe on UNIT_AURA)
+  - Three-tier detection: cast tracking > aura cache by ID > aura cache by name
+
+### Changed
+- **DebugCommands.lua**: Updated poison detection debugging commands
+  - Enhanced `/jac poison` command for testing cast-based inference
+
 ## [3.15] - 2026-01-27
 
 ### Added
