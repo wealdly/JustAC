@@ -780,7 +780,7 @@ function Options.UpdateDefensivesOptions(addon)
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
         info = true, header = true, enabled = true, thresholdInfo = true,
-        behaviorHeader = true, showOnlyInCombat = true, alwaysShowDefensive = true, showHealthBar = true,
+        behaviorHeader = true, displayMode = true, showHealthBar = true,
         position = true, iconScale = true, maxIcons = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
@@ -830,17 +830,18 @@ local function CreateOptionsTable(addon)
                         order = 1,
                         fontSize = "medium"
                     },
-                    visualHeader = {
+                    -- ICON LAYOUT (10-19)
+                    layoutHeader = {
                         type = "header",
                         name = L["Icon Layout"],
-                        order = 2,
+                        order = 10,
                     },
                     maxIcons = {
                         type = "range",
                         name = L["Max Icons"],
                         desc = L["Max Icons desc"],
                         min = 1, max = 7, step = 1,
-                        order = 3,
+                        order = 11,
                         width = "normal",
                         get = function() return addon.db.profile.maxIcons or 5 end,
                         set = function(_, val)
@@ -853,7 +854,7 @@ local function CreateOptionsTable(addon)
                         name = L["Icon Size"],
                         desc = L["Icon Size desc"],
                         min = 20, max = 64, step = 2,
-                        order = 4,
+                        order = 12,
                         width = "normal",
                         get = function() return addon.db.profile.iconSize or 36 end,
                         set = function(_, val)
@@ -866,7 +867,7 @@ local function CreateOptionsTable(addon)
                         name = L["Spacing"],
                         desc = L["Spacing desc"],
                         min = 0, max = 10, step = 1,
-                        order = 5,
+                        order = 13,
                         width = "normal",
                         get = function() return addon.db.profile.iconSpacing or 2 end,
                         set = function(_, val)
@@ -879,7 +880,7 @@ local function CreateOptionsTable(addon)
                         name = L["Primary Spell Scale"],
                         desc = L["Primary Spell Scale desc"],
                         min = 1.0, max = 2.0, step = 0.1,
-                        order = 6,
+                        order = 14,
                         width = "normal",
                         get = function() return addon.db.profile.firstIconScale or 1.2 end,
                         set = function(_, val)
@@ -891,7 +892,7 @@ local function CreateOptionsTable(addon)
                         type = "select",
                         name = L["Queue Orientation"],
                         desc = L["Queue Orientation desc"],
-                        order = 7,
+                        order = 15,
                         width = "normal",
                         values = {
                             LEFT = L["Left to Right"],
@@ -905,76 +906,18 @@ local function CreateOptionsTable(addon)
                             addon:UpdateFrameSize()
                         end
                     },
-                    behaviorHeader = {
+                    -- VISIBILITY (20-29)
+                    visibilityHeader = {
                         type = "header",
-                        name = L["Display Behavior"],
-                        order = 10,
-                    },
-                    focusEmphasis = {
-                        type = "toggle",
-                        name = L["Highlight Primary Spell"],
-                        desc = L["Highlight Primary Spell desc"],
-                        order = 11,
-                        width = "normal",
-                        get = function() return addon.db.profile.focusEmphasis ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.focusEmphasis = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    includeHiddenAbilities = {
-                        type = "toggle",
-                        name = L["Include All Available Abilities"],
-                        desc = L["Include All Available Abilities desc"],
-                        order = 12,
-                        width = "normal",
-                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.includeHiddenAbilities = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    showTooltips = {
-                        type = "toggle",
-                        name = L["Show Tooltips"],
-                        desc = L["Show Tooltips desc"],
-                        order = 13,
-                        width = "normal",
-                        get = function() return addon.db.profile.showTooltips ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.showTooltips = val
-                        end
-                    },
-                    tooltipsInCombat = {
-                        type = "toggle",
-                        name = L["Tooltips in Combat"],
-                        desc = L["Tooltips in Combat desc"],
-                        order = 15,
-                        width = "normal",
-                        disabled = function() return not addon.db.profile.showTooltips end,
-                        get = function() return addon.db.profile.tooltipsInCombat or false end,
-                        set = function(_, val)
-                            addon.db.profile.tooltipsInCombat = val
-                        end
-                    },
-                    showSpellbookProcs = {
-                        type = "toggle",
-                        name = L["Insert Procced Abilities"],
-                        desc = L["Insert Procced Abilities desc"],
-                        order = 16,
-                        width = "normal",
-                        get = function() return addon.db.profile.showSpellbookProcs or false end,
-                        set = function(_, val)
-                            addon.db.profile.showSpellbookProcs = val
-                            addon:ForceUpdate()
-                        end
+                        name = L["Visibility"],
+                        order = 20,
                     },
                     hideQueueOutOfCombat = {
                         type = "toggle",
                         name = L["Hide Out of Combat"],
                         desc = L["Hide Out of Combat desc"],
-                        order = 17,
-                        width = "normal",
+                        order = 21,
+                        width = "full",
                         get = function() return addon.db.profile.hideQueueOutOfCombat end,
                         set = function(_, val)
                             addon.db.profile.hideQueueOutOfCombat = val
@@ -985,8 +928,8 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Hide for Healer Specs"],
                         desc = L["Hide for Healer Specs desc"],
-                        order = 18,
-                        width = "normal",
+                        order = 22,
+                        width = "full",
                         get = function() return addon.db.profile.hideQueueForHealers end,
                         set = function(_, val)
                             addon.db.profile.hideQueueForHealers = val
@@ -997,11 +940,53 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Hide When Mounted"],
                         desc = L["Hide When Mounted desc"],
-                        order = 19,
-                        width = "normal",
+                        order = 23,
+                        width = "full",
                         get = function() return addon.db.profile.hideQueueWhenMounted end,
                         set = function(_, val)
                             addon.db.profile.hideQueueWhenMounted = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    requireHostileTarget = {
+                        type = "toggle",
+                        name = L["Require Hostile Target"],
+                        desc = L["Require Hostile Target desc"],
+                        order = 24,
+                        width = "full",
+                        get = function() return addon.db.profile.requireHostileTarget end,
+                        set = function(_, val)
+                            addon.db.profile.requireHostileTarget = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    -- QUEUE CONTENT (30-39)
+                    contentHeader = {
+                        type = "header",
+                        name = L["Queue Content"],
+                        order = 30,
+                    },
+                    includeHiddenAbilities = {
+                        type = "toggle",
+                        name = L["Include All Available Abilities"],
+                        desc = L["Include All Available Abilities desc"],
+                        order = 31,
+                        width = "full",
+                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.includeHiddenAbilities = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    showSpellbookProcs = {
+                        type = "toggle",
+                        name = L["Insert Procced Abilities"],
+                        desc = L["Insert Procced Abilities desc"],
+                        order = 32,
+                        width = "full",
+                        get = function() return addon.db.profile.showSpellbookProcs or false end,
+                        set = function(_, val)
+                            addon.db.profile.showSpellbookProcs = val
                             addon:ForceUpdate()
                         end
                     },
@@ -1009,25 +994,71 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Hide Item Abilities"],
                         desc = L["Hide Item Abilities desc"],
-                        order = 19.5,
-                        width = "normal",
+                        order = 33,
+                        width = "full",
                         get = function() return addon.db.profile.hideItemAbilities end,
                         set = function(_, val)
                             addon.db.profile.hideItemAbilities = val
                             addon:ForceUpdate()
                         end
                     },
-                    glowHeader = {
+                    -- APPEARANCE (40-49)
+                    appearanceHeader = {
                         type = "header",
-                        name = L["Visual Effects"],
-                        order = 20,
+                        name = L["Appearance"],
+                        order = 40,
+                    },
+                    focusEmphasis = {
+                        type = "toggle",
+                        name = L["Highlight Primary Spell"],
+                        desc = L["Highlight Primary Spell desc"],
+                        order = 41,
+                        width = "normal",
+                        get = function() return addon.db.profile.focusEmphasis ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.focusEmphasis = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    tooltipMode = {
+                        type = "select",
+                        name = L["Tooltips"],
+                        desc = L["Tooltips desc"],
+                        order = 42,
+                        width = "normal",
+                        values = {
+                            never = L["Never"],
+                            outOfCombat = L["Out of Combat Only"],
+                            always = L["Always"],
+                        },
+                        sorting = {"never", "outOfCombat", "always"},
+                        get = function()
+                            -- Migration: convert old settings to new mode
+                            if addon.db.profile.tooltipMode then
+                                return addon.db.profile.tooltipMode
+                            end
+                            -- Migrate from old settings
+                            if addon.db.profile.showTooltips == false then
+                                return "never"
+                            elseif addon.db.profile.tooltipsInCombat then
+                                return "always"
+                            else
+                                return "outOfCombat"
+                            end
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.tooltipMode = val
+                            -- Clear old settings after migration
+                            addon.db.profile.showTooltips = nil
+                            addon.db.profile.tooltipsInCombat = nil
+                        end
                     },
                     frameOpacity = {
                         type = "range",
                         name = L["Frame Opacity"],
                         desc = L["Frame Opacity desc"],
                         min = 0.1, max = 1.0, step = 0.05,
-                        order = 21,
+                        order = 43,
                         width = "normal",
                         get = function() return addon.db.profile.frameOpacity or 1.0 end,
                         set = function(_, val)
@@ -1040,7 +1071,7 @@ local function CreateOptionsTable(addon)
                         name = L["Queue Icon Fade"],
                         desc = L["Queue Icon Fade desc"],
                         min = 0, max = 1.0, step = 0.05,
-                        order = 22,
+                        order = 44,
                         width = "normal",
                         get = function() return addon.db.profile.queueIconDesaturation or 0 end,
                         set = function(_, val)
@@ -1213,6 +1244,7 @@ local function CreateOptionsTable(addon)
                             addon:OnHotkeyProfileUpdate()
                         end,
                     },
+                    -- SYSTEM (90-99)
                     systemHeader = {
                         type = "header",
                         name = L["System"],
@@ -1362,28 +1394,39 @@ local function CreateOptionsTable(addon)
                         name = L["Display Behavior"],
                         order = 6,
                     },
-                    showOnlyInCombat = {
-                        type = "toggle",
-                        name = L["Only In Combat"],
-                        desc = L["Only In Combat desc"],
+                    displayMode = {
+                        type = "select",
+                        name = L["Defensive Display Mode"],
+                        desc = L["Defensive Display Mode desc"],
                         order = 7,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.showOnlyInCombat end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.showOnlyInCombat = val
-                            addon:ForceUpdateAll()
+                        width = "double",
+                        values = {
+                            healthBased = L["When Health Low"],
+                            combatOnly = L["In Combat Only"],
+                            always = L["Always"],
+                        },
+                        sorting = {"healthBased", "combatOnly", "always"},
+                        get = function()
+                            -- Migration from old settings
+                            if addon.db.profile.defensives.displayMode then
+                                return addon.db.profile.defensives.displayMode
+                            end
+                            -- Convert old toggles to new mode
+                            local showOnlyInCombat = addon.db.profile.defensives.showOnlyInCombat
+                            local alwaysShow = addon.db.profile.defensives.alwaysShowDefensive
+                            if alwaysShow and showOnlyInCombat then
+                                return "combatOnly"
+                            elseif alwaysShow then
+                                return "always"
+                            else
+                                return "healthBased"
+                            end
                         end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    alwaysShowDefensive = {
-                        type = "toggle",
-                        name = "Always Show Defensive Queue",
-                        desc = "Show defensive queue even at full health (displays available defensive/heal abilities and procs). Useful for proactive defensive play.",
-                        order = 7.5,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.alwaysShowDefensive end,
                         set = function(_, val)
-                            addon.db.profile.defensives.alwaysShowDefensive = val
+                            addon.db.profile.defensives.displayMode = val
+                            -- Clear old settings
+                            addon.db.profile.defensives.showOnlyInCombat = nil
+                            addon.db.profile.defensives.alwaysShowDefensive = nil
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1391,7 +1434,7 @@ local function CreateOptionsTable(addon)
                     showHealthBar = {
                         type = "toggle",
                         name = "Show Health Bar",
-                        desc = "Display a compact health bar above the main queue (visual only, no percentage text)",
+                        desc = "Display a compact health bar alongside the main queue (visual indicator only)",
                         order = 8,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showHealthBar end,
@@ -1420,7 +1463,7 @@ local function CreateOptionsTable(addon)
                             SIDE2 = L["Side 2"],
                             LEADING = L["Leading Edge"],
                         },
-                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,
+                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,  -- Default: SIDE1
                         set = function(_, val)
                             addon.db.profile.defensives.position = val
                             UIManager.CreateSpellIcons(addon)
@@ -1450,7 +1493,7 @@ local function CreateOptionsTable(addon)
                         min = 1, max = 3, step = 1,
                         order = 11,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.maxIcons or 1 end,
+                        get = function() return addon.db.profile.defensives.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
                             UIManager.CreateSpellIcons(addon)
@@ -1638,6 +1681,13 @@ local function HandleSlashCommand(addon, input)
     elseif command == "defensive" or command == "def" then
         if DebugCommands and DebugCommands.DefensiveDiagnostics then
             DebugCommands.DefensiveDiagnostics(addon)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+
+    elseif command == "poisons" or command == "poison" then
+        if DebugCommands and DebugCommands.PoisonDiagnostics then
+            DebugCommands.PoisonDiagnostics(addon)
         else
             addon:Print("DebugCommands module not available")
         end

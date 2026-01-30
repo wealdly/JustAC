@@ -308,11 +308,23 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
-        if addon.db and addon.db.profile and addon.db.profile.showTooltips then
-            local inCombat = UnitAffectingCombat("player")
-            local showTooltip = not inCombat or addon.db.profile.tooltipsInCombat
+        local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
+        -- Migration: handle old settings
+        if not tooltipMode and addon.db and addon.db.profile then
+            if addon.db.profile.showTooltips == false then
+                tooltipMode = "never"
+            elseif addon.db.profile.tooltipsInCombat then
+                tooltipMode = "always"
+            else
+                tooltipMode = "outOfCombat"
+            end
+        end
+        tooltipMode = tooltipMode or "outOfCombat"
 
-            if showTooltip then
+        local inCombat = UnitAffectingCombat("player")
+        local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
+
+        if showTooltip then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 
                 if self.isItem and self.itemID then
@@ -347,7 +359,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
 
                 GameTooltip:Show()
             end
-        end
     end)
 
     button:SetScript("OnLeave", function()
@@ -1054,9 +1065,22 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             addon.grabTab.fadeIn:Play()
         end
 
-        if self.spellID and addon.db and addon.db.profile and addon.db.profile.showTooltips then
+        if self.spellID then
+            local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
+            -- Migration: handle old settings
+            if not tooltipMode and addon.db and addon.db.profile then
+                if addon.db.profile.showTooltips == false then
+                    tooltipMode = "never"
+                elseif addon.db.profile.tooltipsInCombat then
+                    tooltipMode = "always"
+                else
+                    tooltipMode = "outOfCombat"
+                end
+            end
+            tooltipMode = tooltipMode or "outOfCombat"
+
             local inCombat = UnitAffectingCombat("player")
-            local showTooltip = not inCombat or addon.db.profile.tooltipsInCombat
+            local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
 
             if showTooltip then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
