@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.197] - 2026-01-29
+
+### Changed
+- **Options.lua**: Removed verbose instructions from Profiles section to save vertical space
+  - Clear description fields for desc, descreset, choosedesc, copydesc, deldesc, resetdesc
+  - Maintains functionality while reducing UI clutter
+
 ## [3.15] - 2026-01-27
 
 ### Added
