@@ -115,6 +115,7 @@ local defaults = {
         maxIcons = 4,
         iconSize = 36,
         iconSpacing = 1,
+        gamepadIconStyle = "xbox",    -- Gamepad button icons: "generic", "xbox", "playstation"
         debugMode = false,
         isManualMode = false,
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
