@@ -1,8 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Debug Commands Module
--- Consolidated diagnostic commands - for ad-hoc debugging, use /script in-game
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 14)
+-- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 15)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -59,8 +58,7 @@ end
 --------------------------------------------------------------------------------
 function DebugCommands.ModuleDiagnostics(addon)
     addon:Print("=== JustAC Module Diagnostics ===")
-    
-    -- Check all LibStub modules
+
     local modules = {
         {"JustAC-BlizzardAPI", "BlizzardAPI"},
         {"JustAC-FormCache", "FormCache"},
@@ -81,17 +79,15 @@ function DebugCommands.ModuleDiagnostics(addon)
             addon:Print("|cffff0000✗|r " .. displayName .. " - NOT LOADED")
         end
     end
-    
-    -- Check critical WoW APIs
+
     addon:Print("")
     addon:Print("Assisted Combat API:")
     local hasAPI = C_AssistedCombat and C_AssistedCombat.GetRotationSpells
     addon:Print("  C_AssistedCombat: " .. (hasAPI and "|cff00ff00OK|r" or "|cffff0000MISSING|r"))
-    
+
     local assistedMode = GetCVarBool("assistedMode")
     addon:Print("  assistedMode CVar: " .. (assistedMode and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
-    
-    -- Check 12.0+ features
+
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI then
         if BlizzardAPI.IsMidnightOrLater and BlizzardAPI.IsMidnightOrLater() then
@@ -111,8 +107,7 @@ function DebugCommands.ModuleDiagnostics(addon)
             end
         end
     end
-    
-    -- Database status
+
     addon:Print("")
     addon:Print("Database: " .. (addon.db and addon.db.profile and "|cff00ff00OK|r" or "|cffff0000FAILED|r"))
     addon:Print("Debug Mode: " .. (addon.db and addon.db.profile and addon.db.profile.debugMode and "|cff00ff00ON|r" or "OFF"))
@@ -133,8 +128,7 @@ function DebugCommands.FindSpell(addon, spellName)
     local MacroParser = LibStub("JustAC-MacroParser", true)
     
     addon:Print("=== Searching for: " .. spellName .. " ===")
-    
-    -- Get spell info
+
     local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellName)
     if spellInfo then
         addon:Print("Spell ID: " .. spellInfo.spellID .. " | Name: " .. spellInfo.name)
@@ -148,8 +142,7 @@ function DebugCommands.FindSpell(addon, spellName)
     for slot = 1, 180 do
         if HasAction(slot) then
             local actionType, actionID = GetActionInfo(slot)
-            
-            -- Check direct spells
+
             if actionType == "spell" and actionID then
                 local slotSpellInfo = C_Spell.GetSpellInfo(actionID)
                 if slotSpellInfo and slotSpellInfo.name and slotSpellInfo.name:lower():find(lowerSpellName, 1, true) then
@@ -161,8 +154,7 @@ function DebugCommands.FindSpell(addon, spellName)
                     foundAnything = true
                 end
             end
-            
-            -- Check macros
+
             if actionType == "macro" then
                 local macroName = GetActionText(slot)
                 if macroName then
@@ -171,8 +163,7 @@ function DebugCommands.FindSpell(addon, spellName)
                         local bar = math.ceil(slot / 12)
                         local button = ((slot - 1) % 12) + 1
                         local key = GetBindingKey("ACTIONBUTTON" .. button) or ""
-                        
-                        -- Use MacroParser to check if it actually casts the spell
+
                         local casts = false
                         if MacroParser and spellInfo then
                             local entry = MacroParser.GetMacroSpellInfo(slot, spellInfo.spellID, spellInfo.name)
@@ -193,7 +184,6 @@ function DebugCommands.FindSpell(addon, spellName)
         addon:Print("No matches found on action bars")
     end
     
-    -- Show what ActionBarScanner would return
     if spellInfo and ActionBarScanner and ActionBarScanner.GetSpellHotkey then
         local hotkey = ActionBarScanner.GetSpellHotkey(spellInfo.spellID)
         addon:Print("")
@@ -216,14 +206,12 @@ function DebugCommands.DefensiveDiagnostics(addon)
     end
     
     local defSettings = profile.defensives or {}
-    
-    -- Settings
+
     addon:Print("Settings:")
     addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
     addon:Print("  Display Mode: " .. (defSettings.displayMode or "healthBased"))
     addon:Print("  Position: " .. (defSettings.position or "LEFT"))
-    
-    -- Defensive icon frames (all positions)
+
     addon:Print("")
     addon:Print("Defensive Icons:")
     local defensiveIcons = addon.defensiveIcons or (addon.defensiveIcon and {addon.defensiveIcon}) or {}
@@ -237,14 +225,12 @@ function DebugCommands.DefensiveDiagnostics(addon)
             addon:Print("    SpellID: " .. tostring(icon.spellID or "nil"))
             addon:Print("    isItem: " .. tostring(icon.isItem or "nil"))
 
-            -- Cooldown frame diagnostics
             if icon.cooldown then
                 addon:Print("    Cooldown frame: |cff00ff00EXISTS|r")
                 addon:Print("      CD Visible: " .. (icon.cooldown:IsShown() and "|cff00ff00YES|r" or "|cffff0000NO|r"))
                 addon:Print("      DrawSwipe: " .. tostring(icon.cooldown:GetDrawSwipe()))
                 addon:Print("      DrawEdge: " .. tostring(icon.cooldown:GetDrawEdge()))
 
-                -- Get current cooldown state
                 local cdStart, cdDuration = icon.cooldown:GetCooldownTimes()
                 if cdStart and cdDuration then
                     cdStart = cdStart / 1000  -- Convert from ms
@@ -263,8 +249,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
             end
         end
     end
-    
-    -- Health API status
+
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     addon:Print("")
     addon:Print("Health API:")
@@ -280,12 +265,10 @@ function DebugCommands.DefensiveDiagnostics(addon)
             addon:Print("  Current Health: |cffff0000nil|r")
         end
     end
-    
-    -- Combat status
+
     local inCombat = UnitAffectingCombat("player")
     addon:Print("  In Combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
 
-    -- Positioning debug info
     addon:Print("")
     addon:Print("Positioning (pixels):")
     local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
@@ -300,7 +283,6 @@ function DebugCommands.DefensiveDiagnostics(addon)
         addon:Print("  (Should be equal: " .. barSpacing .. "px each)")
     end
 
-    -- Configured spells summary
     addon:Print("")
     addon:Print("Configured Spells:")
     local selfHeals = defSettings.selfHealSpells or {}
@@ -324,10 +306,9 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
         return
     end
 
-    -- Find spell by name - search player's spellbook first
     local spellID = nil
 
-    -- Method 1: Search player's spellbook (most accurate for known spells)
+    -- Spellbook search is more accurate than brute-force ID iteration
     if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
         -- Iterate through player's spellbook slots
         for i = 1, 1000 do
@@ -342,7 +323,7 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
         end
     end
 
-    -- Method 2: Fallback to wide ID search if not found in spellbook
+    -- Fallback: brute-force ID search
     if not spellID and C_Spell and C_Spell.GetSpellInfo then
         for i = 1, 500000 do
             local spellInfo = C_Spell.GetSpellInfo(i)
@@ -362,7 +343,7 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 
-    -- Helper to safely format values (secret values can't be used in string operations)
+    -- Secret values can't be used in string operations
     local function SafeFormat(value, isSecret)
         if isSecret then
             return "SECRET"
@@ -378,7 +359,6 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     addon:Print("=== Cooldown API Test: " .. spellName .. " (ID: " .. spellID .. ") ===")
     addon:Print("")
 
-    -- Test 1: C_SpellBook.GetSpellCooldown
     addon:Print("1. C_SpellBook.GetSpellCooldown:")
     if C_SpellBook and C_SpellBook.GetSpellCooldown then
         local ok, cd = pcall(C_SpellBook.GetSpellCooldown, spellID)
@@ -404,7 +384,6 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
 
     addon:Print("")
 
-    -- Test 2: BlizzardAPI.GetSpellCooldown (C_Spell API)
     addon:Print("2. BlizzardAPI.GetSpellCooldown (C_Spell):")
     if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
         local start, dur = BlizzardAPI.GetSpellCooldown(spellID)
@@ -426,7 +405,6 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
 
     addon:Print("")
 
-    -- Test 3: Action Bar Cooldown (if on action bar)
     addon:Print("3. Action Bar Cooldown:")
     if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
         local slot = ActionBarScanner.GetSlotForSpell(spellID)
@@ -456,7 +434,6 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
 
     addon:Print("")
 
-    -- Test 4: GCD from dummy spell
     addon:Print("4. GCD (dummy spell 61304):")
     if BlizzardAPI and BlizzardAPI.GetGCDInfo then
         local gcdStart, gcdDur = BlizzardAPI.GetGCDInfo()
@@ -493,7 +470,6 @@ function DebugCommands.PoisonDiagnostics(addon)
         return
     end
 
-    -- Get aura cache
     local auras = nil
     if RedundancyFilter.GetAuraCache then
         auras = RedundancyFilter.GetAuraCache()
@@ -504,7 +480,6 @@ function DebugCommands.PoisonDiagnostics(addon)
         return
     end
 
-    -- Count table entries helper
     local function countTable(t)
         if not t then return 0 end
         local n = 0
@@ -520,19 +495,14 @@ function DebugCommands.PoisonDiagnostics(addon)
     addon:Print("  byID entries: " .. countTable(auras.byID))
     addon:Print("  byName entries: " .. countTable(auras.byName))
 
-    -- All possible poison BUFF spell IDs (cast + alternates)
+    -- IDs from 12.0 Midnight Exclusion Whitelist
     local POISON_BUFF_IDS = {
-        [2823] = "Deadly Poison (cast)",
-        [2818] = "Deadly Poison (alt)",
-        [8679] = "Wound Poison (cast)",
-        [8680] = "Wound Poison (alt)",
+        [2823] = "Deadly Poison",
+        [8679] = "Wound Poison",
         [315584] = "Instant Poison",
-        [381664] = "Atrophic Poison (cast)",
-        [381637] = "Atrophic Poison (buff)",
-        [3408] = "Crippling Poison (cast)",
-        [3409] = "Crippling Poison (alt)",
-        [5761] = "Numbing Poison (cast)",
-        [5760] = "Numbing Poison (alt)",
+        [381637] = "Atrophic Poison",
+        [3408] = "Crippling Poison",
+        [5761] = "Numbing Poison",
     }
 
     addon:Print("")
@@ -543,7 +513,6 @@ function DebugCommands.PoisonDiagnostics(addon)
         addon:Print("  " .. spellID .. " (" .. name .. "): " .. status)
     end
 
-    -- Check by name
     local POISON_NAMES = {
         "Deadly Poison", "Wound Poison", "Instant Poison", "Atrophic Poison",
         "Crippling Poison", "Numbing Poison"
@@ -557,7 +526,6 @@ function DebugCommands.PoisonDiagnostics(addon)
         addon:Print("  " .. name .. ": " .. status)
     end
 
-    -- Dump all buffs for inspection
     addon:Print("")
     addon:Print("All player buffs (first 20):")
     local count = 0
@@ -573,7 +541,6 @@ function DebugCommands.PoisonDiagnostics(addon)
             end
         end
     else
-        -- Fallback to UnitAura
         for i = 1, 40 do
             local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", i, "HELPFUL")
             if not name and not spellId then break end
