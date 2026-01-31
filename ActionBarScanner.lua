@@ -26,40 +26,73 @@ local math_min = math.min
 
 -- Gamepad face button atlas mappings by style (using _64 atlas with outline for better visibility)
 -- Format: {PAD1, PAD2, PAD3, PAD4, PAD5, PAD6}
--- Atlas format: |A:name:height:width:xOffset:yOffset|a - using 1:0 for 1px right shift
+-- Atlas format: |A:name:height:width|a
+-- Normal size (14:14) for single buttons, small size (10:10) for modifier combos
 local GAMEPAD_FACE_BUTTONS = {
     generic = {
-        "|A:Gamepad_Gen_1_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_2_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_3_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_4_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_5_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_6_64:14:14:1:-1|a",
+        normal = {
+            "|A:Gamepad_Gen_1_64:14:14|a",
+            "|A:Gamepad_Gen_2_64:14:14|a",
+            "|A:Gamepad_Gen_3_64:14:14|a",
+            "|A:Gamepad_Gen_4_64:14:14|a",
+            "|A:Gamepad_Gen_5_64:14:14|a",
+            "|A:Gamepad_Gen_6_64:14:14|a",
+        },
+        small = {
+            "|A:Gamepad_Gen_1_64:10:10|a",
+            "|A:Gamepad_Gen_2_64:10:10|a",
+            "|A:Gamepad_Gen_3_64:10:10|a",
+            "|A:Gamepad_Gen_4_64:10:10|a",
+            "|A:Gamepad_Gen_5_64:10:10|a",
+            "|A:Gamepad_Gen_6_64:10:10|a",
+        },
     },
     xbox = {
-        "|A:Gamepad_Ltr_A_64:14:14:1:-1|a",
-        "|A:Gamepad_Ltr_B_64:14:14:1:-1|a",
-        "|A:Gamepad_Ltr_X_64:14:14:1:-1|a",
-        "|A:Gamepad_Ltr_Y_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_5_64:14:14:1:-1|a",
-        "|A:Gamepad_Gen_6_64:14:14:1:-1|a",
+        normal = {
+            "|A:Gamepad_Ltr_A_64:14:14|a",
+            "|A:Gamepad_Ltr_B_64:14:14|a",
+            "|A:Gamepad_Ltr_X_64:14:14|a",
+            "|A:Gamepad_Ltr_Y_64:14:14|a",
+            "|A:Gamepad_Gen_5_64:14:14|a",
+            "|A:Gamepad_Gen_6_64:14:14|a",
+        },
+        small = {
+            "|A:Gamepad_Ltr_A_64:10:10|a",
+            "|A:Gamepad_Ltr_B_64:10:10|a",
+            "|A:Gamepad_Ltr_X_64:10:10|a",
+            "|A:Gamepad_Ltr_Y_64:10:10|a",
+            "|A:Gamepad_Gen_5_64:10:10|a",
+            "|A:Gamepad_Gen_6_64:10:10|a",
+        },
     },
     playstation = {
-        "|A:Gamepad_Shp_Cross_64:14:14:1:-1|a",
-        "|A:Gamepad_Shp_Circle_64:14:14:1:-1|a",
-        "|A:Gamepad_Shp_Square_64:14:14:1:-1|a",
-        "|A:Gamepad_Shp_Triangle_64:14:14:1:-1|a",
-        "|A:Gamepad_Shp_MicMute_64:14:14:1:-1|a",
-        "|A:Gamepad_Shp_TouchpadR_64:14:14:1:-1|a",
+        normal = {
+            "|A:Gamepad_Shp_Cross_64:14:14|a",
+            "|A:Gamepad_Shp_Circle_64:14:14|a",
+            "|A:Gamepad_Shp_Square_64:14:14|a",
+            "|A:Gamepad_Shp_Triangle_64:14:14|a",
+            "|A:Gamepad_Shp_MicMute_64:14:14|a",
+            "|A:Gamepad_Shp_TouchpadR_64:14:14|a",
+        },
+        small = {
+            "|A:Gamepad_Shp_Cross_64:10:10|a",
+            "|A:Gamepad_Shp_Circle_64:10:10|a",
+            "|A:Gamepad_Shp_Square_64:10:10|a",
+            "|A:Gamepad_Shp_Triangle_64:10:10|a",
+            "|A:Gamepad_Shp_MicMute_64:10:10|a",
+            "|A:Gamepad_Shp_TouchpadR_64:10:10|a",
+        },
     },
 }
 
 -- Helper to get face button atlas based on current setting
-local function GetGamepadFaceButton(buttonNum)
+-- size: "normal" (14:14) or "small" (10:10) for modifier combos
+local function GetGamepadFaceButton(buttonNum, size)
     local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
     local style = (addon and addon.db and addon.db.profile.gamepadIconStyle) or "xbox"
-    local buttons = GAMEPAD_FACE_BUTTONS[style] or GAMEPAD_FACE_BUTTONS.xbox
-    return buttons[buttonNum] or buttons[1]
+    local styleButtons = GAMEPAD_FACE_BUTTONS[style] or GAMEPAD_FACE_BUTTONS.xbox
+    local sizeButtons = styleButtons[size or "normal"] or styleButtons.normal
+    return sizeButtons[buttonNum] or sizeButtons[1]
 end
 local string_byte = string.byte
 local string_gsub = string.gsub
@@ -494,11 +527,35 @@ local function AbbreviateKeybind(key)
     if not key or key == "" then return "" end
 
     local result = key
-
-    -- Modifiers (applied first, before key abbreviations)
-    result = string_gsub(result, "SHIFT%-", "S")
-    result = string_gsub(result, "CTRL%-", "C")
+    
+    -- Check if this is a gamepad combo (modifier + PAD button)
+    -- WoW maps gamepad triggers to keyboard modifiers: LT→SHIFT, RT→CTRL
+    -- So "SHIFT-PAD1" is actually LT+A on a gamepad
+    local hasGamepadButton = string.find(key, "PAD%d") or string.find(key, "PADD") or 
+                             string.find(key, "PADLSTICK") or string.find(key, "PADRSTICK") or
+                             string.find(key, "PAD[LR]SHOULDER") or string.find(key, "PAD[LR]TRIGGER") or
+                             string.find(key, "PADPADDLE") or string.find(key, "PADFORWARD") or
+                             string.find(key, "PADBACK") or string.find(key, "PADSYSTEM") or string.find(key, "PADSOCIAL")
+    local isGamepadModifierCombo = hasGamepadButton and (string.find(key, "^SHIFT%-") or string.find(key, "^CTRL%-"))
+    local iconSize = isGamepadModifierCombo and "10:10" or "14:14"
+    
+    -- Convert keyboard modifiers to gamepad trigger icons when combined with PAD buttons
+    -- LT = SHIFT, RT = CTRL (WoW's internal gamepad→keyboard mapping)
+    if isGamepadModifierCombo then
+        result = string_gsub(result, "^SHIFT%-", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "^CTRL%-", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
+    else
+        -- Regular keyboard modifiers (no gamepad button involved)
+        result = string_gsub(result, "SHIFT%-", "S")
+        result = string_gsub(result, "CTRL%-", "C")
+    end
     result = string_gsub(result, "ALT%-", "A")
+
+    -- Gamepad modifier buttons as prefixes (native PADLTRIGGER- format, if WoW ever uses it)
+    result = string_gsub(result, "PADLSHOULDER%-", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSHOULDER%-", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADLTRIGGER%-", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRTRIGGER%-", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
 
     -- Mouse buttons
     result = string_gsub(result, "BUTTON(%d+)", "M%1")
@@ -516,46 +573,47 @@ local function AbbreviateKeybind(key)
     result = string_gsub(result, "NUMPAD", "N")  -- NUMPAD0-9 -> N0-N9
     
     -- Gamepad buttons (MUST come before arrow keys since PADDDOWN contains DOWN, etc.)
-    -- Using _64 atlas with 14:14 size for proper button outline/visibility, 1:0 offset for positioning
+    -- Using _64 atlas with dynamic size based on whether it's a modifier combo
     -- Stick directions (must come before stick click abbreviations)
-    result = string_gsub(result, "PADLSTICKUP", "|A:Gamepad_Gen_LStickUp_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADLSTICKDOWN", "|A:Gamepad_Gen_LStickDown_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADLSTICKLEFT", "|A:Gamepad_Gen_LStickLeft_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADLSTICKRIGHT", "|A:Gamepad_Gen_LStickRight_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSTICKUP", "|A:Gamepad_Gen_RStickUp_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSTICKDOWN", "|A:Gamepad_Gen_RStickDown_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSTICKLEFT", "|A:Gamepad_Gen_RStickLeft_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSTICKRIGHT", "|A:Gamepad_Gen_RStickRight_64:14:14:1:-1|a")
+    result = string_gsub(result, "PADLSTICKUP", "|A:Gamepad_Gen_LStickUp_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADLSTICKDOWN", "|A:Gamepad_Gen_LStickDown_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADLSTICKLEFT", "|A:Gamepad_Gen_LStickLeft_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADLSTICKRIGHT", "|A:Gamepad_Gen_LStickRight_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSTICKUP", "|A:Gamepad_Gen_RStickUp_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSTICKDOWN", "|A:Gamepad_Gen_RStickDown_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSTICKLEFT", "|A:Gamepad_Gen_RStickLeft_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSTICKRIGHT", "|A:Gamepad_Gen_RStickRight_64:" .. iconSize .. "|a")
     -- Stick clicks
-    result = string_gsub(result, "PADLSTICK", "|A:Gamepad_Gen_LStickIn_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSTICK", "|A:Gamepad_Gen_RStickIn_64:14:14:1:-1|a")
+    result = string_gsub(result, "PADLSTICK", "|A:Gamepad_Gen_LStickIn_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSTICK", "|A:Gamepad_Gen_RStickIn_64:" .. iconSize .. "|a")
     -- D-pad (must come before arrow key abbreviations - PADDDOWN contains DOWN)
-    result = string_gsub(result, "PADDUP", "|A:Gamepad_Gen_Up_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADDDOWN", "|A:Gamepad_Gen_Down_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADDLEFT", "|A:Gamepad_Gen_Left_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADDRIGHT", "|A:Gamepad_Gen_Right_64:14:14:1:-1|a")
-    -- Shoulders and triggers
-    result = string_gsub(result, "PADLSHOULDER", "|A:Gamepad_Gen_LShoulder_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRSHOULDER", "|A:Gamepad_Gen_RShoulder_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADLTRIGGER", "|A:Gamepad_Gen_LTrigger_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADRTRIGGER", "|A:Gamepad_Gen_RTrigger_64:14:14:1:-1|a")
+    result = string_gsub(result, "PADDUP", "|A:Gamepad_Gen_Up_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADDDOWN", "|A:Gamepad_Gen_Down_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADDLEFT", "|A:Gamepad_Gen_Left_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADDRIGHT", "|A:Gamepad_Gen_Right_64:" .. iconSize .. "|a")
+    -- Shoulders and triggers (standalone, not as modifiers)
+    result = string_gsub(result, "PADLSHOULDER", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRSHOULDER", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADLTRIGGER", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADRTRIGGER", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
     -- Paddles (must come before face buttons - PADPADDLE1 contains PAD substring)
-    result = string_gsub(result, "PADPADDLE1", "|A:Gamepad_Gen_Paddle1_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADPADDLE2", "|A:Gamepad_Gen_Paddle2_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADPADDLE3", "|A:Gamepad_Gen_Paddle3_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADPADDLE4", "|A:Gamepad_Gen_Paddle4_64:14:14:1:-1|a")
+    result = string_gsub(result, "PADPADDLE1", "|A:Gamepad_Gen_Paddle1_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADPADDLE2", "|A:Gamepad_Gen_Paddle2_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADPADDLE3", "|A:Gamepad_Gen_Paddle3_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADPADDLE4", "|A:Gamepad_Gen_Paddle4_64:" .. iconSize .. "|a")
     -- System buttons (must come before face buttons)
-    result = string_gsub(result, "PADFORWARD", "|A:Gamepad_Gen_Forward_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADBACK", "|A:Gamepad_Gen_Back_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADSYSTEM", "|A:Gamepad_Gen_System_64:14:14:1:-1|a")
-    result = string_gsub(result, "PADSOCIAL", "|A:Gamepad_Gen_Share_64:14:14:1:-1|a")
+    result = string_gsub(result, "PADFORWARD", "|A:Gamepad_Gen_Forward_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADBACK", "|A:Gamepad_Gen_Back_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADSYSTEM", "|A:Gamepad_Gen_System_64:" .. iconSize .. "|a")
+    result = string_gsub(result, "PADSOCIAL", "|A:Gamepad_Gen_Share_64:" .. iconSize .. "|a")
     -- Face buttons (style-dependent: Generic/Xbox/PlayStation) - LAST because PAD1 could match other PAD* if not careful
-    result = string_gsub(result, "PAD1", GetGamepadFaceButton(1))
-    result = string_gsub(result, "PAD2", GetGamepadFaceButton(2))
-    result = string_gsub(result, "PAD3", GetGamepadFaceButton(3))
-    result = string_gsub(result, "PAD4", GetGamepadFaceButton(4))
-    result = string_gsub(result, "PAD5", GetGamepadFaceButton(5))
-    result = string_gsub(result, "PAD6", GetGamepadFaceButton(6))
+    local faceSize = isGamepadModifierCombo and "small" or "normal"
+    result = string_gsub(result, "PAD1", GetGamepadFaceButton(1, faceSize))
+    result = string_gsub(result, "PAD2", GetGamepadFaceButton(2, faceSize))
+    result = string_gsub(result, "PAD3", GetGamepadFaceButton(3, faceSize))
+    result = string_gsub(result, "PAD4", GetGamepadFaceButton(4, faceSize))
+    result = string_gsub(result, "PAD5", GetGamepadFaceButton(5, faceSize))
+    result = string_gsub(result, "PAD6", GetGamepadFaceButton(6, faceSize))
     
     -- Navigation keys
     result = string_gsub(result, "PAGEUP", "PgU")
