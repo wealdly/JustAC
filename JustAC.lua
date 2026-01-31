@@ -1318,6 +1318,9 @@ end
 function JustAC:UpdateSpellQueue()
     if not self.db or not self.db.profile or self.db.profile.isManualMode or not self.mainFrame or not SpellQueue or not UIManager then return end
 
+    -- Always build queue to keep caches warm (redundancy filter, aura tracking, etc.)
+    -- even when frame is hidden - this ensures instant response when frame becomes visible
+    -- Renderer will skip expensive operations (hotkey lookups, icon updates) when hidden
     local currentSpells = SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue() or {}
     UIManager.RenderSpellQueue(self, currentSpells)
 end
