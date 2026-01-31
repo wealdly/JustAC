@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Options Module
+-- JustAC: Options Module - Provides AceConfig UI for addon settings
 local Options = LibStub:NewLibrary("JustAC-Options", 25)
 if not Options then return end
 

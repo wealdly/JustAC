@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Manager Module (Orchestrator)
--- Coordinates between UIAnimations, UIFrameFactory, and UIRenderer modules
+-- JustAC: UI Manager Module - Orchestrates UIAnimations, UIFrameFactory, and UIRenderer
 local UIManager = LibStub:NewLibrary("JustAC-UIManager", 30)
 if not UIManager then return end
 

@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Spell Queue Module v30
--- Changed: Added usability filtering for queue positions 2+ (cooldown/resource checks)
+-- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
 local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 30)
 if not SpellQueue then return end
 
@@ -9,7 +8,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 
--- Hot path optimizations: cache frequently used functions
+-- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local wipe = wipe
@@ -44,11 +43,11 @@ end
 function SpellQueue.GetCachedSpellInfo(spellID)
     if not spellID or spellID == 0 then return nil end
     
-    -- Fast path: return cached value
+    -- Return immediately if already cached to avoid repeated API calls
     local cached = spellInfoCache[spellID]
     if cached then return cached end
     
-    -- Cache miss: fetch and store (unbounded is fine, spell IDs per character are finite ~200 max)
+    -- Cache spells to prevent duplicate API calls (200~ max spells per character)
     local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
     if not spellInfo then return nil end
     
@@ -82,8 +81,8 @@ end
 
 function SpellQueue.IsSpellBlacklisted(spellID)
     local charData = BlizzardAPI.GetCharData()
-    if not spellID or not charData or not charData.blacklistedSpells then 
-        return false 
+    if not spellID or not charData or not charData.blacklistedSpells then
+        return false
     end
     -- Simplified format: blacklistedSpells[spellID] = true
     -- Also handle legacy format: { fixedQueue = true }
@@ -145,13 +144,13 @@ local function IsSpellAvailable(spellID)
 end
 
 -- Wrapper to BlizzardAPI.IsSpellUsable - checks if spell can be cast (resources, cooldown, etc.)
--- Returns true if usable OR if API unavailable (fail-open)
+-- Fail-open: return true if API is unavailable to show max helpful spells
 local function IsSpellUsable(spellID)
     if not BlizzardAPI or not BlizzardAPI.IsSpellUsable then
         return true  -- Fail-open if API unavailable
     end
     local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-    -- Also check cooldown - don't show spells with >2s real cooldown remaining (ignore GCD)
+    -- Skip spells with >2s real cooldown remaining (GCD ignored) to avoid suggesting unavailable spells
     if isUsable and BlizzardAPI.IsSpellOnRealCooldown then
         if BlizzardAPI.IsSpellOnRealCooldown(spellID) then
             -- Use GetSpellCooldownValues which sanitizes secrets to 0
@@ -169,7 +168,7 @@ end
 
 -- Helper: Check if either base or display spell ID is blacklisted
 local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
-    return SpellQueue.IsSpellBlacklisted(displaySpellID) or 
+    return SpellQueue.IsSpellBlacklisted(displaySpellID) or
            (baseSpellID ~= displaySpellID and SpellQueue.IsSpellBlacklisted(baseSpellID))
 end
 
@@ -182,7 +181,7 @@ end
 
 function SpellQueue.GetCurrentSpellQueue()
     local profile = BlizzardAPI.GetProfile()
-    if not profile or profile.isManualMode then 
+    if not profile or profile.isManualMode then
         return lastSpellIDs or {}
     end
 
@@ -378,7 +377,7 @@ function SpellQueue.GetCurrentSpellQueue()
         local proccedCount = importantProccedCount + regularProccedCount
         
         -- Second pass: add procced spells first (IMPORTANT ones are already at front), then normal
-        -- Note: addedSpellIDs already updated in first pass, no need to update again
+        -- addedSpellIDs updated in first pass; avoid duplicate updates
         -- Extra safety check: verify no duplicates slip through (shouldn't happen but failsafe)
         for i = 1, proccedCount do
             if spellCount >= maxIcons then break end

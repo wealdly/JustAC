@@ -1,20 +1,18 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Health Bar Module
--- Compact health bar using StatusBar:SetValue() which accepts secret values directly
--- Positioned above the main DPS queue (below defensive icon when ABOVE)
+-- JustAC: Health Bar Module - Shows player health bar for low-health warning
 local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 3)
 if not UIHealthBar then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
--- Hot path optimizations
+-- Cache frequently used functions to reduce table lookups on every update
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local GetTime = GetTime
 
 -- Constants
-local UPDATE_INTERVAL = 0.1   -- Update 10 times per second (smooth enough, not too spammy)
+local UPDATE_INTERVAL = 0.1   -- Update frequently enough for responsive feedback
 local BAR_HEIGHT = 6          -- Compact height in pixels
 local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
@@ -158,7 +156,7 @@ function UIHealthBar.CreateHealthBar(addon)
     return frame
 end
 
--- Update health bar (call on UNIT_HEALTH and timer)
+-- Update health bar on state changes and timer intervals
 function UIHealthBar.Update(addon)
     if not healthBarFrame or not healthBarFrame:IsVisible() then return end
     
@@ -222,7 +220,7 @@ function UIHealthBar.GetFrame()
 end
 
 -- Update health bar size to match current queue dimensions
--- Note: Orientation changes require full recreation, so we destroy and recreate
+-- Recreate on orientation change to ensure layout and tick correctness
 function UIHealthBar.UpdateSize(addon)
     if not addon or not addon.db or not addon.db.profile then return end
     
