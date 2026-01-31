@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.2] - 2026-01-31
+
+### Added
+- **Gamepad keybind support**: Full gamepad/controller button display using native WoW atlas textures
+  - D-pad, face buttons (PAD1-6), shoulders/triggers, stick clicks + directions, paddles, system buttons
+  - **New option "Gamepad Icon Style"** in General settings: Generic (1/2/3/4), Xbox (A/B/X/Y), PlayStation (Cross/Circle/Square/Triangle)
+  - Uses `_64` atlas with proper button outline matching WoW's default keybind display
+  - Pixel-perfect positioning with 1px right/down offset
+
+- **Extended keyboard keybind abbreviations**:
+  - Numpad special keys: NUMPADDIVIDE→N/, NUMPADMULTIPLY→N*, NUMPADMINUS→N-, NUMPADPLUS→N+, etc.
+  - Arrow keys, navigation keys, punctuation (TAB, ENTER, PAUSE, brackets, etc.)
+
+### Changed
+- **ActionBarScanner v32**: Extended keybind abbreviation with full keyboard and gamepad support
+- **UIRenderer v10**: Enhanced hotkey normalization for flash animation matching on all key types
+- **Delayed keybind refresh**: Added 0.3s follow-up invalidation to catch late-committed gamepad binding changes
+
 ## [3.199] - 2026-01-31
 
 ### Added
