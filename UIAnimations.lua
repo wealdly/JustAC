@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Animations Module
+-- JustAC: UI Animations Module - Manages glow and flash animations on buttons
 local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 1)
 if not UIAnimations then return end
 
@@ -16,7 +16,7 @@ local StopAssistedGlow
 local StopDefensiveGlow
 local UpdateFlash
 
--- Create a marching ants flipbook frame
+-- Create marching ants glow to show active abilities (Blizzard's rotation helper style)
 local function CreateMarchingAntsFrame(parent, frameKey)
     local highlightFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = highlightFrame
@@ -46,7 +46,7 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     return highlightFrame
 end
 
--- Create a proc glow frame (using WoW's native proc loop atlas)
+-- Create proc glow using WoW's native animations to match action button style
 local function CreateProcGlowFrame(parent, frameKey)
     local procFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = procFrame
@@ -93,7 +93,7 @@ local function CreateProcGlowFrame(parent, frameKey)
     return procFrame
 end
 
--- Show proc glow (native WoW gold proc animation)
+-- Display proc glow to highlight instantly available abilities
 local function ShowProcGlow(icon)
     if not icon then return end
     
@@ -196,7 +196,7 @@ local function StartDefensiveGlow(icon, isInCombat)
     highlightFrame:SetScale(width / 45)
     
     -- Green tint for defensive queue (RGB: 0.3, 1.0, 0.3)
-    -- Note: Procs use native gold overlay glow instead of tinted crawl
+    -- Use native gold overlay for procs to match Blizzard visuals
     TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
     
     highlightFrame:Show()

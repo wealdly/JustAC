@@ -1,16 +1,13 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Redundancy Filter Module v35
--- Changed: Added alternate aura IDs for group buffs from 12.0 Midnight Exclusion Whitelist
--- Changed: Fixed 264761 label (Battle Shout alternate, not Blessing of the Bronze)
--- 12.0 COMPATIBILITY: Uses API-specific helpers for incremental API access
+-- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
 local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 35)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Hot path optimizations
+-- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
@@ -113,7 +110,7 @@ local PERSONAL_AURA_SPELLS = {
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
 
--- Cached aura data (invalidated on UNIT_AURA event)
+-- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
 local cachedAuras = {}
 local lastAuraCheck = 0
 local AURA_CACHE_DURATION = 0.2
@@ -130,7 +127,7 @@ local EXPIRATION_CHECK_INTERVAL = 5
 
 -- In-combat activation tracking (mirrors proc detection system)
 -- When player casts a spell in combat, record it so we know they have the buff/form
--- Cleared on leaving combat (PLAYER_REGEN_ENABLED)
+-- Clear activation state on leaving combat to reset for next pull
 local inCombatActivations = {}
 
 -- Throttle debug prints (per-message-type timestamps)
@@ -149,11 +146,8 @@ local function GetCachedSpellInfo(spellID)
     return BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or nil
 end
 
--- Invalidate cached aura state (called on UNIT_AURA events from main addon)
--- NOTE: Does NOT clear inCombatActivations - those persist until leaving combat
--- UNIT_AURA confirms auras changed, but activation tracking is independent
--- IMPORTANT: Only wipe trustedOutOfCombatCache when OUT of combat!
--- In combat, we need to preserve the pre-combat snapshot since aura APIs return secrets.
+-- Invalidate aura cache on UNIT_AURA; keep inCombatActivations until combat ends
+-- Preserve trusted out-of-combat snapshot while in combat to avoid gaps caused by secret values
 function RedundancyFilter.InvalidateCache()
     wipe(cachedAuras)
     lastAuraCheck = 0
@@ -193,10 +187,8 @@ local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
 local function SafeIsMounted() return SafeCall(IsMounted, false) end
 local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
--- Prune expired activations by checking current aura state
--- Called after aura cache refresh to remove toggle-off spells
--- CRITICAL: Only prunes if aura API is accessible (not blocked by secrets)
--- ALSO checks non-aura detection methods (forms, stealth, pets) which work in combat
+-- Prune expired activations only when aura API is reliable; otherwise retain activations conservatively
+-- Also checks non-aura detection methods (forms, stealth, pets) which work in combat
 function RedundancyFilter.PruneExpiredActivations()
     if not next(inCombatActivations) then return end
     
@@ -641,15 +633,9 @@ local function IsStealthSpell(spellName)
 end
 
 --------------------------------------------------------------------------------
--- Rogue Poison Detection
--- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
--- With Dragon-Tempered Blades talent: 2 lethal + 2 non-lethal (4 total)
--- If slots are filled, poison suggestions are redundant
---
--- WOW 12.0 CAST-BASED INFERENCE:
--- Poisons are HOUR-LONG buffs (Category A - Always Safe for cast inference)
--- Once cast is observed via UNIT_SPELLCAST_SUCCEEDED, assume active until
--- combat ends. No need to query aura state which may return secrets.
+-- Rogue Poison Detection (cast-based inference)
+-- Poisons are hour-long buffs; once observed via cast tracking assume active until combat ends
+-- This avoids querying aura state which may return secret values
 --------------------------------------------------------------------------------
 
 -- Poison CAST spell IDs (what C_AssistedCombat recommends)
@@ -667,8 +653,8 @@ local ROGUE_POISON_CAST_IDS = {
 }
 
 -- Poison AURA spell IDs (what appears in the player's buff list)
--- Source: 12.0 Midnight Exclusion Whitelist (authoritative)
--- Note: Primary detection is via inCombatActivations (cast tracking)
+-- Source: 12.0 Midnight Exclusion Whitelist
+-- Primary detection uses cast tracking (inCombatActivations) for reliability
 local ROGUE_POISON_BUFF_IDS = {
     -- Lethal Poisons (aura IDs from whitelist)
     [2823] = true,   -- Deadly Poison
@@ -844,21 +830,36 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     local auras = RefreshAuraCache()
     
     -- If aura API blocked OR cache detected secrets, filter non-DPS spells
-    -- EXCEPTION: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
+    -- EXCEPTION 1: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
+    -- EXCEPTION 2: If we have no trusted cache (logged in during combat), fail-open to avoid hiding valid spells
     -- IMPORTANT: Continue to remaining checks (pet/stealth/mount/etc) even when aura API blocked
     if auraAPIBlocked or (auras and auras.hasSecrets) then
+        -- Check if we have any trusted pre-combat data to validate against
+        local hasTrustedData = trustedOutOfCombatCache.byID and next(trustedOutOfCombatCache.byID)
+        
+        -- Only filter non-DPS spells if we have trusted data OR are doing defensive checks
+        -- If no trusted data and not defensive, fail-open (allow spell through) to avoid false negatives
         if not isDefensiveCheck and not IsDPSRelevant(spellID) then
-            -- Throttle this debug message to avoid spam (once per spell per 5 seconds)
-            local now = GetTime()
-            local throttleKey = "nondps_" .. spellID
-            if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                lastPrintTime[throttleKey] = now
-                local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
-                local spellInfo = GetCachedSpellInfo(spellID)
-                local spellName = spellInfo and spellInfo.name or "Unknown"
-                print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ")")
+            if hasTrustedData then
+                -- Have pre-combat snapshot - safe to filter non-DPS spells
+                local now = GetTime()
+                local throttleKey = "nondps_" .. spellID
+                if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                    lastPrintTime[throttleKey] = now
+                    local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
+                    local spellInfo = GetCachedSpellInfo(spellID)
+                    local spellName = spellInfo and spellInfo.name or "Unknown"
+                    print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ", have trusted cache)")
+                end
+                return true  -- Hide non-DPS spells
+            else
+                -- No trusted cache - fail-open for safety (avoid hiding valid spells)
+                if GetDebugMode() then
+                    local spellInfo = GetCachedSpellInfo(spellID)
+                    local spellName = spellInfo and spellInfo.name or "Unknown"
+                    print("|cff66ccffJAC|r |cffffff00ALLOWED|r: " .. spellName .. " (ID: " .. spellID .. ") - No trusted cache, fail-open")
+                end
             end
-            return true  -- Hide non-DPS spells
         end
         -- Fall through for both defensive checks AND DPS-relevant spells
         -- Continue to pet/stealth/mount checks even when aura checks are blocked
@@ -870,7 +871,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     local spellName = spellInfo.name
     local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
     
-    -- Note: Removed verbose "Checking redundancy" debug output - was extremely spammy
+    -- Removed noisy "Checking redundancy" debug logs to reduce spam
     -- Use /jac test or /jac find for diagnostics instead
     
     -- 3. AURA SPELL REDUNDANCY
@@ -981,7 +982,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
     
-    -- Note: Removed verbose "NOT REDUNDANT" debug output - was extremely spammy
+    -- Removed noisy "NOT REDUNDANT" debug logs to reduce spam
     return false
 end
 

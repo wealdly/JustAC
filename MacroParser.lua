@@ -1,21 +1,13 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Macro Parser Module v21
--- Changed: Implemented [stealth], [nostealth], [combat], [nocombat] conditional evaluation
--- Changed: Removed dead code (SafeIsMounted, SafeIsOutdoors) - 12 lines
--- Fixed: Rogue/Druid stealth macros now correctly detect keybinds
+-- JustAC: Macro Parser Module - Resolves macro conditionals to find actionable spells
 local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 21)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Hot path optimizations: cache frequently used functions
-local GetTime = GetTime
-local pcall = pcall
-local pairs = pairs
-local ipairs = ipairs
-local wipe = wipe
+-- Cache frequently used functions to reduce table lookups on every update
 local type = type
 local tonumber = tonumber
 local string_lower = string.lower
@@ -25,13 +17,11 @@ local string_gmatch = string.gmatch
 local string_sub = string.sub
 local table_insert = table.insert
 
--- Localize combat/stealth APIs for hot path
 local UnitAffectingCombat = UnitAffectingCombat
 local IsStealthed = IsStealthed
 local IsSpellKnown = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 
--- Caching with periodical flush (30s interval)
 local parsedMacroCache = {}
 local spellOverrideCache = {}
 local lastCacheFlush = 0
@@ -50,12 +40,10 @@ local function GetLowercase(str)
     return str and string_lower(str) or ""
 end
 
--- Verbose debug only (avoid spam during normal use)
 local function GetDebugMode()
     return verboseDebugMode
 end
 
--- Safe API wrappers
 local function SafeGetOverrideSpell(spellID)
     if not spellID or not C_Spell or not C_Spell.GetOverrideSpell then return nil end
     local ok, result = pcall(C_Spell.GetOverrideSpell, spellID)
@@ -77,7 +65,6 @@ local function SafeGetActionText(slot)
     return ok and result or nil
 end
 
--- Used for [combat] and [stealth] conditional evaluation
 local function IsInCombat()
     return UnitAffectingCombat and UnitAffectingCombat("player") or false
 end
@@ -86,21 +73,17 @@ local function IsInStealth()
     return IsStealthed and IsStealthed() or false
 end
 
--- Check if spell is known (by ID or name)
 local function IsSpellKnownByIdentifier(identifier)
     if not identifier or identifier == "" then return false end
     
-    -- Try as spell ID first (numeric) - fast path
     local spellID = tonumber(identifier)
     if spellID then
-        -- Use BlizzardAPI.IsSpellAvailable (includes talent checks, has internal cache)
         if BlizzardAPI and BlizzardAPI.IsSpellAvailable then
             return BlizzardAPI.IsSpellAvailable(spellID)
         elseif IsSpellKnown then
             return IsSpellKnown(spellID) or (IsPlayerSpell and IsPlayerSpell(spellID)) or false
         end
     else
-        -- It's a spell name - try to find its ID via C_Spell.GetSpellInfo
         if C_Spell and C_Spell.GetSpellInfo then
             local ok, spellInfo = pcall(C_Spell.GetSpellInfo, identifier)
             if ok and spellInfo and spellInfo.spellID then
@@ -132,29 +115,23 @@ function MacroParser.InvalidateMacroCache()
     lastCacheFlush = GetTime()
 end
 
--- OPTIMIZED: Cache spell overrides to avoid repeated API calls
 local function GetSpellAndOverride(spellID, spellName)
     local currentTime = GetTime()
-    
-    -- Flush old cache entries periodically
+
     if currentTime - lastCacheFlush > CACHE_FLUSH_INTERVAL then
         wipe(spellOverrideCache)
         lastCacheFlush = currentTime
     end
     
-    -- Check cache first
     if spellOverrideCache[spellID] then
         return spellOverrideCache[spellID]
     end
-    
+
     local spells = {}
-    
-    -- Add the requested spell
     if spellID and spellID > 0 then
         spells[spellID] = spellName
     end
-    
-    -- Add the override spell
+
     local overrideSpellID = SafeGetOverrideSpell(spellID)
     if overrideSpellID and BlizzardAPI then
         local overrideSpellInfo = BlizzardAPI.GetSpellInfo(overrideSpellID)
@@ -162,10 +139,8 @@ local function GetSpellAndOverride(spellID, spellName)
             spells[overrideSpellID] = overrideSpellInfo.name
         end
     end
-    
-    -- Cache the result
+
     spellOverrideCache[spellID] = spells
-    
     return spells
 end
 
@@ -174,21 +149,16 @@ local function DoesSpellMatch(spellPart, targetSpells)
     
     local lowerSpellPart = GetLowercase(spellPart)
     
-    -- Remove target specifiers like @mouseover, @player, @cursor, @target, @focus
-    -- These appear after the spell name: "Shuriken Storm @mouseover" or "Shuriken Storm(@mouseover)"
+    -- Strip target specifiers (@mouseover, @player, etc.) and trailing markers
     local cleanSpellPart = lowerSpellPart:gsub("%s*@[%w]+%s*$", ""):gsub("%s*%(@[%w]+%)%s*$", "")
-    -- Also remove trailing (rank X) or (passive) markers
     cleanSpellPart = cleanSpellPart:gsub("%s*%(.-%)%s*$", "")
-    -- Trim whitespace
     cleanSpellPart = cleanSpellPart:match("^%s*(.-)%s*$") or cleanSpellPart
     
     for spellID, spellName in pairs(targetSpells) do
         local lowerSpellName = GetLowercase(spellName)
-        -- Exact match after cleanup
         if cleanSpellPart == lowerSpellName then
             return true, spellID, spellName
         end
-        -- Also check the unmodified spellPart for exact match
         if lowerSpellPart == lowerSpellName then
             return true, spellID, spellName
         end
@@ -265,8 +235,7 @@ end
 local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells, debugMode)
     local score = 500
     local lowerMacroName = GetLowercase(macroName)
-    
-    -- Bonus points for macro name relevance (check against all target spells)
+
     for spellID, spellName in pairs(targetSpells) do
         local lowerSpellName = GetLowercase(spellName)
         if lowerMacroName == lowerSpellName then
@@ -344,8 +313,7 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
         end
         
         score = score - penalty
-        
-        -- Throttle debug output (once per macro per 5 seconds)
+
         local now = GetTime()
         local throttleKey = "spec_" .. macroName
         if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
@@ -361,9 +329,8 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
     local modifiers = {}
     local allConditionsMet = true
     local formMatched = false
-    local requiresModifier = false  -- Track if [mod] condition is present
+    local requiresModifier = false
 
-    -- Handle empty condition string [] - always matches (fallback clause)
     if not conditionString or conditionString == "" then
         return true, modifiers, false, false
     end
@@ -375,15 +342,10 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             local modType = trimmed:match("^mod:?(.*)") or "any"
             if modType == "" then modType = "any" end
             modifiers.mod = modType
-            -- [mod] means this clause only activates when modifier is held
-            -- Since we're looking for the default (no modifier) keybind, 
-            -- mark this as requiring a modifier
-            requiresModifier = true
+            requiresModifier = true  -- Mark clause as modifier-dependent for keybind detection
 
         elseif trimmed:match("^nomod") then
-            -- [nomod] means this clause activates when NO modifier is held
-            -- This is what we want for default keybind detection
-            modifiers.nomod = true
+            modifiers.nomod = true  -- No-modifier clause = what we want for default keybind
 
         elseif trimmed:match("^nospec") then
             local specList = trimmed:match("nospec:([%d/]+)")
@@ -471,8 +433,7 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
                 break
             end
 
-        -- Other conditionals (mounted, outdoors, target, etc.) are IGNORED
-        -- for keybind detection. Target selection doesn't change which key to press.
+        -- Target/mounted/outdoors conditions ignored - don't affect which key to press
         end
     end
 
@@ -491,7 +452,7 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
     local debugMode = GetDebugMode()
 
     local foundLines = {}
-    local bestMatch = nil  -- Track best match: prefer no-modifier over modifier
+    local bestMatch = nil
 
     for line in string_gmatch(macroBody, "[^\r\n]+") do
         local lowerLine = GetLowercase(line)
@@ -530,7 +491,6 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                     local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
 
                     if isMatch then
-                        -- Throttle debug output (once per spell per 5 seconds)
                         local now = GetTime()
                         local throttleKey = "match_" .. matchedSpellID
                         if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
@@ -547,15 +507,10 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
                         end
 
                         if conditionsMet then
-                            -- Prefer no-modifier clause over modifier clause
-                            -- If we haven't found anything yet, or this is better than what we have
-                            if not bestMatch then
-                                bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
-                            elseif not requiresModifier and bestMatch.requiresModifier then
-                                -- Found no-mod clause, replace the mod clause
+                            -- Prefer no-modifier clause for default keybind detection
+                            if not bestMatch or (not requiresModifier and bestMatch.requiresModifier) then
                                 bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
                             end
-                            -- If current best is no-mod, keep it (don't replace with mod clause)
                         end
                     end
                 end
@@ -570,22 +525,17 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 end
 
 function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
-    -- Early exit for invalid inputs
-    if not slot or not targetSpellID or not targetSpellName or targetSpellName == "" then 
-        return nil 
+    if not slot or not targetSpellID or not targetSpellName or targetSpellName == "" then
+        return nil
     end
-    
-    -- Cache key: only spec affects conditional evaluation for keybind detection
-    -- Form/stealth/combat do NOT affect the keybind - only what spell is cast
-    -- We're finding what key to press, not evaluating current macro conditions
+
+    -- Cache by spec only - form/stealth/combat affect spell cast, not keybind
     local currentSpec = SafeGetSpecialization()
     local cacheKey = slot .. "_" .. targetSpellID .. "_" .. currentSpec
-    
-    -- Fast path: return cached result
+
     local cached = parsedMacroCache[cacheKey]
     if cached then return cached end
 
-    -- Get macro info - early exit if not a macro or empty
     local actionText = SafeGetActionText(slot)
     if not actionText or actionText == "" then return nil end
     

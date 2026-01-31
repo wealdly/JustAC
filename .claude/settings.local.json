@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(grep:*)"
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.wowhead.com)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nVersion 3.194: Poison detection - cast-based inference for 12.0\n\nPoison Detection \\(12.0 compatible\\):\n- Use UNIT_SPELLCAST_SUCCEEDED for primary detection \\(not aura API\\)\n- Poisons are hour-long buffs \\(Category A\\) - safe for cast-based inference\n- Include both cast IDs and possible buff IDs for fallback detection\n- Preserve trusted aura cache in combat \\(don''t wipe on UNIT_AURA\\)\n- Three-tier detection: cast tracking > aura cache by ID > aura cache by name\n\nTechnical Details:\n- inCombatActivations now primary method for poison counting\n- ROGUE_POISON_CAST_IDS tracked via UNIT_SPELLCAST_SUCCEEDED\n- ROGUE_POISON_BUFF_IDS includes all possible buff IDs for aura fallback\n- Conservative approach for 3-5 min cooldowns \\(keep activation when uncertain\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(powershell:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nVersion 3.195: Add alternate aura IDs from 12.0 Midnight Exclusion Whitelist\n\n- Add alternate IDs for group buffs: Mark of the Wild \\(264778\\),\n  Power Word: Fortitude \\(264764\\), Battle Shout \\(264761\\),\n  Arcane Intellect \\(264760\\)\n- Fix mislabeled 264761 \\(Battle Shout alternate, not Blessing of the Bronze\\)\n- Add Frostbrand Weapon \\(196834\\) and Earthliving Weapon \\(382021\\) to shaman imbues\n- Clean up poison buff IDs to match whitelist exactly\n- Increment RedundancyFilter LibStub version to 35\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(ls:*)"
     ]
   }
 }

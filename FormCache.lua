@@ -1,23 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Form Cache Module
--- Note: "Form" in macro conditionals uses stance bar index (1-N), NOT constant form IDs
--- We use GetShapeshiftFormInfo iteration (reliable) rather than GetShapeshiftForm (unreliable during loading)
+-- JustAC: Form Cache Module - Tracks current shapeshift form and available forms
 local FormCache = LibStub:NewLibrary("JustAC-FormCache", 11)
 if not FormCache then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
--- Hot path optimizations: cache frequently used functions
-local GetTime = GetTime
-local pcall = pcall
-local pairs = pairs
-local ipairs = ipairs
-local wipe = wipe
+-- Cache frequently used functions to reduce table lookups on every update
 
 local cachedFormData = {
-    -- currentStanceIndex: The stance bar position (1-N), matches macro [form:X] conditionals
-    -- 0 = caster/no form, 1 = first form on bar, 2 = second, etc.
+    -- Stance bar position (1-N) matching macro [form:X] conditionals (0 = caster/no form)
     currentStanceIndex = 0,
     currentFormName = "",
     availableForms = {},
@@ -27,7 +19,6 @@ local cachedFormData = {
     valid = false,
 }
 
--- Debug mode (BlizzardAPI caches this, only checked once per second)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
@@ -55,9 +46,7 @@ end
 
 local function GetModernSpellBookItemInfo(spellIndex)
     if C_SpellBook and C_SpellBook.GetSpellBookItemType and Enum and Enum.SpellBookSpellBank then
-        -- Returns: itemType (Enum.SpellBookItemType), actionID, spellID
         local itemType, actionID, spellID = C_SpellBook.GetSpellBookItemType(spellIndex, Enum.SpellBookSpellBank.Player)
-        -- Convert enum to string for compatibility, use spellID (3rd return)
         local typeString = nil
         if itemType == Enum.SpellBookItemType.Spell then
             typeString = "SPELL"
@@ -68,7 +57,6 @@ local function GetModernSpellBookItemInfo(spellIndex)
         elseif itemType == Enum.SpellBookItemType.PetAction then
             typeString = "PETACTION"
         end
-        -- Use spellID if available, fall back to actionID
         return typeString, spellID or actionID
     elseif GetSpellBookItemInfo then
         return GetSpellBookItemInfo(spellIndex, BOOKTYPE_SPELL)
@@ -185,8 +173,7 @@ local function BuildSpellToFormMapping()
     return mapping
 end
 
--- Find active form by iterating GetShapeshiftFormInfo
--- Always reliable, unlike GetShapeshiftForm() which returns nil during loading
+-- GetShapeshiftForm() returns nil during loading; iteration is always reliable
 local function FindActiveStanceIndex(numForms)
     for i = 1, numForms do
         local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(i)
@@ -206,8 +193,6 @@ local function UpdateFormCache()
     
     local numForms = SafeGetNumShapeshiftForms()
     
-    -- Use iteration approach - always reliable, even during loading
-    -- GetShapeshiftForm() can return nil before UPDATE_SHAPESHIFT_FORMS fires
     local stanceIndex = FindActiveStanceIndex(numForms)
     
     local formName = ""
@@ -345,26 +330,22 @@ function FormCache.GetFormIDBySpellID(spellID)
     
     UpdateFormCache()
     
-    -- Fast path: direct spell ID match in cached mapping
     local mapping = cachedFormData.spellToFormMap
     if mapping[spellID] then
         return mapping[spellID]
     end
     
-    -- Check available forms by spell ID
     for formID, formData in pairs(cachedFormData.availableForms) do
         if formData.spellID and formData.spellID == spellID then
             return formID
         end
     end
     
-    -- Check if this spell ID overrides to a known form spell
-    -- (Blizzard rotation may return base ID, stance bar may have override)
+    -- Rotation may return base ID while stance bar uses override spell
     if C_Spell and C_Spell.GetOverrideSpell then
         local overrideID = C_Spell.GetOverrideSpell(spellID)
         if overrideID and overrideID ~= spellID then
             if mapping[overrideID] then
-                -- Cache the mapping for the base spell too
                 mapping[spellID] = mapping[overrideID]
                 return mapping[overrideID]
             end
@@ -377,21 +358,18 @@ function FormCache.GetFormIDBySpellID(spellID)
         end
     end
     
-    -- Name-based fallback: get spell name and match against available forms
-    -- This handles cases where rotation returns a different spell ID for the same form
+    -- Fallback: match by name when rotation uses different spell ID for same form
     local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
     if spellInfo and spellInfo.name then
         local spellName = spellInfo.name
         for formID, formData in pairs(cachedFormData.availableForms) do
             if formData.name and formData.name == spellName then
-                -- Found a match by name - cache this mapping
                 mapping[spellID] = formID
                 return formID
             end
         end
     end
     
-    -- Rebuild mapping and try one more time
     BuildSpellToFormMapping()
     mapping = cachedFormData.spellToFormMap
     return mapping[spellID]
@@ -404,7 +382,7 @@ function FormCache.ShowFormDebugInfo()
     print("|JAC| === Form Debug Information ===")
     print("|JAC| Player Class: " .. playerClass)
     print("|JAC| Current Form: " .. cachedFormData.currentFormName .. " (Stance Index: " .. cachedFormData.currentStanceIndex .. ")")
-    print("|JAC| Note: Stance Index matches macro [form:X] conditional")
+    print("|JAC| Stance index corresponds to [form:X] macro conditional")
     print("|JAC| Available Forms:")
     
     local availableForms = FormCache.GetAvailableForms()

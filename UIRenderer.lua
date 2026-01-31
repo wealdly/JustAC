@@ -1,8 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Renderer Module v9
--- Changed: Refactored to use Blizzard's cooldown logic (mimics ActionButton_UpdateCooldown)
--- Changed: Removed manual GCD/cooldown management, now using C_Spell APIs directly like Blizzard
+-- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
 local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 9)
 if not UIRenderer then return end
 
@@ -16,7 +14,7 @@ if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations
     return
 end
 
--- Hot path optimizations: cache frequently used functions
+-- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -28,13 +26,10 @@ local math_floor = math.floor
 local string_upper = string.upper
 local string_gsub = string.gsub
 
--- Check if spell is procced (BlizzardAPI or ActionBarScanner)
+-- Check for proc overlay to highlight available abilities
+-- BlizzardAPI.IsSpellProcced already checks both base and override IDs
 local function IsSpellProcced(spellID)
-    if BlizzardAPI.IsSpellProcced(spellID) then return true end
-    if ActionBarScanner and ActionBarScanner.IsSpellProcced then
-        return ActionBarScanner.IsSpellProcced(spellID)
-    end
-    return false
+    return BlizzardAPI.IsSpellProcced(spellID)
 end
 
 -- Normalize hotkey format (S-5 → SHIFT-5, etc.)
@@ -51,7 +46,7 @@ local function NormalizeHotkey(hotkey)
     return normalized
 end
 
--- Update button cooldowns - passes values directly to Cooldown widgets
+-- Update button cooldowns - Cooldown widgets handle secret values internally
 -- Cooldown frames can handle secret values internally, so we avoid all comparisons/arithmetic
 local function UpdateButtonCooldowns(button)
     if not button then return end
@@ -101,7 +96,7 @@ local function UpdateButtonCooldowns(button)
         local modRate = cooldownInfo.modRate or 1
 
         -- Use SetCooldownFromExpirationTime for 12.0+ compatibility (handles secret values better)
-        if button.cooldown.SetCooldownFromExpirationTime and 
+        if button.cooldown.SetCooldownFromExpirationTime and
            not (BlizzardAPI.IsSecretValue(startTime) or BlizzardAPI.IsSecretValue(duration)) then
             -- 12.0+ method: Pass expiration time directly (only if values are not secret)
             local expirationTime = startTime + duration
@@ -112,9 +107,11 @@ local function UpdateButtonCooldowns(button)
         end
 
         -- Force swipe visibility (in case it got reset) and ensure frame is shown
-        -- Use pcall because duration comparison may fail with secret values
+        -- Check secret values directly instead of pcall to avoid closure overhead
         local hasCooldown = false
-        pcall(function() hasCooldown = duration > 0 end)
+        if not (BlizzardAPI.IsSecretValue(duration)) then
+            hasCooldown = duration > 0
+        end
         if hasCooldown then
             button.cooldown:SetDrawSwipe(true)
             button.cooldown:Show()
@@ -124,45 +121,37 @@ local function UpdateButtonCooldowns(button)
         button.cooldown:Clear()
     end
 
-    -- Charge cooldown edge animation: Pass values directly, let widget handle display
+    -- Let the widget handle cooldown visuals (keeps display logic encapsulated)
     if button.chargeCooldown then
-        -- Use pcall to safely check if there's a charge cooldown (handles secret values)
+        -- Check secret values directly to avoid pcall overhead
         local hasChargeCooldown = false
-        if chargeInfo then
-            pcall(function()
-                hasChargeCooldown = chargeInfo.cooldownDuration and chargeInfo.cooldownDuration > 0
-            end)
-            -- If pcall failed (secret value), hasChargeCooldown stays false
+        if chargeInfo and chargeInfo.cooldownDuration then
+            if not BlizzardAPI.IsSecretValue(chargeInfo.cooldownDuration) then
+                hasChargeCooldown = chargeInfo.cooldownDuration > 0
+            end
         end
 
         if hasChargeCooldown then
-            -- Active charge regeneration - pass values to cooldown widget
+            -- Show charge cooldown when available
             button.chargeCooldown:SetCooldown(
                 chargeInfo.cooldownStartTime or 0,
                 chargeInfo.cooldownDuration or 0,
                 chargeInfo.chargeModRate or 1
             )
         else
-            -- No charge cooldown active (or values are secret) - clear the widget
+            -- Hide when unavailable or secret
             button.chargeCooldown:Clear()
         end
     end
 
-    -- Charge count text: Always try to set it, let it fail silently if values are secret
+    -- Show charge count only for multi-charge spells; check secret values directly
     if button.chargeText and chargeInfo then
-        -- Use pcall to handle secret values - if it errors, we just won't show the text
-        local ok = pcall(function()
-            -- Only show charge count if maxCharges > 1 (multi-charge spell)
-            -- This will error if values are secret, which is fine
-            if chargeInfo.maxCharges and chargeInfo.maxCharges > 1 and chargeInfo.currentCharges then
-                button.chargeText:SetText(chargeInfo.currentCharges)
-                button.chargeText:Show()
-            else
-                button.chargeText:Hide()
-            end
-        end)
-        -- If pcall failed (secret values), hide the text
-        if not ok then
+        if chargeInfo.maxCharges and chargeInfo.currentCharges and
+           not (BlizzardAPI.IsSecretValue(chargeInfo.maxCharges) or BlizzardAPI.IsSecretValue(chargeInfo.currentCharges)) and
+           chargeInfo.maxCharges > 1 then
+            button.chargeText:SetText(chargeInfo.currentCharges)
+            button.chargeText:Show()
+        else
             button.chargeText:Hide()
         end
     elseif button.chargeText then
@@ -194,6 +183,7 @@ end
 -- State variables
 local isInCombat = false
 local hotkeysDirty = true
+local lastPanelLocked = nil
 local lastFrameState = {
     shouldShow = false,
     spellCount = 0,
@@ -470,7 +460,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Check if player is channeling (grey out queue to emphasize not interrupting)
     local isChanneling = UnitChannelInfo("player") ~= nil
     
-    -- Cache frequently called functions for hot path (avoid repeated table lookups)
+    -- Cache frequently called functions to reduce table lookups in hot path
     local GetSpellCooldown = BlizzardAPI.GetSpellCooldown
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
@@ -489,7 +479,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 
                 -- Reset cooldown cache when spell changes (including first-time assignment)
                 if spellChanged then
-                    -- Track previous spell ID for grace period logic (avoid flashing spell that just moved)
+    -- Prevent flash animation when spell briefly moves during GCD transitions
                     if icon.spellID then
                         icon.previousSpellID = icon.spellID
                     end
@@ -501,7 +491,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 
                 icon.spellID = spellID
                 
-                -- Cache icon texture reference for multiple accesses
+                -- Reuse texture reference to avoid repeated lookup
                 local iconTexture = icon.iconTexture
                 
                 -- Set texture when spell changes OR if texture has never been set (fixes missing artwork)
@@ -515,11 +505,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 -- Check for "Waiting for..." spells (Assisted Combat's resource-wait indicator)
-                -- These spells tell the player to wait for energy/mana/rage/etc to regenerate
-                local isWaitingSpell = spellInfo.name and spellInfo.name:find("^Waiting for")
+                -- Cache the pattern check result when spell changes to avoid repeated string operations
+                if spellChanged then
+                    icon.isWaitingSpell = spellInfo.name and spellInfo.name:find("^Waiting for") or false
+                end
                 local centerText = icon.centerText
                 if centerText then
-                    if isWaitingSpell then
+                    if icon.isWaitingSpell then
                         centerText:SetText("WAIT")
                         centerText:Show()
                     else
@@ -596,8 +588,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 -- Out-of-range indicator: red text if out of range, white otherwise
+                -- Note: C_Spell.IsSpellInRange may return secret values in combat, fail-safe to white text
                 local inRange = hotkey ~= "" and C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(spellID)
-                icon.hotkeyText:SetTextColor(inRange == false and 1 or 1, inRange == false and 0 or 1, inRange == false and 0 or 1, 1)
+                local isOutOfRange = false
+                if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                    isOutOfRange = (inRange == false)
+                end
+                icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
                 
                 -- Icon appearance: grey when channeling, blue tint when not enough resources, fade based on position
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
@@ -606,8 +603,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     iconTexture:SetDesaturation(1.0)
                     iconTexture:SetVertexColor(1, 1, 1)
                 elseif isInCombat then
-                    local isUsable, notEnoughResources = IsSpellUsable(spellID)
-                    if not isUsable and notEnoughResources then
+                    -- Cache usability check per icon - only update when spell changes or every 0.25s
+                    if spellChanged or not icon.lastUsableCheck or (currentTime - icon.lastUsableCheck) > 0.25 then
+                        icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
+                        icon.lastUsableCheck = currentTime
+                    end
+                    if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
                         -- Not enough resources - darker blue tint
                         iconTexture:SetDesaturation(0)
                         iconTexture:SetVertexColor(0.3, 0.3, 0.8)
@@ -641,6 +642,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.cachedHotkey = nil
                     icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil
+                    icon.cachedIsUsable = nil
+                    icon.cachedNotEnoughResources = nil
+                    icon.lastUsableCheck = nil
+                    icon.isWaitingSpell = nil
                     icon.hasAssistedGlow = false
                     icon.hasProcGlow = false
                     UIAnimations.StopAssistedGlow(icon)
@@ -660,18 +665,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Clear hotkey dirty flag after processing all icons
     hotkeysDirty = false
     
-    -- Update defensive icon cooldowns (continuous update, like DPS icons)
-    -- Uses Blizzard's cooldown logic for GCD/spell CD/charge handling
-    local defensiveIconsList = addon.defensiveIcons or (addon.defensiveIcon and {addon.defensiveIcon})
-    if defensiveIconsList then
-        for _, defensiveIcon in ipairs(defensiveIconsList) do
-            if defensiveIcon and defensiveIcon:IsShown() then
-                UpdateButtonCooldowns(defensiveIcon)
-            end
-        end
-    end
+    -- Note: Defensive icon cooldowns are updated separately by UpdateDefensiveCooldowns()
+    -- No need to update them here to avoid redundant calls
     
-    -- Update frame visibility with fade animations only when state actually changes
+    -- Update frame visibility only when state changes to optimize animation rendering
     if addon.mainFrame and (frameStateChanged or spellCountChanged) then
         if shouldShowFrame then
             if not addon.mainFrame:IsShown() then
@@ -708,34 +705,38 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
     end
     
-    -- Update click-through state based on lock (check every render for responsiveness)
+    -- Update click-through only when lock state changes (not every frame)
     local isLocked = profile.panelLocked
     
-    -- Main frame click-through (but grab tab stays interactive for unlock)
-    if addon.mainFrame then
-        addon.mainFrame:EnableMouse(not isLocked)
-    end
-    
-    for i = 1, maxIcons do
-        local icon = spellIconsRef[i]
-        if icon then
-            -- Icons always need mouse enabled for tooltips
-            -- When locked, RegisterForClicks("") prevents clicks while keeping tooltips
-            icon:EnableMouse(true)
-            if isLocked then
-                icon:RegisterForClicks()  -- No clicks = locked but tooltips work
-            else
-                icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+    if lastPanelLocked ~= isLocked then
+        lastPanelLocked = isLocked
+        
+        -- Main frame click-through (but grab tab stays interactive for unlock)
+        if addon.mainFrame then
+            addon.mainFrame:EnableMouse(not isLocked)
+        end
+        
+        for i = 1, maxIcons do
+            local icon = spellIconsRef[i]
+            if icon then
+                -- Icons always need mouse enabled for tooltips
+                -- When locked, RegisterForClicks("") prevents clicks while keeping tooltips
+                icon:EnableMouse(true)
+                if isLocked then
+                    icon:RegisterForClicks()  -- No clicks = locked but tooltips work
+                else
+                    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+                end
             end
         end
-    end
-    if addon.defensiveIcon then
-        -- Defensive icon also needs mouse enabled for tooltips
-        addon.defensiveIcon:EnableMouse(true)
-        if isLocked then
-            addon.defensiveIcon:RegisterForClicks()  -- No clicks = locked but tooltips work
-        else
-            addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+        if addon.defensiveIcon then
+            -- Defensive icon also needs mouse enabled for tooltips
+            addon.defensiveIcon:EnableMouse(true)
+            if isLocked then
+                addon.defensiveIcon:RegisterForClicks()  -- No clicks = locked but tooltips work
+            else
+                addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+            end
         end
     end
     
