@@ -933,6 +933,7 @@ local function CreateOptionsTable(addon)
                         desc = L["Require Hostile Target desc"],
                         order = 23,
                         width = "full",
+                        disabled = function() return addon.db.profile.hideQueueOutOfCombat end,
                         get = function() return addon.db.profile.requireHostileTarget end,
                         set = function(_, val)
                             addon.db.profile.requireHostileTarget = val

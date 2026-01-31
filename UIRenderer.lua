@@ -466,7 +466,31 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
-    -- Update individual icons
+    -- When frame should be hidden (mounted, out of combat, etc.), stop all glows and skip icon updates
+    -- This prevents highlight frames from appearing with incorrect scaling when auto-hide is enabled
+    if not shouldShowFrame then
+        for i = 1, maxIcons do
+            local icon = spellIconsRef[i]
+            if icon then
+                -- Stop all glow effects to prevent "large highlight frame" bug
+                if icon.hasAssistedGlow then
+                    UIAnimations.StopAssistedGlow(icon)
+                    icon.hasAssistedGlow = false
+                end
+                if icon.hasProcGlow then
+                    UIAnimations.HideProcGlow(icon)
+                    icon.hasProcGlow = false
+                end
+                if icon.hasDefensiveGlow then
+                    UIAnimations.StopDefensiveGlow(icon)
+                    icon.hasDefensiveGlow = false
+                end
+            end
+        end
+    end
+    
+    -- Update individual icons (only when frame should be visible)
+    if shouldShowFrame then
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
         if icon then
@@ -661,6 +685,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
+    end  -- Close if shouldShowFrame then block
     
     -- Clear hotkey dirty flag after processing all icons
     hotkeysDirty = false
