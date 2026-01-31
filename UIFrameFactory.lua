@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: UI Frame Factory Module v10
--- Changed: Refactored cooldown frames to match Blizzard's ActionButtonTemplate (cooldown + chargeCooldown)
+-- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
 local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 10)
 if not UIFrameFactory then return end
 
@@ -11,7 +10,8 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local ProfileHelpers = LibStub("JustAC-ProfileHelpers", true)
--- Hot path optimizations: cache frequently used functions
+
+-- Cache frequently used functions to reduce table lookups on every update
 local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
@@ -490,7 +490,7 @@ function UIFrameFactory.CreateMainFrame(addon)
     end)
     
     -- Right-click on main frame (empty areas) for options
-    -- Note: Frame doesn't support RegisterForClicks, so we use OnMouseDown instead
+    -- Use OnMouseDown because the frame lacks RegisterForClicks support
     addon.mainFrame:SetScript("OnMouseDown", function(self, mouseButton)
         if mouseButton == "RightButton" then
             local profile = addon:GetProfile()
@@ -512,7 +512,7 @@ function UIFrameFactory.CreateMainFrame(addon)
         end
     end)
     
-    -- Start hidden, only show when we have spells
+    -- Start hidden to avoid showing an empty UI; fade in when spells appear
     addon.mainFrame:SetAlpha(0)  -- Start invisible for fade-in
     addon.mainFrame:Hide()
     

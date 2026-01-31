@@ -1,5 +1,29 @@
 # Changelog
 
+## [3.198] - 2026-01-30
+
+### Changed
+- **UIRenderer v34**: CPU optimization improvements for high icon counts
+  - Eliminated redundant IsSpellProcced calls to ActionBarScanner
+  - Replaced pcall closures with direct issecretvalue checks (cooldown, charge display)
+  - Cached "Waiting for" pattern on spellChanged instead of every frame
+  - Throttled IsSpellUsable per-icon to 0.25s interval (reduced from 60fps)
+  - Track panelLocked state to skip RegisterForClicks when unchanged
+  - Removed duplicate defensive icon cooldown updates
+  - Added explicit secret value handling for range detection (C_Spell.IsSpellInRange)
+
+- **RedundancyFilter v36**: Edge-case safety for in-combat logins
+  - Add fail-open behavior when trusted cache unavailable (no pre-combat snapshot)
+  - Only filter non-DPS spells if cache exists; allow through if no trusted data
+  - Prevents false negatives during combat login scenarios
+
+- **SpellDB v18**: Spell classification accuracy sweep
+  - Remove damage/hybrid spells from HEALING_SPELLS: Cone of Cold, Purge the Wicked, Death Strike, Drain Life, Grimoire of Sacrifice, Penance, Soul Cleave, Immolation Aura, Reaver, Fracture, Expel Harm
+  - Remove pet maintenance from HEALING_SPELLS: Mend Pet, Revive Pet (now offensive, DPS-critical)
+  - Remove DPS gap closer from UTILITY_SPELLS: Shadowstep (now offensive)
+  - Remove damage-dealing spells from CROWD_CONTROL_SPELLS: Rake (bleed DoT), Holy Word: Chastise variants
+  - Remove speed-boosting ability from UTILITY_SPELLS: Chi Torpedo
+
 ## [3.197] - 2026-01-29
 
 ### Added

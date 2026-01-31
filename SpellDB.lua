@@ -1,12 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Native Spell Classification Database v2
--- Provides spell type classification for filtering non-offensive procs from DPS queue
--- 12.0 COMPATIBLE: Replaces LibPlayerSpells with native spell tables
---
--- DESIGN: Fail-open approach - only list spells we KNOW are defensive/CC/healing/utility
--- Everything NOT in these tables is assumed offensive (correct for DPS filtering)
-
+-- JustAC: Spell Database - Native spell classification tables for filtering and categorization
 local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 2)
 if not SpellDB then return end
 
@@ -166,14 +160,7 @@ local DEFENSIVE_SPELLS = {
 local HEALING_SPELLS = {
     -- Death Knight
     [48743] = true,   -- Death Pact
-    [49998] = true,   -- Death Strike
     [206940] = true,  -- Mark of Blood
-    
-    -- Demon Hunter
-    [228477] = true,  -- Soul Cleave
-    [178740] = true,  -- Immolation Aura (Vengeance heals)
-    [212106] = true,  -- Reaver
-    [263642] = true,  -- Fracture
     
     -- Druid
     [774] = true,     -- Rejuvenation
@@ -206,12 +193,6 @@ local HEALING_SPELLS = {
     [409311] = true,  -- Prescience
     [406732] = true,  -- Spatial Paradox
     
-    -- Hunter
-    [136] = true,     -- Mend Pet
-    
-    -- Mage
-    [120] = true,     -- Cone of Cold (no, that's damage)
-    
     -- Monk
     [115175] = true,  -- Soothing Mist
     [116670] = true,  -- Vivify
@@ -221,8 +202,6 @@ local HEALING_SPELLS = {
     [191837] = true,  -- Essence Font
     [198898] = true,  -- Song of Chi-Ji
     [205234] = true,  -- Healing Sphere
-    [274774] = true,  -- Expel Harm (heal component)
-    [322101] = true,  -- Expel Harm
     [322118] = true,  -- Invoke Yu'lon
     [325197] = true,  -- Invoke Chi-Ji
     [388615] = true,  -- Restoral
@@ -269,8 +248,6 @@ local HEALING_SPELLS = {
     [204883] = true,  -- Circle of Healing
     [289666] = true,  -- Greater Heal
     [73325] = true,   -- Leap of Faith
-    [47540] = true,   -- Penance (can heal)
-    [204197] = true,  -- Purge the Wicked (doesn't heal, remove)
     [596] = true,     -- Prayer of Healing
     [33076] = true,   -- Prayer of Mending
     [527] = true,     -- Purify
@@ -292,9 +269,7 @@ local HEALING_SPELLS = {
     [77130] = true,   -- Purify Spirit
     
     -- Warlock
-    [234153] = true,  -- Drain Life
-    [108503] = true,  -- Grimoire of Sacrifice (heal on kill)
-    [755] = true,     -- Health Funnel
+    [755] = true,     -- Health Funnel (out-of-combat pet healing)
     
     -- Warrior
     [34428] = true,   -- Victory Rush
@@ -332,7 +307,6 @@ local CROWD_CONTROL_SPELLS = {
     [102359] = true,  -- Mass Entanglement
     [102793] = true,  -- Ursol's Vortex
     [106839] = true,  -- Skull Bash (interrupt)
-    [163505] = true,  -- Rake (stun from stealth)
     [203123] = true,  -- Maim
     
     -- Evoker
@@ -396,8 +370,6 @@ local CROWD_CONTROL_SPELLS = {
     [9484] = true,    -- Shackle Undead
     [15487] = true,   -- Silence
     [64044] = true,   -- Psychic Horror
-    [88625] = true,   -- Holy Word: Chastise (stun)
-    [200200] = true,  -- Holy Word: Chastise (incapacitate)
     [205369] = true,  -- Mind Bomb
     [605] = true,     -- Mind Control
     
@@ -455,18 +427,18 @@ local CROWD_CONTROL_SPELLS = {
 --------------------------------------------------------------------------------
 -- UTILITY SPELLS: Movement, dispels, rezzes, taunts, externals, transfers
 -- Non-damage abilities that shouldn't appear in DPS queue
--- NOTE: Abilities that do damage (Heroic Leap, Fel Rush, etc.) are NOT included
+-- NOTE: Mobility abilities with significant damage (Heroic Leap, Fel Rush, Charge)
+-- are intentionally EXCLUDED from this list so they remain offensive spells in queue
 --------------------------------------------------------------------------------
 local UTILITY_SPELLS = {
     -- Movement Abilities (pure mobility, no damage)
     [2983] = true,    -- Sprint (Rogue)
-    [36554] = true,   -- Shadowstep (Rogue) - gap closer, no damage
+    -- REMOVED: Shadowstep (36554) - Offensive gap closer, enables DPS
     [1953] = true,    -- Blink (Mage)
     [212653] = true,  -- Shimmer (Mage)
     [186257] = true,  -- Aspect of the Cheetah (Hunter)
     [781] = true,     -- Disengage (Hunter)
     [109132] = true,  -- Roll (Monk)
-    [115008] = true,  -- Chi Torpedo (Monk) - does minor damage, but primarily mobility
     [116841] = true,  -- Tiger's Lust (Monk)
     [1850] = true,    -- Dash (Druid)
     [252216] = true,  -- Tiger Dash (Druid)
@@ -545,7 +517,6 @@ local UTILITY_SPELLS = {
     
     -- Pet Utility
     [2641] = true,    -- Dismiss Pet (Hunter)
-    [982] = true,     -- Revive Pet (Hunter)
     [883] = true,     -- Call Pet 1 (Hunter)
     [83242] = true,   -- Call Pet 2
     [83243] = true,   -- Call Pet 3

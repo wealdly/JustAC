@@ -174,6 +174,11 @@ L["Major Cooldowns Priority List"] = "Major Cooldowns Priority List (emergency)"
 L["Major Cooldowns Priority desc"] = "Big defensives for emergencies. Only checked if no self-heal is available and health is critically low."
 L["Profiles"] = "Profiles"
 L["Profiles desc"] = "Character and spec profile management"
+-- Per-spec profile switching
+L["Spec-Based Switching"] = "Spec-Based Switching"
+L["Auto-switch profile by spec"] = "Auto-switch profile by spec"
+L["(No change)"] = "(No change)"
+L["(Disabled)"] = "(Disabled)"
 L["About"] = "About"
 L["About JustAssistedCombat"] = "About JustAssistedCombat"
 
