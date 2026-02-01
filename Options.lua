@@ -908,6 +908,27 @@ local function CreateOptionsTable(addon)
                             addon:UpdateFrameSize()
                         end
                     },
+                    gamepadIconStyle = {
+                        type = "select",
+                        name = L["Gamepad Icon Style"],
+                        desc = L["Gamepad Icon Style desc"],
+                        order = 16,
+                        width = "normal",
+                        values = {
+                            generic = L["Generic"],
+                            xbox = L["Xbox"],
+                            playstation = L["PlayStation"],
+                        },
+                        get = function() return addon.db.profile.gamepadIconStyle or "xbox" end,
+                        set = function(_, val)
+                            addon.db.profile.gamepadIconStyle = val
+                            -- Force keybind cache refresh
+                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                                ActionBarScanner.ClearAllCaches()
+                            end
+                        end
+                    },
                     -- VISIBILITY (20-29)
                     visibilityHeader = {
                         type = "header",
@@ -944,6 +965,7 @@ local function CreateOptionsTable(addon)
                         desc = L["Require Hostile Target desc"],
                         order = 23,
                         width = "full",
+                        disabled = function() return addon.db.profile.hideQueueOutOfCombat end,
                         get = function() return addon.db.profile.requireHostileTarget end,
                         set = function(_, val)
                             addon.db.profile.requireHostileTarget = val

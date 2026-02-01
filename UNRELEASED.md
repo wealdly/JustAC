@@ -2,9 +2,11 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.198
+## Current Version: 3.2
 
 **Instructions:**
 - Add changes here as they're made
 - When version is bumped, move these to CHANGELOG.md and clear this section
 - Don't increment version numbers without explicit instruction
+
+(No unreleased changes)

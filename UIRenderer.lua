@@ -32,17 +32,114 @@ local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
 end
 
--- Normalize hotkey format (S-5 → SHIFT-5, etc.)
+-- Normalize hotkey format for key press matching (S-5 → SHIFT-5, etc.)
+-- Expands abbreviated modifiers and common keys to their full form
 local function NormalizeHotkey(hotkey)
     if not hotkey or hotkey == "" then return nil end
     local normalized = string_upper(hotkey)
+    
+    -- Expand abbreviated modifiers to full form
     normalized = string_gsub(normalized, "^S%-", "SHIFT-")
-    normalized = string_gsub(normalized, "^S([^H])", "SHIFT-%1")
+    normalized = string_gsub(normalized, "^S([^HPCE])", "SHIFT-%1")  -- S1 -> SHIFT-1 (exclude SHIFT, SPC, SCROLL, etc.)
     normalized = string_gsub(normalized, "^C%-", "CTRL-")
-    normalized = string_gsub(normalized, "^C([^T])", "CTRL-%1")
+    normalized = string_gsub(normalized, "^C([^TAO])", "CTRL-%1")    -- C1 -> CTRL-1 (exclude CTRL, CAPS, COMMA)
     normalized = string_gsub(normalized, "^A%-", "ALT-")
-    normalized = string_gsub(normalized, "^A([^L])", "ALT-%1")
-    normalized = string_gsub(normalized, "^%+", "MOD-")
+    normalized = string_gsub(normalized, "^A([^L])", "ALT-%1")       -- A1 -> ALT-1 (exclude ALT)
+    normalized = string_gsub(normalized, "^%+", "MOD-")              -- +1 -> MOD-1 (any modifier)
+    
+    -- Expand abbreviated numpad keys
+    normalized = string_gsub(normalized, "N(%d)$", "NUMPAD%1")        -- N1 -> NUMPAD1
+    normalized = string_gsub(normalized, "N/$", "NUMPADDIVIDE")
+    normalized = string_gsub(normalized, "N%*$", "NUMPADMULTIPLY")
+    normalized = string_gsub(normalized, "N%-$", "NUMPADMINUS")
+    normalized = string_gsub(normalized, "N%+$", "NUMPADPLUS")
+    normalized = string_gsub(normalized, "N%.$", "NUMPADDECIMAL")
+    normalized = string_gsub(normalized, "NENT$", "NUMPADENTER")
+    normalized = string_gsub(normalized, "NLK$", "NUMLOCK")
+    
+    -- Expand abbreviated mouse buttons
+    normalized = string_gsub(normalized, "M(%d+)$", "BUTTON%1")       -- M4 -> BUTTON4
+    normalized = string_gsub(normalized, "MWU$", "MOUSEWHEELUP")
+    normalized = string_gsub(normalized, "MWD$", "MOUSEWHEELDOWN")
+    
+    -- Expand abbreviated navigation keys
+    normalized = string_gsub(normalized, "PGU$", "PAGEUP")
+    normalized = string_gsub(normalized, "PGD$", "PAGEDOWN")
+    normalized = string_gsub(normalized, "INS$", "INSERT")
+    normalized = string_gsub(normalized, "DEL$", "DELETE")
+    normalized = string_gsub(normalized, "HM$", "HOME")
+    
+    -- Expand abbreviated arrow keys
+    normalized = string_gsub(normalized, "%-UP$", "-UP")
+    normalized = string_gsub(normalized, "%-DN$", "-DOWN")
+    normalized = string_gsub(normalized, "%-LT$", "-LEFT")
+    normalized = string_gsub(normalized, "%-RT$", "-RIGHT")
+    
+    -- Expand abbreviated special keys
+    normalized = string_gsub(normalized, "BKSP$", "BACKSPACE")
+    normalized = string_gsub(normalized, "SPC$", "SPACE")
+    normalized = string_gsub(normalized, "ENT$", "ENTER")
+    normalized = string_gsub(normalized, "ESC$", "ESCAPE")
+    
+    -- Expand abbreviated gamepad stick directions (atlas textures - match both _32 and _64)
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickUp_%d+:[%d:]+|a", "PADLSTICKUP")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickDown_%d+:[%d:]+|a", "PADLSTICKDOWN")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickLeft_%d+:[%d:]+|a", "PADLSTICKLEFT")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickRight_%d+:[%d:]+|a", "PADLSTICKRIGHT")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickUp_%d+:[%d:]+|a", "PADRSTICKUP")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickDown_%d+:[%d:]+|a", "PADRSTICKDOWN")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickLeft_%d+:[%d:]+|a", "PADRSTICKLEFT")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickRight_%d+:[%d:]+|a", "PADRSTICKRIGHT")
+    
+    -- Expand abbreviated gamepad stick clicks
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickIn_%d+:[%d:]+|a", "PADLSTICK")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickIn_%d+:[%d:]+|a", "PADRSTICK")
+    
+    -- Expand abbreviated gamepad D-pad
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Up_%d+:[%d:]+|a", "PADDUP")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Down_%d+:[%d:]+|a", "PADDDOWN")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Left_%d+:[%d:]+|a", "PADDLEFT")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Right_%d+:[%d:]+|a", "PADDRIGHT")
+    
+    -- Expand abbreviated gamepad shoulders/triggers
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LShoulder_%d+:[%d:]+|a", "PADLSHOULDER")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RShoulder_%d+:[%d:]+|a", "PADRSHOULDER")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LTrigger_%d+:[%d:]+|a", "PADLTRIGGER")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RTrigger_%d+:[%d:]+|a", "PADRTRIGGER")
+    
+    -- Expand abbreviated gamepad face buttons (all styles: Generic/Xbox/PlayStation)
+    -- Generic style (1-6)
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_1_%d+:[%d:]+|a", "PAD1")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_2_%d+:[%d:]+|a", "PAD2")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_3_%d+:[%d:]+|a", "PAD3")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_4_%d+:[%d:]+|a", "PAD4")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_5_%d+:[%d:]+|a", "PAD5")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_6_%d+:[%d:]+|a", "PAD6")
+    -- Xbox style (A/B/X/Y)
+    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_A_%d+:[%d:]+|a", "PAD1")
+    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_B_%d+:[%d:]+|a", "PAD2")
+    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_X_%d+:[%d:]+|a", "PAD3")
+    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_Y_%d+:[%d:]+|a", "PAD4")
+    -- PlayStation style (Cross/Circle/Square/Triangle)
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Cross_%d+:[%d:]+|a", "PAD1")
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Circle_%d+:[%d:]+|a", "PAD2")
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Square_%d+:[%d:]+|a", "PAD3")
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Triangle_%d+:[%d:]+|a", "PAD4")
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_MicMute_%d+:[%d:]+|a", "PAD5")
+    normalized = string_gsub(normalized, "|A:Gamepad_Shp_TouchpadR_%d+:[%d:]+|a", "PAD6")
+    
+    -- Expand abbreviated gamepad paddles
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle1_%d+:[%d:]+|a", "PADPADDLE1")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle2_%d+:[%d:]+|a", "PADPADDLE2")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle3_%d+:[%d:]+|a", "PADPADDLE3")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle4_%d+:[%d:]+|a", "PADPADDLE4")
+    
+    -- Expand abbreviated gamepad system buttons
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Forward_%d+:[%d:]+|a", "PADFORWARD")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Back_%d+:[%d:]+|a", "PADBACK")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_System_%d+:[%d:]+|a", "PADSYSTEM")
+    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Share_%d+:[%d:]+|a", "PADSOCIAL")
+    
     return normalized
 end
 
@@ -191,9 +288,22 @@ local lastFrameState = {
 }
 
 -- Invalidate hotkey cache (call when action bars or bindings change)
+-- Also clears per-icon cached hotkeys to prevent displaying stale atlas markup
 function UIRenderer.InvalidateHotkeyCache()
     hotkeysDirty = true
+    -- Clear cached hotkeys on all icons immediately to prevent visual glitches
+    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    if addon and addon.spellIcons then
+        for i = 1, #addon.spellIcons do
+            local icon = addon.spellIcons[i]
+            if icon then
+                icon.cachedHotkey = nil
+                icon.cachedNormalizedHotkey = nil
+            end
+        end
+    end
 end
+
 -- Show the defensive icon with a specific spell or item
 -- isItem: true if id is an itemID (potion), false/nil if it's a spellID
 -- showGlow: true to show green marching ants glow (only slot 1 should have this)
@@ -466,7 +576,31 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
-    -- Update individual icons
+    -- When frame should be hidden (mounted, out of combat, etc.), stop all glows and skip icon updates
+    -- This prevents highlight frames from appearing with incorrect scaling when auto-hide is enabled
+    if not shouldShowFrame then
+        for i = 1, maxIcons do
+            local icon = spellIconsRef[i]
+            if icon then
+                -- Stop all glow effects to prevent "large highlight frame" bug
+                if icon.hasAssistedGlow then
+                    UIAnimations.StopAssistedGlow(icon)
+                    icon.hasAssistedGlow = false
+                end
+                if icon.hasProcGlow then
+                    UIAnimations.HideProcGlow(icon)
+                    icon.hasProcGlow = false
+                end
+                if icon.hasDefensiveGlow then
+                    UIAnimations.StopDefensiveGlow(icon)
+                    icon.hasDefensiveGlow = false
+                end
+            end
+        end
+    end
+    
+    -- Update individual icons (only when frame should be visible)
+    if shouldShowFrame then
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
         if icon then
@@ -661,6 +795,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
+    end  -- Close if shouldShowFrame then block
     
     -- Clear hotkey dirty flag after processing all icons
     hotkeysDirty = false

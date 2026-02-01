@@ -1,5 +1,43 @@
 # Changelog
 
+## [3.2] - 2026-01-31
+
+### Added
+- **Gamepad keybind support**: Full gamepad/controller button display using native WoW atlas textures
+  - D-pad, face buttons (PAD1-6), shoulders/triggers, stick clicks + directions, paddles, system buttons
+  - **New option "Gamepad Icon Style"** in General settings: Generic (1/2/3/4), Xbox (A/B/X/Y), PlayStation (Cross/Circle/Square/Triangle)
+  - Uses `_64` atlas with proper button outline matching WoW's default keybind display
+  - Pixel-perfect positioning with 1px right/down offset
+
+- **Extended keyboard keybind abbreviations**:
+  - Numpad special keys: NUMPADDIVIDE→N/, NUMPADMULTIPLY→N*, NUMPADMINUS→N-, NUMPADPLUS→N+, etc.
+  - Arrow keys, navigation keys, punctuation (TAB, ENTER, PAUSE, brackets, etc.)
+
+### Changed
+- **ActionBarScanner v32**: Extended keybind abbreviation with full keyboard and gamepad support
+- **UIRenderer v10**: Enhanced hotkey normalization for flash animation matching on all key types
+- **Delayed keybind refresh**: Added 0.3s follow-up invalidation to catch late-committed gamepad binding changes
+
+## [3.199] - 2026-01-31
+
+### Added
+- **Options:** "Require Hostile Target" checkbox is now disabled when "Hide Out of Combat" is enabled
+  - These options are redundant together since hideQueueOutOfCombat hides the frame before the hostile target check runs
+  - Description updated to explain the relationship
+
+### Changed
+- **UIRenderer v10**: Optimized rendering loop when auto-hide features are active
+  - Skips expensive rendering operations (hotkey lookups, icon updates, glow animations) when frame is hidden
+  - Still processes queue building and cache updates to ensure instant response when frame becomes visible
+  - Maintains warm caches for redundancy filter, aura tracking, and spell info
+  - Applies to: hideQueueOutOfCombat, hideQueueForHealers, hideQueueWhenMounted, requireHostileTarget
+
+### Fixed
+- **UIRenderer v10**: Fixed large highlight frame bug appearing over backup abilities when auto-hide features are enabled
+  - Now properly stops all glow animations (assisted, proc, defensive) when frame should be hidden
+  - Prevents highlight frames from scaling incorrectly during auto-hide transitions
+  - Skips icon updates entirely when `shouldShowFrame = false` to avoid frame state inconsistencies
+
 ## [3.198] - 2026-01-30
 
 ### Changed
