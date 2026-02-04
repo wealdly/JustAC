@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 30)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 31)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -11,6 +11,10 @@ local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
+local IsMounted = IsMounted
+local GetShapeshiftFormID = GetShapeshiftFormID
+local UnitExists = UnitExists
+local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 
@@ -31,6 +35,14 @@ local proccedBase = {}
 local proccedDisplay = {}
 local normalBase = {}
 local normalDisplay = {}
+-- Pooled tables for GetCurrentSpellQueue (wiped at start of each call)
+local addedSpellIDs = {}
+local recommendedSpells = {}
+
+-- Per-update cache for spell filter results (cleared at start of each GetCurrentSpellQueue call)
+-- Prevents re-checking the same spell multiple times per update cycle
+local filterResultCache = {}
+local filterCacheUpdateTime = 0
 
 -- Throttle interval for queue updates
 -- 0.1s in combat = 10 updates/sec (fast enough for responsiveness, slow enough to reduce flicker)
@@ -145,24 +157,14 @@ end
 
 -- Wrapper to BlizzardAPI.IsSpellUsable - checks if spell can be cast (resources, cooldown, etc.)
 -- Fail-open: return true if API is unavailable to show max helpful spells
+-- PERFORMANCE: Removed expensive cooldown filtering - the cooldown swipe already shows this visually
 local function IsSpellUsable(spellID)
     if not BlizzardAPI or not BlizzardAPI.IsSpellUsable then
         return true  -- Fail-open if API unavailable
     end
+    -- Just check basic usability, skip expensive cooldown checks
+    -- The renderer's cooldown swipe already shows if a spell is on cooldown
     local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-    -- Skip spells with >2s real cooldown remaining (GCD ignored) to avoid suggesting unavailable spells
-    if isUsable and BlizzardAPI.IsSpellOnRealCooldown then
-        if BlizzardAPI.IsSpellOnRealCooldown(spellID) then
-            -- Use GetSpellCooldownValues which sanitizes secrets to 0
-            local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
-            if start and start > 0 and duration and duration > 0 then
-                local remaining = (start + duration) - GetTime()
-                if remaining > 2.0 then  -- Hide if more than 2s remaining on real cooldown
-                    return false
-                end
-            end
-        end
-    end
     return isUsable
 end
 
@@ -173,10 +175,21 @@ local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
 end
 
 -- Helper: Check if spell passes common filters (availability, usability, redundancy)
+-- Uses per-update cache to avoid re-checking the same spell multiple times
 local function PassesSpellFilters(spellID, profile)
-    return IsSpellAvailable(spellID)
+    -- Check cache first (valid for this update cycle only)
+    local cached = filterResultCache[spellID]
+    if cached ~= nil then
+        return cached
+    end
+    
+    -- Compute result and cache it
+    local result = IsSpellAvailable(spellID)
        and IsSpellUsable(spellID)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
+    
+    filterResultCache[spellID] = result
+    return result
 end
 
 function SpellQueue.GetCurrentSpellQueue()
@@ -192,15 +205,60 @@ function SpellQueue.GetCurrentSpellQueue()
     if now - lastQueueUpdate < throttleInterval then
         return lastSpellIDs or {}
     end
+    
+    -- PERFORMANCE: Skip expensive processing when frame would be hidden
+    -- These checks mirror UIRenderer.RenderSpellQueue visibility logic
+    local inCombat = UnitAffectingCombat("player")
+    
+    -- Check if queue should be hidden based on settings
+    if profile.hideQueueOutOfCombat and not inCombat then
+        lastQueueUpdate = now
+        return lastSpellIDs or {}
+    end
+    
+    if profile.hideQueueForHealers and BlizzardAPI.IsCurrentSpecHealer and BlizzardAPI.IsCurrentSpecHealer() then
+        lastQueueUpdate = now
+        return lastSpellIDs or {}
+    end
+    
+    if profile.hideQueueWhenMounted then
+        local isMounted = IsMounted()
+        if not isMounted then
+            local formID = GetShapeshiftFormID()
+            if formID == 3 or formID == 27 then  -- Druid Travel/Flight Form
+                isMounted = true
+            end
+        end
+        if isMounted then
+            lastQueueUpdate = now
+            return lastSpellIDs or {}
+        end
+    end
+    
+    if profile.requireHostileTarget and not inCombat then
+        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
+        if not hasHostileTarget then
+            lastQueueUpdate = now
+            return lastSpellIDs or {}
+        end
+    end
+    
     lastQueueUpdate = now
+
+    -- PERFORMANCE: Clear per-update caches at start of each update cycle
+    wipe(filterResultCache)
+    if BlizzardAPI.ClearProcCache then
+        BlizzardAPI.ClearProcCache()
+    end
     
     -- Early check: determine which features are bypassed due to secrets
     -- bypassProcs is used for proc categorization in the rotation list
     local flags = BlizzardAPI and BlizzardAPI.GetBypassFlags and BlizzardAPI.GetBypassFlags() or {}
     local bypassProcs = flags.bypassProcs or false
     
-    local recommendedSpells = {}
-    local addedSpellIDs = {}
+    -- Reuse pooled tables to avoid GC pressure
+    wipe(recommendedSpells)
+    wipe(addedSpellIDs)
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
     

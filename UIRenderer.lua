@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 9)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 10)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -23,124 +23,11 @@ local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
-local string_upper = string.upper
-local string_gsub = string.gsub
 
 -- Check for proc overlay to highlight available abilities
 -- BlizzardAPI.IsSpellProcced already checks both base and override IDs
 local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
-end
-
--- Normalize hotkey format for key press matching (S-5 → SHIFT-5, etc.)
--- Expands abbreviated modifiers and common keys to their full form
-local function NormalizeHotkey(hotkey)
-    if not hotkey or hotkey == "" then return nil end
-    local normalized = string_upper(hotkey)
-    
-    -- Expand abbreviated modifiers to full form
-    normalized = string_gsub(normalized, "^S%-", "SHIFT-")
-    normalized = string_gsub(normalized, "^S([^HPCE])", "SHIFT-%1")  -- S1 -> SHIFT-1 (exclude SHIFT, SPC, SCROLL, etc.)
-    normalized = string_gsub(normalized, "^C%-", "CTRL-")
-    normalized = string_gsub(normalized, "^C([^TAO])", "CTRL-%1")    -- C1 -> CTRL-1 (exclude CTRL, CAPS, COMMA)
-    normalized = string_gsub(normalized, "^A%-", "ALT-")
-    normalized = string_gsub(normalized, "^A([^L])", "ALT-%1")       -- A1 -> ALT-1 (exclude ALT)
-    normalized = string_gsub(normalized, "^%+", "MOD-")              -- +1 -> MOD-1 (any modifier)
-    
-    -- Expand abbreviated numpad keys
-    normalized = string_gsub(normalized, "N(%d)$", "NUMPAD%1")        -- N1 -> NUMPAD1
-    normalized = string_gsub(normalized, "N/$", "NUMPADDIVIDE")
-    normalized = string_gsub(normalized, "N%*$", "NUMPADMULTIPLY")
-    normalized = string_gsub(normalized, "N%-$", "NUMPADMINUS")
-    normalized = string_gsub(normalized, "N%+$", "NUMPADPLUS")
-    normalized = string_gsub(normalized, "N%.$", "NUMPADDECIMAL")
-    normalized = string_gsub(normalized, "NENT$", "NUMPADENTER")
-    normalized = string_gsub(normalized, "NLK$", "NUMLOCK")
-    
-    -- Expand abbreviated mouse buttons
-    normalized = string_gsub(normalized, "M(%d+)$", "BUTTON%1")       -- M4 -> BUTTON4
-    normalized = string_gsub(normalized, "MWU$", "MOUSEWHEELUP")
-    normalized = string_gsub(normalized, "MWD$", "MOUSEWHEELDOWN")
-    
-    -- Expand abbreviated navigation keys
-    normalized = string_gsub(normalized, "PGU$", "PAGEUP")
-    normalized = string_gsub(normalized, "PGD$", "PAGEDOWN")
-    normalized = string_gsub(normalized, "INS$", "INSERT")
-    normalized = string_gsub(normalized, "DEL$", "DELETE")
-    normalized = string_gsub(normalized, "HM$", "HOME")
-    
-    -- Expand abbreviated arrow keys
-    normalized = string_gsub(normalized, "%-UP$", "-UP")
-    normalized = string_gsub(normalized, "%-DN$", "-DOWN")
-    normalized = string_gsub(normalized, "%-LT$", "-LEFT")
-    normalized = string_gsub(normalized, "%-RT$", "-RIGHT")
-    
-    -- Expand abbreviated special keys
-    normalized = string_gsub(normalized, "BKSP$", "BACKSPACE")
-    normalized = string_gsub(normalized, "SPC$", "SPACE")
-    normalized = string_gsub(normalized, "ENT$", "ENTER")
-    normalized = string_gsub(normalized, "ESC$", "ESCAPE")
-    
-    -- Expand abbreviated gamepad stick directions (atlas textures - match both _32 and _64)
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickUp_%d+:[%d:]+|a", "PADLSTICKUP")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickDown_%d+:[%d:]+|a", "PADLSTICKDOWN")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickLeft_%d+:[%d:]+|a", "PADLSTICKLEFT")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickRight_%d+:[%d:]+|a", "PADLSTICKRIGHT")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickUp_%d+:[%d:]+|a", "PADRSTICKUP")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickDown_%d+:[%d:]+|a", "PADRSTICKDOWN")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickLeft_%d+:[%d:]+|a", "PADRSTICKLEFT")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickRight_%d+:[%d:]+|a", "PADRSTICKRIGHT")
-    
-    -- Expand abbreviated gamepad stick clicks
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LStickIn_%d+:[%d:]+|a", "PADLSTICK")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RStickIn_%d+:[%d:]+|a", "PADRSTICK")
-    
-    -- Expand abbreviated gamepad D-pad
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Up_%d+:[%d:]+|a", "PADDUP")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Down_%d+:[%d:]+|a", "PADDDOWN")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Left_%d+:[%d:]+|a", "PADDLEFT")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Right_%d+:[%d:]+|a", "PADDRIGHT")
-    
-    -- Expand abbreviated gamepad shoulders/triggers
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LShoulder_%d+:[%d:]+|a", "PADLSHOULDER")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RShoulder_%d+:[%d:]+|a", "PADRSHOULDER")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_LTrigger_%d+:[%d:]+|a", "PADLTRIGGER")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_RTrigger_%d+:[%d:]+|a", "PADRTRIGGER")
-    
-    -- Expand abbreviated gamepad face buttons (all styles: Generic/Xbox/PlayStation)
-    -- Generic style (1-6)
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_1_%d+:[%d:]+|a", "PAD1")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_2_%d+:[%d:]+|a", "PAD2")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_3_%d+:[%d:]+|a", "PAD3")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_4_%d+:[%d:]+|a", "PAD4")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_5_%d+:[%d:]+|a", "PAD5")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_6_%d+:[%d:]+|a", "PAD6")
-    -- Xbox style (A/B/X/Y)
-    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_A_%d+:[%d:]+|a", "PAD1")
-    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_B_%d+:[%d:]+|a", "PAD2")
-    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_X_%d+:[%d:]+|a", "PAD3")
-    normalized = string_gsub(normalized, "|A:Gamepad_Ltr_Y_%d+:[%d:]+|a", "PAD4")
-    -- PlayStation style (Cross/Circle/Square/Triangle)
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Cross_%d+:[%d:]+|a", "PAD1")
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Circle_%d+:[%d:]+|a", "PAD2")
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Square_%d+:[%d:]+|a", "PAD3")
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_Triangle_%d+:[%d:]+|a", "PAD4")
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_MicMute_%d+:[%d:]+|a", "PAD5")
-    normalized = string_gsub(normalized, "|A:Gamepad_Shp_TouchpadR_%d+:[%d:]+|a", "PAD6")
-    
-    -- Expand abbreviated gamepad paddles
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle1_%d+:[%d:]+|a", "PADPADDLE1")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle2_%d+:[%d:]+|a", "PADPADDLE2")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle3_%d+:[%d:]+|a", "PADPADDLE3")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Paddle4_%d+:[%d:]+|a", "PADPADDLE4")
-    
-    -- Expand abbreviated gamepad system buttons
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Forward_%d+:[%d:]+|a", "PADFORWARD")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Back_%d+:[%d:]+|a", "PADBACK")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_System_%d+:[%d:]+|a", "PADSYSTEM")
-    normalized = string_gsub(normalized, "|A:Gamepad_Gen_Share_%d+:[%d:]+|a", "PADSOCIAL")
-    
-    return normalized
 end
 
 -- Update button cooldowns - Cooldown widgets handle secret values internally
@@ -169,15 +56,8 @@ local function UpdateButtonCooldowns(button)
         chargeInfo = nil  -- Items don't have charges
     else
         -- Spells: use C_Spell APIs (same as Blizzard's ActionButton line 871-872)
-        -- Check for override spell ID (e.g., Victory Rush -> Impending Victory)
-        -- The cooldown may be tracked on the override, not the base spell
-        local cooldownID = id
-        if C_Spell and C_Spell.GetOverrideSpell then
-            local override = C_Spell.GetOverrideSpell(id)
-            if override and override ~= 0 and override ~= id then
-                cooldownID = override
-            end
-        end
+        -- PERFORMANCE: Use cached cooldownID from BlizzardAPI (avoids redundant override lookup)
+        local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
         cooldownInfo = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(cooldownID)
         chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(cooldownID)
     end
@@ -287,6 +167,10 @@ local lastFrameState = {
     lastUpdate = 0,
 }
 
+-- PERFORMANCE: Throttle cooldown updates (cooldown swipe animates smoothly once set)
+local lastCooldownUpdate = 0
+local COOLDOWN_UPDATE_INTERVAL = 0.15  -- Update cooldowns max 6-7 times/sec (enough for responsiveness)
+
 -- Invalidate hotkey cache (call when action bars or bindings change)
 -- Also clears per-icon cached hotkeys to prevent displaying stale atlas markup
 function UIRenderer.InvalidateHotkeyCache()
@@ -298,7 +182,6 @@ function UIRenderer.InvalidateHotkeyCache()
             local icon = addon.spellIcons[i]
             if icon then
                 icon.cachedHotkey = nil
-                icon.cachedNormalizedHotkey = nil
             end
         end
     end
@@ -382,22 +265,32 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
     end
     
-    -- Normalize hotkey for key press matching (use shared helper)
-    local normalized = NormalizeHotkey(hotkey)
-    
-    -- Only update previous hotkey if normalized changed (for flash grace period)
-    if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
-        defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
-        defensiveIcon.hotkeyChangeTime = GetTime()
-    end
-    defensiveIcon.normalizedHotkey = normalized
-    
     -- Only update hotkey text if it changed (prevents flicker)
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
     if currentHotkey ~= hotkey then
         defensiveIcon.hotkeyText:SetText(hotkey)
     end
-    
+
+    -- Normalize hotkey for key press flash matching
+    if hotkey ~= "" then
+        local normalized = hotkey:upper()
+        normalized = normalized:gsub("^S%-?", "SHIFT-")
+        normalized = normalized:gsub("^C%-?", "CTRL-")
+        normalized = normalized:gsub("^A%-?", "ALT-")
+        normalized = normalized:gsub("^CS%-?", "CTRL-SHIFT-")
+        normalized = normalized:gsub("^SA%-?", "SHIFT-ALT-")
+        normalized = normalized:gsub("^CA%-?", "CTRL-ALT-")
+        normalized = normalized:gsub("^%+", "MOD-")
+
+        if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
+            defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
+            defensiveIcon.hotkeyChangeTime = GetTime()
+        end
+        defensiveIcon.normalizedHotkey = normalized
+    else
+        defensiveIcon.normalizedHotkey = nil
+    end
+
     local isInCombat = UnitAffectingCombat("player")
     
     -- Start green crawl glow on slot 1
@@ -576,6 +469,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
+    -- PERFORMANCE: Throttle cooldown updates - swipe animates smoothly once set
+    -- Only update cooldowns every COOLDOWN_UPDATE_INTERVAL, not every frame
+    local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
+    if shouldUpdateCooldowns then
+        lastCooldownUpdate = currentTime
+    end
+    
     -- When frame should be hidden (mounted, out of combat, etc.), stop all glows and skip icon updates
     -- This prevents highlight frames from appearing with incorrect scaling when auto-hide is enabled
     if not shouldShowFrame then
@@ -613,9 +513,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 
                 -- Reset cooldown cache when spell changes (including first-time assignment)
                 if spellChanged then
-    -- Prevent flash animation when spell briefly moves during GCD transitions
+                    -- Track previous spell and change time for flash grace period
                     if icon.spellID then
                         icon.previousSpellID = icon.spellID
+                        icon.spellChangeTime = currentTime  -- Used by key flash grace period
+                        -- Preserve current hotkey as previous (even if new spell has same hotkey)
+                        -- This ensures flash works when user presses key right as spell changes
+                        if icon.normalizedHotkey then
+                            icon.previousNormalizedHotkey = icon.normalizedHotkey
+                        end
                     end
                     -- Reset cooldown cache so new spell's cooldown is properly applied
                     icon.lastCooldownStart = nil
@@ -661,9 +567,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Update cooldowns using Blizzard's logic (handles GCD, spell CD, and charges)
-                UpdateButtonCooldowns(icon)
+                -- PERFORMANCE: Only update cooldowns when spell changed OR throttle interval passed
+                -- The cooldown swipe animates smoothly once set, no need to update every frame
+                if spellChanged or shouldUpdateCooldowns then
+                    UpdateButtonCooldowns(icon)
+                end
 
                 -- Check if spell has an active proc (overlay)
+                -- NOTE: Proc check is cheap (table lookup), so we check every frame for responsiveness
+                -- Proc glows should appear instantly when ability becomes available
                 local isProc = IsSpellProcced(spellID)
 
                 -- Show blue/white assisted crawl on position 1 if focus emphasis enabled
@@ -692,27 +604,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 local hotkeyChanged = false
                 if hotkeysDirty or spellChanged or not icon.cachedHotkey then
                     hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
-                    hotkeyChanged = (icon.cachedHotkey ~= hotkey)
-                    icon.cachedHotkey = hotkey
-                    
-                    -- Only normalize when hotkey actually changes (expensive gsub calls)
-                    if hotkeyChanged or not icon.cachedNormalizedHotkey then
-                        local normalized = NormalizeHotkey(hotkey)
-                        
-                        -- Track previous for flash grace period
-                        if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
-                            icon.previousNormalizedHotkey = icon.normalizedHotkey
-                            icon.hotkeyChangeTime = currentTime
-                        end
-                        icon.normalizedHotkey = normalized
-                        icon.cachedNormalizedHotkey = normalized
+                    if icon.cachedHotkey ~= hotkey then
+                        hotkeyChanged = true
                     end
+                    icon.cachedHotkey = hotkey
                 else
                     hotkey = icon.cachedHotkey
-                    -- Use cached normalized value (no gsub calls)
-                    if not icon.normalizedHotkey and icon.cachedNormalizedHotkey then
-                        icon.normalizedHotkey = icon.cachedNormalizedHotkey
-                    end
                 end
                 
                 -- Only update hotkey text if it changed (prevents flicker)
@@ -720,41 +617,93 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if currentHotkey ~= hotkey then
                     icon.hotkeyText:SetText(hotkey)
                 end
+
+                -- Normalize hotkey for key press flash matching
+                -- PERFORMANCE: Only normalize when hotkey actually changed (string ops are expensive)
+                if hotkeyChanged and hotkey ~= "" then
+                    local normalized = hotkey:upper()
+                    -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
+                    normalized = normalized:gsub("^S%-?", "SHIFT-")
+                    normalized = normalized:gsub("^C%-?", "CTRL-")
+                    normalized = normalized:gsub("^A%-?", "ALT-")
+                    normalized = normalized:gsub("^CS%-?", "CTRL-SHIFT-")
+                    normalized = normalized:gsub("^SA%-?", "SHIFT-ALT-")
+                    normalized = normalized:gsub("^CA%-?", "CTRL-ALT-")
+                    normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
+
+                    -- Track previous hotkey for grace period (spell position changes)
+                    if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
+                        icon.previousNormalizedHotkey = icon.normalizedHotkey
+                        icon.hotkeyChangeTime = currentTime
+                    end
+                    icon.cachedNormalizedHotkey = normalized
+                    icon.normalizedHotkey = normalized
+                elseif hotkeyChanged then
+                    -- Hotkey became empty
+                    icon.cachedNormalizedHotkey = nil
+                    icon.normalizedHotkey = nil
+                end
+
+                -- Note: Flash pass-through removed - Blizzard's flash is tied to the button
+                -- that was pressed, not the spell. Cannot reliably mirror flash from action bars.
                 
                 -- Out-of-range indicator: red text if out of range, white otherwise
                 -- Note: C_Spell.IsSpellInRange may return secret values in combat, fail-safe to white text
-                local inRange = hotkey ~= "" and C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(spellID)
+                -- PERFORMANCE: Only check range when spell changed OR throttle interval passed
                 local isOutOfRange = false
-                if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                    isOutOfRange = (inRange == false)
+                if hotkey ~= "" and C_Spell_IsSpellInRange then
+                    if spellChanged or shouldUpdateCooldowns then
+                        local inRange = C_Spell_IsSpellInRange(spellID)
+                        if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                            icon.cachedOutOfRange = (inRange == false)
+                        else
+                            icon.cachedOutOfRange = false
+                        end
+                    end
+                    isOutOfRange = icon.cachedOutOfRange or false
                 end
-                icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                -- PERFORMANCE: Only update text color when it actually changes
+                if icon.lastOutOfRange ~= isOutOfRange then
+                    icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    icon.lastOutOfRange = isOutOfRange
+                end
                 
                 -- Icon appearance: grey when channeling, blue tint when not enough resources, fade based on position
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
                 
+                -- PERFORMANCE: Calculate visual state and only update when changed
+                local visualState  -- 1 = channeling, 2 = no resources, 3 = normal
                 if isChanneling then
-                    iconTexture:SetDesaturation(1.0)
-                    iconTexture:SetVertexColor(1, 1, 1)
+                    visualState = 1
                 elseif isInCombat then
-                    -- Cache usability check per icon - only update when spell changes or every 0.25s
-                    if spellChanged or not icon.lastUsableCheck or (currentTime - icon.lastUsableCheck) > 0.25 then
+                    -- Cache usability check per icon - update when spell changes or at throttle interval
+                    -- Use same interval as cooldowns (0.15s) for responsive resource feedback
+                    if spellChanged or shouldUpdateCooldowns then
                         icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
-                        icon.lastUsableCheck = currentTime
                     end
                     if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
-                        -- Not enough resources - darker blue tint
+                        visualState = 2
+                    else
+                        visualState = 3
+                    end
+                else
+                    visualState = 3
+                end
+                
+                -- Only call SetDesaturation/SetVertexColor when visual state changes
+                if icon.lastVisualState ~= visualState or icon.lastBaseDesaturation ~= baseDesaturation then
+                    if visualState == 1 then
+                        iconTexture:SetDesaturation(1.0)
+                        iconTexture:SetVertexColor(1, 1, 1)
+                    elseif visualState == 2 then
                         iconTexture:SetDesaturation(0)
                         iconTexture:SetVertexColor(0.3, 0.3, 0.8)
                     else
-                        -- Usable or on cooldown - normal color, apply queue fade setting
                         iconTexture:SetDesaturation(baseDesaturation)
-                        iconTexture:SetVertexColor(1, 1, 1)  -- Full white
+                        iconTexture:SetVertexColor(1, 1, 1)
                     end
-                else
-                    -- Out of combat - normal color, apply queue fade setting
-                    iconTexture:SetDesaturation(baseDesaturation)
-                    iconTexture:SetVertexColor(1, 1, 1)  -- Full white
+                    icon.lastVisualState = visualState
+                    icon.lastBaseDesaturation = baseDesaturation
                 end
 
                 -- Only show if not already shown
@@ -774,14 +723,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon._lastCooldownDuration = nil
                     icon._cooldownIsSecret = nil
                     icon.cachedHotkey = nil
-                    icon.cachedNormalizedHotkey = nil
-                    icon.normalizedHotkey = nil
                     icon.cachedIsUsable = nil
                     icon.cachedNotEnoughResources = nil
-                    icon.lastUsableCheck = nil
                     icon.isWaitingSpell = nil
                     icon.hasAssistedGlow = false
                     icon.hasProcGlow = false
+                    icon.lastOutOfRange = nil
+                    icon.lastVisualState = nil
+                    icon.lastBaseDesaturation = nil
+                    icon.cachedOutOfRange = nil
+                    icon.cachedNormalizedHotkey = nil
                     UIAnimations.StopAssistedGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance

@@ -131,40 +131,51 @@ end
 
 local function StartAssistedGlow(icon, isInCombat)
     if not icon then return end
-    
+
     local highlightFrame = icon.AssistedCombatHighlightFrame
-    if not highlightFrame then
+    local needsInit = not highlightFrame
+
+    if needsInit then
         highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
     end
-    
-    local width = icon:GetWidth()
-    highlightFrame:SetScale((width / 45) * 1.02)
-    
-    -- White tint for assisted combat (RGB: 1, 1, 1 = white/no tint, appears blue in-game)
-    TintMarchingAnts(highlightFrame, 1, 1, 1)
-    
-    -- Show blue/white ants frame
-    highlightFrame.Flipbook:SetAlpha(1)
-    highlightFrame:Show()
-    
+
+    -- Only do setup work if frame was just created or not yet shown
+    if needsInit or not highlightFrame:IsShown() then
+        local width = icon:GetWidth()
+        highlightFrame:SetScale((width / 45) * 1.02)
+
+        -- White tint for assisted combat (RGB: 1, 1, 1 = white/no tint, appears blue in-game)
+        TintMarchingAnts(highlightFrame, 1, 1, 1)
+
+        -- Show blue/white ants frame
+        highlightFrame.Flipbook:SetAlpha(1)
+        highlightFrame:Show()
+
+        icon.activeGlowStyle = "ASSISTED"
+    end
+
     -- Animation state based on combat status
+    -- FAST PATH: If already in correct state, exit early
     if isInCombat then
-        highlightFrame.Flipbook.Anim:Play()
-        icon.assistedAnimPaused = false
+        -- In combat: ensure animation is playing
+        if icon.assistedAnimPaused or not highlightFrame.Flipbook.Anim:IsPlaying() then
+            highlightFrame.Flipbook.Anim:Play()
+            icon.assistedAnimPaused = false
+        end
     elseif not icon.assistedAnimPaused then
         -- Out of combat: pause after brief initialization
+        -- Set flag IMMEDIATELY to prevent scheduling duplicate timers every frame
+        icon.assistedAnimPaused = true
         if not highlightFrame.Flipbook.Anim:IsPlaying() then
             highlightFrame.Flipbook.Anim:Play()
         end
         C_Timer.After(0.05, function()
             if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
                 highlightFrame.Flipbook.Anim:Pause()
-                icon.assistedAnimPaused = true
             end
         end)
     end
-    
-    icon.activeGlowStyle = "ASSISTED"
+    -- else: already paused out of combat, nothing to do
 end
 
 StopAssistedGlow = function(icon)
@@ -186,34 +197,48 @@ end
 
 local function StartDefensiveGlow(icon, isInCombat)
     if not icon then return end
-    
+
     local highlightFrame = icon.DefensiveHighlightFrame
-    if not highlightFrame then
+    local needsInit = not highlightFrame
+
+    if needsInit then
         highlightFrame = CreateMarchingAntsFrame(icon, "DefensiveHighlightFrame")
     end
-    
-    local width = icon:GetWidth()
-    highlightFrame:SetScale(width / 45)
-    
-    -- Green tint for defensive queue (RGB: 0.3, 1.0, 0.3)
-    -- Use native gold overlay for procs to match Blizzard visuals
-    TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
-    
-    highlightFrame:Show()
-    
-    -- Animation state: play in combat, pause out of combat after brief initialization
-    if not highlightFrame.Flipbook.Anim:IsPlaying() then
-        highlightFrame.Flipbook.Anim:Play()
+
+    -- Only do setup work if frame was just created or not yet shown
+    if needsInit or not highlightFrame:IsShown() then
+        local width = icon:GetWidth()
+        highlightFrame:SetScale(width / 45)
+
+        -- Green tint for defensive queue (RGB: 0.3, 1.0, 0.3)
+        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
+
+        highlightFrame:Show()
+        icon.hasDefensiveGlow = true
     end
-    if not isInCombat then
+
+    -- Animation state based on combat status
+    -- FAST PATH: If already in correct state, exit early
+    if isInCombat then
+        -- In combat: ensure animation is playing
+        if icon.defensiveAnimPaused or not highlightFrame.Flipbook.Anim:IsPlaying() then
+            highlightFrame.Flipbook.Anim:Play()
+            icon.defensiveAnimPaused = false
+        end
+    elseif not icon.defensiveAnimPaused then
+        -- Out of combat: pause after brief initialization
+        -- Set flag IMMEDIATELY to prevent scheduling duplicate timers every frame
+        icon.defensiveAnimPaused = true
+        if not highlightFrame.Flipbook.Anim:IsPlaying() then
+            highlightFrame.Flipbook.Anim:Play()
+        end
         C_Timer.After(0.05, function()
-            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim and highlightFrame.Flipbook.Anim:IsPlaying() then
+            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
                 highlightFrame.Flipbook.Anim:Pause()
             end
         end)
     end
-    
-    icon.hasDefensiveGlow = true
+    -- else: already paused out of combat, nothing to do
 end
 
 StopDefensiveGlow = function(icon)
@@ -230,6 +255,7 @@ StopDefensiveGlow = function(icon)
     HideProcGlow(icon)
     
     icon.hasDefensiveGlow = false
+    icon.defensiveAnimPaused = false
 end
 
 local function StartFlash(button)
@@ -266,6 +292,7 @@ local function StartFlash(button)
             button:SetScript("OnUpdate", runner)
         end
     end
+    -- Note: Flash is now passed through FROM action bars TO our icons (same as cooldowns)
 end
 
 local function StopFlash(button)
