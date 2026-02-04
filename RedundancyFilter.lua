@@ -111,9 +111,10 @@ local PERSONAL_AURA_SPELLS = {
 local PANDEMIC_THRESHOLD = 0.30
 
 -- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
+-- UNIT_AURA events invalidate the cache, so 0.5s is safe and reduces API calls by 60%
 local cachedAuras = {}
 local lastAuraCheck = 0
-local AURA_CACHE_DURATION = 0.2
+local AURA_CACHE_DURATION = 0.5
 
 -- Out-of-combat trusted cache (persists into combat to handle long-duration buffs)
 -- When we check auras out of combat and they're valid, cache them longer
