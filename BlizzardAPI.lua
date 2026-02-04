@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module - Wraps WoW C_* APIs with 12.0+ secret value handling
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 26)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 27)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -985,39 +985,86 @@ end
 -- Centralized Utility Functions
 --------------------------------------------------------------------------------
 
+-- Per-update cache for proc results (cleared by ClearProcCache, called from SpellQueue)
+local procResultCache = {}
+local procCacheTime = 0
+local PROC_CACHE_DURATION = 0.05  -- 50ms - cleared on each update cycle
+
+-- Override spell cache - spell morphs change infrequently (Metamorphosis, etc.)
+-- Cache per update cycle, cleared along with proc cache
+local overrideSpellCache = {}
+
+function BlizzardAPI.ClearProcCache()
+    wipe(procResultCache)
+    wipe(overrideSpellCache)  -- Also clear override cache each update cycle
+    procCacheTime = GetTime()
+end
+
 -- Checks both provided ID and override ID (events may fire with different IDs)
+-- Results cached per update cycle to avoid redundant API calls
 function BlizzardAPI.IsSpellProcced(spellID)
     if not spellID or spellID == 0 then return false end
+
+    -- Check cache first (valid for this update cycle)
+    local cached = procResultCache[spellID]
+    if cached ~= nil then
+        return cached
+    end
+
+    -- Auto-expire cache if not cleared by caller
+    local now = GetTime()
+    if now - procCacheTime > PROC_CACHE_DURATION then
+        wipe(procResultCache)
+        procCacheTime = now
+    end
 
     local result = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
 
     if issecretvalue and issecretvalue(result) then
+        procResultCache[spellID] = false
         return false
     end
 
-    if result then return true end
+    if result then
+        procResultCache[spellID] = true
+        return true
+    end
 
     local overrideID = BlizzardAPI.GetDisplaySpellID(spellID)
     if overrideID and overrideID ~= spellID then
         local overrideResult = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(overrideID)
         if issecretvalue and issecretvalue(overrideResult) then
+            procResultCache[spellID] = false
             return false
         end
-        if overrideResult then return true end
+        if overrideResult then
+            procResultCache[spellID] = true
+            return true
+        end
     end
 
+    procResultCache[spellID] = false
     return false
 end
 
 -- Resolves override spells (e.g., Metamorphosis transformations)
+-- PERFORMANCE: Cache results per update cycle (overrides change infrequently)
 function BlizzardAPI.GetDisplaySpellID(spellID)
     if not spellID or spellID == 0 then return spellID end
     if not C_Spell_GetOverrideSpell then return spellID end
     
+    -- Check cache first (cleared each update cycle by ClearProcCache)
+    local cached = overrideSpellCache[spellID]
+    if cached ~= nil then
+        return cached
+    end
+    
     local override = C_Spell_GetOverrideSpell(spellID)
     if override and override ~= 0 and override ~= spellID then
+        overrideSpellCache[spellID] = override
         return override
     end
+    overrideSpellCache[spellID] = spellID  -- Cache "no override" as well
     return spellID
 end
 
