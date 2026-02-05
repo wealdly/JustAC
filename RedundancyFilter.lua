@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 35)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 36)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -284,15 +284,35 @@ RefreshAuraCache = function()
     local inCombat = UnitAffectingCombat("player")
     
     -- If in combat and we have a recent trusted out-of-combat cache, use it
-    -- But filter out any auras that have expired based on cached expiration times
+    -- Filter out auras based on how recent our validation was:
+    --   - Recent validation (<60s ago): Can trust expiration times, invalidate near expiry
+    --   - Older validation: Use conservative 80% threshold to account for drift
+    -- CRITICAL: Only compare timestamps in combat - no arithmetic with cached values (may be secrets)
     -- Throttle expiration checks to once per 5s (UNIT_AURA handles most invalidation)
     if inCombat and trustedOutOfCombatCache.byID and (now - lastTrustedCacheTime) < TRUSTED_CACHE_DURATION then
         -- Only check for expired auras every 5 seconds (not every cache access)
         if now >= nextExpirationCheck then
             nextExpirationCheck = now + EXPIRATION_CHECK_INTERVAL
+            local cacheAge = now - lastTrustedCacheTime
+            local useConservativeThreshold = cacheAge > 300  -- Recent = last 5 minutes
+            
             for spellID, auraInfo in pairs(trustedOutOfCombatCache.auraInfo or {}) do
-                if auraInfo.expirationTime and auraInfo.expirationTime > 0 and now >= auraInfo.expirationTime then
-                    -- This aura expired, remove it from trusted cache
+                local shouldInvalidate = false
+                
+                if useConservativeThreshold then
+                    -- Cache is older - use 80% threshold (pre-calculated out of combat)
+                    if auraInfo.halfwayThreshold and now >= auraInfo.halfwayThreshold then
+                        shouldInvalidate = true
+                    end
+                else
+                    -- Cache is recent - can use actual expiration time for more accuracy
+                    if auraInfo.expirationTime and auraInfo.expirationTime > 0 and now >= auraInfo.expirationTime then
+                        shouldInvalidate = true
+                    end
+                end
+                
+                if shouldInvalidate then
+                    -- Remove from cache to allow recast suggestions
                     trustedOutOfCombatCache.byID[spellID] = nil
                     trustedOutOfCombatCache.auraInfo[spellID] = nil
                 end
@@ -336,10 +356,17 @@ RefreshAuraCache = function()
                     cachedAuras.byID[auraData.spellId] = true
                     -- Store aura timing info for pandemic check (use API-specific helper)
                     local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
+                    -- Pre-calculate 80% duration threshold (absolute timestamp)
+                    -- CRITICAL: Do arithmetic NOW (out of combat) not later when values may be secret
+                    local halfwayThreshold = nil
+                    if dur and dur > 0 and exp and exp > 0 then
+                        halfwayThreshold = exp - (dur * 0.2)  -- Timestamp when aura reaches 20% remaining (80% consumed)
+                    end
                     cachedAuras.auraInfo[auraData.spellId] = {
                         duration = dur or 0,
                         expirationTime = exp or 0,
                         count = auraData.applications or 1,  -- Stack count
+                        halfwayThreshold = halfwayThreshold,  -- Pre-calculated for in-combat comparison
                     }
                 end
                 if auraData.name then
@@ -368,10 +395,19 @@ RefreshAuraCache = function()
                     cachedAuras.byID[spellId] = true
                     local durIsSecret = BlizzardAPI.IsSecretValue(duration)
                     local expIsSecret = BlizzardAPI.IsSecretValue(expirationTime)
+                    local dur = (not durIsSecret and duration) or 0
+                    local exp = (not expIsSecret and expirationTime) or 0
+                    -- Pre-calculate 80% duration threshold (absolute timestamp)
+                    -- CRITICAL: Do arithmetic NOW (out of combat) not later when values may be secret
+                    local halfwayThreshold = nil
+                    if dur > 0 and exp > 0 then
+                        halfwayThreshold = exp - (dur * 0.2)  -- Timestamp when aura reaches 20% remaining (80% consumed)
+                    end
                     cachedAuras.auraInfo[spellId] = {
-                        duration = (not durIsSecret and duration) or 0,
-                        expirationTime = (not expIsSecret and expirationTime) or 0,
+                        duration = dur,
+                        expirationTime = exp,
                         count = count or 1,
+                        halfwayThreshold = halfwayThreshold,  -- Pre-calculated for in-combat comparison
                     }
                 end
                 if name then
@@ -401,7 +437,8 @@ RefreshAuraCache = function()
             trustedOutOfCombatCache.auraInfo[k] = {
                 duration = v.duration,
                 expirationTime = v.expirationTime,
-                count = v.count
+                count = v.count,
+                halfwayThreshold = v.halfwayThreshold  -- Pre-calculated threshold (safe for in-combat comparison)
             }
         end
         lastTrustedCacheTime = now
