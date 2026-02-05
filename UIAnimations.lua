@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 1)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 2)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -270,9 +270,10 @@ local function StartFlash(button)
     
     button.flashScaleTimer = FLASH_SCALE_DURATION
     if button.FlashFrame and button.FlashFrame.SetScale then
-        -- Store the base scale so we can animate relative to it
-        button._flashBaseScale = button.FlashFrame:GetScale() or 1
-        button.FlashFrame:SetScale(button._flashBaseScale * FLASH_MAX_SCALE)
+        -- Always use 1.0 as base scale to prevent cumulative scaling bug
+        -- FlashFrame is created at scale 1.0 and should always return to that
+        button._flashBaseScale = 1.0
+        button.FlashFrame:SetScale(FLASH_MAX_SCALE)
     end
     
     if not button._prevFlashOnUpdate then

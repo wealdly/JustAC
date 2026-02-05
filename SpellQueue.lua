@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 31)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 33)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -182,12 +182,12 @@ local function PassesSpellFilters(spellID, profile)
     if cached ~= nil then
         return cached
     end
-    
-    -- Compute result and cache it
+
+    -- Compute result
     local result = IsSpellAvailable(spellID)
        and IsSpellUsable(spellID)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
-    
+
     filterResultCache[spellID] = result
     return result
 end
@@ -381,7 +381,7 @@ function SpellQueue.GetCurrentSpellQueue()
         wipe(normalDisplay)
         local importantProccedCount, regularProccedCount, normalCount = 0, 0, 0
         local rotationCount = #rotationList
-        
+
         -- First pass: categorize spells into important procs, regular procs, and normal
         for i = 1, rotationCount do
             local spellID = rotationList[i]
@@ -390,7 +390,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 if not SpellQueue.IsSpellBlacklisted(spellID) then
                     -- Get the actual spell we'd display (might be an override)
                     local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
-                    
+
                     -- Skip if override already shown
                     if not addedSpellIDs[actualSpellID] then
                         -- Filter: not blacklisted, not item, passes availability/usability/redundancy

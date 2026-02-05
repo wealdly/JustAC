@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options Module - Provides AceConfig UI for addon settings
-local Options = LibStub:NewLibrary("JustAC-Options", 25)
+local Options = LibStub:NewLibrary("JustAC-Options", 30)
 if not Options then return end
 
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
@@ -153,12 +153,19 @@ function Options.UpdateBlacklistOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable then return end
 
-    local blacklistArgs = optionsTable.args.blacklist.args
+    local blacklistArgs = optionsTable.args.offensive.args
 
-    -- Clear old entries (preserve static ones)
+    -- Static keys to preserve (defined in InitOptionsTable)
+    local staticKeys = {
+        info = true, contentHeader = true, includeHiddenAbilities = true,
+        showSpellbookProcs = true, hideItemAbilities = true, showHotkeys = true,
+        blacklistHeader = true, blacklistInfo = true,
+    }
+
+    -- Clear old dynamic entries
     local keysToClear = {}
     for key, _ in pairs(blacklistArgs) do
-        if key ~= "info" then
+        if not staticKeys[key] then
             table.insert(keysToClear, key)
         end
     end
@@ -182,13 +189,13 @@ function Options.UpdateBlacklistOptions(addon)
     blacklistArgs.addHeader = {
         type = "header",
         name = L["Add Spell to Blacklist"],
-        order = 2,
+        order = 22,
     }
     blacklistArgs.searchInput = {
         type = "input",
-        name = "Search spell name or ID",
-        desc = "Type spell name or ID (2+ chars to search)",
-        order = 2.1,
+        name = L["Search spell name or ID"],
+        desc = L["Search spell desc"],
+        order = 22.1,
         width = "double",
         get = function() return spellSearchFilter.blacklist or "" end,
         set = function(_, val)
@@ -201,8 +208,8 @@ function Options.UpdateBlacklistOptions(addon)
     blacklistArgs.searchDropdown = {
         type = "select",
         name = "",
-        desc = "Select a spell from the filtered results to blacklist it",
-        order = 2.2,
+        desc = L["Select spell to blacklist"],
+        order = 22.2,
         width = "double",
         values = function()
             -- Convert blacklist dict to array for exclusion
@@ -214,7 +221,7 @@ function Options.UpdateBlacklistOptions(addon)
             local filter = (spellSearchFilter.blacklist or ""):trim()
             if next(results) == nil and #filter >= 2 then
                 spellSearchPreview.blacklist = nil
-                return {[0] = "|cff888888No matches - try a different search|r"}
+                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
             -- Set preview to first result (shown in dropdown, not yet added)
             spellSearchPreview.blacklist = next(results)
@@ -240,8 +247,8 @@ function Options.UpdateBlacklistOptions(addon)
     blacklistArgs.addButton = {
         type = "execute",
         name = L["Add"],
-        desc = "Add spell by ID or exact name",
-        order = 2.3,
+        desc = L["Add spell manual desc"],
+        order = 22.3,
         width = "half",
         func = function()
             local val = (spellSearchFilter.blacklist or ""):trim()
@@ -288,7 +295,7 @@ function Options.UpdateBlacklistOptions(addon)
     blacklistArgs.listHeader = {
         type = "header",
         name = L["Blacklisted Spells"],
-        order = 2.5,
+        order = 22.5,
     }
     
     -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
@@ -311,7 +318,7 @@ function Options.UpdateBlacklistOptions(addon)
         blacklistArgs.noSpells = {
             type = "description",
             name = L["No spells currently blacklisted"],
-            order = 3,
+            order = 23,
         }
     else
         for i, spellID in ipairs(spellList) do
@@ -323,7 +330,7 @@ function Options.UpdateBlacklistOptions(addon)
                 type = "group",
                 name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
                 inline = true,
-                order = i + 3,
+                order = i + 23,
                 args = {
                     spellInfo = {
                         type = "description",
@@ -385,8 +392,8 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     }
     hotkeyArgs.searchInput = {
         type = "input",
-        name = "Search spell name or ID",
-        desc = "Type spell name or ID (2+ chars to search)",
+        name = L["Search spell name or ID"],
+        desc = L["Search spell desc"],
         order = 2.1,
         width = "double",
         get = function() return spellSearchFilter.hotkey or "" end,
@@ -400,7 +407,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     hotkeyArgs.searchDropdown = {
         type = "select",
         name = "",
-        desc = "Select a spell from the filtered results",
+        desc = L["Select spell for hotkey"],
         order = 2.2,
         width = "double",
         values = function()
@@ -413,7 +420,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             local filter = (spellSearchFilter.hotkey or ""):trim()
             if next(results) == nil and #filter >= 2 then
                 spellSearchPreview.hotkey = nil
-                return {[0] = "|cff888888No matches - try a different search|r"}
+                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
             -- Set preview to first result (shown in dropdown, not yet added)
             spellSearchPreview.hotkey = next(results)
@@ -449,17 +456,17 @@ function Options.UpdateHotkeyOverrideOptions(addon)
     hotkeyArgs.addButton = {
         type = "execute",
         name = L["Add"],
-        desc = "Add hotkey override for the selected spell",
+        desc = L["Add hotkey desc"],
         order = 2.4,
         width = "half",
         func = function()
             local val = (spellSearchFilter.hotkey or ""):trim()
             if val == "" then
-                addon:Print("Please search and select a spell first")
+                addon:Print(L["Please search and select a spell first"])
                 return
             end
             if not addHotkeyValueInput or addHotkeyValueInput:trim() == "" then
-                addon:Print("Please enter a hotkey value")
+                addon:Print(L["Please enter a hotkey value"])
                 return
             end
 
@@ -580,7 +587,11 @@ end
 -- Helper to create spell list entries for a given list
 local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType, baseOrder)
     if not spellList then return end
-    
+
+    local updateFunc = function()
+        Options.UpdateDefensivesOptions(addon)
+    end
+
     for i, spellID in ipairs(spellList) do
         local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or ("Spell " .. spellID)
@@ -615,7 +626,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
                         local temp = spellList[i - 1]
                         spellList[i - 1] = spellList[i]
                         spellList[i] = temp
-                        Options.UpdateDefensivesOptions(addon)
+                        updateFunc()
                     end
                 },
                 moveDown = {
@@ -629,7 +640,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
                         local temp = spellList[i + 1]
                         spellList[i + 1] = spellList[i]
                         spellList[i] = temp
-                        Options.UpdateDefensivesOptions(addon)
+                        updateFunc()
                     end
                 },
                 remove = {
@@ -639,7 +650,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
                     width = 0.5,
                     func = function()
                         table.remove(spellList, i)
-                        Options.UpdateDefensivesOptions(addon)
+                        updateFunc()
                     end
                 }
             }
@@ -679,11 +690,15 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
     -- Initialize filter storage
     spellSearchFilter[listType] = spellSearchFilter[listType] or ""
 
+    local updateFunc = function()
+        Options.UpdateDefensivesOptions(addon)
+    end
+
     -- Search input field (type to filter by name or ID)
     defensivesArgs["search_input_" .. listType] = {
         type = "input",
         name = L["Add to %s"]:format(listName),
-        desc = "Type spell name or ID (2+ chars to search)",
+        desc = L["Search spell desc"],
         order = order,
         width = "double",
         get = function() return spellSearchFilter[listType] or "" end,
@@ -700,7 +715,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
     defensivesArgs["search_dropdown_" .. listType] = {
         type = "select",
         name = "",
-        desc = "Select a spell from the filtered results to add it",
+        desc = L["Select spell to add"],
         order = order + 0.1,
         width = "double",
         values = function()
@@ -709,7 +724,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
             local filter = (spellSearchFilter[listType] or ""):trim()
             if next(results) == nil and #filter >= 2 then
                 spellSearchPreview[listType] = nil
-                return {[0] = "|cff888888No matches - try a different search|r"}
+                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
             -- Set preview to first result (shown in dropdown, not yet added)
             spellSearchPreview[listType] = next(results)
@@ -721,7 +736,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
             if AddSpellToList(addon, spellList, spellID) then
                 spellSearchFilter[listType] = ""  -- Clear search
                 spellSearchPreview[listType] = nil  -- Clear preview
-                Options.UpdateDefensivesOptions(addon)
+                updateFunc()
             end
         end,
         disabled = function()
@@ -734,7 +749,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
     defensivesArgs["add_button_" .. listType] = {
         type = "execute",
         name = L["Add"],
-        desc = "Add spell by ID or exact name (for spells not in dropdown)",
+        desc = L["Add spell dropdown desc"],
         order = order + 0.2,
         width = "half",
         func = function()
@@ -763,7 +778,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
 
             if AddSpellToList(addon, spellList, spellID) then
                 spellSearchFilter[listType] = ""  -- Clear input
-                Options.UpdateDefensivesOptions(addon)
+                updateFunc()
             end
         end,
         disabled = function()
@@ -781,9 +796,10 @@ function Options.UpdateDefensivesOptions(addon)
 
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
-        info = true, header = true, enabled = true, thresholdInfo = true,
+        info = true, header = true, enabled = true, showProcs = true,
+        thresholdHeader = true, selfHealThreshold = true, cooldownThreshold = true, petHealThreshold = true, thresholdNote = true,
         behaviorHeader = true, displayMode = true, showHealthBar = true,
-        position = true, iconScale = true, maxIcons = true,
+        position = true, iconScale = true, maxIcons = true, showHotkeys = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -805,7 +821,7 @@ function Options.UpdateDefensivesOptions(addon)
     CreateSpellListEntries(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 22)
     CreateAddSpellInput(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 40, "Self-Heals")
 
-    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
+    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)
     CreateSpellListEntries(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 52)
     CreateAddSpellInput(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 70, "Cooldowns")
     
@@ -874,19 +890,6 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.iconSpacing or 2 end,
                         set = function(_, val)
                             addon.db.profile.iconSpacing = val
-                            addon:UpdateFrameSize()
-                        end
-                    },
-                    firstIconScale = {
-                        type = "range",
-                        name = L["Primary Spell Scale"],
-                        desc = L["Primary Spell Scale desc"],
-                        min = 1.0, max = 2.0, step = 0.1,
-                        order = 14,
-                        width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
-                        set = function(_, val)
-                            addon.db.profile.firstIconScale = val
                             addon:UpdateFrameSize()
                         end
                     },
@@ -972,59 +975,17 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
-                    -- QUEUE CONTENT (30-39)
-                    contentHeader = {
-                        type = "header",
-                        name = L["Queue Content"],
-                        order = 30,
-                    },
-                    includeHiddenAbilities = {
-                        type = "toggle",
-                        name = L["Include All Available Abilities"],
-                        desc = L["Include All Available Abilities desc"],
-                        order = 31,
-                        width = "full",
-                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.includeHiddenAbilities = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    showSpellbookProcs = {
-                        type = "toggle",
-                        name = L["Insert Procced Abilities"],
-                        desc = L["Insert Procced Abilities desc"],
-                        order = 32,
-                        width = "full",
-                        get = function() return addon.db.profile.showSpellbookProcs or false end,
-                        set = function(_, val)
-                            addon.db.profile.showSpellbookProcs = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    hideItemAbilities = {
-                        type = "toggle",
-                        name = L["Hide Item Abilities"],
-                        desc = L["Hide Item Abilities desc"],
-                        order = 33,
-                        width = "full",
-                        get = function() return addon.db.profile.hideItemAbilities end,
-                        set = function(_, val)
-                            addon.db.profile.hideItemAbilities = val
-                            addon:ForceUpdate()
-                        end
-                    },
-                    -- APPEARANCE (40-49)
+                    -- APPEARANCE (30-39)
                     appearanceHeader = {
                         type = "header",
                         name = L["Appearance"],
-                        order = 40,
+                        order = 30,
                     },
                     focusEmphasis = {
                         type = "toggle",
                         name = L["Highlight Primary Spell"],
                         desc = L["Highlight Primary Spell desc"],
-                        order = 41,
+                        order = 31,
                         width = "normal",
                         get = function() return addon.db.profile.focusEmphasis ~= false end,
                         set = function(_, val)
@@ -1036,7 +997,7 @@ local function CreateOptionsTable(addon)
                         type = "select",
                         name = L["Tooltips"],
                         desc = L["Tooltips desc"],
-                        order = 42,
+                        order = 32,
                         width = "normal",
                         values = {
                             never = L["Never"],
@@ -1070,7 +1031,7 @@ local function CreateOptionsTable(addon)
                         name = L["Frame Opacity"],
                         desc = L["Frame Opacity desc"],
                         min = 0.1, max = 1.0, step = 0.05,
-                        order = 43,
+                        order = 33,
                         width = "normal",
                         get = function() return addon.db.profile.frameOpacity or 1.0 end,
                         set = function(_, val)
@@ -1083,7 +1044,7 @@ local function CreateOptionsTable(addon)
                         name = L["Queue Icon Fade"],
                         desc = L["Queue Icon Fade desc"],
                         min = 0, max = 1.0, step = 0.05,
-                        order = 44,
+                        order = 34,
                         width = "normal",
                         get = function() return addon.db.profile.queueIconDesaturation or 0 end,
                         set = function(_, val)
@@ -1275,28 +1236,109 @@ local function CreateOptionsTable(addon)
                             addon:DebugPrint("Panel " .. status)
                         end
                     },
-                    debugMode = {
-                        type = "toggle",
-                        name = L["Debug Mode"],
-                        desc = L["Debug Mode desc"],
-                        order = 92,
-                        width = "full",
-                        get = function() return addon.db.profile.debugMode or false end,
-                        set = function(_, val)
-                            addon.db.profile.debugMode = val
-                            -- Refresh cached debug mode immediately
-                            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
-                                BlizzardAPI.RefreshDebugMode()
-                            end
-                            addon:Print("Debug: " .. (val and "ON" or "OFF"))
-                        end
-                    }
                 }
+            },
+            offensive = {
+                type = "group",
+                name = L["Offensive"],
+                order = 2,
+                args = {
+                    info = {
+                        type = "description",
+                        name = L["Offensive Info"],
+                        order = 1,
+                        fontSize = "medium"
+                    },
+                    -- QUEUE CONTENT (10-19)
+                    contentHeader = {
+                        type = "header",
+                        name = L["Queue Content"],
+                        order = 10,
+                    },
+                    includeHiddenAbilities = {
+                        type = "toggle",
+                        name = L["Include All Available Abilities"],
+                        desc = L["Include All Available Abilities desc"],
+                        order = 11,
+                        width = "full",
+                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.includeHiddenAbilities = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    showSpellbookProcs = {
+                        type = "toggle",
+                        name = L["Insert Procced Abilities"],
+                        desc = L["Insert Procced Abilities desc"],
+                        order = 12,
+                        width = "full",
+                        get = function() return addon.db.profile.showSpellbookProcs or false end,
+                        set = function(_, val)
+                            addon.db.profile.showSpellbookProcs = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    hideItemAbilities = {
+                        type = "toggle",
+                        name = L["Hide Item Abilities"],
+                        desc = L["Hide Item Abilities desc"],
+                        order = 13,
+                        width = "full",
+                        get = function() return addon.db.profile.hideItemAbilities end,
+                        set = function(_, val)
+                            addon.db.profile.hideItemAbilities = val
+                            addon:ForceUpdate()
+                        end
+                    },
+                    showHotkeys = {
+                        type = "toggle",
+                        name = L["Show Offensive Hotkeys"],
+                        desc = L["Show Offensive Hotkeys desc"],
+                        order = 14,
+                        width = "full",
+                        get = function() return addon.db.profile.showOffensiveHotkeys ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.showOffensiveHotkeys = val
+                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                                ActionBarScanner.ClearAllCaches()
+                            end
+                            addon:ForceUpdate()
+                        end
+                    },
+                    firstIconScale = {
+                        type = "range",
+                        name = L["Primary Spell Scale"],
+                        desc = L["Primary Spell Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 15,
+                        width = "normal",
+                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
+                        set = function(_, val)
+                            addon.db.profile.firstIconScale = val
+                            addon:UpdateFrameSize()
+                        end
+                    },
+                    -- BLACKLIST (20+)
+                    blacklistHeader = {
+                        type = "header",
+                        name = L["Blacklist"],
+                        order = 20,
+                    },
+                    blacklistInfo = {
+                        type = "description",
+                        name = L["Blacklist Info"],
+                        order = 21,
+                        fontSize = "medium"
+                    },
+                    -- Dynamic blacklist entries added by UpdateBlacklistOptions
+                },
             },
             hotkeyOverrides = {
                 type = "group",
                 name = L["Hotkey Overrides"],
-                order = 3,
+                order = 5,
                 args = {
                     info = {
                         type = "description",
@@ -1306,23 +1348,10 @@ local function CreateOptionsTable(addon)
                     },
                 },
             },
-            blacklist = {
-                type = "group",
-                name = L["Blacklist"],
-                order = 4,
-                args = {
-                    info = {
-                        type = "description",
-                        name = L["Blacklist Info"],
-                        order = 1,
-                        fontSize = "medium"
-                    },
-                },
-            },
             defensives = {
                 type = "group",
                 name = L["Defensives"],
-                order = 2,
+                order = 3,
                 args = {
                     info = {
                         type = "description",
@@ -1348,15 +1377,28 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdateAll()
                         end
                     },
+                    showProcs = {
+                        type = "toggle",
+                        name = L["Insert Procced Defensives"],
+                        desc = L["Insert Procced Defensives desc"],
+                        order = 3.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showProcs ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showProcs = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
                     thresholdHeader = {
                         type = "header",
-                        name = "Health Thresholds",
+                        name = L["Threshold Settings"],
                         order = 4,
                     },
                     selfHealThreshold = {
                         type = "range",
-                        name = "Self-Heal Threshold",
-                        desc = "Show self-heal abilities when health drops below this percentage",
+                        name = L["Self-Heal Threshold"],
+                        desc = L["Self-Heal Threshold desc"],
                         min = 1, max = 100, step = 1,
                         order = 4.1,
                         width = "normal",
@@ -1369,8 +1411,8 @@ local function CreateOptionsTable(addon)
                     },
                     cooldownThreshold = {
                         type = "range",
-                        name = "Major Cooldown Threshold",
-                        desc = "Show major defensive cooldowns when health drops below this percentage",
+                        name = L["Major Cooldown Threshold"],
+                        desc = L["Major Cooldown Threshold desc"],
                         min = 1, max = 100, step = 1,
                         order = 4.2,
                         width = "normal",
@@ -1383,8 +1425,8 @@ local function CreateOptionsTable(addon)
                     },
                     petHealThreshold = {
                         type = "range",
-                        name = "Pet Heal Threshold",
-                        desc = "Show pet heal abilities when PET health drops below this percentage",
+                        name = L["Pet Heal Threshold"],
+                        desc = L["Pet Heal Threshold desc"],
                         min = 1, max = 100, step = 1,
                         order = 4.3,
                         width = "normal",
@@ -1397,7 +1439,7 @@ local function CreateOptionsTable(addon)
                     },
                     thresholdNote = {
                         type = "description",
-                        name = "|cff888888Note: When in combat, health may be a 'secret' value. In this case, the addon falls back to detecting the red low-health overlay (~35%) instead of using these exact thresholds.|r",
+                        name = L["Threshold Note"],
                         order = 4.9,
                         fontSize = "small",
                     },
@@ -1445,8 +1487,8 @@ local function CreateOptionsTable(addon)
                     },
                     showHealthBar = {
                         type = "toggle",
-                        name = "Show Health Bar",
-                        desc = "Display a compact health bar alongside the main queue (visual indicator only)",
+                        name = L["Show Health Bar"],
+                        desc = L["Show Health Bar desc"],
                         order = 8,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showHealthBar end,
@@ -1462,7 +1504,7 @@ local function CreateOptionsTable(addon)
                             end
                             addon:ForceUpdateAll()
                         end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                        -- Health bar works independently of defensive queue
                     },
                     position = {
                         type = "select",
@@ -1485,9 +1527,9 @@ local function CreateOptionsTable(addon)
                     },
                     iconScale = {
                         type = "range",
-                        name = "Defensive Icon Scale",
-                        desc = "Scale multiplier for defensive icons (same as Primary Spell Scale but independent)",
-                        min = 1.0, max = 2.0, step = 0.1,
+                        name = L["Defensive Icon Scale"],
+                        desc = L["Defensive Icon Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
                         order = 10,
                         width = "normal",
                         get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
@@ -1500,8 +1542,8 @@ local function CreateOptionsTable(addon)
                     },
                     maxIcons = {
                         type = "range",
-                        name = "Maximum Icons",
-                        desc = "Number of defensive spells to show at once (1-3). Additional icons appear alongside the first.",
+                        name = L["Defensive Max Icons"],
+                        desc = L["Defensive Max Icons desc"],
                         min = 1, max = 3, step = 1,
                         order = 11,
                         width = "normal",
@@ -1509,6 +1551,23 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
                             UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    showHotkeys = {
+                        type = "toggle",
+                        name = L["Show Defensive Hotkeys"],
+                        desc = L["Show Defensive Hotkeys desc"],
+                        order = 8.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showHotkeys ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showHotkeys = val
+                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                                ActionBarScanner.ClearAllCaches()
+                            end
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1566,7 +1625,7 @@ local function CreateOptionsTable(addon)
                 type = "group",
                 name = L["Profiles"],
                 desc = L["Profiles desc"],
-                order = 10,
+                order = 4,
                 args = {}
             },
             about = {
@@ -1593,7 +1652,27 @@ local function CreateOptionsTable(addon)
                         name = L["Slash Commands"],
                         order = 3,
                         fontSize = "medium"
-                    }
+                    },
+                    debugHeader = {
+                        type = "header",
+                        name = L["Developer"],
+                        order = 10,
+                    },
+                    debugMode = {
+                        type = "toggle",
+                        name = L["Debug Mode"],
+                        desc = L["Debug Mode desc"],
+                        order = 11,
+                        width = "full",
+                        get = function() return addon.db.profile.debugMode or false end,
+                        set = function(_, val)
+                            addon.db.profile.debugMode = val
+                            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+                                BlizzardAPI.RefreshDebugMode()
+                            end
+                            addon:Print("Debug: " .. (val and "ON" or "OFF"))
+                        end
+                    },
                 }
             }
         }

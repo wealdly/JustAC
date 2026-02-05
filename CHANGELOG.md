@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.21.1] - 2026-02-04
+
+### Fixed
+- **Aura filtering consistency (RedundancyFilter v36)**: Fixed aura recast suggestions appearing during long combat
+  - Adaptive cache expiration: Recent validation (<5 min) uses actual expiration time; older validation uses conservative 80% threshold
+  - Prevents hour-long buffs (poisons, imbues) from reappearing mid-combat during persistent boss fights
+  - All duration calculations done out of combat to avoid arithmetic on WoW 12.0 secret values
+
+## [3.21.0] - 2026-02-04
+
+### Added
+- **Key press flash**: Icons flash gold when their hotkey is pressed for visual feedback
+- **Separate hotkey toggles**: Individual "Show Hotkeys" options for Offensive and Defensives sections
+  - Performance benefit: disabling skips hotkey detection for that section only
+- **Insert Procced Defensives option**: Toggle to control procced defensives (Victory Rush, free heals) at any health
+
+### Changed
+- **Options reorganization**: Moved "Primary Spell Scale" from General to Offensive section (offensive-only setting)
+- **Threshold note shortened**: More concise threshold fallback description
+- **Options preservation**: Fixed threshold settings and new toggles being removed during dynamic updates
+
+### Fixed
+- **Profile switching**: Fixed queue appearing when switching to healer spec marked as "DISABLED"
+- **Flash animation growth**: Fixed key press flash growing larger over time due to cumulative scale bug
+- **Critical timer allocation fix**: Fixed `C_Timer.After` being called every frame in glow animations, causing massive GC pressure
+- **Major performance fix**: Reduced in-combat CPU usage from ~34% to near-zero
+  - Early-exit checks when frame hidden (mounted, out of combat, etc.)
+  - Removed expensive `IsSpellOnRealCooldown` check (200+ API calls per update)
+  - Added `filterResultCache` to prevent re-checking same spell multiple times
+  - Pooled frequently allocated tables to reduce GC stutter
+- **Gamepad keybind optimization**: Fixed ~100% CPU overhead when gamepad mode enabled
+  - `CalculateKeybindHash()` now computed once instead of every validation check
+- **Hotkey lookup rate-limiting**: Eliminated expensive action bar scanning (100+ slots) on every frame
+  - Full lookups rate-limited to max 4x/sec, cached values returned immediately
+- **UIRenderer throttling**: Major reduction in per-frame API calls
+  - Added 0.15s throttle for cooldown updates (cooldown swipe animates smoothly once set)
+  - Throttled range checks, cached hotkey normalization
+  - Visual state caching (tinting, desaturation) - only updates when state changes
+
+### Removed
+- **Mobility feature**: Gap closer feature removed entirely
+  - `C_Spell.IsSpellInRange()` returns secret values in WoW 12.0+ combat, making it unreliable
+  - Removed Options tab, profile settings, locale strings, SpellQueue integration
+
 ## [3.2] - 2026-01-31
 
 ### Added

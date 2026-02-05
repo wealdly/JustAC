@@ -2,18 +2,18 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.2
+## Current Version: 3.21.1
 
 **Instructions:**
 - Add changes here as they're made
 - When version is bumped, move these to CHANGELOG.md and clear this section
 - Don't increment version numbers without explicit instruction
 
+### Added
+
+### Changed
+
 ### Fixed
-- **Critical Performance Fix**: Fixed `C_Timer.After` being called every frame in `StartAssistedGlow` and `StartDefensiveGlow`, causing massive timer allocation and garbage collection pressure
-  - `StartAssistedGlow`: Set `assistedAnimPaused` flag immediately before scheduling timer, not inside callback
-  - `StartDefensiveGlow`: Added missing `defensiveAnimPaused` flag tracking (previously scheduled new timer every frame when out of combat)
-  - Root cause of hitching even out of combat with JAC enabled
 
 - **Major Performance Fix (SpellQueue v31)**: Reduced in-combat CPU usage from ~34% to near-zero
   - Added early-exit checks in `GetCurrentSpellQueue()` when frame should be hidden (mounted, out of combat with hideQueueOutOfCombat enabled, etc.)
@@ -74,6 +74,14 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
   - Cached `SetTextColor` for range indicator - only updates when out-of-range state changes
   - Cached `SetDesaturation`/`SetVertexColor` for icon tinting - only updates when visual state changes (channeling/no-resources/normal)
   - Reduced UI API calls from ~100/frame to ~5/frame during stable combat
+
+### Removed
+
+- **Mobility Feature**: Removed the gap closer feature entirely
+  - `C_Spell.IsSpellInRange()` returns secret values in WoW 12.0+ combat, making range detection unreliable
+  - Feature's value was primarily in combat where range detection doesn't work
+  - Removed: Options tab, profile settings, locale strings, SpellQueue insertion, RedundancyFilter check
+  - Removed: `CLASS_MOBILITY_DEFAULTS`, `CLASS_PETMOBILITY_DEFAULTS`, `IsMobilitySpell()`, `IsInMeleeRange()`
 
 ### Added
 
