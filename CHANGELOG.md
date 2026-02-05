@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.21.1] - 2026-02-04
+
+### Fixed
+- **Aura filtering consistency (RedundancyFilter v36)**: Fixed aura recast suggestions appearing during long combat
+  - Adaptive cache expiration: Recent validation (<5 min) uses actual expiration time; older validation uses conservative 80% threshold
+  - Prevents hour-long buffs (poisons, imbues) from reappearing mid-combat during persistent boss fights
+  - All duration calculations done out of combat to avoid arithmetic on WoW 12.0 secret values
+
 ## [3.21.0] - 2026-02-04
 
 ### Added

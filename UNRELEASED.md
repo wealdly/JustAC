@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.21.0
+## Current Version: 3.21.1
 
 **Instructions:**
 - Add changes here as they're made
@@ -12,14 +12,8 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 ### Added
 
 ### Changed
-- **Hotkey abbreviations**: Shortened to 2-3 characters max for better readability
-  - `PgU/PgD` → `PU/PD`, `BkSp` → `BS`, `NEnt` → `NE`
-  - `PrtSc` → `PS`, `ScrLk` → `SL`, `Caps` → `CL`, `Paus` → `Pa`
 
 ### Fixed
-  - `StartAssistedGlow`: Set `assistedAnimPaused` flag immediately before scheduling timer, not inside callback
-  - `StartDefensiveGlow`: Added missing `defensiveAnimPaused` flag tracking (previously scheduled new timer every frame when out of combat)
-  - Root cause of hitching even out of combat with JAC enabled
 
 - **Major Performance Fix (SpellQueue v31)**: Reduced in-combat CPU usage from ~34% to near-zero
   - Added early-exit checks in `GetCurrentSpellQueue()` when frame should be hidden (mounted, out of combat with hideQueueOutOfCombat enabled, etc.)
