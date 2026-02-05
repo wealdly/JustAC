@@ -12,6 +12,9 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 ### Added
 
 ### Changed
+- **Hotkey abbreviations**: Shortened to 2-3 characters max for better readability
+  - `PgU/PgD` → `PU/PD`, `BkSp` → `BS`, `NEnt` → `NE`
+  - `PrtSc` → `PS`, `ScrLk` → `SL`, `Caps` → `CL`, `Paus` → `Pa`
 
 ### Fixed
   - `StartAssistedGlow`: Set `assistedAnimPaused` flag immediately before scheduling timer, not inside callback
