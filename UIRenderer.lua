@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 10)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 13)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -72,62 +72,103 @@ local function UpdateButtonCooldowns(button)
         local duration = cooldownInfo.duration or 0
         local modRate = cooldownInfo.modRate or 1
 
-        -- Use SetCooldownFromExpirationTime for 12.0+ compatibility (handles secret values better)
-        if button.cooldown.SetCooldownFromExpirationTime and
-           not (BlizzardAPI.IsSecretValue(startTime) or BlizzardAPI.IsSecretValue(duration)) then
-            -- 12.0+ method: Pass expiration time directly (only if values are not secret)
-            local expirationTime = startTime + duration
-            button.cooldown:SetCooldownFromExpirationTime(expirationTime, duration, modRate)
-        else
-            -- Legacy method for older WoW versions or when values are secret
-            button.cooldown:SetCooldown(startTime, duration, modRate)
-        end
-
-        -- Force swipe visibility (in case it got reset) and ensure frame is shown
-        -- Check secret values directly instead of pcall to avoid closure overhead
-        local hasCooldown = false
-        if not (BlizzardAPI.IsSecretValue(duration)) then
-            hasCooldown = duration > 0
-        end
-        if hasCooldown then
+        -- Always pass values to the cooldown widget - it handles secrets internally
+        -- The widget will show/hide the swipe based on the values it receives
+        if not button._cooldownShown then
             button.cooldown:SetDrawSwipe(true)
             button.cooldown:Show()
+            button._cooldownShown = true
         end
+        -- Always update - widget handles everything including secret values
+        button.cooldown:SetCooldown(startTime, duration, modRate)
     elseif button.cooldown then
-        -- No cooldown info - clear the display
-        button.cooldown:Clear()
+        -- No cooldown info - clear the display only if needed
+        if button._cooldownShown then
+            button.cooldown:Clear()
+            button._cooldownShown = false
+        end
     end
 
-    -- Let the widget handle cooldown visuals (keeps display logic encapsulated)
+    -- Charge cooldown (recharging next charge)
+    -- maxCharges is spell structure (rarely secret), currentCharges is combat state (can be secret)
+    -- For multi-charge spells (maxCharges > 1), always pass values through to the widget
     if button.chargeCooldown then
-        -- Check secret values directly to avoid pcall overhead
-        local hasChargeCooldown = false
-        if chargeInfo and chargeInfo.cooldownDuration then
-            if not BlizzardAPI.IsSecretValue(chargeInfo.cooldownDuration) then
-                hasChargeCooldown = chargeInfo.cooldownDuration > 0
+        local maxCharges = chargeInfo and chargeInfo.maxCharges
+        local currentCharges = chargeInfo and chargeInfo.currentCharges
+        
+        if maxCharges and currentCharges then
+            -- Cache maxCharges when known (spell structure, rarely changes)
+            if not BlizzardAPI.IsSecretValue(maxCharges) then
+                button._cachedMaxCharges = maxCharges
+            end
+            
+            -- Use cached or current maxCharges to determine if multi-charge spell
+            local effectiveMaxCharges = button._cachedMaxCharges or (not BlizzardAPI.IsSecretValue(maxCharges) and maxCharges) or 0
+            local isMultiCharge = effectiveMaxCharges > 1
+            
+            if isMultiCharge then
+                -- Multi-charge spell: always show and pass values through
+                -- Widget handles the display, including secret values
+                if not button._chargeCooldownShown then
+                    button.chargeCooldown:SetDrawSwipe(true)
+                    button.chargeCooldown:Show()
+                    button._chargeCooldownShown = true
+                end
+                -- Always update - widget handles secrets internally
+                button.chargeCooldown:SetCooldown(
+                    chargeInfo.cooldownStartTime or 0,
+                    chargeInfo.cooldownDuration or 0,
+                    chargeInfo.chargeModRate or 1
+                )
+            else
+                -- Not a multi-charge spell - hide
+                if button._chargeCooldownShown then
+                    button.chargeCooldown:Clear()
+                    button.chargeCooldown:Hide()
+                    button._chargeCooldownShown = false
+                end
+            end
+        else
+            -- No charge info - clear and hide only if needed
+            if button._chargeCooldownShown then
+                button.chargeCooldown:Clear()
+                button.chargeCooldown:Hide()
+                button._chargeCooldownShown = false
             end
         end
-
-        if hasChargeCooldown then
-            -- Show charge cooldown when available
-            button.chargeCooldown:SetCooldown(
-                chargeInfo.cooldownStartTime or 0,
-                chargeInfo.cooldownDuration or 0,
-                chargeInfo.chargeModRate or 1
-            )
-        else
-            -- Hide when unavailable or secret
-            button.chargeCooldown:Clear()
-        end
     end
 
-    -- Show charge count only for multi-charge spells; check secret values directly
+    -- Show charge count only for multi-charge spells
+    -- IMPORTANT: currentCharges can be a secret value in combat
+    -- We check maxCharges to decide whether to show charges at all
+    -- SetText() can display secret values directly - they render as the actual number
     if button.chargeText and chargeInfo then
-        if chargeInfo.maxCharges and chargeInfo.currentCharges and
-           not (BlizzardAPI.IsSecretValue(chargeInfo.maxCharges) or BlizzardAPI.IsSecretValue(chargeInfo.currentCharges)) and
-           chargeInfo.maxCharges > 1 then
-            button.chargeText:SetText(chargeInfo.currentCharges)
-            button.chargeText:Show()
+        local maxCharges = chargeInfo.maxCharges
+        local currentCharges = chargeInfo.currentCharges
+
+        -- maxCharges defines spell structure (static), currentCharges is combat state (can be secret)
+        if maxCharges and currentCharges then
+            -- Safe comparison: maxCharges is usually not secret (spell structure)
+            local showCharges = false
+            if not BlizzardAPI.IsSecretValue(maxCharges) then
+                showCharges = maxCharges > 1
+            elseif button._cachedMaxCharges then
+                -- Fall back to cached value if current is somehow secret
+                showCharges = button._cachedMaxCharges > 1
+            end
+
+            -- Cache maxCharges when it's a real value
+            if not BlizzardAPI.IsSecretValue(maxCharges) then
+                button._cachedMaxCharges = maxCharges
+            end
+
+            if showCharges then
+                -- Pass currentCharges directly - FontString displays secret values correctly
+                button.chargeText:SetText(currentCharges)
+                button.chargeText:Show()
+            else
+                button.chargeText:Hide()
+            end
         else
             button.chargeText:Hide()
         end
@@ -246,23 +287,27 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.cooldown:Show()
     end
 
-    -- Find hotkey for item by scanning action bars
+    -- Hotkey display (skip lookup entirely when disabled for performance)
+    local showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
     local hotkey = ""
-    if isItem then
-        for slot = 1, 180 do
-            local actionType, actionID = GetActionInfo(slot)
-            if actionType == "item" and actionID == id then
-                hotkey = GetBindingKey("ACTIONBUTTON" .. slot) or ""
-                if hotkey == "" then
-                    local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
-                    local buttonIndex = ((slot - 1) % 12) + 1
-                    hotkey = GetBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
+    if showHotkeys then
+        -- Find hotkey for item by scanning action bars
+        if isItem then
+            for slot = 1, 180 do
+                local actionType, actionID = GetActionInfo(slot)
+                if actionType == "item" and actionID == id then
+                    hotkey = GetBindingKey("ACTIONBUTTON" .. slot) or ""
+                    if hotkey == "" then
+                        local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
+                        local buttonIndex = ((slot - 1) % 12) + 1
+                        hotkey = GetBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
+                    end
+                    break
                 end
-                break
             end
+        else
+            hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
         end
-    else
-        hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
     end
     
     -- Only update hotkey text if it changed (prevents flicker)
@@ -466,7 +511,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Cache frequently called functions to reduce table lookups in hot path
     local GetSpellCooldown = BlizzardAPI.GetSpellCooldown
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
-    local GetSpellHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey
+    local showHotkeys = profile.showOffensiveHotkeys ~= false
+    local GetSpellHotkey = showHotkeys and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
     -- PERFORMANCE: Throttle cooldown updates - swipe animates smoothly once set

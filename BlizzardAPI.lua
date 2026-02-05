@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module - Wraps WoW C_* APIs with 12.0+ secret value handling
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 27)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 28)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -424,7 +424,10 @@ function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
     local cd = C_Spell_GetSpellCooldown(spellID)
     if not cd then return true end
-    if BlizzardAPI.IsSecretValue(cd.startTime) then return true end
+    -- Check BOTH values for secret before any comparison or arithmetic
+    if BlizzardAPI.IsSecretValue(cd.startTime) or BlizzardAPI.IsSecretValue(cd.duration) then
+        return true  -- Fail-open: assume ready
+    end
     return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
 end
 
@@ -904,7 +907,12 @@ function BlizzardAPI.IsSpellOnRealCooldown(spellID)
         local success, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
         if success and chargeInfo then
             local currentCharges = chargeInfo.currentCharges
-            if currentCharges and not (issecretvalue and issecretvalue(currentCharges)) then
+            if currentCharges then
+                if issecretvalue and issecretvalue(currentCharges) then
+                    -- Secret value: fail-open (assume usable) to prevent hiding spells
+                    -- that may have charges available
+                    return false
+                end
                 if currentCharges == 0 then
                     return true
                 else
@@ -925,6 +933,10 @@ function BlizzardAPI.IsSpellOnRealCooldown(spellID)
         local slot = ActionBarScanner.GetSlotForSpell(spellID)
         if slot and C_ActionBar and C_ActionBar.IsUsableAction then
             local actionUsable, notEnoughMana = C_ActionBar.IsUsableAction(slot)
+            -- Check for secrets before comparing - fail-open (assume usable = show)
+            if issecretvalue and (issecretvalue(actionUsable) or issecretvalue(notEnoughMana)) then
+                return false  -- Fail-open: assume NOT on cooldown (show)
+            end
             if actionUsable == false and not notEnoughMana then
                 return true
             end
@@ -1297,6 +1309,53 @@ function BlizzardAPI.ShouldUnitSpellCastBeSecret(unit)
         if ok then return result end
     end
     return nil
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Spell State Helper (consolidates common validation pattern)
+--------------------------------------------------------------------------------
+
+-- Cache for RedundancyFilter lookup (lazy-loaded)
+local cachedRedundancyFilter = nil
+local function GetRedundancyFilter()
+    if cachedRedundancyFilter == nil then
+        cachedRedundancyFilter = LibStub("JustAC-RedundancyFilter", true) or false
+    end
+    return cachedRedundancyFilter or nil
+end
+
+-- Check defensive spell usability in one call (avoids repeated API lookups)
+-- Returns: isUsable, isKnown, isRedundant, onCooldown, isProcced
+-- isUsable = isKnown AND NOT isRedundant AND NOT onCooldown
+function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+    if not spellID or spellID == 0 then
+        return false, false, false, false, false
+    end
+    
+    -- Check if spell is known/available
+    local isKnown = BlizzardAPI.IsSpellAvailable(spellID)
+    if not isKnown then
+        return false, false, false, false, false
+    end
+    
+    -- Check if procced (instant/free cast available)
+    local isProcced = BlizzardAPI.IsSpellProcced(spellID)
+    
+    -- Check redundancy (buff already active)
+    local RedundancyFilter = GetRedundancyFilter()
+    local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
+    if isRedundant then
+        return false, true, true, false, isProcced
+    end
+    
+    -- Check cooldown
+    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown(spellID)
+    if onCooldown then
+        return false, true, false, true, isProcced
+    end
+    
+    -- Spell is usable
+    return true, true, false, false, isProcced
 end
 
 --------------------------------------------------------------------------------
