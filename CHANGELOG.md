@@ -1,6 +1,6 @@
 # Changelog
 
-## [3.21] - 2026-02-04
+## [3.21.0] - 2026-02-04
 
 ### Added
 - **Separate hotkey toggles**: Individual "Show Hotkeys" options for Offensive and Defensives sections
