@@ -36,7 +36,8 @@ function UIHealthBar.CreateHealthBar(addon)
     if not addon.db or not addon.db.profile then return nil end
     
     local profile = addon.db.profile
-    if not profile.defensives or not profile.defensives.enabled or not profile.defensives.showHealthBar then
+    -- Health bar is independent of defensive queue - only check showHealthBar setting
+    if not profile.defensives or not profile.defensives.showHealthBar then
         return nil
     end
     
