@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 32)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 33)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -124,6 +124,17 @@ local spellHotkeyCacheValid = false
 -- Cache slot mappings so hotkey lookups don't fail when spell changes mid-GCD
 local spellSlotCache = {}
 
+-- PERFORMANCE: Cache abbreviated keybinds (50+ gsub calls per abbreviation is expensive)
+-- Key: raw binding string, Value: abbreviated string
+local abbreviatedKeyCache = {}
+local abbreviatedKeyCacheSize = 0
+local MAX_ABBREVIATED_CACHE_SIZE = 100
+
+-- PERFORMANCE: Rate-limit full hotkey lookups (FindSpellInActions is VERY expensive)
+-- When cache is invalid, we return stale value immediately and only refresh periodically
+local lastHotkeyRefreshTime = 0
+local HOTKEY_REFRESH_INTERVAL = 0.25  -- Refresh stale entries max 4x/sec (enough for responsiveness)
+
 local verboseDebugMode = false
 
 function ActionBarScanner.SetVerboseDebug(enabled)
@@ -166,6 +177,9 @@ local function GetCachedStateHash()
     return cachedStateData.hash
 end
 
+-- PERFORMANCE: Cache the binding hash value - only recompute when bindings actually change
+local cachedBindingHash = 0
+
 local function RebuildBindingCache()
     wipe(bindingKeyCache)
     local patterns = {
@@ -180,21 +194,8 @@ local function RebuildBindingCache()
             bindingKeyCache[bindingKey] = GetBindingKey(bindingKey) or ""
         end
     end
-    bindingCacheValid = true
-end
-
-local function GetCachedBindingKey(bindingKey)
-    if not bindingCacheValid then
-        RebuildBindingCache()
-    end
-    return bindingKeyCache[bindingKey] or ""
-end
-
-local function CalculateKeybindHash()
-    if not bindingCacheValid then
-        RebuildBindingCache()
-    end
     
+    -- PERFORMANCE: Compute hash once when rebuilding cache, not on every validation check
     local hash = 0
     for bindingKey, key in pairs(bindingKeyCache) do
         if key and key ~= "" then
@@ -206,8 +207,24 @@ local function CalculateKeybindHash()
             end
         end
     end
+    cachedBindingHash = hash
     
-    return hash
+    bindingCacheValid = true
+end
+
+local function GetCachedBindingKey(bindingKey)
+    if not bindingCacheValid then
+        RebuildBindingCache()
+    end
+    return bindingKeyCache[bindingKey] or ""
+end
+
+-- PERFORMANCE: Return cached hash instead of recomputing every call
+local function CalculateKeybindHash()
+    if not bindingCacheValid then
+        RebuildBindingCache()
+    end
+    return cachedBindingHash
 end
 
 local function CalculateActionSlot(buttonID, barType)
@@ -321,6 +338,9 @@ end
 local function InvalidateBindingCache()
     bindingCacheValid = false
     wipe(bindingKeyCache)
+    -- NOTE: Do NOT clear abbreviatedKeyCache here - it's keyed by raw keybind strings
+    -- (like "SHIFT-PAD1") and the abbreviation only depends on gamepad icon style,
+    -- not on which spells are bound. Clearing it on every binding change defeats caching.
     InvalidateKeybindCache()
 end
 
@@ -526,16 +546,25 @@ end
 local function AbbreviateKeybind(key)
     if not key or key == "" then return "" end
 
+    -- PERFORMANCE: Check cache first (50+ gsub calls is very expensive)
+    local cached = abbreviatedKeyCache[key]
+    if cached then
+        return cached
+    end
+
     local result = key
-    
+
     -- Check if this is a gamepad combo (modifier + PAD button)
     -- WoW maps gamepad triggers to keyboard modifiers: LT→SHIFT, RT→CTRL
-    -- So "SHIFT-PAD1" is actually LT+A on a gamepad
-    local hasGamepadButton = string.find(key, "PAD%d") or string.find(key, "PADD") or 
-                             string.find(key, "PADLSTICK") or string.find(key, "PADRSTICK") or
-                             string.find(key, "PAD[LR]SHOULDER") or string.find(key, "PAD[LR]TRIGGER") or
-                             string.find(key, "PADPADDLE") or string.find(key, "PADFORWARD") or
-                             string.find(key, "PADBACK") or string.find(key, "PADSYSTEM") or string.find(key, "PADSOCIAL")
+    -- Quick pre-check: most keys don't contain "PAD", skip expensive checks for keyboard binds
+    local hasGamepadButton = false
+    if string.find(key, "PAD") then
+        hasGamepadButton = string.find(key, "PAD%d") or string.find(key, "PADD") or
+                           string.find(key, "PADLSTICK") or string.find(key, "PADRSTICK") or
+                           string.find(key, "PAD[LR]SHOULDER") or string.find(key, "PAD[LR]TRIGGER") or
+                           string.find(key, "PADPADDLE") or string.find(key, "PADFORWARD") or
+                           string.find(key, "PADBACK") or string.find(key, "PADSYSTEM") or string.find(key, "PADSOCIAL")
+    end
     local isGamepadModifierCombo = hasGamepadButton and (string.find(key, "^SHIFT%-") or string.find(key, "^CTRL%-"))
     local iconSize = isGamepadModifierCombo and "10:10" or "14:14"
     
@@ -551,11 +580,55 @@ local function AbbreviateKeybind(key)
     end
     result = string_gsub(result, "ALT%-", "A")
 
-    -- Gamepad modifier buttons as prefixes (native PADLTRIGGER- format, if WoW ever uses it)
-    result = string_gsub(result, "PADLSHOULDER%-", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSHOULDER%-", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADLTRIGGER%-", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRTRIGGER%-", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
+    -- PERFORMANCE: Skip all gamepad button replacements for keyboard-only binds
+    -- This avoids ~40 unnecessary string.gsub calls when hasGamepadButton is false
+    if hasGamepadButton then
+        -- Gamepad modifier buttons as prefixes (native PADLTRIGGER- format, if WoW ever uses it)
+        result = string_gsub(result, "PADLSHOULDER%-", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSHOULDER%-", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADLTRIGGER%-", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRTRIGGER%-", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
+        -- Stick directions (must come before stick click abbreviations)
+        result = string_gsub(result, "PADLSTICKUP", "|A:Gamepad_Gen_LStickUp_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADLSTICKDOWN", "|A:Gamepad_Gen_LStickDown_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADLSTICKLEFT", "|A:Gamepad_Gen_LStickLeft_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADLSTICKRIGHT", "|A:Gamepad_Gen_LStickRight_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSTICKUP", "|A:Gamepad_Gen_RStickUp_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSTICKDOWN", "|A:Gamepad_Gen_RStickDown_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSTICKLEFT", "|A:Gamepad_Gen_RStickLeft_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSTICKRIGHT", "|A:Gamepad_Gen_RStickRight_64:" .. iconSize .. "|a")
+        -- Stick clicks
+        result = string_gsub(result, "PADLSTICK", "|A:Gamepad_Gen_LStickIn_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSTICK", "|A:Gamepad_Gen_RStickIn_64:" .. iconSize .. "|a")
+        -- D-pad (must come before arrow key abbreviations - PADDDOWN contains DOWN)
+        result = string_gsub(result, "PADDUP", "|A:Gamepad_Gen_Up_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADDDOWN", "|A:Gamepad_Gen_Down_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADDLEFT", "|A:Gamepad_Gen_Left_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADDRIGHT", "|A:Gamepad_Gen_Right_64:" .. iconSize .. "|a")
+        -- Shoulders and triggers (standalone, not as modifiers)
+        result = string_gsub(result, "PADLSHOULDER", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRSHOULDER", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADLTRIGGER", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADRTRIGGER", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
+        -- Paddles (must come before face buttons - PADPADDLE1 contains PAD substring)
+        result = string_gsub(result, "PADPADDLE1", "|A:Gamepad_Gen_Paddle1_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADPADDLE2", "|A:Gamepad_Gen_Paddle2_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADPADDLE3", "|A:Gamepad_Gen_Paddle3_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADPADDLE4", "|A:Gamepad_Gen_Paddle4_64:" .. iconSize .. "|a")
+        -- System buttons (must come before face buttons)
+        result = string_gsub(result, "PADFORWARD", "|A:Gamepad_Gen_Forward_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADBACK", "|A:Gamepad_Gen_Back_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADSYSTEM", "|A:Gamepad_Gen_System_64:" .. iconSize .. "|a")
+        result = string_gsub(result, "PADSOCIAL", "|A:Gamepad_Gen_Share_64:" .. iconSize .. "|a")
+        -- Face buttons (style-dependent: Generic/Xbox/PlayStation)
+        local faceSize = isGamepadModifierCombo and "small" or "normal"
+        result = string_gsub(result, "PAD1", GetGamepadFaceButton(1, faceSize))
+        result = string_gsub(result, "PAD2", GetGamepadFaceButton(2, faceSize))
+        result = string_gsub(result, "PAD3", GetGamepadFaceButton(3, faceSize))
+        result = string_gsub(result, "PAD4", GetGamepadFaceButton(4, faceSize))
+        result = string_gsub(result, "PAD5", GetGamepadFaceButton(5, faceSize))
+        result = string_gsub(result, "PAD6", GetGamepadFaceButton(6, faceSize))
+    end
 
     -- Mouse buttons
     result = string_gsub(result, "BUTTON(%d+)", "M%1")
@@ -571,50 +644,7 @@ local function AbbreviateKeybind(key)
     result = string_gsub(result, "NUMPADENTER", "NEnt")
     result = string_gsub(result, "NUMLOCK", "NLk")
     result = string_gsub(result, "NUMPAD", "N")  -- NUMPAD0-9 -> N0-N9
-    
-    -- Gamepad buttons (MUST come before arrow keys since PADDDOWN contains DOWN, etc.)
-    -- Using _64 atlas with dynamic size based on whether it's a modifier combo
-    -- Stick directions (must come before stick click abbreviations)
-    result = string_gsub(result, "PADLSTICKUP", "|A:Gamepad_Gen_LStickUp_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADLSTICKDOWN", "|A:Gamepad_Gen_LStickDown_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADLSTICKLEFT", "|A:Gamepad_Gen_LStickLeft_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADLSTICKRIGHT", "|A:Gamepad_Gen_LStickRight_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSTICKUP", "|A:Gamepad_Gen_RStickUp_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSTICKDOWN", "|A:Gamepad_Gen_RStickDown_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSTICKLEFT", "|A:Gamepad_Gen_RStickLeft_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSTICKRIGHT", "|A:Gamepad_Gen_RStickRight_64:" .. iconSize .. "|a")
-    -- Stick clicks
-    result = string_gsub(result, "PADLSTICK", "|A:Gamepad_Gen_LStickIn_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSTICK", "|A:Gamepad_Gen_RStickIn_64:" .. iconSize .. "|a")
-    -- D-pad (must come before arrow key abbreviations - PADDDOWN contains DOWN)
-    result = string_gsub(result, "PADDUP", "|A:Gamepad_Gen_Up_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADDDOWN", "|A:Gamepad_Gen_Down_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADDLEFT", "|A:Gamepad_Gen_Left_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADDRIGHT", "|A:Gamepad_Gen_Right_64:" .. iconSize .. "|a")
-    -- Shoulders and triggers (standalone, not as modifiers)
-    result = string_gsub(result, "PADLSHOULDER", "|A:Gamepad_Gen_LShoulder_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRSHOULDER", "|A:Gamepad_Gen_RShoulder_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADLTRIGGER", "|A:Gamepad_Gen_LTrigger_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADRTRIGGER", "|A:Gamepad_Gen_RTrigger_64:" .. iconSize .. "|a")
-    -- Paddles (must come before face buttons - PADPADDLE1 contains PAD substring)
-    result = string_gsub(result, "PADPADDLE1", "|A:Gamepad_Gen_Paddle1_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADPADDLE2", "|A:Gamepad_Gen_Paddle2_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADPADDLE3", "|A:Gamepad_Gen_Paddle3_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADPADDLE4", "|A:Gamepad_Gen_Paddle4_64:" .. iconSize .. "|a")
-    -- System buttons (must come before face buttons)
-    result = string_gsub(result, "PADFORWARD", "|A:Gamepad_Gen_Forward_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADBACK", "|A:Gamepad_Gen_Back_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADSYSTEM", "|A:Gamepad_Gen_System_64:" .. iconSize .. "|a")
-    result = string_gsub(result, "PADSOCIAL", "|A:Gamepad_Gen_Share_64:" .. iconSize .. "|a")
-    -- Face buttons (style-dependent: Generic/Xbox/PlayStation) - LAST because PAD1 could match other PAD* if not careful
-    local faceSize = isGamepadModifierCombo and "small" or "normal"
-    result = string_gsub(result, "PAD1", GetGamepadFaceButton(1, faceSize))
-    result = string_gsub(result, "PAD2", GetGamepadFaceButton(2, faceSize))
-    result = string_gsub(result, "PAD3", GetGamepadFaceButton(3, faceSize))
-    result = string_gsub(result, "PAD4", GetGamepadFaceButton(4, faceSize))
-    result = string_gsub(result, "PAD5", GetGamepadFaceButton(5, faceSize))
-    result = string_gsub(result, "PAD6", GetGamepadFaceButton(6, faceSize))
-    
+
     -- Navigation keys
     result = string_gsub(result, "PAGEUP", "PgU")
     result = string_gsub(result, "PAGEDOWN", "PgD")
@@ -653,7 +683,13 @@ local function AbbreviateKeybind(key)
     result = string_gsub(result, "COMMA", ",")
     result = string_gsub(result, "PERIOD", "%.")
     result = string_gsub(result, "SLASH", "/")
-    
+
+    -- PERFORMANCE: Cache the result (50+ gsub calls avoided on subsequent lookups)
+    if abbreviatedKeyCacheSize < MAX_ABBREVIATED_CACHE_SIZE then
+        abbreviatedKeyCache[key] = result
+        abbreviatedKeyCacheSize = abbreviatedKeyCacheSize + 1
+    end
+
     return result
 end
 
@@ -694,13 +730,26 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         end
     end
 
+    -- FAST PATH: Valid cache hit - return immediately
     if not verboseDebugMode and spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil then
         return spellHotkeyCache[spellID]
     end
 
-    -- Return stale value during refresh to prevent flicker
+    -- PERFORMANCE: If we have a cached value (even stale), return it immediately
+    -- and only do expensive lookup if refresh interval has passed
     local previousValue = spellHotkeyCache[spellID]
-    
+    local now = GetTime()
+
+    if previousValue ~= nil then
+        -- We have a cached value - check if we should refresh
+        if (now - lastHotkeyRefreshTime) < HOTKEY_REFRESH_INTERVAL then
+            -- Too soon to refresh - return stale value (usually correct anyway)
+            return previousValue
+        end
+        -- Mark this refresh time
+        lastHotkeyRefreshTime = now
+    end
+
     if verboseDebugMode then
         print("|JAC| GetSpellHotkey(" .. spellID .. "): cache bypass, doing fresh lookup")
     end

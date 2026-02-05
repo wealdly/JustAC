@@ -261,7 +261,6 @@ function JustAC:OnEnable()
         return
     end
 
-    self:CreateKeyPressDetector()
     UIManager.CreateSpellIcons(self)
 
     -- Must be after CreateSpellIcons
@@ -277,7 +276,10 @@ function JustAC:OnEnable()
     
     self:InitializeCaches()
     self:StartUpdates()
-    
+
+    -- Create key press detector for flash feedback
+    self:CreateKeyPressDetector()
+
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnCombatEvent")
     self:RegisterEvent("PLAYER_REGEN_DISABLED", "OnCombatEvent")
@@ -338,111 +340,6 @@ function JustAC:OnEnable()
     end
     
     self:ScheduleTimer("DelayedValidation", 2)
-end
-
-function JustAC:CreateKeyPressDetector()
-    if self.keyPressFrame then return end
-    
-    local frame = CreateFrame("Frame", nil, UIParent)
-    frame:EnableKeyboard(true)
-    frame:SetPropagateKeyboardInput(true)
-    self.keyPressFrame = frame
-
-    local StartFlash = UIManager and UIManager.StartFlash
-    local IsShiftKeyDown = IsShiftKeyDown
-    local IsControlKeyDown = IsControlKeyDown
-    local IsAltKeyDown = IsAltKeyDown
-    
-    frame:SetScript("OnKeyDown", function(self, key)
-        local addon = JustAC
-        if not addon or not StartFlash then return end
-
-        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
-            return
-        end
-
-        local pressedKey = key:upper()
-        local hasShift = IsShiftKeyDown()
-        local hasCtrl = IsControlKeyDown()
-        local hasAlt = IsAltKeyDown()
-
-        local fullKey
-        if hasShift or hasCtrl or hasAlt then
-            if hasShift and hasCtrl and hasAlt then
-                fullKey = "SHIFT-CTRL-ALT-" .. pressedKey
-            elseif hasShift and hasCtrl then
-                fullKey = "SHIFT-CTRL-" .. pressedKey
-            elseif hasShift and hasAlt then
-                fullKey = "SHIFT-ALT-" .. pressedKey
-            elseif hasCtrl and hasAlt then
-                fullKey = "CTRL-ALT-" .. pressedKey
-            elseif hasShift then
-                fullKey = "SHIFT-" .. pressedKey
-            elseif hasCtrl then
-                fullKey = "CTRL-" .. pressedKey
-            else -- hasAlt
-                fullKey = "ALT-" .. pressedKey
-            end
-        else
-            fullKey = pressedKey
-        end
-
-        local function HotkeyMatches(hotkey)
-            if not hotkey then return false end
-            if hotkey == fullKey then return true end
-            if hotkey:match("^MOD%-") and (hasShift or hasCtrl or hasAlt) then
-                local baseKey = hotkey:gsub("^MOD%-", "")
-                return (pressedKey == baseKey)
-            end
-            return false
-        end
-
-        -- Don't flash slots 2+ if showing spell that just moved from slot 1
-        local iconsToFlash = {}
-        local now = GetTime()
-        local HOTKEY_GRACE_PERIOD = 0.15
-        local slot1PrevSpellID = nil
-        
-        local spellIcons = addon.spellIcons
-        if spellIcons then
-            local icon1 = spellIcons[1]
-            if icon1 and icon1:IsShown() then
-                if icon1.hotkeyChangeTime and (now - icon1.hotkeyChangeTime) < HOTKEY_GRACE_PERIOD then
-                    slot1PrevSpellID = icon1.previousSpellID
-                end
-                
-                if HotkeyMatches(icon1.normalizedHotkey) then
-                    iconsToFlash[#iconsToFlash + 1] = icon1
-                end
-            end
-
-            for i = 2, #spellIcons do
-                local icon = spellIcons[i]
-                if icon and icon:IsShown() then
-                    local matched = HotkeyMatches(icon.normalizedHotkey)
-
-                    if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
-                        matched = false
-                    end
-                    
-                    if matched then
-                        iconsToFlash[#iconsToFlash + 1] = icon
-                    end
-                end
-            end
-        end
-
-        local defIcon = addon.defensiveIcon
-        if defIcon and defIcon:IsShown() then
-            if HotkeyMatches(defIcon.normalizedHotkey) then
-                iconsToFlash[#iconsToFlash + 1] = defIcon
-            end
-        end
-
-        for _, icon in ipairs(iconsToFlash) do
-            StartFlash(icon)
-        end
-    end)
 end
 
 function JustAC:InitializeCaches()
@@ -691,13 +588,27 @@ function JustAC:RestoreDefensiveDefaults(listType)
     self:OnHealthChanged(nil, "player")
 end
 
+-- Throttle for UNIT_HEALTH events (fires very frequently in combat)
+local lastHealthUpdate = 0
+local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue updates
+-- Pooled table to avoid GC pressure in OnHealthChanged
+local dpsQueueExclusions = {}
+
 function JustAC:OnHealthChanged(event, unit)
     if unit ~= "player" and unit ~= "pet" then return end
 
+    -- Health bar update is cheap, always do it for visual feedback
     if UIManager and UIManager.UpdateHealthBar then
         UIManager.UpdateHealthBar(self)
     end
-    
+
+    -- Throttle defensive queue updates (expensive operation with table allocations)
+    local now = GetTime()
+    if event and now - lastHealthUpdate < HEALTH_UPDATE_THROTTLE then
+        return
+    end
+    lastHealthUpdate = now
+
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then 
         if UIManager and UIManager.HideDefensiveIcon then
@@ -737,8 +648,8 @@ function JustAC:OnHealthChanged(event, unit)
     local petHealThreshold = profile.defensives.petHealThreshold or 70
     local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
 
-    -- Exclude spells already visible in DPS queue
-    local dpsQueueExclusions = {}
+    -- Exclude spells already visible in DPS queue (reuse pooled table)
+    wipe(dpsQueueExclusions)
     if SpellQueue and SpellQueue.GetCurrentSpellQueue then
         local dpsQueue = SpellQueue.GetCurrentSpellQueue()
         local maxDpsIcons = profile.maxIcons or 4
@@ -777,10 +688,8 @@ end
 function JustAC:GetProccedDefensiveSpell()
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return nil end
-    
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    
+
+    -- Use module-level cached references (populated in LoadModules)
     if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
         local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
         if defensiveProcs and #defensiveProcs > 0 then
@@ -843,9 +752,7 @@ function JustAC:GetBestDefensiveSpell(spellList)
         self:DebugPrint("GetBestDefensiveSpell called with " .. #spellList .. " spells in list")
     end
 
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-
+    -- Use module-level cached references (populated in LoadModules)
     -- Procced spells from spellbook take priority (free/instant)
     if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
         local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
@@ -928,8 +835,8 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return {} end
-    
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+
+    -- Use module-level cached RedundancyFilter reference
     local results = {}
     alreadyAdded = alreadyAdded or {}
     local addedHere = {}
@@ -969,6 +876,9 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     return results
 end
 
+-- Pooled table for GetDefensiveSpellQueue (alreadyAdded is internal, results must be new since it's returned)
+local defensiveAlreadyAdded = {}
+
 -- Display order: instant procs first, then by health threshold (higher priority first)
 function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat, passedExclusions)
     local profile = self:GetProfile()
@@ -976,7 +886,9 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
 
     local maxIcons = profile.defensives.maxIcons or 1
     local results = {}
-    local alreadyAdded = {}
+    -- Reuse pooled table for tracking added spells
+    wipe(defensiveAlreadyAdded)
+    local alreadyAdded = defensiveAlreadyAdded
 
     if passedExclusions then
         for spellID, _ in pairs(passedExclusions) do
@@ -1020,9 +932,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
 
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-
+    -- Use module-level cached references (populated in LoadModules)
     -- Procced spells shown at ANY health level
     if ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
         local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
@@ -1597,11 +1507,15 @@ function JustAC:OnProcGlowChange(event, spellID)
         end
     end
 
+    -- Mark both queues dirty - procs affect rotation and defensive priorities
+    self:MarkQueueDirty()
+    self:MarkDefensiveDirty()
     self:ForceUpdate()
     self:OnHealthChanged(nil, "player")
 end
 
 function JustAC:OnTargetChanged()
+    self:MarkQueueDirty()
     self:ForceUpdate()
 end
 
@@ -1621,12 +1535,137 @@ end
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
 
+    -- Cast completed - mark queue dirty for immediate update
+    self:MarkQueueDirty()
+
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
     end
 
     if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer) end
     self.castSuccessTimer = self:ScheduleTimer("ForceUpdate", 0.02)
+end
+
+-- Pooled table for key press flash matching (avoids GC pressure on every key press)
+local iconsToFlash = {}
+
+-- Monitor key presses to trigger flash on matching queue icons
+function JustAC:CreateKeyPressDetector()
+    if self.keyPressFrame then return end
+
+    local frame = CreateFrame("Frame", "JustACKeyPressFrame", UIParent)
+    frame:SetPropagateKeyboardInput(true)
+    self.keyPressFrame = frame
+
+    -- Cache function references at creation time (avoid table lookups in hot path)
+    local StartFlash = UIManager and UIManager.StartFlash
+    local IsShiftKeyDown = IsShiftKeyDown
+    local IsControlKeyDown = IsControlKeyDown
+    local IsAltKeyDown = IsAltKeyDown
+    local wipe = wipe
+    local GetTime = GetTime
+
+    frame:SetScript("OnKeyDown", function(_, key)
+        local addon = JustAC
+        if not addon or not StartFlash then return end
+
+        -- Skip pure modifier keys early
+        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
+            return
+        end
+
+        -- Build normalized key with modifiers (matches format in UIRenderer)
+        local modKey = ""
+        local shift = IsShiftKeyDown()
+        local ctrl = IsControlKeyDown()
+        local alt = IsAltKeyDown()
+
+        if ctrl and shift then
+            modKey = "CTRL-SHIFT-"
+        elseif shift and alt then
+            modKey = "SHIFT-ALT-"
+        elseif ctrl and alt then
+            modKey = "CTRL-ALT-"
+        elseif shift then
+            modKey = "SHIFT-"
+        elseif ctrl then
+            modKey = "CTRL-"
+        elseif alt then
+            modKey = "ALT-"
+        end
+
+        local normalizedKey = modKey .. key:upper()
+
+        -- Reuse pooled table to avoid GC pressure
+        wipe(iconsToFlash)
+        local now = GetTime()
+        local HOTKEY_GRACE_PERIOD = 0.15
+        local slot1PrevSpellID = nil
+
+        local spellIcons = addon.spellIcons
+        if spellIcons then
+            -- Check slot 1 first (special handling for spell change timing)
+            local icon1 = spellIcons[1]
+            if icon1 and icon1:IsShown() and icon1.spellID then
+                -- Grace period uses spellChangeTime (not hotkeyChangeTime) because
+                -- the hotkey often stays the same when spell changes (same action bar slot)
+                local inGracePeriod = icon1.spellChangeTime and (now - icon1.spellChangeTime) < HOTKEY_GRACE_PERIOD
+                if icon1.previousSpellID and inGracePeriod then
+                    slot1PrevSpellID = icon1.previousSpellID
+                end
+
+                -- Match: current hotkey, previous hotkey, OR any match during grace period
+                local matched = icon1.normalizedHotkey == normalizedKey
+                if not matched and inGracePeriod then
+                    -- During grace period, also accept previous hotkey
+                    -- (user pressed key for the spell that just got cast)
+                    matched = icon1.previousNormalizedHotkey == normalizedKey
+                end
+                if matched then
+                    iconsToFlash[#iconsToFlash + 1] = icon1
+                end
+            end
+
+            -- Check remaining slots
+            for i = 2, #spellIcons do
+                local icon = spellIcons[i]
+                if icon and icon:IsShown() and icon.spellID then
+                    -- Inline match check
+                    local matched = icon.normalizedHotkey == normalizedKey
+
+                    -- Skip if same spell that was in slot 1 (just moved)
+                    if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
+                        matched = false
+                    end
+
+                    if matched then
+                        iconsToFlash[#iconsToFlash + 1] = icon
+                    end
+                end
+            end
+        end
+
+        -- Check defensive icons (inline match)
+        local defIcons = addon.defensiveIcons
+        if defIcons then
+            for _, defIcon in ipairs(defIcons) do
+                if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
+                    iconsToFlash[#iconsToFlash + 1] = defIcon
+                end
+            end
+        end
+
+        -- Legacy single defensive icon
+        local defIcon = addon.defensiveIcon
+        if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
+            iconsToFlash[#iconsToFlash + 1] = defIcon
+        end
+
+        -- Flash all matched icons
+        for _, icon in ipairs(iconsToFlash) do
+            StartFlash(icon)
+        end
+    end)
 end
 
 function JustAC:OnCooldownUpdate()
@@ -1676,29 +1715,91 @@ function JustAC:OpenOptionsPanel()
     end
 end
 
+-- Dirty flags for event-driven optimization
+-- When set, next OnUpdate will process; cleared after processing
+local spellQueueDirty = true
+local defensiveQueueDirty = true
+local lastFullUpdate = 0
+local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
+
+-- Cache expensive CVar lookup (rarely changes, no need to query every frame)
+local cachedUpdateRate = nil
+local lastCVarCheck = 0
+local CVAR_CHECK_INTERVAL = 5.0  -- Only re-check CVar every 5 seconds
+
+function JustAC:MarkQueueDirty()
+    spellQueueDirty = true
+end
+
+function JustAC:MarkDefensiveDirty()
+    defensiveQueueDirty = true
+end
+
 function JustAC:StartUpdates()
     if self.updateFrame then return end
 
     self.updateFrame = CreateFrame("Frame")
     self.updateTimeLeft = 0
 
+    -- Pre-cache references to avoid table lookups in hot path
+    local UnitAffectingCombat = UnitAffectingCombat
+    local GetTime = GetTime
+    local GetCVar = GetCVar
+    local math_max = math.max
+
     self.updateFrame:SetScript("OnUpdate", function(_, elapsed)
-        self.updateTimeLeft = (self.updateTimeLeft or 0) - elapsed
+        local timeLeft = (self.updateTimeLeft or 0) - elapsed
+        self.updateTimeLeft = timeLeft
+
+        -- Fast path: skip all work if not time to update yet
+        -- This is the most common case - exit as early as possible
+        if timeLeft > 0 then
+            return
+        end
+
+        -- Early exit: skip all work if UI is completely hidden (saves CPU when mounted, etc.)
+        local mainFrame = self.mainFrame
+        local mainHidden = not mainFrame or not mainFrame:IsShown()
+        local defIcons = self.defensiveIcons
+        local defHidden = not defIcons or #defIcons == 0
+        if mainHidden and defHidden and not self.defensiveIcon then
+            self.updateTimeLeft = IDLE_CHECK_INTERVAL
+            return
+        end
 
         local inCombat = UnitAffectingCombat("player")
-        local baseUpdateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0.05
+
+        -- Cache CVar lookup (expensive string operation + registry lookup)
+        local now = GetTime()
+        if not cachedUpdateRate or (now - lastCVarCheck) > CVAR_CHECK_INTERVAL then
+            cachedUpdateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0.05
+            lastCVarCheck = now
+        end
 
         local updateRate
         if inCombat then
-            updateRate = math.max(baseUpdateRate, 0.03)
+            updateRate = math_max(cachedUpdateRate, 0.03)
         else
-            updateRate = math.max(baseUpdateRate * 2.5, 0.15)
+            -- Out of combat: use longer interval unless dirty
+            if not spellQueueDirty and not defensiveQueueDirty then
+                updateRate = IDLE_CHECK_INTERVAL
+            else
+                updateRate = math_max(cachedUpdateRate * 2.5, 0.15)
+            end
         end
 
-        if self.updateTimeLeft <= 0 then
-            self.updateTimeLeft = updateRate
-            self:UpdateSpellQueue()
+        self.updateTimeLeft = updateRate
+
+        -- Always update spell queue (Blizzard doesn't provide events for rotation changes)
+        -- But SpellQueue.GetCurrentSpellQueue has internal 0.1s throttle
+        self:UpdateSpellQueue()
+        spellQueueDirty = false
+
+        -- Only update defensive cooldowns if dirty or periodic check
+        if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
             self:UpdateDefensiveCooldowns()
+            defensiveQueueDirty = false
+            lastFullUpdate = now
         end
     end)
 end

@@ -156,9 +156,9 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
     flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)  -- Higher level to ensure visibility
     
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 7)  -- High sublevel on OVERLAY
     flashTexture:SetAllPoints(flashFrame)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
