@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 2)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 4)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -604,3 +604,98 @@ function SpellDB.GetTableStats()
     for _ in pairs(UTILITY_SPELLS) do utilCount = utilCount + 1 end
     return defCount, healCount, ccCount, utilCount
 end
+
+--------------------------------------------------------------------------------
+-- CLASS DEFAULTS: Per-class spell lists for defensive queue feature
+-- These are user-configurable starting points, stored in saved variables
+--------------------------------------------------------------------------------
+
+-- Self-heal spells (shown at 80% health threshold)
+SpellDB.CLASS_SELFHEAL_DEFAULTS = {
+    -- Death Knight: Death Strike is #1 priority (generates runic power refund at low HP)
+    DEATHKNIGHT = {49998},                           -- Death Strike
+    
+    -- Demon Hunter: Blur is instant mitigation, Soul Cleave for Vengeance
+    DEMONHUNTER = {198589, 228477},                  -- Blur, Soul Cleave (Veng only)
+    
+    -- Druid: Regrowth (Predatory Swiftness proc!), Frenzied Regen (Bear), Renewal, Barkskin
+    DRUID = {8936, 22842, 108238, 22812},            -- Regrowth, Frenzied Regen, Renewal, Barkskin
+    
+    -- Evoker: Obsidian Scales (instant absorb), Verdant Embrace (instant heal)
+    EVOKER = {363916, 360995},                       -- Obsidian Scales, Verdant Embrace
+    
+    -- Hunter: Exhilaration is the only real self-heal
+    HUNTER = {109304},                               -- Exhilaration
+    
+    -- Mage: Barriers are instant absorbs - pick one based on spec
+    MAGE = {11426, 235313, 235450},                  -- Ice Barrier, Blazing Barrier, Prismatic Barrier
+    
+    -- Monk: Expel Harm is instant, strong heal
+    MONK = {322101},                                 -- Expel Harm
+    
+    -- Paladin: Word of Glory (free with Holy Power), Divine Protection (instant)
+    PALADIN = {85673, 498},                          -- Word of Glory, Divine Protection
+    
+    -- Priest: Desperate Prayer (instant, strong), Power Word: Shield (instant absorb)
+    PRIEST = {19236, 17},                            -- Desperate Prayer, PW:Shield
+    
+    -- Rogue: Crimson Vial is the only heal, Feint for mitigation
+    ROGUE = {185311, 1966},                          -- Crimson Vial, Feint
+    
+    -- Shaman: Astral Shift is instant damage reduction, Healing Surge
+    SHAMAN = {108271, 8004},                         -- Astral Shift, Healing Surge
+    
+    -- Warlock: Dark Pact (instant absorb), Drain Life (channeled but heals)
+    WARLOCK = {108416, 234153},                      -- Dark Pact, Drain Life
+    
+    -- Warrior: Victory Rush (proc), Impending Victory (talent), Ignore Pain
+    WARRIOR = {34428, 202168, 190456},               -- Victory Rush, Impending Victory, Ignore Pain
+}
+
+-- Major cooldowns for critical situations (shown at 60% health threshold)
+SpellDB.CLASS_COOLDOWN_DEFAULTS = {
+    -- Death Knight: IBF is the big one, AMS for magic damage
+    DEATHKNIGHT = {48792, 48707},                    -- Icebound Fortitude, Anti-Magic Shell
+    
+    -- Demon Hunter: Netherwalk (immunity), Darkness (AoE DR)
+    DEMONHUNTER = {196555, 196718},                  -- Netherwalk, Darkness
+    
+    -- Druid: Survival Instincts (Feral/Guardian)
+    DRUID = {61336},                                 -- Survival Instincts
+    
+    -- Evoker: Renewing Blaze (heal over time + death save)
+    EVOKER = {374348},                               -- Renewing Blaze
+    
+    -- Hunter: Turtle is immunity, Fortitude of the Bear (talent)
+    HUNTER = {186265, 388035},                       -- Aspect of the Turtle, Fortitude of the Bear
+    
+    -- Mage: Ice Block (immunity), Greater Invisibility (DR + threat drop)
+    MAGE = {45438, 110959},                          -- Ice Block, Greater Invisibility
+    
+    -- Monk: Fortifying Brew, Touch of Karma (WW), Diffuse Magic
+    MONK = {115203, 122470, 122783},                 -- Fortifying Brew, Touch of Karma, Diffuse Magic
+    
+    -- Paladin: Divine Shield (immunity), Lay on Hands (full heal)
+    PALADIN = {642, 633},                            -- Divine Shield, Lay on Hands
+    
+    -- Priest: Dispersion (Shadow), Fade (threat + DR talents)
+    PRIEST = {47585, 586},                           -- Dispersion, Fade
+    
+    -- Rogue: Cloak of Shadows (magic immunity), Evasion (dodge)
+    ROGUE = {31224, 5277},                           -- Cloak of Shadows, Evasion
+    
+    -- Shaman: Earth Elemental (taunt)
+    SHAMAN = {198103},                               -- Earth Elemental
+    
+    -- Warlock: Unending Resolve (big DR)
+    WARLOCK = {104773},                              -- Unending Resolve
+    
+    -- Warrior: Shield Wall (Prot), Die by the Sword (Arms/Fury), Rallying Cry
+    WARRIOR = {871, 118038, 97462},                  -- Shield Wall, Die by the Sword, Rallying Cry
+}
+
+-- Pet heal spells (shown when PET health is low)
+SpellDB.CLASS_PETHEAL_DEFAULTS = {
+    HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
+    WARLOCK = {755},                                 -- Health Funnel
+}

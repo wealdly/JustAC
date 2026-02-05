@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 10)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 11)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -41,6 +41,12 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     if not button then return nil end
 
     button:SetSize(actualIconSize, actualIconSize)
+
+    -- Cooldown container: clips cooldown swipes but glows parent to button directly (not clipped)
+    local cooldownContainer = CreateFrame("Frame", nil, button)
+    cooldownContainer:SetAllPoints(button)
+    cooldownContainer:SetClipsChildren(true)
+    button.cooldownContainer = cooldownContainer
 
     local firstIconCenter = actualIconSize / 2
     -- Use health bar offset for SIDE1 when health bar shown, otherwise use consistent base spacing
@@ -170,14 +176,15 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button.flashtime = 0
 
     -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
+    -- Parent to cooldownContainer so swipes are clipped to button bounds (glows parent to button, not clipped)
     -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
-    local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    local cooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
     cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
-    cooldown:SetSwipeColor(0, 0, 0, 0.8)
+    cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
     -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
     -- Access the countdown text region and modify its appearance
@@ -191,16 +198,21 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end
 
+    -- Clear cooldown to prevent visual artifacts on load
+    cooldown:Clear()
+    cooldown:Hide()  -- Hide until a cooldown is actually set
     button.cooldown = cooldown
 
     -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
-    local chargeCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    -- Same 4px inset as main cooldown to match Blizzard's ActionButtonTemplate
+    local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
     chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     chargeCooldown:SetDrawEdge(true)
-    chargeCooldown:SetDrawSwipe(false)  -- Only edge, no swipe
+    chargeCooldown:SetDrawSwipe(true)
     chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
     chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
+    chargeCooldown:Clear()  -- Clear to prevent visual artifacts on load
     chargeCooldown:Hide()
     button.chargeCooldown = chargeCooldown
     
@@ -236,7 +248,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
     chargeText:SetTextColor(1, 1, 1, 1)
     chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -885,7 +897,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
-    cooldown:SetSwipeColor(0, 0, 0, 0.8)
+    cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
     -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
     -- Access the countdown text region and modify its appearance
@@ -899,16 +911,21 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
         end
     end
 
+    -- Clear cooldown to prevent visual artifacts on load
+    cooldown:Clear()
+    cooldown:Hide()  -- Hide until a cooldown is actually set
     button.cooldown = cooldown
 
     -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
+    -- Same 4px inset as main cooldown to match Blizzard's ActionButtonTemplate
     local chargeCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
     chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
     chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
     chargeCooldown:SetDrawEdge(true)
-    chargeCooldown:SetDrawSwipe(false)  -- Only edge, no swipe
+    chargeCooldown:SetDrawSwipe(true)
     chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
     chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
+    chargeCooldown:Clear()  -- Clear to prevent visual artifacts on load
     chargeCooldown:Hide()
     button.chargeCooldown = chargeCooldown
     
@@ -949,7 +966,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
     chargeText:SetTextColor(1, 1, 1, 1)
     chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText

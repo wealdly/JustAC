@@ -776,9 +776,9 @@ end
 
 function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
-    
+
     local debugMode = GetDebugMode()
-    
+
     -- 1. FORM/STANCE REDUNDANCY (check FIRST - unaffected by 12.0 secrets)
     -- Stance bar APIs are client-side UI state, always accessible
     -- If this is a form spell and we're already in that form, skip it
