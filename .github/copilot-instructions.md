@@ -32,6 +32,16 @@ end
 4. **DO NOT auto-increment versions** — Track changes in `UNRELEASED.md`, only bump version on explicit instruction
 5. **DO NOT auto-build or push** — Commit changes, let user build/push manually
 
+## Versioning
+
+**Semantic Versioning (MAJOR.MINOR.PATCH):**
+- Current: 3.21.0
+- Hotfixes: 3.21.1, 3.21.2, etc. (bug fixes only)
+- Features: 3.22.0, 3.23.0, etc. (new functionality)
+- Breaking: 4.0.0, 5.0.0, etc. (major rewrites)
+
+Update in three places: `JustAC.toc`, `CHANGELOG.md`, `UNRELEASED.md`
+
 ## Architecture (Load Order Matters)
 
 10 LibStub modules in `JustAC.toc` — **MUST edit in dependency order**:
@@ -122,10 +132,39 @@ Two-tier health thresholds in `JustAC.lua`:
 - `CLASS_SELFHEAL_DEFAULTS` — 80% threshold, quick heals
 - `CLASS_COOLDOWN_DEFAULTS` — 60% threshold, major defensives
 
-## 12.0 Compatibility
+## 12.0 Compatibility & Secret Values
 
-Safe APIs: `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`
-Secret handling: `BlizzardAPI.IsSecretValue()` — fail-open design (shows extra, never hides valid)
+**Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`
+
+**Secret Values (WoW 12.0+):**
+- Blizzard hides certain combat data in PvP/rated content to prevent automation
+- **Detection:** `BlizzardAPI.IsSecretValue(value)` returns `true` for secret data
+- **Critical limitations:**
+  - ❌ Cannot compare: `if charges > 2` crashes if `charges` is secret
+  - ❌ Cannot do arithmetic: `charges + 1` returns secret value (unusable)
+  - ❌ Cannot use in conditionals: `if duration > 5` fails if `duration` is secret
+  - ✅ Can pass to UI: `FontString:SetText(secretValue)` works (Blizzard handles internally)
+  - ✅ Can pass to cooldown: `Cooldown:SetCooldown(start, secretDuration)` works
+- **Common secret values:**
+  - `currentCharges` (charge count in combat)
+  - `duration` (cooldown duration in rated PvP)
+  - `UnitHealth()` result (exact health in arena)
+- **Fail-open design:** `IsSecretValue()` shows extra content rather than hiding valid data
+- **Fallback pattern:** Cache non-secret structure data (e.g., `maxCharges`) for comparison
+
+**Example handling:**
+```lua
+local charges = GetSpellCharges(spellID)
+if BlizzardAPI.IsSecretValue(charges) then
+    -- Pass directly to UI (Blizzard will show "?" or hide it)
+    button.Count:SetText(charges)
+else
+    -- Safe to compare/calculate
+    if charges > 1 then
+        button.Count:SetText(charges)
+    end
+end
+```
 
 ## Reference Docs
 
@@ -139,7 +178,7 @@ Secret handling: `BlizzardAPI.IsSecretValue()` — fail-open design (shows extra
 ## Build & Release
 
 PowerShell script `build.ps1` creates distributable package:
-- Extracts version from `JustAC.toc` (currently 3.10)
+- Extracts version from `JustAC.toc` (currently 3.21.0)
 - Packages core `.lua` files + `Libs/` folder
 - Removes duplicate nested lib folders (common packaging error)
 - Creates `dist/JustAC-<version>.zip` ready for CurseForge/GitHub
@@ -149,7 +188,7 @@ PowerShell script `build.ps1` creates distributable package:
 2. Update `UNRELEASED.md` with change notes
 3. When user requests version bump:
    - Move UNRELEASED changes to CHANGELOG.md
-   - Increment version in JustAC.toc
+   - Increment version in JustAC.toc (use semantic versioning: 3.21.0 → 3.21.1 or 3.22.0)
    - Update library versions if breaking changes
    - Clear UNRELEASED.md
    - Commit version bump
