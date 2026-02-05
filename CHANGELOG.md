@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.21] - 2026-02-04
+
+### Added
+- **Separate hotkey toggles**: Individual "Show Hotkeys" options for Offensive and Defensives sections
+  - Performance benefit: disabling skips hotkey detection for that section only
+- **Insert Procced Defensives option**: Toggle to control procced defensives (Victory Rush, free heals) at any health
+
+### Changed
+- **Options reorganization**: Moved "Primary Spell Scale" from General to Offensive section (offensive-only setting)
+- **Threshold note shortened**: More concise threshold fallback description
+- **Options preservation**: Fixed threshold settings and new toggles being removed during dynamic updates
+
+### Fixed
+- **Profile switching**: Fixed queue appearing when switching to healer spec marked as "DISABLED"
+- **Flash animation growth**: Fixed key press flash growing larger over time due to cumulative scale bug
+
 ## [3.2] - 2026-01-31
 
 ### Added
