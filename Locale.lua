@@ -90,6 +90,7 @@ L["Visibility"] = "Visibility"
 L["Queue Content"] = "Queue Content"
 L["Appearance"] = "Appearance"
 L["Display Behavior"] = "Display Behavior"
+L["Display"] = "Display"
 L["Visual Effects"] = "Visual Effects"
 L["Threshold Settings"] = "Threshold Settings"
 
@@ -206,7 +207,6 @@ L["Blacklist Info"] = "Hide spells from the queue.\n\n|cffff6666Shift+Right-clic
 L["Blacklisted Spells"] = "Blacklisted Spells"
 L["Defensives"] = "Defensives"
 L["Defensives Info"] = "Survival spells shown when health drops.\n|cff00ff00• Self-Heals|r: Below self-heal threshold\n|cffff6666• Major Cooldowns|r: Below cooldown threshold"
-L["Display Behavior"] = "Display Behavior"
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 L["Restore Class Defaults desc"] = "Reset the cooldown list to default spells for your class"
 
@@ -293,6 +293,7 @@ if L then
     L["Queue Content"] = "Warteschlangen-Inhalt"
     L["Appearance"] = "Aussehen"
     L["Display Behavior"] = "Anzeigeverhalten"
+    L["Display"] = "Anzeige"
     L["Visual Effects"] = "Visuelle Effekte"
     L["Threshold Settings"] = "Schwellenwert-Einstellungen"
 
@@ -452,6 +453,7 @@ if L then
     L["Queue Content"] = "Contenu de la file"
     L["Appearance"] = "Apparence"
     L["Display Behavior"] = "Comportement d'affichage"
+    L["Display"] = "Affichage"
     L["Visual Effects"] = "Effets visuels"
     L["Threshold Settings"] = "Paramètres de seuil"
 
@@ -611,6 +613,7 @@ if L then
     L["Queue Content"] = "Содержимое очереди"
     L["Appearance"] = "Внешний вид"
     L["Display Behavior"] = "Поведение отображения"
+    L["Display"] = "Отображение"
     L["Visual Effects"] = "Визуальные эффекты"
     L["Threshold Settings"] = "Настройки порогов"
 
@@ -705,6 +708,7 @@ end
 -------------------------------------------------------------------------------
 L = LibStub("AceLocale-3.0"):NewLocale("JustAssistedCombat", "esES")
 if L then
+    L["Display"] = "Pantalla"
     -- General UI
     L["JustAssistedCombat"] = "JustAssistedCombat"
     L["General"] = "General"
@@ -863,6 +867,7 @@ end
 -------------------------------------------------------------------------------
 L = LibStub("AceLocale-3.0"):NewLocale("JustAssistedCombat", "esMX")
 if L then
+    L["Display"] = "Pantalla"
     -- Use same translations as esES (Spanish from Spain)
     -- Mexican Spanish is very similar, main differences are in slang/colloquialisms
     -- For UI text, esES translations work perfectly fine
@@ -1088,6 +1093,7 @@ if L then
     L["Queue Content"] = "Conteúdo da fila"
     L["Appearance"] = "Aparência"
     L["Display Behavior"] = "Comportamento de exibição"
+    L["Display"] = "Exibição"
     L["Visual Effects"] = "Efeitos visuais"
     L["Threshold Settings"] = "Configurações de limite"
 
