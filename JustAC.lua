@@ -342,6 +342,11 @@ function JustAC:EnterDisabledMode()
         self.defensiveIcon:Hide()
     end
 
+    -- Hide health bar
+    if UIManager and UIManager.HideHealthBar then
+        UIManager.HideHealthBar()
+    end
+
     self:DebugPrint("Entered disabled mode for current spec")
 end
 
@@ -353,6 +358,14 @@ function JustAC:ExitDisabledMode()
 
     if self.mainFrame then
         self.mainFrame:Show()
+    end
+
+    -- Restore health bar if setting is enabled
+    if UIManager and UIManager.ShowHealthBar then
+        local profile = self:GetProfile()
+        if profile and profile.defensives and profile.defensives.showHealthBar then
+            UIManager.ShowHealthBar()
+        end
     end
 
     self:ForceUpdateAll()
@@ -1209,11 +1222,9 @@ function JustAC:OnSpecChange()
         end
 
         if target and target ~= "" and target ~= self.db:GetCurrentProfile() then
-            local ok = pcall(function() self.db:SetProfile(target) end)
-            if ok then
-                self.db.char.lastKnownSpec = newSpec
-                return
-            end
+            -- SetProfile triggers RefreshConfig via OnProfileChanged callback;
+            -- cache invalidation below still runs for spec-dependent state
+            pcall(function() self.db:SetProfile(target) end)
         end
     elseif self.isDisabledMode then
         self:ExitDisabledMode()
