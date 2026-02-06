@@ -11,6 +11,10 @@ local FLASH_DURATION = 0.2
 local FLASH_MAX_SCALE = 1.12
 local FLASH_SCALE_DURATION = 0.12
 
+-- Sentinel value: indicates no previous OnUpdate handler existed before flash
+-- Must be a unique truthy value so the guard check works correctly
+local FLASH_NO_PREV_HANDLER = {}
+
 -- Forward declarations
 local StopAssistedGlow
 local StopDefensiveGlow
@@ -260,22 +264,19 @@ end
 
 local function StartFlash(button)
     if not button.Flash then return end
-    
+
     button.flashing = 1
     button.flashtime = FLASH_DURATION
-    
+
     button.Flash:SetDrawLayer("OVERLAY", 2)
     button.Flash:SetAlpha(1.0)
     button.Flash:Show()
-    
+
     button.flashScaleTimer = FLASH_SCALE_DURATION
     if button.FlashFrame and button.FlashFrame.SetScale then
-        -- Always use 1.0 as base scale to prevent cumulative scaling bug
-        -- FlashFrame is created at scale 1.0 and should always return to that
-        button._flashBaseScale = 1.0
         button.FlashFrame:SetScale(FLASH_MAX_SCALE)
     end
-    
+
     if not button._prevFlashOnUpdate then
         local prev = button:GetScript("OnUpdate")
         if prev then
@@ -289,11 +290,10 @@ local function StartFlash(button)
             local function runner(self, elapsed)
                 UpdateFlash(self, elapsed)
             end
-            button._prevFlashOnUpdate = nil
+            button._prevFlashOnUpdate = FLASH_NO_PREV_HANDLER
             button:SetScript("OnUpdate", runner)
         end
     end
-    -- Note: Flash is now passed through FROM action bars TO our icons (same as cooldowns)
 end
 
 local function StopFlash(button)
@@ -305,40 +305,40 @@ local function StopFlash(button)
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
     end
-    -- Restore base scale
-    if button.FlashFrame and button._flashBaseScale then
-        button.FlashFrame:SetScale(button._flashBaseScale)
+    -- Always restore FlashFrame to base scale
+    if button.FlashFrame and button.FlashFrame.SetScale then
+        button.FlashFrame:SetScale(1)
     end
-    button._flashBaseScale = nil
     if button._prevFlashOnUpdate then
-        button:SetScript("OnUpdate", button._prevFlashOnUpdate)
+        if button._prevFlashOnUpdate == FLASH_NO_PREV_HANDLER then
+            button:SetScript("OnUpdate", nil)
+        else
+            button:SetScript("OnUpdate", button._prevFlashOnUpdate)
+        end
         button._prevFlashOnUpdate = nil
-    else
-        button:SetScript("OnUpdate", nil)
     end
 end
 
 UpdateFlash = function(button, elapsed)
     if not button or button.flashing ~= 1 or not button.Flash then return end
-    
+
     button.flashtime = button.flashtime - elapsed
-    
+
     if button.flashtime <= 0 then
         StopFlash(button)
         return
     end
-    
+
     if button.flashScaleTimer and button.FlashFrame and button.FlashFrame.SetScale then
-        local baseScale = button._flashBaseScale or 1
         local st = button.flashScaleTimer - elapsed
         if st <= 0 then
             button.flashScaleTimer = nil
-            button.FlashFrame:SetScale(baseScale)
+            button.FlashFrame:SetScale(1)
         else
             button.flashScaleTimer = st
             local progress = 1 - (st / FLASH_SCALE_DURATION)
             local curScale = FLASH_MAX_SCALE - ((FLASH_MAX_SCALE - 1) * progress)
-            button.FlashFrame:SetScale(baseScale * curScale)
+            button.FlashFrame:SetScale(curScale)
         end
     end
 end

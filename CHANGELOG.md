@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.21.2] - 2026-02-05
+
+### Fixed
+
+- **Flash animation scaling bug**: Fixed OnUpdate handler stacking that caused spell flash to grow uncontrollably on rapid key presses (sentinel value pattern prevents re-wrapping)
+- **Spec change cache invalidation**: Profile switch via spec change now properly invalidates spell, macro, and hotkey caches (early return was skipping cache clears)
+- **Health bar in disabled mode**: Health bar now hides when entering disabled mode and restores when exiting
+
+### Changed
+
+- **Options panel reorganization**: Offensive and Defensive tabs now mirror each other with parallel section structure (Queue Content → Display → unique sections)
+- **Gamepad Icon Style**: Moved from Icon Layout to Appearance section in General tab (visual setting, not spatial layout)
+
 ## [3.21.1] - 2026-02-04
 
 ### Fixed
