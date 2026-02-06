@@ -147,7 +147,8 @@ function Options.UpdateBlacklistOptions(addon)
     -- Static keys to preserve (defined in InitOptionsTable)
     local staticKeys = {
         info = true, contentHeader = true, includeHiddenAbilities = true,
-        showSpellbookProcs = true, hideItemAbilities = true, showHotkeys = true,
+        showSpellbookProcs = true, hideItemAbilities = true,
+        displayHeader = true, firstIconScale = true, showHotkeys = true,
         blacklistHeader = true, blacklistInfo = true,
     }
 
@@ -785,10 +786,10 @@ function Options.UpdateDefensivesOptions(addon)
 
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
-        info = true, header = true, enabled = true, showProcs = true, 
+        info = true, header = true, enabled = true, showProcs = true,
+        displayHeader = true, iconScale = true, maxIcons = true, position = true,
+        showHotkeys = true, displayMode = true, showHealthBar = true,
         thresholdHeader = true, selfHealThreshold = true, cooldownThreshold = true, petHealThreshold = true, thresholdNote = true,
-        behaviorHeader = true, displayMode = true, showHealthBar = true,
-        position = true, iconScale = true, maxIcons = true, showHotkeys = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -898,27 +899,6 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.queueOrientation = val
                             addon:UpdateFrameSize()
-                        end
-                    },
-                    gamepadIconStyle = {
-                        type = "select",
-                        name = L["Gamepad Icon Style"],
-                        desc = L["Gamepad Icon Style desc"],
-                        order = 16,
-                        width = "normal",
-                        values = {
-                            generic = L["Generic"],
-                            xbox = L["Xbox"],
-                            playstation = L["PlayStation"],
-                        },
-                        get = function() return addon.db.profile.gamepadIconStyle or "xbox" end,
-                        set = function(_, val)
-                            addon.db.profile.gamepadIconStyle = val
-                            -- Force keybind cache refresh
-                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
-                                ActionBarScanner.ClearAllCaches()
-                            end
                         end
                     },
                     -- VISIBILITY (20-29)
@@ -1041,6 +1021,27 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
+                    gamepadIconStyle = {
+                        type = "select",
+                        name = L["Gamepad Icon Style"],
+                        desc = L["Gamepad Icon Style desc"],
+                        order = 35,
+                        width = "normal",
+                        values = {
+                            generic = L["Generic"],
+                            xbox = L["Xbox"],
+                            playstation = L["PlayStation"],
+                        },
+                        get = function() return addon.db.profile.gamepadIconStyle or "xbox" end,
+                        set = function(_, val)
+                            addon.db.profile.gamepadIconStyle = val
+                            -- Force keybind cache refresh
+                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                                ActionBarScanner.ClearAllCaches()
+                            end
+                        end
+                    },
                     -- SYSTEM (40-49)
                     systemHeader = {
                         type = "header",
@@ -1115,11 +1116,30 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
+                    -- DISPLAY (15-19)
+                    displayHeader = {
+                        type = "header",
+                        name = L["Display"],
+                        order = 15,
+                    },
+                    firstIconScale = {
+                        type = "range",
+                        name = L["Primary Spell Scale"],
+                        desc = L["Primary Spell Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 16,
+                        width = "normal",
+                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
+                        set = function(_, val)
+                            addon.db.profile.firstIconScale = val
+                            addon:UpdateFrameSize()
+                        end
+                    },
                     showHotkeys = {
                         type = "toggle",
                         name = L["Show Offensive Hotkeys"],
                         desc = L["Show Offensive Hotkeys desc"],
-                        order = 14,
+                        order = 17,
                         width = "full",
                         get = function() return addon.db.profile.showOffensiveHotkeys ~= false end,
                         set = function(_, val)
@@ -1129,19 +1149,6 @@ local function CreateOptionsTable(addon)
                                 ActionBarScanner.ClearAllCaches()
                             end
                             addon:ForceUpdate()
-                        end
-                    },
-                    firstIconScale = {
-                        type = "range",
-                        name = L["Primary Spell Scale"],
-                        desc = L["Primary Spell Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
-                        order = 15,
-                        width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.2 end,
-                        set = function(_, val)
-                            addon.db.profile.firstIconScale = val
-                            addon:UpdateFrameSize()
                         end
                     },
                     -- BLACKLIST (20+)
@@ -1183,9 +1190,10 @@ local function CreateOptionsTable(addon)
                         order = 1,
                         fontSize = "medium"
                     },
+                    -- QUEUE CONTENT (2-4)
                     header = {
                         type = "header",
-                        name = L["Defensive Icon"],
+                        name = L["Queue Content"],
                         order = 2,
                     },
                     enabled = {
@@ -1205,7 +1213,7 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Insert Procced Defensives"],
                         desc = L["Insert Procced Defensives desc"],
-                        order = 3.5,
+                        order = 4,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showProcs ~= false end,
                         set = function(_, val)
@@ -1214,69 +1222,83 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
-                    thresholdHeader = {
+                    -- DISPLAY (5-9)
+                    displayHeader = {
                         type = "header",
-                        name = L["Threshold Settings"],
-                        order = 4,
+                        name = L["Display"],
+                        order = 5,
                     },
-                    selfHealThreshold = {
+                    iconScale = {
                         type = "range",
-                        name = L["Self-Heal Threshold"],
-                        desc = L["Self-Heal Threshold desc"],
-                        min = 1, max = 100, step = 1,
-                        order = 4.1,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.selfHealThreshold = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    cooldownThreshold = {
-                        type = "range",
-                        name = L["Major Cooldown Threshold"],
-                        desc = L["Major Cooldown Threshold desc"],
-                        min = 1, max = 100, step = 1,
-                        order = 4.2,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.cooldownThreshold = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    petHealThreshold = {
-                        type = "range",
-                        name = L["Pet Heal Threshold"],
-                        desc = L["Pet Heal Threshold desc"],
-                        min = 1, max = 100, step = 1,
-                        order = 4.3,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.petHealThreshold or 50 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.petHealThreshold = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    thresholdNote = {
-                        type = "description",
-                        name = L["Threshold Note"],
-                        order = 4.9,
-                        fontSize = "small",
-                    },
-                    behaviorHeader = {
-                        type = "header",
-                        name = L["Display Behavior"],
+                        name = L["Defensive Icon Scale"],
+                        desc = L["Defensive Icon Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
                         order = 6,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.iconScale = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    maxIcons = {
+                        type = "range",
+                        name = L["Defensive Max Icons"],
+                        desc = L["Defensive Max Icons desc"],
+                        min = 1, max = 3, step = 1,
+                        order = 6.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.maxIcons or 3 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.maxIcons = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    position = {
+                        type = "select",
+                        name = L["Icon Position"],
+                        desc = L["Icon Position desc"],
+                        order = 7,
+                        width = "normal",
+                        values = {
+                            SIDE1 = L["Side 1 (Health Bar)"],
+                            SIDE2 = L["Side 2"],
+                            LEADING = L["Leading Edge"],
+                        },
+                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,  -- Default: SIDE1
+                        set = function(_, val)
+                            addon.db.profile.defensives.position = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    showHotkeys = {
+                        type = "toggle",
+                        name = L["Show Defensive Hotkeys"],
+                        desc = L["Show Defensive Hotkeys desc"],
+                        order = 7.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showHotkeys ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showHotkeys = val
+                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                                ActionBarScanner.ClearAllCaches()
+                            end
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
                     displayMode = {
                         type = "select",
                         name = L["Defensive Display Mode"],
                         desc = L["Defensive Display Mode desc"],
-                        order = 7,
+                        order = 8,
                         width = "double",
                         values = {
                             healthBased = L["When Health Low"],
@@ -1313,7 +1335,7 @@ local function CreateOptionsTable(addon)
                         type = "toggle",
                         name = L["Show Health Bar"],
                         desc = L["Show Health Bar desc"],
-                        order = 8,
+                        order = 9,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showHealthBar end,
                         set = function(_, val)
@@ -1330,73 +1352,61 @@ local function CreateOptionsTable(addon)
                         end,
                         -- Health bar works independently of defensive queue
                     },
-                    position = {
-                        type = "select",
-                        name = L["Icon Position"],
-                        desc = L["Icon Position desc"],
-                        order = 9,
-                        width = "normal",
-                        values = {
-                            SIDE1 = L["Side 1 (Health Bar)"],
-                            SIDE2 = L["Side 2"],
-                            LEADING = L["Leading Edge"],
-                        },
-                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,  -- Default: SIDE1
-                        set = function(_, val)
-                            addon.db.profile.defensives.position = val
-                            UIManager.CreateSpellIcons(addon)
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    iconScale = {
-                        type = "range",
-                        name = L["Defensive Icon Scale"],
-                        desc = L["Defensive Icon Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
+                    -- THRESHOLD SETTINGS (10-14)
+                    thresholdHeader = {
+                        type = "header",
+                        name = L["Threshold Settings"],
                         order = 10,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.iconScale = val
-                            UIManager.CreateSpellIcons(addon)
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
-                    maxIcons = {
+                    selfHealThreshold = {
                         type = "range",
-                        name = L["Defensive Max Icons"],
-                        desc = L["Defensive Max Icons desc"],
-                        min = 1, max = 3, step = 1,
+                        name = L["Self-Heal Threshold"],
+                        desc = L["Self-Heal Threshold desc"],
+                        min = 1, max = 100, step = 1,
                         order = 11,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.maxIcons or 3 end,
+                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
                         set = function(_, val)
-                            addon.db.profile.defensives.maxIcons = val
-                            UIManager.CreateSpellIcons(addon)
+                            addon.db.profile.defensives.selfHealThreshold = val
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
-                    showHotkeys = {
-                        type = "toggle",
-                        name = L["Show Defensive Hotkeys"],
-                        desc = L["Show Defensive Hotkeys desc"],
-                        order = 8.5,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.showHotkeys ~= false end,
+                    cooldownThreshold = {
+                        type = "range",
+                        name = L["Major Cooldown Threshold"],
+                        desc = L["Major Cooldown Threshold desc"],
+                        min = 1, max = 100, step = 1,
+                        order = 12,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
                         set = function(_, val)
-                            addon.db.profile.defensives.showHotkeys = val
-                            local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-                            if ActionBarScanner and ActionBarScanner.ClearAllCaches then
-                                ActionBarScanner.ClearAllCaches()
-                            end
+                            addon.db.profile.defensives.cooldownThreshold = val
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
-
+                    petHealThreshold = {
+                        type = "range",
+                        name = L["Pet Heal Threshold"],
+                        desc = L["Pet Heal Threshold desc"],
+                        min = 1, max = 100, step = 1,
+                        order = 13,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.petHealThreshold or 50 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.petHealThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    thresholdNote = {
+                        type = "description",
+                        name = L["Threshold Note"],
+                        order = 14,
+                        fontSize = "small",
+                    },
+                    -- SELF-HEAL PRIORITY LIST (20+)
                     selfHealHeader = {
                         type = "header",
                         name = L["Self-Heal Priority List"],

@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.21.1
+## Current Version: 3.21.2
 
 **Instructions:**
 - Add changes here as they're made
