@@ -15,7 +15,7 @@ local DEFENSIVE_SPELLS = {
     [49028] = true,   -- Dancing Rune Weapon (Blood)
     [55233] = true,   -- Vampiric Blood
     [194679] = true,  -- Rune Tap
-    [206931] = true,  -- Blooddrinker
+    -- REMOVED: Blooddrinker (206931) - Blood DK damage channel, rotational DPS
     [219809] = true,  -- Tombstone
     [49039] = true,   -- Lichborne
     [51052] = true,   -- Anti-Magic Zone
@@ -27,7 +27,7 @@ local DEFENSIVE_SPELLS = {
     [198589] = true,  -- Blur
     [203720] = true,  -- Demon Spikes
     [204021] = true,  -- Fiery Brand
-    [212084] = true,  -- Fel Devastation
+    -- REMOVED: Fel Devastation (212084) - Core Vengeance DH rotational AoE damage
     [263648] = true,  -- Soul Barrier
     
     -- Druid
@@ -91,7 +91,7 @@ local DEFENSIVE_SPELLS = {
     [184662] = true,  -- Shield of Vengeance
     [204018] = true,  -- Blessing of Spellwarding
     [228049] = true,  -- Guardian of the Forgotten Queen
-    [152262] = true,  -- Seraphim
+    -- REMOVED: Seraphim (152262) - Prot Paladin DPS cooldown
     [378974] = true,  -- Bastion of Light
     [387174] = true,  -- Eye of Tyr
     [389539] = true,  -- Sentinel
@@ -149,8 +149,8 @@ local DEFENSIVE_SPELLS = {
     [190456] = true,  -- Ignore Pain
     [213871] = true,  -- Bodyguard
     [386208] = true,  -- Defensive Stance
-    [385060] = true,  -- Odyn's Fury (defensive component)
-    [384318] = true,  -- Thunderous Roar
+    -- REMOVED: Odyn's Fury (385060) - Fury Warrior major DPS cooldown
+    -- REMOVED: Thunderous Roar (384318) - Warrior AoE damage cooldown (bleed)
 }
 
 --------------------------------------------------------------------------------

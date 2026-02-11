@@ -15,7 +15,7 @@ local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
 
--- Visual constants (copied from UIManager.lua)
+-- Visual constants
 local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
@@ -43,13 +43,19 @@ end
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 
--- Forward declaration for UIManager access
+-- Masque support
+local Masque = LibStub("Masque", true)
 local GetMasqueGroup, GetMasqueDefensiveGroup
 
--- Initialize Masque accessors (called by UIManager after module load)
-function UIFrameFactory.InitializeMasqueAccessors(getMasqueGroupFunc, getMasqueDefensiveGroupFunc)
-    GetMasqueGroup = getMasqueGroupFunc
-    GetMasqueDefensiveGroup = getMasqueDefensiveGroupFunc
+if Masque then
+    local MasqueGroup = Masque:Group("JustAssistedCombat", "Spell Queue")
+    local MasqueDefensiveGroup = Masque:Group("JustAssistedCombat", "Defensive")
+    
+    GetMasqueGroup = function() return MasqueGroup end
+    GetMasqueDefensiveGroup = function() return MasqueDefensiveGroup end
+else
+    GetMasqueGroup = function() return nil end
+    GetMasqueDefensiveGroup = function() return nil end
 end
 
 -- Helper: Create a single defensive icon button at the specified index (0-based)
