@@ -148,7 +148,7 @@ function Options.UpdateBlacklistOptions(addon)
     local staticKeys = {
         info = true, contentHeader = true, includeHiddenAbilities = true,
         showSpellbookProcs = true, hideItemAbilities = true,
-        displayHeader = true, firstIconScale = true, showHotkeys = true,
+        displayHeader = true, maxIcons = true, firstIconScale = true, showHotkeys = true, glowMode = true,
         blacklistHeader = true, blacklistInfo = true,
     }
 
@@ -788,7 +788,7 @@ function Options.UpdateDefensivesOptions(addon)
     local staticKeys = {
         info = true, header = true, enabled = true, showProcs = true,
         displayHeader = true, iconScale = true, maxIcons = true, position = true,
-        showHotkeys = true, displayMode = true, showHealthBar = true,
+        showHotkeys = true, glowMode = true, displayMode = true, showHealthBar = true,
         thresholdHeader = true, selfHealThreshold = true, cooldownThreshold = true, petHealThreshold = true, thresholdNote = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
@@ -843,19 +843,6 @@ local function CreateOptionsTable(addon)
                         type = "header",
                         name = L["Icon Layout"],
                         order = 10,
-                    },
-                    maxIcons = {
-                        type = "range",
-                        name = L["Max Icons"],
-                        desc = L["Max Icons desc"],
-                        min = 1, max = 7, step = 1,
-                        order = 11,
-                        width = "normal",
-                        get = function() return addon.db.profile.maxIcons or 5 end,
-                        set = function(_, val)
-                            addon.db.profile.maxIcons = val
-                            addon:UpdateFrameSize()
-                        end
                     },
                     iconSize = {
                         type = "range",
@@ -950,18 +937,6 @@ local function CreateOptionsTable(addon)
                         name = L["Appearance"],
                         order = 30,
                     },
-                    focusEmphasis = {
-                        type = "toggle",
-                        name = L["Highlight Primary Spell"],
-                        desc = L["Highlight Primary Spell desc"],
-                        order = 31,
-                        width = "normal",
-                        get = function() return addon.db.profile.focusEmphasis ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.focusEmphasis = val
-                            addon:ForceUpdate()
-                        end
-                    },
                     tooltipMode = {
                         type = "select",
                         name = L["Tooltips"],
@@ -1048,17 +1023,24 @@ local function CreateOptionsTable(addon)
                         name = L["System"],
                         order = 40,
                     },
-                    panelLocked = {
-                        type = "toggle",
-                        name = L["Lock Panel"],
-                        desc = L["Lock Panel desc"],
+                    panelInteraction = {
+                        type = "select",
+                        name = L["Panel Interaction"],
+                        desc = L["Panel Interaction desc"],
                         order = 41,
-                        width = "full",
-                        get = function() return addon.db.profile.panelLocked or false end,
+                        width = "normal",
+                        values = {
+                            unlocked = L["Unlocked"],
+                            locked = L["Locked"],
+                            clickthrough = L["Click Through"],
+                        },
+                        sorting = { "unlocked", "locked", "clickthrough" },
+                        get = function()
+                            local profile = addon.db.profile
+                            return profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
+                        end,
                         set = function(_, val)
-                            addon.db.profile.panelLocked = val
-                            local status = val and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
-                            addon:DebugPrint("Panel " .. status)
+                            addon.db.profile.panelInteraction = val
                         end
                     },
                 }
@@ -1122,6 +1104,19 @@ local function CreateOptionsTable(addon)
                         name = L["Display"],
                         order = 15,
                     },
+                    maxIcons = {
+                        type = "range",
+                        name = L["Max Icons"],
+                        desc = L["Max Icons desc"],
+                        min = 1, max = 7, step = 1,
+                        order = 15.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.maxIcons or 5 end,
+                        set = function(_, val)
+                            addon.db.profile.maxIcons = val
+                            addon:UpdateFrameSize()
+                        end
+                    },
                     firstIconScale = {
                         type = "range",
                         name = L["Primary Spell Scale"],
@@ -1148,6 +1143,25 @@ local function CreateOptionsTable(addon)
                             if ActionBarScanner and ActionBarScanner.ClearAllCaches then
                                 ActionBarScanner.ClearAllCaches()
                             end
+                            addon:ForceUpdate()
+                        end
+                    },
+                    glowMode = {
+                        type = "select",
+                        name = L["Highlight Mode"],
+                        desc = L["Highlight Mode desc"],
+                        order = 18,
+                        width = "normal",
+                        values = {
+                            all = L["All Glows"],
+                            primaryOnly = L["Primary Only"],
+                            procOnly = L["Proc Only"],
+                            none = L["No Glows"],
+                        },
+                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        get = function() return addon.db.profile.glowMode or "all" end,
+                        set = function(_, val)
+                            addon.db.profile.glowMode = val
                             addon:ForceUpdate()
                         end
                     },
@@ -1228,31 +1242,31 @@ local function CreateOptionsTable(addon)
                         name = L["Display"],
                         order = 5,
                     },
-                    iconScale = {
-                        type = "range",
-                        name = L["Defensive Icon Scale"],
-                        desc = L["Defensive Icon Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
-                        order = 6,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.iconScale = val
-                            UIManager.CreateSpellIcons(addon)
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
                     maxIcons = {
                         type = "range",
                         name = L["Defensive Max Icons"],
                         desc = L["Defensive Max Icons desc"],
                         min = 1, max = 3, step = 1,
-                        order = 6.5,
+                        order = 6,
                         width = "normal",
                         get = function() return addon.db.profile.defensives.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
+                            UIManager.CreateSpellIcons(addon)
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    iconScale = {
+                        type = "range",
+                        name = L["Defensive Icon Scale"],
+                        desc = L["Defensive Icon Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 6.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.iconScale = val
                             UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
                         end,
@@ -1290,6 +1304,26 @@ local function CreateOptionsTable(addon)
                             if ActionBarScanner and ActionBarScanner.ClearAllCaches then
                                 ActionBarScanner.ClearAllCaches()
                             end
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    glowMode = {
+                        type = "select",
+                        name = L["Highlight Mode"],
+                        desc = L["Highlight Mode desc"],
+                        order = 7.6,
+                        width = "normal",
+                        values = {
+                            all = L["All Glows"],
+                            primaryOnly = L["Primary Only"],
+                            procOnly = L["Proc Only"],
+                            none = L["No Glows"],
+                        },
+                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        get = function() return addon.db.profile.defensives.glowMode or "all" end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.glowMode = val
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1444,7 +1478,7 @@ local function CreateOptionsTable(addon)
                     restoreCooldownDefaults = {
                         type = "execute",
                         name = L["Restore Class Defaults name"],
-                        desc = L["Restore Class Defaults desc"],
+                        desc = L["Restore Cooldowns Defaults desc"],
                         order = 72,
                         width = "normal",
                         func = function()
