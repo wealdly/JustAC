@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.21.5
+## Current Version: 3.21.6
 
 **Instructions:**
 
@@ -12,5 +12,16 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 
 ### Changed
 
-- **Removed section summaries from Offensives/Defensives tabs**: Info descriptions at top of each tab removed — settings are self-explanatory
-- **Compact About panel**: Replaced verbose feature list with concise one-liner and setup commands
+(No unreleased changes yet)
+
+### Fixed
+
+(No unreleased changes yet)
+
+### Added
+
+(No unreleased changes yet)
+
+### Removed
+
+(No unreleased changes yet)
