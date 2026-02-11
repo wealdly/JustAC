@@ -156,9 +156,18 @@ local function TestHealthAccess()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
     
-    if issecretvalue and (issecretvalue(health) or issecretvalue(maxHealth)) then
-        return false
+    -- Check for secrets
+    if issecretvalue then
+        if issecretvalue(health) or issecretvalue(maxHealth) then
+            return false
+        end
     end
+    if canaccessvalue then
+        if not canaccessvalue(health) or not canaccessvalue(maxHealth) then
+            return false
+        end
+    end
+    
     return true
 end
 
@@ -172,14 +181,55 @@ local function TestAuraAccess()
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end  -- No more auras
             
-            local hasSecret = issecretvalue and (issecretvalue(auraData.spellId) or issecretvalue(auraData.name))
-            if hasSecret then
-                secretCount = secretCount + 1
-            else
+            local hasSecret = false
+            if issecretvalue then
+                if issecretvalue(auraData.spellId) or issecretvalue(auraData.name) then
+                    hasSecret = true
+                    secretCount = secretCount + 1
+                end
+            end
+            if not hasSecret and canaccessvalue then
+                if not canaccessvalue(auraData.spellId) or not canaccessvalue(auraData.name) then
+                    hasSecret = true
+                    secretCount = secretCount + 1
+                end
+            end
+            
+            if not hasSecret then
                 accessibleCount = accessibleCount + 1
             end
         end
 
+        return accessibleCount > 0 or (accessibleCount == 0 and secretCount == 0)
+    end
+
+    if UnitAura then
+        local accessibleCount = 0
+        local secretCount = 0
+        
+        for i = 1, 5 do
+            local name, _, _, _, _, _, _, _, _, spellId = UnitAura("player", i, "HELPFUL")
+            if not name then break end
+            
+            local hasSecret = false
+            if issecretvalue then
+                if issecretvalue(name) or issecretvalue(spellId) then
+                    hasSecret = true
+                    secretCount = secretCount + 1
+                end
+            end
+            if not hasSecret and canaccessvalue then
+                if not canaccessvalue(name) or not canaccessvalue(spellId) then
+                    hasSecret = true
+                    secretCount = secretCount + 1
+                end
+            end
+            
+            if not hasSecret then
+                accessibleCount = accessibleCount + 1
+            end
+        end
+        
         return accessibleCount > 0 or (accessibleCount == 0 and secretCount == 0)
     end
 
@@ -359,6 +409,16 @@ end
 -- API-Specific Secret-Aware Helpers
 --------------------------------------------------------------------------------
 
+function BlizzardAPI.GetCooldownForDisplay(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return nil, nil end
+    local cd = C_Spell_GetSpellCooldown(spellID)
+    if not cd then return nil, nil end
+    
+    local start = BlizzardAPI.IsSecretValue(cd.startTime) and nil or cd.startTime
+    local dur = BlizzardAPI.IsSecretValue(cd.duration) and nil or cd.duration
+    return start, dur
+end
+
 -- Fail-open if secret (assume ready)
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
@@ -404,21 +464,43 @@ end
 --------------------------------------------------------------------------------
 
 function BlizzardAPI.GetSpellCooldownSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellCooldownSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellCooldownSecrecy, spellID)
+    if GetSpellCooldownSecrecy then
+        local ok, lvl = pcall(GetSpellCooldownSecrecy, spellID)
         if ok then return lvl end
+    end
+
+    -- Fallback heuristic: inspect the cooldown values and treat them as secret
+    if C_Spell_GetSpellCooldown then
+        local ok, start, duration = pcall(function()
+            local s, d = C_Spell_GetSpellCooldown(spellID)
+            return s, d
+        end)
+        if ok and (BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration)) then
+            return "SECRET"
+        end
     end
     return nil
 end
 
 -- Returns nil, nil when values are secret
 function BlizzardAPI.GetSafeSpellCooldown(spellID)
-    if not C_Spell_GetSpellCooldown then return nil, nil end
-    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return nil, nil end
+    local ok, start, duration = pcall(function()
+        if C_Spell_GetSpellCooldown then
+            return C_Spell_GetSpellCooldown(spellID)
+        elseif GetSpellCooldown then
+            return GetSpellCooldown(spellID)
+        end
+        return nil, nil
+    end)
 
-    local start, duration = cd.startTime, cd.duration
-    if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then
+    if not ok then return nil, nil end
+    if start == nil and duration == nil then return nil, nil end
+
+    if BlizzardAPI.IsSecretValue and (BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration)) then
+        return nil, nil
+    end
+
+    if BlizzardAPI.CanAccessValue and ((start ~= nil and not BlizzardAPI.CanAccessValue(start)) or (duration ~= nil and not BlizzardAPI.CanAccessValue(duration))) then
         return nil, nil
     end
 
@@ -426,24 +508,24 @@ function BlizzardAPI.GetSafeSpellCooldown(spellID)
 end
 
 function BlizzardAPI.GetSpellAuraSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellAuraSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellAuraSecrecy, spellID)
+    if GetSpellAuraSecrecy then
+        local ok, lvl = pcall(GetSpellAuraSecrecy, spellID)
         if ok then return lvl end
     end
     return nil
 end
 
 function BlizzardAPI.GetSpellCastSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellCastSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellCastSecrecy, spellID)
+    if GetSpellCastSecrecy then
+        local ok, lvl = pcall(GetSpellCastSecrecy, spellID)
         if ok then return lvl end
     end
     return nil
 end
 
 function BlizzardAPI.ShouldUnitHealthMaxBeSecret(unitToken)
-    if C_Secrets and C_Secrets.ShouldUnitHealthMaxBeSecret then
-        local ok, res = pcall(C_Secrets.ShouldUnitHealthMaxBeSecret, unitToken)
+    if ShouldUnitHealthMaxBeSecret then
+        local ok, res = pcall(ShouldUnitHealthMaxBeSecret, unitToken)
         if ok then return res end
     end
     return nil
@@ -518,8 +600,10 @@ end
 
 function BlizzardAPI.GetSpellInfo(spellID)
     if not spellID or spellID == 0 then return nil end
-    if not C_Spell_GetSpellInfo then return nil end
-    return C_Spell_GetSpellInfo(spellID)
+    if C_Spell_GetSpellInfo then return C_Spell_GetSpellInfo(spellID) end
+    local name, _, icon = GetSpellInfo(spellID)
+    if name then return {name = name, iconID = icon} end
+    return nil
 end
 
 -- checkForVisibleButton: true=visible only, false=include hidden (macro conditionals)
@@ -589,6 +673,17 @@ function BlizzardAPI.ValidateAssistedCombatSetup()
     local isAvailable, failureReason = BlizzardAPI.IsAssistedCombatAvailable()
     if not isAvailable then
         issues[#issues + 1] = "Assisted Combat not available: " .. (failureReason or "unknown reason")
+    end
+    
+    -- Check CVars
+    local assistedMode = GetCVarBool("assistedMode")
+    if not assistedMode then
+        issues[#issues + 1] = "assistedMode CVar is disabled (try: /console assistedMode 1)"
+    end
+    
+    local assistedHighlight = GetCVarBool("assistedCombatHighlight")
+    if not assistedHighlight then
+        issues[#issues + 1] = "assistedCombatHighlight CVar is disabled (try: /console assistedCombatHighlight 1)"
     end
     
     -- Check action buttons
@@ -686,6 +781,10 @@ function BlizzardAPI.TestAssistedCombatAPI()
         for i, issue in ipairs(issues) do
             print("|JAC|   " .. i .. ". " .. issue)
         end
+        print("|JAC| Quick Fix Commands:")
+        print("|JAC|   /console assistedMode 1")
+        print("|JAC|   /console assistedCombatHighlight 1")
+        print("|JAC|   /reload")
     end
 
     -- Secrecy API quick test: surface results for the sample spell (primary or first rotation)
@@ -694,7 +793,7 @@ function BlizzardAPI.TestAssistedCombatAPI()
         local cdLevel = BlizzardAPI.GetSpellCooldownSecrecy and BlizzardAPI.GetSpellCooldownSecrecy(sample)
         local auraLevel = BlizzardAPI.GetSpellAuraSecrecy and BlizzardAPI.GetSpellAuraSecrecy(sample)
         local castLevel = BlizzardAPI.GetSpellCastSecrecy and BlizzardAPI.GetSpellCastSecrecy(sample)
-        local start, dur = BlizzardAPI.GetSafeSpellCooldown(sample)
+        local start, dur = BlizzardAPI.GetSafeSpellCooldown and BlizzardAPI.GetSafeSpellCooldown(sample)
         print("|JAC| Secrecy for sample spell (" .. tostring(sample) .. "):")
         print("|JAC|   cooldown secrecy: " .. tostring(cdLevel) .. ", aura secrecy: " .. tostring(auraLevel) .. ", cast secrecy: " .. tostring(castLevel))
         print("|JAC|   safe cooldown read: start=" .. tostring(start) .. ", duration=" .. tostring(dur))
@@ -705,25 +804,39 @@ end
 
 -- Raw values (may be secret); Cooldown widget handles them
 function BlizzardAPI.GetSpellCooldown(spellID)
-    if not C_Spell_GetSpellCooldown then return 0, 0 end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if cd then
-        return cd.startTime, cd.duration
+    if C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
+        if cd then
+            return cd.startTime, cd.duration
+        end
+        return 0, 0
+    elseif C_SpellBook and C_SpellBook.GetSpellCooldown then
+        return C_SpellBook.GetSpellCooldown(spellID)
+    elseif GetSpellCooldown then
+        return GetSpellCooldown(spellID)
     end
     return 0, 0
 end
 
 -- Sanitized values for comparison (0,0 if secret)
 function BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not C_Spell_GetSpellCooldown then return 0, 0 end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if not cd then return 0, 0 end
-    local startTime = cd.startTime
-    local duration = cd.duration
-    if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
+    if C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
+        if cd then
+            local startTime = cd.startTime
+            local duration = cd.duration
+            if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
+                return 0, 0
+            end
+            return startTime or 0, duration or 0
+        end
         return 0, 0
+    elseif C_SpellBook and C_SpellBook.GetSpellCooldown then
+        return C_SpellBook.GetSpellCooldown(spellID)
+    elseif GetSpellCooldown then
+        return GetSpellCooldown(spellID)
     end
-    return startTime or 0, duration or 0
+    return 0, 0
 end
 
 -- Blizzard's dummy GCD spell always returns current GCD state
@@ -864,6 +977,16 @@ function BlizzardAPI.IsSpellUsable(spellID)
                 return true, false
             end
             return isUsable, notEnoughResources
+        end
+    end
+
+    if IsUsableSpell then
+        local success, isUsable, notEnoughMana = pcall(IsUsableSpell, spellID)
+        if success then
+            if issecretvalue and (issecretvalue(isUsable) or issecretvalue(notEnoughMana)) then
+                return true, false
+            end
+            return isUsable, notEnoughMana
         end
     end
 
@@ -1119,9 +1242,15 @@ function BlizzardAPI.GetPlayerHealthPercent()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
     
+    -- Handle potential secrets in 12.0+ (fail-safe)
     if BlizzardAPI.IsSecretValue(health) or BlizzardAPI.IsSecretValue(maxHealth) then
         return nil
     end
+    
+    if not BlizzardAPI.CanAccessValue(health) or not BlizzardAPI.CanAccessValue(maxHealth) then
+        return nil
+    end
+    
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
 end
@@ -1145,6 +1274,11 @@ function BlizzardAPI.GetPetHealthPercent()
     if BlizzardAPI.IsSecretValue(health) or BlizzardAPI.IsSecretValue(maxHealth) then
         return nil
     end
+
+    if not BlizzardAPI.CanAccessValue(health) or not BlizzardAPI.CanAccessValue(maxHealth) then
+        return nil
+    end
+
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
 end

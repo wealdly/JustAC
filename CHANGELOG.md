@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.21.7] - 2026-02-11
+
+### Fixed
+
+- **Fix crash opening hotkey override dialog**: `OpenHotkeyOverrideDialog` was calling `addon:GetCachedSpellInfo()` (doesn't exist) instead of `SpellQueue.GetCachedSpellInfo()` — right-clicking a spell icon to set a custom hotkey caused an error
+
 ## [3.21.6] - 2026-02-11
 
 ### Changed
