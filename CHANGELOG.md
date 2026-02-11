@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Fix crash opening hotkey override dialog**: `OpenHotkeyOverrideDialog` was calling `addon:GetCachedSpellInfo()` (doesn't exist) instead of `SpellQueue.GetCachedSpellInfo()` — right-clicking a spell icon to set a custom hotkey caused an error
+- **Fix glow animations not pausing/resuming on combat state change**: `PauseAllGlows` and `ResumeAllGlows` were called without the required `addon` argument at 4 call sites, so they silently did nothing
 
 ## [3.21.6] - 2026-02-11
 

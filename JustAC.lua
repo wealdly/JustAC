@@ -177,9 +177,9 @@ function JustAC:OnEnable()
     end
 
     if UnitAffectingCombat("player") then
-        if UIAnimations and UIAnimations.ResumeAllGlows then UIAnimations.ResumeAllGlows() end
+        if UIAnimations and UIAnimations.ResumeAllGlows then UIAnimations.ResumeAllGlows(self) end
     else
-        if UIAnimations and UIAnimations.PauseAllGlows then UIAnimations.PauseAllGlows() end
+        if UIAnimations and UIAnimations.PauseAllGlows then UIAnimations.PauseAllGlows(self) end
     end
     
     self:InitializeCaches()
@@ -1146,7 +1146,7 @@ function JustAC:OnCombatEvent(event)
             UIRenderer.SetCombatState(true)
         end
         if UIAnimations and UIAnimations.ResumeAllGlows then
-            UIAnimations.ResumeAllGlows()
+            UIAnimations.ResumeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -1154,7 +1154,7 @@ function JustAC:OnCombatEvent(event)
             UIRenderer.SetCombatState(false)
         end
         if UIAnimations and UIAnimations.PauseAllGlows then
-            UIAnimations.PauseAllGlows()
+            UIAnimations.PauseAllGlows(self)
         end
         self:InvalidateCaches({auras = true})
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
