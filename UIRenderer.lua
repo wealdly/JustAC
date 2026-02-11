@@ -319,13 +319,15 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     -- Normalize hotkey for key press flash matching
     if hotkey ~= "" then
         local normalized = hotkey:upper()
-        normalized = normalized:gsub("^S%-?", "SHIFT-")
-        normalized = normalized:gsub("^C%-?", "CTRL-")
-        normalized = normalized:gsub("^A%-?", "ALT-")
-        normalized = normalized:gsub("^CS%-?", "CTRL-SHIFT-")
-        normalized = normalized:gsub("^SA%-?", "SHIFT-ALT-")
-        normalized = normalized:gsub("^CA%-?", "CTRL-ALT-")
-        normalized = normalized:gsub("^%+", "MOD-")
+        -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
+        -- Anchored patterns with lookahead via capture to avoid false positives on bare S/A/C keys
+        normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
+        normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
+        normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
+        normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
+        normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
+        normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
+        normalized = normalized:gsub("^%+(.+)", "MOD-%1")
 
         if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
             defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
@@ -338,18 +340,23 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     local isInCombat = UnitAffectingCombat("player")
     
-    -- Start green crawl glow on slot 1
-    if showGlow then
+    -- Defensive glow mode (independent from offensive glowMode)
+    local defGlowMode = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode or "all"
+
+    -- Start green crawl glow on slot 1 if glow mode includes primary
+    local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
+    if showMarching then
         UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
     else
         UIAnimations.StopDefensiveGlow(defensiveIcon)
     end
-    
+
     -- Check if defensive spell has an active proc (only for spells, not items)
     local isProc = not isItem and IsSpellProcced(id)
-    
-    -- Show custom proc glow if spell is procced
-    if isProc then
+
+    -- Show custom proc glow if spell is procced and glow mode includes proc
+    local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
+    if wantProcGlow then
         UIAnimations.ShowProcGlow(defensiveIcon)
     else
         UIAnimations.HideProcGlow(defensiveIcon)
@@ -502,7 +509,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Cache commonly accessed values
     local maxIcons = profile.maxIcons
-    local focusEmphasis = profile.focusEmphasis
+    local glowMode = profile.glowMode or (profile.focusEmphasis == false and "procOnly") or "all"
+    local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
+    local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local queueDesaturation = GetQueueDesaturation()
     
     -- Check if player is channeling (grey out queue to emphasize not interrupting)
@@ -624,8 +633,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Proc glows should appear instantly when ability becomes available
                 local isProc = IsSpellProcced(spellID)
 
-                -- Show blue/white assisted crawl on position 1 if focus emphasis enabled
-                local shouldShowAssisted = (i == 1 and focusEmphasis)
+                -- Show blue/white assisted crawl on position 1 if glow mode includes primary
+                local shouldShowAssisted = (i == 1 and showPrimaryGlow)
                 if shouldShowAssisted then
                     -- Call every frame to update animation state based on combat status
                     UIAnimations.StartAssistedGlow(icon, isInCombat)
@@ -634,12 +643,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     UIAnimations.StopAssistedGlow(icon)
                     icon.hasAssistedGlow = false
                 end
-                
+
                 -- Show custom proc glow if spell is procced (any position)
-                if isProc and not icon.hasProcGlow then
+                local wantProcGlow = isProc and showProcGlow
+                if wantProcGlow and not icon.hasProcGlow then
                     UIAnimations.ShowProcGlow(icon)
                     icon.hasProcGlow = true
-                elseif not isProc and icon.hasProcGlow then
+                elseif not wantProcGlow and icon.hasProcGlow then
                     UIAnimations.HideProcGlow(icon)
                     icon.hasProcGlow = false
                 end
@@ -668,14 +678,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- PERFORMANCE: Only normalize when hotkey actually changed (string ops are expensive)
                 if hotkeyChanged and hotkey ~= "" then
                     local normalized = hotkey:upper()
-                    -- Handle both formats: "S-5" and "S5" (ActionBarScanner uses no-dash format)
-                    normalized = normalized:gsub("^S%-?", "SHIFT-")
-                    normalized = normalized:gsub("^C%-?", "CTRL-")
-                    normalized = normalized:gsub("^A%-?", "ALT-")
-                    normalized = normalized:gsub("^CS%-?", "CTRL-SHIFT-")
-                    normalized = normalized:gsub("^SA%-?", "SHIFT-ALT-")
-                    normalized = normalized:gsub("^CA%-?", "CTRL-ALT-")
-                    normalized = normalized:gsub("^%+", "MOD-")  -- +5 -> MOD-5 (generic modifier)
+                    -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
+                    -- Multi-modifier combos must be checked first to avoid partial matches
+                    normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
+                    normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
+                    normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
+                    normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
+                    normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
+                    normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
+                    normalized = normalized:gsub("^%+(.+)", "MOD-%1")  -- +5 -> MOD-5 (generic modifier)
 
                     -- Track previous hotkey for grace period (spell position changes)
                     if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
@@ -800,75 +811,98 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Note: Defensive icon cooldowns are updated separately by UpdateDefensiveCooldowns()
     -- No need to update them here to avoid redundant calls
     
-    -- Update frame visibility only when state changes to optimize animation rendering
-    if addon.mainFrame and (frameStateChanged or spellCountChanged) then
-        if shouldShowFrame then
-            if not addon.mainFrame:IsShown() then
-                -- Stop any fade-out in progress
-                if addon.mainFrame.fadeOut and addon.mainFrame.fadeOut:IsPlaying() then
-                    addon.mainFrame.fadeOut:Stop()
-                end
-                addon.mainFrame:Show()
-                addon.mainFrame:SetAlpha(0)
-                if addon.mainFrame.fadeIn then
-                    addon.mainFrame.fadeIn:Play()
-                else
-                    -- Fallback if no animation (shouldn't happen)
-                    addon.mainFrame:SetAlpha(profile.frameOpacity or 1.0)
-                end
-            end
-        else
-            if addon.mainFrame:IsShown() then
-                -- Fade out instead of instant hide
-                if addon.mainFrame.fadeOut and not addon.mainFrame.fadeOut:IsPlaying() then
-                    -- Stop any fade-in in progress
-                    if addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying() then
-                        addon.mainFrame.fadeIn:Stop()
+    -- Update frame visibility when state changes OR when actual visibility is out of sync
+    -- The out-of-sync check catches a race where fadeOut's OnFinished hides the frame
+    -- after lastFrameState.shouldShow was already set back to true (e.g., spells briefly
+    -- cleared during Fel Rush then immediately restored)
+    if addon.mainFrame then
+        local isFadingOut = addon.mainFrame.fadeOut and addon.mainFrame.fadeOut:IsPlaying()
+        local actuallyVisible = addon.mainFrame:IsShown() and not isFadingOut
+        local visibilityDesynced = shouldShowFrame ~= actuallyVisible
+
+        if frameStateChanged or spellCountChanged or visibilityDesynced then
+            if shouldShowFrame then
+                if not addon.mainFrame:IsShown() or isFadingOut then
+                    -- Stop any fade-out in progress
+                    if isFadingOut then
+                        addon.mainFrame.fadeOut:Stop()
                     end
-                    addon.mainFrame.fadeOut:Play()
-                else
-                    -- Fallback or already fading out
-                    if not addon.mainFrame.fadeOut then
-                        addon.mainFrame:Hide()
-                        addon.mainFrame:SetAlpha(0)
+                    addon.mainFrame:Show()
+                    addon.mainFrame:SetAlpha(0)
+                    if addon.mainFrame.fadeIn then
+                        addon.mainFrame.fadeIn:Play()
+                    else
+                        addon.mainFrame:SetAlpha(profile.frameOpacity or 1.0)
+                    end
+                end
+            else
+                if addon.mainFrame:IsShown() then
+                    -- Fade out instead of instant hide
+                    if addon.mainFrame.fadeOut and not isFadingOut then
+                        -- Stop any fade-in in progress
+                        if addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying() then
+                            addon.mainFrame.fadeIn:Stop()
+                        end
+                        addon.mainFrame.fadeOut:Play()
+                    else
+                        -- Fallback or already fading out
+                        if not addon.mainFrame.fadeOut then
+                            addon.mainFrame:Hide()
+                            addon.mainFrame:SetAlpha(0)
+                        end
                     end
                 end
             end
         end
     end
     
-    -- Update click-through only when lock state changes (not every frame)
-    local isLocked = profile.panelLocked
-    
-    if lastPanelLocked ~= isLocked then
-        lastPanelLocked = isLocked
-        
-        -- Main frame click-through (but grab tab stays interactive for unlock)
+    -- Update interaction mode only when it changes (not every frame)
+    local interactionMode = profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
+
+    if lastPanelLocked ~= interactionMode then
+        lastPanelLocked = interactionMode
+        local isClickThrough = interactionMode == "clickthrough"
+        local isLocked = interactionMode == "locked" or isClickThrough
+
         if addon.mainFrame then
             addon.mainFrame:EnableMouse(not isLocked)
         end
-        
+
         for i = 1, maxIcons do
             local icon = spellIconsRef[i]
             if icon then
-                -- Icons always need mouse enabled for tooltips
-                -- When locked, RegisterForClicks("") prevents clicks while keeping tooltips
-                icon:EnableMouse(true)
+                icon:EnableMouse(not isClickThrough)
                 if isLocked then
-                    icon:RegisterForClicks()  -- No clicks = locked but tooltips work
+                    icon:RegisterForClicks()
                 else
-                    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+                    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
                 end
             end
         end
         if addon.defensiveIcon then
-            -- Defensive icon also needs mouse enabled for tooltips
-            addon.defensiveIcon:EnableMouse(true)
+            addon.defensiveIcon:EnableMouse(not isClickThrough)
             if isLocked then
-                addon.defensiveIcon:RegisterForClicks()  -- No clicks = locked but tooltips work
+                addon.defensiveIcon:RegisterForClicks()
             else
-                addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")  -- Both clicks enabled
+                addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             end
+        end
+        -- Defensive icon array
+        if addon.defensiveIcons then
+            for _, defIcon in ipairs(addon.defensiveIcons) do
+                if defIcon then
+                    defIcon:EnableMouse(not isClickThrough)
+                    if isLocked then
+                        defIcon:RegisterForClicks()
+                    else
+                        defIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+                    end
+                end
+            end
+        end
+        -- Grab tab stays interactive unless click-through (so users can still unlock)
+        if addon.grabTab then
+            addon.grabTab:EnableMouse(not isClickThrough)
         end
     end
     
