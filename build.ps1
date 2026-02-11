@@ -39,7 +39,6 @@ $coreFiles = @(
     "UIAnimations.lua",
     "UIFrameFactory.lua",
     "UIRenderer.lua",
-    "UIManager.lua",
     "DebugCommands.lua",
     "Options.lua",
     "LICENSE",
