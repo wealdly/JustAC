@@ -66,7 +66,10 @@ function DebugCommands.ModuleDiagnostics(addon)
         {"JustAC-ActionBarScanner", "ActionBarScanner"},
         {"JustAC-RedundancyFilter", "RedundancyFilter"},
         {"JustAC-SpellQueue", "SpellQueue"},
-        {"JustAC-UIManager", "UIManager"},
+        {"JustAC-UIRenderer", "UIRenderer"},
+        {"JustAC-UIFrameFactory", "UIFrameFactory"},
+        {"JustAC-UIAnimations", "UIAnimations"},
+        {"JustAC-UIHealthBar", "UIHealthBar"},
         {"JustAC-Options", "Options"},
     }
     

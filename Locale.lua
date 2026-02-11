@@ -10,7 +10,6 @@ L["JustAssistedCombat"] = "JustAssistedCombat"
 L["General"] = "General"
 L["System"] = "System"
 L["Offensive"] = "Offensives"
-L["Offensive Info"] = "DPS rotation queue from Blizzard's Assisted Combat.\n|cff00ff00• Procs|r: Glowing abilities inserted automatically\n|cff888888• Blacklist|r: Hide unwanted spells from queue"
 L["Defensives"] = "Defensives"
 L["Blacklist"] = "Blacklist"
 L["Hotkey Overrides"] = "Hotkeys"
@@ -59,6 +58,9 @@ L["Add Spell to Blacklist"] = "Add Spell to Blacklist"
 L["Spell ID"] = "Spell ID"
 L["Enter the spell ID to blacklist"] = "Enter the spell ID to blacklist (e.g., 48707)"
 L["Add"] = "Add"
+L["Clear All"] = "Clear All"
+L["Clear All Blacklist desc"] = "Remove all spells from the blacklist"
+L["Clear All Hotkeys desc"] = "Remove all custom hotkey overrides"
 
 -- Hotkey Overrides
 L["Custom Hotkey"] = "Custom Hotkey"
@@ -205,7 +207,6 @@ L["Blacklist"] = "Blacklist"
 L["Blacklist Info"] = "Hide spells from the queue.\n\n|cffff6666Shift+Right-click|r a spell to toggle blacklist."
 L["Blacklisted Spells"] = "Blacklisted Spells"
 L["Defensives"] = "Defensives"
-L["Defensives Info"] = "Survival spells shown when health drops.\n|cff00ff00• Self-Heals|r: Below self-heal threshold\n|cffff6666• Major Cooldowns|r: Below cooldown threshold"
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 
 -- Spell search UI (used in multiple panels)
@@ -234,6 +235,9 @@ if L then
     L["Blacklist"] = "Sperrliste"
     L["Hotkey Overrides"] = "Hotkeys"
     L["Add"] = "Hinzufügen"
+    L["Clear All"] = "Alle löschen"
+    L["Clear All Blacklist desc"] = "Alle Zauber von der Sperrliste entfernen"
+    L["Clear All Hotkeys desc"] = "Alle benutzerdefinierten Hotkeys entfernen"
 
     -- General Options
     L["Max Icons"] = "Max. Symbole"
@@ -372,7 +376,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Benutzerdefinierten Tastentext festlegen.\n\n|cff00ff00Rechtsklick|r um Hotkey festzulegen."
     L["Blacklist Info"] = "Zauber aus der Warteschlange ausblenden.\n\n|cffff6666Umschalt+Rechtsklick|r zum Umschalten."
-    L["Defensives Info"] = "Zweistufiges Prioritätssystem:\n|cff00ff00• Selbstheilungen|r: Unter Selbstheilungs-Schwelle\n|cffff6666• Große Cooldowns|r: Unter Cooldown-Schwelle"
     L["Restore Class Defaults name"] = "Klassen-Standardwerte wiederherstellen"
 end
 
@@ -389,6 +392,9 @@ if L then
     L["Blacklist"] = "Liste noire"
     L["Hotkey Overrides"] = "Raccourcis"
     L["Add"] = "Ajouter"
+    L["Clear All"] = "Tout effacer"
+    L["Clear All Blacklist desc"] = "Retirer tous les sorts de la liste noire"
+    L["Clear All Hotkeys desc"] = "Supprimer tous les raccourcis personnalisés"
 
     -- General Options
     L["Max Icons"] = "Icônes max"
@@ -527,7 +533,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Définir un raccourci personnalisé.\n\n|cff00ff00Clic droit|r pour définir un raccourci."
     L["Blacklist Info"] = "Masquer des sorts de la file.\n\n|cffff6666Maj+Clic droit|r pour basculer."
-    L["Defensives Info"] = "Système de priorité à deux niveaux:\n|cff00ff00• Auto-soins|r: Sous le seuil d'auto-soin\n|cffff6666• Cooldowns majeurs|r: Sous le seuil de cooldown"
     L["Restore Class Defaults name"] = "Restaurer les valeurs par défaut de la classe"
 end
 
@@ -544,6 +549,9 @@ if L then
     L["Blacklist"] = "Черный список"
     L["Hotkey Overrides"] = "Горячие клавиши"
     L["Add"] = "Добавить"
+    L["Clear All"] = "Очистить все"
+    L["Clear All Blacklist desc"] = "Удалить все заклинания из черного списка"
+    L["Clear All Hotkeys desc"] = "Удалить все пользовательские горячие клавиши"
 
     -- General Options
     L["Max Icons"] = "Макс. иконок"
@@ -682,7 +690,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Установить пользовательскую клавишу.\n\n|cff00ff00Правый клик|r для установки."
     L["Blacklist Info"] = "Скрыть заклинания из очереди.\n\n|cffff6666Shift+Правый клик|r для переключения."
-    L["Defensives Info"] = "Двухуровневая система приоритетов:\n|cff00ff00• Самолечение|r: Ниже порога самолечения\n|cffff6666• Большие перезарядки|r: Ниже порога перезарядки"
     L["Restore Class Defaults name"] = "Восстановить настройки класса"
 end
 
@@ -700,6 +707,9 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atajos"
     L["Add"] = "Agregar"
+    L["Clear All"] = "Borrar todo"
+    L["Clear All Blacklist desc"] = "Eliminar todos los hechizos de la lista negra"
+    L["Clear All Hotkeys desc"] = "Eliminar todos los atajos personalizados"
 
     -- General Options
     L["Max Icons"] = "Iconos máx"
@@ -836,7 +846,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Establecer texto de atajo personalizado para hechizos cuando la detección automática falla o por preferencia personal.\n\n|cff00ff00Clic derecho|r en un icono de hechizo en la cola para establecer un atajo personalizado."
     L["Blacklist Info"] = "Ocultar hechizos de la cola de sugerencias.\n\n|cffff6666Shift+Clic derecho|r en un icono de hechizo para agregarlo o quitarlo de la lista negra."
-    L["Defensives Info"] = "Icono defensivo posición 0 con prioridad de dos niveles:\n|cff00ff00• Autocuraciones|r: Curaciones rápidas mostradas cuando la salud cae bajo el umbral\n|cffff6666• Tiempos de reutilización mayores|r: Defensivos de emergencia cuando críticamente bajo\n\nEl icono aparece con un brillo verde. El comportamiento fuera de combate está controlado por el interruptor 'Solo en combate'."
     L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 end
 
@@ -858,6 +867,9 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atajos"
     L["Add"] = "Agregar"
+    L["Clear All"] = "Borrar todo"
+    L["Clear All Blacklist desc"] = "Eliminar todos los hechizos de la lista negra"
+    L["Clear All Hotkeys desc"] = "Eliminar todos los atajos personalizados"
 
     -- General Options
     L["Max Icons"] = "Iconos máx"
@@ -993,7 +1005,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Atajos personalizados para hechizos.\n|cff00ff00Clic derecho|r para establecer."
     L["Blacklist Info"] = "Ocultar hechizos de la cola.\n|cffff6666Shift+Clic derecho|r para alternar."
-    L["Defensives Info"] = "|cff00ff00Autocuraciones|r en umbral alto\n|cffff6666Reutilizaciones|r en salud crítica"
     L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 end
 
@@ -1010,6 +1021,9 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atalhos"
     L["Add"] = "Adicionar"
+    L["Clear All"] = "Limpar tudo"
+    L["Clear All Blacklist desc"] = "Remover todas as magias da lista negra"
+    L["Clear All Hotkeys desc"] = "Remover todos os atalhos personalizados"
 
     -- General Options
     L["Max Icons"] = "Ícones máx"
@@ -1146,6 +1160,5 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Atalhos personalizados para magias.\n|cff00ff00Clique direito|r para definir."
     L["Blacklist Info"] = "Ocultar magias da fila.\n|cffff6666Shift+Clique direito|r para alternar."
-    L["Defensives Info"] = "|cff00ff00Autocuras|r em limite alto\n|cffff6666Recargas|r em vida crítica"
     L["Restore Class Defaults name"] = "Restaurar padrões da classe"
 end

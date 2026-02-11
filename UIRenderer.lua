@@ -518,7 +518,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local isChanneling = UnitChannelInfo("player") ~= nil
     
     -- Cache frequently called functions to reduce table lookups in hot path
-    local GetSpellCooldown = BlizzardAPI.GetSpellCooldown
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local showHotkeys = profile.showOffensiveHotkeys ~= false
     local GetSpellHotkey = showHotkeys and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
