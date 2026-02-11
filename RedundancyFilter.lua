@@ -81,18 +81,12 @@ local UNIQUE_AURA_SPELLS = {
     [186257] = true,  -- Aspect of the Cheetah
     [186265] = true,  -- Aspect of the Turtle
     [186289] = true,  -- Aspect of the Eagle
-    -- Raid Buffs (unique - can only have one active)
-    -- Includes alternate IDs from 12.0 Midnight Exclusion Whitelist
-    [1126] = true,    -- Mark of the Wild (Druid)
-    [264778] = true,  -- Mark of the Wild (alternate)
-    [21562] = true,   -- Power Word: Fortitude (Priest)
-    [264764] = true,  -- Power Word: Fortitude (alternate)
-    [6673] = true,    -- Battle Shout (Warrior)
-    [264761] = true,  -- Battle Shout (alternate)
-    [1459] = true,    -- Arcane Intellect (Mage)
-    [264760] = true,  -- Arcane Intellect (alternate)
-    [381732] = true,  -- Blessing of the Bronze (Evoker)
 }
+
+-- Raid buffs are also unique auras (can only have one active)
+for spellID in pairs(RAID_BUFF_SPELLS) do
+    UNIQUE_AURA_SPELLS[spellID] = true
+end
 
 -- Personal Aura Spells: Self-only buffs (subset that we recognize)
 -- Used for determining if a spell applies a personal buff

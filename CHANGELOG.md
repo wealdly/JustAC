@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.21.5] - 2026-02-11
+
+### Changed
+
+- **Defensive queue and health bar disabled by default**: New profiles start with defensives off and health bar hidden — enable in Defensives tab if desired
+- **Clear All buttons for blacklist and hotkey overrides**: Both panels now show a "Clear All" button (with confirmation) when entries exist
+- **Removed health bar color gradient**: Bar stays green with red background showing missing health (gradient didn't work with secret health values)
+
+### Fixed
+
+- **Fix `IsShown` crash in `HideDefensiveIcon`**: Was passing addon object (`self`) instead of defensive icon frame — caused 57+ errors per second during health updates
+- **Fix `ShowDefensiveIcon` silently failing**: Two call sites were missing the required `defensiveIcon` frame parameter, so defensive icons never displayed when health dropped or hotkey overrides changed
+- **Fix health bar toggle in options**: Was calling nonexistent `UIHealthBar.DestroyHealthBar()` instead of `UIHealthBar.Destroy()` — toggling health bar off in settings had no effect
+- **Fix default mismatches in Options panel**: `maxIcons` fallback was 5 (should be 4), `iconSpacing` fallback was 2 (should be 1), causing options sliders to show wrong values on fresh profiles
+- **Fix profile migration on profile switch**: `RefreshConfig` now calls `NormalizeSavedData()` so switching to an older profile properly migrates string-keyed spell IDs, profile-level blacklists, and `panelLocked` boolean
+- **Fix profile reset wiping character data**: `OnProfileReset` no longer clears blacklist and hotkey overrides, which are character-specific and should persist across profile operations
+
+### Removed
+
+- Dead variable `defensivePosition` in `UIHealthBar.CreateHealthBar` (assigned but never read)
+- `BlizzardAPI` import from `UIHealthBar` (only used by removed gradient code)
+- **Threshold sliders from Defensives options**: Self-heal, cooldown, and pet heal threshold settings hidden from UI (health values are secret in 12.0+, making user-configured thresholds non-functional); defaults still used internally
+
 ## [3.21.4] - 2026-02-11
 
 ### Added
