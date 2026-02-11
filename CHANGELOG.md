@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.21.6] - 2026-02-11
+
+### Changed
+
+- **Removed section summaries from Offensives/Defensives tabs**: Info descriptions at top of each tab removed — settings are self-explanatory
+- **Compact About panel**: Replaced verbose feature list with concise one-liner; removed console command instructions (assisted combat is on by default in 12.0)
+- **About version now reads from TOC**: Uses `C_AddOns.GetAddOnMetadata` instead of stale `db.global.version` default
+
+### Removed
+
+- Console command references from About panel and debug output (`assistedMode`, `assistedCombatHighlight` CVars are on by default in 12.0)
+- Stale `db.global.version = "2.6"` default (was never updated, About panel now reads TOC version)
+- CVar validation from `BlizzardAPI.ValidateSetup()` and "Quick Fix Commands" from `/jac test` output
+
 ## [3.21.5] - 2026-02-11
 
 ### Changed
