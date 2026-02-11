@@ -65,9 +65,7 @@ local defaults = {
         specProfilesEnabled = true,   -- Auto-switch profiles by spec (enabled by default)
         specProfiles = {},        -- [specIndex] = "profileName" | "DISABLED" | nil
     },
-    global = {
-        version = "2.6",
-    },
+    global = {},
 }
 
 function JustAC:DebugPrint(msg)
@@ -386,13 +384,7 @@ end
 
 function JustAC:ShowWelcomeMessage()
     if not self.db or not self.db.profile or not self.db.profile.debugMode then return end
-    
-    local assistedMode = GetCVarBool("assistedMode") or false
-    if assistedMode then
-        self:Print("Assisted Combat mode active")
-    else
-        self:Print("Tip: Enable /console assistedMode 1")
-    end
+    self:Print("Debug mode active")
 end
 
 function JustAC:InitializeDefensiveSpells()

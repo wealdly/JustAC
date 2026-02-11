@@ -33,7 +33,6 @@ L["Show Defensive Hotkeys"] = "Show Hotkeys"
 L["Show Defensive Hotkeys desc"] = "Display keybind text on defensive icons. Disabling skips hotkey detection for better performance."
 L["Insert Procced Defensives"] = "Insert Procced Defensives"
 L["Insert Procced Defensives desc"] = "Show procced defensive abilities (Victory Rush, free heals) at any health level."
-L["Debug Mode"] = "Debug Mode"
 L["Frame Opacity"] = "Frame Opacity"
 L["Queue Icon Fade"] = "Queue Icon Fade"
 L["Hide Out of Combat"] = "Hide Out of Combat"
@@ -136,7 +135,6 @@ L["Panel Interaction desc"] = "Controls how the panel responds to mouse input"
 L["Unlocked"] = "Unlocked"
 L["Locked"] = "Locked"
 L["Click Through"] = "Click Through"
-L["Debug Mode desc"] = "Show debug info in chat"
 L["Enable Defensive Suggestions desc"] = "Show defensive spells when health drops below thresholds."
 L["Icon Position desc"] = "Where to place defensive icons relative to the queue"
 L["Custom Hotkey desc"] = "Text to display as hotkey (e.g., 'F1', 'Ctrl+Q', 'Mouse4')"
@@ -182,21 +180,11 @@ L["Spec-Based Switching"] = "Spec-Based Switching"
 L["Auto-switch profile by spec"] = "Auto-switch profile by spec"
 L["(No change)"] = "(No change)"
 L["(Disabled)"] = "(Disabled)"
-L["About"] = "About"
-L["About JustAssistedCombat"] = "About JustAssistedCombat"
-L["Developer"] = "Developer"
-
 -- Orientation values (full names)
 L["Left to Right"] = "Left to Right"
 L["Right to Left"] = "Right to Left"
 L["Bottom to Top"] = "Bottom to Top"
 L["Top to Bottom"] = "Top to Bottom"
-
--- Slash commands help
-L["Slash Commands"] = "|cffffff00Slash Commands:|r\n|cff88ff88/jac|r - Open options\n|cff88ff88/jac toggle|r - Pause/resume\n|cff88ff88/jac debug|r - Toggle debug mode\n|cff88ff88/jac test|r - Test Blizzard API\n|cff88ff88/jac formcheck|r - Check form detection\n|cff88ff88/jac find <spell>|r - Locate spell\n|cff88ff88/jac reset|r - Reset position\n\nType |cff88ff88/jac help|r for full command list"
-
--- About text (function will concatenate with version)
-L["About Text"] = "Enhances WoW's Assisted Combat system with advanced features for better gameplay experience.\n\n|cffffff00Key Features:|r\n• Smart hotkey detection with custom override support\n• Advanced macro parsing with conditional modifiers\n• Intelligent spell filtering and blacklist management\n• Enhanced visual feedback and tooltips\n• Seamless integration with Blizzard's native highlights\n• Zero performance impact on global cooldowns\n\n|cffffff00How It Works:|r\nJustAC automatically detects your action bar setup and displays the recommended rotation with proper hotkeys. When automatic detection fails, you can set custom hotkey displays via right-click.\n\n|cffffff00Optional Enhancements:|r\n|cffffffff/console assistedMode 1|r - Enables Blizzard's assisted combat system\n|cffffffff/console assistedCombatHighlight 1|r - Adds native button highlighting\n\nThese console commands enhance the experience but are not required for JustAC to function."
 
 -- Additional UI strings
 L["Remove"] = "Remove"
@@ -247,7 +235,6 @@ if L then
     L["Primary Spell Scale"] = "Hauptzauber-Skalierung"
     L["Queue Orientation"] = "Warteschlangen-Ausrichtung"
     L["Lock Panel"] = "Panel sperren"
-    L["Debug Mode"] = "Debug-Modus"
     L["Frame Opacity"] = "Rahmen-Transparenz"
     L["Queue Icon Fade"] = "Warteschlangen-Symbol ausblenden"
     L["Hide Out of Combat"] = "Warteschlange außerhalb des Kampfes ausblenden"
@@ -319,7 +306,6 @@ if L then
     L["Insert Procced Abilities desc"] = "Leuchtende Proc-Fähigkeiten zur Warteschlange hinzufügen"
     L["Include All Available Abilities desc"] = "Hinter Makro-Bedingungen versteckte Fähigkeiten einbeziehen"
     L["Lock Panel desc"] = "Ziehen und Rechtsklick-Menüs deaktivieren"
-    L["Debug Mode desc"] = "Debug-Infos im Chat anzeigen"
     L["Enable Defensive Suggestions desc"] = "Defensiv-Vorschläge basierend auf Gesundheit anzeigen"
     L["Self-Heal Threshold desc"] = "Selbstheilung unter diesem Gesundheits-% anzeigen"
     L["Cooldown Threshold desc"] = "Große Defensiven unter diesem Gesundheits-% anzeigen"
@@ -358,20 +344,11 @@ if L then
     L["Defensive Max Icons desc"] = "Anzahl Defensiv-Zauber gleichzeitig (1-3)"
     L["Profiles"] = "Profile"
     L["Profiles desc"] = "Charakter- und Spezialisierungsprofilverwaltung"
-    L["About"] = "Über"
-    L["About JustAssistedCombat"] = "Über JustAssistedCombat"
-
     -- Orientation values (full names)
     L["Left to Right"] = "Links nach Rechts"
     L["Right to Left"] = "Rechts nach Links"
     L["Bottom to Top"] = "Unten nach Oben"
     L["Top to Bottom"] = "Oben nach Unten"
-
-    -- Slash commands help
-    L["Slash Commands"] = "|cffffff00Befehle:|r\n|cff88ff88/jac|r - Optionen öffnen\n|cff88ff88/jac toggle|r - Pausieren/Fortsetzen\n|cff88ff88/jac debug|r - Debug-Modus umschalten\n|cff88ff88/jac test|r - Blizzard-API testen\n|cff88ff88/jac formcheck|r - Formerkennung prüfen\n|cff88ff88/jac find <zauber>|r - Zauber finden\n|cff88ff88/jac reset|r - Position zurücksetzen\n\nGeben Sie |cff88ff88/jac help|r für die vollständige Befehlsliste ein"
-
-    -- About text
-    L["About Text"] = "Verbessert WoWs Assistiertes Kampfsystem mit erweiterten Funktionen für besseres Spielerlebnis.\n\n|cffffff00Hauptmerkmale:|r\n• Intelligente Hotkey-Erkennung mit benutzerdefinierter Überschreibung\n• Erweiterte Makro-Analyse mit bedingten Modifikatoren\n• Intelligente Zauberfilterung und Sperrlisten-Verwaltung\n• Verbesserte visuelle Rückmeldung und Tooltips\n• Nahtlose Integration mit Blizzards nativen Hervorhebungen\n• Keine Auswirkungen auf globale Abklingzeiten\n\n|cffffff00Funktionsweise:|r\nJustAC erkennt automatisch Ihre Aktionsleisten-Einrichtung und zeigt die empfohlene Rotation mit richtigen Hotkeys an. Wenn die automatische Erkennung fehlschlägt, können Sie benutzerdefinierte Hotkey-Anzeigen per Rechtsklick festlegen.\n\n|cffffff00Optionale Verbesserungen:|r\n|cffffffff/console assistedMode 1|r - Aktiviert Blizzards Assistiertes Kampfsystem\n|cffffffff/console assistedCombatHighlight 1|r - Fügt native Button-Hervorhebung hinzu\n\nDiese Konsolenbefehle verbessern das Erlebnis, sind aber nicht erforderlich, damit JustAC funktioniert."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Benutzerdefinierten Tastentext festlegen.\n\n|cff00ff00Rechtsklick|r um Hotkey festzulegen."
@@ -404,7 +381,6 @@ if L then
     L["Primary Spell Scale"] = "Échelle du sort principal"
     L["Queue Orientation"] = "Orientation de la file"
     L["Lock Panel"] = "Verrouiller le panneau"
-    L["Debug Mode"] = "Mode débogage"
     L["Frame Opacity"] = "Opacité du cadre"
     L["Queue Icon Fade"] = "Fondu des icônes de file"
     L["Hide Out of Combat"] = "Masquer la file hors combat"
@@ -476,7 +452,6 @@ if L then
     L["Insert Procced Abilities desc"] = "Scanner le grimoire pour les capacités offensives déclenchées (lumineuses) et les afficher dans la file. Utile pour les capacités comme 'Lame gangrenée' qui peuvent ne pas apparaître dans la liste de rotation de Blizzard."
     L["Include All Available Abilities desc"] = "Inclure les capacités cachées derrière des conditions de macro (par ex. [mod:shift]) dans les recommandations. Active la stabilisation pour réduire le scintillement. Désactiver si vous voulez uniquement les capacités directement visibles sur vos barres d'action."
     L["Lock Panel desc"] = "Bloquer le glissement et les menus contextuels (les infobulles fonctionnent toujours si activées). Basculer via clic droit sur la poignée de déplacement."
-    L["Debug Mode desc"] = "Afficher les informations détaillées de l'addon dans le chat pour le dépannage"
     L["Enable Defensive Suggestions desc"] = "Afficher une suggestion de sort défensif lorsque la santé est basse"
     L["Self-Heal Threshold desc"] = "Afficher les suggestions d'auto-soin lorsque la santé tombe en dessous de ce pourcentage (plus élevé = se déclenche plus tôt)"
     L["Cooldown Threshold desc"] = "Afficher les suggestions de temps de recharge majeurs lorsque la santé tombe en dessous de ce pourcentage (plus élevé = se déclenche plus tôt)"
@@ -515,20 +490,11 @@ if L then
     L["Defensive Max Icons desc"] = "Sorts défensifs à afficher (1-3)"
     L["Profiles"] = "Profils"
     L["Profiles desc"] = "Gestion des profils de personnage et de spécialisation"
-    L["About"] = "À propos"
-    L["About JustAssistedCombat"] = "À propos de JustAssistedCombat"
-
     -- Orientation values (full names)
     L["Left to Right"] = "Gauche à droite"
     L["Right to Left"] = "Droite à gauche"
     L["Bottom to Top"] = "Bas vers haut"
     L["Top to Bottom"] = "Haut vers bas"
-
-    -- Slash commands help
-    L["Slash Commands"] = "|cffffff00Commandes:|r\n|cff88ff88/jac|r - Ouvrir les options\n|cff88ff88/jac toggle|r - Pause/Reprendre\n|cff88ff88/jac debug|r - Basculer le mode débogage\n|cff88ff88/jac test|r - Tester l'API Blizzard\n|cff88ff88/jac formcheck|r - Vérifier la détection de forme\n|cff88ff88/jac find <sort>|r - Localiser le sort\n|cff88ff88/jac reset|r - Réinitialiser la position\n\nTapez |cff88ff88/jac help|r pour la liste complète des commandes"
-
-    -- About text
-    L["About Text"] = "Améliore le système de Combat Assisté de WoW avec des fonctionnalités avancées pour une meilleure expérience de jeu.\n\n|cffffff00Fonctionnalités clés:|r\n• Détection intelligente des raccourcis avec personnalisation\n• Analyse avancée des macros avec modificateurs conditionnels\n• Filtrage intelligent des sorts et gestion de liste noire\n• Retour visuel et infobulles améliorés\n• Intégration transparente avec les surbrillances natives de Blizzard\n• Aucun impact sur les temps de recharge globaux\n\n|cffffff00Fonctionnement:|r\nJustAC détecte automatiquement votre configuration de barre d'action et affiche la rotation recommandée avec les bons raccourcis. Lorsque la détection automatique échoue, vous pouvez définir des affichages de raccourcis personnalisés via clic droit.\n\n|cffffff00Améliorations optionnelles:|r\n|cffffffff/console assistedMode 1|r - Active le système de combat assisté de Blizzard\n|cffffffff/console assistedCombatHighlight 1|r - Ajoute la surbrillance native des boutons\n\nCes commandes de console améliorent l'expérience mais ne sont pas nécessaires pour que JustAC fonctionne."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Définir un raccourci personnalisé.\n\n|cff00ff00Clic droit|r pour définir un raccourci."
@@ -561,7 +527,6 @@ if L then
     L["Primary Spell Scale"] = "Масштаб главного заклинания"
     L["Queue Orientation"] = "Ориентация очереди"
     L["Lock Panel"] = "Заблокировать панель"
-    L["Debug Mode"] = "Режим отладки"
     L["Frame Opacity"] = "Прозрачность рамки"
     L["Queue Icon Fade"] = "Затухание иконок очереди"
     L["Hide Out of Combat"] = "Скрыть очередь вне боя"
@@ -633,7 +598,6 @@ if L then
     L["Insert Procced Abilities desc"] = "Добавить светящиеся проки в очередь"
     L["Include All Available Abilities desc"] = "Включить способности за условиями макросов"
     L["Lock Panel desc"] = "Отключить перетаскивание и меню"
-    L["Debug Mode desc"] = "Показывать отладку в чате"
     L["Enable Defensive Suggestions desc"] = "Показывать защитные предложения по здоровью"
     L["Self-Heal Threshold desc"] = "Показывать самолечение ниже этого % здоровья"
     L["Cooldown Threshold desc"] = "Показывать защитные ниже этого % здоровья"
@@ -672,20 +636,11 @@ if L then
     L["Defensive Max Icons desc"] = "Защитных заклинаний одновременно (1-3)"
     L["Profiles"] = "Профили"
     L["Profiles desc"] = "Управление профилями персонажа и специализации"
-    L["About"] = "О аддоне"
-    L["About JustAssistedCombat"] = "О JustAssistedCombat"
-
     -- Orientation values (full names)
     L["Left to Right"] = "Слева направо"
     L["Right to Left"] = "Справа налево"
     L["Bottom to Top"] = "Снизу вверх"
     L["Top to Bottom"] = "Сверху вниз"
-
-    -- Slash commands help
-    L["Slash Commands"] = "|cffffff00Команды:|r\n|cff88ff88/jac|r - Открыть настройки\n|cff88ff88/jac toggle|r - Пауза/возобновление\n|cff88ff88/jac debug|r - Переключить режим отладки\n|cff88ff88/jac test|r - Тестировать API Blizzard\n|cff88ff88/jac formcheck|r - Проверить определение формы\n|cff88ff88/jac find <заклинание>|r - Найти заклинание\n|cff88ff88/jac reset|r - Сбросить позицию\n\nВведите |cff88ff88/jac help|r для полного списка команд"
-
-    -- About text
-    L["About Text"] = "Улучшает систему Вспомогательного боя WoW с расширенными функциями для лучшего игрового опыта.\n\n|cffffff00Основные возможности:|r\n• Умное определение горячих клавиш с переопределением\n• Расширенный анализ макросов с условными модификаторами\n• Интеллектуальная фильтрация заклинаний и управление черным списком\n• Улучшенная визуальная обратная связь и подсказки\n• Бесшовная интеграция с нативными подсветками Blizzard\n• Нулевое влияние на глобальные перезарядки\n\n|cffffff00Как работает:|r\nJustAC автоматически определяет настройку панели действий и показывает рекомендуемую ротацию с правильными горячими клавишами. Когда автоопределение не срабатывает, вы можете установить пользовательские горячие клавиши правым кликом.\n\n|cffffff00Опциональные улучшения:|r\n|cffffffff/console assistedMode 1|r - Включает систему вспомогательного боя Blizzard\n|cffffffff/console assistedCombatHighlight 1|r - Добавляет нативную подсветку кнопок\n\nЭти консольные команды улучшают опыт, но не требуются для работы JustAC."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Установить пользовательскую клавишу.\n\n|cff00ff00Правый клик|r для установки."
@@ -719,7 +674,6 @@ if L then
     L["Primary Spell Scale"] = "Escala del hechizo principal"
     L["Queue Orientation"] = "Orientación de cola"
     L["Lock Panel"] = "Bloquear panel"
-    L["Debug Mode"] = "Modo de depuración"
     L["Frame Opacity"] = "Opacidad del marco"
     L["Queue Icon Fade"] = "Desvanecimiento de icono de cola"
     L["Hide Out of Combat"] = "Ocultar cola fuera de combate"

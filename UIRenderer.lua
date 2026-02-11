@@ -934,7 +934,7 @@ end
 function UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
     if not addon or not spellID then return end
     
-    local spellInfo = addon:GetCachedSpellInfo(spellID)
+    local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
     if not spellInfo then return end
     
     StaticPopupDialogs["JUSTAC_HOTKEY_OVERRIDE"] = {
