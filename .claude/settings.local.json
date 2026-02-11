@@ -8,7 +8,19 @@
       "Bash(git push)",
       "Bash(powershell:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nVersion 3.195: Add alternate aura IDs from 12.0 Midnight Exclusion Whitelist\n\n- Add alternate IDs for group buffs: Mark of the Wild \\(264778\\),\n  Power Word: Fortitude \\(264764\\), Battle Shout \\(264761\\),\n  Arcane Intellect \\(264760\\)\n- Fix mislabeled 264761 \\(Battle Shout alternate, not Blessing of the Bronze\\)\n- Add Frostbrand Weapon \\(196834\\) and Earthliving Weapon \\(382021\\) to shaman imbues\n- Clean up poison buff IDs to match whitelist exactly\n- Increment RedundancyFilter LibStub version to 35\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(git commit:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "Bash(git status:*)",
+      "WebFetch(domain:warcraft.wiki.gg)",
+      "WebFetch(domain:www.icy-veins.com)",
+      "WebFetch(domain:www.warcrafttavern.com)",
+      "Bash(grep:*)",
+      "Bash(git rm:*)"
+    ],
+    "additionalDirectories": [
+      "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"
     ]
   }
 }
