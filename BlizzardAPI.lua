@@ -591,17 +591,6 @@ function BlizzardAPI.ValidateAssistedCombatSetup()
         issues[#issues + 1] = "Assisted Combat not available: " .. (failureReason or "unknown reason")
     end
     
-    -- Check CVars
-    local assistedMode = GetCVarBool("assistedMode")
-    if not assistedMode then
-        issues[#issues + 1] = "assistedMode CVar is disabled (try: /console assistedMode 1)"
-    end
-    
-    local assistedHighlight = GetCVarBool("assistedCombatHighlight")
-    if not assistedHighlight then
-        issues[#issues + 1] = "assistedCombatHighlight CVar is disabled (try: /console assistedCombatHighlight 1)"
-    end
-    
     -- Check action buttons
     local hasActionButtons = BlizzardAPI.HasAssistedCombatActionButtons()
     if not hasActionButtons then
@@ -697,10 +686,6 @@ function BlizzardAPI.TestAssistedCombatAPI()
         for i, issue in ipairs(issues) do
             print("|JAC|   " .. i .. ". " .. issue)
         end
-        print("|JAC| Quick Fix Commands:")
-        print("|JAC|   /console assistedMode 1")
-        print("|JAC|   /console assistedCombatHighlight 1")
-        print("|JAC|   /reload")
     end
 
     -- Secrecy API quick test: surface results for the sample spell (primary or first rotation)

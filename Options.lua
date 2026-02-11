@@ -1466,53 +1466,6 @@ local function CreateOptionsTable(addon)
                 order = 4,
                 args = {}
             },
-            about = {
-                type = "group",
-                name = L["About"],
-                order = 11,
-                args = {
-                    aboutHeader = {
-                        type = "header",
-                        name = L["About JustAssistedCombat"],
-                        order = 1,
-                    },
-                    version = {
-                        type = "description",
-                        name = function()
-                            local version = addon.db.global.version or "2.6"
-                            return "|cff00ff00JustAssistedCombat v" .. version .. "|r\n\nDisplays Blizzard's Assisted Combat rotation as a movable icon queue with hotkeys, proc glows, and optional defensive suggestions.\n\n|cffffff00Setup:|r\n|cffffffff/console assistedMode 1|r — Enable assisted combat\n|cffffffff/console assistedCombatHighlight 1|r — Add native button glow (optional)"
-                        end,
-                        order = 2,
-                        fontSize = "medium"
-                    },
-                    commands = {
-                        type = "description",
-                        name = L["Slash Commands"],
-                        order = 3,
-                        fontSize = "medium"
-                    },
-                    debugHeader = {
-                        type = "header",
-                        name = L["Developer"],
-                        order = 10,
-                    },
-                    debugMode = {
-                        type = "toggle",
-                        name = L["Debug Mode"],
-                        desc = L["Debug Mode desc"],
-                        order = 11,
-                        width = "full",
-                        get = function() return addon.db.profile.debugMode or false end,
-                        set = function(_, val)
-                            addon.db.profile.debugMode = val
-                            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
-                                BlizzardAPI.RefreshDebugMode()
-                            end
-                            addon:Print("Debug: " .. (val and "ON" or "OFF"))
-                        end
-                    },
-                }
-            }
         }
     }
 end
