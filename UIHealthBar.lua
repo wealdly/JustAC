@@ -4,8 +4,6 @@
 local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 3)
 if not UIHealthBar then return end
 
-local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-
 -- Cache frequently used functions to reduce table lookups on every update
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
@@ -70,9 +68,6 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Vertical queue: vertical bar (width x height)
         frame:SetSize(BAR_HEIGHT, queueDimension)
     end
-    
-    -- Position above position 1 icon, accounting for queue orientation and defensive position
-    local defensivePosition = profile.defensives and profile.defensives.position or "LEFT"
     
     -- Positioning offset: 0 for single icon (edge-to-edge), 25% for multiple icons
     local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
@@ -169,36 +164,15 @@ function UIHealthBar.Update(addon)
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
     
-    if not health or not maxHealth or maxHealth == 0 then return end
-    
+    if not health or not maxHealth then return end
+
     local statusBar = healthBarFrame.statusBar
     if not statusBar then return end
-    
-    -- Set min/max and value (both accept secrets directly)
+
+    -- Pass-through: StatusBar:SetMinMaxValues and SetValue accept secret values directly
+    -- The bar renders correctly even when values are secret
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
-    
-    -- Color gradient: Green → Yellow → Red based on health percentage
-    -- Only update color if not dealing with secret values
-    if BlizzardAPI and not BlizzardAPI.IsSecretValue(health) and not BlizzardAPI.IsSecretValue(maxHealth) then
-        local healthPercent = health / maxHealth
-        local r, g, b
-        
-        if healthPercent > 0.5 then
-            -- Green to Yellow (100% → 50%)
-            r = (1.0 - healthPercent) * 2  -- 0.0 → 1.0
-            g = 0.8
-            b = 0.0
-        else
-            -- Yellow to Red (50% → 0%)
-            r = 1.0
-            g = healthPercent * 1.6  -- 0.8 → 0.0
-            b = 0.0
-        end
-        
-        statusBar:SetStatusBarColor(r, g, b, 1.0)
-    end
-    -- Color stays green (set at creation) - visual fill shows health level
 end
 
 -- Show the health bar
