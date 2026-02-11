@@ -24,7 +24,7 @@ local defaults = {
         debugMode = false,
         isManualMode = false,
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
-        focusEmphasis = true,
+        glowMode = "all",                 -- "all", "primaryOnly", "procOnly", "none"
         firstIconScale = 1.2,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
@@ -33,7 +33,8 @@ local defaults = {
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
-        panelLocked = false,              -- Lock panel interactions in combat
+        panelLocked = false,              -- Legacy (migrated to panelInteraction)
+        panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
@@ -41,6 +42,7 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
+            glowMode = "all",         -- "all", "primaryOnly", "procOnly", "none"
             showHotkeys = true,       -- Show hotkey text on defensive icons
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = true,     -- Display compact health bar above main queue
@@ -118,6 +120,10 @@ function JustAC:NormalizeSavedData()
                 end
             end
             profile.hotkeyOverrides = nil  -- Clear old data
+        end
+        -- Migrate panelLocked boolean → panelInteraction string
+        if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
+            profile.panelInteraction = "locked"
         end
     end
 end

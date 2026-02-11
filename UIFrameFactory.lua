@@ -21,6 +21,24 @@ local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
 
+-- Panel interaction helpers
+local function IsPanelLocked(profile)
+    if not profile then return false end
+    local mode = profile.panelInteraction
+    if mode then return mode ~= "unlocked" end
+    return profile.panelLocked or false  -- Legacy fallback
+end
+
+local function TogglePanelLock(profile)
+    local mode = profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
+    if mode == "unlocked" then
+        profile.panelInteraction = "locked"
+    else
+        profile.panelInteraction = "unlocked"
+    end
+    return profile.panelInteraction ~= "unlocked"
+end
+
 -- Local state
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
@@ -327,8 +345,8 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
             local profile = addon:GetProfile()
-            if profile and profile.panelLocked then return end
-            
+            if IsPanelLocked(profile) then return end
+
             if self.spellID and not self.isItem then
                 addon:OpenHotkeyOverrideDialog(self.spellID)
             end
@@ -480,7 +498,7 @@ function UIFrameFactory.CreateMainFrame(addon)
     
     addon.mainFrame:SetScript("OnDragStart", function()
         local profile = addon:GetProfile()
-        if profile and not profile.panelLocked then
+        if not IsPanelLocked(profile) then
             addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
         end
     end)
@@ -516,8 +534,8 @@ function UIFrameFactory.CreateMainFrame(addon)
             
             if IsShiftKeyDown() then
                 -- Toggle lock
-                profile.panelLocked = not profile.panelLocked
-                local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                local nowLocked = TogglePanelLock(profile)
+                local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                 if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
             else
                 -- Open options panel
@@ -642,7 +660,7 @@ function UIFrameFactory.CreateGrabTab(addon)
         if not profile then return end
         
         -- Block dragging if locked
-        if profile.panelLocked then
+        if IsPanelLocked(profile) then
             return
         end
         
@@ -680,8 +698,8 @@ function UIFrameFactory.CreateGrabTab(addon)
                 -- Shift+Right-click: toggle lock (safe in combat - only modifies addon db)
                 local profile = addon:GetProfile()
                 if profile then
-                    profile.panelLocked = not profile.panelLocked
-                    local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                    local nowLocked = TogglePanelLock(profile)
+                    local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 end
             else
@@ -694,16 +712,16 @@ function UIFrameFactory.CreateGrabTab(addon)
             end
         end
     end)
-    
+
     addon.grabTab:SetScript("OnEnter", function()
         -- Stop any fade-out in progress and ensure fully visible
         if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
             addon.grabTab.fadeOut:Stop()
         end
         addon.grabTab:SetAlpha(1)
-        
+
         local profile = addon:GetProfile()
-        local isLocked = profile and profile.panelLocked
+        local isLocked = IsPanelLocked(profile)
         
         GameTooltip:SetOwner(addon.grabTab, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
@@ -977,22 +995,22 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     button:RegisterForDrag("LeftButton")
     button:SetScript("OnDragStart", function(self)
         local profile = addon:GetProfile()
-        if not profile or profile.panelLocked then return end
+        if IsPanelLocked(profile) then return end
         addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
     end)
-    
+
     button:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
     end)
-    
+
     -- Right-click menu for configuration
     button:RegisterForClicks("RightButtonUp")
     button:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
             local profile = addon:GetProfile()
-            if profile and profile.panelLocked then return end
-            
+            if IsPanelLocked(profile) then return end
+
             if self.spellID then
                 -- Spell-specific options
                 if IsShiftKeyDown() then
@@ -1004,8 +1022,8 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                 -- Empty slot - show general options
                 if IsShiftKeyDown() then
                     -- Toggle lock
-                    profile.panelLocked = not profile.panelLocked
-                    local status = profile.panelLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                    local nowLocked = TogglePanelLock(profile)
+                    local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 else
                     -- Open options panel
