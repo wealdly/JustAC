@@ -66,9 +66,18 @@ Get-ChildItem $libsDest -Directory | ForEach-Object {
     }
 }
 
-# Create ZIP (containing the addon folder, not just contents)
+# Create ZIP with forward slashes for macOS/Linux compatibility
+# (Compress-Archive uses backslashes which breaks non-Windows extractors)
 Write-Host "Creating ZIP archive..." -ForegroundColor Cyan
-Compress-Archive -Path $outputDir -DestinationPath $zipFile -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zip = [System.IO.Compression.ZipFile]::Open($zipFile, 'Create')
+Get-ChildItem $outputDir -Recurse -File | ForEach-Object {
+    $relativePath = $_.FullName.Substring($tempDir.Length + 1).Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $zip, $_.FullName, $relativePath, [System.IO.Compression.CompressionLevel]::Optimal
+    ) | Out-Null
+}
+$zip.Dispose()
 
 # Clean up temp folder
 Remove-Item $tempDir -Recurse -Force

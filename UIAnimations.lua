@@ -8,8 +8,6 @@ local GetTime = GetTime
 
 -- Flash animation constants
 local FLASH_DURATION = 0.2
-local FLASH_MAX_SCALE = 1.12
-local FLASH_SCALE_DURATION = 0.12
 
 -- Sentinel value: indicates no previous OnUpdate handler existed before flash
 -- Must be a unique truthy value so the guard check works correctly
@@ -272,11 +270,6 @@ local function StartFlash(button)
     button.Flash:SetAlpha(1.0)
     button.Flash:Show()
 
-    button.flashScaleTimer = FLASH_SCALE_DURATION
-    if button.FlashFrame and button.FlashFrame.SetScale then
-        button.FlashFrame:SetScale(FLASH_MAX_SCALE)
-    end
-
     if not button._prevFlashOnUpdate then
         local prev = button:GetScript("OnUpdate")
         if prev then
@@ -300,14 +293,9 @@ local function StopFlash(button)
     if not button then return end
     button.flashing = 0
     button.flashtime = 0
-    button.flashScaleTimer = nil
     if button.Flash then
         button.Flash:SetAlpha(0)
         button.Flash:Hide()
-    end
-    -- Always restore FlashFrame to base scale
-    if button.FlashFrame and button.FlashFrame.SetScale then
-        button.FlashFrame:SetScale(1)
     end
     if button._prevFlashOnUpdate then
         if button._prevFlashOnUpdate == FLASH_NO_PREV_HANDLER then
@@ -327,19 +315,6 @@ UpdateFlash = function(button, elapsed)
     if button.flashtime <= 0 then
         StopFlash(button)
         return
-    end
-
-    if button.flashScaleTimer and button.FlashFrame and button.FlashFrame.SetScale then
-        local st = button.flashScaleTimer - elapsed
-        if st <= 0 then
-            button.flashScaleTimer = nil
-            button.FlashFrame:SetScale(1)
-        else
-            button.flashScaleTimer = st
-            local progress = 1 - (st / FLASH_SCALE_DURATION)
-            local curScale = FLASH_MAX_SCALE - ((FLASH_MAX_SCALE - 1) * progress)
-            button.FlashFrame:SetScale(curScale)
-        end
     end
 end
 
