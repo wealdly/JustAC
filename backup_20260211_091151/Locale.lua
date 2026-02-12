@@ -10,6 +10,7 @@ L["JustAssistedCombat"] = "JustAssistedCombat"
 L["General"] = "General"
 L["System"] = "System"
 L["Offensive"] = "Offensives"
+L["Offensive Info"] = "DPS rotation queue from Blizzard's Assisted Combat.\n|cff00ff00• Procs|r: Glowing abilities inserted automatically\n|cff888888• Blacklist|r: Hide unwanted spells from queue"
 L["Defensives"] = "Defensives"
 L["Blacklist"] = "Blacklist"
 L["Hotkey Overrides"] = "Hotkeys"
@@ -33,6 +34,7 @@ L["Show Defensive Hotkeys"] = "Show Hotkeys"
 L["Show Defensive Hotkeys desc"] = "Display keybind text on defensive icons. Disabling skips hotkey detection for better performance."
 L["Insert Procced Defensives"] = "Insert Procced Defensives"
 L["Insert Procced Defensives desc"] = "Show procced defensive abilities (Victory Rush, free heals) at any health level."
+L["Debug Mode"] = "Debug Mode"
 L["Frame Opacity"] = "Frame Opacity"
 L["Queue Icon Fade"] = "Queue Icon Fade"
 L["Hide Out of Combat"] = "Hide Out of Combat"
@@ -46,36 +48,6 @@ L["No Glows"] = "No Glows"
 L["Show Tooltips"] = "Show Tooltips"
 L["Tooltips in Combat"] = "Tooltips in Combat"
 
--- Hotkey Options
-L["Hotkey Options"] = "Hotkey Options"
-L["Hotkey Font"] = "Hotkey Font"
-L["Font for hotkey text"] = "Font for hotkey text"
-L["Hotkey Size"] = "Hotkey Size"
-L["Size of hotkey text"] = "Size of hotkey text"
-L["Hotkey Color"] = "Hotkey Color"
-L["Color of hotkey text"] = "Color of hotkey text"
-L["Parent Anchor"] = "Parent Anchor"
-L["Anchor point of hotkey text relative to icon"] = "Anchor point of hotkey text relative to icon"
-L["Hotkey Anchor"] = "Hotkey Anchor"
-L["Which point on the hotkey text attaches to the anchor"] = "Which point on the hotkey text attaches to the anchor"
-L["First X Offset"] = "First X Offset"
-L["Horizontal offset for first icon hotkey text"] = "Horizontal offset for first icon hotkey text"
-L["First Y Offset"] = "First Y Offset"
-L["Vertical offset for first icon hotkey text"] = "Vertical offset for first icon hotkey text"
-L["Queue X Offset"] = "Queue X Offset"
-L["Horizontal offset for queued icons hotkey text"] = "Horizontal offset for queued icons hotkey text"
-L["Queue Y Offset"] = "Queue Y Offset"
-L["Vertical offset for queued icons hotkey text"] = "Vertical offset for queued icons hotkey text"
-L["Outline Mode"] = "Outline Mode"
-L["Font outline and rendering flags for hotkey text"] = "Font outline and rendering flags for hotkey text"
-L["None"] = "None"
-L["Outline"] = "Outline"
-L["Thick Outline"] = "Thick Outline"
-L["Monochrome"] = "Monochrome"
-L["Outline + Monochrome"] = "Outline + Monochrome"
-L["Thick Outline + Monochrome"] = "Thick Outline + Monochrome"
-
-
 -- Blacklist
 L["Hide from Queue"] = "Hide from Queue"
 L["Remove"] = "Remove"
@@ -87,9 +59,6 @@ L["Add Spell to Blacklist"] = "Add Spell to Blacklist"
 L["Spell ID"] = "Spell ID"
 L["Enter the spell ID to blacklist"] = "Enter the spell ID to blacklist (e.g., 48707)"
 L["Add"] = "Add"
-L["Clear All"] = "Clear All"
-L["Clear All Blacklist desc"] = "Remove all spells from the blacklist"
-L["Clear All Hotkeys desc"] = "Remove all custom hotkey overrides"
 
 -- Hotkey Overrides
 L["Custom Hotkey"] = "Custom Hotkey"
@@ -165,6 +134,7 @@ L["Panel Interaction desc"] = "Controls how the panel responds to mouse input"
 L["Unlocked"] = "Unlocked"
 L["Locked"] = "Locked"
 L["Click Through"] = "Click Through"
+L["Debug Mode desc"] = "Show debug info in chat"
 L["Enable Defensive Suggestions desc"] = "Show defensive spells when health drops below thresholds."
 L["Icon Position desc"] = "Where to place defensive icons relative to the queue"
 L["Custom Hotkey desc"] = "Text to display as hotkey (e.g., 'F1', 'Ctrl+Q', 'Mouse4')"
@@ -210,20 +180,21 @@ L["Spec-Based Switching"] = "Spec-Based Switching"
 L["Auto-switch profile by spec"] = "Auto-switch profile by spec"
 L["(No change)"] = "(No change)"
 L["(Disabled)"] = "(Disabled)"
+L["About"] = "About"
+L["About JustAssistedCombat"] = "About JustAssistedCombat"
+L["Developer"] = "Developer"
+
 -- Orientation values (full names)
 L["Left to Right"] = "Left to Right"
 L["Right to Left"] = "Right to Left"
 L["Bottom to Top"] = "Bottom to Top"
 L["Top to Bottom"] = "Top to Bottom"
 
--- Target frame anchor
-L["Target Frame Anchor"] = "Target Frame Anchor"
-L["Target Frame Anchor desc"] = "Attach the queue to the default target frame instead of a fixed screen position"
-L["Disabled"] = "Disabled"
-L["Top"] = "Top"
-L["Bottom"] = "Bottom"
-L["Left"] = "Left"
-L["Right"] = "Right"
+-- Slash commands help
+L["Slash Commands"] = "|cffffff00Slash Commands:|r\n|cff88ff88/jac|r - Open options\n|cff88ff88/jac toggle|r - Pause/resume\n|cff88ff88/jac debug|r - Toggle debug mode\n|cff88ff88/jac test|r - Test Blizzard API\n|cff88ff88/jac formcheck|r - Check form detection\n|cff88ff88/jac find <spell>|r - Locate spell\n|cff88ff88/jac reset|r - Reset position\n\nType |cff88ff88/jac help|r for full command list"
+
+-- About text (function will concatenate with version)
+L["About Text"] = "Enhances WoW's Assisted Combat system with advanced features for better gameplay experience.\n\n|cffffff00Key Features:|r\n• Smart hotkey detection with custom override support\n• Advanced macro parsing with conditional modifiers\n• Intelligent spell filtering and blacklist management\n• Enhanced visual feedback and tooltips\n• Seamless integration with Blizzard's native highlights\n• Zero performance impact on global cooldowns\n\n|cffffff00How It Works:|r\nJustAC automatically detects your action bar setup and displays the recommended rotation with proper hotkeys. When automatic detection fails, you can set custom hotkey displays via right-click.\n\n|cffffff00Optional Enhancements:|r\n|cffffffff/console assistedMode 1|r - Enables Blizzard's assisted combat system\n|cffffffff/console assistedCombatHighlight 1|r - Adds native button highlighting\n\nThese console commands enhance the experience but are not required for JustAC to function."
 
 -- Additional UI strings
 L["Remove"] = "Remove"
@@ -234,6 +205,7 @@ L["Blacklist"] = "Blacklist"
 L["Blacklist Info"] = "Hide spells from the queue.\n\n|cffff6666Shift+Right-click|r a spell to toggle blacklist."
 L["Blacklisted Spells"] = "Blacklisted Spells"
 L["Defensives"] = "Defensives"
+L["Defensives Info"] = "Survival spells shown when health drops.\n|cff00ff00• Self-Heals|r: Below self-heal threshold\n|cffff6666• Major Cooldowns|r: Below cooldown threshold"
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 
 -- Spell search UI (used in multiple panels)
@@ -262,9 +234,6 @@ if L then
     L["Blacklist"] = "Sperrliste"
     L["Hotkey Overrides"] = "Hotkeys"
     L["Add"] = "Hinzufügen"
-    L["Clear All"] = "Alle löschen"
-    L["Clear All Blacklist desc"] = "Alle Zauber von der Sperrliste entfernen"
-    L["Clear All Hotkeys desc"] = "Alle benutzerdefinierten Hotkeys entfernen"
 
     -- General Options
     L["Max Icons"] = "Max. Symbole"
@@ -274,6 +243,7 @@ if L then
     L["Primary Spell Scale"] = "Hauptzauber-Skalierung"
     L["Queue Orientation"] = "Warteschlangen-Ausrichtung"
     L["Lock Panel"] = "Panel sperren"
+    L["Debug Mode"] = "Debug-Modus"
     L["Frame Opacity"] = "Rahmen-Transparenz"
     L["Queue Icon Fade"] = "Warteschlangen-Symbol ausblenden"
     L["Hide Out of Combat"] = "Warteschlange außerhalb des Kampfes ausblenden"
@@ -286,35 +256,6 @@ if L then
     L["No Glows"] = "Keine Leuchteffekte"
     L["Show Tooltips"] = "Tooltips anzeigen"
     L["Tooltips in Combat"] = "Tooltips im Kampf"
-    
-    -- Hotkey Options
-    L["Hotkey Options"] = "Hotkey-Optionen"
-    L["Hotkey Font"] = "Hotkey-Schriftart"
-    L["Font for hotkey text"] = "Schriftart für Hotkey-Text"
-    L["Hotkey Size"] = "Hotkey-Größe"
-    L["Size of hotkey text"] = "Größe des Hotkey-Texts"
-    L["Hotkey Color"] = "Hotkey-Farbe"
-    L["Color of hotkey text"] = "Farbe des Hotkey-Texts"
-    L["Parent Anchor"] = "Elternanker"
-    L["Anchor point of hotkey text relative to icon"] = "Ankerpunkt des Hotkey-Texts relativ zum Symbol"
-    L["Hotkey Anchor"] = "Hotkey-Anker"
-    L["Which point on the hotkey text attaches to the anchor"] = "Welcher Punkt des Hotkey-Texts am Anker befestigt wird"
-    L["First X Offset"] = "Erster X-Versatz"
-    L["Horizontal offset for first icon hotkey text"] = "Horizontaler Versatz für den ersten Hotkey-Text"
-    L["First Y Offset"] = "Erster Y-Versatz"
-    L["Vertical offset for first icon hotkey text"] = "Vertikaler Versatz für den ersten Hotkey-Text"
-    L["Queue X Offset"] = "Warteschlangen-X-Versatz"
-    L["Horizontal offset for queued icons hotkey text"] = "Horizontaler Versatz für Hotkey-Text in der Warteschlange"
-    L["Queue Y Offset"] = "Warteschlangen-Y-Versatz"
-    L["Vertical offset for queued icons hotkey text"] = "Vertikaler Versatz für Hotkey-Text in der Warteschlange"
-    L["Outline Mode"] = "Konturenmodus"
-    L["Font outline and rendering flags for hotkey text"] = "Kontur- und Rendering-Modi für Hotkey-Text"
-    L["None"] = "Keine"
-    L["Outline"] = "Kontur"
-    L["Thick Outline"] = "Dicke Kontur"
-    L["Monochrome"] = "Monochrom"
-    L["Outline + Monochrome"] = "Kontur + Monochrom"
-    L["Thick Outline + Monochrome"] = "Dicke Kontur + Monochrom"
 
     -- Blacklist
     L["Hide from Queue"] = "Aus Warteschlange ausblenden"
@@ -374,6 +315,7 @@ if L then
     L["Insert Procced Abilities desc"] = "Leuchtende Proc-Fähigkeiten zur Warteschlange hinzufügen"
     L["Include All Available Abilities desc"] = "Hinter Makro-Bedingungen versteckte Fähigkeiten einbeziehen"
     L["Lock Panel desc"] = "Ziehen und Rechtsklick-Menüs deaktivieren"
+    L["Debug Mode desc"] = "Debug-Infos im Chat anzeigen"
     L["Enable Defensive Suggestions desc"] = "Defensiv-Vorschläge basierend auf Gesundheit anzeigen"
     L["Self-Heal Threshold desc"] = "Selbstheilung unter diesem Gesundheits-% anzeigen"
     L["Cooldown Threshold desc"] = "Große Defensiven unter diesem Gesundheits-% anzeigen"
@@ -412,24 +354,25 @@ if L then
     L["Defensive Max Icons desc"] = "Anzahl Defensiv-Zauber gleichzeitig (1-3)"
     L["Profiles"] = "Profile"
     L["Profiles desc"] = "Charakter- und Spezialisierungsprofilverwaltung"
+    L["About"] = "Über"
+    L["About JustAssistedCombat"] = "Über JustAssistedCombat"
+
     -- Orientation values (full names)
     L["Left to Right"] = "Links nach Rechts"
     L["Right to Left"] = "Rechts nach Links"
     L["Bottom to Top"] = "Unten nach Oben"
     L["Top to Bottom"] = "Oben nach Unten"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Zielrahmen-Anker"
-    L["Target Frame Anchor desc"] = "Warteschlange am Standard-Zielrahmen verankern statt an einer festen Bildschirmposition"
-    L["Disabled"] = "Deaktiviert"
-    L["Top"] = "Oben"
-    L["Bottom"] = "Unten"
-    L["Left"] = "Links"
-    L["Right"] = "Rechts"
+    -- Slash commands help
+    L["Slash Commands"] = "|cffffff00Befehle:|r\n|cff88ff88/jac|r - Optionen öffnen\n|cff88ff88/jac toggle|r - Pausieren/Fortsetzen\n|cff88ff88/jac debug|r - Debug-Modus umschalten\n|cff88ff88/jac test|r - Blizzard-API testen\n|cff88ff88/jac formcheck|r - Formerkennung prüfen\n|cff88ff88/jac find <zauber>|r - Zauber finden\n|cff88ff88/jac reset|r - Position zurücksetzen\n\nGeben Sie |cff88ff88/jac help|r für die vollständige Befehlsliste ein"
+
+    -- About text
+    L["About Text"] = "Verbessert WoWs Assistiertes Kampfsystem mit erweiterten Funktionen für besseres Spielerlebnis.\n\n|cffffff00Hauptmerkmale:|r\n• Intelligente Hotkey-Erkennung mit benutzerdefinierter Überschreibung\n• Erweiterte Makro-Analyse mit bedingten Modifikatoren\n• Intelligente Zauberfilterung und Sperrlisten-Verwaltung\n• Verbesserte visuelle Rückmeldung und Tooltips\n• Nahtlose Integration mit Blizzards nativen Hervorhebungen\n• Keine Auswirkungen auf globale Abklingzeiten\n\n|cffffff00Funktionsweise:|r\nJustAC erkennt automatisch Ihre Aktionsleisten-Einrichtung und zeigt die empfohlene Rotation mit richtigen Hotkeys an. Wenn die automatische Erkennung fehlschlägt, können Sie benutzerdefinierte Hotkey-Anzeigen per Rechtsklick festlegen.\n\n|cffffff00Optionale Verbesserungen:|r\n|cffffffff/console assistedMode 1|r - Aktiviert Blizzards Assistiertes Kampfsystem\n|cffffffff/console assistedCombatHighlight 1|r - Fügt native Button-Hervorhebung hinzu\n\nDiese Konsolenbefehle verbessern das Erlebnis, sind aber nicht erforderlich, damit JustAC funktioniert."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Benutzerdefinierten Tastentext festlegen.\n\n|cff00ff00Rechtsklick|r um Hotkey festzulegen."
     L["Blacklist Info"] = "Zauber aus der Warteschlange ausblenden.\n\n|cffff6666Umschalt+Rechtsklick|r zum Umschalten."
+    L["Defensives Info"] = "Zweistufiges Prioritätssystem:\n|cff00ff00• Selbstheilungen|r: Unter Selbstheilungs-Schwelle\n|cffff6666• Große Cooldowns|r: Unter Cooldown-Schwelle"
     L["Restore Class Defaults name"] = "Klassen-Standardwerte wiederherstellen"
 end
 
@@ -446,9 +389,6 @@ if L then
     L["Blacklist"] = "Liste noire"
     L["Hotkey Overrides"] = "Raccourcis"
     L["Add"] = "Ajouter"
-    L["Clear All"] = "Tout effacer"
-    L["Clear All Blacklist desc"] = "Retirer tous les sorts de la liste noire"
-    L["Clear All Hotkeys desc"] = "Supprimer tous les raccourcis personnalisés"
 
     -- General Options
     L["Max Icons"] = "Icônes max"
@@ -458,6 +398,7 @@ if L then
     L["Primary Spell Scale"] = "Échelle du sort principal"
     L["Queue Orientation"] = "Orientation de la file"
     L["Lock Panel"] = "Verrouiller le panneau"
+    L["Debug Mode"] = "Mode débogage"
     L["Frame Opacity"] = "Opacité du cadre"
     L["Queue Icon Fade"] = "Fondu des icônes de file"
     L["Hide Out of Combat"] = "Masquer la file hors combat"
@@ -470,36 +411,7 @@ if L then
     L["No Glows"] = "Aucune lueur"
     L["Show Tooltips"] = "Afficher les infobulles"
     L["Tooltips in Combat"] = "Infobulles en combat"
-    
-    -- Hotkey Options
-    L["Hotkey Options"] = "Options des raccourcis"
-    L["Hotkey Font"] = "Police du raccourci"
-    L["Font for hotkey text"] = "Police pour le texte des raccourcis"
-    L["Hotkey Size"] = "Taille du raccourci"
-    L["Size of hotkey text"] = "Taille du texte des raccourcis"
-    L["Hotkey Color"] = "Couleur du raccourci"
-    L["Color of hotkey text"] = "Couleur du texte des raccourcis"
-    L["Parent Anchor"] = "Ancre parente"
-    L["Anchor point of hotkey text relative to icon"] = "Point d'ancrage du texte des raccourcis par rapport à l'icône"
-    L["Hotkey Anchor"] = "Ancre du raccourci"
-    L["Which point on the hotkey text attaches to the anchor"] = "Quel point du texte du raccourci se fixe à l'ancre"
-    L["First X Offset"] = "Décalage X initial"
-    L["Horizontal offset for first icon hotkey text"] = "Décalage horizontal pour le texte du premier raccourci"
-    L["First Y Offset"] = "Décalage Y initial"
-    L["Vertical offset for first icon hotkey text"] = "Décalage vertical pour le texte du premier raccourci"
-    L["Queue X Offset"] = "Décalage X en file"
-    L["Horizontal offset for queued icons hotkey text"] = "Décalage horizontal pour le texte des raccourcis en file"
-    L["Queue Y Offset"] = "Décalage Y en file"
-    L["Vertical offset for queued icons hotkey text"] = "Décalage vertical pour le texte des raccourcis en file"
-    L["Outline Mode"] = "Mode contour"
-    L["Font outline and rendering flags for hotkey text"] = "Contours et options de rendu pour le texte des raccourcis"
-    L["None"] = "Aucun"
-    L["Outline"] = "Contour"
-    L["Thick Outline"] = "Contour épais"
-    L["Monochrome"] = "Monochrome"
-    L["Outline + Monochrome"] = "Contour + Monochrome"
-    L["Thick Outline + Monochrome"] = "Contour épais + Monochrome"
-    
+
     -- Blacklist
     L["Hide from Queue"] = "Masquer de la file"
     L["Remove"] = "Supprimer"
@@ -558,6 +470,7 @@ if L then
     L["Insert Procced Abilities desc"] = "Scanner le grimoire pour les capacités offensives déclenchées (lumineuses) et les afficher dans la file. Utile pour les capacités comme 'Lame gangrenée' qui peuvent ne pas apparaître dans la liste de rotation de Blizzard."
     L["Include All Available Abilities desc"] = "Inclure les capacités cachées derrière des conditions de macro (par ex. [mod:shift]) dans les recommandations. Active la stabilisation pour réduire le scintillement. Désactiver si vous voulez uniquement les capacités directement visibles sur vos barres d'action."
     L["Lock Panel desc"] = "Bloquer le glissement et les menus contextuels (les infobulles fonctionnent toujours si activées). Basculer via clic droit sur la poignée de déplacement."
+    L["Debug Mode desc"] = "Afficher les informations détaillées de l'addon dans le chat pour le dépannage"
     L["Enable Defensive Suggestions desc"] = "Afficher une suggestion de sort défensif lorsque la santé est basse"
     L["Self-Heal Threshold desc"] = "Afficher les suggestions d'auto-soin lorsque la santé tombe en dessous de ce pourcentage (plus élevé = se déclenche plus tôt)"
     L["Cooldown Threshold desc"] = "Afficher les suggestions de temps de recharge majeurs lorsque la santé tombe en dessous de ce pourcentage (plus élevé = se déclenche plus tôt)"
@@ -596,24 +509,25 @@ if L then
     L["Defensive Max Icons desc"] = "Sorts défensifs à afficher (1-3)"
     L["Profiles"] = "Profils"
     L["Profiles desc"] = "Gestion des profils de personnage et de spécialisation"
+    L["About"] = "À propos"
+    L["About JustAssistedCombat"] = "À propos de JustAssistedCombat"
+
     -- Orientation values (full names)
     L["Left to Right"] = "Gauche à droite"
     L["Right to Left"] = "Droite à gauche"
     L["Bottom to Top"] = "Bas vers haut"
     L["Top to Bottom"] = "Haut vers bas"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Ancrage cadre de cible"
-    L["Target Frame Anchor desc"] = "Attacher la file au cadre de cible par défaut au lieu d'une position fixe à l'écran"
-    L["Disabled"] = "Désactivé"
-    L["Top"] = "Haut"
-    L["Bottom"] = "Bas"
-    L["Left"] = "Gauche"
-    L["Right"] = "Droite"
+    -- Slash commands help
+    L["Slash Commands"] = "|cffffff00Commandes:|r\n|cff88ff88/jac|r - Ouvrir les options\n|cff88ff88/jac toggle|r - Pause/Reprendre\n|cff88ff88/jac debug|r - Basculer le mode débogage\n|cff88ff88/jac test|r - Tester l'API Blizzard\n|cff88ff88/jac formcheck|r - Vérifier la détection de forme\n|cff88ff88/jac find <sort>|r - Localiser le sort\n|cff88ff88/jac reset|r - Réinitialiser la position\n\nTapez |cff88ff88/jac help|r pour la liste complète des commandes"
+
+    -- About text
+    L["About Text"] = "Améliore le système de Combat Assisté de WoW avec des fonctionnalités avancées pour une meilleure expérience de jeu.\n\n|cffffff00Fonctionnalités clés:|r\n• Détection intelligente des raccourcis avec personnalisation\n• Analyse avancée des macros avec modificateurs conditionnels\n• Filtrage intelligent des sorts et gestion de liste noire\n• Retour visuel et infobulles améliorés\n• Intégration transparente avec les surbrillances natives de Blizzard\n• Aucun impact sur les temps de recharge globaux\n\n|cffffff00Fonctionnement:|r\nJustAC détecte automatiquement votre configuration de barre d'action et affiche la rotation recommandée avec les bons raccourcis. Lorsque la détection automatique échoue, vous pouvez définir des affichages de raccourcis personnalisés via clic droit.\n\n|cffffff00Améliorations optionnelles:|r\n|cffffffff/console assistedMode 1|r - Active le système de combat assisté de Blizzard\n|cffffffff/console assistedCombatHighlight 1|r - Ajoute la surbrillance native des boutons\n\nCes commandes de console améliorent l'expérience mais ne sont pas nécessaires pour que JustAC fonctionne."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Définir un raccourci personnalisé.\n\n|cff00ff00Clic droit|r pour définir un raccourci."
     L["Blacklist Info"] = "Masquer des sorts de la file.\n\n|cffff6666Maj+Clic droit|r pour basculer."
+    L["Defensives Info"] = "Système de priorité à deux niveaux:\n|cff00ff00• Auto-soins|r: Sous le seuil d'auto-soin\n|cffff6666• Cooldowns majeurs|r: Sous le seuil de cooldown"
     L["Restore Class Defaults name"] = "Restaurer les valeurs par défaut de la classe"
 end
 
@@ -630,9 +544,6 @@ if L then
     L["Blacklist"] = "Черный список"
     L["Hotkey Overrides"] = "Горячие клавиши"
     L["Add"] = "Добавить"
-    L["Clear All"] = "Очистить все"
-    L["Clear All Blacklist desc"] = "Удалить все заклинания из черного списка"
-    L["Clear All Hotkeys desc"] = "Удалить все пользовательские горячие клавиши"
 
     -- General Options
     L["Max Icons"] = "Макс. иконок"
@@ -642,6 +553,7 @@ if L then
     L["Primary Spell Scale"] = "Масштаб главного заклинания"
     L["Queue Orientation"] = "Ориентация очереди"
     L["Lock Panel"] = "Заблокировать панель"
+    L["Debug Mode"] = "Режим отладки"
     L["Frame Opacity"] = "Прозрачность рамки"
     L["Queue Icon Fade"] = "Затухание иконок очереди"
     L["Hide Out of Combat"] = "Скрыть очередь вне боя"
@@ -654,35 +566,6 @@ if L then
     L["No Glows"] = "Без свечения"
     L["Show Tooltips"] = "Показывать подсказки"
     L["Tooltips in Combat"] = "Подсказки в бою"
-
-    -- Hotkey Options
-    L["Hotkey Options"] = "Параметры клавиш"
-    L["Hotkey Font"] = "Шрифт клавиши"
-    L["Font for hotkey text"] = "Шрифт для текста клавиши"
-    L["Hotkey Size"] = "Размер клавиши"
-    L["Size of hotkey text"] = "Размер текста клавиши"
-    L["Hotkey Color"] = "Цвет клавиши"
-    L["Color of hotkey text"] = "Цвет текста клавиши"
-    L["Parent Anchor"] = "Якорь родителя"
-    L["Anchor point of hotkey text relative to icon"] = "Точка привязки текста клавиши относительно иконки"
-    L["Hotkey Anchor"] = "Якорь клавиши"
-    L["Which point on the hotkey text attaches to the anchor"] = "Какая точка текста клавиши привязывается к якорю"
-    L["First X Offset"] = "Смещение X первой"
-    L["Horizontal offset for first icon hotkey text"] = "Горизонтальное смещение текста первой клавиши"
-    L["First Y Offset"] = "Смещение Y первой"
-    L["Vertical offset for first icon hotkey text"] = "Вертикальное смещение текста первой клавиши"
-    L["Queue X Offset"] = "Смещение X очереди"
-    L["Horizontal offset for queued icons hotkey text"] = "Горизонтальное смещение текста клавиш в очереди"
-    L["Queue Y Offset"] = "Смещение Y очереди"
-    L["Vertical offset for queued icons hotkey text"] = "Вертикальное смещение текста клавиш в очереди"
-    L["Outline Mode"] = "Режим контура"
-    L["Font outline and rendering flags for hotkey text"] = "Контур и параметры рендеринга текста клавиши"
-    L["None"] = "Нет"
-    L["Outline"] = "Контур"
-    L["Thick Outline"] = "Толстый контур"
-    L["Monochrome"] = "Монохром"
-    L["Outline + Monochrome"] = "Контур + Монохром"
-    L["Thick Outline + Monochrome"] = "Толстый контур + Монохром"
 
     -- Blacklist
     L["Hide from Queue"] = "Скрыть из очереди"
@@ -742,6 +625,7 @@ if L then
     L["Insert Procced Abilities desc"] = "Добавить светящиеся проки в очередь"
     L["Include All Available Abilities desc"] = "Включить способности за условиями макросов"
     L["Lock Panel desc"] = "Отключить перетаскивание и меню"
+    L["Debug Mode desc"] = "Показывать отладку в чате"
     L["Enable Defensive Suggestions desc"] = "Показывать защитные предложения по здоровью"
     L["Self-Heal Threshold desc"] = "Показывать самолечение ниже этого % здоровья"
     L["Cooldown Threshold desc"] = "Показывать защитные ниже этого % здоровья"
@@ -780,24 +664,25 @@ if L then
     L["Defensive Max Icons desc"] = "Защитных заклинаний одновременно (1-3)"
     L["Profiles"] = "Профили"
     L["Profiles desc"] = "Управление профилями персонажа и специализации"
+    L["About"] = "О аддоне"
+    L["About JustAssistedCombat"] = "О JustAssistedCombat"
+
     -- Orientation values (full names)
     L["Left to Right"] = "Слева направо"
     L["Right to Left"] = "Справа налево"
     L["Bottom to Top"] = "Снизу вверх"
     L["Top to Bottom"] = "Сверху вниз"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Привязка к рамке цели"
-    L["Target Frame Anchor desc"] = "Привязать очередь к стандартной рамке цели вместо фиксированной позиции на экране"
-    L["Disabled"] = "Выключено"
-    L["Top"] = "Сверху"
-    L["Bottom"] = "Снизу"
-    L["Left"] = "Слева"
-    L["Right"] = "Справа"
+    -- Slash commands help
+    L["Slash Commands"] = "|cffffff00Команды:|r\n|cff88ff88/jac|r - Открыть настройки\n|cff88ff88/jac toggle|r - Пауза/возобновление\n|cff88ff88/jac debug|r - Переключить режим отладки\n|cff88ff88/jac test|r - Тестировать API Blizzard\n|cff88ff88/jac formcheck|r - Проверить определение формы\n|cff88ff88/jac find <заклинание>|r - Найти заклинание\n|cff88ff88/jac reset|r - Сбросить позицию\n\nВведите |cff88ff88/jac help|r для полного списка команд"
+
+    -- About text
+    L["About Text"] = "Улучшает систему Вспомогательного боя WoW с расширенными функциями для лучшего игрового опыта.\n\n|cffffff00Основные возможности:|r\n• Умное определение горячих клавиш с переопределением\n• Расширенный анализ макросов с условными модификаторами\n• Интеллектуальная фильтрация заклинаний и управление черным списком\n• Улучшенная визуальная обратная связь и подсказки\n• Бесшовная интеграция с нативными подсветками Blizzard\n• Нулевое влияние на глобальные перезарядки\n\n|cffffff00Как работает:|r\nJustAC автоматически определяет настройку панели действий и показывает рекомендуемую ротацию с правильными горячими клавишами. Когда автоопределение не срабатывает, вы можете установить пользовательские горячие клавиши правым кликом.\n\n|cffffff00Опциональные улучшения:|r\n|cffffffff/console assistedMode 1|r - Включает систему вспомогательного боя Blizzard\n|cffffffff/console assistedCombatHighlight 1|r - Добавляет нативную подсветку кнопок\n\nЭти консольные команды улучшают опыт, но не требуются для работы JustAC."
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Установить пользовательскую клавишу.\n\n|cff00ff00Правый клик|r для установки."
     L["Blacklist Info"] = "Скрыть заклинания из очереди.\n\n|cffff6666Shift+Правый клик|r для переключения."
+    L["Defensives Info"] = "Двухуровневая система приоритетов:\n|cff00ff00• Самолечение|r: Ниже порога самолечения\n|cffff6666• Большие перезарядки|r: Ниже порога перезарядки"
     L["Restore Class Defaults name"] = "Восстановить настройки класса"
 end
 
@@ -815,9 +700,6 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atajos"
     L["Add"] = "Agregar"
-    L["Clear All"] = "Borrar todo"
-    L["Clear All Blacklist desc"] = "Eliminar todos los hechizos de la lista negra"
-    L["Clear All Hotkeys desc"] = "Eliminar todos los atajos personalizados"
 
     -- General Options
     L["Max Icons"] = "Iconos máx"
@@ -827,6 +709,7 @@ if L then
     L["Primary Spell Scale"] = "Escala del hechizo principal"
     L["Queue Orientation"] = "Orientación de cola"
     L["Lock Panel"] = "Bloquear panel"
+    L["Debug Mode"] = "Modo de depuración"
     L["Frame Opacity"] = "Opacidad del marco"
     L["Queue Icon Fade"] = "Desvanecimiento de icono de cola"
     L["Hide Out of Combat"] = "Ocultar cola fuera de combate"
@@ -839,35 +722,6 @@ if L then
     L["No Glows"] = "Sin brillos"
     L["Show Tooltips"] = "Mostrar información"
     L["Tooltips in Combat"] = "Información en combate"
-    
-    -- Hotkey Options
-    L["Hotkey Options"] = "Opciones de tecla rápida"
-    L["Hotkey Font"] = "Fuente de la tecla"
-    L["Font for hotkey text"] = "Fuente para el texto de la tecla"
-    L["Hotkey Size"] = "Tamaño de la tecla"
-    L["Size of hotkey text"] = "Tamaño del texto de la tecla"
-    L["Hotkey Color"] = "Color de la tecla"
-    L["Color of hotkey text"] = "Color del texto de la tecla"
-    L["Parent Anchor"] = "Ancla del padre"
-    L["Anchor point of hotkey text relative to icon"] = "Punto de anclaje del texto respecto al icono"
-    L["Hotkey Anchor"] = "Ancla de la tecla"
-    L["Which point on the hotkey text attaches to the anchor"] = "Qué punto del texto se engancha al ancla"
-    L["First X Offset"] = "Desplazamiento X inicial"
-    L["Horizontal offset for first icon hotkey text"] = "Desplazamiento horizontal del primer texto de tecla"
-    L["First Y Offset"] = "Desplazamiento Y inicial"
-    L["Vertical offset for first icon hotkey text"] = "Desplazamiento vertical del primer texto de tecla"
-    L["Queue X Offset"] = "Desplazamiento X en cola"
-    L["Horizontal offset for queued icons hotkey text"] = "Desplazamiento horizontal del texto de teclas en cola"
-    L["Queue Y Offset"] = "Desplazamiento Y en cola"
-    L["Vertical offset for queued icons hotkey text"] = "Desplazamiento vertical del texto de teclas en cola"
-    L["Outline Mode"] = "Modo de contorno"
-    L["Font outline and rendering flags for hotkey text"] = "Contorno y opciones de renderizado del texto de la tecla"
-    L["None"] = "Ninguno"
-    L["Outline"] = "Contorno"
-    L["Thick Outline"] = "Contorno grueso"
-    L["Monochrome"] = "Monocromo"
-    L["Outline + Monochrome"] = "Contorno + Monocromo"
-    L["Thick Outline + Monochrome"] = "Contorno grueso + Monocromo"
 
     -- Blacklist
     L["Hide from Queue"] = "Ocultar de la cola"
@@ -973,15 +827,6 @@ if L then
     L["Bottom to Top"] = "Abajo hacia arriba"
     L["Top to Bottom"] = "Arriba hacia abajo"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Anclaje al marco de objetivo"
-    L["Target Frame Anchor desc"] = "Anclar la cola al marco de objetivo predeterminado en lugar de una posición fija en pantalla"
-    L["Disabled"] = "Desactivado"
-    L["Top"] = "Arriba"
-    L["Bottom"] = "Abajo"
-    L["Left"] = "Izquierda"
-    L["Right"] = "Derecha"
-
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n|cff88ff88/jac|r - Abrir opciones\n|cff88ff88/jac toggle|r - Pausar/reanudar\n|cff88ff88/jac debug|r - Alternar modo depuración\n|cff88ff88/jac test|r - Probar API Blizzard\n|cff88ff88/jac formcheck|r - Comprobar detección de forma\n|cff88ff88/jac find <hechizo>|r - Localizar hechizo\n|cff88ff88/jac reset|r - Restablecer posición\n\nEscribe |cff88ff88/jac help|r para la lista completa de comandos"
 
@@ -991,6 +836,7 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Establecer texto de atajo personalizado para hechizos cuando la detección automática falla o por preferencia personal.\n\n|cff00ff00Clic derecho|r en un icono de hechizo en la cola para establecer un atajo personalizado."
     L["Blacklist Info"] = "Ocultar hechizos de la cola de sugerencias.\n\n|cffff6666Shift+Clic derecho|r en un icono de hechizo para agregarlo o quitarlo de la lista negra."
+    L["Defensives Info"] = "Icono defensivo posición 0 con prioridad de dos niveles:\n|cff00ff00• Autocuraciones|r: Curaciones rápidas mostradas cuando la salud cae bajo el umbral\n|cffff6666• Tiempos de reutilización mayores|r: Defensivos de emergencia cuando críticamente bajo\n\nEl icono aparece con un brillo verde. El comportamiento fuera de combate está controlado por el interruptor 'Solo en combate'."
     L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 end
 
@@ -1012,9 +858,6 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atajos"
     L["Add"] = "Agregar"
-    L["Clear All"] = "Borrar todo"
-    L["Clear All Blacklist desc"] = "Eliminar todos los hechizos de la lista negra"
-    L["Clear All Hotkeys desc"] = "Eliminar todos los atajos personalizados"
 
     -- General Options
     L["Max Icons"] = "Iconos máx"
@@ -1036,35 +879,6 @@ if L then
     L["No Glows"] = "Sin brillos"
     L["Show Tooltips"] = "Mostrar información"
     L["Tooltips in Combat"] = "Información en combate"
-
-    -- Hotkey Options
-    L["Hotkey Options"] = "Opciones de tecla rápida"
-    L["Hotkey Font"] = "Fuente de la tecla"
-    L["Font for hotkey text"] = "Fuente para el texto de la tecla"
-    L["Hotkey Size"] = "Tamaño de la tecla"
-    L["Size of hotkey text"] = "Tamaño del texto de la tecla"
-    L["Hotkey Color"] = "Color de la tecla"
-    L["Color of hotkey text"] = "Color del texto de la tecla"
-    L["Parent Anchor"] = "Ancla del padre"
-    L["Anchor point of hotkey text relative to icon"] = "Punto de anclaje del texto respecto al icono"
-    L["Hotkey Anchor"] = "Ancla de la tecla"
-    L["Which point on the hotkey text attaches to the anchor"] = "Qué punto del texto se engancha al ancla"
-    L["First X Offset"] = "Desplazamiento X inicial"
-    L["Horizontal offset for first icon hotkey text"] = "Desplazamiento horizontal del primer texto de tecla"
-    L["First Y Offset"] = "Desplazamiento Y inicial"
-    L["Vertical offset for first icon hotkey text"] = "Desplazamiento vertical del primer texto de tecla"
-    L["Queue X Offset"] = "Desplazamiento X en cola"
-    L["Horizontal offset for queued icons hotkey text"] = "Desplazamiento horizontal del texto de teclas en cola"
-    L["Queue Y Offset"] = "Desplazamiento Y en cola"
-    L["Vertical offset for queued icons hotkey text"] = "Desplazamiento vertical del texto de teclas en cola"
-    L["Outline Mode"] = "Modo de contorno"
-    L["Font outline and rendering flags for hotkey text"] = "Contorno y opciones de renderizado del texto de la tecla"
-    L["None"] = "Ninguno"
-    L["Outline"] = "Contorno"
-    L["Thick Outline"] = "Contorno grueso"
-    L["Monochrome"] = "Monocromo"
-    L["Outline + Monochrome"] = "Contorno + Monocromo"
-    L["Thick Outline + Monochrome"] = "Contorno grueso + Monocromo"
 
     -- Blacklist
     L["Hide from Queue"] = "Ocultar de la cola"
@@ -1170,15 +984,6 @@ if L then
     L["Bottom to Top"] = "Abajo hacia arriba"
     L["Top to Bottom"] = "Arriba hacia abajo"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Anclaje al marco de objetivo"
-    L["Target Frame Anchor desc"] = "Anclar la cola al marco de objetivo predeterminado en lugar de una posición fija en pantalla"
-    L["Disabled"] = "Desactivado"
-    L["Top"] = "Arriba"
-    L["Bottom"] = "Abajo"
-    L["Left"] = "Izquierda"
-    L["Right"] = "Derecha"
-
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n/jac - Opciones\n/jac toggle - Pausar\n/jac debug - Depuración\n/jac test - Probar API\n/jac reset - Restablecer\n\n|cff88ff88/jac help|r para todos"
 
@@ -1188,6 +993,7 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Atajos personalizados para hechizos.\n|cff00ff00Clic derecho|r para establecer."
     L["Blacklist Info"] = "Ocultar hechizos de la cola.\n|cffff6666Shift+Clic derecho|r para alternar."
+    L["Defensives Info"] = "|cff00ff00Autocuraciones|r en umbral alto\n|cffff6666Reutilizaciones|r en salud crítica"
     L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 end
 
@@ -1204,9 +1010,6 @@ if L then
     L["Blacklist"] = "Lista negra"
     L["Hotkey Overrides"] = "Atalhos"
     L["Add"] = "Adicionar"
-    L["Clear All"] = "Limpar tudo"
-    L["Clear All Blacklist desc"] = "Remover todas as magias da lista negra"
-    L["Clear All Hotkeys desc"] = "Remover todos os atalhos personalizados"
 
     -- General Options
     L["Max Icons"] = "Ícones máx"
@@ -1228,35 +1031,6 @@ if L then
     L["No Glows"] = "Sem brilhos"
     L["Show Tooltips"] = "Mostrar dicas"
     L["Tooltips in Combat"] = "Dicas em combate"
-    
-    -- Hotkey Options
-    L["Hotkey Options"] = "Opções de Atalho"
-    L["Hotkey Font"] = "Fonte do Atalho"
-    L["Font for hotkey text"] = "Fonte para o texto do atalho"
-    L["Hotkey Size"] = "Tamanho do Atalho"
-    L["Size of hotkey text"] = "Tamanho do texto do atalho"
-    L["Hotkey Color"] = "Cor do Atalho"
-    L["Color of hotkey text"] = "Cor do texto do atalho"
-    L["Parent Anchor"] = "Âncora do Pai"
-    L["Anchor point of hotkey text relative to icon"] = "Ponto de ancoragem do texto em relação ao ícone"
-    L["Hotkey Anchor"] = "Âncora do Atalho"
-    L["Which point on the hotkey text attaches to the anchor"] = "Qual ponto do texto do atalho se fixa à âncora"
-    L["First X Offset"] = "Deslocamento X Inicial"
-    L["Horizontal offset for first icon hotkey text"] = "Deslocamento horizontal para o texto do primeiro atalho"
-    L["First Y Offset"] = "Deslocamento Y Inicial"
-    L["Vertical offset for first icon hotkey text"] = "Deslocamento vertical para o texto do primeiro atalho"
-    L["Queue X Offset"] = "Deslocamento X da Fila"
-    L["Horizontal offset for queued icons hotkey text"] = "Deslocamento horizontal para o texto dos atalhos na fila"
-    L["Queue Y Offset"] = "Deslocamento Y da Fila"
-    L["Vertical offset for queued icons hotkey text"] = "Deslocamento vertical para o texto dos atalhos na fila"
-    L["Outline Mode"] = "Modo de Contorno"
-    L["Font outline and rendering flags for hotkey text"] = "Contorno e opções de renderização para o texto do atalho"
-    L["None"] = "Nenhum"
-    L["Outline"] = "Contorno"
-    L["Thick Outline"] = "Contorno Grosso"
-    L["Monochrome"] = "Monocromático"
-    L["Outline + Monochrome"] = "Contorno + Monocromático"
-    L["Thick Outline + Monochrome"] = "Contorno Grosso + Monocromático"
 
     -- Blacklist
     L["Hide from Queue"] = "Ocultar da fila"
@@ -1363,15 +1137,6 @@ if L then
     L["Bottom to Top"] = "Baixo para cima"
     L["Top to Bottom"] = "Cima para baixo"
 
-    -- Target frame anchor
-    L["Target Frame Anchor"] = "Ancoragem ao quadro de alvo"
-    L["Target Frame Anchor desc"] = "Ancorar a fila no quadro de alvo padrão em vez de uma posição fixa na tela"
-    L["Disabled"] = "Desativado"
-    L["Top"] = "Cima"
-    L["Bottom"] = "Baixo"
-    L["Left"] = "Esquerda"
-    L["Right"] = "Direita"
-
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n/jac - Opções\n/jac toggle - Pausar\n/jac debug - Depuração\n/jac test - Testar API\n/jac reset - Redefinir\n\n|cff88ff88/jac help|r para todos"
 
@@ -1381,5 +1146,6 @@ if L then
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Atalhos personalizados para magias.\n|cff00ff00Clique direito|r para definir."
     L["Blacklist Info"] = "Ocultar magias da fila.\n|cffff6666Shift+Clique direito|r para alternar."
+    L["Defensives Info"] = "|cff00ff00Autocuras|r em limite alto\n|cffff6666Recargas|r em vida crítica"
     L["Restore Class Defaults name"] = "Restaurar padrões da classe"
 end

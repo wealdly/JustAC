@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter
+local UIManager, UIRenderer, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter
 
 -- Class default tables are stored in SpellDB.lua for consistency
 -- Access via JustAC.CLASS_*_DEFAULTS (set in OnInitialize after SpellDB loads)
@@ -36,17 +36,16 @@ local defaults = {
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
-        targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
-            enabled = false,
+            enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
             glowMode = "all",         -- "all", "primaryOnly", "procOnly", "none"
             showHotkeys = true,       -- Show hotkey text on defensive icons
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
-            showHealthBar = false,    -- Display compact health bar above main queue
+            showHealthBar = true,     -- Display compact health bar above main queue
             iconScale = 1.2,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 3,             -- Number of defensive icons to show (1-3)
             selfHealThreshold = 80,   -- Show self-heals when health drops below this
@@ -57,17 +56,6 @@ local defaults = {
             petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
             displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
-        hotkeyText = {
-            font = "Friz Quadrata TT",   -- LibSharedMedia font name
-            size = 12,                    -- Font size
-            color = { r = 1, g = 1, b = 1, a = 1 },  -- White by default
-            anchor = "TOPRIGHT",          -- Text anchoring relative to icon
-            anchorPoint = "TOPRIGHT",     -- Text anchor point
-            firstXOffset = -3,            -- First icon X offset
-            firstYOffset = -3,            -- First icon Y offset
-            queueXOffset = -2,            -- Queue icons X offset
-            queueYOffset = -2,            -- Queue icons Y offset
-        },
     },
     char = {
         lastKnownSpec = nil,
@@ -77,7 +65,9 @@ local defaults = {
         specProfilesEnabled = true,   -- Auto-switch profiles by spec (enabled by default)
         specProfiles = {},        -- [specIndex] = "profileName" | "DISABLED" | nil
     },
-    global = {},
+    global = {
+        version = "2.6",
+    },
 }
 
 function JustAC:DebugPrint(msg)
@@ -170,31 +160,28 @@ function JustAC:OnInitialize()
 end
 
 function JustAC:OnEnable()
-    if not UIFrameFactory or not UIFrameFactory.CreateMainFrame then
-        self:Print("Error: UIFrameFactory module not loaded properly")
+    if not UIManager or not UIManager.CreateMainFrame then
+        self:Print("Error: UIManager module not loaded properly")
         return
     end
     
-    UIFrameFactory.CreateMainFrame(self)
+    UIManager.CreateMainFrame(self)
     if not self.mainFrame then
         self:Print("Error: Failed to create main frame")
         return
     end
 
-    -- Apply target frame anchor if enabled (before icons so position is correct)
-    self:UpdateTargetFrameAnchor()
-
-    UIFrameFactory.CreateSpellIcons(self)
+    UIManager.CreateSpellIcons(self)
 
     -- Must be after CreateSpellIcons
-    if UIHealthBar and UIHealthBar.CreateHealthBar then
-        UIHealthBar.CreateHealthBar(self)
+    if UIManager.CreateHealthBar then
+        UIManager.CreateHealthBar(self)
     end
 
     if UnitAffectingCombat("player") then
-        if UIAnimations and UIAnimations.ResumeAllGlows then UIAnimations.ResumeAllGlows(self) end
+        if UIManager.UnfreezeAllGlows then UIManager.UnfreezeAllGlows(self) end
     else
-        if UIAnimations and UIAnimations.PauseAllGlows then UIAnimations.PauseAllGlows(self) end
+        if UIManager.FreezeAllGlows then UIManager.FreezeAllGlows(self) end
     end
     
     self:InitializeCaches()
@@ -285,7 +272,13 @@ function JustAC:InitializeCaches()
         end
     end
     
-    self:InvalidateCaches({macros = true, auras = true})
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if RedundancyFilter and RedundancyFilter.InvalidateCache then
+        RedundancyFilter.InvalidateCache()
+    end
 
     if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
         BlizzardAPI.RefreshFeatureAvailability()
@@ -345,8 +338,8 @@ function JustAC:EnterDisabledMode()
     end
 
     -- Hide health bar
-    if UIHealthBar and UIHealthBar.Hide then
-        UIHealthBar.Hide()
+    if UIManager and UIManager.HideHealthBar then
+        UIManager.HideHealthBar()
     end
 
     self:DebugPrint("Entered disabled mode for current spec")
@@ -363,10 +356,10 @@ function JustAC:ExitDisabledMode()
     end
 
     -- Restore health bar if setting is enabled
-    if UIHealthBar and UIHealthBar.Show then
+    if UIManager and UIManager.ShowHealthBar then
         local profile = self:GetProfile()
         if profile and profile.defensives and profile.defensives.showHealthBar then
-            UIHealthBar.Show()
+            UIManager.ShowHealthBar()
         end
     end
 
@@ -375,8 +368,6 @@ function JustAC:ExitDisabledMode()
 end
 
 function JustAC:RefreshConfig()
-    -- Migrate old profile-level data (blacklist/hotkeys/panelLocked) if switching to an un-migrated profile
-    self:NormalizeSavedData()
     -- Blacklist/hotkey overrides are character-specific, persist across profile changes
     self:InitializeDefensiveSpells()
 
@@ -385,23 +376,31 @@ function JustAC:RefreshConfig()
         local profile = self:GetProfile()
         self.mainFrame:ClearAllPoints()
         self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        -- Save before anchoring so we preserve UIParent-relative coords as fallback
         self:SavePosition()
-        self:UpdateTargetFrameAnchor()
     end
     self:ForceUpdate()
 end
 
 -- Only on explicit profile reset (not change/copy)
--- Character data (blacklist, hotkeys, spec profiles) is intentionally preserved;
--- AceDB already resets profile-level settings to defaults.
 function JustAC:OnProfileReset()
+    if self.db and self.db.char then
+        self.db.char.blacklistedSpells = {}
+        self.db.char.hotkeyOverrides = {}
+    end
+
+    -- Then do standard config refresh
     self:RefreshConfig()
 end
 
 function JustAC:ShowWelcomeMessage()
     if not self.db or not self.db.profile or not self.db.profile.debugMode then return end
-    self:Print("Debug mode active")
+    
+    local assistedMode = GetCVarBool("assistedMode") or false
+    if assistedMode then
+        self:Print("Assisted Combat mode active")
+    else
+        self:Print("Tip: Enable /console assistedMode 1")
+    end
 end
 
 function JustAC:InitializeDefensiveSpells()
@@ -522,8 +521,8 @@ function JustAC:OnHealthChanged(event, unit)
     if unit ~= "player" and unit ~= "pet" then return end
 
     -- Health bar update is cheap, always do it for visual feedback
-    if UIHealthBar and UIHealthBar.Update then
-        UIHealthBar.Update(self)
+    if UIManager and UIManager.UpdateHealthBar then
+        UIManager.UpdateHealthBar(self)
     end
 
     -- Throttle defensive queue updates (expensive operation with table allocations)
@@ -535,10 +534,8 @@ function JustAC:OnHealthChanged(event, unit)
 
     local profile = self:GetProfile()
     if not profile or not profile.defensives or not profile.defensives.enabled then 
-        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-            UIRenderer.HideDefensiveIcons(self)
-        elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-            UIRenderer.HideDefensiveIcon(self.defensiveIcon)
+        if UIManager and UIManager.HideDefensiveIcon then
+            UIManager.HideDefensiveIcon(self)
         end
         return
     end
@@ -596,16 +593,16 @@ function JustAC:OnHealthChanged(event, unit)
     end
 
     if #defensiveQueue > 0 then
-        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
-            UIRenderer.ShowDefensiveIcons(self, defensiveQueue)
-        elseif self.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
-            UIRenderer.ShowDefensiveIcon(self, defensiveQueue[1].spellID, defensiveQueue[1].isItem, self.defensiveIcon)
+        if self.defensiveIcons and #self.defensiveIcons > 0 and UIManager and UIManager.ShowDefensiveIcons then
+            UIManager.ShowDefensiveIcons(self, defensiveQueue)
+        elseif self.defensiveIcon and UIManager and UIManager.ShowDefensiveIcon then
+            UIManager.ShowDefensiveIcon(self, defensiveQueue[1].spellID, defensiveQueue[1].isItem)
         end
     else
-        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-            UIRenderer.HideDefensiveIcons(self)
-        elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-            UIRenderer.HideDefensiveIcon(self.defensiveIcon)
+        if self.defensiveIcons and #self.defensiveIcons > 0 and UIManager and UIManager.HideDefensiveIcons then
+            UIManager.HideDefensiveIcons(self)
+        elseif self.defensiveIcon and UIManager and UIManager.HideDefensiveIcon then
+            UIManager.HideDefensiveIcon(self)
         end
     end
 end
@@ -981,10 +978,8 @@ function JustAC:FindHealingPotionOnActionBar()
 end
 
 function JustAC:LoadModules()
+    UIManager = LibStub("JustAC-UIManager", true)
     UIRenderer = LibStub("JustAC-UIRenderer", true)
-    UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
-    UIAnimations = LibStub("JustAC-UIAnimations", true)
-    UIHealthBar = LibStub("JustAC-UIHealthBar", true)
     SpellQueue = LibStub("JustAC-SpellQueue", true)
     ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
     BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -993,15 +988,63 @@ function JustAC:LoadModules()
     MacroParser = LibStub("JustAC-MacroParser", true)
     RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     
-    if not UIRenderer then self:Print("Error: UIRenderer module not found"); self:Disable(); return end
-    if not UIFrameFactory then self:Print("Error: UIFrameFactory module not found"); self:Disable(); return end
-    if not UIAnimations then self:Print("Error: UIAnimations module not found"); self:Disable(); return end
-    if not SpellQueue then self:Print("Error: SpellQueue module not found"); self:Disable(); return end
-    if not BlizzardAPI then self:Print("Error: BlizzardAPI module not found"); self:Disable(); return end
+    if not UIManager then self:Print("Error: UIManager module not found"); UIManager = {} end
+    if not UIRenderer then self:Print("Error: UIRenderer module not found"); UIRenderer = {} end
+    if not SpellQueue then self:Print("Error: SpellQueue module not found"); SpellQueue = {} end
     if not ActionBarScanner then self:Print("Warning: ActionBarScanner module not found"); ActionBarScanner = {} end
+    if not BlizzardAPI then BlizzardAPI = self:CreateFallbackAPI() end
     if not FormCache then self:Print("Warning: FormCache module not found") end
     if not MacroParser then self:Print("Warning: MacroParser module not found") end
     if not RedundancyFilter then self:Print("Warning: RedundancyFilter module not found") end
+end
+
+function JustAC:CreateFallbackAPI()
+    local self_ref = self
+    return {
+        GetNextCastSpell = function()
+            if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
+                local success, result = pcall(C_AssistedCombat.GetNextCastSpell, true)
+                return success and result and type(result) == "number" and result > 0 and result or nil
+            end
+            return nil
+        end,
+        GetRotationSpells = function()
+            if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
+                local success, result = pcall(C_AssistedCombat.GetRotationSpells)
+                return success and result and type(result) == "table" and #result > 0 and result or nil
+            end
+            return nil
+        end,
+        GetSpellInfo = function(spellID)
+            if not spellID or spellID == 0 then return nil end
+            if C_Spell and C_Spell.GetSpellInfo then return C_Spell.GetSpellInfo(spellID) end
+            local name, _, icon = GetSpellInfo(spellID)
+            return name and {name = name, iconID = icon} or nil
+        end,
+        GetProfile = function()
+            return self_ref.db and self_ref.db.profile or nil
+        end,
+        GetDebugMode = function()
+            local profile = self_ref.db and self_ref.db.profile
+            return profile and profile.debugMode or false
+        end,
+        IsSpellAvailable = function(spellID)
+            if not spellID or spellID == 0 then return false end
+            -- Check if spell is actually known to the player
+            if IsSpellKnown then
+                if IsSpellKnown(spellID) then return true end
+                if IsSpellKnown(spellID, true) then return true end  -- Pet spells
+            end
+            -- Check spellbook
+            if C_SpellBook and C_SpellBook.IsSpellInSpellBook then
+                if C_SpellBook.IsSpellInSpellBook(spellID, Enum.SpellBookSpellBank.Player) then
+                    return true
+                end
+            end
+            return false
+        end,
+        ClearAvailabilityCache = function() end,
+    }
 end
 
 function JustAC:SetHotkeyOverride(spellID, hotkeyText)
@@ -1015,18 +1058,18 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
     
     if hotkeyText and hotkeyText:trim() ~= "" then
         charData.hotkeyOverrides[spellID] = hotkeyText:trim()
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
+        local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey: " .. spellName .. " = '" .. hotkeyText:trim() .. "'")
     else
         charData.hotkeyOverrides[spellID] = nil
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
+        local spellInfo = self:GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey removed: " .. spellName)
     end
 
     if self.defensiveIcon and self.defensiveIcon:IsShown() and self.defensiveIcon.spellID == spellID then
-        UIRenderer.ShowDefensiveIcon(self, spellID, false, self.defensiveIcon)
+        UIManager.ShowDefensiveIcon(self, spellID, false)
     end
 
     local Options = LibStub("JustAC-Options", true)
@@ -1045,45 +1088,18 @@ function JustAC:GetHotkeyOverride(spellID)
 end
 
 function JustAC:OpenHotkeyOverrideDialog(spellID)
-    if UIRenderer and UIRenderer.OpenHotkeyOverrideDialog then
-        UIRenderer.OpenHotkeyOverrideDialog(self, spellID)
+    if UIManager and UIManager.OpenHotkeyOverrideDialog then
+        UIManager.OpenHotkeyOverrideDialog(self, spellID)
     end
 end
 
 function JustAC:GetProfile() return self.db and self.db.profile end
+function JustAC:GetCachedSpellInfo(spellID) return SpellQueue and SpellQueue.GetCachedSpellInfo and SpellQueue.GetCachedSpellInfo(spellID) or nil end
 function JustAC:IsSpellBlacklisted(spellID)
     if not SpellQueue or not SpellQueue.IsSpellBlacklisted then return false end
     return SpellQueue.IsSpellBlacklisted(spellID)
 end
 function JustAC:GetBlacklistedSpells() return SpellQueue and SpellQueue.GetBlacklistedSpells and SpellQueue.GetBlacklistedSpells() or {} end
-
--- Centralized cache invalidation with flags
-function JustAC:InvalidateCaches(flags)
-    flags = flags or {}
-    
-    if flags.spells or flags.all then
-        if SpellQueue and SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
-        if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
-    end
-    
-    if flags.macros or flags.all then
-        if MacroParser and MacroParser.InvalidateMacroCache then MacroParser.InvalidateMacroCache() end
-    end
-    
-    if flags.hotkeys or flags.all then
-        if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then ActionBarScanner.InvalidateHotkeyCache() end
-        if UIRenderer and UIRenderer.InvalidateHotkeyCache then UIRenderer.InvalidateHotkeyCache() end
-    end
-    
-    if flags.forms or flags.all then
-        if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
-        if FormCache and FormCache.InvalidateSpellMapping then FormCache.InvalidateSpellMapping() end
-    end
-    
-    if flags.auras or flags.all then
-        if RedundancyFilter and RedundancyFilter.InvalidateCache then RedundancyFilter.InvalidateCache() end
-    end
-end
 
 function JustAC:ToggleSpellBlacklist(spellID)
     if SpellQueue and SpellQueue.ToggleSpellBlacklist then
@@ -1094,15 +1110,13 @@ end
 
 function JustAC:UpdateSpellQueue()
     if self.isDisabledMode then return end
-    if not self.db or not self.db.profile or self.db.profile.isManualMode or not self.mainFrame or not SpellQueue or not UIRenderer then return end
+    if not self.db or not self.db.profile or self.db.profile.isManualMode or not self.mainFrame or not SpellQueue or not UIManager then return end
 
     -- Always build queue to keep caches warm (redundancy filter, aura tracking, etc.)
     -- even when frame is hidden - this ensures instant response when frame becomes visible
     -- Renderer will skip expensive operations (hotkey lookups, icon updates) when hidden
     local currentSpells = SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue() or {}
-    if UIRenderer and UIRenderer.RenderSpellQueue then
-        UIRenderer.RenderSpellQueue(self, currentSpells)
-    end
+    UIManager.RenderSpellQueue(self, currentSpells)
 end
 
 function JustAC:UpdateDefensiveCooldowns()
@@ -1162,18 +1176,21 @@ function JustAC:OnCombatEvent(event)
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(true)
         end
-        if UIAnimations and UIAnimations.ResumeAllGlows then
-            UIAnimations.ResumeAllGlows(self)
+        if UIManager and UIManager.UnfreezeAllGlows then
+            UIManager.UnfreezeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
     elseif event == "PLAYER_REGEN_ENABLED" then
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(false)
         end
-        if UIAnimations and UIAnimations.PauseAllGlows then
-            UIAnimations.PauseAllGlows(self)
+        if UIManager and UIManager.FreezeAllGlows then
+            UIManager.FreezeAllGlows(self)
         end
-        self:InvalidateCaches({auras = true})
+        local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+        if RedundancyFilter and RedundancyFilter.InvalidateCache then
+            RedundancyFilter.InvalidateCache()
+        end
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
         end
@@ -1209,7 +1226,20 @@ function JustAC:OnSpecChange()
     end
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
-    self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
+    if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
+    if SpellQueue and SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
+
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
 
     self.db.char.lastKnownSpec = newSpec
     self:ForceUpdate()
@@ -1217,22 +1247,61 @@ end
 
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
-    self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
+    if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
+    
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if ActionBarScanner and ActionBarScanner.InvalidateKeybindCache then
+        ActionBarScanner.InvalidateKeybindCache()
+    end
+    
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
+    
     self:ForceUpdate()
 end
 
 function JustAC:OnSpellIconChanged()
-    self:InvalidateCaches({hotkeys = true})
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
     self:ForceUpdate()
 end
 
 function JustAC:OnShapeshiftFormChanged()
-    self:InvalidateCaches({macros = true, hotkeys = true})
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
     self:ForceUpdate()
 end
 
 function JustAC:OnShapeshiftFormsRebuilt()
-    self:InvalidateCaches({forms = true, macros = true, hotkeys = true})
+    local FormCache = LibStub("JustAC-FormCache", true)
+    if FormCache then
+        FormCache.InvalidateCache()
+        FormCache.InvalidateSpellMapping()
+    end
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then
+        ActionBarScanner.InvalidateHotkeyCache()
+    end
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1242,21 +1311,26 @@ function JustAC:OnUnitAura(event, unit)
     local now = GetTime()
     if now - (self.lastAuraInvalidation or 0) > 0.5 then
         self.lastAuraInvalidation = now
-        self:InvalidateCaches({auras = true})
+        if RedundancyFilter and RedundancyFilter.InvalidateCache then
+            RedundancyFilter.InvalidateCache()
+        end
     end
 end
 
 function JustAC:OnActionBarChanged()
-    self:InvalidateCaches({hotkeys = true, macros = true})
-    self:ForceUpdate()
-end
-
--- This is expensive, avoid calling unless necessary
-function JustAC:OnHotkeyProfileUpdate()
-    if UIManager and UIManager.CreateSpellIcons then
-        UIManager.CreateSpellIcons(self)
+    if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
+        ActionBarScanner.OnKeybindsChanged()
     end
-    self:ForceUpdate()    
+    
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
+    
+    if UIManager and UIManager.InvalidateHotkeyCache then
+        UIManager.InvalidateHotkeyCache()
+    end
+    
+    self:ForceUpdate()
 end
 
 function JustAC:OnSpecialBarChanged()
@@ -1267,7 +1341,12 @@ end
 function JustAC:OnVehicleChanged(event, unit)
     if unit ~= "player" then return end
 
-    self:InvalidateCaches({macros = true, hotkeys = true})
+    if ActionBarScanner and ActionBarScanner.OnSpecialBarChanged then
+        ActionBarScanner.OnSpecialBarChanged()
+    end
+    if MacroParser and MacroParser.InvalidateMacroCache then
+        MacroParser.InvalidateMacroCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1300,49 +1379,7 @@ end
 
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
-    self:UpdateTargetFrameAnchor()
     self:ForceUpdate()
-end
-
-function JustAC:UpdateTargetFrameAnchor()
-    if not self.mainFrame then return end
-    local profile = self:GetProfile()
-    if not profile then return end
-
-    local anchor = profile.targetFrameAnchor
-    if not anchor or anchor == "DISABLED" then
-        -- Restore to saved position if we were previously anchored
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-            self.mainFrame:ClearAllPoints()
-            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        return
-    end
-
-    -- Anchor to Blizzard's default TargetFrame (even when hidden — it holds position)
-    -- Offsets account for TargetFrame's 232x100 template size, HitRectInsets
-    -- (top=4, bottom=9), and space for auras/castbar below the frame
-    if TargetFrame then
-        self.targetframe_anchored = true
-        self.mainFrame:ClearAllPoints()
-        if anchor == "TOP" then
-            self.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
-        elseif anchor == "BOTTOM" then
-            self.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
-        elseif anchor == "LEFT" then
-            self.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -2, 0)
-        elseif anchor == "RIGHT" then
-            self.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", 2, 0)
-        end
-    else
-        -- TargetFrame not available (shouldn't happen) — fall back to saved position
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-        end
-        self.mainFrame:ClearAllPoints()
-        self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-    end
 end
 
 function JustAC:OnPetChanged(event, unit)
@@ -1385,7 +1422,7 @@ function JustAC:CreateKeyPressDetector()
     self.keyPressFrame = frame
 
     -- Cache function references at creation time (avoid table lookups in hot path)
-    local StartFlash = UIAnimations and UIAnimations.StartFlash
+    local StartFlash = UIManager and UIManager.StartFlash
     local IsShiftKeyDown = IsShiftKeyDown
     local IsControlKeyDown = IsControlKeyDown
     local IsAltKeyDown = IsAltKeyDown
@@ -1639,12 +1676,12 @@ function JustAC:StopUpdates()
 end
 
 function JustAC:UpdateFrameSize()
-    if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
-    if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
+    if UIManager and UIManager.UpdateFrameSize then UIManager.UpdateFrameSize(self) end
+    if UIManager and UIManager.UpdateHealthBarSize then UIManager.UpdateHealthBarSize(self) end
     self:ForceUpdate()
 end
 
 function JustAC:SavePosition()
-    if UIFrameFactory and UIFrameFactory.SavePosition then UIFrameFactory.SavePosition(self) end
+    if UIManager and UIManager.SavePosition then UIManager.SavePosition(self) end
     self:ForceUpdate()
 end

@@ -7,24 +7,12 @@ if not Options then return end
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
-local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
-local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+local UIManager = LibStub("JustAC-UIManager", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
-local LSM = LibStub("LibSharedMedia-3.0")
 
 -- Storage for hotkey value input (not spell search)
 local addHotkeyValueInput = ""
-
--- Fonts from LSM
-local function fontValues()
-    local fonts = LSM:HashTable("font")
-    local values = {}
-    for name, _ in pairs(fonts) do
-        values[name] = name -- key = label
-    end
-    return values
-end
 
 -- Spellbook cache for autocomplete (populated on first options open)
 local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
@@ -323,24 +311,11 @@ function Options.UpdateBlacklistOptions(addon)
             order = 23,
         }
     else
-        blacklistArgs.clearAll = {
-            type = "execute",
-            name = L["Clear All"],
-            desc = L["Clear All Blacklist desc"],
-            order = 22.6,
-            width = "half",
-            confirm = true,
-            func = function()
-                wipe(blacklistedSpells)
-                addon:ForceUpdate()
-                Options.UpdateBlacklistOptions(addon)
-            end,
-        }
         for i, spellID in ipairs(spellList) do
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
-            
+
             blacklistArgs[tostring(spellID)] = {
                 type = "group",
                 name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
@@ -548,19 +523,6 @@ function Options.UpdateHotkeyOverrideOptions(addon)
             order = 3,
         }
     else
-        hotkeyArgs.clearAll = {
-            type = "execute",
-            name = L["Clear All"],
-            desc = L["Clear All Hotkeys desc"],
-            order = 2.6,
-            width = "half",
-            confirm = true,
-            func = function()
-                wipe(hotkeyOverrides)
-                addon:ForceUpdate()
-                Options.UpdateHotkeyOverrideOptions(addon)
-            end,
-        }
         for i, spellID in ipairs(overrideList) do
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
@@ -619,7 +581,7 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
     local updateFunc = function()
         Options.UpdateDefensivesOptions(addon)
     end
-
+    
     for i, spellID in ipairs(spellList) do
         local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or ("Spell " .. spellID)
@@ -827,6 +789,7 @@ function Options.UpdateDefensivesOptions(addon)
         info = true, header = true, enabled = true, showProcs = true,
         displayHeader = true, iconScale = true, maxIcons = true, position = true,
         showHotkeys = true, glowMode = true, displayMode = true, showHealthBar = true,
+        thresholdHeader = true, selfHealThreshold = true, cooldownThreshold = true, petHealThreshold = true, thresholdNote = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -848,7 +811,7 @@ function Options.UpdateDefensivesOptions(addon)
     CreateSpellListEntries(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 22)
     CreateAddSpellInput(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 40, "Self-Heals")
 
-    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)
+    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
     CreateSpellListEntries(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 52)
     CreateAddSpellInput(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 70, "Cooldowns")
     
@@ -901,7 +864,7 @@ local function CreateOptionsTable(addon)
                         min = 0, max = 10, step = 1,
                         order = 13,
                         width = "normal",
-                        get = function() return addon.db.profile.iconSpacing or 1 end,
+                        get = function() return addon.db.profile.iconSpacing or 2 end,
                         set = function(_, val)
                             addon.db.profile.iconSpacing = val
                             addon:UpdateFrameSize()
@@ -923,25 +886,6 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.queueOrientation = val
                             addon:UpdateFrameSize()
-                        end
-                    },
-                    targetFrameAnchor = {
-                        type = "select",
-                        name = L["Target Frame Anchor"],
-                        desc = L["Target Frame Anchor desc"],
-                        order = 16,
-                        width = "normal",
-                        values = {
-                            DISABLED = L["Disabled"],
-                            TOP = L["Top"],
-                            BOTTOM = L["Bottom"],
-                            LEFT = L["Left"],
-                            RIGHT = L["Right"],
-                        },
-                        get = function() return addon.db.profile.targetFrameAnchor or "DISABLED" end,
-                        set = function(_, val)
-                            addon.db.profile.targetFrameAnchor = val
-                            addon:UpdateTargetFrameAnchor()
                         end
                     },
                     -- VISIBILITY (20-29)
@@ -1052,172 +996,6 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
-                    hotkeyOptionsHeader = {
-                        type = "header",
-                        name = L["Hotkey Options"],
-                        order = 50,
-                    },
-                    hotkeyFont = {
-                        type = "select",
-                        name = L["Hotkey Font"],
-                        desc = L["Font for hotkey text"],
-                        order = 51,
-                        values = function() return fontValues() end,
-                        get = function()
-                            return addon.db.profile.hotkeyText.font or "Friz Quadrata TT"
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.font = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    hotkeyFontFlags = {
-                        type = "select",
-                        name = L["Outline Mode"],
-                        desc = L["Font outline and rendering flags for hotkey text"],
-                        order = 52,
-                        values = {
-                            [""] = L["None"],
-                            ["OUTLINE"] = L["Outline"],
-                            ["THICKOUTLINE"] = L["Thick Outline"],
-                            ["MONOCHROME"] = L["Monochrome"],
-                            ["OUTLINE,MONOCHROME"] = L["Outline + Monochrome"],
-                            ["THICKOUTLINE,MONOCHROME"] = L["Thick Outline + Monochrome"],
-                        },
-                        get = function()
-                            return addon.db.profile.hotkeyText.flags or "OUTLINE"
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.flags = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    hotkeySize = {
-                        type = "range",
-                        name = L["Hotkey Size"],
-                        desc = L["Size of hotkey text"],
-                        order = 53,
-                        min = 1, max = 64, step = 1,
-                        get = function()
-                            return addon.db.profile.hotkeyText.size or 12
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.size = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    hotkeyColor = {
-                        type = "color",
-                        name = L["Hotkey Color"],
-                        desc = L["Color of hotkey text"],
-                        order = 54,
-                        hasAlpha = true,
-                        get = function()
-                            local c = addon.db.profile.hotkeyText.color or { r = 1, g = 1, b = 1, a = 1 }
-                            return c.r, c.g, c.b, c.a
-                        end,
-                        set = function(_, r, g, b, a)
-                            addon.db.profile.hotkeyText.color = { r = r, g = g, b = b, a = a }
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    hotkeyAnchor = {
-                        type = "select",
-                        name = L["Parent Anchor"],
-                        desc = L["Anchor point of hotkey text relative to icon"],
-                        order = 55,
-                        values = {
-                            TOPLEFT = "TOPLEFT",
-                            TOP = "TOP",
-                            TOPRIGHT = "TOPRIGHT",
-                            LEFT = "LEFT",
-                            CENTER = "CENTER",
-                            RIGHT = "RIGHT",
-                            BOTTOMLEFT = "BOTTOMLEFT",
-                            BOTTOM = "BOTTOM",
-                            BOTTOMRIGHT = "BOTTOMRIGHT",
-                        },
-                        get = function()
-                            return addon.db.profile.hotkeyText.anchor or "TOPRIGHT"
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.anchor = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    hotkeyAnchorPoint = {
-                        type = "select",
-                        name = L["Hotkey Anchor"],
-                        desc = L["Which point on the hotkey text attaches to the anchor"],
-                        order = 56,
-                        values = {
-                            TOPLEFT = "TOPLEFT",
-                            TOP = "TOP",
-                            TOPRIGHT = "TOPRIGHT",
-                            LEFT = "LEFT",
-                            CENTER = "CENTER",
-                            RIGHT = "RIGHT",
-                            BOTTOMLEFT = "BOTTOMLEFT",
-                            BOTTOM = "BOTTOM",
-                            BOTTOMRIGHT = "BOTTOMRIGHT",
-                        },
-                        get = function()
-                            return addon.db.profile.hotkeyText.anchorPoint or "TOPRIGHT"
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.anchorPoint = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    firstXOffset = {
-                        type = "range",
-                        name = L["First X Offset"],
-                        desc = L["Horizontal offset for first icon hotkey text"],
-                        order = 57,
-                        min = -20, max = 20, step = 1,
-                        get = function() return addon.db.profile.hotkeyText.firstXOffset or -3 end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.firstXOffset = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    firstYOffset = {
-                        type = "range",
-                        name = L["First Y Offset"],
-                        desc = L["Vertical offset for first icon hotkey text"],
-                        order = 58,
-                        min = -20, max = 20, step = 1,
-                        get = function() return addon.db.profile.hotkeyText.firstYOffset or -3 end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.firstYOffset = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    queueXOffset = {
-                        type = "range",
-                        name = L["Queue X Offset"],
-                        desc = L["Horizontal offset for queued icons hotkey text"],
-                        order = 59,
-                        min = -20, max = 20, step = 1,
-                        get = function() return addon.db.profile.hotkeyText.queueXOffset or -2 end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.queueXOffset = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    queueYOffset = {
-                        type = "range",
-                        name = L["Queue Y Offset"],
-                        desc = L["Vertical offset for queued icons hotkey text"],
-                        order = 60,
-                        min = -20, max = 20, step = 1,
-                        get = function() return addon.db.profile.hotkeyText.queueYOffset or -2 end,
-                        set = function(_, val)
-                            addon.db.profile.hotkeyText.queueYOffset = val
-                            addon:OnHotkeyProfileUpdate()
-                        end,
-                    },
-                    -- SYSTEM (90-99)
                     gamepadIconStyle = {
                         type = "select",
                         name = L["Gamepad Icon Style"],
@@ -1239,11 +1017,11 @@ local function CreateOptionsTable(addon)
                             end
                         end
                     },
-                    -- SYSTEM (90-99)
+                    -- SYSTEM (40-49)
                     systemHeader = {
                         type = "header",
                         name = L["System"],
-                        order = 90,
+                        order = 40,
                     },
                     panelInteraction = {
                         type = "select",
@@ -1272,6 +1050,12 @@ local function CreateOptionsTable(addon)
                 name = L["Offensive"],
                 order = 2,
                 args = {
+                    info = {
+                        type = "description",
+                        name = L["Offensive Info"],
+                        order = 1,
+                        fontSize = "medium"
+                    },
                     -- QUEUE CONTENT (10-19)
                     contentHeader = {
                         type = "header",
@@ -1327,7 +1111,7 @@ local function CreateOptionsTable(addon)
                         min = 1, max = 7, step = 1,
                         order = 15.5,
                         width = "normal",
-                        get = function() return addon.db.profile.maxIcons or 4 end,
+                        get = function() return addon.db.profile.maxIcons or 5 end,
                         set = function(_, val)
                             addon.db.profile.maxIcons = val
                             addon:UpdateFrameSize()
@@ -1414,6 +1198,12 @@ local function CreateOptionsTable(addon)
                 name = L["Defensives"],
                 order = 3,
                 args = {
+                    info = {
+                        type = "description",
+                        name = L["Defensives Info"],
+                        order = 1,
+                        fontSize = "medium"
+                    },
                     -- QUEUE CONTENT (2-4)
                     header = {
                         type = "header",
@@ -1429,9 +1219,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.enabled end,
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
+                            UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
                         end
                     },
@@ -1464,9 +1252,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
+                            UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1481,9 +1267,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
                         set = function(_, val)
                             addon.db.profile.defensives.iconScale = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
+                            UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1502,9 +1286,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.position or "SIDE1" end,  -- Default: SIDE1
                         set = function(_, val)
                             addon.db.profile.defensives.position = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
+                            UIManager.CreateSpellIcons(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -1592,19 +1374,71 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.showHealthBar end,
                         set = function(_, val)
                             addon.db.profile.defensives.showHealthBar = val
-                            if UIHealthBar and UIHealthBar.Destroy then
-                                UIHealthBar.Destroy()
-                            end
-                            if val and UIHealthBar and UIHealthBar.CreateHealthBar then
-                                UIHealthBar.CreateHealthBar(addon)
+                            if UIManager.DestroyHealthBar then UIManager.DestroyHealthBar() end
+                            if val and UIManager.CreateHealthBar then
+                                UIManager.CreateHealthBar(addon)
                             end
                             -- Recreate defensive icon to update spacing based on health bar state
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
+                            if UIManager.CreateSpellIcons then
+                                UIManager.CreateSpellIcons(addon)
                             end
                             addon:ForceUpdateAll()
                         end,
                         -- Health bar works independently of defensive queue
+                    },
+                    -- THRESHOLD SETTINGS (10-14)
+                    thresholdHeader = {
+                        type = "header",
+                        name = L["Threshold Settings"],
+                        order = 10,
+                    },
+                    selfHealThreshold = {
+                        type = "range",
+                        name = L["Self-Heal Threshold"],
+                        desc = L["Self-Heal Threshold desc"],
+                        min = 1, max = 100, step = 1,
+                        order = 11,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.selfHealThreshold or 80 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.selfHealThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    cooldownThreshold = {
+                        type = "range",
+                        name = L["Major Cooldown Threshold"],
+                        desc = L["Major Cooldown Threshold desc"],
+                        min = 1, max = 100, step = 1,
+                        order = 12,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.cooldownThreshold or 60 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.cooldownThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    petHealThreshold = {
+                        type = "range",
+                        name = L["Pet Heal Threshold"],
+                        desc = L["Pet Heal Threshold desc"],
+                        min = 1, max = 100, step = 1,
+                        order = 13,
+                        width = "normal",
+                        get = function() return addon.db.profile.defensives.petHealThreshold or 50 end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.petHealThreshold = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    thresholdNote = {
+                        type = "description",
+                        name = L["Threshold Note"],
+                        order = 14,
+                        fontSize = "small",
                     },
                     -- SELF-HEAL PRIORITY LIST (20+)
                     selfHealHeader = {
@@ -1662,6 +1496,53 @@ local function CreateOptionsTable(addon)
                 order = 4,
                 args = {}
             },
+            about = {
+                type = "group",
+                name = L["About"],
+                order = 11,
+                args = {
+                    aboutHeader = {
+                        type = "header",
+                        name = L["About JustAssistedCombat"],
+                        order = 1,
+                    },
+                    version = {
+                        type = "description",
+                        name = function()
+                            local version = addon.db.global.version or "2.6"
+                            return "|cff00ff00JustAssistedCombat v" .. version .. "|r\n\nEnhances WoW's Assisted Combat system with advanced features for better gameplay experience.\n\n|cffffff00Key Features:|r\n• Smart hotkey detection with custom override support\n• Advanced macro parsing with conditional modifiers\n• Intelligent spell filtering and blacklist management\n• Enhanced visual feedback and tooltips\n• Seamless integration with Blizzard's native highlights\n• Zero performance impact on global cooldowns\n\n|cffffff00How It Works:|r\nJustAC automatically detects your action bar setup and displays the recommended rotation with proper hotkeys. When automatic detection fails, you can set custom hotkey displays via right-click.\n\n|cffffff00Optional Enhancements:|r\n|cffffffff/console assistedMode 1|r - Enables Blizzard's assisted combat system\n|cffffffff/console assistedCombatHighlight 1|r - Adds native button highlighting\n\nThese console commands enhance the experience but are not required for JustAC to function."
+                        end,
+                        order = 2,
+                        fontSize = "medium"
+                    },
+                    commands = {
+                        type = "description",
+                        name = L["Slash Commands"],
+                        order = 3,
+                        fontSize = "medium"
+                    },
+                    debugHeader = {
+                        type = "header",
+                        name = L["Developer"],
+                        order = 10,
+                    },
+                    debugMode = {
+                        type = "toggle",
+                        name = L["Debug Mode"],
+                        desc = L["Debug Mode desc"],
+                        order = 11,
+                        width = "full",
+                        get = function() return addon.db.profile.debugMode or false end,
+                        set = function(_, val)
+                            addon.db.profile.debugMode = val
+                            if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+                                BlizzardAPI.RefreshDebugMode()
+                            end
+                            addon:Print("Debug: " .. (val and "ON" or "OFF"))
+                        end
+                    },
+                }
+            }
         }
     }
 end
@@ -1745,8 +1626,6 @@ local function HandleSlashCommand(addon, input)
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint("CENTER", 0, -150)
             addon:SavePosition()
-            -- Re-apply target frame anchor if enabled
-            addon:UpdateTargetFrameAnchor()
             addon:Print("Position reset to center")
         end
         

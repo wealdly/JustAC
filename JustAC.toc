@@ -1,10 +1,10 @@
-## Interface: 120000
+## Interface: 120001
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 3.21.2
+## Version: 3.22.0
 ## License: GPL-3.0-or-later
-## IconTexture: Interface\\Icons\\Trade_Engineering
+## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB
 ## OptionalDeps: Ace3, Masque
 
@@ -37,7 +37,6 @@ UIHealthBar.lua
 UIAnimations.lua
 UIFrameFactory.lua
 UIRenderer.lua
-UIManager.lua
 DebugCommands.lua
 Options.lua
 JustAC.lua

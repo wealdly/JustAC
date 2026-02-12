@@ -9,14 +9,13 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
-local ProfileHelpers = LibStub("JustAC-ProfileHelpers", true)
 
 -- Cache frequently used functions to reduce table lookups on every update
 local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
 
--- Visual constants
+-- Visual constants (copied from UIManager.lua)
 local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
@@ -44,19 +43,13 @@ end
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 
--- Masque support
-local Masque = LibStub("Masque", true)
+-- Forward declaration for UIManager access
 local GetMasqueGroup, GetMasqueDefensiveGroup
 
-if Masque then
-    local MasqueGroup = Masque:Group("JustAssistedCombat", "Spell Queue")
-    local MasqueDefensiveGroup = Masque:Group("JustAssistedCombat", "Defensive")
-    
-    GetMasqueGroup = function() return MasqueGroup end
-    GetMasqueDefensiveGroup = function() return MasqueDefensiveGroup end
-else
-    GetMasqueGroup = function() return nil end
-    GetMasqueDefensiveGroup = function() return nil end
+-- Initialize Masque accessors (called by UIManager after module load)
+function UIFrameFactory.InitializeMasqueAccessors(getMasqueGroupFunc, getMasqueDefensiveGroupFunc)
+    GetMasqueGroup = getMasqueGroupFunc
+    GetMasqueDefensiveGroup = getMasqueDefensiveGroupFunc
 end
 
 -- Helper: Create a single defensive icon button at the specified index (0-based)
@@ -246,7 +239,11 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, true)
+    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
+    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    hotkeyText:SetTextColor(1, 1, 1, 1)
+    hotkeyText:SetJustifyH("RIGHT")
+    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -265,8 +262,11 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
-    
+    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
+    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -499,22 +499,12 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetScript("OnDragStart", function()
         local profile = addon:GetProfile()
         if not IsPanelLocked(profile) then
-            -- Detach from target frame anchor before dragging so position saves correctly
-            if addon.targetframe_anchored then
-                addon.targetframe_anchored = false
-                addon.mainFrame:ClearAllPoints()
-                addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-            end
             addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
         end
     end)
     addon.mainFrame:SetScript("OnDragStop", function()
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
     end)
     
     -- Show/hide grab tab on hover
@@ -686,14 +676,6 @@ function UIFrameFactory.CreateGrabTab(addon)
         end
         self:SetAlpha(1)
         
-        -- Detach from target frame anchor before dragging so position saves correctly
-        local profile = addon:GetProfile()
-        if addon.targetframe_anchored and profile then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        
         -- Move the main frame (grab tab follows since it's anchored to it)
         -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
         addon.mainFrame:StartMoving(true)
@@ -702,11 +684,6 @@ function UIFrameFactory.CreateGrabTab(addon)
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
-        
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
         
         -- Clear dragging flag and fade out if mouse isn't over frame/tab
         self.isDragging = false
@@ -975,7 +952,16 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirstIcon)
+    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
+    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    hotkeyText:SetTextColor(1, 1, 1, 1)
+    hotkeyText:SetJustifyH("RIGHT")
+    
+    if isFirstIcon then
+        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
+    else
+        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_QUEUE, HOTKEY_OFFSET_QUEUE)
+    end
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -994,8 +980,11 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
-    
+    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
+    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -1007,22 +996,12 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     button:SetScript("OnDragStart", function(self)
         local profile = addon:GetProfile()
         if IsPanelLocked(profile) then return end
-        -- Detach from target frame anchor before dragging so position saves correctly
-        if addon.targetframe_anchored and profile then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
         addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
     end)
 
     button:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
     end)
 
     -- Right-click menu for configuration
