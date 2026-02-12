@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.21.7
+## Current Version: 3.22.0
 
 **Instructions:**
 
@@ -10,15 +10,15 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 - When version is bumped, move these to CHANGELOG.md and clear this section
 - Don't increment version numbers without explicit instruction
 
+### Added
+
+(No unreleased changes yet)
+
 ### Changed
 
 (No unreleased changes yet)
 
 ### Fixed
-
-(No unreleased changes yet)
-
-### Added
 
 (No unreleased changes yet)
 

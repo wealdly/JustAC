@@ -36,6 +36,7 @@ local defaults = {
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
+        targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         -- Defensives feature (two tiers: self-heals and major cooldowns)
@@ -168,6 +169,9 @@ function JustAC:OnEnable()
         self:Print("Error: Failed to create main frame")
         return
     end
+
+    -- Apply target frame anchor if enabled (before icons so position is correct)
+    self:UpdateTargetFrameAnchor()
 
     UIFrameFactory.CreateSpellIcons(self)
 
@@ -370,7 +374,9 @@ function JustAC:RefreshConfig()
         local profile = self:GetProfile()
         self.mainFrame:ClearAllPoints()
         self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        -- Save before anchoring so we preserve UIParent-relative coords as fallback
         self:SavePosition()
+        self:UpdateTargetFrameAnchor()
     end
     self:ForceUpdate()
 end
@@ -1275,7 +1281,49 @@ end
 
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
+    self:UpdateTargetFrameAnchor()
     self:ForceUpdate()
+end
+
+function JustAC:UpdateTargetFrameAnchor()
+    if not self.mainFrame then return end
+    local profile = self:GetProfile()
+    if not profile then return end
+
+    local anchor = profile.targetFrameAnchor
+    if not anchor or anchor == "DISABLED" then
+        -- Restore to saved position if we were previously anchored
+        if self.targetframe_anchored then
+            self.targetframe_anchored = false
+            self.mainFrame:ClearAllPoints()
+            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
+        return
+    end
+
+    -- Anchor to Blizzard's default TargetFrame (even when hidden — it holds position)
+    -- Offsets account for TargetFrame's 232x100 template size, HitRectInsets
+    -- (top=4, bottom=9), and space for auras/castbar below the frame
+    if TargetFrame then
+        self.targetframe_anchored = true
+        self.mainFrame:ClearAllPoints()
+        if anchor == "TOP" then
+            self.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
+        elseif anchor == "BOTTOM" then
+            self.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
+        elseif anchor == "LEFT" then
+            self.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -2, 0)
+        elseif anchor == "RIGHT" then
+            self.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", 2, 0)
+        end
+    else
+        -- TargetFrame not available (shouldn't happen) — fall back to saved position
+        if self.targetframe_anchored then
+            self.targetframe_anchored = false
+        end
+        self.mainFrame:ClearAllPoints()
+        self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+    end
 end
 
 function JustAC:OnPetChanged(event, unit)
