@@ -914,6 +914,25 @@ local function CreateOptionsTable(addon)
                             addon:UpdateFrameSize()
                         end
                     },
+                    targetFrameAnchor = {
+                        type = "select",
+                        name = L["Target Frame Anchor"],
+                        desc = L["Target Frame Anchor desc"],
+                        order = 16,
+                        width = "normal",
+                        values = {
+                            DISABLED = L["Disabled"],
+                            TOP = L["Top"],
+                            BOTTOM = L["Bottom"],
+                            LEFT = L["Left"],
+                            RIGHT = L["Right"],
+                        },
+                        get = function() return addon.db.profile.targetFrameAnchor or "DISABLED" end,
+                        set = function(_, val)
+                            addon.db.profile.targetFrameAnchor = val
+                            addon:UpdateTargetFrameAnchor()
+                        end
+                    },
                     -- VISIBILITY (20-29)
                     visibilityHeader = {
                         type = "header",
@@ -1549,6 +1568,8 @@ local function HandleSlashCommand(addon, input)
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint("CENTER", 0, -150)
             addon:SavePosition()
+            -- Re-apply target frame anchor if enabled
+            addon:UpdateTargetFrameAnchor()
             addon:Print("Position reset to center")
         end
         

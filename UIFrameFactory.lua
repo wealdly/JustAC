@@ -505,12 +505,22 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetScript("OnDragStart", function()
         local profile = addon:GetProfile()
         if not IsPanelLocked(profile) then
+            -- Detach from target frame anchor before dragging so position saves correctly
+            if addon.targetframe_anchored then
+                addon.targetframe_anchored = false
+                addon.mainFrame:ClearAllPoints()
+                addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+            end
             addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
         end
     end)
     addon.mainFrame:SetScript("OnDragStop", function()
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
+        -- Re-apply target frame anchor if enabled
+        if addon.UpdateTargetFrameAnchor then
+            addon:UpdateTargetFrameAnchor()
+        end
     end)
     
     -- Show/hide grab tab on hover
@@ -682,6 +692,14 @@ function UIFrameFactory.CreateGrabTab(addon)
         end
         self:SetAlpha(1)
         
+        -- Detach from target frame anchor before dragging so position saves correctly
+        local profile = addon:GetProfile()
+        if addon.targetframe_anchored and profile then
+            addon.targetframe_anchored = false
+            addon.mainFrame:ClearAllPoints()
+            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
+        
         -- Move the main frame (grab tab follows since it's anchored to it)
         -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
         addon.mainFrame:StartMoving(true)
@@ -690,6 +708,11 @@ function UIFrameFactory.CreateGrabTab(addon)
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
+        
+        -- Re-apply target frame anchor if enabled
+        if addon.UpdateTargetFrameAnchor then
+            addon:UpdateTargetFrameAnchor()
+        end
         
         -- Clear dragging flag and fade out if mouse isn't over frame/tab
         self.isDragging = false
@@ -1002,12 +1025,22 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     button:SetScript("OnDragStart", function(self)
         local profile = addon:GetProfile()
         if IsPanelLocked(profile) then return end
+        -- Detach from target frame anchor before dragging so position saves correctly
+        if addon.targetframe_anchored and profile then
+            addon.targetframe_anchored = false
+            addon.mainFrame:ClearAllPoints()
+            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
         addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
     end)
 
     button:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
+        -- Re-apply target frame anchor if enabled
+        if addon.UpdateTargetFrameAnchor then
+            addon:UpdateTargetFrameAnchor()
+        end
     end)
 
     -- Right-click menu for configuration

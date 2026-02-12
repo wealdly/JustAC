@@ -186,6 +186,15 @@ L["Right to Left"] = "Right to Left"
 L["Bottom to Top"] = "Bottom to Top"
 L["Top to Bottom"] = "Top to Bottom"
 
+-- Target frame anchor
+L["Target Frame Anchor"] = "Target Frame Anchor"
+L["Target Frame Anchor desc"] = "Attach the queue to the default target frame instead of a fixed screen position"
+L["Disabled"] = "Disabled"
+L["Top"] = "Top"
+L["Bottom"] = "Bottom"
+L["Left"] = "Left"
+L["Right"] = "Right"
+
 -- Additional UI strings
 L["Remove"] = "Remove"
 L["Hotkey Overrides"] = "Hotkeys"
@@ -350,6 +359,15 @@ if L then
     L["Bottom to Top"] = "Unten nach Oben"
     L["Top to Bottom"] = "Oben nach Unten"
 
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Zielrahmen-Anker"
+    L["Target Frame Anchor desc"] = "Warteschlange am Standard-Zielrahmen verankern statt an einer festen Bildschirmposition"
+    L["Disabled"] = "Deaktiviert"
+    L["Top"] = "Oben"
+    L["Bottom"] = "Unten"
+    L["Left"] = "Links"
+    L["Right"] = "Rechts"
+
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Benutzerdefinierten Tastentext festlegen.\n\n|cff00ff00Rechtsklick|r um Hotkey festzulegen."
     L["Blacklist Info"] = "Zauber aus der Warteschlange ausblenden.\n\n|cffff6666Umschalt+Rechtsklick|r zum Umschalten."
@@ -496,6 +514,15 @@ if L then
     L["Bottom to Top"] = "Bas vers haut"
     L["Top to Bottom"] = "Haut vers bas"
 
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Ancrage cadre de cible"
+    L["Target Frame Anchor desc"] = "Attacher la file au cadre de cible par défaut au lieu d'une position fixe à l'écran"
+    L["Disabled"] = "Désactivé"
+    L["Top"] = "Haut"
+    L["Bottom"] = "Bas"
+    L["Left"] = "Gauche"
+    L["Right"] = "Droite"
+
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Définir un raccourci personnalisé.\n\n|cff00ff00Clic droit|r pour définir un raccourci."
     L["Blacklist Info"] = "Masquer des sorts de la file.\n\n|cffff6666Maj+Clic droit|r pour basculer."
@@ -641,6 +668,15 @@ if L then
     L["Right to Left"] = "Справа налево"
     L["Bottom to Top"] = "Снизу вверх"
     L["Top to Bottom"] = "Сверху вниз"
+
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Привязка к рамке цели"
+    L["Target Frame Anchor desc"] = "Привязать очередь к стандартной рамке цели вместо фиксированной позиции на экране"
+    L["Disabled"] = "Выключено"
+    L["Top"] = "Сверху"
+    L["Bottom"] = "Снизу"
+    L["Left"] = "Слева"
+    L["Right"] = "Справа"
 
     -- Additional UI strings
     L["Hotkey Overrides Info"] = "Установить пользовательскую клавишу.\n\n|cff00ff00Правый клик|r для установки."
@@ -790,6 +826,15 @@ if L then
     L["Right to Left"] = "Derecha a izquierda"
     L["Bottom to Top"] = "Abajo hacia arriba"
     L["Top to Bottom"] = "Arriba hacia abajo"
+
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Anclaje al marco de objetivo"
+    L["Target Frame Anchor desc"] = "Anclar la cola al marco de objetivo predeterminado en lugar de una posición fija en pantalla"
+    L["Disabled"] = "Desactivado"
+    L["Top"] = "Arriba"
+    L["Bottom"] = "Abajo"
+    L["Left"] = "Izquierda"
+    L["Right"] = "Derecha"
 
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n|cff88ff88/jac|r - Abrir opciones\n|cff88ff88/jac toggle|r - Pausar/reanudar\n|cff88ff88/jac debug|r - Alternar modo depuración\n|cff88ff88/jac test|r - Probar API Blizzard\n|cff88ff88/jac formcheck|r - Comprobar detección de forma\n|cff88ff88/jac find <hechizo>|r - Localizar hechizo\n|cff88ff88/jac reset|r - Restablecer posición\n\nEscribe |cff88ff88/jac help|r para la lista completa de comandos"
@@ -950,6 +995,15 @@ if L then
     L["Bottom to Top"] = "Abajo hacia arriba"
     L["Top to Bottom"] = "Arriba hacia abajo"
 
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Anclaje al marco de objetivo"
+    L["Target Frame Anchor desc"] = "Anclar la cola al marco de objetivo predeterminado en lugar de una posición fija en pantalla"
+    L["Disabled"] = "Desactivado"
+    L["Top"] = "Arriba"
+    L["Bottom"] = "Abajo"
+    L["Left"] = "Izquierda"
+    L["Right"] = "Derecha"
+
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n/jac - Opciones\n/jac toggle - Pausar\n/jac debug - Depuración\n/jac test - Probar API\n/jac reset - Restablecer\n\n|cff88ff88/jac help|r para todos"
 
@@ -1104,6 +1158,15 @@ if L then
     L["Right to Left"] = "Direita para esquerda"
     L["Bottom to Top"] = "Baixo para cima"
     L["Top to Bottom"] = "Cima para baixo"
+
+    -- Target frame anchor
+    L["Target Frame Anchor"] = "Ancoragem ao quadro de alvo"
+    L["Target Frame Anchor desc"] = "Ancorar a fila no quadro de alvo padrão em vez de uma posição fixa na tela"
+    L["Disabled"] = "Desativado"
+    L["Top"] = "Cima"
+    L["Bottom"] = "Baixo"
+    L["Left"] = "Esquerda"
+    L["Right"] = "Direita"
 
     -- Slash commands help
     L["Slash Commands"] = "|cffffff00Comandos:|r\n/jac - Opções\n/jac toggle - Pausar\n/jac debug - Depuração\n/jac test - Testar API\n/jac reset - Redefinir\n\n|cff88ff88/jac help|r para todos"

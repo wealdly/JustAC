@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.22.0] - 2026-02-11
+
+### Added
+
+- **Target Frame Anchor:** New option to attach the spell queue to the default target frame (Top/Bottom/Left/Right). Anchor persists even when target frame is hidden. Dragging detaches, re-enable in General → Icon Layout. Localized in all 7 languages.
+
 ## [3.21.7] - 2026-02-11
 
 ### Fixed
