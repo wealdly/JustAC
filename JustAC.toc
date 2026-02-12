@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 3.22.0
+## Version: 3.23.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB
@@ -23,7 +23,15 @@ Libs\\AceGUI-3.0\\AceGUI-3.0.xml
 Libs\\AceConfig-3.0\\AceConfig-3.0.xml
 Libs\\AceLocale-3.0\\AceLocale-3.0.xml
 
-Locale.lua
+Locales\enUS.lua
+Locales\deDE.lua
+Locales\frFR.lua
+Locales\ruRU.lua
+Locales\esES.lua
+Locales\esMX.lua
+Locales\ptBR.lua
+Locales\zhCN.lua
+Locales\zhTW.lua
 SpellDB.lua
 BlizzardAPI.lua
 FormCache.lua

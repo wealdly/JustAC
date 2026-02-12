@@ -27,7 +27,15 @@ Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 $coreFiles = @(
     "JustAC.toc",
     "JustAC.lua",
-    "Locale.lua",
+    "Locales\enUS.lua",
+    "Locales\deDE.lua",
+    "Locales\frFR.lua",
+    "Locales\ruRU.lua",
+    "Locales\esES.lua",
+    "Locales\esMX.lua",
+    "Locales\ptBR.lua",
+    "Locales\zhCN.lua",
+    "Locales\zhTW.lua",
     "SpellDB.lua",
     "BlizzardAPI.lua",
     "FormCache.lua",
@@ -48,7 +56,12 @@ $coreFiles = @(
 foreach ($file in $coreFiles) {
     $src = Join-Path $PSScriptRoot $file
     if (Test-Path $src) {
-        Copy-Item $src $outputDir -Force
+        $dest = Join-Path $outputDir $file
+        $destDir = Split-Path $dest -Parent
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Copy-Item $src $dest -Force
     }
 }
 
