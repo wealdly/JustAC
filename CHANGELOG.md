@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.23.0] - 2026-02-12
+
+### Added
+
+- Simplified Chinese (zhCN) and Traditional Chinese (zhTW) locale support
+- 56+ missing translation keys added to all existing locales (deDE, frFR, ruRU, esES, esMX, ptBR) covering gamepad icons, spell search UI, panel interaction, defensive display modes, visibility toggles, and profile switching
+
+### Changed
+
+- Split single Locale.lua into per-language files under Locales/ folder for easier maintenance and community contributions
+
+### Fixed
+
+- Removed dead/outdated locale keys (Cooldown Threshold, Debug Mode, About, Slash Commands) from older translations
+- Removed duplicate key definitions within locale sections
+- Added missing `UI Scale` translation to esMX and ptBR
+- Added missing `Clear All` translation to zhCN
+
 ## [3.22.0] - 2026-02-11
 
 ### Added
