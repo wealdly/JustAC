@@ -475,6 +475,9 @@ local function GetAddon()
     return cachedAddon
 end
 
+-- Expose for other modules that need cached addon access
+BlizzardAPI.GetAddon = GetAddon
+
 function BlizzardAPI.GetProfile()
     local addon = GetAddon()
     if not addon or not addon.db then return nil end
