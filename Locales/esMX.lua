@@ -48,6 +48,8 @@ L["All Glows"] = "Todos los brillos"
 L["Primary Only"] = "Solo principal"
 L["Proc Only"] = "Solo proc"
 L["No Glows"] = "Sin brillos"
+L["Show Key Press Flash"] = "Flash de tecla"
+L["Show Key Press Flash desc"] = "Hacer parpadear el icono al pulsar su atajo correspondiente."
 L["Show Tooltips"] = "Mostrar información"
 L["Tooltips in Combat"] = "Información en combate"
 

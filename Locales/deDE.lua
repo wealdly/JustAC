@@ -47,6 +47,8 @@ L["All Glows"] = "Alle Leuchteffekte"
 L["Primary Only"] = "Nur Primär"
 L["Proc Only"] = "Nur Proc"
 L["No Glows"] = "Keine Leuchteffekte"
+L["Show Key Press Flash"] = "Tastendruck-Blitz"
+L["Show Key Press Flash desc"] = "Symbol beim Drücken der zugehörigen Taste aufblitzen lassen."
 L["Show Tooltips"] = "Tooltips anzeigen"
 L["Tooltips in Combat"] = "Tooltips im Kampf"
 
