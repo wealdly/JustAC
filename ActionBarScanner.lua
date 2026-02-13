@@ -85,13 +85,8 @@ local GAMEPAD_FACE_BUTTONS = {
 
 local string_gsub = string.gsub
 
-local cachedAddon = nil
-local function GetCachedAddon()
-    if not cachedAddon then
-        cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-    end
-    return cachedAddon
-end
+-- Reuse BlizzardAPI's cached addon lookup
+local GetCachedAddon = BlizzardAPI.GetAddon
 
 -- Helper to get face button atlas based on current setting
 -- size: "normal" (14:14) or "small" (10:10) for modifier combos
