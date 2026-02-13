@@ -43,6 +43,8 @@ L["All Glows"] = "All Glows"
 L["Primary Only"] = "Primary Only"
 L["Proc Only"] = "Proc Only"
 L["No Glows"] = "No Glows"
+L["Show Key Press Flash"] = "Key Press Flash"
+L["Show Key Press Flash desc"] = "Flash the icon when you press its matching keybind."
 L["Show Tooltips"] = "Show Tooltips"
 L["Tooltips in Combat"] = "Tooltips in Combat"
 

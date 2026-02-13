@@ -47,6 +47,8 @@ L["All Glows"] = "全部發光"
 L["Primary Only"] = "僅主要"
 L["Proc Only"] = "僅觸發"
 L["No Glows"] = "無發光"
+L["Show Key Press Flash"] = "按鍵閃光"
+L["Show Key Press Flash desc"] = "按下對應快捷鍵時閃爍圖示。"
 L["Show Tooltips"] = "顯示提示"
 L["Tooltips in Combat"] = "戰鬥中顯示提示"
 

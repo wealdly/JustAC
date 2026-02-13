@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.24.0] - 2026-02-12
+
+### Added
+
+- Separate "Key Press Flash" toggles for offensive and defensive queues
+
+### Changed
+
+- ActionBarScanner: Extract `CacheHotkey` helper in `GetSpellHotkey` (reduces code duplication)
+- ActionBarScanner: `ClearAllCaches` now also clears `abbreviatedKeyCache` (fixes stale gamepad icons on style change)
+- ActionBarScanner: Minor code cleanup (cached addon lookup, remove unused upvalues, remove shadowed locals, remove redundant debug function)
+
+### Fixed
+
+- Gamepad modifier keys showing "S" prefix instead of trigger icons when used with shoulder buttons
+
 ## [3.23.0] - 2026-02-12
 
 ### Added
