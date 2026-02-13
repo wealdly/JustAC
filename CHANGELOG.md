@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.24.1] - 2026-02-12
+
+### Changed
+
+- RedundancyFilter: `GetCachedSpellInfo` now routes through SpellQueue's cache (avoids ~12 uncached `C_Spell.GetSpellInfo` calls per redundancy check)
+- ActionBarScanner: Reuse `BlizzardAPI.GetAddon()` instead of duplicate `cachedAddon` local
+- Updated "Show Hotkeys" tooltip descriptions in all 9 locales (removed stale "skips hotkey detection" claim)
+
+### Removed
+
+- Deleted deprecated root `Locale.lua` (only `Locales/*.lua` files are loaded)
+
 ## [3.24.0] - 2026-02-12
 
 ### Added
