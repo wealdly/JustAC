@@ -287,10 +287,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.cooldown:Show()
     end
 
-    -- Hotkey display (skip lookup entirely when disabled for performance)
+    -- Hotkey lookup: needed for display AND for key press flash matching
     local showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
+    local showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
     local hotkey = ""
-    if showHotkeys then
+    if showHotkeys or showFlash then
         -- Find hotkey for item by scanning action bars
         if isItem then
             for slot = 1, 180 do
@@ -311,9 +312,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     end
     
     -- Only update hotkey text if it changed (prevents flicker)
+    -- When showHotkeys is off, clear displayed text but keep hotkey for flash matching
+    local displayHotkey = showHotkeys and hotkey or ""
     local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
-    if currentHotkey ~= hotkey then
-        defensiveIcon.hotkeyText:SetText(hotkey)
+    if currentHotkey ~= displayHotkey then
+        defensiveIcon.hotkeyText:SetText(displayHotkey)
     end
 
     -- Normalize hotkey for key press flash matching
@@ -520,7 +523,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Cache frequently called functions to reduce table lookups in hot path
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local showHotkeys = profile.showOffensiveHotkeys ~= false
-    local GetSpellHotkey = showHotkeys and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
+    local showFlash = profile.showFlash ~= false
+    -- Look up hotkeys when displaying text OR when flash needs normalizedHotkey for matching
+    local GetSpellHotkey = (showHotkeys or showFlash) and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
     local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
     
     -- PERFORMANCE: Throttle cooldown updates - swipe animates smoothly once set
@@ -668,9 +673,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 -- Only update hotkey text if it changed (prevents flicker)
+                -- When showHotkeys is off, clear displayed text but keep hotkey for flash matching
+                local displayHotkey = showHotkeys and hotkey or ""
                 local currentHotkey = icon.hotkeyText:GetText() or ""
-                if currentHotkey ~= hotkey then
-                    icon.hotkeyText:SetText(hotkey)
+                if currentHotkey ~= displayHotkey then
+                    icon.hotkeyText:SetText(displayHotkey)
                 end
 
                 -- Normalize hotkey for key press flash matching
@@ -707,7 +714,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Note: C_Spell.IsSpellInRange may return secret values in combat, fail-safe to white text
                 -- PERFORMANCE: Only check range when spell changed OR throttle interval passed
                 local isOutOfRange = false
-                if hotkey ~= "" and C_Spell_IsSpellInRange then
+                if displayHotkey ~= "" and C_Spell_IsSpellInRange then
                     if spellChanged or shouldUpdateCooldowns then
                         local inRange = C_Spell_IsSpellInRange(spellID)
                         if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
