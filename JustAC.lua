@@ -25,6 +25,7 @@ local defaults = {
         isManualMode = false,
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
         glowMode = "all",                 -- "all", "primaryOnly", "procOnly", "none"
+        showFlash = true,                 -- Flash icon on matching key press
         firstIconScale = 1.2,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
@@ -44,6 +45,7 @@ local defaults = {
             enabled = false,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
             glowMode = "all",         -- "all", "primaryOnly", "procOnly", "none"
+            showFlash = true,         -- Flash icon on matching key press
             showHotkeys = true,       -- Show hotkey text on defensive icons
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
@@ -1410,8 +1412,11 @@ function JustAC:CreateKeyPressDetector()
         local HOTKEY_GRACE_PERIOD = 0.15
         local slot1PrevSpellID = nil
 
+        local profile = addon.db and addon.db.profile
+
+        -- Check offensive icons (if flash enabled)
         local spellIcons = addon.spellIcons
-        if spellIcons then
+        if spellIcons and (not profile or profile.showFlash ~= false) then
             -- Check slot 1 first (special handling for spell change timing)
             local icon1 = spellIcons[1]
             if icon1 and icon1:IsShown() and icon1.spellID then
@@ -1453,20 +1458,23 @@ function JustAC:CreateKeyPressDetector()
             end
         end
 
-        -- Check defensive icons (inline match)
-        local defIcons = addon.defensiveIcons
-        if defIcons then
-            for _, defIcon in ipairs(defIcons) do
-                if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
-                    iconsToFlash[#iconsToFlash + 1] = defIcon
+        -- Check defensive icons (if flash enabled)
+        local defFlash = not profile or not profile.defensives or profile.defensives.showFlash ~= false
+        if defFlash then
+            local defIcons = addon.defensiveIcons
+            if defIcons then
+                for _, defIcon in ipairs(defIcons) do
+                    if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
+                        iconsToFlash[#iconsToFlash + 1] = defIcon
+                    end
                 end
             end
-        end
 
-        -- Legacy single defensive icon
-        local defIcon = addon.defensiveIcon
-        if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
-            iconsToFlash[#iconsToFlash + 1] = defIcon
+            -- Legacy single defensive icon
+            local defIcon = addon.defensiveIcon
+            if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
+                iconsToFlash[#iconsToFlash + 1] = defIcon
+            end
         end
 
         -- Flash all matched icons

@@ -47,6 +47,8 @@ L["All Glows"] = "Все свечения"
 L["Primary Only"] = "Только основное"
 L["Proc Only"] = "Только проки"
 L["No Glows"] = "Без свечения"
+L["Show Key Press Flash"] = "Вспышка клавиши"
+L["Show Key Press Flash desc"] = "Подсветка иконки при нажатии соответствующей клавиши."
 L["Show Tooltips"] = "Показывать подсказки"
 L["Tooltips in Combat"] = "Подсказки в бою"
 
