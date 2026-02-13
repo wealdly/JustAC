@@ -160,7 +160,7 @@ function Options.UpdateBlacklistOptions(addon)
     local staticKeys = {
         info = true, contentHeader = true, includeHiddenAbilities = true,
         showSpellbookProcs = true, hideItemAbilities = true,
-        displayHeader = true, maxIcons = true, firstIconScale = true, showHotkeys = true, glowMode = true,
+        displayHeader = true, maxIcons = true, firstIconScale = true, showHotkeys = true, glowMode = true, showFlash = true,
         blacklistHeader = true, blacklistInfo = true,
     }
 
@@ -826,7 +826,7 @@ function Options.UpdateDefensivesOptions(addon)
     local staticKeys = {
         info = true, header = true, enabled = true, showProcs = true,
         displayHeader = true, iconScale = true, maxIcons = true, position = true,
-        showHotkeys = true, glowMode = true, displayMode = true, showHealthBar = true,
+        showHotkeys = true, glowMode = true, showFlash = true, displayMode = true, showHealthBar = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
     }
@@ -1381,6 +1381,17 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdate()
                         end
                     },
+                    showFlash = {
+                        type = "toggle",
+                        name = L["Show Key Press Flash"],
+                        desc = L["Show Key Press Flash desc"],
+                        order = 19,
+                        width = "full",
+                        get = function() return addon.db.profile.showFlash ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.showFlash = val
+                        end
+                    },
                     -- BLACKLIST (20+)
                     blacklistHeader = {
                         type = "header",
@@ -1543,6 +1554,18 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.glowMode = val
                             addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    showFlash = {
+                        type = "toggle",
+                        name = L["Show Key Press Flash"],
+                        desc = L["Show Key Press Flash desc"],
+                        order = 7.7,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showFlash ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showFlash = val
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },

@@ -1,5 +1,51 @@
 # Changelog
 
+## [3.24.1] - 2026-02-12
+
+### Changed
+
+- RedundancyFilter: `GetCachedSpellInfo` now routes through SpellQueue's cache (avoids ~12 uncached `C_Spell.GetSpellInfo` calls per redundancy check)
+- ActionBarScanner: Reuse `BlizzardAPI.GetAddon()` instead of duplicate `cachedAddon` local
+- Updated "Show Hotkeys" tooltip descriptions in all 9 locales (removed stale "skips hotkey detection" claim)
+
+### Removed
+
+- Deleted deprecated root `Locale.lua` (only `Locales/*.lua` files are loaded)
+
+## [3.24.0] - 2026-02-12
+
+### Added
+
+- Separate "Key Press Flash" toggles for offensive and defensive queues
+
+### Changed
+
+- ActionBarScanner: Extract `CacheHotkey` helper in `GetSpellHotkey` (reduces code duplication)
+- ActionBarScanner: `ClearAllCaches` now also clears `abbreviatedKeyCache` (fixes stale gamepad icons on style change)
+- ActionBarScanner: Minor code cleanup (cached addon lookup, remove unused upvalues, remove shadowed locals, remove redundant debug function)
+
+### Fixed
+
+- Gamepad modifier keys showing "S" prefix instead of trigger icons when used with shoulder buttons
+
+## [3.23.0] - 2026-02-12
+
+### Added
+
+- Simplified Chinese (zhCN) and Traditional Chinese (zhTW) locale support
+- 56+ missing translation keys added to all existing locales (deDE, frFR, ruRU, esES, esMX, ptBR) covering gamepad icons, spell search UI, panel interaction, defensive display modes, visibility toggles, and profile switching
+
+### Changed
+
+- Split single Locale.lua into per-language files under Locales/ folder for easier maintenance and community contributions
+
+### Fixed
+
+- Removed dead/outdated locale keys (Cooldown Threshold, Debug Mode, About, Slash Commands) from older translations
+- Removed duplicate key definitions within locale sections
+- Added missing `UI Scale` translation to esMX and ptBR
+- Added missing `Clear All` translation to zhCN
+
 ## [3.22.0] - 2026-02-11
 
 ### Added

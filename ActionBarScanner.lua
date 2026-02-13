@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 33)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 34)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -21,8 +21,6 @@ local FindSpellOverrideByID = FindSpellOverrideByID
 local pairs = pairs
 local ipairs = ipairs
 local wipe = wipe
-local math_max = math.max
-local math_min = math.min
 
 -- Gamepad face button atlas mappings by style (using _64 atlas with outline for better visibility)
 -- Format: {PAD1, PAD2, PAD3, PAD4, PAD5, PAD6}
@@ -85,24 +83,19 @@ local GAMEPAD_FACE_BUTTONS = {
     },
 }
 
+local string_gsub = string.gsub
+
+-- Reuse BlizzardAPI's cached addon lookup
+local GetCachedAddon = BlizzardAPI.GetAddon
+
 -- Helper to get face button atlas based on current setting
 -- size: "normal" (14:14) or "small" (10:10) for modifier combos
 local function GetGamepadFaceButton(buttonNum, size)
-    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    local addon = GetCachedAddon()
     local style = (addon and addon.db and addon.db.profile.gamepadIconStyle) or "xbox"
     local styleButtons = GAMEPAD_FACE_BUTTONS[style] or GAMEPAD_FACE_BUTTONS.xbox
     local sizeButtons = styleButtons[size or "normal"] or styleButtons.normal
     return sizeButtons[buttonNum] or sizeButtons[1]
-end
-local string_byte = string.byte
-local string_gsub = string.gsub
-
-local cachedAddon = nil
-local function GetCachedAddon()
-    if not cachedAddon then
-        cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-    end
-    return cachedAddon
 end
 
 local NUM_ACTIONBAR_BUTTONS = 12
@@ -702,11 +695,17 @@ local function FormatHotkeyWithModifiers(baseKey, macroModifiers)
     if not baseKey or baseKey == "" then
         return ""
     end
-    
+
     if not macroModifiers or not macroModifiers.mod then
         return baseKey
     end
-    
+
+    -- Don't prefix modifiers when key already contains gamepad icon markup;
+    -- AbbreviateKeybind() already converted SHIFT/CTRL to trigger icons.
+    if baseKey:find("|A:") then
+        return baseKey
+    end
+
     local modType = macroModifiers.mod
     if modType == "any" or modType == "" then
         return "+" .. baseKey
@@ -769,54 +768,43 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         return previousValue or ""
     end
 
-    local foundSlot, macroModifiers = FindSpellInActions(spellID, spellInfo.name)
-
-    if foundSlot then
-        local baseKey = GetOptimizedKeybind(foundSlot)
-
-        if baseKey then
-            local abbreviatedKey = AbbreviateKeybind(baseKey)
-            local finalHotkey = FormatHotkeyWithModifiers(abbreviatedKey, macroModifiers)
-            -- Cache the result and the slot for transform lookups
-            spellHotkeyCache[spellID] = finalHotkey
-            spellSlotCache[spellID] = foundSlot
-            spellHotkeyCacheValid = true
-            return finalHotkey
+    -- Helper: abbreviate + format + cache a hotkey for a given slot
+    local function CacheHotkey(slot, modifiers, cacheID, extraCacheID)
+        local baseKey = GetOptimizedKeybind(slot)
+        if not baseKey then return nil end
+        local finalHotkey = FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers)
+        spellHotkeyCache[cacheID] = finalHotkey
+        spellSlotCache[cacheID] = slot
+        if extraCacheID then
+            spellHotkeyCache[extraCacheID] = finalHotkey
+            spellSlotCache[extraCacheID] = slot
         end
+        spellHotkeyCacheValid = true
+        return finalHotkey
     end
-    
+
+    local foundSlot, macroModifiers = FindSpellInActions(spellID, spellInfo.name)
+    if foundSlot then
+        local result = CacheHotkey(foundSlot, macroModifiers, spellID)
+        if result then return result end
+    end
+
     -- Transform fast path: slot doesn't change, only displayed spell
     if FindBaseSpellByID then
         local baseSpellID = FindBaseSpellByID(spellID)
         if baseSpellID and baseSpellID ~= spellID then
             local cachedSlot = spellSlotCache[baseSpellID]
             if cachedSlot then
-                local baseKey = GetOptimizedKeybind(cachedSlot)
-                if baseKey then
-                    local abbreviatedKey = AbbreviateKeybind(baseKey)
-                    local finalHotkey = abbreviatedKey
-                    spellHotkeyCache[spellID] = finalHotkey
-                    spellSlotCache[spellID] = cachedSlot
-                    spellHotkeyCacheValid = true
-                    return finalHotkey
-                end
+                local result = CacheHotkey(cachedSlot, nil, spellID)
+                if result then return result end
             end
 
             local baseSpellInfo = C_Spell.GetSpellInfo(baseSpellID)
             if baseSpellInfo and baseSpellInfo.name then
                 local baseFoundSlot, baseMacroModifiers = FindSpellInActions(baseSpellID, baseSpellInfo.name)
                 if baseFoundSlot then
-                    local baseKey = GetOptimizedKeybind(baseFoundSlot)
-                    if baseKey then
-                        local abbreviatedKey = AbbreviateKeybind(baseKey)
-                        local finalHotkey = FormatHotkeyWithModifiers(abbreviatedKey, baseMacroModifiers)
-                        spellHotkeyCache[spellID] = finalHotkey
-                        spellHotkeyCache[baseSpellID] = finalHotkey
-                        spellSlotCache[spellID] = baseFoundSlot
-                        spellSlotCache[baseSpellID] = baseFoundSlot
-                        spellHotkeyCacheValid = true
-                        return finalHotkey
-                    end
+                    local result = CacheHotkey(baseFoundSlot, baseMacroModifiers, spellID, baseSpellID)
+                    if result then return result end
                 end
             end
         end
@@ -893,53 +881,6 @@ function ActionBarScanner.OnUIChanged()
     InvalidateStateCache()
 end
 
-function ActionBarScanner.FindSpellInSlots(spellName)
-    if not spellName or spellName == "" then
-        print("|JAC| Error: No spell name provided")
-        return {}
-    end
-    
-    print("|JAC| Searching for: " .. tostring(spellName))
-    
-    local foundSlots = {}
-    local lowerSpellName = spellName:lower()
-    local slotMapping = GetCachedSlotMapping()
-    
-    for slot = 1, MAX_ACTION_SLOTS do
-        if HasAction(slot) then
-            -- Always use BlizzardAPI.GetActionInfo (no fallback to GetActionInfo)
-            local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
-            local isValid = slotMapping[slot] ~= nil
-            
-            -- Skip the single-button assistant using multiple detection methods
-            local isAssistantButton = (actionType == "spell" and type(actionID) == "string" and actionID == "assistedcombat")
-            local isAssistedCombatAction = C_ActionBar and C_ActionBar.IsAssistedCombatAction and C_ActionBar.IsAssistedCombatAction(slot)
-            
-            if not isAssistantButton and not isAssistedCombatAction and actionType == "spell" and actionID then
-                local spellInfo = C_Spell.GetSpellInfo(actionID)
-                if spellInfo and spellInfo.name and spellInfo.name:lower():find(lowerSpellName, 1, true) then
-                    local key = GetOptimizedKeybind(slot)
-                    local status = isValid and "VALID" or "INVALID"
-                    print("|JAC| Found: '" .. tostring(spellInfo.name) .. "' in slot " .. tostring(slot) .. " (" .. status .. ") (key: " .. tostring(key or "none") .. ")")
-                    
-                    table.insert(foundSlots, {
-                        slot = slot,
-                        spellID = actionID,
-                        spellName = spellInfo.name,
-                        valid = isValid
-                    })
-                end
-            end
-        end
-    end
-    
-    if #foundSlots == 0 then
-        print("|JAC| No matches found for '" .. tostring(spellName) .. "'")
-    end
-    
-    return foundSlots
-end
-
 --------------------------------------------------------------------------------
 -- Event-Driven Proc Tracking (SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE)
 --------------------------------------------------------------------------------
@@ -999,7 +940,6 @@ function ActionBarScanner.IsSpellProcced(spellID)
     if not spellID or spellID == 0 then return false end
     if activeProcs[spellID] then return true end
     -- Proc events may fire with different ID than display ID
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI and BlizzardAPI.GetDisplaySpellID then
         local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
         if displayID and displayID ~= spellID and activeProcs[displayID] then
@@ -1025,6 +965,8 @@ end
 function ActionBarScanner.ClearAllCaches()
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
+    wipe(abbreviatedKeyCache)
+    abbreviatedKeyCacheSize = 0
     spellHotkeyCacheValid = false
 end
 

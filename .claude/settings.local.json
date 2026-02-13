@@ -17,7 +17,10 @@
       "WebFetch(domain:www.icy-veins.com)",
       "WebFetch(domain:www.warcrafttavern.com)",
       "Bash(grep:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(dir:*)",
+      "Bash(del:*)",
+      "Bash(wc:*)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"
