@@ -449,11 +449,17 @@ local function CreateDefensiveIcons(addon, profile)
     -- Defensive bottom = BAR_SPACING above health bar top
     -- So: defensive bottom = BAR_SPACING + BAR_HEIGHT + BAR_SPACING = BAR_HEIGHT + 2*BAR_SPACING
     -- Add 1px visual compensation for Blizzard's -0.5px texture offset on both elements
+    -- Pet health bar stacks above player health bar when both are enabled
     local healthBarOffset = 0
-    if profile.defensives.showHealthBar and UIHealthBar and defPosition == "SIDE1" then
+    if defPosition == "SIDE1" and UIHealthBar then
         local barSpacing = UIHealthBar.BAR_SPACING
         local barHeight = UIHealthBar.BAR_HEIGHT
-        healthBarOffset = barHeight + (barSpacing * 2)
+        local barCount = 0
+        if profile.defensives.showHealthBar then barCount = barCount + 1 end
+        if profile.defensives.showPetHealthBar then barCount = barCount + 1 end
+        if barCount > 0 then
+            healthBarOffset = barCount * (barHeight + barSpacing) + barSpacing
+        end
     end
     
     -- Create maxIcons defensive buttons using a FRESH table

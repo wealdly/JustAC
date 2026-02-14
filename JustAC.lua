@@ -49,14 +49,16 @@ local defaults = {
             showHotkeys = true,       -- Show hotkey text on defensive icons
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
+            showPetHealthBar = false, -- Display compact pet health bar (pet classes only)
             iconScale = 1.2,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 3,             -- Number of defensive icons to show (1-3)
-            selfHealThreshold = 80,   -- Show self-heals when health drops below this
-            cooldownThreshold = 60,   -- Show major cooldowns when health drops below this
-            petHealThreshold = 50,    -- Show pet heals when PET health drops below this
-            selfHealSpells = {},      -- Populated from CLASS_SELFHEAL_DEFAULTS on first run
-            cooldownSpells = {},      -- Populated from CLASS_COOLDOWN_DEFAULTS on first run
-            petHealSpells = {},       -- Populated from CLASS_PETHEAL_DEFAULTS on first run
+            -- NOTE: In 12.0 combat, UnitHealth() is secret. These thresholds only
+            -- apply out of combat. In combat, we fall back to Blizzard's LowHealthFrame
+            -- overlay which provides two binary states: "low" (~35%) and "critical" (~20%).
+            selfHealThreshold = 80,   -- Out-of-combat only: show self-heals below this %
+            cooldownThreshold = 60,   -- Out-of-combat only: show major cooldowns below this %
+            petHealThreshold = 50,    -- Out-of-combat only: show pet heals below this pet %
+            classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
             displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
     },
@@ -144,6 +146,7 @@ function JustAC:OnInitialize()
         JustAC.CLASS_SELFHEAL_DEFAULTS = SpellDB.CLASS_SELFHEAL_DEFAULTS
         JustAC.CLASS_COOLDOWN_DEFAULTS = SpellDB.CLASS_COOLDOWN_DEFAULTS
         JustAC.CLASS_PETHEAL_DEFAULTS = SpellDB.CLASS_PETHEAL_DEFAULTS
+        JustAC.CLASS_PET_REZ_DEFAULTS = SpellDB.CLASS_PET_REZ_DEFAULTS
     end
     
     self:NormalizeSavedData()
@@ -180,6 +183,9 @@ function JustAC:OnEnable()
     -- Must be after CreateSpellIcons
     if UIHealthBar and UIHealthBar.CreateHealthBar then
         UIHealthBar.CreateHealthBar(self)
+    end
+    if UIHealthBar and UIHealthBar.CreatePetHealthBar then
+        UIHealthBar.CreatePetHealthBar(self)
     end
 
     if UnitAffectingCombat("player") then
@@ -339,6 +345,9 @@ function JustAC:EnterDisabledMode()
     if UIHealthBar and UIHealthBar.Hide then
         UIHealthBar.Hide()
     end
+    if UIHealthBar and UIHealthBar.HidePet then
+        UIHealthBar.HidePet()
+    end
 
     self:DebugPrint("Entered disabled mode for current spec")
 end
@@ -358,6 +367,11 @@ function JustAC:ExitDisabledMode()
         local profile = self:GetProfile()
         if profile and profile.defensives and profile.defensives.showHealthBar then
             UIHealthBar.Show()
+        end
+        if profile and profile.defensives and profile.defensives.showPetHealthBar then
+            if UIHealthBar.UpdatePetVisibility then
+                UIHealthBar.UpdatePetVisibility(self)
+            end
         end
     end
 
@@ -395,39 +409,128 @@ function JustAC:ShowWelcomeMessage()
     self:Print("Debug mode active")
 end
 
+-- Returns the spell list for a given type ("selfHealSpells", "cooldownSpells", "petHealSpells")
+-- for the current player class from the per-class nested structure.
+function JustAC:GetClassSpellList(listKey)
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives then return nil end
+
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+
+    local classSpells = profile.defensives.classSpells
+    if not classSpells or not classSpells[playerClass] then return nil end
+
+    return classSpells[playerClass][listKey]
+end
+
+-- Migrate pre-3.25 flat spell lists (selfHealSpells/cooldownSpells/petHealSpells)
+-- into the new per-class classSpells structure. Safe to call multiple times.
+function JustAC:MigrateDefensiveSpellsToClassSpells()
+    local profile = self:GetProfile()
+    if not profile or not profile.defensives then return end
+
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return end
+
+    local def = profile.defensives
+    local hasFlatData = (def.selfHealSpells and #def.selfHealSpells > 0)
+        or (def.cooldownSpells and #def.cooldownSpells > 0)
+        or (def.petHealSpells and #def.petHealSpells > 0)
+
+    if not hasFlatData then return end
+
+    -- Ensure classSpells table exists
+    if not def.classSpells then def.classSpells = {} end
+
+    -- Only migrate if this class doesn't already have nested data
+    if not def.classSpells[playerClass] then
+        def.classSpells[playerClass] = {}
+    end
+    local cs = def.classSpells[playerClass]
+
+    -- Move flat lists into per-class structure (don't overwrite existing)
+    if def.selfHealSpells and #def.selfHealSpells > 0 and (not cs.selfHealSpells or #cs.selfHealSpells == 0) then
+        cs.selfHealSpells = {}
+        for i, spellID in ipairs(def.selfHealSpells) do
+            cs.selfHealSpells[i] = spellID
+        end
+    end
+
+    if def.cooldownSpells and #def.cooldownSpells > 0 and (not cs.cooldownSpells or #cs.cooldownSpells == 0) then
+        cs.cooldownSpells = {}
+        for i, spellID in ipairs(def.cooldownSpells) do
+            cs.cooldownSpells[i] = spellID
+        end
+    end
+
+    if def.petHealSpells and #def.petHealSpells > 0 and (not cs.petHealSpells or #cs.petHealSpells == 0) then
+        cs.petHealSpells = {}
+        for i, spellID in ipairs(def.petHealSpells) do
+            cs.petHealSpells[i] = spellID
+        end
+    end
+
+    -- Clear flat keys so migration won't re-trigger
+    def.selfHealSpells = nil
+    def.cooldownSpells = nil
+    def.petHealSpells = nil
+
+    self:DebugPrint("Migrated flat defensive spells to classSpells[" .. playerClass .. "]")
+end
+
 function JustAC:InitializeDefensiveSpells()
     local profile = self:GetProfile()
     if not profile or not profile.defensives then return end
-    
+
     local _, playerClass = UnitClass("player")
     if not playerClass then return end
-    
-    if not profile.defensives.selfHealSpells or #profile.defensives.selfHealSpells == 0 then
+
+    -- Migrate legacy flat lists on first load
+    self:MigrateDefensiveSpellsToClassSpells()
+
+    -- Ensure classSpells table structure exists
+    local def = profile.defensives
+    if not def.classSpells then def.classSpells = {} end
+    if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
+    local cs = def.classSpells[playerClass]
+
+    if not cs.selfHealSpells or #cs.selfHealSpells == 0 then
         local healDefaults = JustAC.CLASS_SELFHEAL_DEFAULTS and JustAC.CLASS_SELFHEAL_DEFAULTS[playerClass]
         if healDefaults then
-            profile.defensives.selfHealSpells = {}
+            cs.selfHealSpells = {}
             for i, spellID in ipairs(healDefaults) do
-                profile.defensives.selfHealSpells[i] = spellID
+                cs.selfHealSpells[i] = spellID
             end
         end
     end
 
-    if not profile.defensives.cooldownSpells or #profile.defensives.cooldownSpells == 0 then
+    if not cs.cooldownSpells or #cs.cooldownSpells == 0 then
         local cdDefaults = JustAC.CLASS_COOLDOWN_DEFAULTS and JustAC.CLASS_COOLDOWN_DEFAULTS[playerClass]
         if cdDefaults then
-            profile.defensives.cooldownSpells = {}
+            cs.cooldownSpells = {}
             for i, spellID in ipairs(cdDefaults) do
-                profile.defensives.cooldownSpells[i] = spellID
+                cs.cooldownSpells[i] = spellID
             end
         end
     end
 
-    if not profile.defensives.petHealSpells or #profile.defensives.petHealSpells == 0 then
+    if not cs.petHealSpells or #cs.petHealSpells == 0 then
         local petDefaults = JustAC.CLASS_PETHEAL_DEFAULTS and JustAC.CLASS_PETHEAL_DEFAULTS[playerClass]
         if petDefaults then
-            profile.defensives.petHealSpells = {}
+            cs.petHealSpells = {}
             for i, spellID in ipairs(petDefaults) do
-                profile.defensives.petHealSpells[i] = spellID
+                cs.petHealSpells[i] = spellID
+            end
+        end
+    end
+
+    if not cs.petRezSpells or #cs.petRezSpells == 0 then
+        local rezDefaults = JustAC.CLASS_PET_REZ_DEFAULTS and JustAC.CLASS_PET_REZ_DEFAULTS[playerClass]
+        if rezDefaults then
+            cs.petRezSpells = {}
+            for i, spellID in ipairs(rezDefaults) do
+                cs.petRezSpells[i] = spellID
             end
         end
     end
@@ -447,20 +550,31 @@ function JustAC:RegisterDefensivesForTracking()
         BlizzardAPI.ClearTrackedDefensives()
     end
 
-    if profile.defensives.selfHealSpells then
-        for _, spellID in ipairs(profile.defensives.selfHealSpells) do
+    local selfHeals = self:GetClassSpellList("selfHealSpells")
+    local cooldowns = self:GetClassSpellList("cooldownSpells")
+    local petHeals = self:GetClassSpellList("petHealSpells")
+    local petRez = self:GetClassSpellList("petRezSpells")
+
+    if selfHeals then
+        for _, spellID in ipairs(selfHeals) do
             BlizzardAPI.RegisterDefensiveSpell(spellID)
         end
     end
 
-    if profile.defensives.cooldownSpells then
-        for _, spellID in ipairs(profile.defensives.cooldownSpells) do
+    if cooldowns then
+        for _, spellID in ipairs(cooldowns) do
             BlizzardAPI.RegisterDefensiveSpell(spellID)
         end
     end
 
-    if profile.defensives.petHealSpells then
-        for _, spellID in ipairs(profile.defensives.petHealSpells) do
+    if petHeals then
+        for _, spellID in ipairs(petHeals) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+
+    if petRez then
+        for _, spellID in ipairs(petRez) do
             BlizzardAPI.RegisterDefensiveSpell(spellID)
         end
     end
@@ -472,29 +586,42 @@ function JustAC:RestoreDefensiveDefaults(listType)
     
     local _, playerClass = UnitClass("player")
     if not playerClass then return end
+
+    -- Ensure classSpells structure exists
+    if not profile.defensives.classSpells then profile.defensives.classSpells = {} end
+    if not profile.defensives.classSpells[playerClass] then profile.defensives.classSpells[playerClass] = {} end
+    local cs = profile.defensives.classSpells[playerClass]
     
     if listType == "selfheal" then
         local healDefaults = JustAC.CLASS_SELFHEAL_DEFAULTS and JustAC.CLASS_SELFHEAL_DEFAULTS[playerClass]
         if healDefaults then
-            profile.defensives.selfHealSpells = {}
+            cs.selfHealSpells = {}
             for i, spellID in ipairs(healDefaults) do
-                profile.defensives.selfHealSpells[i] = spellID
+                cs.selfHealSpells[i] = spellID
             end
         end
     elseif listType == "cooldown" then
         local cdDefaults = JustAC.CLASS_COOLDOWN_DEFAULTS and JustAC.CLASS_COOLDOWN_DEFAULTS[playerClass]
         if cdDefaults then
-            profile.defensives.cooldownSpells = {}
+            cs.cooldownSpells = {}
             for i, spellID in ipairs(cdDefaults) do
-                profile.defensives.cooldownSpells[i] = spellID
+                cs.cooldownSpells[i] = spellID
             end
         end
     elseif listType == "petheal" then
         local petDefaults = JustAC.CLASS_PETHEAL_DEFAULTS and JustAC.CLASS_PETHEAL_DEFAULTS[playerClass]
         if petDefaults then
-            profile.defensives.petHealSpells = {}
+            cs.petHealSpells = {}
             for i, spellID in ipairs(petDefaults) do
-                profile.defensives.petHealSpells[i] = spellID
+                cs.petHealSpells[i] = spellID
+            end
+        end
+    elseif listType == "petrez" then
+        local rezDefaults = JustAC.CLASS_PET_REZ_DEFAULTS and JustAC.CLASS_PET_REZ_DEFAULTS[playerClass]
+        if rezDefaults then
+            cs.petRezSpells = {}
+            for i, spellID in ipairs(rezDefaults) do
+                cs.petRezSpells[i] = spellID
             end
         end
     end
@@ -515,6 +642,9 @@ function JustAC:OnHealthChanged(event, unit)
     -- Health bar update is cheap, always do it for visual feedback
     if UIHealthBar and UIHealthBar.Update then
         UIHealthBar.Update(self)
+    end
+    if UIHealthBar and UIHealthBar.UpdatePet then
+        UIHealthBar.UpdatePet(self)
     end
 
     -- Throttle defensive queue updates (expensive operation with table allocations)
@@ -545,6 +675,11 @@ function JustAC:OnHealthChanged(event, unit)
     local selfHealThreshold = profile.defensives.selfHealThreshold or 80
     local cooldownThreshold = profile.defensives.cooldownThreshold or 60
 
+    -- 12.0: UnitHealth() is secret in combat (PvE and PvP). When isEstimated=true,
+    -- thresholds above are ignored — we use Blizzard's LowHealthFrame binary states:
+    --   "low"  = ~35% health → shows self-heals
+    --   "critical" = ~20% health → shows major cooldowns
+    -- Thresholds only matter out of combat (between pulls, open world, etc.)
     local isCritical, isLow
     if isEstimated then
         local lowState, critState = false, false
@@ -561,9 +696,15 @@ function JustAC:OnHealthChanged(event, unit)
         isLow = false
     end
 
+    -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
+    -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
-    local petHealThreshold = profile.defensives.petHealThreshold or 70
+    local petHealThreshold = profile.defensives.petHealThreshold or 50
     local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
+
+    -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat
+    local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
+    local petNeedsRez = (petStatus == "dead" or petStatus == "missing")
 
     -- Exclude spells already visible in DPS queue (reuse pooled table)
     wipe(dpsQueueExclusions)
@@ -579,10 +720,25 @@ function JustAC:OnHealthChanged(event, unit)
     local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions)
 
     local maxIcons = profile.defensives.maxIcons or 1
-    if petNeedsHeal and #defensiveQueue < maxIcons then
-        local petHeals = self:GetUsableDefensiveSpells(profile.defensives.petHealSpells, maxIcons - #defensiveQueue, {})
+
+    -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
+    -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
+    if petNeedsRez and #defensiveQueue < maxIcons then
+        local petRezSpells = self:GetClassSpellList("petRezSpells")
+        local petRez = self:GetUsableDefensiveSpells(petRezSpells, maxIcons - #defensiveQueue, defensiveAlreadyAdded)
+        for _, entry in ipairs(petRez) do
+            defensiveQueue[#defensiveQueue + 1] = entry
+            defensiveAlreadyAdded[entry.spellID] = true
+        end
+    end
+
+    -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
+    if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
+        local petHealSpells = self:GetClassSpellList("petHealSpells")
+        local petHeals = self:GetUsableDefensiveSpells(petHealSpells, maxIcons - #defensiveQueue, defensiveAlreadyAdded)
         for _, entry in ipairs(petHeals) do
             defensiveQueue[#defensiveQueue + 1] = entry
+            defensiveAlreadyAdded[entry.spellID] = true
         end
     end
 
@@ -625,8 +781,8 @@ function JustAC:GetProccedDefensiveSpell()
     end
 
     local spellLists = {
-        profile.defensives.selfHealSpells,
-        profile.defensives.cooldownSpells,
+        self:GetClassSpellList("selfHealSpells"),
+        self:GetClassSpellList("cooldownSpells"),
     }
     for _, spellList in ipairs(spellLists) do
         if spellList then
@@ -815,8 +971,12 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
 
+    -- Resolve per-class spell lists once for this update cycle
+    local selfHealSpells = self:GetClassSpellList("selfHealSpells")
+    local cooldownSpells = self:GetClassSpellList("cooldownSpells")
+
     if #results < maxIcons then
-        local procs = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+        local procs = self:GetUsableDefensiveSpells(selfHealSpells, maxIcons - #results, alreadyAdded)
         for _, entry in ipairs(procs) do
             if entry.isProcced then
                 results[#results + 1] = entry
@@ -825,7 +985,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
     if #results < maxIcons then
-        local procs = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+        local procs = self:GetUsableDefensiveSpells(cooldownSpells, maxIcons - #results, alreadyAdded)
         for _, entry in ipairs(procs) do
             if entry.isProcced then
                 results[#results + 1] = entry
@@ -840,13 +1000,13 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
     if showAllAvailable and not isLow and not isCritical and #results < maxIcons then
-        local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+        local spells = self:GetUsableDefensiveSpells(selfHealSpells, maxIcons - #results, alreadyAdded)
         for _, entry in ipairs(spells) do
             results[#results + 1] = entry
             alreadyAdded[entry.spellID] = true
         end
         if #results < maxIcons then
-            local cooldowns = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            local cooldowns = self:GetUsableDefensiveSpells(cooldownSpells, maxIcons - #results, alreadyAdded)
             for _, entry in ipairs(cooldowns) do
                 results[#results + 1] = entry
                 alreadyAdded[entry.spellID] = true
@@ -857,14 +1017,14 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
 
     if isCritical then
         if #results < maxIcons then
-            local spells = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            local spells = self:GetUsableDefensiveSpells(cooldownSpells, maxIcons - #results, alreadyAdded)
             for _, entry in ipairs(spells) do
                 results[#results + 1] = entry
                 alreadyAdded[entry.spellID] = true
             end
         end
         if #results < maxIcons then
-            local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+            local spells = self:GetUsableDefensiveSpells(selfHealSpells, maxIcons - #results, alreadyAdded)
             for _, entry in ipairs(spells) do
                 results[#results + 1] = entry
                 alreadyAdded[entry.spellID] = true
@@ -879,14 +1039,14 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     elseif isLow then
         if #results < maxIcons then
-            local spells = self:GetUsableDefensiveSpells(profile.defensives.selfHealSpells, maxIcons - #results, alreadyAdded)
+            local spells = self:GetUsableDefensiveSpells(selfHealSpells, maxIcons - #results, alreadyAdded)
             for _, entry in ipairs(spells) do
                 results[#results + 1] = entry
                 alreadyAdded[entry.spellID] = true
             end
         end
         if #results < maxIcons then
-            local spells = self:GetUsableDefensiveSpells(profile.defensives.cooldownSpells, maxIcons - #results, alreadyAdded)
+            local spells = self:GetUsableDefensiveSpells(cooldownSpells, maxIcons - #results, alreadyAdded)
             for _, entry in ipairs(spells) do
                 results[#results + 1] = entry
                 alreadyAdded[entry.spellID] = true
@@ -1330,6 +1490,11 @@ end
 
 function JustAC:OnPetChanged(event, unit)
     if unit ~= "player" then return end
+    -- Pet summoned/dismissed/died — update pet health bar visibility and defensive queue
+    if UIHealthBar and UIHealthBar.UpdatePetVisibility then
+        UIHealthBar.UpdatePetVisibility(self)
+    end
+    self:OnHealthChanged(nil, "pet")
     self:ForceUpdate()
 end
 
@@ -1630,6 +1795,7 @@ end
 function JustAC:UpdateFrameSize()
     if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
     if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
+    if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
     self:ForceUpdate()
 end
 

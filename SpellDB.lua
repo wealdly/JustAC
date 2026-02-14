@@ -694,7 +694,15 @@ SpellDB.CLASS_COOLDOWN_DEFAULTS = {
     WARRIOR = {871, 118038, 97462},                  -- Shield Wall, Die by the Sword, Rallying Cry
 }
 
--- Pet heal spells (shown when PET health is low)
+-- Pet rez/summon spells (shown when pet is dead or missing — reliable in combat via UnitIsDead/UnitExists)
+SpellDB.CLASS_PET_REZ_DEFAULTS = {
+    HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1
+    WARLOCK = {688, 697, 712, 691, 30146},           -- Summon Imp/Voidwalker/Succubus/Felhunter/Felguard
+    DEATHKNIGHT = {46585},                           -- Raise Dead
+}
+
+-- Pet heal spells (shown when PET health is low — OUT OF COMBAT ONLY)
+-- In 12.0 combat, UnitHealth("pet") is secret so pet heals cannot trigger.
 SpellDB.CLASS_PETHEAL_DEFAULTS = {
     HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
     WARLOCK = {755},                                 -- Health Funnel

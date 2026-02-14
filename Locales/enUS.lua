@@ -156,6 +156,14 @@ L["Restore Class Defaults"] = "Restore Class Defaults"
 L["Major Cooldowns Priority List"] = "Major Cooldowns Priority List (emergency)"
 L["Major Cooldowns Priority desc"] = "First usable spell is shown. Reorder to set priority."
 
+-- Pet rez/summon and heal lists (pet classes only)
+L["Pet Rez/Summon Priority List"] = "Pet Rez/Summon Priority List"
+L["Pet Rez/Summon Priority desc"] = "Shown when pet is dead or missing. High priority — reliable in combat."
+L["Restore Pet Rez Defaults desc"] = "Reset pet rez/summon spells to class defaults"
+L["Pet Heal Priority List"] = "Pet Heal Priority List"
+L["Pet Heal Priority desc"] = "Shown when pet health is low. Best-effort — pet health may be hidden in combat."
+L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
+
 -- Defensive thresholds
 L["Self-Heal Threshold"] = "Self-Heal Threshold"
 L["Self-Heal Threshold desc"] = "Show self-heals below this health %"
@@ -168,6 +176,8 @@ L["Threshold Note"] = "|cff888888In combat, health may be hidden. Uses low-healt
 -- Defensive display options
 L["Show Health Bar"] = "Show Health Bar"
 L["Show Health Bar desc"] = "Show a compact health bar next to the queue"
+L["Show Pet Health Bar"] = "Show Pet Health Bar"
+L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only). Uses teal color. Auto-hides when no pet is active."
 L["Defensive Icon Scale"] = "Icon Scale"
 L["Defensive Icon Scale desc"] = "Scale multiplier for defensive spell icons"
 L["Defensive Max Icons"] = "Max Icons"
