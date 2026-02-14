@@ -288,10 +288,31 @@ function DebugCommands.DefensiveDiagnostics(addon)
 
     addon:Print("")
     addon:Print("Configured Spells:")
-    local selfHeals = defSettings.selfHealSpells or {}
-    local cooldowns = defSettings.cooldownSpells or {}
+    local _, playerClass = UnitClass("player")
+    local selfHeals = addon:GetClassSpellList("selfHealSpells") or {}
+    local cooldowns = addon:GetClassSpellList("cooldownSpells") or {}
+    local petHeals = addon:GetClassSpellList("petHealSpells") or {}
+    local petRez = addon:GetClassSpellList("petRezSpells") or {}
+    addon:Print("  Class: " .. (playerClass or "UNKNOWN"))
     addon:Print("  Self-Heals: " .. #selfHeals .. " spells")
     addon:Print("  Cooldowns: " .. #cooldowns .. " spells")
+    if #petRez > 0 then
+        addon:Print("  Pet Rez/Summon: " .. #petRez .. " spells")
+    end
+    if #petHeals > 0 then
+        addon:Print("  Pet Heals: " .. #petHeals .. " spells")
+    end
+
+    -- Pet status (reliable in combat: UnitExists/UnitIsDead are NOT secret)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.GetPetStatus then
+        local petStatus = BlizzardAPI.GetPetStatus()
+        addon:Print("  Pet Status: " .. (petStatus or "N/A"))
+        if petStatus == "alive" and BlizzardAPI.GetPetHealthPercent then
+            local petHP = BlizzardAPI.GetPetHealthPercent()
+            addon:Print("  Pet Health: " .. (petHP and string.format("%.0f%%", petHP) or "secret"))
+        end
+    end
     
     addon:Print("======================================")
 end
