@@ -1129,7 +1129,9 @@ function BlizzardAPI.GetPlayerHealthPercent()
     return (health / maxHealth) * 100
 end
 
--- Pet health CAN be secret in 12.0 unlike player health
+-- Pet health IS secret in 12.0 combat (PvE and PvP). Returns nil when secret.
+-- This means pet heals only trigger out of combat. Pet rez/summon uses
+-- GetPetStatus() instead, which relies on UnitIsDead/UnitExists (not secret).
 function BlizzardAPI.GetPetHealthPercent()
     if not UnitExists("pet") then return nil end
 
@@ -1150,6 +1152,23 @@ function BlizzardAPI.GetPetHealthPercent()
     end
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
+end
+
+-- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
+-- UnitExists and UnitIsDead are NOT secret — reliable in combat
+-- Pet health IS secret in combat — use GetPetHealthPercent() for best-effort health
+function BlizzardAPI.GetPetStatus()
+    local ok, exists = pcall(UnitExists, "pet")
+    if not ok or not exists then
+        return "missing"
+    end
+
+    local ok2, isDead = pcall(UnitIsDead, "pet")
+    if ok2 and isDead and not (issecretvalue and issecretvalue(isDead)) then
+        return "dead"
+    end
+
+    return "alive"
 end
 
 --------------------------------------------------------------------------------
