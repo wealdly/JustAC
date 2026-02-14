@@ -677,6 +677,7 @@ end
 
 -- Helper to add a spell to a list (used by both dropdown and manual input)
 local function AddSpellToList(addon, spellList, spellID)
+    if not spellList then return false end
     if not spellID or spellID <= 0 then return false end
 
     -- Validate spell exists
@@ -805,6 +806,23 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
     }
 end
 
+-- WoW class color codes for Options panel headers
+local CLASS_COLORS = {
+    DEATHKNIGHT = "FFC41E3A",
+    DEMONHUNTER = "FFA330C9",
+    DRUID       = "FFFF7C0A",
+    EVOKER      = "FF33937F",
+    HUNTER      = "FFAAD372",
+    MAGE        = "FF3FC7EB",
+    MONK        = "FF00FF98",
+    PALADIN     = "FFF48CBA",
+    PRIEST      = "FFFFFFFF",
+    ROGUE       = "FFFFF468",
+    SHAMAN      = "FF0070DD",
+    WARLOCK     = "FF8788EE",
+    WARRIOR     = "FFC69B6D",
+}
+
 function Options.UpdateDefensivesOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable or not SpellQueue then return end
@@ -816,8 +834,12 @@ function Options.UpdateDefensivesOptions(addon)
         info = true, header = true, enabled = true, showProcs = true,
         displayHeader = true, iconScale = true, maxIcons = true, position = true,
         showHotkeys = true, glowMode = true, showFlash = true, displayMode = true, showHealthBar = true,
+        showPetHealthBar = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
+        petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
+        petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
+        classColorHeader = true,
     }
     
     local keysToClear = {}
@@ -833,13 +855,52 @@ function Options.UpdateDefensivesOptions(addon)
     local defensives = addon.db.profile.defensives
     if not defensives then return end
 
+    -- Resolve per-class spell lists
+    local _, playerClass = UnitClass("player")
+    local selfHealSpells, cooldownSpells, petRezSpells, petHealSpells
+    if playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
+        selfHealSpells = defensives.classSpells[playerClass].selfHealSpells
+        cooldownSpells = defensives.classSpells[playerClass].cooldownSpells
+        petRezSpells = defensives.classSpells[playerClass].petRezSpells
+        petHealSpells = defensives.classSpells[playerClass].petHealSpells
+    end
+
+    -- Determine if this is a pet class (has rez or heal defaults)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local isPetClass = SpellDB and (
+        (SpellDB.CLASS_PET_REZ_DEFAULTS and SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass])
+        or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
+    )
+
+    -- Inject class-colored header so user knows which class spells they're editing
+    local className = playerClass and (UnitClass("player")) or "Unknown"
+    local colorCode = (playerClass and CLASS_COLORS[playerClass]) or "FFFFFFFF"
+    defensivesArgs.classColorHeader = {
+        type = "description",
+        name = "|c" .. colorCode .. className .. "|r Defensive Spells",
+        fontSize = "large",
+        order = 19.5,
+    }
+
     -- Self-heal spells (order 22.0-39.9, allowing 180 entries)
-    CreateSpellListEntries(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 22)
-    CreateAddSpellInput(addon, defensivesArgs, defensives.selfHealSpells, "selfheal", 40, "Self-Heals")
+    CreateSpellListEntries(addon, defensivesArgs, selfHealSpells, "selfheal", 22)
+    CreateAddSpellInput(addon, defensivesArgs, selfHealSpells, "selfheal", 40, "Self-Heals")
 
     -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
-    CreateSpellListEntries(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 52)
-    CreateAddSpellInput(addon, defensivesArgs, defensives.cooldownSpells, "cooldown", 70, "Cooldowns")
+    CreateSpellListEntries(addon, defensivesArgs, cooldownSpells, "cooldown", 52)
+    CreateAddSpellInput(addon, defensivesArgs, cooldownSpells, "cooldown", 70, "Cooldowns")
+
+    -- Pet Rez/Summon spells (order 82.0-99.9, pet classes only)
+    if isPetClass and petRezSpells then
+        CreateSpellListEntries(addon, defensivesArgs, petRezSpells, "petrez", 82)
+        CreateAddSpellInput(addon, defensivesArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon")
+    end
+
+    -- Pet Heal spells (order 112.0-129.9, pet classes only)
+    if isPetClass and petHealSpells then
+        CreateSpellListEntries(addon, defensivesArgs, petHealSpells, "petheal", 112)
+        CreateAddSpellInput(addon, defensivesArgs, petHealSpells, "petheal", 130, "Pet Heals")
+    end
     
     -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
@@ -1444,6 +1505,10 @@ local function CreateOptionsTable(addon)
                             if val and UIHealthBar and UIHealthBar.CreateHealthBar then
                                 UIHealthBar.CreateHealthBar(addon)
                             end
+                            -- Recreate pet bar too (position depends on player bar)
+                            if UIHealthBar and UIHealthBar.UpdatePetSize then
+                                UIHealthBar.UpdatePetSize(addon)
+                            end
                             -- Recreate defensive icon to update spacing based on health bar state
                             if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
                                 UIFrameFactory.CreateSpellIcons(addon)
@@ -1451,6 +1516,35 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdateAll()
                         end,
                         -- Health bar works independently of defensive queue
+                    },
+                    showPetHealthBar = {
+                        type = "toggle",
+                        name = L["Show Pet Health Bar"],
+                        desc = L["Show Pet Health Bar desc"],
+                        order = 9.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.showPetHealthBar end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.showPetHealthBar = val
+                            if UIHealthBar and UIHealthBar.DestroyPet then
+                                UIHealthBar.DestroyPet()
+                            end
+                            if val and UIHealthBar and UIHealthBar.CreatePetHealthBar then
+                                UIHealthBar.CreatePetHealthBar(addon)
+                            end
+                            -- Recreate defensive icons to update spacing
+                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
+                                UIFrameFactory.CreateSpellIcons(addon)
+                            end
+                            addon:ForceUpdateAll()
+                        end,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            if not SDB or not pc then return true end
+                            return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                                or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
+                        end,
                     },
                     -- SELF-HEAL PRIORITY LIST (20+)
                     selfHealHeader = {
@@ -1499,6 +1593,84 @@ local function CreateOptionsTable(addon)
                         end,
                     },
                     -- Dynamic cooldownSpells entries added by UpdateDefensivesOptions
+                    -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
+                    petRezHeader = {
+                        type = "header",
+                        name = L["Pet Rez/Summon Priority List"],
+                        order = 80,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                        end,
+                    },
+                    petRezInfo = {
+                        type = "description",
+                        name = L["Pet Rez/Summon Priority desc"],
+                        order = 81,
+                        fontSize = "small",
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                        end,
+                    },
+                    restorePetRezDefaults = {
+                        type = "execute",
+                        name = L["Restore Class Defaults name"],
+                        desc = L["Restore Pet Rez Defaults desc"],
+                        order = 102,
+                        width = "normal",
+                        func = function()
+                            addon:RestoreDefensiveDefaults("petrez")
+                            Options.UpdateDefensivesOptions(addon)
+                        end,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                        end,
+                    },
+                    -- Dynamic petRezSpells entries added by UpdateDefensivesOptions
+                    -- PET HEAL PRIORITY LIST (110+, pet classes only)
+                    petHealHeader = {
+                        type = "header",
+                        name = L["Pet Heal Priority List"],
+                        order = 110,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                        end,
+                    },
+                    petHealInfo = {
+                        type = "description",
+                        name = L["Pet Heal Priority desc"],
+                        order = 111,
+                        fontSize = "small",
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                        end,
+                    },
+                    restorePetHealDefaults = {
+                        type = "execute",
+                        name = L["Restore Class Defaults name"],
+                        desc = L["Restore Pet Heal Defaults desc"],
+                        order = 132,
+                        width = "normal",
+                        func = function()
+                            addon:RestoreDefensiveDefaults("petheal")
+                            Options.UpdateDefensivesOptions(addon)
+                        end,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                        end,
+                    },
+                    -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
                 },
             },
             profiles = {
