@@ -177,24 +177,20 @@ local function UpdateButtonCooldowns(button)
     end
 end
 
-
-local function GetProfile()
-    return BlizzardAPI and BlizzardAPI.GetProfile() or nil
-end
-
 -- Visual constants (defaults, profile overrides where applicable)
 local DEFAULT_QUEUE_DESATURATION = 0
 local QUEUE_ICON_BRIGHTNESS = 1.0
 local QUEUE_ICON_OPACITY = 1.0
 local CLICK_DARKEN_ALPHA = 0.4
 local CLICK_INSET_PIXELS = 2
-local HOTKEY_FONT_SCALE = 0.4
-local HOTKEY_MIN_FONT_SIZE = 8
-local HOTKEY_OFFSET_FIRST = -3
-local HOTKEY_OFFSET_QUEUE = -2
+-- Import shared visual constants from UIFrameFactory
+local HOTKEY_FONT_SCALE = UIFrameFactory.HOTKEY_FONT_SCALE
+local HOTKEY_MIN_FONT_SIZE = UIFrameFactory.HOTKEY_MIN_FONT_SIZE
+local HOTKEY_OFFSET_FIRST = UIFrameFactory.HOTKEY_OFFSET_FIRST
+local HOTKEY_OFFSET_QUEUE = UIFrameFactory.HOTKEY_OFFSET_QUEUE
 
 local function GetQueueDesaturation()
-    local profile = GetProfile()
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     return profile and profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
 end
 
@@ -462,7 +458,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local spellIconsRef = addon.spellIcons
     if not spellIconsRef then return end
 
-    local profile = GetProfile()
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     if not profile then return end
 
     local currentTime = GetTime()
@@ -982,13 +978,5 @@ function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
 
--- Public exports
-UIRenderer.RenderSpellQueue = UIRenderer.RenderSpellQueue
-UIRenderer.ShowDefensiveIcon = UIRenderer.ShowDefensiveIcon
-UIRenderer.HideDefensiveIcon = UIRenderer.HideDefensiveIcon
-UIRenderer.ShowDefensiveIcons = UIRenderer.ShowDefensiveIcons
-UIRenderer.HideDefensiveIcons = UIRenderer.HideDefensiveIcons
-UIRenderer.OpenHotkeyOverrideDialog = UIRenderer.OpenHotkeyOverrideDialog
-UIRenderer.InvalidateHotkeyCache = UIRenderer.InvalidateHotkeyCache
-UIRenderer.SetCombatState = UIRenderer.SetCombatState
+-- Public exports (UpdateButtonCooldowns is local, needs explicit assignment)
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
