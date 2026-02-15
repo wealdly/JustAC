@@ -550,32 +550,14 @@ function JustAC:RegisterDefensivesForTracking()
         BlizzardAPI.ClearTrackedDefensives()
     end
 
-    local selfHeals = self:GetClassSpellList("selfHealSpells")
-    local cooldowns = self:GetClassSpellList("cooldownSpells")
-    local petHeals = self:GetClassSpellList("petHealSpells")
-    local petRez = self:GetClassSpellList("petRezSpells")
-
-    if selfHeals then
-        for _, spellID in ipairs(selfHeals) do
-            BlizzardAPI.RegisterDefensiveSpell(spellID)
-        end
-    end
-
-    if cooldowns then
-        for _, spellID in ipairs(cooldowns) do
-            BlizzardAPI.RegisterDefensiveSpell(spellID)
-        end
-    end
-
-    if petHeals then
-        for _, spellID in ipairs(petHeals) do
-            BlizzardAPI.RegisterDefensiveSpell(spellID)
-        end
-    end
-
-    if petRez then
-        for _, spellID in ipairs(petRez) do
-            BlizzardAPI.RegisterDefensiveSpell(spellID)
+    -- Table-driven iteration: register all defensive spell lists
+    local spellListTypes = { "selfHealSpells", "cooldownSpells", "petHealSpells", "petRezSpells" }
+    for _, listType in ipairs(spellListTypes) do
+        local spellList = self:GetClassSpellList(listType)
+        if spellList then
+            for _, spellID in ipairs(spellList) do
+                BlizzardAPI.RegisterDefensiveSpell(spellID)
+            end
         end
     end
 end
