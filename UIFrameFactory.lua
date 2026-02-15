@@ -15,11 +15,17 @@ local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
 
--- Visual constants
+-- Visual constants (shared with UIRenderer)
 local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
+
+-- Export constants for UIRenderer
+UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
+UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
+UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
+UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
 
 -- Panel interaction helpers
 local function IsPanelLocked(profile)
@@ -138,12 +144,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     slotBackground:SetAllPoints(button)
     slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
     button.SlotBackground = slotBackground
-    
-    -- Slot art overlay (created but hidden to prevent visual artifacts)
-    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
-    slotArt:SetAllPoints(button)
-    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
-    slotArt:Hide()
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
@@ -876,12 +876,6 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     slotBackground:SetAllPoints(button)
     slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
     button.SlotBackground = slotBackground
-    
-    -- Slot art overlay (created but hidden to prevent visual artifacts)
-    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
-    slotArt:SetAllPoints(button)
-    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
-    slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     -- Icon fills button completely
@@ -1242,5 +1236,4 @@ function UIFrameFactory.SavePosition(addon)
 end
 
 -- Export public functions
-UIFrameFactory.GetDefensiveIcon = function() return defensiveIcon end
 UIFrameFactory.GetSpellIcons = function() return spellIcons end
