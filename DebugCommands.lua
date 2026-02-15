@@ -304,7 +304,6 @@ function DebugCommands.DefensiveDiagnostics(addon)
     end
 
     -- Pet status (reliable in combat: UnitExists/UnitIsDead are NOT secret)
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI and BlizzardAPI.GetPetStatus then
         local petStatus = BlizzardAPI.GetPetStatus()
         addon:Print("  Pet Status: " .. (petStatus or "N/A"))

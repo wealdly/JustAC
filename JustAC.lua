@@ -633,8 +633,9 @@ end
 -- Throttle for UNIT_HEALTH events (fires very frequently in combat)
 local lastHealthUpdate = 0
 local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue updates
--- Pooled table to avoid GC pressure in OnHealthChanged
+-- Pooled tables to avoid GC pressure in OnHealthChanged / GetDefensiveSpellQueue
 local dpsQueueExclusions = {}
+local defensiveAlreadyAdded = {}
 
 function JustAC:OnHealthChanged(event, unit)
     if unit ~= "player" and unit ~= "pet" then return end
@@ -897,9 +898,6 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     
     return results
 end
-
--- Pooled table for GetDefensiveSpellQueue (alreadyAdded is internal, results must be new since it's returned)
-local defensiveAlreadyAdded = {}
 
 -- Display order: instant procs first, then by health threshold (higher priority first)
 function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat, passedExclusions)
