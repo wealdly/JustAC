@@ -18,7 +18,7 @@ local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 
-local spellInfoCache = {}
+-- DEPRECATED: Local spell info cache removed - use BlizzardAPI.GetCachedSpellInfo() instead
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
@@ -53,22 +53,15 @@ local function GetQueueThrottleInterval()
 end
 
 function SpellQueue.GetCachedSpellInfo(spellID)
-    if not spellID or spellID == 0 then return nil end
-    
-    -- Return immediately if already cached to avoid repeated API calls
-    local cached = spellInfoCache[spellID]
-    if cached then return cached end
-    
-    -- Cache spells to prevent duplicate API calls (200~ max spells per character)
-    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
-    if not spellInfo then return nil end
-    
-    spellInfoCache[spellID] = spellInfo
-    return spellInfo
+    -- Delegate to BlizzardAPI's unified spell cache
+    return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
 end
 
 function SpellQueue.ClearSpellCache()
-    wipe(spellInfoCache)
+    -- Delegate to BlizzardAPI's unified spell cache
+    if BlizzardAPI and BlizzardAPI.ClearSpellCache then
+        BlizzardAPI.ClearSpellCache()
+    end
 end
 
 function SpellQueue.ClearAvailabilityCache()

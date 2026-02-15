@@ -137,27 +137,9 @@ local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
 
--- Spell info cache: use SpellQueue's cache if available (lazy import), else local cache
-local SpellQueue_GetCachedSpellInfo
-local localSpellInfoCache = {}
+-- Spell info cache: delegate to BlizzardAPI's unified cache
 local function GetCachedSpellInfo(spellID)
-    if not spellID or spellID == 0 then return nil end
-    -- Lazy-resolve SpellQueue (loads after us in TOC)
-    if not SpellQueue_GetCachedSpellInfo then
-        local sq = LibStub("JustAC-SpellQueue", true)
-        if sq and sq.GetCachedSpellInfo then
-            SpellQueue_GetCachedSpellInfo = sq.GetCachedSpellInfo
-        end
-    end
-    if SpellQueue_GetCachedSpellInfo then
-        return SpellQueue_GetCachedSpellInfo(spellID)
-    end
-    -- Fallback: local cache (before SpellQueue loads)
-    local cached = localSpellInfoCache[spellID]
-    if cached then return cached end
-    local info = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or nil
-    if info then localSpellInfoCache[spellID] = info end
-    return info
+    return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
 end
 
 -- Invalidate aura cache on UNIT_AURA; keep inCombatActivations until combat ends
