@@ -18,7 +18,8 @@ local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 
--- DEPRECATED: Local spell info cache removed - use BlizzardAPI.GetCachedSpellInfo() instead
+-- NOTE: Local spell info cache was removed — now delegates to BlizzardAPI.GetCachedSpellInfo()
+
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 local lastDisplayUpdate = 0
