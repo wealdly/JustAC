@@ -525,6 +525,28 @@ function BlizzardAPI.GetSpellInfo(spellID)
     return C_Spell_GetSpellInfo(spellID)
 end
 
+-- Spell info cache for GetCachedSpellInfo (prevents duplicate API calls)
+local spellInfoCache = {}
+
+function BlizzardAPI.GetCachedSpellInfo(spellID)
+    if not spellID or spellID == 0 then return nil end
+    
+    -- Return immediately if already cached to avoid repeated API calls
+    local cached = spellInfoCache[spellID]
+    if cached then return cached end
+    
+    -- Cache spells to prevent duplicate API calls (200~ max spells per character)
+    local spellInfo = BlizzardAPI.GetSpellInfo(spellID)
+    if not spellInfo then return nil end
+    
+    spellInfoCache[spellID] = spellInfo
+    return spellInfo
+end
+
+function BlizzardAPI.ClearSpellCache()
+    wipe(spellInfoCache)
+end
+
 -- checkForVisibleButton: true=visible only, false=include hidden (macro conditionals)
 function BlizzardAPI.GetNextCastSpell()
     if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
