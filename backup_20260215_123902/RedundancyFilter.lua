@@ -1070,7 +1070,15 @@ function RedundancyFilter.GetSpellClassification(spellID)
     }
 end
 
+-- Legacy alias for backwards compatibility (was GetLPSInfo when using LibPlayerSpells)
+function RedundancyFilter.GetLPSInfo(spellID)
+    return RedundancyFilter.GetSpellClassification(spellID)
+end
 
+-- Legacy function - always returns false since we no longer use LibPlayerSpells
+function RedundancyFilter.IsLibPlayerSpellsAvailable()
+    return false
+end
 
 -- Expose aura cache for diagnostics
 function RedundancyFilter.GetAuraCache()

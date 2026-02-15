@@ -984,6 +984,10 @@ function BlizzardAPI.IsUtilitySpell(spellID)
     return SpellDB.IsUtilitySpell(spellID)
 end
 
+function BlizzardAPI.IsImportantSpell(spellID)
+    return false
+end
+
 --------------------------------------------------------------------------------
 -- Item Spell Detection
 --------------------------------------------------------------------------------
