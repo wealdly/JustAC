@@ -1006,12 +1006,6 @@ function BlizzardAPI.IsUtilitySpell(spellID)
     return SpellDB.IsUtilitySpell(spellID)
 end
 
--- Stub: placeholder for future priority-proc logic (e.g. Execute-range spells)
--- Currently returns false for all spells — callers use this to sort procs to front of queue
-function BlizzardAPI.IsImportantSpell(spellID)
-    return false
-end
-
 --------------------------------------------------------------------------------
 -- Item Spell Detection
 --------------------------------------------------------------------------------

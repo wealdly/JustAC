@@ -373,10 +373,10 @@ function SpellQueue.GetCurrentSpellQueue()
         wipe(proccedDisplay)
         wipe(normalBase)
         wipe(normalDisplay)
-        local importantProccedCount, regularProccedCount, normalCount = 0, 0, 0
+        local proccedCount, normalCount = 0, 0
         local rotationCount = #rotationList
 
-        -- First pass: categorize spells into important procs, regular procs, and normal
+        -- First pass: categorize spells into procced and normal
         for i = 1, rotationCount do
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
@@ -396,25 +396,12 @@ function SpellQueue.GetCurrentSpellQueue()
                             addedSpellIDs[actualSpellID] = true
                             addedSpellIDs[spellID] = true
                             
-                            -- Categorize: important procs, regular procs, or normal (proc detection bypassed if secrets detected)
+                            -- Categorize: procs shown first, then normal (proc detection bypassed if secrets detected)
                             local isProcced = not bypassProcs and BlizzardAPI.IsSpellProcced(actualSpellID)
                             if isProcced then
-                                -- IMPORTANT procs go to front of procced list
-                                if BlizzardAPI.IsImportantSpell(actualSpellID) then
-                                    importantProccedCount = importantProccedCount + 1
-                                    -- Insert at front by shifting (rare, usually 0-2 important procs)
-                                    for j = importantProccedCount, 2, -1 do
-                                        proccedBase[j] = proccedBase[j - 1]
-                                        proccedDisplay[j] = proccedDisplay[j - 1]
-                                    end
-                                    proccedBase[1] = spellID
-                                    proccedDisplay[1] = actualSpellID
-                                else
-                                    regularProccedCount = regularProccedCount + 1
-                                    local idx = importantProccedCount + regularProccedCount
-                                    proccedBase[idx] = spellID
-                                    proccedDisplay[idx] = actualSpellID
-                                end
+                                proccedCount = proccedCount + 1
+                                proccedBase[proccedCount] = spellID
+                                proccedDisplay[proccedCount] = actualSpellID
                             else
                                 normalCount = normalCount + 1
                                 normalBase[normalCount] = spellID
@@ -426,9 +413,7 @@ function SpellQueue.GetCurrentSpellQueue()
             end
         end
         
-        local proccedCount = importantProccedCount + regularProccedCount
-        
-        -- Second pass: add procced spells first (IMPORTANT ones are already at front), then normal
+        -- Second pass: add procced spells first, then normal
         -- addedSpellIDs updated in first pass; avoid duplicate updates
         -- Extra safety check: verify no duplicates slip through (shouldn't happen but failsafe)
         for i = 1, proccedCount do
