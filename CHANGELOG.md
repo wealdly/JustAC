@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.25.1] - 2026-02-17
+
+### Fixed
+
+- Critical: Crash on addon load caused by variable scoping error in defensive spell initialization (`defensiveAlreadyAdded` declared after use)
+- Critical: Combat crash when spell procs are active (restored `IsImportantSpell` stub accidentally removed during cleanup)
+- Suppressed single-button assistant warning when current spec is set to DISABLED in options
+
+### Changed
+
+- Internal: Unified spell info caching in BlizzardAPI (eliminated duplicate caches in SpellQueue and RedundancyFilter, ~35 lines consolidated)
+- Internal: Removed ~90 lines of dead code and redundant abstractions (self-assignment exports, unused texture allocations, legacy stubs)
+- Internal: Simplified proc sorting logic (removed unused "important proc" categorization, ~20 lines)
+- Internal: Optimized defensive spell registration with table-driven iteration (4 loops → 1 loop)
+
 ## [3.25.0] - 2026-02-14
 
 ### Added
