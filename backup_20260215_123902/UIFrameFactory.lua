@@ -9,24 +9,17 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
-local ProfileHelpers = LibStub("JustAC-ProfileHelpers", true)
 
 -- Cache frequently used functions to reduce table lookups on every update
 local math_max = math.max
 local math_floor = math.floor
 local wipe = wipe
 
--- Visual constants (shared with UIRenderer)
+-- Visual constants
 local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
-
--- Export constants for UIRenderer
-UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
-UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
-UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
-UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
 
 -- Panel interaction helpers
 local function IsPanelLocked(profile)
@@ -145,6 +138,12 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     slotBackground:SetAllPoints(button)
     slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
     button.SlotBackground = slotBackground
+    
+    -- Slot art overlay (created but hidden to prevent visual artifacts)
+    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+    slotArt:SetAllPoints(button)
+    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    slotArt:Hide()
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     iconTexture:SetAllPoints(button)
@@ -246,7 +245,11 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, true)
+    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
+    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    hotkeyText:SetTextColor(1, 1, 1, 1)
+    hotkeyText:SetJustifyH("RIGHT")
+    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -265,8 +268,11 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
-    
+    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
+    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -870,6 +876,12 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     slotBackground:SetAllPoints(button)
     slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
     button.SlotBackground = slotBackground
+    
+    -- Slot art overlay (created but hidden to prevent visual artifacts)
+    local slotArt = button:CreateTexture(nil, "BACKGROUND", nil, 1)
+    slotArt:SetAllPoints(button)
+    slotArt:SetAtlas("ui-hud-actionbar-iconframe-slot")
+    slotArt:Hide()  -- Hidden: atlas texture was covering icon artwork on ARTWORK layer
 
     local iconTexture = button:CreateTexture(nil, "ARTWORK")
     -- Icon fills button completely
@@ -975,7 +987,16 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirstIcon)
+    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
+    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    hotkeyText:SetTextColor(1, 1, 1, 1)
+    hotkeyText:SetJustifyH("RIGHT")
+    
+    if isFirstIcon then
+        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
+    else
+        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_QUEUE, HOTKEY_OFFSET_QUEUE)
+    end
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -994,8 +1015,11 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
-    
+    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
+    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
+    chargeText:SetTextColor(1, 1, 1, 1)
+    chargeText:SetJustifyH("RIGHT")
+    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
@@ -1218,4 +1242,5 @@ function UIFrameFactory.SavePosition(addon)
 end
 
 -- Export public functions
+UIFrameFactory.GetDefensiveIcon = function() return defensiveIcon end
 UIFrameFactory.GetSpellIcons = function() return spellIcons end

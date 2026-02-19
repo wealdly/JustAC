@@ -61,17 +61,6 @@ local defaults = {
             classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
             displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
-        hotkeyText = {
-            font = "Friz Quadrata TT",   -- LibSharedMedia font name
-            size = 12,                    -- Font size
-            color = { r = 1, g = 1, b = 1, a = 1 },  -- White by default
-            anchor = "TOPRIGHT",          -- Text anchoring relative to icon
-            anchorPoint = "TOPRIGHT",     -- Text anchor point
-            firstXOffset = -3,            -- First icon X offset
-            firstYOffset = -3,            -- First icon Y offset
-            queueXOffset = -2,            -- Queue icons X offset
-            queueYOffset = -2,            -- Queue icons Y offset
-        },
     },
     char = {
         lastKnownSpec = nil,
@@ -561,14 +550,32 @@ function JustAC:RegisterDefensivesForTracking()
         BlizzardAPI.ClearTrackedDefensives()
     end
 
-    -- Table-driven iteration: register all defensive spell lists
-    local spellListTypes = { "selfHealSpells", "cooldownSpells", "petHealSpells", "petRezSpells" }
-    for _, listType in ipairs(spellListTypes) do
-        local spellList = self:GetClassSpellList(listType)
-        if spellList then
-            for _, spellID in ipairs(spellList) do
-                BlizzardAPI.RegisterDefensiveSpell(spellID)
-            end
+    local selfHeals = self:GetClassSpellList("selfHealSpells")
+    local cooldowns = self:GetClassSpellList("cooldownSpells")
+    local petHeals = self:GetClassSpellList("petHealSpells")
+    local petRez = self:GetClassSpellList("petRezSpells")
+
+    if selfHeals then
+        for _, spellID in ipairs(selfHeals) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+
+    if cooldowns then
+        for _, spellID in ipairs(cooldowns) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+
+    if petHeals then
+        for _, spellID in ipairs(petHeals) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
+        end
+    end
+
+    if petRez then
+        for _, spellID in ipairs(petRez) do
+            BlizzardAPI.RegisterDefensiveSpell(spellID)
         end
     end
 end
@@ -1283,9 +1290,7 @@ function JustAC:PLAYER_ENTERING_WORLD()
     C_Timer.After(1.0, function() self:ForceUpdateAll() end)
 
     -- Single-Button Assistant required for stable API behavior
-    -- Skip warning if the current spec is disabled (user doesn't need the button for specs they won't use)
     C_Timer.After(2, function()
-        if self.isDisabledMode then return end
         if C_ActionBar and C_ActionBar.HasAssistedCombatActionButtons then
             local hasButton = C_ActionBar.HasAssistedCombatActionButtons()
             if not hasButton then
@@ -1393,14 +1398,6 @@ end
 function JustAC:OnActionBarChanged()
     self:InvalidateCaches({hotkeys = true, macros = true})
     self:ForceUpdate()
-end
-
--- This is expensive, avoid calling unless necessary
-function JustAC:OnHotkeyProfileUpdate()
-    if UIManager and UIManager.CreateSpellIcons then
-        UIManager.CreateSpellIcons(self)
-    end
-    self:ForceUpdate()    
 end
 
 function JustAC:OnSpecialBarChanged()

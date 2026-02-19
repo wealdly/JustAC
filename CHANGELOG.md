@@ -1,5 +1,55 @@
 # Changelog
 
+## [3.25.1] - 2026-02-17
+
+### Fixed
+
+- Critical: Crash on addon load caused by variable scoping error in defensive spell initialization (`defensiveAlreadyAdded` declared after use)
+- Critical: Combat crash when spell procs are active (restored `IsImportantSpell` stub accidentally removed during cleanup)
+- Suppressed single-button assistant warning when current spec is set to DISABLED in options
+
+### Changed
+
+- Internal: Unified spell info caching in BlizzardAPI (eliminated duplicate caches in SpellQueue and RedundancyFilter, ~35 lines consolidated)
+- Internal: Removed ~90 lines of dead code and redundant abstractions (self-assignment exports, unused texture allocations, legacy stubs)
+- Internal: Simplified proc sorting logic (removed unused "important proc" categorization, ~20 lines)
+- Internal: Optimized defensive spell registration with table-driven iteration (4 loops → 1 loop)
+
+## [3.25.0] - 2026-02-14
+
+### Added
+
+- Per-class defensive spell lists: profiles now store spell lists under `classSpells[playerClass]` so one profile works across all classes
+- Class-colored header in Defensives options panel showing which class's spells are being edited
+- Migration: existing flat spell lists (`selfHealSpells`/`cooldownSpells`/`petHealSpells`) automatically migrated to new structure on first load
+- `GetClassSpellList(listKey)` helper for clean per-class spell access
+- `/jac defensive` now shows current class name and pet heal count
+- **Pet rez/summon system**: High-priority defensive icon when pet is dead (`UnitIsDead`) or missing (`!UnitExists`) — reliable in combat (not secret)
+- `CLASS_PET_REZ_DEFAULTS` in SpellDB: Hunter (Revive Pet, Heart of the Phoenix, Call Pet 1), Warlock (all summon demons), Death Knight (Raise Dead)
+- `BlizzardAPI.GetPetStatus()`: returns "dead", "missing", or "alive" using combat-safe APIs
+- **Pet health bar**: Teal-colored StatusBar mirroring player health bar style, independently toggleable via `showPetHealthBar`
+  - Auto-hides when no pet is active, shows red dead overlay when pet is dead
+  - StatusBar accepts secret values — renders pet health visually even when exact % is hidden
+  - Stacks above player health bar when both enabled, defensive icons offset correctly for both bars
+- Pet Rez/Summon and Pet Heal priority list sections in Options panel (hidden for non-pet classes)
+- `/jac defensive` now shows pet status, pet health %, pet rez spell count
+- `AddSpellToList` nil guard for safety
+
+### Changed
+
+- Defensive spell lists are no longer stored at `profile.defensives.selfHealSpells` — they live under `profile.defensives.classSpells[CLASS].selfHealSpells`
+- Profile copy/share now transfers visual settings (thresholds, icon count, display mode) while each class auto-populates its own defensive spells on first login
+- Pet heal suggestions now require pet to be alive (dead/missing triggers rez spells instead)
+- Pet heal threshold is best-effort: pet health is secret in combat, heals only suggested when health is readable
+- Added inline code comments throughout explaining 12.0 secret limitations: thresholds are out-of-combat only, pet heals are out-of-combat only, pet rez/summon works in combat via UnitIsDead/UnitExists
+- UIFrameFactory defensive icon offset accounts for both player and pet health bars when stacked
+
+### Fixed
+
+- Fixed duplicate spells in defensive queue: pet rez/heal now shares `defensiveAlreadyAdded` with player defensives (prevents e.g. Exhilaration appearing twice for Hunters)
+- Fixed `petHealThreshold` fallback using wrong default (70 instead of profile default 50)
+- Added `issecretvalue` guard in UIHealthBar `UpdatePet()` for consistency with `GetPetStatus()`
+
 ## [3.24.1] - 2026-02-12
 
 ### Changed
