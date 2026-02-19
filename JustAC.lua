@@ -34,6 +34,7 @@ local defaults = {
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
+        enableItemFeatures = true,     -- Master toggle for all item-related features
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -58,6 +59,8 @@ local defaults = {
             selfHealThreshold = 80,   -- Out-of-combat only: show self-heals below this %
             cooldownThreshold = 60,   -- Out-of-combat only: show major cooldowns below this %
             petHealThreshold = 50,    -- Out-of-combat only: show pet heals below this pet %
+            allowItems = false,       -- Allow manual item insertion in defensive spell lists
+            autoInsertPotions = true,  -- Auto-insert health potions at critical health
             classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
             displayMode = "combatOnly", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
@@ -363,15 +366,13 @@ function JustAC:ExitDisabledMode()
     end
 
     -- Restore health bar if setting is enabled
-    if UIHealthBar and UIHealthBar.Show then
-        local profile = self:GetProfile()
-        if profile and profile.defensives and profile.defensives.showHealthBar then
+    local profile = self:GetProfile()
+    if UIHealthBar and profile and profile.defensives then
+        if profile.defensives.showHealthBar and UIHealthBar.Show then
             UIHealthBar.Show()
         end
-        if profile and profile.defensives and profile.defensives.showPetHealthBar then
-            if UIHealthBar.UpdatePetVisibility then
-                UIHealthBar.UpdatePetVisibility(self)
-            end
+        if profile.defensives.showPetHealthBar and UIHealthBar.UpdatePetVisibility then
+            UIHealthBar.UpdatePetVisibility(self)
         end
     end
 
@@ -555,8 +556,11 @@ function JustAC:RegisterDefensivesForTracking()
     for _, listType in ipairs(spellListTypes) do
         local spellList = self:GetClassSpellList(listType)
         if spellList then
-            for _, spellID in ipairs(spellList) do
-                BlizzardAPI.RegisterDefensiveSpell(spellID)
+            for _, entry in ipairs(spellList) do
+                -- Only register positive entries (spells) — negative entries are items
+                if entry and entry > 0 then
+                    BlizzardAPI.RegisterDefensiveSpell(entry)
+                end
             end
         end
     end
@@ -618,15 +622,28 @@ local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue upd
 -- Pooled tables to avoid GC pressure in OnHealthChanged / GetDefensiveSpellQueue
 local dpsQueueExclusions = {}
 local defensiveAlreadyAdded = {}
+-- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
+local usableResults = {}
+local usableAddedHere = {}
 
 function JustAC:OnHealthChanged(event, unit)
+    if self.isDisabledMode then return end
     if unit ~= "player" and unit ~= "pet" then return end
 
+    local profile = self:GetProfile()
+    local def = profile and profile.defensives
+
+    -- Early exit: skip all work when defensive feature is fully disabled
+    -- (no health bars, no defensive icons, no queue processing)
+    if not def or (not def.enabled and not def.showHealthBar and not def.showPetHealthBar) then
+        return
+    end
+
     -- Health bar update is cheap, always do it for visual feedback
-    if UIHealthBar and UIHealthBar.Update then
+    if def.showHealthBar and UIHealthBar and UIHealthBar.Update then
         UIHealthBar.Update(self)
     end
-    if UIHealthBar and UIHealthBar.UpdatePet then
+    if def.showPetHealthBar and UIHealthBar and UIHealthBar.UpdatePet then
         UIHealthBar.UpdatePet(self)
     end
 
@@ -637,8 +654,7 @@ function JustAC:OnHealthChanged(event, unit)
     end
     lastHealthUpdate = now
 
-    local profile = self:GetProfile()
-    if not profile or not profile.defensives or not profile.defensives.enabled then 
+    if not def.enabled then
         if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
             UIRenderer.HideDefensiveIcons(self)
         elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
@@ -763,17 +779,17 @@ function JustAC:GetProccedDefensiveSpell()
         end
     end
 
-    local spellLists = {
-        self:GetClassSpellList("selfHealSpells"),
-        self:GetClassSpellList("cooldownSpells"),
-    }
-    for _, spellList in ipairs(spellLists) do
+    local selfHealSpells = self:GetClassSpellList("selfHealSpells")
+    local cooldownSpells = self:GetClassSpellList("cooldownSpells")
+    for pass = 1, 2 do
+        local spellList = pass == 1 and selfHealSpells or cooldownSpells
         if spellList then
-            for _, spellID in ipairs(spellList) do
-                if spellID and spellID > 0 then
-                    local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+            for _, entry in ipairs(spellList) do
+                -- Items (negative entries) can't proc, skip them
+                if entry and entry > 0 then
+                    local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
                     if isUsable and isProcced then
-                        return spellID
+                        return entry
                     end
                 end
             end
@@ -810,32 +826,50 @@ function JustAC:GetBestDefensiveSpell(spellList)
         end
     end
 
-    for i, spellID in ipairs(spellList) do
-        if spellID and spellID > 0 then
-            local isUsable, isKnown, isRedundant, onCooldown, isProcced = BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+    for i, entry in ipairs(spellList) do
+        if entry and entry > 0 then
+            local isUsable, isKnown, isRedundant, onCooldown, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
             
             if debugMode then
-                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                local spellInfo = C_Spell.GetSpellInfo(entry)
                 local name = spellInfo and spellInfo.name or "Unknown"
-                self:DebugPrint(string.format("Checking defensive spell %d/%d: %s (%d)", i, #spellList, name, spellID))
+                self:DebugPrint(string.format("Checking defensive spell %d/%d: %s (%d)", i, #spellList, name, entry))
                 
                 if not isKnown then
                     self:DebugPrint(string.format("  SKIP: %s - not known/available", name))
                 elseif isRedundant then
                     self:DebugPrint(string.format("  SKIP: %s - redundant (buff active)", name))
                 elseif onCooldown then
-                    local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+                    local start, duration = BlizzardAPI.GetSpellCooldownValues(entry)
                     self:DebugPrint(string.format("  SKIP: %s - on cooldown (start=%s, duration=%s)", 
                         name, tostring(start or 0), tostring(duration or 0)))
                 else
-                    local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+                    local start, duration = BlizzardAPI.GetSpellCooldownValues(entry)
                     self:DebugPrint(string.format("  PASS: %s - onCooldown=false, start=%s, duration=%s", 
                         name, tostring(start or 0), tostring(duration or 0)))
                 end
             end
 
             if isUsable then
-                return spellID
+                return entry
+            end
+        elseif entry and entry < 0 then
+            -- Negative entry = item ID
+            local itemID = -entry
+            local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+
+            if debugMode then
+                local itemName = GetItemInfo(itemID) or "Unknown Item"
+                self:DebugPrint(string.format("Checking defensive item %d/%d: %s (item:%d)", i, #spellList, itemName, itemID))
+                if isUsable then
+                    self:DebugPrint(string.format("  PASS: %s - usable", itemName))
+                else
+                    self:DebugPrint(string.format("  SKIP: %s - not usable", itemName))
+                end
+            end
+
+            if isUsable then
+                return itemID, true  -- return itemID, isItem=true
             end
         end
     end
@@ -843,42 +877,57 @@ function JustAC:GetBestDefensiveSpell(spellList)
     return nil
 end
 
--- Returns up to maxCount usable spells, prioritizing procs
+-- Returns up to maxCount usable spells/items, prioritizing procs
+-- Uses module-level pooled tables (usableResults/usableAddedHere) to avoid per-call allocations
+-- IMPORTANT: Caller must consume results before next call (table is reused)
+-- List entries: positive = spell ID, negative = item ID (-itemID)
 function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
-    if not spellList or maxCount <= 0 then return {} end
-    
+    wipe(usableResults)
+    if not spellList or maxCount <= 0 then return usableResults end
+
     local profile = self:GetProfile()
-    if not profile or not profile.defensives then return {} end
+    if not profile or not profile.defensives then return usableResults end
 
-    local results = {}
     alreadyAdded = alreadyAdded or {}
-    local addedHere = {}
+    wipe(usableAddedHere)
 
-    -- First pass: add procced spells (higher priority)
-    for _, spellID in ipairs(spellList) do
-        if #results >= maxCount then break end
-        if spellID and spellID > 0 and not alreadyAdded[spellID] and not addedHere[spellID] then
-            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+    -- First pass: add procced spells (higher priority) - items can't proc
+    for _, entry in ipairs(spellList) do
+        if #usableResults >= maxCount then break end
+        if entry and entry > 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
+            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
             if isUsable and isProcced then
-                results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
-                addedHere[spellID] = true
+                usableResults[#usableResults + 1] = {spellID = entry, isItem = false, isProcced = true}
+                usableAddedHere[entry] = true
             end
         end
     end
 
-    -- Second pass: add non-procced usable spells
-    for _, spellID in ipairs(spellList) do
-        if #results >= maxCount then break end
-        if spellID and spellID > 0 and not alreadyAdded[spellID] and not addedHere[spellID] then
-            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+    -- Second pass: add non-procced usable spells AND usable items
+    local itemsEnabled = profile.enableItemFeatures
+    for _, entry in ipairs(spellList) do
+        if #usableResults >= maxCount then break end
+        if entry and entry > 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
+            -- Positive entry = spell
+            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
             if isUsable then
-                results[#results + 1] = {spellID = spellID, isItem = false, isProcced = isProcced}
-                addedHere[spellID] = true
+                usableResults[#usableResults + 1] = {spellID = entry, isItem = false, isProcced = isProcced}
+                usableAddedHere[entry] = true
+            end
+        elseif itemsEnabled and entry and entry < 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
+            -- Negative entry = item (stored as -itemID)
+            local itemID = -entry
+            local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+            if isUsable then
+                usableResults[#usableResults + 1] = {spellID = itemID, isItem = true, isProcced = false}
+                usableAddedHere[entry] = true
+                -- Also mark the positive itemID to prevent FindHealingPotionOnActionBar duplicates
+                usableAddedHere[itemID] = true
             end
         end
     end
-    
-    return results
+
+    return usableResults
 end
 
 -- Display order: instant procs first, then by health threshold (higher priority first)
@@ -1010,7 +1059,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
                 alreadyAdded[entry.spellID] = true
             end
         end
-        if #results < maxIcons then
+        if #results < maxIcons and profile.enableItemFeatures and profile.defensives.autoInsertPotions ~= false then
             local potionID = self:FindHealingPotionOnActionBar()
             if potionID and not alreadyAdded[potionID] then
                 results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
@@ -1038,6 +1087,15 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
 end
 
 local HEALTHSTONE_ITEM_ID = 5512
+
+-- Cached healing potion result (invalidated by OnActionBarChanged and leaving combat)
+local cachedPotionID = nil
+local cachedPotionSlot = nil
+local potionCacheValid = false
+
+local function InvalidatePotionCache()
+    potionCacheValid = false
+end
 
 local function IsHealingConsumable(itemID)
     if not itemID then return false end
@@ -1073,7 +1131,31 @@ local function IsHealingConsumable(itemID)
 end
 
 -- Returns itemID, actionSlot for first usable healing consumable (Healthstone prioritized)
+-- Uses cached result from last action bar scan; call InvalidatePotionCache() on bar/bag changes
 function JustAC:FindHealingPotionOnActionBar()
+    if potionCacheValid then
+        -- Still check cooldown/count on cached result (these change in combat)
+        if cachedPotionID then
+            local count = GetItemCount(cachedPotionID) or 0
+            if count > 0 then
+                local start, duration = GetItemCooldown(cachedPotionID)
+                local onCooldown = false
+                if start and duration then
+                    local startIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+                    local durIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+                    if not startIsSecret and not durIsSecret then
+                        onCooldown = start > 0 and duration > 1.5
+                    end
+                end
+                if not onCooldown then
+                    return cachedPotionID, cachedPotionSlot
+                end
+            end
+        end
+        return nil, nil
+    end
+
+    -- Full 180-slot scan (expensive, only on cache miss)
     local bestPotion = nil
     local bestSlot = nil
 
@@ -1096,6 +1178,9 @@ function JustAC:FindHealingPotionOnActionBar()
 
                 if not onCooldown then
                     if id == HEALTHSTONE_ITEM_ID then
+                        cachedPotionID = id
+                        cachedPotionSlot = slot
+                        potionCacheValid = true
                         return id, slot
                     end
 
@@ -1107,7 +1192,10 @@ function JustAC:FindHealingPotionOnActionBar()
             end
         end
     end
-    
+
+    cachedPotionID = bestPotion
+    cachedPotionSlot = bestSlot
+    potionCacheValid = true
     return bestPotion, bestSlot
 end
 
@@ -1239,7 +1327,8 @@ end
 function JustAC:UpdateDefensiveCooldowns()
     if self.isDisabledMode then return end
     if not self.db or not self.db.profile or self.db.profile.isManualMode then return end
-    
+    if not self.db.profile.defensives or not self.db.profile.defensives.enabled then return end
+
     -- Update cooldowns on all visible defensive icons
     -- This ensures cooldown layers appear/disappear as quickly as the main queue
     if self.defensiveIcons and #self.defensiveIcons > 0 then
@@ -1261,10 +1350,8 @@ function JustAC:PLAYER_ENTERING_WORLD()
         FormCache.OnPlayerLogin()
     end
     
-    local currentSpec = GetSpecialization()
-    if currentSpec ~= self.db.char.lastKnownSpec then
-        self.db.char.lastKnownSpec = currentSpec
-    end
+    -- Apply spec-based profile/disabled state on world entry (not just on spec change events)
+    self:OnSpecChange()
 
     self:ForceUpdateAll()
 
@@ -1300,6 +1387,7 @@ function JustAC:OnCombatEvent(event)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
     elseif event == "PLAYER_REGEN_ENABLED" then
+        InvalidatePotionCache()
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(false)
         end
@@ -1318,13 +1406,13 @@ function JustAC:OnSpecChange()
     local newSpec = GetSpecialization()
     if not newSpec then return end
 
+    self.db.char.lastKnownSpec = newSpec
+
     if self.db.char.specProfilesEnabled and self.db.char.specProfiles then
         local target = self.db.char.specProfiles[newSpec]
 
         if target == "DISABLED" then
-            -- Enter minimal mode for this spec
             self:EnterDisabledMode()
-            self.db.char.lastKnownSpec = newSpec
             return
         end
 
@@ -1343,8 +1431,6 @@ function JustAC:OnSpecChange()
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
-
-    self.db.char.lastKnownSpec = newSpec
     self:ForceUpdate()
 end
 
@@ -1380,6 +1466,7 @@ function JustAC:OnUnitAura(event, unit)
 end
 
 function JustAC:OnActionBarChanged()
+    InvalidatePotionCache()
     self:InvalidateCaches({hotkeys = true, macros = true})
     self:ForceUpdate()
 end
@@ -1431,6 +1518,9 @@ end
 
 function JustAC:UpdateTargetFrameAnchor()
     if not self.mainFrame then return end
+    -- Guard against taint: TargetFrame is secure; SetPoint against it in combat
+    -- can spread taint to the action bar system causing "action blocked" errors
+    if InCombatLockdown() then return end
     local profile = self:GetProfile()
     if not profile then return end
 
