@@ -30,6 +30,20 @@ local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
 end
 
+-- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
+-- Multi-modifier combos are checked first to prevent partial prefix matches.
+local function NormalizeHotkey(hotkey)
+    local n = hotkey:upper()
+    n = n:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
+    n = n:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
+    n = n:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
+    n = n:gsub("^S%-?(.+)",  "SHIFT-%1")
+    n = n:gsub("^C%-?(.+)",  "CTRL-%1")
+    n = n:gsub("^A%-?(.+)",  "ALT-%1")
+    n = n:gsub("^%+(.+)",    "MOD-%1")
+    return n
+end
+
 -- Update button cooldowns - Cooldown widgets handle secret values internally
 -- Cooldown frames can handle secret values internally, so we avoid all comparisons/arithmetic
 local function UpdateButtonCooldowns(button)
@@ -227,7 +241,10 @@ end
 -- Show the defensive icon with a specific spell or item
 -- isItem: true if id is an itemID (potion), false/nil if it's a spellID
 -- showGlow: true to show green marching ants glow (only slot 1 should have this)
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow)
+-- glowModeOverride: optional string ("all"/"primaryOnly"/"procOnly"/"none") that
+--   replaces the profile.defensives.glowMode read — used by the nameplate overlay
+--   so each display can have its own independent glow setting.
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -278,11 +295,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     -- Update cooldowns using Blizzard's logic (handles GCD, spell CD, and charges)
     UpdateButtonCooldowns(defensiveIcon)
 
-    -- Ensure cooldown frame is visible (may have been hidden by HideDefensiveIcon)
-    if defensiveIcon.cooldown then
-        defensiveIcon.cooldown:Show()
-    end
-
     -- Hotkey lookup: needed for display AND for key press flash matching
     local showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
     local showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
@@ -317,17 +329,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     -- Normalize hotkey for key press flash matching
     if hotkey ~= "" then
-        local normalized = hotkey:upper()
-        -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
-        -- Anchored patterns with lookahead via capture to avoid false positives on bare S/A/C keys
-        normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
-        normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
-        normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
-        normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
-        normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
-        normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
-        normalized = normalized:gsub("^%+(.+)", "MOD-%1")
-
+        local normalized = NormalizeHotkey(hotkey)
         if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
             defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
             defensiveIcon.hotkeyChangeTime = GetTime()
@@ -339,8 +341,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     local isInCombat = UnitAffectingCombat("player")
     
-    -- Defensive glow mode (independent from offensive glowMode)
-    local defGlowMode = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode or "all"
+    -- Defensive glow mode: use caller-supplied override (overlay) or fall back to
+    -- the main-panel profile setting.
+    local defGlowMode = glowModeOverride
+        or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
+        or "all"
 
     -- Start green crawl glow on slot 1 if glow mode includes primary
     local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
@@ -399,6 +404,10 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
             defensiveIcon.chargeCooldown:Hide()
             defensiveIcon.chargeCooldown:Clear()
         end
+        -- Reset cooldown state flags so UpdateButtonCooldowns re-shows widgets on reuse
+        defensiveIcon._cooldownShown = nil
+        defensiveIcon._chargeCooldownShown = nil
+        defensiveIcon._cachedMaxCharges = nil
         -- Reset cooldown cache for when icon gets reused
         defensiveIcon._lastCooldownStart = nil
         defensiveIcon._lastCooldownDuration = nil
@@ -467,7 +476,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Determine if frame should be visible
     local shouldShowFrame = hasSpells
-    
+
+    -- Hide main queue when displayMode excludes it
+    local displayMode = profile.displayMode or "queue"
+    if displayMode == "disabled" or displayMode == "overlay" then
+        shouldShowFrame = false
+    end
+
     -- Hide queue out of combat if option is enabled
     if shouldShowFrame and profile.hideQueueOutOfCombat and not isInCombat then
         shouldShowFrame = false
@@ -677,19 +692,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Normalize hotkey for key press flash matching
-                -- PERFORMANCE: Only normalize when hotkey actually changed (string ops are expensive)
+                -- Only normalize when hotkey actually changed (string ops are expensive)
                 if hotkeyChanged and hotkey ~= "" then
-                    local normalized = hotkey:upper()
-                    -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
-                    -- Multi-modifier combos must be checked first to avoid partial matches
-                    normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
-                    normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
-                    normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
-                    normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
-                    normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
-                    normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
-                    normalized = normalized:gsub("^%+(.+)", "MOD-%1")  -- +5 -> MOD-5 (generic modifier)
-
+                    local normalized = NormalizeHotkey(hotkey)
                     -- Track previous hotkey for grace period (spell position changes)
                     if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
                         icon.previousNormalizedHotkey = icon.normalizedHotkey
@@ -778,6 +783,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if icon.centerText then icon.centerText:Hide() end
                     if icon.chargeText then icon.chargeText:Hide() end
                     -- Reset all caches for when slot gets reused
+                    icon._cooldownShown = nil
+                    icon._chargeCooldownShown = nil
+                    icon._cachedMaxCharges = nil
                     icon._lastCooldownStart = nil
                     icon._lastCooldownDuration = nil
                     icon._cooldownIsSecret = nil
@@ -978,5 +986,6 @@ function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
 
--- Public exports (UpdateButtonCooldowns is local, needs explicit assignment)
+-- Public exports (locals need explicit assignment)
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
+UIRenderer.NormalizeHotkey       = NormalizeHotkey
