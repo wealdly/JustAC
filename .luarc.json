@@ -46,6 +46,7 @@
             "UnitHealthMax",
             "UnitLevel",
             "UnitAffectingCombat",
+            "UnitCanAttack",
             "GetCVar",
             "GetCVarBool",
             "SetCVar",

@@ -1,5 +1,38 @@
 # Changelog
 
+## [3.26.0] - 2026-02-20
+
+### Added
+
+- **Nameplate overlay: expansion direction setting** — New "Expansion Direction" dropdown: Horizontal (Out) chains icons away from the nameplate (original behaviour), Vertical Up stacks slot 2 above slot 1, Vertical Down stacks them downward. Anchor dropdown is now LEFT/RIGHT only (TOP/BOTTOM were mis-implemented as above/below the nameplate and have been removed).
+- **Nameplate overlay: vertical health bar** — For Vertical Up/Down expansion the health bar renders as a thin vertical strip beside the icon column, spanning the full cluster height (26 px × 1 icon, 54 px × 2 icons, 82 px × 3 icons). Orientation is VERTICAL so fill direction matches the icon stack.
+- **Nameplate overlay defensive display mode** — New "Defensive Visibility" dropdown in the Nameplate Overlay options: "In Combat Only" (default) or "Always". Previously the overlay defensives inherited the main defensive panel's `displayMode`. The overlay now has its own independent setting and calls `GetDefensiveSpellQueue` with an `overrideDisplayMode`.
+- **Items in defensive queue** — Negative numbers in spell lists represent items (-itemID).
+  - `BlizzardAPI.CheckDefensiveItemState(itemID, profile)` — validates item count and cooldown.
+  - Options UI accepts `-itemID` or `item:ID` syntax in the manual input field.
+  - Items display with `[Item]` tag and correct icon/name in the spell list editor.
+  - `GetUsableDefensiveSpells` handles mixed spell/item lists, deduplicates with hardcoded potions.
+  - `GetBestDefensiveSpell` returns `itemID, true` for item entries.
+  - Backward compatible: existing positive-only spell lists work unchanged.
+
+### Changed
+
+- BlizzardAPI library bumped to v29.
+- **Health bar color** — Overlay health bar now uses pure bright green `(0, 1, 0)` instead of the previous murky `(0.1, 0.8, 0.1)`, matching Blizzard's nameplate health bar saturation.
+- **Health bar inset formula** — Replaced asymmetric `iconSize * 1.8 + (n-2)*spacing` with symmetric `clusterWidth - 2*inset` so both outer edges have equal inset.
+- **healthBarPosition option** — Disabled when expansion is "out" (horizontal) instead of when anchor is LEFT/RIGHT. Only meaningful for vertical expansion.
+
+### Fixed
+
+- **Defensive overlay invisible after option change** — `UINameplateOverlay.Create` now calls `ForceUpdateAll()` after anchoring so icons render immediately without requiring a re-target.
+- **DPS queue invisible after CreateBaseIcon refactor** — `CreateBaseIcon` was setting `button:SetAlpha(0)` at init; the DPS renderer only calls `icon:Show()` (not `fadeIn:Play()`), so icons were permanently invisible. Removed the alpha reset from `CreateBaseIcon`; defensive icons set alpha=0 themselves before playing fadeIn.
+- **Defensive queue permanently hides spells on cooldown** — `CheckDefensiveSpellState` was calling `IsSpellOnRealCooldown` and returning `isUsable=false` for spells on CD. In combat cooldown duration is secret so we can never reliably detect expiry. Removed the gate; all known non-redundant defensives now appear with the cooldown swipe as the visual indicator.
+- **Rotation list (positions 2+) permanently hides spells on cooldown** — Added `PassesRotationFilters` in SpellQueue.lua that checks availability and redundancy but skips `IsSpellUsable`/cooldown filtering. The rotation list now uses this function.
+- **Cooldown swipe not re-shown when icon slot is reused** — `HideDefensiveIcon` and the DPS slot-clear path were calling `cooldown:Hide()` without resetting `_cooldownShown` / `_chargeCooldownShown` / `_cachedMaxCharges`. All three flags now reset in both clear paths.
+- **Icon background corner-clipping** — `iconMask` was only applied to `iconTexture`, not `slotBackground`. Added `slotBackground:AddMaskTexture(iconMask)` so the background is also clipped.
+- **Disabled spec profile not applied on login/reload** — `PLAYER_ENTERING_WORLD` now calls `OnSpecChange()` to apply the spec profile (including disabled state) on world entry.
+- **Defensive icons/health bar could re-appear while spec-disabled** — `OnHealthChanged` now guards on `isDisabledMode` so live health changes can't undo the hide performed by `EnterDisabledMode`.
+
 ## [3.25.1] - 2026-02-17
 
 ### Fixed

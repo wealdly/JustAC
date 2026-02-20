@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 4)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 5)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -34,7 +34,7 @@ local DEFENSIVE_SPELLS = {
     [22812] = true,   -- Barkskin
     [61336] = true,   -- Survival Instincts
     [102342] = true,  -- Ironbark
-    [106922] = true,  -- Rage of the Sleeper (Feral)
+    [106922] = true,  -- Rage of the Sleeper (Guardian)
     [108238] = true,  -- Renewal
     [22842] = true,   -- Frenzied Regeneration
     [192081] = true,  -- Ironfur
@@ -46,15 +46,15 @@ local DEFENSIVE_SPELLS = {
     [374348] = true,  -- Renewing Blaze
     [357170] = true,  -- Time Dilation
     [378441] = true,  -- Time Stop
-    [406732] = true,  -- Spatial Paradox
-    
+    [406732] = true,  -- Spatial Paradox (also supportive/healing for Preservation)
+
     -- Hunter
     [186265] = true,  -- Aspect of the Turtle
     [109304] = true,  -- Exhilaration
     [264735] = true,  -- Survival of the Fittest
     [281195] = true,  -- Survival of the Fittest (Lone Wolf)
     [53480] = true,   -- Roar of Sacrifice (Pet)
-    [264667] = true,  -- Primal Rage (Ferocity pet lust, but defensive use)
+    -- MOVED: Primal Rage (264667) - Bloodlust variant, classified as utility
     
     -- Mage
     [45438] = true,   -- Ice Block
@@ -77,9 +77,8 @@ local DEFENSIVE_SPELLS = {
     [243435] = true,  -- Fortifying Brew (Mistweaver)
     [201318] = true,  -- Fortifying Brew (Windwalker)
     [322507] = true,  -- Celestial Brew
-    [325197] = true,  -- Invoke Niuzao
     [115295] = true,  -- Guard
-    [116844] = true,  -- Ring of Peace
+    -- MOVED: Ring of Peace (116844) - displacement CC, classified as crowd control
     
     -- Paladin
     [498] = true,     -- Divine Protection
@@ -103,7 +102,7 @@ local DEFENSIVE_SPELLS = {
     [33206] = true,   -- Pain Suppression
     [62618] = true,   -- Power Word: Barrier
     [81782] = true,   -- Power Word: Barrier (aura)
-    [109964] = true,  -- Spirit Shell
+    -- REMOVED: Spirit Shell (109964) - removed from game in Dragonflight
     [108968] = true,  -- Void Shift
     [586] = true,     -- Fade
     [213602] = true,  -- Greater Fade
@@ -135,7 +134,7 @@ local DEFENSIVE_SPELLS = {
     [104773] = true,  -- Unending Resolve
     [108416] = true,  -- Dark Pact
     [212295] = true,  -- Nether Ward
-    [6789] = true,    -- Mortal Coil (defensive use)
+    -- MOVED: Mortal Coil (6789) - horror CC, classified as crowd control
     [386997] = true,  -- Soul Harvester
     [264106] = true,  -- Deathbolt (defensive talent)
     
@@ -189,9 +188,9 @@ local HEALING_SPELLS = {
     [367226] = true,  -- Spiritbloom
     [382614] = true,  -- Dream Breath
     [382731] = true,  -- Temporal Anomaly
-    [395152] = true,  -- Ebon Might (augmentation, but supportive)
-    [409311] = true,  -- Prescience
-    [406732] = true,  -- Spatial Paradox
+    -- MOVED: Ebon Might (395152) - Augmentation buff, classified as utility
+    -- MOVED: Prescience (409311) - Augmentation buff, classified as utility
+    -- Spatial Paradox (406732) already in DEFENSIVE_SPELLS (primary classification)
     
     -- Monk
     [115175] = true,  -- Soothing Mist
@@ -217,7 +216,7 @@ local HEALING_SPELLS = {
     [53563] = true,   -- Beacon of Light
     [114158] = true,  -- Light's Hammer
     [114165] = true,  -- Holy Prism
-    [183998] = true,  -- Light of the Protector
+    -- REMOVED: Light of the Protector (183998) - replaced by Word of Glory
     [213644] = true,  -- Cleanse Toxins
     [223306] = true,  -- Bestow Faith
     [200025] = true,  -- Beacon of Virtue
@@ -251,7 +250,7 @@ local HEALING_SPELLS = {
     [596] = true,     -- Prayer of Healing
     [33076] = true,   -- Prayer of Mending
     [527] = true,     -- Purify
-    [528] = true,     -- Dispel Magic (can be used to purge enemy buffs OR dispel friendly debuffs)
+    -- Dispel Magic (528) already in UTILITY_SPELLS (primary classification)
     
     -- Shaman
     [5394] = true,    -- Healing Stream Totem
@@ -331,7 +330,7 @@ local CROWD_CONTROL_SPELLS = {
     -- Mage
     [31661] = true,   -- Dragon's Breath
     [33395] = true,   -- Freeze (pet)
-    [44572] = true,   -- Deep Freeze
+    -- REMOVED: Deep Freeze (44572) - removed from game
     [82691] = true,   -- Ring of Frost
     [118] = true,     -- Polymorph
     [122] = true,     -- Frost Nova
@@ -352,7 +351,8 @@ local CROWD_CONTROL_SPELLS = {
     [115078] = true,  -- Paralysis
     [116705] = true,  -- Spear Hand Strike (interrupt)
     [119381] = true,  -- Leg Sweep
-    [198898] = true,  -- Song of Chi-Ji
+    -- Song of Chi-Ji (198898) already in HEALING_SPELLS (primary classification)
+    [116844] = true,  -- Ring of Peace (displacement)
     [233759] = true,  -- Grapple Weapon
     
     -- Paladin
@@ -484,16 +484,18 @@ local UTILITY_SPELLS = {
     [10060] = true,   -- Power Infusion (Priest)
     [29166] = true,   -- Innervate (Druid)
     [1044] = true,    -- Blessing of Freedom (Paladin)
-    [6940] = true,    -- Blessing of Sacrifice (Paladin) - also defensive
-    [1022] = true,    -- Blessing of Protection (Paladin) - also defensive
-    [204018] = true,  -- Blessing of Spellwarding (Paladin)
+    -- Blessing of Sacrifice (6940) already in DEFENSIVE_SPELLS (primary classification)
+    -- Blessing of Protection (1022) already in DEFENSIVE_SPELLS (primary classification)
+    -- Blessing of Spellwarding (204018) already in DEFENSIVE_SPELLS (primary classification)
     [80353] = true,   -- Time Warp (Mage)
     [32182] = true,   -- Heroism (Shaman)
     [2825] = true,    -- Bloodlust (Shaman)
-    [264667] = true,  -- Primal Rage (Hunter pet)
+    [264667] = true,  -- Primal Rage (Hunter pet Bloodlust)
     [390386] = true,  -- Fury of the Aspects (Evoker)
     [381748] = true,  -- Blessing of the Bronze (Evoker)
-    [1038] = true,    -- Blessing of Salvation (Paladin - not in retail?)
+    [395152] = true,  -- Ebon Might (Evoker Augmentation buff)
+    [409311] = true,  -- Prescience (Evoker Augmentation buff)
+    -- REMOVED: Blessing of Salvation (1038) - not in retail
     
     -- Threat Transfers
     [34477] = true,   -- Misdirection (Hunter)

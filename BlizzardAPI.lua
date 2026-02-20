@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module - Wraps WoW C_* APIs with 12.0+ secret value handling
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 28)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 29)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -29,6 +29,10 @@ local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+local GetItemCount = GetItemCount
+local GetItemCooldown = GetItemCooldown
+local GetItemInfo = GetItemInfo
+local GetItemSpell = GetItemSpell
 
 --------------------------------------------------------------------------------
 -- Local Cooldown Tracking (12.0+ secret value workaround)
@@ -1237,31 +1241,65 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false, false, false
     end
-    
+
     -- Check if spell is known/available
     local isKnown = BlizzardAPI.IsSpellAvailable(spellID)
     if not isKnown then
         return false, false, false, false, false
     end
-    
+
     -- Check if procced (instant/free cast available)
     local isProcced = BlizzardAPI.IsSpellProcced(spellID)
-    
-    -- Check redundancy (buff already active)
+
+    -- Check redundancy (buff already active — reliable, based on UnitBuff not cooldown)
     local RedundancyFilter = GetRedundancyFilter()
     local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
     if isRedundant then
         return false, true, true, false, isProcced
     end
-    
-    -- Check cooldown
-    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown(spellID)
-    if onCooldown then
-        return false, true, false, true, isProcced
-    end
-    
-    -- Spell is usable
+
+    -- NOTE: We intentionally do NOT call IsSpellOnRealCooldown here.
+    -- Cooldown duration is a secret value in combat, so once we hide a defensive for being
+    -- on CD we can never reliably detect when it expires — it would stay hidden for the
+    -- whole combat session.  The cooldown swipe on the icon is the visual CD indicator.
+    -- Always show a known, non-redundant defensive regardless of cooldown state.
     return true, true, false, false, isProcced
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Item State Helper (mirrors CheckDefensiveSpellState for items)
+--------------------------------------------------------------------------------
+
+-- Check defensive item usability in one call
+-- Returns: isUsable, hasItem, onCooldown
+-- isUsable = hasItem AND NOT onCooldown
+function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+    if not itemID or itemID == 0 then
+        return false, false, false
+    end
+
+    -- Check if player has the item in bags/inventory
+    local count = GetItemCount(itemID) or 0
+    if count == 0 then
+        return false, false, false
+    end
+
+    -- Check cooldown (fail-open: if values are secret, assume NOT on cooldown)
+    local start, duration = GetItemCooldown(itemID)
+    local onCooldown = false
+    if start and duration then
+        local startIsSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+        local durIsSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+        if not startIsSecret and not durIsSecret then
+            onCooldown = start > 0 and duration > 1.5
+        end
+    end
+
+    if onCooldown then
+        return false, true, true
+    end
+
+    return true, true, false
 end
 
 --------------------------------------------------------------------------------

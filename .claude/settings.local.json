@@ -20,7 +20,9 @@
       "Bash(git rm:*)",
       "Bash(dir:*)",
       "Bash(del:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(gh run list:*)",
+      "Bash(git -C \"r:/WOW/_retail_/Interface/AddOns/JustAC\" log --oneline c0a7359..HEAD)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"
