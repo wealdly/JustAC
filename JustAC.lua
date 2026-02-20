@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay
 
 -- Class default tables are stored in SpellDB.lua for consistency
 -- Access via JustAC.CLASS_*_DEFAULTS (set in OnInitialize after SpellDB loads)
@@ -32,6 +32,7 @@ local defaults = {
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
         hideQueueForHealers = false,   -- Hide the entire queue when in a healer spec
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
+        displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         enableItemFeatures = true,     -- Master toggle for all item-related features
@@ -41,11 +42,28 @@ local defaults = {
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
+        hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
+        -- Nameplate Overlay feature (independent queue cluster on target nameplate)
+        nameplateOverlay = {
+            maxIcons          = 3,       -- 1-3 DPS queue slots
+            anchor            = "RIGHT", -- LEFT, RIGHT
+            expansion         = "out",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
+            healthBarPosition = "outside", -- "outside" (far end of cluster) or "inside" (nameplate end); up/down only
+            iconSize          = 32,
+            showGlow          = true,
+            glowMode          = "all",
+            showHotkey        = true,
+            showDefensives       = true,
+            maxDefensiveIcons    = 3,    -- 1-3
+            defensiveDisplayMode = "combatOnly", -- "combatOnly", "always"
+            defensiveShowProcs   = true,
+            showHealthBar        = true,
+        },
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
-            enabled = false,
+            enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
-            glowMode = "all",         -- "all", "primaryOnly", "procOnly", "none"
+            glowMode = "procOnly",     -- "all", "primaryOnly", "procOnly", "none"
             showFlash = true,         -- Flash icon on matching key press
             showHotkeys = true,       -- Show hotkey text on defensive icons
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
@@ -69,7 +87,7 @@ local defaults = {
         lastKnownSpec = nil,
         firstRun = true,
         blacklistedSpells = {},   -- Character-specific spell blacklist
-        hotkeyOverrides = {},     -- Character-specific hotkey overrides
+        hotkeyOverrides = {},     -- Legacy: migrated to profile on load; kept as schema for migration detection
         specProfilesEnabled = true,   -- Auto-switch profiles by spec (enabled by default)
         specProfiles = {},        -- [specIndex] = "profileName" | "DISABLED" | nil
     },
@@ -98,17 +116,6 @@ function JustAC:NormalizeSavedData()
         charData.blacklistedSpells = normalized
     end
     
-    if charData.hotkeyOverrides then
-        local normalized = {}
-        for key, value in pairs(charData.hotkeyOverrides) do
-            local spellID = tonumber(key)
-            if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
-                normalized[spellID] = value
-            end
-        end
-        charData.hotkeyOverrides = normalized
-    end
-    
     local profile = self.db and self.db.profile
     if profile then
         if profile.blacklistedSpells and next(profile.blacklistedSpells) then
@@ -119,13 +126,28 @@ function JustAC:NormalizeSavedData()
             end
             profile.blacklistedSpells = nil  -- Clear old data
         end
-        if profile.hotkeyOverrides and next(profile.hotkeyOverrides) then
-            for spellID, value in pairs(profile.hotkeyOverrides) do
-                if not charData.hotkeyOverrides[spellID] then
-                    charData.hotkeyOverrides[tonumber(spellID) or spellID] = value
+        -- Normalize profile.hotkeyOverrides (SavedVariables serialise numeric keys as strings)
+        if profile.hotkeyOverrides then
+            local normalized = {}
+            for key, value in pairs(profile.hotkeyOverrides) do
+                local spellID = tonumber(key)
+                if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
+                    normalized[spellID] = value
                 end
             end
-            profile.hotkeyOverrides = nil  -- Clear old data
+            profile.hotkeyOverrides = normalized
+        end
+        -- One-time migration: char.hotkeyOverrides → profile.hotkeyOverrides
+        -- (hotkey overrides moved to profile level so they are included in profile copies)
+        if charData.hotkeyOverrides and next(charData.hotkeyOverrides) then
+            if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
+            for key, value in pairs(charData.hotkeyOverrides) do
+                local spellID = tonumber(key)
+                if spellID and spellID > 0 and type(value) == "string" and value ~= "" and not profile.hotkeyOverrides[spellID] then
+                    profile.hotkeyOverrides[spellID] = value
+                end
+            end
+            charData.hotkeyOverrides = {}  -- Clear after migration
         end
         -- Migrate panelLocked boolean → panelInteraction string
         if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
@@ -202,6 +224,11 @@ function JustAC:OnEnable()
 
     -- Create key press detector for flash feedback
     self:CreateKeyPressDetector()
+
+    -- Nameplate overlay (fully independent of main panel)
+    if UINameplateOverlay then UINameplateOverlay.Create(self) end
+    self:RegisterEvent("NAME_PLATE_UNIT_ADDED",   "OnNamePlateAdded")
+    self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", "OnNamePlateRemoved")
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnCombatEvent")
@@ -352,6 +379,9 @@ function JustAC:EnterDisabledMode()
         UIHealthBar.HidePet()
     end
 
+    -- Hide nameplate overlay
+    if UINameplateOverlay then UINameplateOverlay.HideAll() end
+
     self:DebugPrint("Entered disabled mode for current spec")
 end
 
@@ -376,6 +406,9 @@ function JustAC:ExitDisabledMode()
         end
     end
 
+    -- Restore nameplate overlay if enabled
+    if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
+
     self:ForceUpdateAll()
     self:DebugPrint("Exited disabled mode")
 end
@@ -383,7 +416,7 @@ end
 function JustAC:RefreshConfig()
     -- Migrate old profile-level data (blacklist/hotkeys/panelLocked) if switching to an un-migrated profile
     self:NormalizeSavedData()
-    -- Blacklist/hotkey overrides are character-specific, persist across profile changes
+    -- Blacklist/spec profiles are character-specific; hotkey overrides travel with the profile
     self:InitializeDefensiveSpells()
 
     self:UpdateFrameSize()
@@ -395,11 +428,16 @@ function JustAC:RefreshConfig()
         self:SavePosition()
         self:UpdateTargetFrameAnchor()
     end
+    if UINameplateOverlay then
+        UINameplateOverlay.Destroy(self)
+        UINameplateOverlay.Create(self)
+    end
     self:ForceUpdate()
 end
 
 -- Only on explicit profile reset (not change/copy)
--- Character data (blacklist, hotkeys, spec profiles) is intentionally preserved;
+-- Character data (blacklist, spec profiles) is intentionally preserved;
+-- Profile-level data (hotkey overrides, settings) is cleared — that's what a reset does.
 -- AceDB already resets profile-level settings to defaults.
 function JustAC:OnProfileReset()
     self:RefreshConfig()
@@ -633,36 +671,33 @@ function JustAC:OnHealthChanged(event, unit)
     local profile = self:GetProfile()
     local def = profile and profile.defensives
 
-    -- Early exit: skip all work when defensive feature is fully disabled
-    -- (no health bars, no defensive icons, no queue processing)
-    if not def or (not def.enabled and not def.showHealthBar and not def.showPetHealthBar) then
-        return
-    end
+    -- Resolve overlay state once (UINameplateOverlay may not be loaded)
+    local npo = UINameplateOverlay and (profile and profile.nameplateOverlay)
+    local overlayDM = profile and profile.displayMode or "queue"
+    local overlayActive = npo and (overlayDM == "overlay" or overlayDM == "both")
 
-    -- Health bar update is cheap, always do it for visual feedback
-    if def.showHealthBar and UIHealthBar and UIHealthBar.Update then
-        UIHealthBar.Update(self)
-    end
-    if def.showPetHealthBar and UIHealthBar and UIHealthBar.UpdatePet then
-        UIHealthBar.UpdatePet(self)
-    end
+    -- Early exit: nothing at all to do for health events
+    local needsAnyWork = (def and (def.enabled or def.showHealthBar or def.showPetHealthBar))
+        or (overlayActive and (npo.showHealthBar or npo.showDefensives))
+    if not needsAnyWork then return end
 
-    -- Throttle defensive queue updates (expensive operation with table allocations)
+    -- Health bars are cheap; update them without throttling
+    if def then
+        if def.showHealthBar and UIHealthBar and UIHealthBar.Update then UIHealthBar.Update(self) end
+        if def.showPetHealthBar and UIHealthBar and UIHealthBar.UpdatePet then UIHealthBar.UpdatePet(self) end
+    end
+    if overlayActive and npo.showHealthBar then UINameplateOverlay.UpdateHealthBar() end
+
+    -- Throttle defensive queue updates (expensive: table allocations, spell lookups)
     local now = GetTime()
-    if event and now - lastHealthUpdate < HEALTH_UPDATE_THROTTLE then
-        return
-    end
+    if event and now - lastHealthUpdate < HEALTH_UPDATE_THROTTLE then return end
     lastHealthUpdate = now
 
-    if not def.enabled then
-        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-            UIRenderer.HideDefensiveIcons(self)
-        elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-            UIRenderer.HideDefensiveIcon(self.defensiveIcon)
-        end
-        return
-    end
+    -- Skip queue work if neither path needs it
+    local needsDefensives = (def and def.enabled) or (overlayActive and npo.showDefensives)
+    if not needsDefensives then return end
 
+    -- Health state — computed once, shared by main panel and overlay paths
     local inCombat = UnitAffectingCombat("player")
 
     -- Falls back to LowHealthFrame when UnitHealth() returns secrets
@@ -671,8 +706,8 @@ function JustAC:OnHealthChanged(event, unit)
         healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
     end
 
-    local selfHealThreshold = profile.defensives.selfHealThreshold or 80
-    local cooldownThreshold = profile.defensives.cooldownThreshold or 60
+    local selfHealThreshold = def and def.selfHealThreshold or 80
+    local cooldownThreshold = def and def.cooldownThreshold or 60
 
     -- 12.0: UnitHealth() is secret in combat (PvE and PvP). When isEstimated=true,
     -- thresholds above are ignored — we use Blizzard's LowHealthFrame binary states:
@@ -698,60 +733,81 @@ function JustAC:OnHealthChanged(event, unit)
     -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
     -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
-    local petHealThreshold = profile.defensives.petHealThreshold or 50
+    local petHealThreshold = def and def.petHealThreshold or 50
     local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
 
     -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat
     local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
     local petNeedsRez = (petStatus == "dead" or petStatus == "missing")
 
-    -- Exclude spells already visible in DPS queue (reuse pooled table)
+    -- DPS exclusions shared by both paths (reuse pooled table)
     wipe(dpsQueueExclusions)
     if SpellQueue and SpellQueue.GetCurrentSpellQueue then
         local dpsQueue = SpellQueue.GetCurrentSpellQueue()
         local maxDpsIcons = profile.maxIcons or 4
         for i = 1, math.min(#dpsQueue, maxDpsIcons) do
-            if dpsQueue[i] then
-                dpsQueueExclusions[dpsQueue[i]] = true
+            if dpsQueue[i] then dpsQueueExclusions[dpsQueue[i]] = true end
+        end
+    end
+
+    -- Main panel defensive queue (gated by defensives.enabled)
+    if def and def.enabled then
+        local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions)
+        local maxIcons = def.maxIcons or 1
+
+        -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
+        -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
+        if petNeedsRez and #defensiveQueue < maxIcons then
+            local petRez = self:GetUsableDefensiveSpells(self:GetClassSpellList("petRezSpells"), maxIcons - #defensiveQueue, defensiveAlreadyAdded)
+            for _, entry in ipairs(petRez) do
+                defensiveQueue[#defensiveQueue + 1] = entry
+                defensiveAlreadyAdded[entry.spellID] = true
             end
         end
-    end
-    local defensiveQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions)
 
-    local maxIcons = profile.defensives.maxIcons or 1
-
-    -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
-    -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
-    if petNeedsRez and #defensiveQueue < maxIcons then
-        local petRezSpells = self:GetClassSpellList("petRezSpells")
-        local petRez = self:GetUsableDefensiveSpells(petRezSpells, maxIcons - #defensiveQueue, defensiveAlreadyAdded)
-        for _, entry in ipairs(petRez) do
-            defensiveQueue[#defensiveQueue + 1] = entry
-            defensiveAlreadyAdded[entry.spellID] = true
+        -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
+        if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
+            local petHeals = self:GetUsableDefensiveSpells(self:GetClassSpellList("petHealSpells"), maxIcons - #defensiveQueue, defensiveAlreadyAdded)
+            for _, entry in ipairs(petHeals) do
+                defensiveQueue[#defensiveQueue + 1] = entry
+                defensiveAlreadyAdded[entry.spellID] = true
+            end
         end
-    end
 
-    -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
-    if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-        local petHealSpells = self:GetClassSpellList("petHealSpells")
-        local petHeals = self:GetUsableDefensiveSpells(petHealSpells, maxIcons - #defensiveQueue, defensiveAlreadyAdded)
-        for _, entry in ipairs(petHeals) do
-            defensiveQueue[#defensiveQueue + 1] = entry
-            defensiveAlreadyAdded[entry.spellID] = true
-        end
-    end
-
-    if #defensiveQueue > 0 then
-        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
-            UIRenderer.ShowDefensiveIcons(self, defensiveQueue)
-        elseif self.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
-            UIRenderer.ShowDefensiveIcon(self, defensiveQueue[1].spellID, defensiveQueue[1].isItem, self.defensiveIcon)
+        if #defensiveQueue > 0 then
+            if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
+                UIRenderer.ShowDefensiveIcons(self, defensiveQueue)
+            elseif self.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
+                UIRenderer.ShowDefensiveIcon(self, defensiveQueue[1].spellID, defensiveQueue[1].isItem, self.defensiveIcon)
+            end
+        else
+            if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
+                UIRenderer.HideDefensiveIcons(self)
+            elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
+                UIRenderer.HideDefensiveIcon(self.defensiveIcon)
+            end
         end
     else
+        -- Defensives disabled on main panel: ensure icons are hidden
         if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
             UIRenderer.HideDefensiveIcons(self)
         elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
             UIRenderer.HideDefensiveIcon(self.defensiveIcon)
+        end
+    end
+
+    -- Nameplate overlay defensive queue — independent of defensives.enabled.
+    -- Uses its own display mode and icon count settings. GetDefensiveSpellQueue wipes
+    -- defensiveAlreadyAdded at the start of each call, so no bleed from the main panel path.
+    if overlayActive and npo.showDefensives then
+        local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
+        local npoMaxIcons    = npo.maxDefensiveIcons or 1
+        local npoShowProcs   = npo.defensiveShowProcs ~= false
+        local npoQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions, npoDisplayMode, npoMaxIcons, npoShowProcs)
+        if #npoQueue > 0 then
+            UINameplateOverlay.RenderDefensives(self, npoQueue)
+        else
+            UINameplateOverlay.HideDefensiveIcons()
         end
     end
 end
@@ -931,11 +987,12 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
 end
 
 -- Display order: instant procs first, then by health threshold (higher priority first)
-function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat, passedExclusions)
+function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCombat, passedExclusions, overrideDisplayMode, overrideMaxIcons, overrideShowProcs)
     local profile = self:GetProfile()
-    if not profile or not profile.defensives or not profile.defensives.enabled then return {} end
+    if not profile or not profile.defensives then return {} end
 
-    local maxIcons = profile.defensives.maxIcons or 1
+    local maxIcons = overrideMaxIcons or profile.defensives.maxIcons or 1
+    local showProcs = (overrideShowProcs ~= nil) and overrideShowProcs or (profile.defensives.showProcs ~= false)
     local results = {}
     -- Reuse pooled table for tracking added spells
     wipe(defensiveAlreadyAdded)
@@ -970,7 +1027,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         end
     end
 
-    local displayMode = profile.defensives.displayMode
+    local displayMode = overrideDisplayMode or profile.defensives.displayMode
     if not displayMode then
         local showOnlyInCombat = profile.defensives.showOnlyInCombat
         local alwaysShow = profile.defensives.alwaysShowDefensive
@@ -984,7 +1041,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
     end
 
     -- Procced spells shown at ANY health level
-    if profile.defensives.showProcs ~= false and ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
+    if showProcs and ActionBarScanner and ActionBarScanner.GetDefensiveProccedSpells then
         local defensiveProcs = ActionBarScanner.GetDefensiveProccedSpells()
         if defensiveProcs then
             for _, spellID in ipairs(defensiveProcs) do
@@ -1221,24 +1278,26 @@ function JustAC:LoadModules()
     if not FormCache then self:Print("Warning: FormCache module not found") end
     if not MacroParser then self:Print("Warning: MacroParser module not found") end
     if not RedundancyFilter then self:Print("Warning: RedundancyFilter module not found") end
+    UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
+    if not UINameplateOverlay then self:Print("Warning: UINameplateOverlay module not found") end
 end
 
 function JustAC:SetHotkeyOverride(spellID, hotkeyText)
     if not spellID or spellID == 0 then return end
-    local charData = self.db and self.db.char
-    if not charData then return end
-    
-    if not charData.hotkeyOverrides then
-        charData.hotkeyOverrides = {}
+    local profile = self:GetProfile()
+    if not profile then return end
+
+    if not profile.hotkeyOverrides then
+        profile.hotkeyOverrides = {}
     end
-    
+
     if hotkeyText and hotkeyText:trim() ~= "" then
-        charData.hotkeyOverrides[spellID] = hotkeyText:trim()
+        profile.hotkeyOverrides[spellID] = hotkeyText:trim()
         local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey: " .. spellName .. " = '" .. hotkeyText:trim() .. "'")
     else
-        charData.hotkeyOverrides[spellID] = nil
+        profile.hotkeyOverrides[spellID] = nil
         local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
         local spellName = spellInfo and spellInfo.name or "Unknown"
         self:DebugPrint("Hotkey removed: " .. spellName)
@@ -1258,9 +1317,9 @@ end
 
 function JustAC:GetHotkeyOverride(spellID)
     if not spellID or spellID == 0 then return nil end
-    local charData = self.db and self.db.char
-    if not charData or not charData.hotkeyOverrides then return nil end
-    return charData.hotkeyOverrides[spellID]
+    local profile = self:GetProfile()
+    if not profile or not profile.hotkeyOverrides then return nil end
+    return profile.hotkeyOverrides[spellID]
 end
 
 function JustAC:OpenHotkeyOverrideDialog(spellID)
@@ -1322,24 +1381,36 @@ function JustAC:UpdateSpellQueue()
     if UIRenderer and UIRenderer.RenderSpellQueue then
         UIRenderer.RenderSpellQueue(self, currentSpells)
     end
+    if UINameplateOverlay then UINameplateOverlay.Render(self, currentSpells) end
 end
 
 function JustAC:UpdateDefensiveCooldowns()
     if self.isDisabledMode then return end
     if not self.db or not self.db.profile or self.db.profile.isManualMode then return end
-    if not self.db.profile.defensives or not self.db.profile.defensives.enabled then return end
 
-    -- Update cooldowns on all visible defensive icons
-    -- This ensures cooldown layers appear/disappear as quickly as the main queue
-    if self.defensiveIcons and #self.defensiveIcons > 0 then
-        for _, icon in ipairs(self.defensiveIcons) do
+    -- Update cooldowns on all visible main-panel defensive icons (requires defensives.enabled)
+    local def = self.db.profile.defensives
+    if def and def.enabled then
+        if self.defensiveIcons and #self.defensiveIcons > 0 then
+            for _, icon in ipairs(self.defensiveIcons) do
+                if icon and icon:IsShown() then
+                    UIRenderer.UpdateButtonCooldowns(icon)
+                end
+            end
+        elseif self.defensiveIcon and self.defensiveIcon:IsShown() then
+            UIRenderer.UpdateButtonCooldowns(self.defensiveIcon)
+        end
+    end
+
+    -- Update cooldowns on nameplate overlay defensive icons.
+    -- These are only rendered on UNIT_HEALTH events (which are suppressed in combat when
+    -- health is a secret value), so their cooldowns would freeze without this explicit poll.
+    if self.nameplateDefIcons and #self.nameplateDefIcons > 0 then
+        for _, icon in ipairs(self.nameplateDefIcons) do
             if icon and icon:IsShown() then
                 UIRenderer.UpdateButtonCooldowns(icon)
             end
         end
-    elseif self.defensiveIcon and self.defensiveIcon:IsShown() then
-        -- Legacy single defensive icon support
-        UIRenderer.UpdateButtonCooldowns(self.defensiveIcon)
     end
 end
 
@@ -1513,7 +1584,28 @@ end
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
     self:UpdateTargetFrameAnchor()
-    self:ForceUpdate()
+    if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
+    -- ForceUpdateAll so the defensive overlay re-renders immediately on target switch
+    -- rather than waiting for the next UNIT_HEALTH event (which may not fire in combat
+    -- when health is a secret value).
+    self:ForceUpdateAll()
+end
+
+function JustAC:OnNamePlateAdded(_, nameplateUnit)
+    if UINameplateOverlay and UnitIsUnit(nameplateUnit, "target") then ---@diagnostic disable-line: undefined-global
+        UINameplateOverlay.UpdateAnchor(self)
+        -- ForceUpdateAll so the defensive overlay re-renders as soon as the plate appears.
+        -- ForceUpdate (DPS-only) isn't enough — defensive icons are driven by OnHealthChanged.
+        self:ForceUpdateAll()
+    end
+end
+
+function JustAC:OnNamePlateRemoved(_, nameplateUnit)
+    if UINameplateOverlay and UnitIsUnit(nameplateUnit, "target") then ---@diagnostic disable-line: undefined-global
+        UINameplateOverlay.UpdateAnchor(self)
+        -- clear icons immediately when the target plate disappears
+        self:ForceUpdate()
+    end
 end
 
 function JustAC:UpdateTargetFrameAnchor()
@@ -1714,6 +1806,29 @@ function JustAC:CreateKeyPressDetector()
             end
         end
 
+        -- Check nameplate DPS overlay icons (same flash logic as main queue)
+        local npIcons = addon.nameplateIcons
+        if npIcons and (not profile or profile.showFlash ~= false) then
+            for _, npIcon in ipairs(npIcons) do
+                if npIcon and npIcon:IsShown() and npIcon.normalizedHotkey == normalizedKey then
+                    iconsToFlash[#iconsToFlash + 1] = npIcon
+                end
+            end
+        end
+
+        -- Check nameplate defensive overlay icons
+        local npDefFlash = not profile or not profile.defensives or profile.defensives.showFlash ~= false
+        if npDefFlash then
+            local npDefIcons = addon.nameplateDefIcons
+            if npDefIcons then
+                for _, npDefIcon in ipairs(npDefIcons) do
+                    if npDefIcon and npDefIcon:IsShown() and npDefIcon.normalizedHotkey == normalizedKey then
+                        iconsToFlash[#iconsToFlash + 1] = npDefIcon
+                    end
+                end
+            end
+        end
+
         -- Flash all matched icons
         for _, icon in ipairs(iconsToFlash) do
             StartFlash(icon)
@@ -1815,7 +1930,8 @@ function JustAC:StartUpdates()
         local mainHidden = not mainFrame or not mainFrame:IsShown()
         local defIcons = self.defensiveIcons
         local defHidden = not defIcons or #defIcons == 0
-        if mainHidden and defHidden and not self.defensiveIcon then
+        local npHidden = not self.nameplateIcons or #self.nameplateIcons == 0
+        if mainHidden and defHidden and not self.defensiveIcon and npHidden then
             self.updateTimeLeft = IDLE_CHECK_INTERVAL
             return
         end

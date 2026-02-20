@@ -22,7 +22,6 @@ local type = type
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
-local lastDisplayUpdate = 0
 
 -- Primary spell stabilization to prevent flicker during rapid transitions
 -- Holds the primary spell briefly if the new one matches what was just in slot 2
@@ -169,7 +168,8 @@ local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
 end
 
 -- Helper: Check if spell passes common filters (availability, usability, redundancy)
--- Uses per-update cache to avoid re-checking the same spell multiple times
+-- Used for position 1 and spell-book proc spells — includes usability (resources, CD) check.
+-- Uses per-update cache to avoid re-checking the same spell multiple times.
 local function PassesSpellFilters(spellID, profile)
     -- Check cache first (valid for this update cycle only)
     local cached = filterResultCache[spellID]
@@ -183,6 +183,23 @@ local function PassesSpellFilters(spellID, profile)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
 
     filterResultCache[spellID] = result
+    return result
+end
+
+-- Lighter filter for rotation list positions 2+ and defensive queue spells.
+-- Does NOT check IsSpellUsable: cooldown status is a secret value in combat, so we can never
+-- reliably detect when a spell comes off CD. The cooldown swipe handles the visual indicator.
+-- Filtering the spell out would remove it permanently for the rest of the combat session.
+local function PassesRotationFilters(spellID, profile)
+    local cached = filterResultCache["r_" .. spellID]
+    if cached ~= nil then
+        return cached
+    end
+
+    local result = IsSpellAvailable(spellID)
+       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
+
+    filterResultCache["r_" .. spellID] = result
     return result
 end
 
@@ -257,7 +274,8 @@ function SpellQueue.GetCurrentSpellQueue()
     local spellCount = 0
     
     -- Cache hideItemAbilities setting for this update
-    local hideItems = profile.hideItemAbilities
+    -- If master item features toggle is off, always hide item abilities
+    local hideItems = not profile.enableItemFeatures or profile.hideItemAbilities
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
     -- ALWAYS apply blacklist - if slot 1 is blacklisted, rotation spells shift up to fill it
@@ -387,11 +405,13 @@ function SpellQueue.GetCurrentSpellQueue()
 
                     -- Skip if override already shown
                     if not addedSpellIDs[actualSpellID] then
-                        -- Filter: not blacklisted, not item, passes availability/usability/redundancy
+                        -- Filter: not blacklisted, not item, available, not redundant
+                        -- NOTE: intentionally skips IsSpellUsable — cooldowns are secret in combat
+                        -- and a spell filtered out for CD would never reappear this session.
                         local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(actualSpellID)
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and not isItemSpell
-                           and PassesSpellFilters(actualSpellID, profile) then
+                           and PassesRotationFilters(actualSpellID, profile) then
                             -- Mark as added to prevent duplicates (both actualSpellID and base spellID)
                             addedSpellIDs[actualSpellID] = true
                             addedSpellIDs[spellID] = true
@@ -446,7 +466,6 @@ end
 
 function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
-    lastDisplayUpdate = 0
     -- Reset stabilization to allow immediate response
     lastPrimarySpellID = nil
     lastPrimaryChangeTime = 0

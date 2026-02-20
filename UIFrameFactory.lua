@@ -11,9 +11,11 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 
 -- Cache frequently used functions to reduce table lookups on every update
+local GetTime = GetTime
+local pcall = pcall
+local wipe = wipe
 local math_max = math.max
 local math_floor = math.floor
-local wipe = wipe
 
 -- Visual constants (shared with UIRenderer)
 local HOTKEY_FONT_SCALE = 0.4
@@ -64,79 +66,23 @@ else
     GetMasqueDefensiveGroup = function() return nil end
 end
 
--- Helper: Create a single defensive icon button at the specified index (0-based)
--- Position offset is calculated based on index, orientation, and defensive position
-local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
-    local button = CreateFrame("Button", nil, addon.mainFrame)
+-- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
+-- Returns a button with all visual layers, cooldown frames, hotkey text and fade
+-- animations pre-built.  Positioning is left to the caller.
+--
+-- Parameters:
+--   parent       - parent Frame
+--   size         - icon size in pixels
+--   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
+--   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
+local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
+    local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
 
-    button:SetSize(actualIconSize, actualIconSize)
+    button:SetSize(size, size)
 
-    -- Cooldown container: clips cooldown swipes but glows parent to button directly (not clipped)
-    local cooldownContainer = CreateFrame("Frame", nil, button)
-    cooldownContainer:SetAllPoints(button)
-    cooldownContainer:SetClipsChildren(true)
-    button.cooldownContainer = cooldownContainer
-
-    local firstIconCenter = actualIconSize / 2
-    -- Use health bar offset for SIDE1 when health bar shown, otherwise use consistent base spacing
-    -- Base spacing is BAR_SPACING (3px) minimum to visually separate from the queue
-    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or math.max(spacing, baseSpacing)
-    
-    -- Calculate offset for additional icons (index 0 has no offset)
-    -- SIDE1/SIDE2: horizontal layout (along queue direction)
-    -- LEADING: stacking layout (perpendicular to leading edge)
-    local iconOffset = index * (actualIconSize + spacing)
-    
-    if queueOrientation == "LEFT" then
-        -- Queue grows left-to-right (grab tab on right)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = above (health bar side), icons grow rightward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = below, icons grow rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
-        else -- LEADING
-            -- LEADING = left side, icons stack upward
-            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
-        end
-    elseif queueOrientation == "RIGHT" then
-        -- Queue grows right-to-left (grab tab on left)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = above, icons grow leftward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = below, icons grow leftward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -effectiveSpacing)
-        else -- LEADING
-            -- LEADING = right side, icons stack upward
-            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
-        end
-    elseif queueOrientation == "UP" then
-        -- Queue grows bottom-to-top (grab tab on top)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = right side, icons grow upward
-            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side, icons grow upward
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset)
-        else -- LEADING
-            -- LEADING = bottom side, icons stack rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
-        end
-    elseif queueOrientation == "DOWN" then
-        -- Queue grows top-to-bottom (grab tab on bottom)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = right side, icons grow downward
-            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side, icons grow downward
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
-        else -- LEADING
-            -- LEADING = top side, icons stack rightward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
-        end
+    if not isClickable then
+        button:EnableMouse(false)
     end
 
     -- Slot background (Blizzard style depth effect)
@@ -149,115 +95,134 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     iconTexture:SetAllPoints(button)
     iconTexture:Hide()
     button.iconTexture = iconTexture
-    
-    -- Mask texture to clip icon corners
-    local maskPadding = math_floor(actualIconSize * 0.17)
+
+    -- Mask texture to clip rounded corners on all icon layers
+    -- Applied to both slotBackground and iconTexture so neither bleeds outside the frame shape
+    local maskPadding = math_floor(size * 0.17)
     local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
-    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", maskPadding, -maskPadding)
+    iconMask:SetPoint("TOPLEFT",     button, "TOPLEFT",     -maskPadding,  maskPadding)
+    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT",  maskPadding, -maskPadding)
     iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+    slotBackground:AddMaskTexture(iconMask)
     iconTexture:AddMaskTexture(iconMask)
     button.IconMask = iconMask
-    
-    -- Normal texture (button frame border)
-    local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    normalTexture:SetSize(actualIconSize, actualIconSize)
-    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
-    button.NormalTexture = normalTexture
-    
-    -- Pushed texture
-    local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
-    pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    pushedTexture:SetSize(actualIconSize, actualIconSize)
-    pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
-    pushedTexture:Hide()
-    button.PushedTexture = pushedTexture
-    
-    -- Highlight texture
-    local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
-    highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    highlightTexture:SetSize(actualIconSize, actualIconSize)
-    highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    button.HighlightTexture = highlightTexture
-    
-    -- Flash overlay
+
+    -- Flash overlay (slightly outside the border, hidden until proc triggers it)
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)  -- Higher level to ensure visibility
-    
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 7)  -- High sublevel on OVERLAY
+    flashFrame:SetSize(size + 2, size + 2)
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
+
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetAllPoints(flashFrame)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
-    
+
     button.Flash = flashTexture
     button.FlashFrame = flashFrame
     button.flashing = 0
     button.flashtime = 0
 
-    -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
-    -- Parent to cooldownContainer so swipes are clipped to button bounds (glows parent to button, not clipped)
-    -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
+    -- Cooldown container: SetClipsChildren clips swipe to icon bounds
+    -- Glow effects are parented to button directly so they're NOT clipped
+    local cooldownContainer = CreateFrame("Frame", nil, button)
+    cooldownContainer:SetAllPoints(button)
+    cooldownContainer:SetClipsChildren(true)
+    button.cooldownContainer = cooldownContainer
+
+    -- Main cooldown (spell CD or GCD, whichever is longer)
     local cooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    -- CooldownFrameTemplate sets setAllPoints="true" which anchors all 4 corners to the parent.
+    -- ClearAllPoints removes those before we inset; without this, TOPRIGHT/BOTTOMLEFT from the
+    -- template remain anchored to cooldownContainer (full button size) and override our inset.
+    cooldown:ClearAllPoints()
+    cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      4, -4)
+    cooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4,  4)
     cooldown:SetDrawEdge(false)
+    cooldown:SetDrawBling(false)   -- BlingTexture (star4 sparkle) renders outside frame bounds
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
-    -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
-    -- Access the countdown text region and modify its appearance
+    -- Smaller, more transparent countdown numbers so they don't overlap the hotkey
     local cooldownText = cooldown:GetRegions()
     if cooldownText and cooldownText.SetFont then
         local font, _, flags = cooldownText:GetFont()
         if font then
-            local smallerSize = math_floor(actualIconSize * 0.25)  -- 25% of icon size (was ~33%)
-            cooldownText:SetFont(font, smallerSize, flags)
-            cooldownText:SetTextColor(1, 1, 1, 0.5)  -- 50% alpha (more transparent)
+            cooldownText:SetFont(font, math_floor(size * 0.25), flags)
+            cooldownText:SetTextColor(1, 1, 1, 0.5)
         end
     end
 
-    -- Clear cooldown to prevent visual artifacts on load
     cooldown:Clear()
-    cooldown:Hide()  -- Hide until a cooldown is actually set
+    cooldown:Hide()
     button.cooldown = cooldown
 
-    -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
-    -- Same 4px inset as main cooldown to match Blizzard's ActionButtonTemplate
+    -- Charge cooldown (charge regen for multi-charge spells)
     local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    chargeCooldown:ClearAllPoints()
+    chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      4, -4)
+    chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4,  4)
     chargeCooldown:SetDrawEdge(true)
+    chargeCooldown:SetDrawBling(false)
     chargeCooldown:SetDrawSwipe(true)
-    chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
-    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
-    chargeCooldown:Clear()  -- Clear to prevent visual artifacts on load
+    chargeCooldown:SetHideCountdownNumbers(true)
+    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
+    chargeCooldown:Clear()
     chargeCooldown:Hide()
     button.chargeCooldown = chargeCooldown
-    
-    -- Hotkey text
+
+    -- Border overlay frame: sits ABOVE cooldowns (L+3) but BELOW glow animations (L+4+).
+    -- The border texture's opaque edges physically cover any cooldown swipe or edge-ring
+    -- overflow at the corners, acting as a visual clip mask.
+    -- NOTE: created after chargeCooldown so creation order puts it on top at the same level.
+    local borderFrame = CreateFrame("Frame", nil, button)
+    borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
+    borderFrame:SetAllPoints(button)
+
+    local normalTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    normalTexture:SetSize(size, size)
+    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    button.NormalTexture = normalTexture
+    button.borderFrame = borderFrame
+
+    if isClickable then
+        -- Pushed texture
+        local pushedTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+        pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+        pushedTexture:SetSize(size, size)
+        pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
+        pushedTexture:Hide()
+        button.PushedTexture = pushedTexture
+
+        -- Highlight texture
+        local highlightTexture = borderFrame:CreateTexture(nil, "HIGHLIGHT", nil, 0)
+        highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+        highlightTexture:SetSize(size, size)
+        highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+        button.HighlightTexture = highlightTexture
+    end
+    -- Hotkey / overlay text (highest frame level to stay above animations)
     local hotkeyFrame = CreateFrame("Frame", nil, button)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
+
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
+    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(size * HOTKEY_FONT_SCALE))
     hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
     hotkeyText:SetTextColor(1, 1, 1, 1)
     hotkeyText:SetJustifyH("RIGHT")
-    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
-    
+    local hotkeyOffset = isFirstIcon and HOTKEY_OFFSET_FIRST or HOTKEY_OFFSET_QUEUE
+    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", hotkeyOffset, hotkeyOffset)
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
-    
-    -- Center text for "WAIT" indicator
+
+    -- "WAIT" center indicator
     local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
-    local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
-    centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
+    centerText:SetFont(STANDARD_TEXT_FONT, math_max(9, math_floor(size * 0.26)), "OUTLINE")
     centerText:SetTextColor(1, 0.9, 0.2, 1)
     centerText:SetJustifyH("CENTER")
     centerText:SetJustifyV("MIDDLE")
@@ -265,11 +230,12 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     centerText:SetText("")
     centerText:Hide()
     button.centerText = centerText
-    
-    -- Charge count text (bottom-right, like action bar charges)
+
+    -- Charge count (bottom-right, like Blizzard action bars)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
-    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
+    chargeText:SetFont(STANDARD_TEXT_FONT,
+        math_max(HOTKEY_MIN_FONT_SIZE, math_floor(size * HOTKEY_FONT_SCALE * 0.65)),
+        "OUTLINE")
     chargeText:SetTextColor(1, 1, 1, 1)
     chargeText:SetJustifyH("RIGHT")
     chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
@@ -277,7 +243,30 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     chargeText:Hide()
     button.chargeText = chargeText
 
-    -- State tracking
+    -- Fade-in / fade-out animations
+    local fadeIn = button:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.15)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    button.fadeIn = fadeIn
+
+    local fadeOut = button:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        button:Hide()
+        button:SetAlpha(0)
+    end)
+    button.fadeOut = fadeOut
+
+    -- State tracking fields
     button.lastCooldownStart = 0
     button.lastCooldownDuration = 0
     button.spellID = nil
@@ -285,7 +274,77 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button.itemCastSpellID = nil
     button.currentID = nil
     button.isItem = nil
-    button.iconIndex = index  -- Track which slot this is
+
+    button._cooldownShown = false
+    button._chargeCooldownShown = false
+    button._cachedMaxCharges = nil
+
+    button.normalizedHotkey = nil
+    button.previousNormalizedHotkey = nil
+    button.hotkeyChangeTime = nil
+    button.spellChangeTime = nil
+    button.cachedHotkey = nil
+
+    button.hasAssistedGlow = false
+    button.hasProcGlow = false
+    button.hasDefensiveGlow = false
+
+    -- Do NOT set alpha to 0 here — defensive icons set it before showing via ShowDefensiveIcon,
+    -- and DPS icons are shown directly via icon:Show() without a fadeIn:Play() call.
+    button:Hide()
+
+    return button
+end
+
+-- Helper: Create a single defensive icon button at the specified index (0-based)
+-- Position offset is calculated based on index, orientation, and defensive position
+local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
+    -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
+    if not button then return nil end
+
+    -- Defensive-specific slot tracking
+    button.iconIndex = index
+
+    -- Position the button relative to mainFrame based on queue orientation and defensive position
+    local firstIconCenter = actualIconSize / 2
+    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or math.max(spacing, baseSpacing)
+    local iconOffset = index * (actualIconSize + spacing)
+
+    if queueOrientation == "LEFT" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
+        else -- LEADING
+            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
+        end
+    elseif queueOrientation == "RIGHT" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -effectiveSpacing)
+        else -- LEADING
+            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
+        end
+    elseif queueOrientation == "UP" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset)
+        else -- LEADING
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
+        end
+    elseif queueOrientation == "DOWN" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
+        else -- LEADING
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
+        end
+    end
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
@@ -359,33 +418,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    -- Fade-in animation
-    local fadeIn = button:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    button.fadeIn = fadeIn
-    
-    -- Fade-out animation
-    local fadeOut = button:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
-        button:Hide()
-        button:SetAlpha(0)
-    end)
-    button.fadeOut = fadeOut
-
-    button:SetAlpha(0)
-    button:Hide()
-    
+    -- Fade-in animation (already created by CreateBaseIcon; re-register the Masque group here)
     -- Register with Masque if available
     local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
     if MasqueDefensiveGroup then
@@ -849,18 +882,16 @@ end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
 function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
-    local button = CreateFrame("Button", nil, addon.mainFrame)
-    if not button then return nil end
-    
     local isFirstIcon = (index == 1)
     local firstIconScale = profile.firstIconScale or 1.2
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
-    
-    button:SetSize(actualIconSize, actualIconSize)
-    
+
+    -- Build shared icon skeleton (textures, cooldowns, hotkey text, animations)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
+    if not button then return nil end
+
     -- Position based on orientation
-    -- Icons start from one edge, grab tab is at the opposite edge
     if orientation == "RIGHT" then
         button:SetPoint("RIGHT", -offset, 0)
     elseif orientation == "UP" then
@@ -871,173 +902,22 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
         button:SetPoint("LEFT", offset, 0)
     end
 
-    -- Slot background (Blizzard style depth effect)
-    local slotBackground = button:CreateTexture(nil, "BACKGROUND", nil, 0)
-    slotBackground:SetAllPoints(button)
-    slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
-    button.SlotBackground = slotBackground
-
-    local iconTexture = button:CreateTexture(nil, "ARTWORK")
-    -- Icon fills button completely
-    iconTexture:SetAllPoints(button)
-    button.iconTexture = iconTexture
-    
-    -- Mask texture to clip icon corners to beveled frame shape
-    -- Padding scales with icon size (17% on each side compensates for atlas internal padding)
-    local maskPadding = math_floor(actualIconSize * 0.17)
-    local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
-    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", maskPadding, -maskPadding)
-    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
-    iconTexture:AddMaskTexture(iconMask)
-    button.IconMask = iconMask
-    
-    -- Normal texture (button frame border - Blizzard style, centered)
-    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
-    local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    normalTexture:SetSize(actualIconSize, actualIconSize)
-    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
-    button.NormalTexture = normalTexture
-    
-    -- Pushed texture (shown when button is pressed - Blizzard style)
-    local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
-    pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    pushedTexture:SetSize(actualIconSize, actualIconSize)
-    pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
-    pushedTexture:Hide()
-    button.PushedTexture = pushedTexture
-    
-    -- Highlight texture (shown on mouseover - Blizzard style)
-    -- 0.5, -0.5 offset matches Blizzard's half-pixel alignment
-    local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
-    highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    highlightTexture:SetSize(actualIconSize, actualIconSize)
-    highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    button.HighlightTexture = highlightTexture
-    
-    -- Anchored at CENTER so scale animation grows evenly in all directions
-    local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)  -- Slightly larger than icon
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
-    
-    -- Flash texture - uses Blizzard's mouseover atlas (beveled corners)
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    flashTexture:SetAllPoints(flashFrame)
-    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)  -- Bright gold (values >1 boost ADD blend)
-    flashTexture:SetBlendMode("ADD")
-    flashTexture:Hide()
-    
-    button.Flash = flashTexture
-    button.FlashFrame = flashFrame
-    
-    button.flashing = 0
-    button.flashtime = 0
-
-    local cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
-    -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
-    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
-    cooldown:SetDrawEdge(false)
-    cooldown:SetDrawSwipe(true)
-    cooldown:SetReverse(false)
-    cooldown:SetSwipeColor(0, 0, 0, 0.6)
-
-    -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
-    -- Access the countdown text region and modify its appearance
-    local cooldownText = cooldown:GetRegions()
-    if cooldownText and cooldownText.SetFont then
-        local font, _, flags = cooldownText:GetFont()
-        if font then
-            local smallerSize = math_floor(actualIconSize * 0.25)  -- 25% of icon size (was ~33%)
-            cooldownText:SetFont(font, smallerSize, flags)
-            cooldownText:SetTextColor(1, 1, 1, 0.5)  -- 50% alpha (more transparent)
-        end
-    end
-
-    -- Clear cooldown to prevent visual artifacts on load
-    cooldown:Clear()
-    cooldown:Hide()  -- Hide until a cooldown is actually set
-    button.cooldown = cooldown
-
-    -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
-    -- Same 4px inset as main cooldown to match Blizzard's ActionButtonTemplate
-    local chargeCooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-    chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
-    chargeCooldown:SetDrawEdge(true)
-    chargeCooldown:SetDrawSwipe(true)
-    chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
-    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
-    chargeCooldown:Clear()  -- Clear to prevent visual artifacts on load
-    chargeCooldown:Hide()
-    button.chargeCooldown = chargeCooldown
-    
-    -- Hotkey text on highest frame level to ensure visibility above all animations
-    local hotkeyFrame = CreateFrame("Frame", nil, button)
-    hotkeyFrame:SetAllPoints(button)
-    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
-    local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE))
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    
-    if isFirstIcon then
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_FIRST, HOTKEY_OFFSET_FIRST)
-    else
-        hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", HOTKEY_OFFSET_QUEUE, HOTKEY_OFFSET_QUEUE)
-    end
-    
-    button.hotkeyText = hotkeyText
-    button.hotkeyFrame = hotkeyFrame
-    
-    -- Center text for "WAIT" indicator when Assisted Combat suggests waiting for resources
-    local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
-    local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
-    centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
-    centerText:SetTextColor(1, 0.9, 0.2, 1)  -- Gold/yellow color
-    centerText:SetJustifyH("CENTER")
-    centerText:SetJustifyV("MIDDLE")
-    centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    centerText:SetText("")
-    centerText:Hide()
-    button.centerText = centerText
-    
-    -- Charge count text (bottom-right, like action bar charges)
-    local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    local chargeFontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(actualIconSize * HOTKEY_FONT_SCALE * 0.65))
-    chargeText:SetFont(STANDARD_TEXT_FONT, chargeFontSize, "OUTLINE")
-    chargeText:SetTextColor(1, 1, 1, 1)
-    chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4, 4)
-    chargeText:SetText("")
-    chargeText:Hide()
-    button.chargeText = chargeText
-
-
-
     -- Enable dragging from icons (delegates to main frame)
     button:RegisterForDrag("LeftButton")
     button:SetScript("OnDragStart", function(self)
         local profile = addon:GetProfile()
         if IsPanelLocked(profile) then return end
-        -- Detach from target frame anchor before dragging so position saves correctly
         if addon.targetframe_anchored and profile then
             addon.targetframe_anchored = false
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
         end
-        addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
+        addon.mainFrame:StartMoving(true)
     end)
 
     button:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
         UIFrameFactory.SavePosition(addon)
-        -- Re-apply target frame anchor if enabled
         if addon.UpdateTargetFrameAnchor then
             addon:UpdateTargetFrameAnchor()
         end
@@ -1051,21 +931,17 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             if IsPanelLocked(profile) then return end
 
             if self.spellID then
-                -- Spell-specific options
                 if IsShiftKeyDown() then
                     addon:ToggleSpellBlacklist(self.spellID)
                 else
                     addon:OpenHotkeyOverrideDialog(self.spellID)
                 end
             else
-                -- Empty slot - show general options
                 if IsShiftKeyDown() then
-                    -- Toggle lock
                     local nowLocked = TogglePanelLock(profile)
                     local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 else
-                    -- Open options panel
                     if addon.OpenOptionsPanel then
                         addon:OpenOptionsPanel()
                     else
@@ -1075,21 +951,19 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             end
         end
     end)
-    
+
     button:SetScript("OnEnter", function(self)
         -- Show grab tab when hovering over icons
         if addon.grabTab and addon.grabTab.fadeIn then
-            -- Stop any fade-out in progress
             if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
                 addon.grabTab.fadeOut:Stop()
             end
             addon.grabTab:Show()
             addon.grabTab.fadeIn:Play()
         end
-        
+
         if self.spellID then
             local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
-            -- Migration: handle old settings
             if not tooltipMode and addon.db and addon.db.profile then
                 if addon.db.profile.showTooltips == false then
                     tooltipMode = "never"
@@ -1107,10 +981,10 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             if showTooltip then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetSpellByID(self.spellID)
-                
+
                 local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
                 local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
-                
+
                 if hotkey and hotkey ~= "" then
                     GameTooltip:AddLine(" ")
                     if isOverride then
@@ -1123,7 +997,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cffff6666No hotkey found|r")
                 end
-                
+
                 if not inCombat then
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
@@ -1134,25 +1008,19 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                         GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist|r")
                     end
                 end
-                
+
                 GameTooltip:Show()
             end
         end
     end)
-    
+
     button:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
-        -- Hide grab tab if mouse isn't over main frame or grab tab, and not dragging
         if addon.grabTab and addon.grabTab.fadeOut and not addon.mainFrame:IsMouseOver() and not addon.grabTab:IsMouseOver() and not addon.grabTab.isDragging then
             addon.grabTab.fadeOut:Play()
         end
     end)
-    
-    button.lastCooldownStart = 0
-    button.lastCooldownDuration = 0
-    button.spellID = nil
-    button:Hide()
-    
+
     -- Register with Masque if available
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     if MasqueGroup then
@@ -1166,7 +1034,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
-    
+
     return button
 end
 

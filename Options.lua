@@ -67,6 +67,82 @@ local function BuildSpellbookCache()
     spellbookCacheBuilt = true
 end
 
+-- Get filtered items from action bars and bags for dropdown
+-- Returns {[-itemID] = "ItemName [Item]"} — negative keys for AddSpellToList convention
+local function GetFilteredActionBarItems(filterText, excludeList)
+    local results = {}
+    local filter = (filterText or ""):trim()
+    local filterLower = filter:lower()
+
+    if filter == "" or #filter < 2 then return results end
+
+    -- Strip item: prefix for filtering (user might type "item:5512" or just "health")
+    local itemPrefixID = filter:match("^[iI]tem:(%d+)$")
+
+    -- Build exclusion set (list stores negative values for items)
+    local excluded = {}
+    if excludeList then
+        for _, entry in ipairs(excludeList) do
+            excluded[entry] = true
+        end
+    end
+
+    local seen = {}  -- deduplicate items across sources
+    local count = 0
+    local MAX_ITEMS = 10
+
+    local function TryAddItem(itemID)
+        if count >= MAX_ITEMS then return end
+        if seen[itemID] then return end
+        if excluded[-itemID] then return end  -- stored as -itemID in list
+
+        local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
+        if not itemName then return end
+
+        -- Match by name, item ID string, or exact item: prefix
+        local matched = false
+        if itemPrefixID then
+            matched = (tostring(itemID) == itemPrefixID)
+        else
+            local nameLower = itemName:lower()
+            local idString = tostring(itemID)
+            matched = nameLower:find(filterLower, 1, true) or idString:find(filter, 1, true)
+        end
+
+        if matched then
+            seen[itemID] = true
+            results[-itemID] = "|cff00ccff" .. itemName .. "|r (item:" .. itemID .. ")"
+            count = count + 1
+        end
+    end
+
+    -- Source 1: Action bar slots (items placed on bars)
+    for slot = 1, 180 do
+        if count >= MAX_ITEMS then break end
+        local actionType, id = GetActionInfo(slot)
+        if actionType == "item" and id then
+            TryAddItem(id)
+        end
+    end
+
+    -- Source 2: Bag items (backpack + 4 bags)
+    if C_Container and C_Container.GetContainerNumSlots then
+        for bag = 0, 4 do
+            if count >= MAX_ITEMS then break end
+            local numSlots = C_Container.GetContainerNumSlots(bag) or 0
+            for slot = 1, numSlots do
+                if count >= MAX_ITEMS then break end
+                local containerInfo = C_Container.GetContainerItemInfo(bag, slot)
+                if containerInfo and containerInfo.itemID then
+                    TryAddItem(containerInfo.itemID)
+                end
+            end
+        end
+    end
+
+    return results
+end
+
 -- Get filtered spells for dropdown based on search text
 local function GetFilteredSpellbookSpells(filterText, excludeList)
     local results = {}
@@ -380,7 +456,7 @@ function Options.UpdateHotkeyOverrideOptions(addon)
         hotkeyArgs[key] = nil
     end
 
-    local hotkeyOverrides = addon.db.char.hotkeyOverrides or {}
+    local hotkeyOverrides = addon.db.profile.hotkeyOverrides or {}
 
     -- Ensure spellbook cache is built
     BuildSpellbookCache()
@@ -609,26 +685,36 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
         Options.UpdateDefensivesOptions(addon)
     end
     
-    for i, spellID in ipairs(spellList) do
-        local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or ("Spell " .. spellID)
-        local spellIcon = spellInfo and spellInfo.iconID or 134400
-        
-        -- Add cooldown info if available
-        local cooldownInfo = ""
-        if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
-            local cdInfo = C_Spell.GetSpellCooldown(spellID)
-            -- Handle secret values (WoW 12.0+) - duration may be secret in combat
-            local duration = cdInfo and cdInfo.duration
-            local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
-            if duration and not isSecret and duration > 1.5 then
-                cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
+    for i, entry in ipairs(spellList) do
+        local isItemEntry = (entry < 0)
+        local displayName, displayIcon, cooldownInfo
+
+        if isItemEntry then
+            -- Negative entry = item ID
+            local itemID = -entry
+            local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
+            displayName = itemName and (itemName .. " |cff00ccff[Item]|r") or ("Item " .. itemID)
+            displayIcon = itemTexture or 134400
+            cooldownInfo = ""
+        else
+            -- Positive entry = spell ID
+            local spellInfo = SpellQueue.GetCachedSpellInfo(entry)
+            displayName = spellInfo and spellInfo.name or ("Spell " .. entry)
+            displayIcon = spellInfo and spellInfo.iconID or 134400
+            cooldownInfo = ""
+            if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
+                local cdInfo = C_Spell.GetSpellCooldown(entry)
+                local duration = cdInfo and cdInfo.duration
+                local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+                if duration and not isSecret and duration > 1.5 then
+                    cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
+                end
             end
         end
         
         defensivesArgs[listType .. "_" .. i] = {
             type = "group",
-            name = i .. ". |T" .. spellIcon .. ":16:16:0:0|t " .. spellName .. cooldownInfo,
+            name = i .. ". |T" .. displayIcon .. ":16:16:0:0|t " .. displayName .. cooldownInfo,
             inline = true,
             order = baseOrder + (i * 0.1),
             args = {
@@ -675,27 +761,51 @@ local function CreateSpellListEntries(addon, defensivesArgs, spellList, listType
     end
 end
 
--- Helper to add a spell to a list (used by both dropdown and manual input)
-local function AddSpellToList(addon, spellList, spellID)
+-- Helper to add a spell or item to a list (used by both dropdown and manual input)
+-- Positive ID = spell, negative ID = item (stored as -itemID in the list)
+local function AddSpellToList(addon, spellList, id)
     if not spellList then return false end
-    if not spellID or spellID <= 0 then return false end
+    if not id or id == 0 then return false end
 
+    if id < 0 then
+        -- Item entry: validate item exists
+        local itemID = -id
+        local itemName = GetItemInfo(itemID)
+        if not itemName then
+            addon:Print("Invalid item ID: " .. itemID .. " (item not found or not cached)")
+            return false
+        end
+
+        -- Check if already in list
+        for _, existingID in ipairs(spellList) do
+            if existingID == id then
+                addon:Print("Item already in list: " .. itemName)
+                return false
+            end
+        end
+
+        table.insert(spellList, id)
+        addon:Print("Added item: " .. itemName)
+        return true
+    end
+
+    -- Positive ID: spell entry (original behavior)
     -- Validate spell exists
-    local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+    local spellInfo = SpellQueue.GetCachedSpellInfo(id)
     if not spellInfo or not spellInfo.name then
-        addon:Print("Invalid spell ID: " .. spellID .. " (spell not found)")
+        addon:Print("Invalid spell ID: " .. id .. " (spell not found)")
         return false
     end
 
     -- Check if already in list
     for _, existingID in ipairs(spellList) do
-        if existingID == spellID then
+        if existingID == id then
             addon:Print("Spell already in list: " .. spellInfo.name)
             return false
         end
     end
 
-    table.insert(spellList, spellID)
+    table.insert(spellList, id)
     addon:Print("Added: " .. spellInfo.name)
     return true
 end
@@ -712,11 +822,17 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
         Options.UpdateDefensivesOptions(addon)
     end
 
-    -- Search input field (type to filter by name or ID)
+    -- Search input field (type to filter by name or ID, or -itemID/item:ID for items)
+    local allowItems = addon.db and addon.db.profile and addon.db.profile.enableItemFeatures
+        and addon.db.profile.defensives and addon.db.profile.defensives.allowItems
+    local searchDesc = L["Search spell desc"]
+    if allowItems then
+        searchDesc = searchDesc .. "\nFor items: use -itemID or item:ID (e.g., -5512 or item:5512)"
+    end
     defensivesArgs["search_input_" .. listType] = {
         type = "input",
         name = L["Add to %s"]:format(listName),
-        desc = L["Search spell desc"],
+        desc = searchDesc,
         order = order,
         width = "double",
         get = function() return spellSearchFilter[listType] or "" end,
@@ -738,6 +854,14 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
         width = "double",
         values = function()
             local results = GetFilteredSpellbookSpells(spellSearchFilter[listType], spellList)
+            -- Merge item results from action bars + bags (only when allowItems is enabled)
+            if addon.db and addon.db.profile and addon.db.profile.enableItemFeatures
+                and addon.db.profile.defensives and addon.db.profile.defensives.allowItems then
+                local itemResults = GetFilteredActionBarItems(spellSearchFilter[listType], spellList)
+                for k, v in pairs(itemResults) do
+                    results[k] = v
+                end
+            end
             -- If no results and filter looks like valid input, show helper text
             local filter = (spellSearchFilter[listType] or ""):trim()
             if next(results) == nil and #filter >= 2 then
@@ -763,18 +887,58 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
         end,
     }
 
-    -- Add button for manual entry (spell ID or exact name not in spellbook)
+    -- Add button for manual entry (spell ID, item:ID, -itemID, or exact name)
+    local addDesc = L["Add spell dropdown desc"]
+    if allowItems then
+        addDesc = addDesc .. "\nFor items: use -itemID (e.g., -5512) or item:ID (e.g., item:5512)"
+    end
     defensivesArgs["add_button_" .. listType] = {
         type = "execute",
         name = L["Add"],
-        desc = L["Add spell dropdown desc"],
+        desc = addDesc,
         order = order + 0.2,
         width = "half",
         func = function()
             local val = (spellSearchFilter[listType] or ""):trim()
             if val == "" then return end
 
-            local spellID = tonumber(val)
+            local itemsEnabled = addon.db and addon.db.profile and addon.db.profile.enableItemFeatures
+                and addon.db.profile.defensives and addon.db.profile.defensives.allowItems
+
+            -- Check for "item:ID" syntax (user-friendly alternative to negative numbers)
+            local itemPrefix = val:match("^[iI]tem:(%d+)$")
+            if itemPrefix then
+                if not itemsEnabled then
+                    addon:Print("Enable 'Allow Items in Spell Lists' to add items")
+                    return
+                end
+                local itemID = tonumber(itemPrefix)
+                if itemID and itemID > 0 then
+                    if AddSpellToList(addon, spellList, -itemID) then
+                        spellSearchFilter[listType] = ""
+                        updateFunc()
+                    end
+                    return
+                end
+            end
+
+            local numVal = tonumber(val)
+
+            -- Negative number = item ID
+            if numVal and numVal < 0 then
+                if not itemsEnabled then
+                    addon:Print("Enable 'Allow Items in Spell Lists' to add items")
+                    return
+                end
+                if AddSpellToList(addon, spellList, numVal) then
+                    spellSearchFilter[listType] = ""
+                    updateFunc()
+                end
+                return
+            end
+
+            -- Positive number = spell ID
+            local spellID = numVal
 
             -- If not a number, try looking up by name
             if not spellID then
@@ -789,7 +953,7 @@ local function CreateAddSpellInput(addon, defensivesArgs, spellList, listType, o
                     end
                 end
                 if not spellID then
-                    addon:Print("Spell not found: " .. val)
+                    addon:Print("Spell/item not found: " .. val .. " (for items, use -itemID or item:ID)")
                     return
                 end
             end
@@ -832,6 +996,7 @@ function Options.UpdateDefensivesOptions(addon)
     -- Clear old dynamic entries (preserve static elements)
     local staticKeys = {
         info = true, header = true, enabled = true, showProcs = true,
+        itemsHeader = true, allowItems = true, autoInsertPotions = true,
         displayHeader = true, iconScale = true, maxIcons = true, position = true,
         showHotkeys = true, glowMode = true, showFlash = true, displayMode = true, showHealthBar = true,
         showPetHealthBar = true,
@@ -925,6 +1090,33 @@ local function CreateOptionsTable(addon)
                         order = 1,
                         fontSize = "medium"
                     },
+                    displayMode = {
+                        type = "select",
+                        name = L["Display Mode"],
+                        desc = L["Display Mode desc"],
+                        order = 2,
+                        width = "normal",
+                        values = {
+                            disabled = L["Disabled"],
+                            queue    = L["Standard Queue"],
+                            overlay  = L["Nameplate Overlay"],
+                            both     = L["Both"],
+                        },
+                        sorting = { "disabled", "queue", "overlay", "both" },
+                        get = function() return addon.db.profile.displayMode or "queue" end,
+                        set = function(_, val)
+                            addon.db.profile.displayMode = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then
+                                NPO.Destroy(addon)
+                                if val == "overlay" or val == "both" then
+                                    NPO.Create(addon)
+                                end
+                            end
+                            addon:ForceUpdate()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
                     -- ICON LAYOUT (10-19)
                     layoutHeader = {
                         type = "header",
@@ -1006,6 +1198,10 @@ local function CreateOptionsTable(addon)
                         desc = L["Hide Out of Combat desc"],
                         order = 21,
                         width = "full",
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                         get = function() return addon.db.profile.hideQueueOutOfCombat end,
                         set = function(_, val)
                             addon.db.profile.hideQueueOutOfCombat = val
@@ -1018,6 +1214,10 @@ local function CreateOptionsTable(addon)
                         desc = L["Hide When Mounted desc"],
                         order = 22,
                         width = "full",
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                         get = function() return addon.db.profile.hideQueueWhenMounted end,
                         set = function(_, val)
                             addon.db.profile.hideQueueWhenMounted = val
@@ -1030,7 +1230,11 @@ local function CreateOptionsTable(addon)
                         desc = L["Require Hostile Target desc"],
                         order = 23,
                         width = "full",
-                        disabled = function() return addon.db.profile.hideQueueOutOfCombat end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return addon.db.profile.hideQueueOutOfCombat
+                                or dm == "disabled" or dm == "overlay"
+                        end,
                         get = function() return addon.db.profile.requireHostileTarget end,
                         set = function(_, val)
                             addon.db.profile.requireHostileTarget = val
@@ -1149,12 +1353,71 @@ local function CreateOptionsTable(addon)
                             addon.db.profile.panelInteraction = val
                         end
                     },
+                    -- ITEMS (50-59)
+                    itemsHeader = {
+                        type = "header",
+                        name = L["Items"],
+                        order = 50,
+                    },
+                    enableItemFeatures = {
+                        type = "toggle",
+                        name = L["Enable Item Features"],
+                        desc = L["Enable Item Features desc"],
+                        order = 51,
+                        width = "full",
+                        get = function() return addon.db.profile.enableItemFeatures end,
+                        set = function(_, val)
+                            addon.db.profile.enableItemFeatures = val
+                            addon:ForceUpdate()
+                            Options.UpdateDefensivesOptions(addon)
+                            if AceConfigRegistry then
+                                AceConfigRegistry:NotifyChange("JustAssistedCombat")
+                            end
+                        end
+                    },
+                    -- RESET (990+)
+                    resetHeader = {
+                        type = "header",
+                        name = "",
+                        order = 990,
+                    },
+                    resetDefaults = {
+                        type = "execute",
+                        name = L["Reset to Defaults"],
+                        desc = L["Reset General desc"],
+                        order = 991,
+                        width = "normal",
+                        func = function()
+                            local p = addon.db.profile
+                            p.displayMode           = "queue"
+                            p.iconSize              = 36
+                            p.iconSpacing           = 1
+                            p.queueOrientation      = "LEFT"
+                            p.targetFrameAnchor     = "DISABLED"
+                            p.hideQueueOutOfCombat  = false
+                            p.hideQueueWhenMounted  = false
+                            p.requireHostileTarget  = false
+                            p.tooltipMode           = "always"
+                            p.frameOpacity          = 1.0
+                            p.queueIconDesaturation = 0
+                            p.gamepadIconStyle      = "xbox"
+                            p.panelInteraction      = "unlocked"
+                            p.enableItemFeatures    = true
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
+                            addon:UpdateTargetFrameAnchor()
+                            addon:UpdateFrameSize()
+                            addon:ForceUpdate()
+                            Options.UpdateDefensivesOptions(addon)
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
                 }
             },
             offensive = {
                 type = "group",
                 name = L["Offensive"],
-                order = 2,
+                order = 3,
                 args = {
                     -- QUEUE CONTENT (10-19)
                     contentHeader = {
@@ -1196,7 +1459,8 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.hideItemAbilities = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function() return not addon.db.profile.enableItemFeatures end,
                     },
                     -- DISPLAY (15-19)
                     displayHeader = {
@@ -1289,6 +1553,33 @@ local function CreateOptionsTable(addon)
                         fontSize = "medium"
                     },
                     -- Dynamic blacklist entries added by UpdateBlacklistOptions
+                    -- RESET (990+)
+                    resetHeader = {
+                        type = "header",
+                        name = "",
+                        order = 990,
+                    },
+                    resetDefaults = {
+                        type = "execute",
+                        name = L["Reset to Defaults"],
+                        desc = L["Reset Offensive desc"],
+                        order = 991,
+                        width = "normal",
+                        func = function()
+                            local p = addon.db.profile
+                            p.maxIcons               = 4
+                            p.firstIconScale         = 1.2
+                            p.showOffensiveHotkeys   = true
+                            p.glowMode               = "all"
+                            p.showFlash              = true
+                            p.includeHiddenAbilities = true
+                            p.showSpellbookProcs     = true
+                            p.hideItemAbilities      = false
+                            addon:UpdateFrameSize()
+                            addon:ForceUpdate()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
                 },
             },
             hotkeyOverrides = {
@@ -1304,10 +1595,304 @@ local function CreateOptionsTable(addon)
                     },
                 },
             },
+            nameplateOverlay = {
+                type = "group",
+                name = L["Nameplate Overlay"],
+                order = 2,
+                args = {
+                    info = {
+                        type = "description",
+                        name = L["Nameplate Overlay desc"],
+                        order = 1,
+                        fontSize = "medium",
+                    },
+                    anchor = {
+                        type = "select",
+                        name = L["Nameplate Anchor"],
+                        desc = L["Nameplate Anchor desc"],
+                        order = 3,
+                        width = "normal",
+                        values = {
+                            LEFT   = L["Left"],
+                            RIGHT  = L["Right"],
+                        },
+                        sorting = { "LEFT", "RIGHT" },
+                        get = function() return addon.db.profile.nameplateOverlay.anchor or "LEFT" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.anchor = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    healthBarPosition = {
+                        type = "select",
+                        name = L["Health Bar Position"],
+                        desc = L["Health Bar Position desc"],
+                        order = 3.5,
+                        width = "normal",
+                        values = {
+                            outside = L["Outside"],
+                            inside  = L["Inside"],
+                        },
+                        sorting = { "outside", "inside" },
+                        get = function() return addon.db.profile.nameplateOverlay.healthBarPosition or "outside" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.healthBarPosition = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            if dm ~= "overlay" and dm ~= "both" then return true end
+                            -- Only meaningful for vertical expansion (up/down)
+                            local exp = addon.db.profile.nameplateOverlay.expansion or "out"
+                            return exp == "out"
+                        end,
+                    },
+                    expansion = {
+                        type = "select",
+                        name = L["Expansion Direction"],
+                        desc = L["Expansion Direction desc"],
+                        order = 3.7,
+                        width = "normal",
+                        values = {
+                            out  = L["Horizontal (Out)"],
+                            up   = L["Vertical - Up"],
+                            down = L["Vertical - Down"],
+                        },
+                        sorting = { "out", "up", "down" },
+                        get = function() return addon.db.profile.nameplateOverlay.expansion or "out" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.expansion = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    maxIcons = {
+                        type = "select",
+                        name = L["Nameplate Queue Slots"],
+                        order = 4,
+                        width = "normal",
+                        values = { [1] = "1", [2] = "2", [3] = "3" },
+                        sorting = { 1, 2, 3 },
+                        get = function() return addon.db.profile.nameplateOverlay.maxIcons or 1 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.maxIcons = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    iconSize = {
+                        type = "range",
+                        name = L["Nameplate Icon Size"],
+                        order = 5,
+                        width = "normal",
+                        min = 16, max = 48, step = 2,
+                        get = function() return addon.db.profile.nameplateOverlay.iconSize or 26 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.iconSize = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    showGlow = {
+                        type = "select",
+                        name = L["Highlight Mode"],
+                        desc = L["Highlight Mode desc"],
+                        order = 6,
+                        width = "normal",
+                        values = {
+                            all         = L["All Glows"],
+                            primaryOnly = L["Primary Only"],
+                            procOnly    = L["Proc Only"],
+                            none        = L["No Glows"],
+                        },
+                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        get = function()
+                            local npo = addon.db.profile.nameplateOverlay
+                            -- migrate old showGlow boolean to glowMode string
+                            if npo.glowMode then return npo.glowMode end
+                            return npo.showGlow ~= false and "all" or "none"
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.glowMode = val
+                            addon.db.profile.nameplateOverlay.showGlow = nil  -- clear legacy key
+                            addon:ForceUpdateAll()  -- must trigger OnHealthChanged to re-run RenderDefensives
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    showHotkey = {
+                        type = "toggle",
+                        name = L["Show Offensive Hotkeys"],
+                        order = 7,
+                        width = "normal",
+                        get = function() return addon.db.profile.nameplateOverlay.showHotkey end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.showHotkey = val
+                            addon:ForceUpdate()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    showDefensives = {
+                        type = "toggle",
+                        name = L["Nameplate Show Defensives"],
+                        desc = L["Nameplate Show Defensives desc"],
+                        order = 11,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.showDefensives end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.showDefensives = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    defensiveDisplayMode = {
+                        type = "select",
+                        name = L["Nameplate Defensive Display Mode"],
+                        desc = L["Nameplate Defensive Display Mode desc"],
+                        order = 11.5,
+                        width = "normal",
+                        values = {
+                            combatOnly = L["In Combat Only"],
+                            always     = L["Always"],
+                        },
+                        sorting = { "combatOnly", "always" },
+                        get = function() return addon.db.profile.nameplateOverlay.defensiveDisplayMode or "combatOnly" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.defensiveDisplayMode = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return (dm ~= "overlay" and dm ~= "both")
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    defensiveShowProcs = {
+                        type = "toggle",
+                        name = L["Nameplate Defensive Show Procs"],
+                        desc = L["Nameplate Defensive Show Procs desc"],
+                        order = 11.7,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.defensiveShowProcs ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.defensiveShowProcs = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return (dm ~= "overlay" and dm ~= "both")
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    maxDefensiveIcons = {
+                        type = "select",
+                        name = L["Nameplate Defensive Count"],
+                        order = 12,
+                        width = "normal",
+                        values = { [1] = "1", [2] = "2", [3] = "3" },
+                        sorting = { 1, 2, 3 },
+                        get = function() return addon.db.profile.nameplateOverlay.maxDefensiveIcons or 1 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.maxDefensiveIcons = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return (dm ~= "overlay" and dm ~= "both")
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    showHealthBar = {
+                        type = "toggle",
+                        name = L["Nameplate Show Health Bar"],
+                        desc = L["Nameplate Show Health Bar desc"],
+                        order = 13,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.showHealthBar end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.showHealthBar = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return (dm ~= "overlay" and dm ~= "both")
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    -- RESET (990+)
+                    resetHeader = {
+                        type = "header",
+                        name = "",
+                        order = 990,
+                    },
+                    resetDefaults = {
+                        type = "execute",
+                        name = L["Reset to Defaults"],
+                        desc = L["Reset Overlay desc"],
+                        order = 991,
+                        width = "normal",
+                        func = function()
+                            local npo = addon.db.profile.nameplateOverlay
+                            wipe(npo)
+                            npo.maxIcons             = 3
+                            npo.anchor               = "RIGHT"
+                            npo.expansion            = "out"
+                            npo.healthBarPosition    = "outside"
+                            npo.iconSize             = 32
+                            npo.showGlow             = true
+                            npo.glowMode             = "all"
+                            npo.showHotkey           = true
+                            npo.showDefensives       = true
+                            npo.maxDefensiveIcons    = 3
+                            npo.defensiveDisplayMode = "combatOnly"
+                            npo.defensiveShowProcs   = true
+                            npo.showHealthBar        = true
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                },
+            },
             defensives = {
                 type = "group",
                 name = L["Defensives"],
-                order = 3,
+                order = 4,
                 args = {
                     -- QUEUE CONTENT (2-4)
                     header = {
@@ -1342,6 +1927,42 @@ local function CreateOptionsTable(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
+                    },
+                    -- ITEMS (4.3-4.9)
+                    itemsHeader = {
+                        type = "header",
+                        name = L["Items"],
+                        order = 4.3,
+                    },
+                    allowItems = {
+                        type = "toggle",
+                        name = L["Allow Items in Spell Lists"],
+                        desc = L["Allow Items in Spell Lists desc"],
+                        order = 4.5,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.allowItems == true end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.allowItems = val
+                            Options.UpdateDefensivesOptions(addon)
+                        end,
+                        disabled = function()
+                            return not addon.db.profile.defensives.enabled or not addon.db.profile.enableItemFeatures
+                        end,
+                    },
+                    autoInsertPotions = {
+                        type = "toggle",
+                        name = L["Auto-Insert Health Potions"],
+                        desc = L["Auto-Insert Health Potions desc"],
+                        order = 4.6,
+                        width = "full",
+                        get = function() return addon.db.profile.defensives.autoInsertPotions ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.defensives.autoInsertPotions = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function()
+                            return not addon.db.profile.defensives.enabled or not addon.db.profile.enableItemFeatures
+                        end,
                     },
                     -- DISPLAY (5-9)
                     displayHeader = {
@@ -1671,6 +2292,47 @@ local function CreateOptionsTable(addon)
                         end,
                     },
                     -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
+                    -- RESET (990+)
+                    resetHeader = {
+                        type = "header",
+                        name = "",
+                        order = 990,
+                    },
+                    resetDefaults = {
+                        type = "execute",
+                        name = L["Reset to Defaults"],
+                        desc = L["Reset Defensives desc"],
+                        order = 991,
+                        width = "normal",
+                        func = function()
+                            local def = addon.db.profile.defensives
+                            def.enabled          = true
+                            def.showProcs        = true
+                            def.glowMode         = "procOnly"
+                            def.showFlash        = true
+                            def.showHotkeys      = true
+                            def.position         = "SIDE1"
+                            def.showHealthBar    = false
+                            def.showPetHealthBar = false
+                            def.iconScale        = 1.2
+                            def.maxIcons         = 3
+                            def.selfHealThreshold = 80
+                            def.cooldownThreshold = 60
+                            def.petHealThreshold  = 50
+                            def.allowItems        = false
+                            def.autoInsertPotions = true
+                            def.displayMode       = "combatOnly"
+                            if UIHealthBar then
+                                if UIHealthBar.Destroy then UIHealthBar.Destroy() end
+                                if UIHealthBar.DestroyPet then UIHealthBar.DestroyPet() end
+                            end
+                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
+                                UIFrameFactory.CreateSpellIcons(addon)
+                            end
+                            addon:ForceUpdateAll()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
                 },
             },
             profiles = {
