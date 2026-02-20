@@ -22,7 +22,6 @@ L["Clear All Hotkeys desc"] = "Удалить все пользовательс�
 L["Max Icons"] = "Макс. иконок"
 L["Icon Size"] = "Размер иконок"
 L["Spacing"] = "Расстояние"
-L["UI Scale"] = "Масштаб интерфейса"
 L["Primary Spell Scale"] = "Масштаб главного заклинания"
 L["Queue Orientation"] = "Ориентация очереди"
 L["Gamepad Icon Style"] = "Стиль иконок геймпада"
@@ -110,7 +109,6 @@ L["In Combat Only"] = "Только в бою"
 L["Max Icons desc"] = "Максимум иконок (1 = основное, 2+ = очередь)"
 L["Icon Size desc"] = "Базовый размер иконок в пикселях"
 L["Spacing desc"] = "Расстояние между иконками в пикселях"
-L["UI Scale desc"] = "Множитель масштаба рамки"
 L["Primary Spell Scale desc"] = "Множитель масштаба основной иконки"
 L["Queue Orientation desc"] = "Направление роста очереди"
 L["Highlight Mode desc"] = "Какие эффекты свечения показывать на иконках заклинаний"
@@ -159,11 +157,6 @@ L["Major Cooldowns Priority desc"] = "Экстренная защита когд
 -- Defensive thresholds
 L["Self-Heal Threshold"] = "Порог самолечения"
 L["Self-Heal Threshold desc"] = "Показывать самолечение ниже этого % здоровья"
-L["Major Cooldown Threshold"] = "Порог большой перезарядки"
-L["Major Cooldown Threshold desc"] = "Показывать защитные ниже этого % здоровья"
-L["Pet Heal Threshold"] = "Порог лечения питомца"
-L["Pet Heal Threshold desc"] = "Показывать лечение питомца ниже этого % здоровья питомца"
-L["Threshold Note"] = "|cff888888В бою здоровье может быть скрыто. Обнаружение низкого здоровья (~35%).|r"
 
 -- Defensive display options
 L["Show Health Bar"] = "Показать полосу здоровья"
@@ -211,3 +204,63 @@ L["Add hotkey desc"] = "Добавить переопределение клав
 L["No matches"] = "Нет совпадений - попробуйте другой запрос"
 L["Please search and select a spell first"] = "Сначала найдите и выберите заклинание"
 L["Please enter a hotkey value"] = "Введите значение горячей клавиши"
+
+-- Display Mode (Standard Queue / Nameplate Overlay / Both / Disabled)
+L["Display Mode"] = "Display Mode"
+L["Display Mode desc"] = "Choose what to display: Standard Queue shows the main panel, Nameplate Overlay attaches icons to the target nameplate, Both enables all displays, Disabled hides everything."
+L["Standard Queue"] = "Standard Queue"
+L["Both"] = "Both"
+
+-- Item Features (8 keys)
+L["Items"] = "Items"
+L["Enable Item Features"] = "Enable Item Features"
+L["Enable Item Features desc"] = "Master toggle for all item-related features. When disabled, item abilities are hidden from the DPS queue and item insertion in defensive lists is disabled."
+L["Allow Items in Spell Lists"] = "Allow Items in Spell Lists"
+L["Allow Items in Spell Lists desc"] = "Enable adding consumables (potions, healthstones) to defensive spell lists. When enabled, the search dropdown will also scan your bags and action bars for items."
+L["Auto-Insert Health Potions"] = "Auto-Insert Health Potions"
+L["Auto-Insert Health Potions desc"] = "Automatically suggest a healing potion from your action bars when health is critically low, even if not manually added to your spell lists."
+
+-- Pet Rez/Summon and Pet Heal lists (pet classes only)
+L["Pet Rez/Summon Priority List"] = "Pet Rez/Summon Priority List"
+L["Pet Rez/Summon Priority desc"] = "Shown when pet is dead or missing. High priority - reliable in combat."
+L["Restore Pet Rez Defaults desc"] = "Reset pet rez/summon spells to class defaults"
+L["Pet Heal Priority List"] = "Pet Heal Priority List"
+L["Pet Heal Priority desc"] = "Shown when pet health is low. Best-effort - pet health may be hidden in combat."
+L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
+L["Show Pet Health Bar"] = "Show Pet Health Bar"
+L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only). Uses teal color. Auto-hides when no pet is active."
+
+-- Nameplate Overlay (16 keys)
+L["Nameplate Overlay"] = "Overlay"
+L["Nameplate Overlay desc"] = "Attach queue icons directly to the target's nameplate. Fully independent of the main panel - either or both can be enabled."
+L["Nameplate Queue Slots"] = "Queue Slots"
+L["Nameplate Anchor"] = "Anchor"
+L["Nameplate Anchor desc"] = "Which side of the nameplate DPS icons attach to. Defensive icons appear on the opposite side."
+L["Nameplate Icon Size"] = "Icon Size"
+L["Nameplate Show Defensives"] = "Show Defensive Icons"
+L["Nameplate Show Defensives desc"] = "Show defensive queue icons on the opposite side of the nameplate."
+L["Nameplate Defensive Display Mode"] = "Defensive Visibility"
+L["Nameplate Defensive Display Mode desc"] = "In Combat Only: show defensive icons only while in combat.\nAlways: show at all times."
+L["Nameplate Defensive Show Procs"] = "Show Procced Defensives"
+L["Nameplate Defensive Show Procs desc"] = "Show procced defensives (e.g. Victory Rush) on the nameplate overlay regardless of health."
+L["Nameplate Defensive Count"] = "Defensive Slots"
+L["Nameplate Show Health Bar"] = "Show Health Bar"
+L["Nameplate Show Health Bar desc"] = "Show a compact player health bar above the defensive icon cluster. Hides automatically when no defensives are visible."
+L["Health Bar Position"] = "Bar Position"
+L["Health Bar Position desc"] = "Controls where the health bar appears relative to the icon cluster. Outside: beyond the far edge of icons. Inside: between the nameplate and icon 1."
+
+-- Reset buttons (5 keys)
+L["Reset to Defaults"] = "Reset to Defaults"
+L["Reset General desc"] = "Reset all General settings to their default values."
+L["Reset Offensive desc"] = "Reset offensive display and content settings to defaults. The blacklist is not affected."
+L["Reset Overlay desc"] = "Reset all Overlay settings to their default values."
+L["Reset Defensives desc"] = "Reset Defensive display and behavior settings to defaults. Spell lists are not affected."
+
+-- Expansion Direction / positioning (7 keys)
+L["Outside"] = "Outside"
+L["Inside"] = "Inside"
+L["Expansion Direction"] = "Expansion Direction"
+L["Expansion Direction desc"] = "Direction icons stack when there are multiple slots. Horizontal expands away from the nameplate. Vertical Up/Down stacks icons above/below slot 1."
+L["Horizontal (Out)"] = "Horizontal (Out)"
+L["Vertical - Up"] = "Vertical - Up"
+L["Vertical - Down"] = "Vertical - Down"
