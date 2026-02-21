@@ -4,10 +4,19 @@
 
 ### Added
 
+- **Interrupt Reminder System** — Detects interruptible casts on your target via nameplate cast bar state and shows your best available interrupt as a "position 0" icon before the DPS queue. Works in both Standard Queue and Nameplate Overlay modes.
+  - **Interrupt Mode** dropdown: Important Only (shows for lethal/must-interrupt casts via `C_Spell.IsSpellImportant`), All Casts (any interruptible cast), or Off
+  - **CC Non-Important Casts** toggle (on by default): Uses stuns/incapacitates to interrupt non-important casts on CC-able (non-boss) mobs, saving your true interrupt lockout for dangerous casts
+  - Per-class interrupt + CC spell lists in SpellDB with automatic override resolution
+  - Boss-aware filtering: CC abilities automatically skipped against CC-immune targets
+  - De-duplication: interrupt icon hidden when it matches DPS queue position 1
+  - Secret-safe: all cast bar visibility checks wrapped in pcall for 12.0 combat taint
+  - Red interrupt glow distinguishes from normal DPS/proc glows
 - **Nameplate Overlay: Icon Spacing** — New "Spacing" slider (0–10 px, default 2) controls the gap between successive icons in the cluster for both DPS and defensive rows. Applies to horizontal and vertical expansion modes. Replaces the hardcoded 2 px constant.
 - **Nameplate Overlay: Opacity** — New "Frame Opacity" slider (0.1–1.0) for the overlay cluster. Applies to DPS icons, defensive icons (respects fade-in animation), and the health bar independently of the main panel opacity.
 - **Nameplate Overlay: Show Key Press Flash** — New toggle to enable/disable key-press flash feedback on overlay DPS icons, independently of the main panel flash setting.
 - **Nameplate Overlay: Options reorganized** — Overlay tab now structured in three logical sections: shared settings at top (anchor, expansion, health bar position, icon size, spacing, opacity, highlight mode, hotkeys, flash), then an "Offensive Queue" section (offensive slots), then a "Defensive Suggestions" section (enable, visibility, defensive slots, health bar).
+- **DefensiveEngine module** — Extracted ~855 lines of defensive spell logic from JustAC.lua into `DefensiveEngine.lua` (LibStub `JustAC-DefensiveEngine` v1) for maintainability. Core addon retains thin wrapper methods.
 
 ### Changed
 
@@ -18,6 +27,9 @@
 
 ### Fixed
 
+- **Dynamic transform hotkeys missing** (e.g. Templar Strike → Templar Slash): ActionBarScanner v35 — pass `onlyKnown=false` to `C_Spell.GetOverrideSpell()`, added `FindSpellOverrideByID` fallback and forward override scan for aura-driven combat transforms
+- **Frame rebuild consistency**: All frame-affecting Options setters unified through single `UpdateFrameSize()` path; health bar width now updates immediately on config changes
+- **Defensive "Reset to Defaults"**: Synced hardcoded reset values with actual profile defaults (health bar, glow mode, icon count, items, display mode were all mismatched)
 - **BlizzardAPI**: `TestProcAccess()` accessed `spells[1].spellId` but `GetRotationSpells()` returns a flat array of numbers — secret-value detection for procs was dead code (fail-open masked the bug). Now correctly uses `spells[1]`.
 - **BlizzardAPI**: `GetActionInfo()` filtered Assisted Combat placeholder slots by checking `id == "assistedcombat"` but Blizzard's canonical filter is `subType == "assistedcombat"`. Now checks both `subType` and `id` for robustness.
 - Nameplate Overlay: "Show Hotkeys" and "Show Flash" settings now apply to defensive overlay icons as well as DPS icons (both now pass their own override to ShowDefensiveIcon instead of reading the main panel's defensives profile)
