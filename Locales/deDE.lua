@@ -222,17 +222,17 @@ L["Auto-Insert Health Potions desc"] = "Automatically suggest a healing potion f
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "Pet Rez/Summon Priority List"
-L["Pet Rez/Summon Priority desc"] = "Shown when pet is dead or missing. High priority \xe2\x80\x94 reliable in combat."
+L["Pet Rez/Summon Priority desc"] = "Shown when pet is dead or missing. High priority — reliable in combat."
 L["Restore Pet Rez Defaults desc"] = "Reset pet rez/summon spells to class defaults"
 L["Pet Heal Priority List"] = "Pet Heal Priority List"
-L["Pet Heal Priority desc"] = "Shown when pet health is low. Best-effort \xe2\x80\x94 pet health may be hidden in combat."
+L["Pet Heal Priority desc"] = "Shown when pet health is low. Best-effort — pet health may be hidden in combat."
 L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
 L["Show Pet Health Bar"] = "Show Pet Health Bar"
 L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only). Uses teal color. Auto-hides when no pet is active."
 
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
-L["Nameplate Overlay desc"] = "Attach queue icons directly to the target's nameplate. Fully independent of the main panel \xe2\x80\x94 either or both can be enabled."
+L["Nameplate Overlay desc"] = "Attach queue icons directly to the target's nameplate. Fully independent of the main panel — either or both can be enabled."
 L["Nameplate Queue Slots"] = "Queue Slots"
 L["Nameplate Anchor"] = "Anchor"
 L["Nameplate Anchor desc"] = "Which side of the nameplate DPS icons attach to. Defensive icons appear on the opposite side."
