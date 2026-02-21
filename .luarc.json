@@ -133,7 +133,8 @@
             "tContains",
             "GameFontNormal",
             "GameFontHighlight",
-            "NumberFontNormal"
+            "NumberFontNormal",
+            "TargetFrame"
         ],
         "disable": [
             "lowercase-global",

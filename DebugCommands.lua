@@ -101,8 +101,8 @@ function DebugCommands.ModuleDiagnostics(addon)
             local features = BlizzardAPI.GetFeatureAvailability()
             local secretCount = 0
             if not features.healthAccess then secretCount = secretCount + 1 end
-            if not features.cooldownAccess then secretCount = secretCount + 1 end
             if not features.auraAccess then secretCount = secretCount + 1 end
+            if not features.procAccess then secretCount = secretCount + 1 end
             if secretCount > 0 then
                 addon:Print("  Secret Values: |cffffff00" .. secretCount .. " API(s) returning secrets|r")
             else

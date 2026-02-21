@@ -243,7 +243,7 @@ end
 -- glowModeOverride: optional string ("all"/"primaryOnly"/"procOnly"/"none") that
 --   replaces the profile.defensives.glowMode read — used by the nameplate overlay
 --   so each display can have its own independent glow setting.
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride)
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -294,9 +294,19 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     -- Update cooldowns using Blizzard's logic (handles GCD, spell CD, and charges)
     UpdateButtonCooldowns(defensiveIcon)
 
-    -- Hotkey lookup: needed for display AND for key press flash matching
-    local showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
-    local showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
+    -- Hotkey lookup: needed for display AND for key press flash matching.
+    -- Caller may pass overrides (e.g. overlay uses its own showHotkey/showFlash settings).
+    local showHotkeys, showFlash
+    if showHotkeysOverride ~= nil then
+        showHotkeys = showHotkeysOverride
+    else
+        showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
+    end
+    if showFlashOverride ~= nil then
+        showFlash = showFlashOverride
+    else
+        showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
+    end
     local hotkey = ""
     if showHotkeys or showFlash then
         -- Find hotkey for item by scanning action bars
