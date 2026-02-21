@@ -959,14 +959,32 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     alreadyAdded = alreadyAdded or {}
     wipe(usableAddedHere)
 
+    -- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
+    -- Impending Victory is talented, so we use the active replacement instead of the base spell.
+    -- Returns the original ID when no override exists.
+    local function ResolveSpellID(spellID)
+        if FindSpellOverrideByID then
+            local overrideID = FindSpellOverrideByID(spellID)
+            if overrideID and overrideID ~= 0 and overrideID ~= spellID then
+                return overrideID
+            end
+        end
+        return spellID
+    end
+
     -- First pass: add procced spells (higher priority) - items can't proc
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
-        if entry and entry > 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
-            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
-            if isUsable and isProcced then
-                usableResults[#usableResults + 1] = {spellID = entry, isItem = false, isProcced = true}
-                usableAddedHere[entry] = true
+        if entry and entry > 0 then
+            local resolvedID = ResolveSpellID(entry)
+            -- Check both the original and resolved IDs to handle proc injection cross-dedup
+            if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
+                local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+                if isUsable and isProcced then
+                    usableResults[#usableResults + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                    usableAddedHere[resolvedID] = true
+                    usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
+                end
             end
         end
     end
@@ -975,14 +993,18 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     local itemsEnabled = profile.enableItemFeatures
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
-        if entry and entry > 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
-            -- Positive entry = spell
-            local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(entry, profile)
-            if isUsable then
-                usableResults[#usableResults + 1] = {spellID = entry, isItem = false, isProcced = isProcced}
-                usableAddedHere[entry] = true
+        if entry and entry > 0 then
+            local resolvedID = ResolveSpellID(entry)
+            if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
+                -- Positive entry = spell
+                local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+                if isUsable then
+                    usableResults[#usableResults + 1] = {spellID = resolvedID, isItem = false, isProcced = isProcced}
+                    usableAddedHere[resolvedID] = true
+                    usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
+                end
             end
-        elseif itemsEnabled and entry and entry < 0 and not alreadyAdded[entry] and not usableAddedHere[entry] then
+        elseif itemsEnabled and entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
             -- Negative entry = item (stored as -itemID)
             local itemID = -entry
             local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
@@ -1058,11 +1080,23 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
         if defensiveProcs then
             for _, spellID in ipairs(defensiveProcs) do
                 if #results >= maxIcons then break end
-                if spellID and spellID > 0 and not alreadyAdded[spellID] then
-                    local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
-                    if isUsable and isProcced then
-                        results[#results + 1] = {spellID = spellID, isItem = false, isProcced = true}
-                        alreadyAdded[spellID] = true
+                if spellID and spellID > 0 then
+                    -- Resolve talent override so proc and list entries share the same tracking key
+                    -- (e.g. Victory Rush proc 34428 → Impending Victory 202168)
+                    local resolvedID = spellID
+                    if FindSpellOverrideByID then
+                        local overrideID = FindSpellOverrideByID(spellID)
+                        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
+                            resolvedID = overrideID
+                        end
+                    end
+                    if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
+                        local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+                        if isUsable and isProcced then
+                            results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                            alreadyAdded[resolvedID] = true
+                            alreadyAdded[spellID] = true  -- also mark original ID
+                        end
                     end
                 end
             end
