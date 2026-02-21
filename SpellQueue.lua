@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 33)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 34)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -43,6 +43,11 @@ local recommendedSpells = {}
 -- Prevents re-checking the same spell multiple times per update cycle
 local filterResultCache = {}
 local filterCacheUpdateTime = 0
+
+-- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
+-- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
+-- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
+local cachedRotationList = nil
 
 -- Throttle interval for queue updates
 -- 0.1s in combat = 10 updates/sec (fast enough for responsiveness, slow enough to reduce flicker)
@@ -262,10 +267,9 @@ function SpellQueue.GetCurrentSpellQueue()
         BlizzardAPI.ClearProcCache()
     end
     
-    -- Early check: determine which features are bypassed due to secrets
-    -- bypassProcs is used for proc categorization in the rotation list
-    local flags = BlizzardAPI and BlizzardAPI.GetBypassFlags and BlizzardAPI.GetBypassFlags() or {}
-    local bypassProcs = flags.bypassProcs or false
+    -- Check if proc detection is blocked by secret values
+    local bypassProcs = BlizzardAPI and BlizzardAPI.IsProcFeatureAvailable
+        and not BlizzardAPI.IsProcFeatureAvailable() or false
     
     -- Reuse pooled tables to avoid GC pressure
     wipe(recommendedSpells)
@@ -273,9 +277,7 @@ function SpellQueue.GetCurrentSpellQueue()
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
     
-    -- Cache hideItemAbilities setting for this update
-    -- If master item features toggle is off, always hide item abilities
-    local hideItems = not profile.enableItemFeatures or profile.hideItemAbilities
+    local hideItems = profile.hideItemAbilities
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
     -- ALWAYS apply blacklist - if slot 1 is blacklisted, rotation spells shift up to fill it
@@ -383,7 +385,11 @@ function SpellQueue.GetCurrentSpellQueue()
     -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
     -- Apply all filters: no duplicates of position 1, blacklist, availability, usability, redundancy
     -- Procced spells are prioritized and moved to the front of the queue
-    local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+    -- PERFORMANCE: Use cached rotation list; only refreshed via InvalidateRotationCache()
+    if not cachedRotationList and BlizzardAPI and BlizzardAPI.GetRotationSpells then
+        cachedRotationList = BlizzardAPI.GetRotationSpells()
+    end
+    local rotationList = cachedRotationList
     if rotationList then
         -- Reuse pooled tables to avoid GC pressure (paired arrays for base/display spell IDs)
         -- Split procced into important vs regular for priority sorting
@@ -482,7 +488,13 @@ end
 
 function SpellQueue.OnSpellsChanged()
     SpellQueue.ClearSpellCache()
+    SpellQueue.InvalidateRotationCache()
     SpellQueue.ForceUpdate()
+end
+
+-- Invalidate the cached rotation list — called on RotationSpellsUpdated and SPELLS_CHANGED
+function SpellQueue.InvalidateRotationCache()
+    cachedRotationList = nil
 end
 
 -- Debug function for testing

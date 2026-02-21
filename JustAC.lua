@@ -17,7 +17,7 @@ local defaults = {
             y = -150,
         },
         maxIcons = 4,
-        iconSize = 36,
+        iconSize = 42,
         iconSpacing = 1,
         showOffensiveHotkeys = true, -- Show hotkey text on offensive queue icons
         gamepadIconStyle = "xbox",    -- Gamepad button icons: "generic", "xbox", "playstation"
@@ -26,7 +26,7 @@ local defaults = {
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
         glowMode = "all",                 -- "all", "primaryOnly", "procOnly", "none"
         showFlash = true,                 -- Flash icon on matching key press
-        firstIconScale = 1.2,
+        firstIconScale = 1.0,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
@@ -34,8 +34,8 @@ local defaults = {
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
+        showHealthBar = false,         -- Standalone health bar (only shown when defensives disabled)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
-        enableItemFeatures = true,     -- Master toggle for all item-related features
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -46,17 +46,19 @@ local defaults = {
         -- Nameplate Overlay feature (independent queue cluster on target nameplate)
         nameplateOverlay = {
             maxIcons          = 3,       -- 1-3 DPS queue slots
-            anchor            = "RIGHT", -- LEFT, RIGHT
+            reverseAnchor     = false,   -- false = RIGHT (default), true = LEFT
             expansion         = "out",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
             healthBarPosition = "outside", -- "outside" (far end of cluster) or "inside" (nameplate end); up/down only
             iconSize          = 32,
+            iconSpacing       = 2,   -- px between successive icons in the cluster
+            opacity           = 1.0, -- icon opacity (0.1–1.0)
             showGlow          = true,
             glowMode          = "all",
             showHotkey        = true,
+            showFlash         = true, -- key-press flash feedback
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-3
             defensiveDisplayMode = "combatOnly", -- "combatOnly", "always"
-            defensiveShowProcs   = true,
             showHealthBar        = true,
         },
         -- Defensives feature (two tiers: self-heals and major cooldowns)
@@ -69,7 +71,7 @@ local defaults = {
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = false,    -- Display compact health bar above main queue
             showPetHealthBar = false, -- Display compact pet health bar (pet classes only)
-            iconScale = 1.2,          -- Scale for defensive icons (same range as Primary Spell Scale)
+            iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 3,             -- Number of defensive icons to show (1-3)
             -- NOTE: In 12.0 combat, UnitHealth() is secret. These thresholds only
             -- apply out of combat. In combat, we fall back to Blizzard's LowHealthFrame
@@ -268,8 +270,13 @@ function JustAC:OnEnable()
             self:ForceUpdate()
         end, self)
         EventRegistry:RegisterCallback("AssistedCombatManager.RotationSpellsUpdated", function()
-            if SpellQueue and SpellQueue.ClearAvailabilityCache then
-                SpellQueue.ClearAvailabilityCache()
+            if SpellQueue then
+                if SpellQueue.ClearAvailabilityCache then
+                    SpellQueue.ClearAvailabilityCache()
+                end
+                if SpellQueue.InvalidateRotationCache then
+                    SpellQueue.InvalidateRotationCache()
+                end
             end
             self:ForceUpdate()
         end, self)
@@ -814,8 +821,7 @@ function JustAC:OnHealthChanged(event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
         local npoMaxIcons    = npo.maxDefensiveIcons or 1
-        local npoShowProcs   = npo.defensiveShowProcs ~= false
-        local npoQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions, npoDisplayMode, npoMaxIcons, npoShowProcs)
+        local npoQueue = self:GetDefensiveSpellQueue(isLow, isCritical, inCombat, dpsQueueExclusions, npoDisplayMode, npoMaxIcons, true)
         if #npoQueue > 0 then
             UINameplateOverlay.RenderDefensives(self, npoQueue)
         else
@@ -990,7 +996,7 @@ function JustAC:GetUsableDefensiveSpells(spellList, maxCount, alreadyAdded)
     end
 
     -- Second pass: add non-procced usable spells AND usable items
-    local itemsEnabled = profile.enableItemFeatures
+    local itemsEnabled = profile.defensives and profile.defensives.allowItems
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
         if entry and entry > 0 then
@@ -1162,7 +1168,7 @@ function JustAC:GetDefensiveSpellQueue(passedIsLow, passedIsCritical, passedInCo
                 alreadyAdded[entry.spellID] = true
             end
         end
-        if #results < maxIcons and profile.enableItemFeatures and profile.defensives.autoInsertPotions ~= false then
+        if #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
             local potionID = self:FindHealingPotionOnActionBar()
             if potionID and not alreadyAdded[potionID] then
                 results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
@@ -1678,6 +1684,18 @@ function JustAC:UpdateTargetFrameAnchor()
         return
     end
 
+    -- Guard: respect Edit Mode "Buffs on Top" setting.
+    -- TOP anchor conflicts when buffs are above the target frame; BOTTOM conflicts when below.
+    local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
+    if (buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM") then
+        if self.targetframe_anchored then
+            self.targetframe_anchored = false
+            self.mainFrame:ClearAllPoints()
+            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
+        return
+    end
+
     -- Anchor to Blizzard's default TargetFrame (even when hidden — it holds position)
     -- Offsets account for TargetFrame's 232x100 template size, HitRectInsets
     -- (top=4, bottom=9), and space for auras/castbar below the frame
@@ -1859,7 +1877,8 @@ function JustAC:CreateKeyPressDetector()
 
         -- Check nameplate DPS overlay icons (same flash logic as main queue)
         local npIcons = addon.nameplateIcons
-        if npIcons and (not profile or profile.showFlash ~= false) then
+        local npo = profile and profile.nameplateOverlay
+        if npIcons and (not npo or npo.showFlash ~= false) then
             for _, npIcon in ipairs(npIcons) do
                 if npIcon and npIcon:IsShown() and npIcon.normalizedHotkey == normalizedKey then
                     iconsToFlash[#iconsToFlash + 1] = npIcon
@@ -1868,7 +1887,7 @@ function JustAC:CreateKeyPressDetector()
         end
 
         -- Check nameplate defensive overlay icons
-        local npDefFlash = not profile or not profile.defensives or profile.defensives.showFlash ~= false
+        local npDefFlash = not npo or npo.showFlash ~= false
         if npDefFlash then
             local npDefIcons = addon.nameplateDefIcons
             if npDefIcons then
