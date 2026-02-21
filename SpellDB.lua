@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 5)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 7)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -709,3 +709,77 @@ SpellDB.CLASS_PETHEAL_DEFAULTS = {
     HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
     WARLOCK = {755},                                 -- Health Funnel
 }
+
+-- Interrupt/CC spells for the interrupt reminder feature (priority-ordered per class).
+-- Each entry is {spellID, type} where type is:
+--   "interrupt" = pure lockout (works on bosses)
+--   "cc"       = stun/silence/incapacitate (filtered against boss mobs)
+-- First entry is the class's primary interrupt. Subsequent entries are fallbacks
+-- shown when earlier spells are on cooldown.
+SpellDB.CLASS_INTERRUPT_DEFAULTS = {
+    DEATHKNIGHT = {{47528,"interrupt"}, {108194,"cc"}, {221562,"cc"}, {207167,"cc"}},       -- Mind Freeze, Asphyxiate, Asphyxiate (Blood), Blinding Sleet
+    DEMONHUNTER = {{183752,"interrupt"}, {179057,"cc"}, {211881,"cc"}},                     -- Disrupt, Chaos Nova, Fel Eruption
+    DRUID       = {{106839,"interrupt"}, {78675,"interrupt"}, {5211,"cc"}, {99,"cc"}},      -- Skull Bash, Solar Beam, Mighty Bash, Incapacitating Roar
+    EVOKER      = {{351338,"interrupt"}, {357208,"cc"}},                                    -- Quell, Oppressing Roar
+    HUNTER      = {{147362,"interrupt"}, {187707,"interrupt"}, {24394,"cc"}},                -- Counter Shot, Muzzle, Intimidation
+    MAGE        = {{2139,"interrupt"}, {31661,"cc"}},                                       -- Counterspell, Dragon's Breath
+    MONK        = {{116705,"interrupt"}, {119381,"cc"}, {115078,"cc"}},                      -- Spear Hand Strike, Leg Sweep, Paralysis
+    PALADIN     = {{96231,"interrupt"}, {31935,"interrupt"}, {853,"cc"}, {20066,"cc"}},      -- Rebuke, Avenger's Shield, Hammer of Justice, Repentance
+    PRIEST      = {{15487,"interrupt"}, {8122,"cc"}, {205369,"cc"}, {64044,"cc"}},           -- Silence, Psychic Scream, Mind Bomb, Psychic Horror
+    ROGUE       = {{1766,"interrupt"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},                -- Kick, Kidney Shot, Cheap Shot, Gouge
+    SHAMAN      = {{57994,"interrupt"}, {192058,"cc"}, {197214,"cc"}},                       -- Wind Shear, Capacitor Totem, Sundering
+    WARLOCK     = {{19647,"interrupt"}, {212619,"interrupt"}, {89766,"cc"}, {30283,"cc"}},   -- Spell Lock, Call Felhunter, Axe Toss, Shadowfury
+    WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
+}
+
+-- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
+local UnitClass = UnitClass
+local FindSpellOverrideByID = FindSpellOverrideByID
+local pcall = pcall
+local issecretvalue = issecretvalue
+local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
+
+--- Check whether a spell is on a real cooldown (not just GCD).
+--- Uses the NeverSecret `isOnGCD` field to distinguish GCD from actual CD
+--- even when other cooldown fields are secret in 12.0 combat.
+--- Returns true if the spell is on a real (non-GCD) cooldown, false otherwise.
+--- Fail-open: returns false if anything errors.
+function SpellDB.IsInterruptOnCooldown(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return false end
+    local ok, cdInfo = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cdInfo then return false end
+    -- isOnGCD is NeverSecret — always a real boolean
+    if cdInfo.isOnGCD then return false end  -- GCD only, effectively available
+    -- If duration is secret → nonzero → real cooldown running
+    if issecretvalue and issecretvalue(cdInfo.duration) then return true end
+    -- Regular number: 0 = off CD, >0 = on CD (out of combat path)
+    return cdInfo.duration > 0
+end
+
+--- Resolve the current player's interrupt spell IDs (primary interrupt + CC backups).
+--- Returns an ordered array of {spellID, type} entries, or nil if none found.
+--- Each entry: {spellID = number, type = "interrupt"|"cc"}
+--- Called once during frame/overlay creation; result is cached.
+function SpellDB.ResolveInterruptSpells()
+    if not SpellDB.CLASS_INTERRUPT_DEFAULTS then return nil end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local defaults = SpellDB.CLASS_INTERRUPT_DEFAULTS[playerClass]
+    if not defaults then return nil end
+    local result = {}
+    for _, entry in ipairs(defaults) do
+        local spellID = entry[1]
+        local spellType = entry[2] or "interrupt"
+        local resolvedID = spellID
+        if FindSpellOverrideByID then
+            local ov = FindSpellOverrideByID(spellID)
+            if ov and ov ~= 0 and ov ~= spellID then resolvedID = ov end
+        end
+        if BlizzardAPI.IsSpellAvailable(resolvedID) then
+            result[#result + 1] = { spellID = resolvedID, type = spellType }
+        end
+    end
+    return #result > 0 and result or nil
+end

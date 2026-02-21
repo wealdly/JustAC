@@ -280,7 +280,9 @@ function SpellQueue.GetCurrentSpellQueue()
     local hideItems = profile.hideItemAbilities
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
-    -- ALWAYS apply blacklist - if slot 1 is blacklisted, rotation spells shift up to fill it
+    -- NEVER filter position 1 — Blizzard's single-button assistant won't advance
+    -- until this spell is cast; hiding it freezes the entire rotation.
+    -- Blacklist only applies to positions 2+ (the rotation queue).
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
@@ -289,23 +291,8 @@ function SpellQueue.GetCurrentSpellQueue()
         -- Resolve override once for display (handles morphed spells like Metamorphosis)
         local displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
         
-        -- Check blacklist and item filter - ALWAYS apply, rotation spells will shift up if filtered
-        local isBlacklisted = IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
-        local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(displaySpellID)
-        local shouldFilter = isBlacklisted or isItemSpell
-        
-        if shouldFilter then
-            -- Filtered spell - don't add to queue, rotation spells will fill slot 1
-            -- Reset stabilization so we don't try to hold a filtered spell
-            if lastPrimarySpellID == displaySpellID or lastPrimarySpellID == baseSpellID then
-                lastPrimarySpellID = nil
-                lastPrimaryChangeTime = 0
-            end
-            -- Track to prevent duplicates in rotation list (we don't want it anywhere)
-            addedSpellIDs[displaySpellID] = true
-            addedSpellIDs[baseSpellID] = true
-        else
-            -- Not blacklisted - apply minimal stabilization
+        do
+            -- Position 1 is always shown — apply minimal stabilization
             -- If primary changed to what was slot 2, hold briefly to smooth transition
             local previousSlot2 = lastSpellIDs and lastSpellIDs[2]
             
@@ -342,7 +329,7 @@ function SpellQueue.GetCurrentSpellQueue()
             -- Position 1 is shown
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
-        end
+        end  -- do block
     else
         -- No primary spell, reset stabilization tracking
         lastPrimarySpellID = nil
