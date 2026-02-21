@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 3.26.2
+## Version: 4.0.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB

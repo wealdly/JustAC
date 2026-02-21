@@ -22,7 +22,17 @@
       "Bash(del:*)",
       "Bash(wc:*)",
       "Bash(gh run list:*)",
-      "Bash(git -C \"r:/WOW/_retail_/Interface/AddOns/JustAC\" log --oneline c0a7359..HEAD)"
+      "Bash(git -C \"r:/WOW/_retail_/Interface/AddOns/JustAC\" log --oneline c0a7359..HEAD)",
+      "Bash(for f in JustAC.toc JustAC.lua \"Locales/enUS.lua\" \"Locales/deDE.lua\" \"Locales/frFR.lua\" \"Locales/ruRU.lua\" \"Locales/esES.lua\" \"Locales/esMX.lua\" \"Locales/ptBR.lua\" \"Locales/zhCN.lua\" \"Locales/zhTW.lua\" SpellDB.lua BlizzardAPI.lua FormCache.lua MacroParser.lua ActionBarScanner.lua RedundancyFilter.lua SpellQueue.lua UIHealthBar.lua UIAnimations.lua UIFrameFactory.lua UIRenderer.lua UINameplateOverlay.lua DebugCommands.lua Options.lua LICENSE README.md)",
+      "Bash(do)",
+      "Bash([ -e \"$f\" ])",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "Bash(for key in \"UI Scale\" \"UI Scale desc\" \"Major Cooldown Threshold\" \"Major Cooldown Threshold desc\" \"Pet Heal Threshold\" \"Pet Heal Threshold desc\" \"Threshold Note\" \"Disable Main Queue\" \"Disable Main Queue desc\" \"Show Glow\" \"Enable Nameplate Overlay\")",
+      "Bash(for f in deDE.lua esES.lua esMX.lua frFR.lua ptBR.lua ruRU.lua zhCN.lua zhTW.lua)",
+      "Bash(python3:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File build.ps1)",
+      "Bash(awk:*)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"

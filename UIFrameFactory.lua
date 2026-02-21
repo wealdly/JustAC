@@ -300,7 +300,7 @@ end
 
 -- Helper: Create a single defensive icon button at the specified index (0-based)
 -- Position offset is calculated based on index, orientation, and defensive position
-local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
+local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)
     -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
     if not button then return nil end
@@ -311,7 +311,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     -- Position the button relative to mainFrame based on queue orientation and defensive position
     local firstIconCenter = actualIconSize / 2
     local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or math.max(spacing, baseSpacing)
+    local effectiveSpacing = math.max(spacing, baseSpacing)
     local iconOffset = index * (actualIconSize + spacing)
 
     if queueOrientation == "LEFT" then
@@ -478,33 +478,14 @@ local function CreateDefensiveIcons(addon, profile)
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     
-    -- Health bar offset calculation:
-    -- Health bar bottom = BAR_SPACING above mainFrame
-    -- Health bar top = BAR_SPACING + BAR_HEIGHT above mainFrame
-    -- Defensive bottom = BAR_SPACING above health bar top
-    -- So: defensive bottom = BAR_SPACING + BAR_HEIGHT + BAR_SPACING = BAR_HEIGHT + 2*BAR_SPACING
-    -- Add 1px visual compensation for Blizzard's -0.5px texture offset on both elements
-    -- Pet health bar stacks above player health bar when both are enabled
-    local healthBarOffset = 0
-    if defPosition == "SIDE1" and UIHealthBar then
-        local barSpacing = UIHealthBar.BAR_SPACING
-        local barHeight = UIHealthBar.BAR_HEIGHT
-        local barCount = 0
-        if profile.defensives.showHealthBar then barCount = barCount + 1 end
-        if profile.defensives.showPetHealthBar then barCount = barCount + 1 end
-        if barCount > 0 then
-            healthBarOffset = barCount * (barHeight + barSpacing) + barSpacing
-        end
-    end
-    
     -- Create maxIcons defensive buttons using a FRESH table
     -- (Don't reuse module-level table to avoid stale reference issues)
     local maxIcons = profile.defensives.maxIcons or 1
     maxIcons = math.min(maxIcons, 3)  -- Cap at 3
-    
+
     local newIcons = {}
     for i = 1, maxIcons do
-        local button = CreateSingleDefensiveButton(addon, profile, i - 1, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
+        local button = CreateSingleDefensiveButton(addon, profile, i - 1, actualIconSize, defPosition, queueOrientation, spacing)
         if button then
             newIcons[i] = button
             defensiveIcons[i] = button  -- Also update module-level for cleanup on next call

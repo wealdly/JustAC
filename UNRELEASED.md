@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.26.2
+## Current Version: 4.0.0
 
 **Instructions:**
 
@@ -12,16 +12,8 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 
 ### Added
 
-(nothing yet)
-
 ### Changed
-
-(nothing yet)
 
 ### Fixed
 
-(nothing yet)
-
 ### Removed
-
-(nothing yet)

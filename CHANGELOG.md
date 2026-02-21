@@ -1,5 +1,32 @@
 # Changelog
 
+## [4.0.0] - 2026-02-21
+
+### Added
+
+- **Nameplate Overlay: Icon Spacing** — New "Spacing" slider (0–10 px, default 2) controls the gap between successive icons in the cluster for both DPS and defensive rows. Applies to horizontal and vertical expansion modes. Replaces the hardcoded 2 px constant.
+- **Nameplate Overlay: Opacity** — New "Frame Opacity" slider (0.1–1.0) for the overlay cluster. Applies to DPS icons, defensive icons (respects fade-in animation), and the health bar independently of the main panel opacity.
+- **Nameplate Overlay: Show Key Press Flash** — New toggle to enable/disable key-press flash feedback on overlay DPS icons, independently of the main panel flash setting.
+- **Nameplate Overlay: Options reorganized** — Overlay tab now structured in three logical sections: shared settings at top (anchor, expansion, health bar position, icon size, spacing, opacity, highlight mode, hotkeys, flash), then an "Offensive Queue" section (offensive slots), then a "Defensive Suggestions" section (enable, visibility, defensive slots, health bar).
+
+### Changed
+
+- **BlizzardAPI v30**: Removed dead code — `GetBypassFlags()`, `IsCooldownFeatureAvailable()`, `IsDefensivesFeatureAvailable()`, `TestCooldownAccess()` all had no external consumers. Feature availability struct simplified from 5 fields to 3.
+- **SpellQueue v34**: `GetRotationSpells()` result is now cached and only refreshed on `RotationSpellsUpdated` event (was called ~10/sec in combat). Replaced `GetBypassFlags()` table allocation with direct `IsProcFeatureAvailable()` call.
+- Default icon size changed from 36 to 42 for new profiles
+- Default defensive icon scale changed from 1.2 to 1.0 for new profiles
+
+### Fixed
+
+- **BlizzardAPI**: `TestProcAccess()` accessed `spells[1].spellId` but `GetRotationSpells()` returns a flat array of numbers — secret-value detection for procs was dead code (fail-open masked the bug). Now correctly uses `spells[1]`.
+- **BlizzardAPI**: `GetActionInfo()` filtered Assisted Combat placeholder slots by checking `id == "assistedcombat"` but Blizzard's canonical filter is `subType == "assistedcombat"`. Now checks both `subType` and `id` for robustness.
+- Nameplate Overlay: "Show Hotkeys" and "Show Flash" settings now apply to defensive overlay icons as well as DPS icons (both now pass their own override to ShowDefensiveIcon instead of reading the main panel's defensives profile)
+- Nameplate Overlay: key-press flash for defensive overlay icons was gated on the main panel's `defensives.showFlash` setting instead of the overlay's own `showFlash`
+
+### Removed
+
+- Nameplate Overlay: "Show Procced Defensives" toggle removed — procced spells always appear in the overlay defensive queue; the Highlight Mode dropdown controls whether they receive special highlighting
+
 ## [3.26.2] - 2026-02-20
 
 ### Added
