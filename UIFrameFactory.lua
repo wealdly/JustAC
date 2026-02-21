@@ -165,9 +165,12 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     chargeCooldown:ClearAllPoints()
     chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      4, -4)
     chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4,  4)
-    chargeCooldown:SetDrawEdge(true)
+    -- Blizzard 12.0: charge cooldowns use the edge ring (not a swipe) to show recharge progress.
+    -- SetDrawSwipe(true) causes a large dark polygon that bleeds outside the clipping container.
+    -- The edge ring stays within icon bounds and is covered by borderFrame corners if it overflows.
+    chargeCooldown:SetDrawSwipe(false) -- No dark swipe overlay; edge ring is the visual
+    chargeCooldown:SetDrawEdge(true)   -- Edge ring shows recharge progress (matches Blizzard 12.0)
     chargeCooldown:SetDrawBling(false)
-    chargeCooldown:SetDrawSwipe(true)
     chargeCooldown:SetHideCountdownNumbers(true)
     chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
     chargeCooldown:Clear()
@@ -175,8 +178,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     button.chargeCooldown = chargeCooldown
 
     -- Border overlay frame: sits ABOVE cooldowns (L+3) but BELOW glow animations (L+4+).
-    -- The border texture's opaque edges physically cover any cooldown swipe or edge-ring
-    -- overflow at the corners, acting as a visual clip mask.
+    -- The border texture's opaque corners physically cover any cooldown swipe corner bleed.
     -- NOTE: created after chargeCooldown so creation order puts it on top at the same level.
     local borderFrame = CreateFrame("Frame", nil, button)
     borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
@@ -564,14 +566,7 @@ function UIFrameFactory.CreateMainFrame(addon)
     
     -- Show/hide grab tab on hover
     addon.mainFrame:SetScript("OnEnter", function()
-        if addon.grabTab and addon.grabTab.fadeIn then
-            -- Stop any fade-out in progress
-            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
-                addon.grabTab.fadeOut:Stop()
-            end
-            addon.grabTab:Show()
-            addon.grabTab.fadeIn:Play()
-        end
+        -- intentionally empty: grab tab only appears on direct hover
     end)
     
     addon.mainFrame:SetScript("OnLeave", function()
@@ -833,14 +828,14 @@ function UIFrameFactory.CreateGrabTab(addon)
     fadeOutAlpha:SetSmoothing("IN")
     fadeOut:SetToFinalAlpha(true)
     fadeOut:SetScript("OnFinished", function()
-        addon.grabTab:Hide()
+        -- Stay shown (alpha=0) so the frame keeps receiving mouse events
         addon.grabTab:SetAlpha(0)
     end)
     addon.grabTab.fadeOut = fadeOut
     
-    -- Start hidden with alpha 0, show on hover
+    -- Start invisible but shown so mouse detection works immediately
     addon.grabTab:SetAlpha(0)
-    addon.grabTab:Hide()
+    addon.grabTab:Show()
 end
 
 function UIFrameFactory.CreateSpellIcons(addon)
@@ -953,15 +948,6 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     end)
 
     button:SetScript("OnEnter", function(self)
-        -- Show grab tab when hovering over icons
-        if addon.grabTab and addon.grabTab.fadeIn then
-            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
-                addon.grabTab.fadeOut:Stop()
-            end
-            addon.grabTab:Show()
-            addon.grabTab.fadeIn:Play()
-        end
-
         if self.spellID then
             local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
             if not tooltipMode and addon.db and addon.db.profile then
