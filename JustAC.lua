@@ -676,6 +676,18 @@ function JustAC:OnHealthChanged(event, unit)
     local overlayDM = profile and profile.displayMode or "queue"
     local overlayActive = npo and (overlayDM == "overlay" or overlayDM == "both")
 
+    -- When main panel defensives are off, hide any icons that may be visible from a
+    -- previous enabled state.  Must happen before the early exits below because if
+    -- showHealthBar is also off, needsAnyWork is false and the normal else-branch that
+    -- hides icons is never reached.
+    if def and not def.enabled then
+        if self.defensiveIcons and #self.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
+            UIRenderer.HideDefensiveIcons(self)
+        elseif self.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
+            UIRenderer.HideDefensiveIcon(self.defensiveIcon)
+        end
+    end
+
     -- Early exit: nothing at all to do for health events
     local needsAnyWork = (def and (def.enabled or def.showHealthBar or def.showPetHealthBar))
         or (overlayActive and (npo.showHealthBar or npo.showDefensives))
@@ -1416,13 +1428,16 @@ end
 
 function JustAC:PLAYER_ENTERING_WORLD()
     self:InitializeCaches()
-    
+
     if FormCache and FormCache.OnPlayerLogin then
         FormCache.OnPlayerLogin()
     end
-    
+
     -- Apply spec-based profile/disabled state on world entry (not just on spec change events)
     self:OnSpecChange()
+
+    -- Re-assert target frame anchor after loading screens (WoW can reset frame positions)
+    self:UpdateTargetFrameAnchor()
 
     self:ForceUpdateAll()
 
@@ -1469,6 +1484,8 @@ function JustAC:OnCombatEvent(event)
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
         end
+        -- Re-apply anchor in case it was changed during combat (InCombatLockdown blocked it)
+        self:UpdateTargetFrameAnchor()
         self:ForceUpdateAll()
     end
 end
@@ -1984,6 +2001,9 @@ function JustAC:UpdateFrameSize()
     if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
     if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
     if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
+    -- Re-apply target frame anchor after resize (SetSize doesn't move the frame, but
+    -- the anchor guard IsShown check may not have fired before the first render)
+    self:UpdateTargetFrameAnchor()
     self:ForceUpdate()
 end
 

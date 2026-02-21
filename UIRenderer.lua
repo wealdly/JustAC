@@ -124,7 +124,6 @@ local function UpdateButtonCooldowns(button)
                 -- Multi-charge spell: always show and pass values through
                 -- Widget handles the display, including secret values
                 if not button._chargeCooldownShown then
-                    button.chargeCooldown:SetDrawSwipe(true)
                     button.chargeCooldown:Show()
                     button._chargeCooldownShown = true
                 end
