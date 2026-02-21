@@ -47,22 +47,34 @@ $coreFiles = @(
     "UIAnimations.lua",
     "UIFrameFactory.lua",
     "UIRenderer.lua",
+    "UINameplateOverlay.lua",
     "DebugCommands.lua",
     "Options.lua",
     "LICENSE",
     "README.md"
 )
 
+$missingFiles = @()
 foreach ($file in $coreFiles) {
     $src = Join-Path $PSScriptRoot $file
-    if (Test-Path $src) {
-        $dest = Join-Path $outputDir $file
-        $destDir = Split-Path $dest -Parent
-        if (-not (Test-Path $destDir)) {
-            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        }
-        Copy-Item $src $dest -Force
+    if (-not (Test-Path $src)) {
+        $missingFiles += $file
     }
+}
+if ($missingFiles.Count -gt 0) {
+    Write-Host "`nBuild FAILED — missing files:" -ForegroundColor Red
+    $missingFiles | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    exit 1
+}
+
+foreach ($file in $coreFiles) {
+    $src = Join-Path $PSScriptRoot $file
+    $dest = Join-Path $outputDir $file
+    $destDir = Split-Path $dest -Parent
+    if (-not (Test-Path $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+    Copy-Item $src $dest -Force
 }
 
 # Copy Libs folder
