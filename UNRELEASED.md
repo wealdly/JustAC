@@ -2,7 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 3.26.0
+## Current Version: 3.26.1
 
 **Instructions:**
 
@@ -23,6 +23,9 @@ Changes accumulated since last version release. Will be moved to CHANGELOG.md on
 
 ### Fixed
 
+- Defensive icons remaining visible when "Enable Defensive Suggestions" is turned off (early-exit paths in OnHealthChanged bypassed the hide logic)
+- Charge-based ability cooldown sweep bleeding outside icon border (SetDrawSwipe disabled on chargeCooldown; edge ring now matches Blizzard's own rendering)
+- Target frame anchor not re-applied after loading screens or combat lockdown (UpdateTargetFrameAnchor now called on PLAYER_ENTERING_WORLD and PLAYER_REGEN_ENABLED)
 - DPS icons invisible after icon refactor (alpha not reset on slot reuse)
 - Defensive spells on cooldown permanently hidden in combat — cooldown swipe is now the visual indicator; visibility is no longer gated on cooldown state
 - Rotation list positions 2+ permanently hiding spells on cooldown
