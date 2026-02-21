@@ -62,7 +62,7 @@ foreach ($file in $coreFiles) {
     }
 }
 if ($missingFiles.Count -gt 0) {
-    Write-Host "`nBuild FAILED — missing files:" -ForegroundColor Red
+    Write-Host "`nBuild FAILED - missing files:" -ForegroundColor Red
     $missingFiles | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     exit 1
 }
