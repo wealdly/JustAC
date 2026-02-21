@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 34)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 35)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -377,18 +377,34 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                     local isMatch = (id == spellID)
 
                     -- Slot's base transforms to our target (e.g., Pyroblast → Hot Streak)
+                    -- onlyKnown=false catches dynamic combat transforms (Templar Strike → Templar Slash)
                     if not isMatch and id and id ~= spellID then
-                        local slotSpellOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(id)
-                        if slotSpellOverride and slotSpellOverride == spellID then
+                        local slotSpellOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(id, 0, false)
+                        if slotSpellOverride and slotSpellOverride ~= id and slotSpellOverride == spellID then
                             isMatch = true
                         end
                     end
 
                     -- Our target transforms to slot's spell (reverse)
                     if not isMatch then
-                        local targetOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID)
+                        local targetOverride = C_Spell_GetOverrideSpell and C_Spell_GetOverrideSpell(spellID, 0, false)
                         if targetOverride and targetOverride ~= 0 and targetOverride ~= spellID and id == targetOverride then
                             isMatch = true
+                        end
+                    end
+
+                    -- FindSpellOverrideByID fallback — separate native API for talent/aura overrides
+                    -- that C_Spell.GetOverrideSpell may miss (different internal lookup path)
+                    if not isMatch and FindSpellOverrideByID then
+                        local slotOverride = FindSpellOverrideByID(id)
+                        if slotOverride and slotOverride ~= id and slotOverride == spellID then
+                            isMatch = true
+                        end
+                        if not isMatch then
+                            local targetOverride = FindSpellOverrideByID(spellID)
+                            if targetOverride and targetOverride ~= spellID and targetOverride == id then
+                                isMatch = true
+                            end
                         end
                     end
 
@@ -735,7 +751,9 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     end
 
     -- FAST PATH: Valid cache hit - return immediately
-    if not verboseDebugMode and spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil then
+    -- Skip fast path for empty results so dynamic transforms (Templar Strike → Slash)
+    -- self-correct via the stale-refresh logic below instead of returning "" forever
+    if not verboseDebugMode and spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil and spellHotkeyCache[spellID] ~= "" then
         return spellHotkeyCache[spellID]
     end
 
@@ -804,6 +822,21 @@ function ActionBarScanner.GetSpellHotkey(spellID)
                 local baseFoundSlot, baseMacroModifiers = FindSpellInActions(baseSpellID, baseSpellInfo.name)
                 if baseFoundSlot then
                     local result = CacheHotkey(baseFoundSlot, baseMacroModifiers, spellID, baseSpellID)
+                    if result then return result end
+                end
+            end
+        end
+    end
+
+    -- Forward override scan: check if any cached slot's current override matches
+    -- our target. Catches dynamic combat transforms (e.g. Templar Strike → Slash)
+    -- where FindBaseSpellByID returns nil (aura-driven, not talent-driven).
+    if C_Spell_GetOverrideSpell then
+        for cachedID, slot in pairs(spellSlotCache) do
+            if cachedID ~= spellID then
+                local currentOverride = C_Spell_GetOverrideSpell(cachedID, 0, false)
+                if currentOverride and currentOverride == spellID then
+                    local result = CacheHotkey(slot, nil, spellID)
                     if result then return result end
                 end
             end

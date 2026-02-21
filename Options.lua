@@ -224,9 +224,10 @@ function Options.UpdateBlacklistOptions(addon)
     -- Static keys to preserve (defined in InitOptionsTable)
     local staticKeys = {
         info = true, contentHeader = true, includeHiddenAbilities = true,
-        showSpellbookProcs = true, hideItemAbilities = true,
+        showSpellbookProcs = true, hideItemAbilities = true, showInterrupt = true, ccAllCasts = true,
         displayHeader = true, maxIcons = true, firstIconScale = true, showHotkeys = true, glowMode = true, showFlash = true,
         blacklistHeader = true, blacklistInfo = true,
+        resetHeader = true, resetDefaults = true,
     }
 
     -- Clear old dynamic entries
@@ -1130,7 +1131,7 @@ local function CreateOptionsTable(addon)
                         min = 20, max = 64, step = 2,
                         order = 12,
                         width = "normal",
-                        get = function() return addon.db.profile.iconSize or 36 end,
+                        get = function() return addon.db.profile.iconSize or 42 end,
                         set = function(_, val)
                             addon.db.profile.iconSize = val
                             addon:UpdateFrameSize()
@@ -1296,7 +1297,12 @@ local function CreateOptionsTable(addon)
                     },
                     showHealthBar = {
                         type = "toggle",
-                        name = L["Show Health Bar"],
+                        name = function()
+                            if addon.db.profile.defensives.enabled then
+                                return L["Show Health Bar"] .. "  |cff888888(" .. L["disabled when Defensive Queue is enabled"] .. ")|r"
+                            end
+                            return L["Show Health Bar"]
+                        end,
                         desc = L["Show Health Bar desc"],
                         order = 24,
                         width = "full",
@@ -1311,7 +1317,7 @@ local function CreateOptionsTable(addon)
                             end
                             addon:ForceUpdateAll()
                         end,
-                        hidden = function()
+                        disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             if dm == "disabled" or dm == "overlay" then return true end
                             return addon.db.profile.defensives.enabled
@@ -1464,7 +1470,7 @@ local function CreateOptionsTable(addon)
                         func = function()
                             local p = addon.db.profile
                             p.displayMode           = "queue"
-                            p.iconSize              = 36
+                            p.iconSize              = 42
                             p.iconSpacing           = 1
                             p.queueOrientation      = "LEFT"
                             p.targetFrameAnchor     = "DISABLED"
@@ -1478,9 +1484,7 @@ local function CreateOptionsTable(addon)
                             p.panelInteraction      = "unlocked"
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
-                            addon:UpdateTargetFrameAnchor()
                             addon:UpdateFrameSize()
-                            addon:ForceUpdate()
                             Options.UpdateDefensivesOptions(addon)
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
@@ -1544,6 +1548,44 @@ local function CreateOptionsTable(addon)
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    showInterrupt = {
+                        type = "select",
+                        name = L["Interrupt Mode"],
+                        desc = L["Interrupt Mode desc"],
+                        order = 14,
+                        width = "double",
+                        values = {
+                            important = L["Interrupt Important"],
+                            all       = L["Interrupt All"],
+                            off       = L["Interrupt Off"],
+                        },
+                        sorting = { "important", "all", "off" },
+                        get = function() return addon.db.profile.interruptMode or "important" end,
+                        set = function(_, val)
+                            addon.db.profile.interruptMode = val
+                            addon:UpdateFrameSize()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    ccAllCasts = {
+                        type = "toggle",
+                        name = L["CC All Casts"],
+                        desc = L["CC All Casts desc"],
+                        order = 14.5,
+                        width = "double",
+                        get = function() return addon.db.profile.ccAllCasts end,
+                        set = function(_, val)
+                            addon.db.profile.ccAllCasts = val
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            if dm == "disabled" or dm == "overlay" then return true end
+                            return (addon.db.profile.interruptMode or "important") == "off"
                         end,
                     },
                     -- DISPLAY (15-19)
@@ -1672,13 +1714,14 @@ local function CreateOptionsTable(addon)
                         func = function()
                             local p = addon.db.profile
                             p.maxIcons               = 4
-                            p.firstIconScale         = 1.2
+                            p.firstIconScale         = 1.0
                             p.showOffensiveHotkeys   = true
                             p.glowMode               = "all"
                             p.showFlash              = true
                             p.includeHiddenAbilities = true
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
+                            p.interruptMode          = "important"
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -1786,8 +1829,8 @@ local function CreateOptionsTable(addon)
                         name = L["Offensive Slots"],
                         order = 13,
                         width = "normal",
-                        values = { [1] = "1", [2] = "2", [3] = "3" },
-                        sorting = { 1, 2, 3 },
+                        values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
+                        sorting = { 1, 2, 3, 4, 5 },
                         get = function() return addon.db.profile.nameplateOverlay.maxIcons or 1 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxIcons = val
@@ -1912,6 +1955,47 @@ local function CreateOptionsTable(addon)
                         name = L["Offensive Queue"],
                         order = 11,
                     },
+                    showInterrupt = {
+                        type = "select",
+                        name = L["Interrupt Mode"],
+                        desc = L["Interrupt Mode desc"],
+                        order = 12,
+                        width = "double",
+                        values = {
+                            important = L["Interrupt Important"],
+                            all       = L["Interrupt All"],
+                            off       = L["Interrupt Off"],
+                        },
+                        sorting = { "important", "all", "off" },
+                        get = function() return addon.db.profile.nameplateOverlay.interruptMode or "important" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.interruptMode = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    npoCCAllCasts = {
+                        type = "toggle",
+                        name = L["CC All Casts"],
+                        desc = L["CC All Casts desc"],
+                        order = 12.5,
+                        width = "double",
+                        get = function() return addon.db.profile.nameplateOverlay.ccAllCasts end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.ccAllCasts = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            if dm ~= "overlay" and dm ~= "both" then return true end
+                            return (addon.db.profile.nameplateOverlay.interruptMode or "important") == "off"
+                        end,
+                    },
                     defensiveSectionHeader = {
                         type = "header",
                         name = L["Defensive Suggestions"],
@@ -1962,8 +2046,8 @@ local function CreateOptionsTable(addon)
                         name = L["Nameplate Defensive Count"],
                         order = 23,
                         width = "normal",
-                        values = { [1] = "1", [2] = "2", [3] = "3" },
-                        sorting = { 1, 2, 3 },
+                        values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
+                        sorting = { 1, 2, 3, 4, 5 },
                         get = function() return addon.db.profile.nameplateOverlay.maxDefensiveIcons or 1 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxDefensiveIcons = val
@@ -2023,6 +2107,7 @@ local function CreateOptionsTable(addon)
                             npo.maxDefensiveIcons    = 3
                             npo.defensiveDisplayMode = "combatOnly"
                             npo.showHealthBar        = true
+                            npo.interruptMode        = "important"
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -2054,10 +2139,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.enabled end,
                         set = function(_, val)
                             addon.db.profile.defensives.enabled = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end
                     },
                     showProcs = {
@@ -2119,16 +2201,13 @@ local function CreateOptionsTable(addon)
                         type = "range",
                         name = L["Defensive Max Icons"],
                         desc = L["Defensive Max Icons desc"],
-                        min = 1, max = 3, step = 1,
+                        min = 1, max = 7, step = 1,
                         order = 6,
                         width = "normal",
                         get = function() return addon.db.profile.defensives.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
@@ -2139,13 +2218,10 @@ local function CreateOptionsTable(addon)
                         min = 0.5, max = 2.0, step = 0.1,
                         order = 6.5,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.iconScale or 1.2 end,
+                        get = function() return addon.db.profile.defensives.iconScale or 1.0 end,
                         set = function(_, val)
                             addon.db.profile.defensives.iconScale = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
@@ -2167,11 +2243,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.position or "SIDE1" end,
                         set = function(_, val)
                             addon.db.profile.defensives.position = val
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
-                            UIHealthBar.UpdateSize(addon)
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,
                     },
@@ -2270,17 +2342,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.showHealthBar end,
                         set = function(_, val)
                             addon.db.profile.defensives.showHealthBar = val
-                            if UIHealthBar and UIHealthBar.Destroy then
-                                UIHealthBar.Destroy()
-                            end
-                            if val and UIHealthBar and UIHealthBar.CreateHealthBar then
-                                UIHealthBar.CreateHealthBar(addon)
-                            end
-                            -- Recreate pet bar too (position depends on player bar)
-                            if UIHealthBar and UIHealthBar.UpdatePetSize then
-                                UIHealthBar.UpdatePetSize(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end,
                         -- Health bar works independently of defensive queue
                     },
@@ -2293,13 +2355,7 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.showPetHealthBar end,
                         set = function(_, val)
                             addon.db.profile.defensives.showPetHealthBar = val
-                            if UIHealthBar and UIHealthBar.DestroyPet then
-                                UIHealthBar.DestroyPet()
-                            end
-                            if val and UIHealthBar and UIHealthBar.CreatePetHealthBar then
-                                UIHealthBar.CreatePetHealthBar(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            addon:UpdateFrameSize()
                         end,
                         hidden = function()
                             local _, pc = UnitClass("player")
@@ -2448,30 +2504,24 @@ local function CreateOptionsTable(addon)
                         width = "normal",
                         func = function()
                             local def = addon.db.profile.defensives
+                            -- Synced with JustAC.lua profile defaults
                             def.enabled          = true
                             def.showProcs        = true
-                            def.glowMode         = "procOnly"
+                            def.glowMode         = "all"
                             def.showFlash        = true
                             def.showHotkeys      = true
                             def.position         = "SIDE1"
-                            def.showHealthBar    = false
-                            def.showPetHealthBar = false
-                            def.iconScale        = 1.2
-                            def.maxIcons         = 3
+                            def.showHealthBar    = true
+                            def.showPetHealthBar = true
+                            def.iconScale        = 1.0
+                            def.maxIcons         = 4
                             def.selfHealThreshold = 80
                             def.cooldownThreshold = 60
                             def.petHealThreshold  = 50
-                            def.allowItems        = false
+                            def.allowItems        = true
                             def.autoInsertPotions = true
-                            def.displayMode       = "combatOnly"
-                            if UIHealthBar then
-                                if UIHealthBar.Destroy then UIHealthBar.Destroy() end
-                                if UIHealthBar.DestroyPet then UIHealthBar.DestroyPet() end
-                            end
-                            if UIFrameFactory and UIFrameFactory.CreateSpellIcons then
-                                UIFrameFactory.CreateSpellIcons(addon)
-                            end
-                            addon:ForceUpdateAll()
+                            def.displayMode       = "always"
+                            addon:UpdateFrameSize()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                     },
