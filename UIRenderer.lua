@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 13)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 14)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -9,6 +9,7 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations or not UIFrameFactory then
     return
@@ -17,6 +18,7 @@ end
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
+local UnitIsBossMob = UnitIsBossMob
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pairs = pairs
@@ -471,6 +473,24 @@ function UIRenderer.HideDefensiveIcons(addon)
     end
 end
 
+-- Reset and hide the interrupt icon, clearing all cached state and glows.
+-- Shared helper used by both the "no interrupt" and "feature disabled" paths.
+local function HideInterruptIcon(intIcon)
+    intIcon.spellID = nil
+    intIcon.iconTexture:Hide()
+    if intIcon.cooldown then intIcon.cooldown:Clear(); intIcon.cooldown:Hide() end
+    intIcon._cooldownShown       = false
+    intIcon._chargeCooldownShown = false
+    intIcon.normalizedHotkey     = nil
+    intIcon.cachedHotkey         = nil
+    intIcon.hotkeyText:SetText("")
+    if UIAnimations then
+        if intIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(intIcon); intIcon.hasInterruptGlow = false end
+        if intIcon.hasProcGlow      then UIAnimations.HideProcGlow(intIcon);      intIcon.hasProcGlow      = false end
+    end
+    intIcon:Hide()
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
@@ -577,7 +597,139 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
-    
+
+    -- ── Interrupt reminder (position 0) ─────────────────────────────────────
+    -- Standard queue version: detect interruptible cast via the target nameplate's
+    -- cast bar frame state.  Same pcall + secret-boolean-safe approach as the
+    -- nameplate overlay in UINameplateOverlay.
+    local intIcon = addon.interruptIcon
+    local resolvedInts = addon.resolvedInterrupts
+    local interruptMode = profile.interruptMode or "important"
+    local ccAllCasts = profile.ccAllCasts and true or false
+    if intIcon and resolvedInts and shouldShowFrame and interruptMode ~= "off" then
+        local shouldShowInterrupt = false
+        local intSpellID = nil
+
+        -- Look up the target nameplate to read its cast bar state
+        local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
+        local castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
+        if castBar then
+            local visOk, isVis = pcall(castBar.IsVisible, castBar)
+            local visTestOk, castVisible = pcall(function() return isVis and true or false end)
+            if visOk and visTestOk and castVisible then
+                local interruptible = true  -- fail-open default
+                if castBar.BorderShield then
+                    local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
+                    local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
+                    if shOk and shTestOk and shieldVisible then
+                        interruptible = false  -- shield visible → uninterruptible
+                    end
+                end
+
+                -- Determine if this is an "important" cast (for interrupt vs CC decision)
+                local isImportantCast = true  -- default: treat as important
+                if interruptible and (interruptMode == "important" or ccAllCasts) then
+                    local castSpellID = castBar.spellID
+                    if castSpellID and C_Spell and C_Spell.IsSpellImportant then
+                        local impOk, isImportant = pcall(C_Spell.IsSpellImportant, castSpellID)
+                        local impTestOk, isImp = pcall(function() return isImportant and true or false end)
+                        if impOk and impTestOk then
+                            isImportantCast = isImp
+                        end
+                    end
+                end
+
+                -- "important" mode blocks non-important casts unless CC fallback is on
+                if interruptible and not isImportantCast and interruptMode == "important" and not ccAllCasts then
+                    interruptible = false
+                end
+
+                if interruptible then
+                    -- Target is casting — find best available interrupt or CC
+                    local isBoss = UnitIsBossMob and UnitIsBossMob("target")
+                    -- Non-important cast + ccAllCasts → prefer CC, save true interrupt lockout
+                    local ccOnly = ccAllCasts and not isImportantCast
+                    if not (ccOnly and isBoss) then
+                        for _, entry in ipairs(resolvedInts) do
+                            local sid = entry.spellID
+                            local stype = entry.type
+                            -- Skip CC spells against bosses (immune to stuns/incapacitates)
+                            if stype == "cc" and isBoss then
+                                -- skip this spell
+                            elseif stype == "interrupt" and ccOnly then
+                                -- save true interrupt for important casts
+                            elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                intSpellID = sid
+                                shouldShowInterrupt = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- De-dup: if the interrupt spell is already shown as offensive queue position 1, skip it
+        if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
+            shouldShowInterrupt = false
+        end
+
+        if shouldShowInterrupt and intSpellID then
+            local spellChanged = (intIcon.spellID ~= intSpellID)
+            if spellChanged then
+                intIcon.spellID = intSpellID
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(intSpellID)
+                if info and info.iconID then
+                    intIcon.iconTexture:SetTexture(info.iconID)
+                    intIcon.iconTexture:Show()
+                end
+                intIcon._cooldownShown       = false
+                intIcon._chargeCooldownShown = false
+                intIcon._cachedMaxCharges    = nil
+                intIcon.cachedHotkey         = nil
+            end
+
+            -- Cooldowns (throttled)
+            if spellChanged or shouldUpdateCooldowns then
+                UpdateButtonCooldowns(intIcon)
+            end
+
+            -- Hotkey
+            local intShowHotkeys = profile.showOffensiveHotkeys ~= false
+            if spellChanged or shouldUpdateCooldowns or not intIcon.cachedHotkey then
+                local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
+                intIcon.cachedHotkey = hotkey
+                local displayHotkey = intShowHotkeys and hotkey or ""
+                if (intIcon.hotkeyText:GetText() or "") ~= displayHotkey then
+                    intIcon.hotkeyText:SetText(displayHotkey)
+                end
+                if hotkey ~= "" then
+                    intIcon.normalizedHotkey = NormalizeHotkey(hotkey)
+                else
+                    intIcon.normalizedHotkey = nil
+                end
+            end
+
+            -- Glow: red-tinted proc glow for interrupt urgency
+            if not intIcon.hasInterruptGlow then
+                UIAnimations.StartInterruptGlow(intIcon, isInCombat)
+                intIcon.hasInterruptGlow = true
+            end
+
+            if not intIcon:IsShown() then intIcon:Show() end
+            local frameOpacity = profile.frameOpacity or 1.0
+            intIcon:SetAlpha(frameOpacity)
+        else
+            -- Hide interrupt icon
+            if intIcon.spellID or intIcon:IsShown() then
+                HideInterruptIcon(intIcon)
+            end
+        end
+    elseif intIcon and (intIcon.spellID or intIcon:IsShown()) then
+        -- Feature disabled or frame hidden — ensure interrupt icon is cleaned up
+        HideInterruptIcon(intIcon)
+    end
+
     -- Update individual icons (only when frame should be visible)
     if shouldShowFrame then
     for i = 1, maxIcons do

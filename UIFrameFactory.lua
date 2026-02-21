@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 11)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 12)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -9,6 +9,7 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
@@ -50,6 +51,7 @@ end
 -- Local state
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
+local stdInterruptIcon = nil  -- Standard queue interrupt icon ("position 0")
 
 -- Masque support
 local Masque = LibStub("Masque", true)
@@ -287,8 +289,9 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     button.spellChangeTime = nil
     button.cachedHotkey = nil
 
-    button.hasAssistedGlow = false
-    button.hasProcGlow = false
+    button.hasAssistedGlow  = false
+    button.hasInterruptGlow = false
+    button.hasProcGlow      = false
     button.hasDefensiveGlow = false
 
     -- Do NOT set alpha to 0 here — defensive icons set it before showing via ShowDefensiveIcon,
@@ -472,7 +475,7 @@ local function CreateDefensiveIcons(addon, profile)
     if not profile.defensives or not profile.defensives.enabled then return end
     
     -- Calculate shared sizing
-    local defensiveIconScale = profile.defensives.iconScale or 1.2
+    local defensiveIconScale = profile.defensives.iconScale or 1.0
     local actualIconSize = profile.iconSize * defensiveIconScale
     local defPosition = profile.defensives.position or "SIDE1"
     local queueOrientation = profile.queueOrientation or "LEFT"
@@ -481,7 +484,7 @@ local function CreateDefensiveIcons(addon, profile)
     -- Create maxIcons defensive buttons using a FRESH table
     -- (Don't reuse module-level table to avoid stale reference issues)
     local maxIcons = profile.defensives.maxIcons or 1
-    maxIcons = math.min(maxIcons, 3)  -- Cap at 3
+    maxIcons = math.min(maxIcons, 7)  -- Cap at 7 (same as offensive queue)
 
     local newIcons = {}
     for i = 1, maxIcons do
@@ -819,6 +822,57 @@ function UIFrameFactory.CreateGrabTab(addon)
     addon.grabTab:Show()
 end
 
+-- Create a single interrupt icon positioned in the "leading" direction before slot 1.
+-- The icon overhangs outside mainFrame (like defensive icons).
+local function CreateInterruptIcon(addon, profile)
+    -- Cleanup any existing interrupt icon
+    if stdInterruptIcon then
+        if UIAnimations then
+            if stdInterruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(stdInterruptIcon) end
+            if stdInterruptIcon.hasProcGlow      then UIAnimations.HideProcGlow(stdInterruptIcon)      end
+        end
+        stdInterruptIcon:Hide()
+        stdInterruptIcon:SetParent(nil)
+        stdInterruptIcon = nil
+    end
+    addon.interruptIcon = nil
+    addon.resolvedInterrupts = nil
+
+    if (profile.interruptMode or "important") == "off" then return end
+
+    local firstIconScale = profile.firstIconScale or 1.0
+    local actualIconSize = profile.iconSize * firstIconScale
+    local orientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing or 1
+
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, false, true)
+    if not button then return end
+
+    -- Position before slot 1 (opposite of queue growth direction)
+    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+    local effectiveSpacing = math.max(spacing, baseSpacing)
+
+    if orientation == "LEFT" then
+        -- Queue grows left-to-right; interrupt goes to the LEFT of mainFrame
+        button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
+    elseif orientation == "RIGHT" then
+        -- Queue grows right-to-left; interrupt goes to the RIGHT of mainFrame
+        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, 0)
+    elseif orientation == "UP" then
+        -- Queue grows bottom-to-top; interrupt goes BELOW mainFrame
+        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -effectiveSpacing)
+    elseif orientation == "DOWN" then
+        -- Queue grows top-to-bottom; interrupt goes ABOVE mainFrame
+        button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
+    end
+
+    button:Hide()  -- Hidden until an interruptible cast is detected
+
+    stdInterruptIcon = button
+    addon.interruptIcon = button
+    addon.resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+end
+
 function UIFrameFactory.CreateSpellIcons(addon)
     if not addon.db or not addon.db.profile or not addon.mainFrame then return end
     
@@ -852,6 +906,9 @@ function UIFrameFactory.CreateSpellIcons(addon)
     
     addon.spellIcons = spellIcons
     
+    -- Create interrupt icon (position 0, hidden until interruptible cast detected)
+    CreateInterruptIcon(addon, profile)
+    
     -- Create defensive icons (1-3 positioned relative to position 1 based on user settings)
     CreateDefensiveIcons(addon, profile)
 end
@@ -859,7 +916,7 @@ end
 -- SIMPLIFIED: Pure display-only icons with configuration only
 function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.0
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
 
@@ -972,7 +1029,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                     if isBlacklisted then
                         GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from blacklist|r")
                     else
-                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist|r")
+                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist (positions 2+ only)|r")
                     end
                 end
 
@@ -1012,7 +1069,7 @@ function UIFrameFactory.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.0
     local orientation = profile.queueOrientation or "LEFT"
 
     UIFrameFactory.CreateSpellIcons(addon)

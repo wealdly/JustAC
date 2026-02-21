@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Health Bar Module - Shows player health bar for low-health warning
-local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 4)
+local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 5)
 if not UIHealthBar then return end
 
 -- Cache frequently used functions to reduce table lookups on every update
@@ -25,6 +25,7 @@ local healthBarFrame = nil
 local petHealthBarFrame = nil
 local lastUpdate = 0
 local lastPetUpdate = 0
+local lastVisibleCount = -1  -- cached visible icon count (defensive mode only)
 
 -- Create the health bar frame.
 -- Two modes:
@@ -56,15 +57,15 @@ function UIHealthBar.CreateHealthBar(addon)
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
 
     local orientation = profile.queueOrientation or "LEFT"
-    local iconSize    = profile.iconSize or 36
+    local iconSize    = profile.iconSize or 42
     local iconSpacing = profile.iconSpacing or 1
     local queueDimension, offset
 
     if useDefensiveDims then
         -- Span the defensive icon cluster; float on the far side (away from mainFrame)
-        local defIconScale = profile.defensives.iconScale or 1.2
+        local defIconScale = profile.defensives.iconScale or 1.0
         local defIconSize  = iconSize * defIconScale
-        local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 3)
+        local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
         local defPosition  = profile.defensives.position or "SIDE1"
 
         if maxDefIcons == 1 then
@@ -114,7 +115,7 @@ function UIHealthBar.CreateHealthBar(addon)
         end
     else
         -- Span the offensive queue; original position just above mainFrame
-        local firstIconScale = profile.firstIconScale or 1.2
+        local firstIconScale = profile.firstIconScale or 1.0
         local maxIcons       = profile.maxIcons or 4
         local firstIconSize  = iconSize * firstIconScale
 
@@ -167,8 +168,10 @@ function UIHealthBar.CreateHealthBar(addon)
     
     frame.statusBar = statusBar
     frame.background = bg
+    frame.useDefensiveDims = useDefensiveDims
     
     healthBarFrame = frame
+    lastVisibleCount = -1  -- force first resize
     
     -- Initial update
     UIHealthBar.Update(addon)
@@ -232,6 +235,82 @@ function UIHealthBar.UpdateSize(addon)
     UIHealthBar.CreateHealthBar(addon)
 end
 
+--- Dynamically resize the health bar to match the number of visible defensive icons.
+--- Only operates when the bar is in defensive-dims mode (useDefensiveDims = true).
+--- @param addon table  The main addon object
+--- @param visibleCount number  Number of currently visible defensive icons (0 = hide)
+function UIHealthBar.ResizeToCount(addon, visibleCount)
+    if not healthBarFrame then return end
+    if not healthBarFrame.useDefensiveDims then return end  -- offensive-mode bar: skip
+
+    -- Cache check: skip expensive recalc when count hasn't changed
+    if visibleCount == lastVisibleCount then return end
+    lastVisibleCount = visibleCount
+
+    if visibleCount <= 0 then
+        healthBarFrame:Hide()
+        return
+    end
+
+    local profile = addon.db and addon.db.profile
+    if not profile or not profile.defensives then return end
+
+    local orientation  = profile.queueOrientation or "LEFT"
+    local iconSize     = profile.iconSize or 42
+    local iconSpacing  = profile.iconSpacing or 1
+    local defIconScale = profile.defensives.iconScale or 1.0
+    local defIconSize  = iconSize * defIconScale
+    local defPosition  = profile.defensives.position or "SIDE1"
+
+    local queueDimension
+    if visibleCount == 1 then
+        queueDimension = defIconSize
+    else
+        queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
+    end
+    local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+
+    -- Resize
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
+    else
+        healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
+    end
+
+    -- Reposition to stay aligned above/below the visible cluster
+    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    local barDist    = defSpacing + defIconSize + BAR_SPACING
+
+    healthBarFrame:ClearAllPoints()
+    if orientation == "LEFT" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,   barDist)
+        else
+            healthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset,  -barDist)
+        end
+    elseif orientation == "RIGHT" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -offset,   barDist)
+        else
+            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -offset,  -barDist)
+        end
+    elseif orientation == "DOWN" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",    barDist,  -offset)
+        else
+            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",    -barDist,  -offset)
+        end
+    else -- UP
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset)
+        else
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset)
+        end
+    end
+
+    healthBarFrame:Show()
+end
+
 -- Clean up
 function UIHealthBar.Destroy()
     if healthBarFrame then
@@ -240,6 +319,7 @@ function UIHealthBar.Destroy()
         healthBarFrame = nil
     end
     lastUpdate = 0
+    lastVisibleCount = -1
 end
 
 --------------------------------------------------------------------------------
@@ -251,11 +331,11 @@ end
 -- Calculate bar dimensions based on the defensive icon cluster (shared by both bars)
 local function CalculateBarDimensions(profile)
     local orientation  = profile.queueOrientation or "LEFT"
-    local iconSize     = profile.iconSize or 36
+    local iconSize     = profile.iconSize or 42
     local iconSpacing  = profile.iconSpacing or 1
-    local defIconScale = profile.defensives and profile.defensives.iconScale or 1.2
+    local defIconScale = profile.defensives and profile.defensives.iconScale or 1.0
     local defIconSize  = iconSize * defIconScale
-    local maxDefIcons  = math.min(profile.defensives and profile.defensives.maxIcons or 1, 3)
+    local maxDefIcons  = math.min(profile.defensives and profile.defensives.maxIcons or 1, 7)
     local defPosition  = profile.defensives and profile.defensives.position or "SIDE1"
 
     local queueDimension
@@ -352,8 +432,8 @@ function UIHealthBar.CreatePetHealthBar(addon)
         statusBar:SetOrientation("VERTICAL")
     end
 
-    -- Teal/blue for pet (distinct from player's green)
-    statusBar:SetStatusBarColor(0.0, 0.6, 0.8, 0.9)
+    -- Teal-green for pet (green-leaning but distinct from player's pure green)
+    statusBar:SetStatusBarColor(0.0, 0.85, 0.4, 0.9)
 
     -- Background (dark red when pet is hurt/missing health shows through)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")

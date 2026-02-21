@@ -48,6 +48,7 @@ $coreFiles = @(
     "UIFrameFactory.lua",
     "UIRenderer.lua",
     "UINameplateOverlay.lua",
+    "DefensiveEngine.lua",
     "DebugCommands.lua",
     "Options.lua",
     "LICENSE",
