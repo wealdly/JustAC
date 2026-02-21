@@ -169,6 +169,11 @@ local function CreateOverlayIcon(iconSize)
     fadeInAlpha:SetDuration(0.15)
     fadeInAlpha:SetSmoothing("OUT")
     fadeIn:SetToFinalAlpha(true)
+    fadeIn:SetScript("OnFinished", function()
+        -- Clamp to target opacity after fade-in completes (opacity < 1 support)
+        local targetAlpha = button.overlayOpacity or 1
+        if targetAlpha < 1 then button:SetAlpha(targetAlpha) end
+    end)
     button.fadeIn = fadeIn
 
     local fadeOut      = button:CreateAnimationGroup()
@@ -192,6 +197,9 @@ local function CreateOverlayIcon(iconSize)
     button._cooldownShown       = false
     button._chargeCooldownShown = false
     button._cachedMaxCharges    = nil
+
+    -- Opacity support (set before ShowDefensiveIcon to drive OnFinished clamp)
+    button.overlayOpacity = 1
 
     -- Hotkey tracking for CreateKeyPressDetector flash
     button.normalizedHotkey         = nil
@@ -217,8 +225,9 @@ end
 local function CreateOverlayHealthBar(initialWidth)
     local bar = CreateFrame("StatusBar", nil, UIParent)
     bar:SetSize(initialWidth, BAR_HEIGHT)
-    -- Solid fill: vertex colour drives the actual colour, no atlas dependency.
-    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bar:GetStatusBarTexture():SetHorizTile(false)
+    bar:GetStatusBarTexture():SetVertTile(false)
     bar:SetStatusBarColor(0.0, 1.0, 0.0, 0.9)
     bar:SetMinMaxValues(0, 1)
     bar:SetValue(1)
@@ -227,8 +236,8 @@ local function CreateOverlayHealthBar(initialWidth)
     -- Bright red background so lost health is immediately visible.
     local bg = bar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(bar)
-    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-    bg:SetVertexColor(0.9, 0.1, 0.1, 1.0)
+    bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)
     bar.bg = bg
 
     bar:SetAlpha(0)
@@ -244,13 +253,15 @@ end
 -- When the nameplate moves, the entire cluster follows automatically.
 -- Health bar (when shown) floats above the nameplate for all anchor directions.
 -- ─────────────────────────────────────────────────────────────────────────────
-local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, healthBarPosition)
+local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, healthBarPosition, iconSpacing)
     -- anchor:            "LEFT" or "RIGHT" — which side of the nameplate
     -- expansion:         "out" (horizontal, current), "up" (vertical upward), "down" (vertical downward)
     -- healthBarPosition: "outside" (far end of cluster) or "inside" (nameplate end of cluster)
     --                    only meaningful for "up"/"down" expansion; ignored for "out".
-    expansion        = expansion or "out"
+    -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
+    expansion         = expansion or "out"
     healthBarPosition = healthBarPosition or "outside"
+    iconSpacing       = iconSpacing or ICON_SPACING
 
     local isLeft    = (anchor == "LEFT")
     -- Point on the icon that touches the nameplate / previous icon
@@ -263,16 +274,16 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
     local dpsGapX   = isLeft and -NAMEPLATE_GAP or  NAMEPLATE_GAP
     local defGapX   = isLeft and  NAMEPLATE_GAP or -NAMEPLATE_GAP
     -- X offset for horizontal chaining between icons
-    local dpsChainX = isLeft and -ICON_SPACING or  ICON_SPACING
-    local defChainX = isLeft and  ICON_SPACING or -ICON_SPACING
+    local dpsChainX = isLeft and -iconSpacing or  iconSpacing
+    local defChainX = isLeft and  iconSpacing or -iconSpacing
 
     -- Chain anchor params for icons after the first (icon 1 always anchors to nameplate).
     -- "out" uses opposite-edge horizontal chaining; "up"/"down" use vertical chaining.
     local chainPt, chainRelPt, chainOffX, chainOffY
     if expansion == "up" then
-        chainPt, chainRelPt, chainOffX, chainOffY = "BOTTOM", "TOP", 0,  ICON_SPACING
+        chainPt, chainRelPt, chainOffX, chainOffY = "BOTTOM", "TOP", 0,  iconSpacing
     elseif expansion == "down" then
-        chainPt, chainRelPt, chainOffX, chainOffY = "TOP", "BOTTOM",  0, -ICON_SPACING
+        chainPt, chainRelPt, chainOffX, chainOffY = "TOP", "BOTTOM",  0, -iconSpacing
     end
 
     -- Helper: anchor one icon array to the nameplate then chain-anchor subsequent icons.
@@ -398,7 +409,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
     local nameplate = UnitCanAttack("player", "target") and C_NamePlate.GetNamePlateForUnit("target", false) or nil
     if nameplate then
         currentNameplate = nameplate
-        local anchor       = npo.anchor or "TOP"
+        local anchor       = npo.reverseAnchor and "LEFT" or "RIGHT"
         local iconSize     = npo.iconSize or 26
         -- Health bar is tied to the defensive queue: only show when defensives are enabled
         local showDefensives = npo.showDefensives
@@ -406,7 +417,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
 
         local expansion         = npo.expansion or "out"
         local healthBarPosition = npo.healthBarPosition or "outside"
-        AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, healthBarPosition)
+        AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, healthBarPosition, npo.iconSpacing or ICON_SPACING)
         -- Individual icons become visible when Render() / RenderDefensives() fills them
     else
         currentNameplate = nil
@@ -451,6 +462,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local hasSpells   = spellIDs and #spellIDs > 0
     local npoGlowMode  = npo.glowMode or "all"
     local showHotkey   = npo.showHotkey
+    local opacity      = npo.opacity or 1.0
     local now        = GetTime()
     local shouldUpdateCooldowns = (now - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
     if shouldUpdateCooldowns then lastCooldownUpdate = now end
@@ -532,7 +544,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            if not icon:IsShown() then icon:Show(); icon:SetAlpha(1) end
+            if not icon:IsShown() then icon:Show() end
+            icon:SetAlpha(opacity)
         else
             -- Empty slot: clear icon
             if icon.spellID then
@@ -563,12 +576,19 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
 
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local npoGlowMode   = npo.glowMode or "all"
+    local opacity       = npo.opacity or 1.0
+    local iconSpacing   = npo.iconSpacing or ICON_SPACING
 
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
         local entry = defensiveQueue and defensiveQueue[i]
         if entry and entry.spellID then
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode)
+            icon.overlayOpacity = opacity
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npo.showHotkey, npo.showFlash ~= false)
+            -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
+            if icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
+                icon:SetAlpha(opacity)
+            end
             visibleCount = visibleCount + 1
         else
             UIRenderer.HideDefensiveIcon(icon)
@@ -581,10 +601,9 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     --   2+ icons → inset 25% of iconSize from each outer edge, bar spans inner 50%+middle
     if healthBar then
         if visibleCount > 0 then
-            local npo = addon:GetProfile() and addon:GetProfile().nameplateOverlay
             if npo and npo.showHealthBar then
                 local iconSize          = npo.iconSize or 26
-                local anchor    = npo.anchor or "LEFT"
+                local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
                 local expansion = npo.expansion or "out"
                 local isLeft    = (anchor == "LEFT")
 
@@ -593,7 +612,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                 if expansion == "out" then
                     -- Horizontal cluster: symmetric 10% inset on both outer edges.
                     -- clusterWidth = n*size + (n-1)*spacing; barWidth = clusterWidth - 2*inset.
-                    local clusterWidth = visibleCount * iconSize + (visibleCount - 1) * ICON_SPACING
+                    local clusterWidth = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
                     local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
                     local barWidth = math_floor(clusterWidth - 2 * inset)
                     healthBar:SetOrientation("HORIZONTAL")
@@ -608,7 +627,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                 else
                     -- Vertical cluster: VERTICAL bar spans beside the column on the outer side.
                     -- Same inset rule as horizontal: 10% of iconSize per edge for 2+ icons.
-                    local clusterHeight = visibleCount * iconSize + (visibleCount - 1) * ICON_SPACING
+                    local clusterHeight = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
                     local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
                     local barHeight = math_floor(clusterHeight - 2 * inset)
                     healthBar:SetOrientation("VERTICAL")  -- fills bottom→top
@@ -633,10 +652,8 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     end
                 end
 
-                if not healthBar:IsShown() then
-                    healthBar:Show()
-                    healthBar:SetAlpha(1)
-                end
+                healthBar:SetAlpha(opacity)
+                if not healthBar:IsShown() then healthBar:Show() end
             end
         else
             healthBar:Hide()

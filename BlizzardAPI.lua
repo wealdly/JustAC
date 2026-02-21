@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module - Wraps WoW C_* APIs with 12.0+ secret value handling
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 29)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 30)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -149,7 +149,6 @@ end
 local featureAvailability = {
     healthAccess = true,
     auraAccess = true,
-    cooldownAccess = true,
     procAccess = true,
     lastCheck = 0,
 }
@@ -190,40 +189,16 @@ local function TestAuraAccess()
     return false
 end
 
--- Cooldowns flagged spell-by-spell as non-secret in 12.0
-local function TestCooldownAccess()
-    if not C_Spell_GetSpellCooldown then return true end
-
-    local ok, result = pcall(function()
-        if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
-            local spells = C_AssistedCombat.GetRotationSpells()
-            if spells and spells[1] and spells[1].spellId then
-                local cooldownInfo = C_Spell_GetSpellCooldown(spells[1].spellId)
-                if cooldownInfo then
-                    if issecretvalue then
-                        if issecretvalue(cooldownInfo.startTime) or issecretvalue(cooldownInfo.duration) then
-                            return false
-                        end
-                    end
-                end
-            end
-        end
-        return true
-    end)
-    
-    if not ok then return true end
-    return result
-end
-
 -- IsSpellOverlayed may return secret boolean in 12.0
+-- GetRotationSpells() returns a flat array of spell ID numbers (not objects)
 local function TestProcAccess()
     if not C_SpellActivationOverlay_IsSpellOverlayed then return true end
     
     local ok, result = pcall(function()
         if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
             local spells = C_AssistedCombat.GetRotationSpells()
-            if spells and spells[1] and spells[1].spellId then
-                local hasProc = C_SpellActivationOverlay_IsSpellOverlayed(spells[1].spellId)
+            if spells and spells[1] then
+                local hasProc = C_SpellActivationOverlay_IsSpellOverlayed(spells[1])
                 if hasProc ~= nil and issecretvalue then
                     if issecretvalue(hasProc) then
                         return false
@@ -246,12 +221,10 @@ local function RefreshFeatureAvailability()
 
     local oldHealthAccess = featureAvailability.healthAccess
     local oldAuraAccess = featureAvailability.auraAccess
-    local oldCooldownAccess = featureAvailability.cooldownAccess
     local oldProcAccess = featureAvailability.procAccess
 
     featureAvailability.healthAccess = TestHealthAccess()
     featureAvailability.auraAccess = TestAuraAccess()
-    featureAvailability.cooldownAccess = TestCooldownAccess()
     featureAvailability.procAccess = TestProcAccess()
     featureAvailability.lastCheck = now
 
@@ -265,9 +238,6 @@ local function RefreshFeatureAvailability()
             if oldAuraAccess ~= featureAvailability.auraAccess then
                 addon:Print("Aura API access: " .. (featureAvailability.auraAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
-            if oldCooldownAccess ~= featureAvailability.cooldownAccess then
-                addon:Print("Cooldown API access: " .. (featureAvailability.cooldownAccess and "AVAILABLE" or "BLOCKED (secrets)"))
-            end
             if oldProcAccess ~= featureAvailability.procAccess then
                 addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
@@ -275,41 +245,14 @@ local function RefreshFeatureAvailability()
     end
 end
 
-function BlizzardAPI.IsDefensivesFeatureAvailable()
-    RefreshFeatureAvailability()
-    return featureAvailability.healthAccess
-end
-
 function BlizzardAPI.IsRedundancyFilterAvailable()
     RefreshFeatureAvailability()
     return featureAvailability.auraAccess
 end
 
-function BlizzardAPI.IsCooldownFeatureAvailable()
-    RefreshFeatureAvailability()
-    return featureAvailability.cooldownAccess
-end
-
 function BlizzardAPI.IsProcFeatureAvailable()
     RefreshFeatureAvailability()
     return featureAvailability.procAccess
-end
-
-function BlizzardAPI.GetBypassFlags()
-    RefreshFeatureAvailability()
-    local bypassRedundancy = not BlizzardAPI.IsRedundancyFilterAvailable()
-    local bypassProcs = not BlizzardAPI.IsProcFeatureAvailable()
-    local bypassCooldown = not BlizzardAPI.IsCooldownFeatureAvailable()
-    local bypassDefensives = not BlizzardAPI.IsDefensivesFeatureAvailable()
-    local bypassSlot1Blacklist = bypassRedundancy or bypassProcs
-
-    return {
-        bypassRedundancy = bypassRedundancy,
-        bypassProcs = bypassProcs,
-        bypassCooldown = bypassCooldown,
-        bypassDefensives = bypassDefensives,
-        bypassSlot1Blacklist = bypassSlot1Blacklist,
-    }
 end
 
 function BlizzardAPI.RefreshFeatureAvailability()
@@ -322,7 +265,6 @@ function BlizzardAPI.GetFeatureAvailability()
     return {
         healthAccess = featureAvailability.healthAccess,
         auraAccess = featureAvailability.auraAccess,
-        cooldownAccess = featureAvailability.cooldownAccess,
         procAccess = featureAvailability.procAccess,
     }
 end
@@ -603,7 +545,8 @@ function BlizzardAPI.GetActionInfo(slot)
 
     local actionType, id, subType, spell_id_from_macro = GetActionInfo(slot)
 
-    if actionType == "spell" and type(id) == "string" and id == "assistedcombat" then
+    -- Filter Assisted Combat placeholder slots (Blizzard uses subType == "assistedcombat")
+    if actionType == "spell" and (subType == "assistedcombat" or (type(id) == "string" and id == "assistedcombat")) then
         return nil, nil, nil, nil
     end
 
