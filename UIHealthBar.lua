@@ -60,9 +60,8 @@ function UIHealthBar.CreateHealthBar(addon)
         -- Single icon: full width edge-to-edge
         queueDimension = firstIconSize
     else
-        -- Multiple icons: 25% into icon 1 to 75% into last icon
-        -- = 75% of firstIcon + middle icons + 75% of last icon
-        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
+        -- Multiple icons: 10% inset from each outer edge
+        queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
     end
     
     if orientation == "LEFT" or orientation == "RIGHT" then
@@ -73,8 +72,8 @@ function UIHealthBar.CreateHealthBar(addon)
         frame:SetSize(BAR_HEIGHT, queueDimension)
     end
     
-    -- Positioning offset: 0 for single icon (edge-to-edge), 25% for multiple icons
-    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
+    -- Positioning offset: 0 for single icon (edge-to-edge), 10% for multiple icons
+    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
     
     -- Position health bar based on queue orientation
     if orientation == "LEFT" then
@@ -105,48 +104,17 @@ function UIHealthBar.CreateHealthBar(addon)
         statusBar:SetOrientation("VERTICAL")
     end
     
-    -- Set initial green color
-    statusBar:SetStatusBarColor(0.0, 0.8, 0.0, 1.0)
+    -- Set initial bright green color (matches nameplate overlay bar)
+    statusBar:SetStatusBarColor(0.0, 1.0, 0.0, 0.9)
     
-    -- Background
+    -- Solid dark-red background fills the bar frame
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
     bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
     
-    -- Border frame for visual definition
-    local border = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    border:SetAllPoints(frame)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    border:SetBackdropBorderColor(0, 0, 0, 1)
-    
-    -- Tick marks at 25%, 50%, 75% for visual percentage reference
-    local tickMarks = {}
-    for i, percent in ipairs({0.25, 0.5, 0.75}) do
-        local tick = border:CreateTexture(nil, "OVERLAY")
-        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
-        tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)  -- Grey
-        
-        if orientation == "LEFT" or orientation == "RIGHT" then
-            -- Horizontal bar: vertical tick marks
-            tick:SetSize(1, BAR_HEIGHT)
-            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
-        else
-            -- Vertical bar: horizontal tick marks
-            tick:SetSize(BAR_HEIGHT, 1)
-            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
-        end
-        
-        tickMarks[i] = tick
-    end
-    
     frame.statusBar = statusBar
     frame.background = bg
-    frame.border = border
-    frame.tickMarks = tickMarks
     
     healthBarFrame = frame
     
@@ -241,7 +209,7 @@ local function CalculateBarDimensions(profile)
     if maxIcons == 1 then
         queueDimension = firstIconSize
     else
-        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
+        queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
     end
 
     return orientation, queueDimension, firstIconSize, maxIcons
@@ -283,7 +251,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
     end
 
     -- Position: stack above/beside the player health bar if it exists, else same offset
-    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
+    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
     local playerBarExists = (healthBarFrame ~= nil) and profile.defensives.showHealthBar
     local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
 
@@ -311,40 +279,13 @@ function UIHealthBar.CreatePetHealthBar(addon)
     end
 
     -- Teal/blue for pet (distinct from player's green)
-    statusBar:SetStatusBarColor(0.0, 0.6, 0.8, 1.0)
+    statusBar:SetStatusBarColor(0.0, 0.6, 0.8, 0.9)
 
     -- Background (dark red when pet is hurt/missing health shows through)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
     bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
-
-    -- Border
-    local border = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    border:SetAllPoints(frame)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    border:SetBackdropBorderColor(0, 0, 0, 1)
-
-    -- Tick marks at 25%, 50%, 75%
-    local tickMarks = {}
-    for i, percent in ipairs({0.25, 0.5, 0.75}) do
-        local tick = border:CreateTexture(nil, "OVERLAY")
-        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
-        tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)
-
-        if orientation == "LEFT" or orientation == "RIGHT" then
-            tick:SetSize(1, BAR_HEIGHT)
-            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
-        else
-            tick:SetSize(BAR_HEIGHT, 1)
-            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
-        end
-
-        tickMarks[i] = tick
-    end
 
     -- Dead overlay (red tint, hidden by default)
     local deadOverlay = frame:CreateTexture(nil, "ARTWORK")
@@ -355,8 +296,6 @@ function UIHealthBar.CreatePetHealthBar(addon)
 
     frame.statusBar = statusBar
     frame.background = bg
-    frame.border = border
-    frame.tickMarks = tickMarks
     frame.deadOverlay = deadOverlay
 
     petHealthBarFrame = frame

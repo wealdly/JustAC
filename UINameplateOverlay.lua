@@ -116,9 +116,11 @@ local function CreateOverlayIcon(iconSize)
     chargeCooldown:ClearAllPoints()
     chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
     chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
+    -- Blizzard 12.0: charge cooldowns use edge ring only (drawSwipe="false" in XML).
+    -- Swipe is a filled dark polygon that can bleed; edge ring is a thin border that stays contained.
+    chargeCooldown:SetDrawSwipe(false)
     chargeCooldown:SetDrawEdge(true)
     chargeCooldown:SetDrawBling(false)
-    chargeCooldown:SetDrawSwipe(true)
     chargeCooldown:SetHideCountdownNumbers(true)
     chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
     chargeCooldown:Clear()
