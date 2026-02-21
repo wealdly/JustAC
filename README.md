@@ -10,34 +10,69 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Displays upcoming rotation spells in a queue
 - Filters redundant suggestions (active buffs, current forms, existing pets)
 - Finds your keybinds even when spells are inside macros with conditionals
-- Handles spell transformations (Hot Streak, etc.) with cached slot lookups
+- Handles spell transformations (talent overrides, combat morphs) with cached slot lookups
+- Supports gamepad/controller button icons (Xbox, PlayStation, Generic styles)
 - Supports Masque for icon skinning
 
 ## Features
 
+### Dual Display Modes
+
+- **Standard Queue** — Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring.
+- **Nameplate Overlay** — Icon cluster attached directly to the target nameplate. Fully independent settings. Either or both modes can run simultaneously.
+
+### Smart Interrupt Reminders
+
+- Shows your interrupt ability before the DPS queue when the target is casting
+- **Important Only** mode filters to lethal/must-interrupt casts (`C_Spell.IsSpellImportant`)
+- **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts
+- Boss-aware: CC abilities automatically filtered against CC-immune targets
+
+### Defensive Suggestions
+
+- Two-tier health-based system: self-heals at ~80% HP, major cooldowns at ~60% HP
+- Procced defensives (Victory Rush, free heals) shown at any health level
+- Pet rez/summon and pet heal support for Hunter, Warlock, Death Knight
+- Compact health bar (player + pet) with automatic resize
+- Items supported (potions, healthstones) with auto-detection from action bars
+
 ### Smart Hotkey Detection
 
-- Scans action bars to find your keybinds for any spell
-- Parses macro conditionals (`[mod]`, `[form]`, `[spec]`, etc.)
-- Caches spell→slot mappings for instant transform lookups
+- Scans all action bars to find your keybinds for any spell
+- Parses macro conditionals (`[mod]`, `[form]`, `[spec]`, `[stealth]`, `[combat]`)
+- Handles dynamic spell transforms (e.g. Templar Strike → Templar Slash) via override scanning
+- Gamepad support with Xbox/PlayStation/Generic button icon styles
+- Custom hotkey overrides via right-click menu
 
 ### Intelligent Filtering
 
 - Hides redundant suggestions (buffs already active, current form, existing pet)
-- Filters completed defensive cooldowns
+- Per-spell blacklist (Shift+Right-click to toggle)
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
+- Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
 
 ### Performance Optimized
 
 - Event-driven updates with minimal polling
-- Smart cache invalidation (only rescans when necessary)
-- Instant sync via `AssistedCombatManager.OnSetActionSpell` callback
+- Throttled cooldown/range checks (6-7x/sec instead of every frame)
+- Pooled table allocation to reduce garbage collection pressure
+- Cached spell info, override lookups, and filter results per update cycle
+- Gamepad keybind hash computed once, not per-lookup
 
 ## Installation
 
 1. Download and extract to `Interface\AddOns\JustAC`
 2. Enable "Assisted Combat" in WoW's Game Menu → Edit Mode → Combat section
 3. `/jac` to access options
+
+## Configuration
+
+- **Display Mode** — Standard Queue, Nameplate Overlay, Both, or Disabled
+- **Interrupt Reminder** — Important Only (default), All Casts, or Off; with optional CC for non-important casts
+- **Defensives** — Enable/disable, configure health thresholds, spell priority lists per class
+- **Per-Spec Profiles** — Automatic profile switching by specialization; set healer specs to "Disabled"
+- **Visibility** — Hide out of combat, when mounted, for healer specs, or without hostile target
+- **Localization** — English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Simplified/Traditional Chinese
 
 ## Acknowledgments & Credits
 
@@ -85,20 +120,21 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **12.0+ Midnight Compliant** — Uses only safe, non-tainted APIs; handles secret values gracefully
-- **No External Spell Databases** — Native spell classification replaces LibPlayerSpells for full 12.0 compatibility
-- **Modular Architecture** — 10 LibStub modules with clear separation of concerns
-- **Event-Driven** — Minimal polling, responds to game events for proc detection
-- **Cache-Smart** — Aggressive caching with proper invalidation
+- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; fail-open design throughout
+- **No External Spell Databases** — Native spell classification (SpellDB) replaces LibPlayerSpells
+- **Modular Architecture** — 12 LibStub modules with clear dependency order
+- **Event-Driven** — Minimal polling; events mark queues dirty for responsive updates
+- **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven patterns)
 
 ## Commands
 
 ```text
-/jac           - Open options panel
-/jac test      - Run API diagnostics
-/jac modules   - Check module health
-/jac formcheck - Debug form detection
-/jac find Name - Locate a spell on action bars
+/jac            - Open options panel
+/jac test       - Run API diagnostics
+/jac modules    - Check module health
+/jac formcheck  - Debug form detection
+/jac find Name  - Locate a spell on action bars
+/jac defensive  - Diagnose defensive icon system
 ```
 
 ## License
