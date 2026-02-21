@@ -1134,7 +1134,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.iconSize = val
                             addon:UpdateFrameSize()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     iconSpacing = {
                         type = "range",
@@ -1147,7 +1151,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.iconSpacing = val
                             addon:UpdateFrameSize()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     queueOrientation = {
                         type = "select",
@@ -1165,7 +1173,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.queueOrientation = val
                             addon:UpdateFrameSize()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     targetFrameAnchor = {
                         type = "select",
@@ -1184,7 +1196,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.targetFrameAnchor = val
                             addon:UpdateTargetFrameAnchor()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     -- VISIBILITY (20-29)
                     visibilityHeader = {
@@ -1278,7 +1294,11 @@ local function CreateOptionsTable(addon)
                             -- Clear old settings after migration
                             addon.db.profile.showTooltips = nil
                             addon.db.profile.tooltipsInCombat = nil
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     frameOpacity = {
                         type = "range",
@@ -1291,7 +1311,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.frameOpacity = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     queueDesaturation = {
                         type = "range",
@@ -1304,7 +1328,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.queueIconDesaturation = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     gamepadIconStyle = {
                         type = "select",
@@ -1325,7 +1353,11 @@ local function CreateOptionsTable(addon)
                             if ActionBarScanner and ActionBarScanner.ClearAllCaches then
                                 ActionBarScanner.ClearAllCaches()
                             end
-                        end
+                        end,
+                        -- Applies to both queue and overlay hotkeys; only useless when fully disabled
+                        disabled = function()
+                            return (addon.db.profile.displayMode or "queue") == "disabled"
+                        end,
                     },
                     -- SYSTEM (40-49)
                     systemHeader = {
@@ -1351,7 +1383,11 @@ local function CreateOptionsTable(addon)
                         end,
                         set = function(_, val)
                             addon.db.profile.panelInteraction = val
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     -- ITEMS (50-59)
                     itemsHeader = {
@@ -1435,7 +1471,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.includeHiddenAbilities = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     showSpellbookProcs = {
                         type = "toggle",
@@ -1447,7 +1487,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.showSpellbookProcs = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     hideItemAbilities = {
                         type = "toggle",
@@ -1460,7 +1504,11 @@ local function CreateOptionsTable(addon)
                             addon.db.profile.hideItemAbilities = val
                             addon:ForceUpdate()
                         end,
-                        disabled = function() return not addon.db.profile.enableItemFeatures end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return not addon.db.profile.enableItemFeatures
+                                or dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     -- DISPLAY (15-19)
                     displayHeader = {
@@ -1479,7 +1527,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.maxIcons = val
                             addon:UpdateFrameSize()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     firstIconScale = {
                         type = "range",
@@ -1492,7 +1544,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.firstIconScale = val
                             addon:UpdateFrameSize()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     showHotkeys = {
                         type = "toggle",
@@ -1508,7 +1564,11 @@ local function CreateOptionsTable(addon)
                                 ActionBarScanner.ClearAllCaches()
                             end
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     glowMode = {
                         type = "select",
@@ -1527,7 +1587,11 @@ local function CreateOptionsTable(addon)
                         set = function(_, val)
                             addon.db.profile.glowMode = val
                             addon:ForceUpdate()
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     showFlash = {
                         type = "toggle",
@@ -1538,7 +1602,11 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.showFlash ~= false end,
                         set = function(_, val)
                             addon.db.profile.showFlash = val
-                        end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
                     },
                     -- BLACKLIST (20+)
                     blacklistHeader = {
@@ -1578,6 +1646,10 @@ local function CreateOptionsTable(addon)
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
                         end,
                     },
                 },
@@ -1846,8 +1918,7 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return (dm ~= "overlay" and dm ~= "both")
-                                or not addon.db.profile.nameplateOverlay.showDefensives
+                            return dm ~= "overlay" and dm ~= "both"
                         end,
                     },
                     -- RESET (990+)
@@ -2339,7 +2410,7 @@ local function CreateOptionsTable(addon)
                 type = "group",
                 name = L["Profiles"],
                 desc = L["Profiles desc"],
-                order = 4,
+                order = 6,
                 args = {}
             },
         }
