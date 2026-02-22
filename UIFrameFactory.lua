@@ -423,7 +423,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    -- Fade-in animation (already created by CreateBaseIcon; re-register the Masque group here)
     -- Register with Masque if available
     local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
     if MasqueDefensiveGroup then
@@ -523,30 +522,8 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetPoint(pos.point, pos.x, pos.y)
     
     addon.mainFrame:EnableMouse(true)
-    addon.mainFrame:SetMovable(true)
+    addon.mainFrame:SetMovable(true)   -- Required: grab tab delegates StartMoving() to mainFrame
     addon.mainFrame:SetClampedToScreen(true)
-    addon.mainFrame:RegisterForDrag("LeftButton")
-    
-    addon.mainFrame:SetScript("OnDragStart", function()
-        local profile = addon:GetProfile()
-        if not IsPanelLocked(profile) then
-            -- Detach from target frame anchor before dragging so position saves correctly
-            if addon.targetframe_anchored then
-                addon.targetframe_anchored = false
-                addon.mainFrame:ClearAllPoints()
-                addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-            end
-            addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
-        end
-    end)
-    addon.mainFrame:SetScript("OnDragStop", function()
-        addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
-    end)
     
     -- Show/hide grab tab on hover
     addon.mainFrame:SetScript("OnEnter", function()
@@ -631,6 +608,10 @@ function UIFrameFactory.CreateGrabTab(addon)
     else
         addon.grabTab:SetSize(12, 20)
     end
+
+    -- Extend the clickable hit area beyond the visible tab (negative insets = larger area)
+    -- Makes the small tab much easier to grab, especially on high-DPI displays
+    addon.grabTab:SetHitRectInsets(-6, -6, -6, -6)
     
     -- Position at the end of the queue based on orientation
     -- Grab tab goes at the trailing edge with no additional offset
@@ -698,8 +679,9 @@ function UIFrameFactory.CreateGrabTab(addon)
             return
         end
         
-        -- Mark as dragging to prevent fade-out
+        -- Mark as dragging (addon-level for OnUpdate freeze, tab-level for fade logic)
         self.isDragging = true
+        addon.isDragging = true
         
         -- Stop any fade animation and ensure fully visible
         if self.fadeOut and self.fadeOut:IsPlaying() then
@@ -711,8 +693,7 @@ function UIFrameFactory.CreateGrabTab(addon)
         self:SetAlpha(1)
         
         -- Detach from target frame anchor before dragging so position saves correctly
-        local profile = addon:GetProfile()
-        if addon.targetframe_anchored and profile then
+        if addon.targetframe_anchored then
             addon.targetframe_anchored = false
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
@@ -725,15 +706,26 @@ function UIFrameFactory.CreateGrabTab(addon)
     
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
         
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
+        -- User manually dragged — auto-disable target frame anchor so it doesn't snap back
+        local profile = addon:GetProfile()
+        if profile and profile.targetFrameAnchor and profile.targetFrameAnchor ~= "DISABLED" then
+            profile.targetFrameAnchor = "DISABLED"
+            addon.targetframe_anchored = false
+            if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
         end
         
-        -- Clear dragging flag and fade out if mouse isn't over frame/tab
+        UIFrameFactory.SavePosition(addon)
+        
+        -- Clear dragging flags (addon-level + tab-level)
         self.isDragging = false
+        addon.isDragging = false
+        
+        -- Mark queues dirty so icons refresh immediately at new position
+        if addon.MarkQueueDirty then addon:MarkQueueDirty() end
+        if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+        
+        -- Fade out if mouse isn't over frame/tab
         if not addon.mainFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
             self.fadeOut:Play()
         end
@@ -935,27 +927,6 @@ local function CreateInterruptIcon(addon, profile)
         end
     end)
 
-    -- Enable dragging from interrupt icon (delegates to main frame)
-    button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", function(self)
-        local profile = addon:GetProfile()
-        if IsPanelLocked(profile) then return end
-        if addon.targetframe_anchored and profile then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        addon.mainFrame:StartMoving(true)
-    end)
-
-    button:SetScript("OnDragStop", function(self)
-        addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
-    end)
-
     -- Register with Masque if available (matches DPS queue skinning)
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     if MasqueGroup then
@@ -1035,27 +1006,6 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     else -- LEFT (default)
         button:SetPoint("LEFT", offset, 0)
     end
-
-    -- Enable dragging from icons (delegates to main frame)
-    button:RegisterForDrag("LeftButton")
-    button:SetScript("OnDragStart", function(self)
-        local profile = addon:GetProfile()
-        if IsPanelLocked(profile) then return end
-        if addon.targetframe_anchored and profile then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        addon.mainFrame:StartMoving(true)
-    end)
-
-    button:SetScript("OnDragStop", function(self)
-        addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
-    end)
 
     -- Right-click menu for configuration
     button:RegisterForClicks("RightButtonUp")
@@ -1220,11 +1170,16 @@ function UIFrameFactory.SavePosition(addon)
     local profile = addon:GetProfile()
     if not profile then return end
     
+    -- Guard: don't save while anchored to TargetFrame — GetPoint() would return
+    -- TargetFrame-relative offsets which are meaningless as a saved position.
+    if addon.targetframe_anchored then return end
+    
     local point, _, _, x, y = addon.mainFrame:GetPoint()
+    if not point then return end
     profile.framePosition = {
-        point = point or "CENTER",
+        point = point,
         x = x or 0,
-        y = y or -150
+        y = y or -150,
     }
 end
 
