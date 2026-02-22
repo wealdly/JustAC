@@ -219,15 +219,13 @@ function Options.UpdateBlacklistOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable then return end
 
-    local blacklistArgs = optionsTable.args.offensive.args
+    local blacklistGroup = optionsTable.args.offensive.args.blacklistGroup
+    if not blacklistGroup then return end
+    local blacklistArgs = blacklistGroup.args
 
-    -- Static keys to preserve (defined in InitOptionsTable)
+    -- Static keys to preserve (defined in CreateOptionsTable)
     local staticKeys = {
-        info = true, contentHeader = true, includeHiddenAbilities = true,
-        showSpellbookProcs = true, hideItemAbilities = true, showInterrupt = true, ccAllCasts = true,
-        displayHeader = true, maxIcons = true, firstIconScale = true, showHotkeys = true, glowMode = true, showFlash = true,
-        blacklistHeader = true, blacklistInfo = true,
-        resetHeader = true, resetDefaults = true,
+        info = true,
     }
 
     -- Clear old dynamic entries
@@ -992,30 +990,26 @@ function Options.UpdateDefensivesOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable or not SpellQueue then return end
 
-    local defensivesArgs = optionsTable.args.defensives.args
+    local spellListGroup = optionsTable.args.defensives.args.spellListGroup
+    if not spellListGroup then return end
+    local spellListArgs = spellListGroup.args
 
-    -- Clear old dynamic entries (preserve static elements)
+    -- Clear old dynamic entries (preserve static elements within the spell list group)
     local staticKeys = {
-        info = true, header = true, enabled = true, showProcs = true,
-        itemsHeader = true, allowItems = true, autoInsertPotions = true,
-        displayHeader = true, iconScale = true, maxIcons = true, position = true,
-        showHotkeys = true, glowMode = true, showFlash = true, displayMode = true, showHealthBar = true,
-        showPetHealthBar = true,
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
-        classColorHeader = true,
     }
     
     local keysToClear = {}
-    for key, _ in pairs(defensivesArgs) do
+    for key, _ in pairs(spellListArgs) do
         if not staticKeys[key] then
             table.insert(keysToClear, key)
         end
     end
     for _, key in ipairs(keysToClear) do
-        defensivesArgs[key] = nil
+        spellListArgs[key] = nil
     end
 
     local defensives = addon.db.profile.defensives
@@ -1038,34 +1032,24 @@ function Options.UpdateDefensivesOptions(addon)
         or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
     )
 
-    -- Inject class-colored header so user knows which class spells they're editing
-    local className = playerClass and (UnitClass("player")) or "Unknown"
-    local colorCode = (playerClass and CLASS_COLORS[playerClass]) or "FFFFFFFF"
-    defensivesArgs.classColorHeader = {
-        type = "description",
-        name = "|c" .. colorCode .. className .. "|r Defensive Spells",
-        fontSize = "large",
-        order = 19.5,
-    }
-
     -- Self-heal spells (order 22.0-39.9, allowing 180 entries)
-    CreateSpellListEntries(addon, defensivesArgs, selfHealSpells, "selfheal", 22)
-    CreateAddSpellInput(addon, defensivesArgs, selfHealSpells, "selfheal", 40, "Self-Heals")
+    CreateSpellListEntries(addon, spellListArgs, selfHealSpells, "selfheal", 22)
+    CreateAddSpellInput(addon, spellListArgs, selfHealSpells, "selfheal", 40, "Self-Heals")
 
     -- Cooldown spells (order 52.0-69.9, allowing 180 entries)  
-    CreateSpellListEntries(addon, defensivesArgs, cooldownSpells, "cooldown", 52)
-    CreateAddSpellInput(addon, defensivesArgs, cooldownSpells, "cooldown", 70, "Cooldowns")
+    CreateSpellListEntries(addon, spellListArgs, cooldownSpells, "cooldown", 52)
+    CreateAddSpellInput(addon, spellListArgs, cooldownSpells, "cooldown", 70, "Cooldowns")
 
     -- Pet Rez/Summon spells (order 82.0-99.9, pet classes only)
     if isPetClass and petRezSpells then
-        CreateSpellListEntries(addon, defensivesArgs, petRezSpells, "petrez", 82)
-        CreateAddSpellInput(addon, defensivesArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon")
+        CreateSpellListEntries(addon, spellListArgs, petRezSpells, "petrez", 82)
+        CreateAddSpellInput(addon, spellListArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon")
     end
 
     -- Pet Heal spells (order 112.0-129.9, pet classes only)
     if isPetClass and petHealSpells then
-        CreateSpellListEntries(addon, defensivesArgs, petHealSpells, "petheal", 112)
-        CreateAddSpellInput(addon, defensivesArgs, petHealSpells, "petheal", 130, "Pet Heals")
+        CreateSpellListEntries(addon, spellListArgs, petHealSpells, "petheal", 112)
+        CreateAddSpellInput(addon, spellListArgs, petHealSpells, "petheal", 130, "Pet Heals")
     end
     
     -- Notify AceConfig that the options table changed
@@ -1473,10 +1457,11 @@ local function CreateOptionsTable(addon)
                             p.iconSize              = 42
                             p.iconSpacing           = 1
                             p.queueOrientation      = "LEFT"
-                            p.targetFrameAnchor     = "DISABLED"
+                            p.targetFrameAnchor     = "TOP"
                             p.hideQueueOutOfCombat  = false
                             p.hideQueueWhenMounted  = false
                             p.requireHostileTarget  = false
+                            p.showHealthBar         = false
                             p.tooltipMode           = "always"
                             p.frameOpacity          = 1.0
                             p.queueIconDesaturation = 0
@@ -1686,30 +1671,17 @@ local function CreateOptionsTable(addon)
                             return dm == "disabled" or dm == "overlay"
                         end,
                     },
-                    -- BLACKLIST (20+)
-                    blacklistHeader = {
-                        type = "header",
-                        name = L["Blacklist"],
-                        order = 20,
-                    },
-                    blacklistInfo = {
-                        type = "description",
-                        name = L["Blacklist Info"],
-                        order = 21,
-                        fontSize = "medium"
-                    },
-                    -- Dynamic blacklist entries added by UpdateBlacklistOptions
-                    -- RESET (990+)
+                    -- RESET (19.8+)
                     resetHeader = {
                         type = "header",
                         name = "",
-                        order = 990,
+                        order = 19.8,
                     },
                     resetDefaults = {
                         type = "execute",
                         name = L["Reset to Defaults"],
                         desc = L["Reset Offensive desc"],
-                        order = 991,
+                        order = 19.9,
                         width = "normal",
                         func = function()
                             local p = addon.db.profile
@@ -1722,6 +1694,7 @@ local function CreateOptionsTable(addon)
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
                             p.interruptMode          = "important"
+                            p.ccAllCasts             = true
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -1730,6 +1703,22 @@ local function CreateOptionsTable(addon)
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm == "disabled" or dm == "overlay"
                         end,
+                    },
+                    -- BLACKLIST (20+)
+                    blacklistGroup = {
+                        type = "group",
+                        inline = true,
+                        name = L["Blacklist"],
+                        order = 20,
+                        args = {
+                            info = {
+                                type = "description",
+                                name = L["Blacklist Info"],
+                                order = 1,
+                                fontSize = "medium"
+                            },
+                            -- Dynamic blacklist entries added by UpdateBlacklistOptions
+                        },
                     },
                 },
             },
@@ -2105,9 +2094,10 @@ local function CreateOptionsTable(addon)
                             npo.showFlash            = true
                             npo.showDefensives       = true
                             npo.maxDefensiveIcons    = 3
-                            npo.defensiveDisplayMode = "combatOnly"
+                            npo.defensiveDisplayMode = "always"
                             npo.showHealthBar        = true
                             npo.interruptMode        = "important"
+                            npo.ccAllCasts           = true
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -2365,142 +2355,17 @@ local function CreateOptionsTable(addon)
                                 or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
                         end,
                     },
-                    -- SELF-HEAL PRIORITY LIST (20+)
-                    selfHealHeader = {
-                        type = "header",
-                        name = L["Self-Heal Priority List"],
-                        order = 20,
-                    },
-                    selfHealInfo = {
-                        type = "description",
-                        name = L["Self-Heal Priority desc"],
-                        order = 21,
-                        fontSize = "small"
-                    },
-                    restoreSelfHealDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults"],
-                        desc = L["Restore Class Defaults desc"],
-                        order = 42,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("selfheal")
-                            Options.UpdateDefensivesOptions(addon)
-                        end,
-                    },
-                    -- Dynamic selfHealSpells entries added by UpdateDefensivesOptions
-                    cooldownHeader = {
-                        type = "header",
-                        name = L["Major Cooldowns Priority List"],
-                        order = 50,
-                    },
-                    cooldownInfo = {
-                        type = "description",
-                        name = L["Major Cooldowns Priority desc"],
-                        order = 51,
-                        fontSize = "small"
-                    },
-                    restoreCooldownDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Cooldowns Defaults desc"],
-                        order = 72,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("cooldown")
-                            Options.UpdateDefensivesOptions(addon)
-                        end,
-                    },
-                    -- Dynamic cooldownSpells entries added by UpdateDefensivesOptions
-                    -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
-                    petRezHeader = {
-                        type = "header",
-                        name = L["Pet Rez/Summon Priority List"],
-                        order = 80,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
-                    },
-                    petRezInfo = {
-                        type = "description",
-                        name = L["Pet Rez/Summon Priority desc"],
-                        order = 81,
-                        fontSize = "small",
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
-                    },
-                    restorePetRezDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Pet Rez Defaults desc"],
-                        order = 102,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("petrez")
-                            Options.UpdateDefensivesOptions(addon)
-                        end,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
-                    },
-                    -- Dynamic petRezSpells entries added by UpdateDefensivesOptions
-                    -- PET HEAL PRIORITY LIST (110+, pet classes only)
-                    petHealHeader = {
-                        type = "header",
-                        name = L["Pet Heal Priority List"],
-                        order = 110,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
-                    },
-                    petHealInfo = {
-                        type = "description",
-                        name = L["Pet Heal Priority desc"],
-                        order = 111,
-                        fontSize = "small",
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
-                    },
-                    restorePetHealDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Pet Heal Defaults desc"],
-                        order = 132,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("petheal")
-                            Options.UpdateDefensivesOptions(addon)
-                        end,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
-                    },
-                    -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
-                    -- RESET (990+)
+                    -- RESET (19.8+)
                     resetHeader = {
                         type = "header",
                         name = "",
-                        order = 990,
+                        order = 19.8,
                     },
                     resetDefaults = {
                         type = "execute",
                         name = L["Reset to Defaults"],
                         desc = L["Reset Defensives desc"],
-                        order = 991,
+                        order = 19.9,
                         width = "normal",
                         func = function()
                             local def = addon.db.profile.defensives
@@ -2524,6 +2389,143 @@ local function CreateOptionsTable(addon)
                             addon:UpdateFrameSize()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
+                    },
+                    -- SPELL LISTS (20+)
+                    spellListGroup = {
+                        type = "group",
+                        inline = true,
+                        name = function()
+                            local className, playerClass = UnitClass("player")
+                            local colorCode = (playerClass and CLASS_COLORS[playerClass]) or "FFFFFFFF"
+                            return "|c" .. colorCode .. (className or "Unknown") .. "|r Defensive Spells"
+                        end,
+                        order = 20,
+                        args = {
+                            selfHealHeader = {
+                                type = "header",
+                                name = L["Self-Heal Priority List"],
+                                order = 20,
+                            },
+                            selfHealInfo = {
+                                type = "description",
+                                name = L["Self-Heal Priority desc"],
+                                order = 21,
+                                fontSize = "small"
+                            },
+                            restoreSelfHealDefaults = {
+                                type = "execute",
+                                name = L["Restore Class Defaults"],
+                                desc = L["Restore Class Defaults desc"],
+                                order = 42,
+                                width = "normal",
+                                func = function()
+                                    addon:RestoreDefensiveDefaults("selfheal")
+                                    Options.UpdateDefensivesOptions(addon)
+                                end,
+                            },
+                            -- Dynamic selfHealSpells entries added by UpdateDefensivesOptions
+                            cooldownHeader = {
+                                type = "header",
+                                name = L["Major Cooldowns Priority List"],
+                                order = 50,
+                            },
+                            cooldownInfo = {
+                                type = "description",
+                                name = L["Major Cooldowns Priority desc"],
+                                order = 51,
+                                fontSize = "small"
+                            },
+                            restoreCooldownDefaults = {
+                                type = "execute",
+                                name = L["Restore Class Defaults name"],
+                                desc = L["Restore Cooldowns Defaults desc"],
+                                order = 72,
+                                width = "normal",
+                                func = function()
+                                    addon:RestoreDefensiveDefaults("cooldown")
+                                    Options.UpdateDefensivesOptions(addon)
+                                end,
+                            },
+                            -- Dynamic cooldownSpells entries added by UpdateDefensivesOptions
+                            -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
+                            petRezHeader = {
+                                type = "header",
+                                name = L["Pet Rez/Summon Priority List"],
+                                order = 80,
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                                end,
+                            },
+                            petRezInfo = {
+                                type = "description",
+                                name = L["Pet Rez/Summon Priority desc"],
+                                order = 81,
+                                fontSize = "small",
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                                end,
+                            },
+                            restorePetRezDefaults = {
+                                type = "execute",
+                                name = L["Restore Class Defaults name"],
+                                desc = L["Restore Pet Rez Defaults desc"],
+                                order = 102,
+                                width = "normal",
+                                func = function()
+                                    addon:RestoreDefensiveDefaults("petrez")
+                                    Options.UpdateDefensivesOptions(addon)
+                                end,
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                                end,
+                            },
+                            -- Dynamic petRezSpells entries added by UpdateDefensivesOptions
+                            -- PET HEAL PRIORITY LIST (110+, pet classes only)
+                            petHealHeader = {
+                                type = "header",
+                                name = L["Pet Heal Priority List"],
+                                order = 110,
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                                end,
+                            },
+                            petHealInfo = {
+                                type = "description",
+                                name = L["Pet Heal Priority desc"],
+                                order = 111,
+                                fontSize = "small",
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                                end,
+                            },
+                            restorePetHealDefaults = {
+                                type = "execute",
+                                name = L["Restore Class Defaults name"],
+                                desc = L["Restore Pet Heal Defaults desc"],
+                                order = 132,
+                                width = "normal",
+                                func = function()
+                                    addon:RestoreDefensiveDefaults("petheal")
+                                    Options.UpdateDefensivesOptions(addon)
+                                end,
+                                hidden = function()
+                                    local _, pc = UnitClass("player")
+                                    local SDB = LibStub("JustAC-SpellDB", true)
+                                    return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
+                                end,
+                            },
+                            -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
+                        },
                     },
                 },
             },

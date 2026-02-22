@@ -831,6 +831,10 @@ local function CreateInterruptIcon(addon, profile)
             if stdInterruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(stdInterruptIcon) end
             if stdInterruptIcon.hasProcGlow      then UIAnimations.HideProcGlow(stdInterruptIcon)      end
         end
+        local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+        if MasqueGroup then
+            MasqueGroup:RemoveButton(stdInterruptIcon)
+        end
         stdInterruptIcon:Hide()
         stdInterruptIcon:SetParent(nil)
         stdInterruptIcon = nil
@@ -845,7 +849,7 @@ local function CreateInterruptIcon(addon, profile)
     local orientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing or 1
 
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, false, true)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
     if not button then return end
 
     -- Position before slot 1 (opposite of queue growth direction)
@@ -864,6 +868,103 @@ local function CreateInterruptIcon(addon, profile)
     elseif orientation == "DOWN" then
         -- Queue grows top-to-bottom; interrupt goes ABOVE mainFrame
         button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
+    end
+
+    -- Tooltip handling
+    button:SetScript("OnEnter", function(self)
+        if not self.spellID then return end
+
+        local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
+        if not tooltipMode and addon.db and addon.db.profile then
+            if addon.db.profile.showTooltips == false then
+                tooltipMode = "never"
+            elseif addon.db.profile.tooltipsInCombat then
+                tooltipMode = "always"
+            else
+                tooltipMode = "outOfCombat"
+            end
+        end
+        tooltipMode = tooltipMode or "outOfCombat"
+
+        local inCombat = UnitAffectingCombat("player")
+        local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
+
+        if showTooltip then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetSpellByID(self.spellID)
+
+            local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
+            local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
+
+            if hotkey and hotkey ~= "" then
+                GameTooltip:AddLine(" ")
+                if isOverride then
+                    GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
+                else
+                    GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                end
+                GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+            else
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffff6666No hotkey found|r")
+            end
+
+            if not inCombat then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
+            end
+
+            GameTooltip:Show()
+        end
+    end)
+
+    button:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Right-click for hotkey override
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if IsPanelLocked(profile) then return end
+
+            if self.spellID then
+                addon:OpenHotkeyOverrideDialog(self.spellID)
+            end
+        end
+    end)
+
+    -- Enable dragging from interrupt icon (delegates to main frame)
+    button:RegisterForDrag("LeftButton")
+    button:SetScript("OnDragStart", function(self)
+        local profile = addon:GetProfile()
+        if IsPanelLocked(profile) then return end
+        if addon.targetframe_anchored and profile then
+            addon.targetframe_anchored = false
+            addon.mainFrame:ClearAllPoints()
+            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
+        addon.mainFrame:StartMoving(true)
+    end)
+
+    button:SetScript("OnDragStop", function(self)
+        addon.mainFrame:StopMovingOrSizing()
+        UIFrameFactory.SavePosition(addon)
+        if addon.UpdateTargetFrameAnchor then
+            addon:UpdateTargetFrameAnchor()
+        end
+    end)
+
+    -- Register with Masque if available (matches DPS queue skinning)
+    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            HotKey = button.hotkeyText,
+            Normal = button.NormalTexture,
+        })
     end
 
     button:Hide()  -- Hidden until an interruptible cast is detected
