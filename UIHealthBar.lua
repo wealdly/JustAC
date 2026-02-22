@@ -61,6 +61,15 @@ function UIHealthBar.CreateHealthBar(addon)
     local iconSpacing = profile.iconSpacing or 1
     local queueDimension, offset
 
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Health bars must match that shift to stay aligned.
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
     if useDefensiveDims then
         -- Span the defensive icon cluster; float on the far side (away from mainFrame)
         local defIconScale = profile.defensives.iconScale or 1.0
@@ -96,9 +105,9 @@ function UIHealthBar.CreateHealthBar(addon)
             end
         elseif orientation == "RIGHT" then
             if defPosition == "SIDE1" then
-                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -offset,   barDist)
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),   barDist)
             else
-                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -offset,  -barDist)
+                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve),  -barDist)
             end
         elseif orientation == "DOWN" then
             if defPosition == "SIDE1" then
@@ -108,9 +117,9 @@ function UIHealthBar.CreateHealthBar(addon)
             end
         else -- UP
             if defPosition == "SIDE1" then
-                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset)
+                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset + grabTabReserve)
             else
-                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset)
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset + grabTabReserve)
             end
         end
     else
@@ -135,11 +144,13 @@ function UIHealthBar.CreateHealthBar(addon)
         if orientation == "LEFT" then
             frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",    offset,     BAR_SPACING)
         elseif orientation == "RIGHT" then
-            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",  -offset,     BAR_SPACING)
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",  -(offset + grabTabReserve),     BAR_SPACING)
         elseif orientation == "DOWN" then
+            -- Bar to the right of mainFrame (perpendicular to vertical queue)
             frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",   BAR_SPACING, -offset)
         else -- UP
-            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset)
+            -- Bar to the right of mainFrame (perpendicular to vertical queue)
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset + grabTabReserve)
         end
     end
     
@@ -155,6 +166,8 @@ function UIHealthBar.CreateHealthBar(addon)
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
+        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
+        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
     
     -- Set initial bright green color (matches nameplate overlay bar)
@@ -164,6 +177,9 @@ function UIHealthBar.CreateHealthBar(addon)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    if orientation == "UP" or orientation == "DOWN" then
+        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
+    end
     bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
     
     frame.statusBar = statusBar
@@ -281,6 +297,15 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
     local defSpacing = math.max(iconSpacing, BAR_SPACING)
     local barDist    = defSpacing + defIconSize + BAR_SPACING
 
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Health bars must match that shift to stay aligned.
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
     healthBarFrame:ClearAllPoints()
     if orientation == "LEFT" then
         if defPosition == "SIDE1" then
@@ -290,9 +315,9 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         end
     elseif orientation == "RIGHT" then
         if defPosition == "SIDE1" then
-            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -offset,   barDist)
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),   barDist)
         else
-            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -offset,  -barDist)
+            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve),  -barDist)
         end
     elseif orientation == "DOWN" then
         if defPosition == "SIDE1" then
@@ -302,9 +327,9 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         end
     else -- UP
         if defPosition == "SIDE1" then
-            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset)
+            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset + grabTabReserve)
         else
-            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset)
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset + grabTabReserve)
         end
     end
 
@@ -377,6 +402,16 @@ function UIHealthBar.CreatePetHealthBar(addon)
 
     local orientation, queueDimension, defIconSize, maxDefIcons, defPosition, barDist = CalculateBarDimensions(profile)
 
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Pet health bars must match that shift.
+    local iconSpacing = profile.iconSpacing or 1
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
 
@@ -401,9 +436,9 @@ function UIHealthBar.CreatePetHealthBar(addon)
         end
     elseif orientation == "RIGHT" then
         if defPosition == "SIDE1" then
-            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -offset,  dist)
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),  dist)
         else
-            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -offset, -dist)
+            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve), -dist)
         end
     elseif orientation == "DOWN" then
         if defPosition == "SIDE1" then
@@ -413,9 +448,9 @@ function UIHealthBar.CreatePetHealthBar(addon)
         end
     else -- UP
         if defPosition == "SIDE1" then
-            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset)
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset + grabTabReserve)
         else
-            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset)
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset + grabTabReserve)
         end
     end
 
@@ -430,6 +465,8 @@ function UIHealthBar.CreatePetHealthBar(addon)
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
+        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
+        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
 
     -- Teal-green for pet (green-leaning but distinct from player's pure green)
@@ -439,6 +476,9 @@ function UIHealthBar.CreatePetHealthBar(addon)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    if orientation == "UP" or orientation == "DOWN" then
+        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
+    end
     bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
 
     -- Dead overlay (red tint, hidden by default)
