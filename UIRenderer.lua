@@ -483,7 +483,11 @@ local function HideInterruptIcon(intIcon)
     intIcon._chargeCooldownShown = false
     intIcon.normalizedHotkey     = nil
     intIcon.cachedHotkey         = nil
+    intIcon.cachedOutOfRange     = nil
+    intIcon.lastOutOfRange       = nil
+    intIcon.lastVisualState      = nil
     intIcon.hotkeyText:SetText("")
+    intIcon.iconTexture:SetDesaturation(0)
     if UIAnimations then
         if intIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(intIcon); intIcon.hasInterruptGlow = false end
         if intIcon.hasProcGlow      then UIAnimations.HideProcGlow(intIcon);      intIcon.hasProcGlow      = false end
@@ -708,6 +712,34 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 else
                     intIcon.normalizedHotkey = nil
                 end
+            end
+
+            -- Out-of-range: red hotkey text when target is beyond interrupt range
+            if intShowHotkeys and intIcon.cachedHotkey and intIcon.cachedHotkey ~= "" then
+                if spellChanged or shouldUpdateCooldowns then
+                    local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
+                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                        intIcon.cachedOutOfRange = (inRange == false)
+                    else
+                        intIcon.cachedOutOfRange = false
+                    end
+                end
+                local isOutOfRange = intIcon.cachedOutOfRange or false
+                if intIcon.lastOutOfRange ~= isOutOfRange then
+                    intIcon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    intIcon.lastOutOfRange = isOutOfRange
+                end
+            end
+
+            -- Channeling grey-out: desaturate when player is channeling (can't interrupt)
+            local intVisualState = isChanneling and 1 or 3
+            if intIcon.lastVisualState ~= intVisualState then
+                if intVisualState == 1 then
+                    intIcon.iconTexture:SetDesaturation(1.0)
+                else
+                    intIcon.iconTexture:SetDesaturation(0)
+                end
+                intIcon.lastVisualState = intVisualState
             end
 
             -- Glow: red-tinted proc glow for interrupt urgency
