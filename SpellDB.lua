@@ -744,13 +744,24 @@ local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 --- even when other cooldown fields are secret in 12.0 combat.
 --- Returns true if the spell is on a real (non-GCD) cooldown, false otherwise.
 --- Fail-open: returns false if anything errors.
+---
+--- 12.0 combat: duration/startTime are blanket-secreted (even when 0).
+--- However, isOnGCD is NeverSecret and has three distinct states:
+---   true  → GCD only, spell is effectively ready
+---   false → real cooldown is actively running
+---   nil   → no cooldown at all, spell is ready
+--- Only isOnGCD==false reliably indicates a real cooldown in combat.
 function SpellDB.IsInterruptOnCooldown(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return false end
     local ok, cdInfo = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cdInfo then return false end
-    -- isOnGCD is NeverSecret — always a real boolean
-    if cdInfo.isOnGCD then return false end  -- GCD only, effectively available
-    -- If duration is secret → nonzero → real cooldown running
+    -- isOnGCD is NeverSecret:
+    --   true  → GCD only, spell is effectively ready
+    --   nil   → no cooldown at all, spell is ready
+    --   false → real cooldown is actively running (only state we treat as "on CD")
+    if cdInfo.isOnGCD ~= false then return false end
+    -- isOnGCD == false → real cooldown running
+    -- If duration is secret, we already know it's non-zero from isOnGCD==false
     if issecretvalue and issecretvalue(cdInfo.duration) then return true end
     -- Regular number: 0 = off CD, >0 = on CD (out of combat path)
     return cdInfo.duration > 0

@@ -28,6 +28,13 @@ local math_max           = math.max
 local math_floor         = math.floor
 local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
 
+-- Minimum enemy cast duration (seconds) to trigger interrupt/CC reminder.
+local MIN_INTERRUPT_CAST_DURATION = 0.8
+
+-- Elapsed-time fallback for when castBar.maxValue is a secret value (12.0 combat).
+local npTrackedCastSpellID = nil
+local npTrackedCastStartTime = 0
+
 -- Layout constants
 local ICON_SPACING   = 2   -- px between successive icons in the cluster
 local NAMEPLATE_GAP  = 2   -- px between nameplate edge and nearest element
@@ -47,6 +54,7 @@ local savedCCAnchors   = nil  -- saved Blizzard CC frame anchors for restoration
 local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
 local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 
 -- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
 local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainRelPt, chainOffX, chainOffY, iconSpacing }
@@ -534,6 +542,33 @@ function UINameplateOverlay.Create(addon)
     if interruptMode ~= "off" then
         interruptIcon = CreateOverlayIcon(iconSize)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+
+        -- Cast aura: small icon above the interrupt button showing what the enemy is casting
+        local auraSize = math_floor(iconSize * 0.55)
+        local castAura = CreateFrame("Frame", nil, interruptIcon)
+        castAura:SetSize(auraSize, auraSize)
+        castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
+        castAura:SetFrameLevel(interruptIcon:GetFrameLevel() + 2)
+        castAura:EnableMouse(false)
+
+        local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
+        auraIcon:SetAllPoints(castAura)
+        castAura.iconTexture = auraIcon
+
+        local auraMaskPadding = math_floor(auraSize * 0.17)
+        local auraMask = castAura:CreateMaskTexture(nil, "ARTWORK")
+        auraMask:SetPoint("TOPLEFT",     castAura, "TOPLEFT",     -auraMaskPadding,  auraMaskPadding)
+        auraMask:SetPoint("BOTTOMRIGHT", castAura, "BOTTOMRIGHT",  auraMaskPadding, -auraMaskPadding)
+        auraMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+        auraIcon:AddMaskTexture(auraMask)
+
+        local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
+        auraBorder:SetPoint("CENTER", castAura, "CENTER", 0.5, -0.5)
+        auraBorder:SetSize(auraSize, auraSize)
+        auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
+
+        castAura:Hide()
+        interruptIcon.castAura = castAura
     end
 
     if npo.showHealthBar then
@@ -651,6 +686,9 @@ function UINameplateOverlay.UpdateAnchor(addon)
                 if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
                 if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
             end
+            if interruptIcon.castAura then
+                interruptIcon.castAura:Hide()
+            end
             interruptIcon:ClearAllPoints()
             interruptIcon:Hide()
             interruptShown = false
@@ -683,6 +721,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local GetCachedSpellInfo = SpellQueue  and SpellQueue.GetCachedSpellInfo
     local IsSpellProcced     = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
+
+    -- Check if player is channeling (grey out icons to emphasize not interrupting)
+    -- PlayerChannelBarFrame is a visual frame — NeverSecret, avoids pcall for UnitChannelInfo
+    local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
 
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
     -- Detect interruptible cast via the nameplate's cast bar frame state.
@@ -717,6 +759,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
 
                 -- Determine if this is an "important" cast (for interrupt vs CC decision)
+                -- Check importance FIRST so dangerous casts bypass the duration filter.
                 local isImportantCast = true  -- default: treat as important
                 if interruptible and (npoInterruptMode == "important" or npoCCAllCasts) then
                     local castSpellID = castBar.spellID
@@ -732,6 +775,40 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 -- "important" mode blocks non-important casts unless CC fallback is on
                 if interruptible and not isImportantCast and npoInterruptMode == "important" and not npoCCAllCasts then
                     interruptible = false
+                end
+
+                -- Skip very short casts (< 1s) for non-important casts only.
+                -- Important/dangerous casts always trigger immediately.
+                -- Primary: try castBar.maxValue (total duration set by CastingBarMixin).
+                -- Fallback: if maxValue is a secret value (12.0 combat), track elapsed
+                -- time ourselves — only show interrupt after 1s of observed casting.
+                if interruptible and not isImportantCast and castBar.maxValue then
+                    local durOk, isShort = pcall(function() return castBar.maxValue < MIN_INTERRUPT_CAST_DURATION end)
+                    local durTestOk, shortCast = pcall(function() return isShort and true or false end)
+                    if durOk and durTestOk then
+                        -- maxValue was readable — use the direct comparison
+                        if shortCast then
+                            interruptible = false
+                        end
+                        npTrackedCastSpellID = nil
+                    else
+                        -- maxValue is secret — fall back to elapsed-time measurement.
+                        -- castBar.spellID may also be secret (PvP); wrap comparison
+                        -- in pcall to avoid taint from secret boolean in `if`.
+                        local castSpellID = castBar.spellID
+                        local trackOk, isNew = pcall(function() return castSpellID ~= npTrackedCastSpellID end)
+                        if trackOk and isNew then
+                            npTrackedCastSpellID = castSpellID
+                            npTrackedCastStartTime = now
+                        elseif not trackOk and npTrackedCastSpellID == nil then
+                            -- First frame with a secret spellID — start timing
+                            npTrackedCastSpellID = true  -- sentinel: actively tracking
+                            npTrackedCastStartTime = now
+                        end
+                        if (now - npTrackedCastStartTime) < MIN_INTERRUPT_CAST_DURATION then
+                            interruptible = false  -- haven't observed long enough
+                        end
+                    end
                 end
 
                 if interruptible then
@@ -752,6 +829,22 @@ function UINameplateOverlay.Render(addon, spellIDs)
                                 intSpellID = sid
                                 shouldShowInterrupt = true
                                 break
+                            end
+                        end
+                        -- "All + CC" fallback: if CC was preferred but none available,
+                        -- fall back to kick.  "Important + CC" intentionally does NOT
+                        -- fall back — the whole point is to save the interrupt lockout.
+                        if not shouldShowInterrupt and ccOnly and npoInterruptMode == "all" then
+                            for _, entry in ipairs(resolvedInterrupts) do
+                                local sid = entry.spellID
+                                local stype = entry.type
+                                if stype == "cc" and isBoss then
+                                    -- skip
+                                elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid
+                                    shouldShowInterrupt = true
+                                    break
+                                end
                             end
                         end
                     end
@@ -799,16 +892,58 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
+            -- Out-of-range: red hotkey text when target is beyond interrupt range
+            if showHotkey and interruptIcon.cachedHotkey and interruptIcon.cachedHotkey ~= "" then
+                if spellChanged or shouldUpdateCooldowns then
+                    local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
+                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                        interruptIcon.cachedOutOfRange = (inRange == false)
+                    else
+                        interruptIcon.cachedOutOfRange = false
+                    end
+                end
+                local isOutOfRange = interruptIcon.cachedOutOfRange or false
+                if interruptIcon.lastOutOfRange ~= isOutOfRange then
+                    interruptIcon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    interruptIcon.lastOutOfRange = isOutOfRange
+                end
+            end
+
+            -- Channeling grey-out: desaturate when player is channeling (can't interrupt)
+            local intVisualState = isChanneling and 1 or 3
+            if interruptIcon.lastVisualState ~= intVisualState then
+                if intVisualState == 1 then
+                    interruptIcon.iconTexture:SetDesaturation(1.0)
+                else
+                    interruptIcon.iconTexture:SetDesaturation(0)
+                end
+                interruptIcon.lastVisualState = intVisualState
+            end
+
             -- Glow: red-tinted proc glow for interrupt urgency
             if not interruptIcon.hasInterruptGlow and UIAnimations then
                 UIAnimations.StartInterruptGlow(interruptIcon, inCombat)
                 interruptIcon.hasInterruptGlow = true
             end
 
+            -- Cast aura: passthrough the enemy cast bar icon texture from the nameplate
+            -- (castBar textures can be secret values in 12.0 combat — never compare them,
+            --  just pass through to SetTexture unconditionally; Blizzard handles secrets in UI)
+            if interruptIcon.castAura then
+                local castIcon = castBar and castBar.Icon
+                if castIcon and castIcon.GetTexture then
+                    interruptIcon.castAura.iconTexture:SetTexture(castIcon:GetTexture())
+                    if not interruptIcon.castAura:IsShown() then interruptIcon.castAura:Show() end
+                    interruptIcon.castAura:SetAlpha(opacity)
+                else
+                    if interruptIcon.castAura:IsShown() then interruptIcon.castAura:Hide() end
+                end
+            end
+
             if not interruptIcon:IsShown() then interruptIcon:Show() end
             interruptIcon:SetAlpha(opacity)
         else
-            -- Hide interrupt icon
+            -- Hide interrupt icon + cast aura
             if interruptIcon.spellID then
                 interruptIcon.spellID = nil
                 interruptIcon.iconTexture:Hide()
@@ -821,6 +956,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
                     if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
                 end
+            end
+            if interruptIcon.castAura then
+                interruptIcon.castAura:Hide()
             end
             interruptIcon:Hide()
         end
@@ -918,6 +1056,34 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
+            -- Out-of-range indicator: red hotkey text if out of range, white otherwise
+            if showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= "" and C_Spell_IsSpellInRange then
+                if spellChanged or shouldUpdateCooldowns then
+                    local inRange = C_Spell_IsSpellInRange(spellID)
+                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                        icon.cachedOutOfRange = (inRange == false)
+                    else
+                        icon.cachedOutOfRange = false
+                    end
+                end
+                local isOutOfRange = icon.cachedOutOfRange or false
+                if icon.lastOutOfRange ~= isOutOfRange then
+                    icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    icon.lastOutOfRange = isOutOfRange
+                end
+            end
+
+            -- Channeling grey-out: desaturate when player is channeling
+            local visualState = isChanneling and 1 or 3
+            if icon.lastVisualState ~= visualState then
+                if visualState == 1 then
+                    icon.iconTexture:SetDesaturation(1.0)
+                else
+                    icon.iconTexture:SetDesaturation(0)
+                end
+                icon.lastVisualState = visualState
+            end
+
             if not icon:IsShown() then icon:Show() end
             icon:SetAlpha(opacity)
         else
@@ -991,6 +1157,11 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     local barWidth = math_floor(clusterWidth - 2 * inset)
                     healthBar:SetOrientation("HORIZONTAL")
                     healthBar:SetSize(barWidth, BAR_HEIGHT)
+                    -- Reset tex coords in case we switched from vertical
+                    healthBar:GetStatusBarTexture():SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
+                    if healthBar.bg then
+                        healthBar.bg:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
+                    end
                     if isLeft then
                         -- defIcons[1] is innermost (leftmost); cluster grows rightward.
                         healthBar:SetPoint("BOTTOMLEFT", defIcons[1], "TOPLEFT", inset, BAR_SPACING)
@@ -1006,6 +1177,11 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     local barHeight = math_floor(clusterHeight - 2 * inset)
                     healthBar:SetOrientation("VERTICAL")  -- fills bottom→top
                     healthBar:SetSize(BAR_HEIGHT, barHeight)
+                    -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
+                    healthBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
+                    if healthBar.bg then
+                        healthBar.bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
+                    end
                     if expansion == "up" then
                         -- defIcons[1] is at the bottom of the column; chain grows upward.
                         -- Bar anchors by its bottom corner to defIcons[1]'s bottom outer corner.
@@ -1082,6 +1258,15 @@ function UINameplateOverlay.UpdateHealthBar()
         elseif pct <= 0.35 then r, g, b = 0.9, 0.5, 0.1 end
     end
     healthBar:SetStatusBarColor(r, g, b, 0.9)
+end
+
+--- Re-resolve the module-local interrupt spell list.
+--- Called from JustAC:OnSpellsChanged() / OnSpecChange() when talents may have
+--- changed which interrupt/CC spells are available.
+function UINameplateOverlay.RefreshInterruptSpells()
+    if SpellDB and SpellDB.ResolveInterruptSpells then
+        resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+    end
 end
 
 --- Hide every overlay element (called from EnterDisabledMode).

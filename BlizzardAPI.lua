@@ -305,15 +305,22 @@ end
 -- API-Specific Secret-Aware Helpers
 --------------------------------------------------------------------------------
 
--- Fail-open if secret (assume ready)
+-- Check if a spell is ready (not on a real cooldown).
+-- 12.0 combat: duration/startTime are blanket-secreted.
+-- Uses isOnGCD (NeverSecret) three-state: true=GCD only, false=real CD, nil=no CD.
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if not cd then return true end
-    -- Check BOTH values for secret before any comparison or arithmetic
-    if BlizzardAPI.IsSecretValue(cd.startTime) or BlizzardAPI.IsSecretValue(cd.duration) then
-        return true  -- Fail-open: assume ready
-    end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return true end
+    -- isOnGCD three-state (NeverSecret):
+    --   true  → GCD only, spell is effectively ready
+    --   nil   → no cooldown at all, spell is ready
+    --   false → real cooldown is actively running
+    if cd.isOnGCD ~= false then return true end
+    -- isOnGCD == false → real cooldown running
+    -- If duration is secret, we know it's non-zero from isOnGCD==false
+    if issecretvalue and issecretvalue(cd.duration) then return false end
+    -- Out of combat: safe to compare
     return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
 end
 
@@ -685,17 +692,25 @@ function BlizzardAPI.GetSpellCooldown(spellID)
     return 0, 0
 end
 
--- Sanitized values for comparison (0,0 if secret)
+-- Sanitized values for comparison.
+-- Returns start, duration, isOnRealCooldown (three returns).
+-- When secreted: returns 0, 0 but uses isOnGCD to infer cooldown state.
+-- Third return: true = definitely on real CD, false = definitely not, nil = unknown
 function BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not C_Spell_GetSpellCooldown then return 0, 0 end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if not cd then return 0, 0 end
+    if not C_Spell_GetSpellCooldown then return 0, 0, false end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return 0, 0, false end
     local startTime = cd.startTime
     local duration = cd.duration
     if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
-        return 0, 0
+        -- Values are secret — use isOnGCD three-state to infer:
+        --   true  → GCD only, not on real CD
+        --   nil   → no cooldown, not on real CD
+        --   false → real cooldown actively running
+        local onRealCD = (cd.isOnGCD == false)
+        return 0, 0, onRealCD
     end
-    return startTime or 0, duration or 0
+    return startTime or 0, duration or 0, false
 end
 
 -- Blizzard's dummy GCD spell always returns current GCD state
@@ -716,18 +731,25 @@ function BlizzardAPI.GetGCDInfo()
     return 0, 0
 end
 
+-- Check if a spell is only on GCD (not a real cooldown).
+-- 12.0 combat: uses isOnGCD (NeverSecret) directly instead of comparing
+-- secreted start/duration values.
 function BlizzardAPI.IsSpellOnGCD(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return false end
 
-    local spellCD = C_Spell_GetSpellCooldown(spellID)
-    if not spellCD then return false end
+    local ok, spellCD = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not spellCD then return false end
 
-    local spellStart = spellCD.startTime
-    local spellDuration = spellCD.duration
-    if issecretvalue and (issecretvalue(spellStart) or issecretvalue(spellDuration)) then
+    -- isOnGCD is NeverSecret — true means "only GCD, no real CD"
+    if spellCD.isOnGCD == true then return true end
+
+    -- isOnGCD is nil (no cooldown) or false (real cooldown) → not GCD-only
+    -- Fall back to comparing start/duration when values are readable (out of combat)
+    if issecretvalue and (issecretvalue(spellCD.startTime) or issecretvalue(spellCD.duration)) then
         return false
     end
 
+    local spellDuration = spellCD.duration
     if not spellDuration or spellDuration == 0 then
         return false
     end
@@ -745,14 +767,17 @@ function BlizzardAPI.IsSpellOnGCD(spellID)
         return false
     end
 
-    return spellStart == gcdStart and spellDuration == gcdDuration
+    return spellCD.startTime == gcdStart and spellDuration == gcdDuration
 end
 
 -- 12.0 fallbacks: action bar usability, local cooldown tracking
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
 
-    local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+    local start, duration, onRealCD = BlizzardAPI.GetSpellCooldownValues(spellID)
+
+    -- If values were secret, use the isOnGCD-derived inference
+    if onRealCD == true then return true end
 
     if start and start > 0 and duration and duration > 0 then
         if BlizzardAPI.IsSpellOnGCD(spellID) then

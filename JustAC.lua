@@ -624,6 +624,8 @@ function JustAC:PLAYER_ENTERING_WORLD()
     -- Re-check bounds after loading screens (resolution/scale may differ per character)
     self:ClampFrameToScreen()
 
+    -- Re-check whether the standard TargetFrame is active (addons may replace it)
+    self:InvalidateTargetFrameCache()
     -- Re-assert target frame anchor after loading screens (WoW can reset frame positions)
     self:UpdateTargetFrameAnchor()
 
@@ -650,6 +652,25 @@ function JustAC:PLAYER_ENTERING_WORLD()
     end)
 end
 
+--- Re-resolve interrupt spell list from SpellDB.
+--- In combat, IsSpellAvailable() may return false due to 12.0 secret restrictions,
+--- which would wipe a previously good list. Defer to PLAYER_REGEN_ENABLED instead.
+function JustAC:RefreshInterruptSpells()
+    if UnitAffectingCombat("player") then
+        self.interruptRefreshPending = true
+        return
+    end
+    self.interruptRefreshPending = nil
+    local newList = SpellDB and SpellDB.ResolveInterruptSpells and SpellDB.ResolveInterruptSpells()
+    if newList then
+        self.resolvedInterrupts = newList
+    end
+    local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
+    if UINameplateOverlay and UINameplateOverlay.RefreshInterruptSpells then
+        UINameplateOverlay.RefreshInterruptSpells()
+    end
+end
+
 function JustAC:OnCombatEvent(event)
     if event == "PLAYER_REGEN_DISABLED" then
         -- Entering combat: animate glows
@@ -671,6 +692,10 @@ function JustAC:OnCombatEvent(event)
         self:InvalidateCaches({auras = true})
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
+        end
+        -- Re-resolve interrupt spells if deferred from combat
+        if self.interruptRefreshPending then
+            self:RefreshInterruptSpells()
         end
         -- Re-apply anchor in case it was changed during combat (InCombatLockdown blocked it)
         self:UpdateTargetFrameAnchor()
@@ -707,12 +732,14 @@ function JustAC:OnSpecChange()
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
+    self:RefreshInterruptSpells()
     self:ForceUpdate()
 end
 
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
+    self:RefreshInterruptSpells()
     self:ForceUpdate()
 end
 
@@ -731,8 +758,15 @@ function JustAC:OnShapeshiftFormsRebuilt()
     self:ForceUpdate()
 end
 
-function JustAC:OnUnitAura(event, unit)
+function JustAC:OnUnitAura(event, unit, updateInfo)
     if unit ~= "player" then return end
+
+    -- 12.0: Pass updateInfo to RedundancyFilter for incremental instance map updates
+    -- This captures addedAuras (new aura identity) and removedAuraInstanceIDs (cleanup)
+    -- BEFORE cache invalidation, so the map is current when RefreshAuraCache runs
+    if RedundancyFilter and RedundancyFilter.OnUnitAuraUpdate then
+        RedundancyFilter.OnUnitAuraUpdate(updateInfo)
+    end
 
     local now = GetTime()
     if now - (self.lastAuraInvalidation or 0) > 0.5 then
@@ -853,6 +887,83 @@ function JustAC:ClampFrameToScreen()
     end
 end
 
+-- Cached result: nil=unchecked, true=standard frame active, false=replaced
+local standardTargetFrameStatus = nil
+
+-- Whitelist check: is the genuine Blizzard TargetFrame active?
+-- Returns false if a unit-frame addon (ElvUI, SUF, oUF, Pitbull, etc.) replaced it.
+-- Cached per session — invalidated on PLAYER_ENTERING_WORLD / reload.
+function JustAC:IsStandardTargetFrame()
+    if standardTargetFrameStatus ~= nil then
+        return standardTargetFrameStatus
+    end
+
+    local tf = TargetFrame
+    if not tf or type(tf) ~= "table" then
+        standardTargetFrameStatus = false
+        return false
+    end
+
+    if type(tf.IsForbidden) == "function" and tf:IsForbidden() then
+        standardTargetFrameStatus = false
+        return false
+    end
+
+    -- Core whitelist signal: UnitFrame_Initialize registers UNIT_NAME_UPDATE.
+    -- Every replacement addon calls UnregisterAllEvents(), stripping this event.
+    if type(tf.IsEventRegistered) ~= "function" or not tf:IsEventRegistered("UNIT_NAME_UPDATE") then
+        standardTargetFrameStatus = false
+        self:DebugPrint("Target frame anchor unavailable: standard TargetFrame not active (events stripped by another addon)")
+        return false
+    end
+
+    -- Must be positioned (not orphaned by reparenting to nil/hidden ancestor)
+    if type(tf.GetPoint) ~= "function" or not tf:GetPoint() then
+        standardTargetFrameStatus = false
+        self:DebugPrint("Target frame anchor unavailable: TargetFrame has no anchor points")
+        return false
+    end
+
+    standardTargetFrameStatus = true
+    return true
+end
+
+function JustAC:InvalidateTargetFrameCache()
+    standardTargetFrameStatus = nil
+end
+
+-- For vertical orientations, defensive icons and health bar extend sideways from
+-- the main frame.  When anchored to the target frame, this sidebar can overlap it.
+-- Returns the additional offset needed to keep the sidebar clear.
+local function GetVerticalSidebarOffset(profile, anchorSide)
+    local defProfile = profile.defensives
+    if not defProfile or defProfile.enabled == false then return 0 end
+
+    local defPosition = defProfile.position or "SIDE1"
+    -- SIDE1 extends RIGHT (vertical), SIDE2 extends LEFT (vertical)
+    -- LEFT anchor: conflict if SIDE1 (extends right, toward target frame)
+    -- RIGHT anchor: conflict if SIDE2 (extends left, toward target frame)
+    local conflicts = (anchorSide == "LEFT" and defPosition == "SIDE1")
+                   or (anchorSide == "RIGHT" and defPosition == "SIDE2")
+    if not conflicts then return 0 end
+
+    local iconSize     = profile.iconSize or 42
+    local defIconScale = defProfile.iconScale or 1.0
+    local defIconSize  = iconSize * defIconScale
+    local iconSpacing  = profile.iconSpacing or 1
+    local BAR_SPACING  = 3  -- matches UIHealthBar.BAR_SPACING
+    local BAR_HEIGHT   = 6  -- matches UIHealthBar.BAR_HEIGHT
+    local effectiveSpacing = math.max(iconSpacing, BAR_SPACING)
+
+    -- Defensive icon column extends: effectiveSpacing + one icon width
+    local width = effectiveSpacing + defIconSize
+    -- Health bar sits beyond the defensive cluster
+    if defProfile.showHealthBar then
+        width = width + BAR_SPACING + BAR_HEIGHT
+    end
+    return width
+end
+
 function JustAC:UpdateTargetFrameAnchor()
     if not self.mainFrame then return end
     -- Guard against taint: TargetFrame is secure; SetPoint against it in combat
@@ -872,9 +983,19 @@ function JustAC:UpdateTargetFrameAnchor()
         return
     end
 
+    -- Whitelist: only anchor to the genuine Blizzard TargetFrame
+    if not self:IsStandardTargetFrame() then
+        if self.targetframe_anchored then
+            self.targetframe_anchored = false
+            self.mainFrame:ClearAllPoints()
+            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        end
+        return
+    end
+
     -- Guard: respect Edit Mode "Buffs on Top" setting.
     -- TOP anchor conflicts when buffs are above the target frame; BOTTOM conflicts when below.
-    local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
+    local buffsOnTop = TargetFrame.buffsOnTop
     if (buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM") then
         if self.targetframe_anchored then
             self.targetframe_anchored = false
@@ -884,35 +1005,23 @@ function JustAC:UpdateTargetFrameAnchor()
         return
     end
 
-    -- Detect if TargetFrame is usable: another addon (ElvUI, SUF, etc.) may have
-    -- hidden or replaced it.  A hidden TargetFrame still "exists" as a global, but
-    -- anchoring to it would place our icons off-screen or in the wrong spot.
-    local targetFrameUsable = TargetFrame
-        and type(TargetFrame.IsShown) == "function"
-        and not TargetFrame:IsForbidden()
-        -- TargetFrame is "shown" even with no target (it stays positioned).
-        -- If an addon hides it permanently, :GetPoint() returns nil.
-        and TargetFrame:GetPoint() ~= nil
+    local orientation = profile.queueOrientation or "LEFT"
+    local isVertical  = (orientation == "UP" or orientation == "DOWN")
 
-    if targetFrameUsable then
-        self.targetframe_anchored = true
-        self.mainFrame:ClearAllPoints()
-        if anchor == "TOP" then
-            self.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
-        elseif anchor == "BOTTOM" then
-            self.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
-        elseif anchor == "LEFT" then
-            self.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -2, 0)
-        elseif anchor == "RIGHT" then
-            self.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", 2, 0)
-        end
-    else
-        -- TargetFrame not available (shouldn't happen) — fall back to saved position
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-        end
-        self.mainFrame:ClearAllPoints()
-        self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+    self.targetframe_anchored = true
+    self.mainFrame:ClearAllPoints()
+    if anchor == "TOP" then
+        self.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
+    elseif anchor == "BOTTOM" then
+        self.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
+    elseif anchor == "LEFT" then
+        local gap = 2
+        if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "LEFT") end
+        self.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -gap, 0)
+    elseif anchor == "RIGHT" then
+        local gap = 2
+        if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "RIGHT") end
+        self.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", gap, 0)
     end
 end
 

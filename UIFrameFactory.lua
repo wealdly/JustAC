@@ -317,6 +317,16 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     local effectiveSpacing = math.max(spacing, baseSpacing)
     local iconOffset = index * (actualIconSize + spacing)
 
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position (right for horizontal, bottom for vertical).
+    -- Defensive icons must match that shift so they align with the queue icons.
+    local grabTabReserve = 0
+    if queueOrientation == "RIGHT" or queueOrientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (queueOrientation == "UP")
+        grabTabReserve = spacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
     if queueOrientation == "LEFT" then
         if defPosition == "SIDE1" then
             button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
@@ -327,17 +337,17 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     elseif queueOrientation == "RIGHT" then
         if defPosition == "SIDE1" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset - grabTabReserve, effectiveSpacing)
         elseif defPosition == "SIDE2" then
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -effectiveSpacing)
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset - grabTabReserve, -effectiveSpacing)
         else -- LEADING
             button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
         end
     elseif queueOrientation == "UP" then
         if defPosition == "SIDE1" then
-            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
         elseif defPosition == "SIDE2" then
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset)
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
         else -- LEADING
             button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
         end
@@ -613,19 +623,11 @@ function UIFrameFactory.CreateGrabTab(addon)
     -- Makes the small tab much easier to grab, especially on high-DPI displays
     addon.grabTab:SetHitRectInsets(-6, -6, -6, -6)
     
-    -- Position at the end of the queue based on orientation
-    -- Grab tab goes at the trailing edge with no additional offset
-    if orientation == "RIGHT" then
-        -- Icons grow left from right edge, grab tab at left
-        addon.grabTab:SetPoint("LEFT", addon.mainFrame, "LEFT", 0, 0)
-    elseif orientation == "UP" then
-        -- Icons grow down from bottom, grab tab at top
-        addon.grabTab:SetPoint("TOP", addon.mainFrame, "TOP", 0, 0)
-    elseif orientation == "DOWN" then
-        -- Icons grow up from top, grab tab at bottom
+    -- Predictable position: always at the right end (horizontal) or bottom (vertical).
+    -- For RIGHT/UP orientations the icons are shifted within the frame to make room.
+    if isVertical then
         addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "BOTTOM", 0, 0)
-    else -- LEFT (default)
-        -- Icons grow right from left edge, grab tab at right
+    else
         addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "RIGHT", 0, 0)
     end
     
@@ -848,19 +850,29 @@ local function CreateInterruptIcon(addon, profile)
     local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
     local effectiveSpacing = math.max(spacing, baseSpacing)
 
+    -- For RIGHT/UP, icon 1 is shifted inward by grabTabReserve to make room for
+    -- the grab tab at the same edge.  We mirror that shift here so the interrupt
+    -- sits adjacent to icon 1 (effectiveSpacing gap) rather than beyond the grab tab.
     if orientation == "LEFT" then
         -- Queue grows left-to-right; interrupt goes to the LEFT of mainFrame
         button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
     elseif orientation == "RIGHT" then
-        -- Queue grows right-to-left; interrupt goes to the RIGHT of mainFrame
-        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, 0)
+        -- Queue grows right-to-left; interrupt adjacent to icon 1 (covers grab tab)
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
+        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", -(grabTabReserve - effectiveSpacing), 0)
     elseif orientation == "UP" then
-        -- Queue grows bottom-to-top; interrupt goes BELOW mainFrame
-        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -effectiveSpacing)
+        -- Queue grows bottom-to-top; interrupt adjacent to icon 1 (covers grab tab)
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH
+        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, grabTabReserve - effectiveSpacing)
     elseif orientation == "DOWN" then
         -- Queue grows top-to-bottom; interrupt goes ABOVE mainFrame
         button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
     end
+
+    -- Ensure interrupt renders above the grab tab when they overlap (RIGHT/UP)
+    button:SetFrameLevel(button:GetFrameLevel() + 5)
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
@@ -938,6 +950,35 @@ local function CreateInterruptIcon(addon, profile)
         })
     end
 
+    -- Cast aura: small icon above the interrupt button showing what the enemy is casting.
+    -- Reads castBar.spellID from the target nameplate; updated by UIRenderer each frame.
+    local auraSize = math.floor(actualIconSize * 0.55)
+    local castAura = CreateFrame("Frame", nil, button)
+    castAura:SetSize(auraSize, auraSize)
+    castAura:SetPoint("BOTTOM", button, "TOP", 0, 2)
+    castAura:SetFrameLevel(button:GetFrameLevel() + 2)
+
+    local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
+    auraIcon:SetAllPoints(castAura)
+    castAura.iconTexture = auraIcon
+
+    -- Rounded corner mask (matches queue icon style)
+    local auraMaskPadding = math.floor(auraSize * 0.17)
+    local auraMask = castAura:CreateMaskTexture(nil, "ARTWORK")
+    auraMask:SetPoint("TOPLEFT",     castAura, "TOPLEFT",     -auraMaskPadding,  auraMaskPadding)
+    auraMask:SetPoint("BOTTOMRIGHT", castAura, "BOTTOMRIGHT",  auraMaskPadding, -auraMaskPadding)
+    auraMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+    auraIcon:AddMaskTexture(auraMask)
+
+    local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
+    auraBorder:SetPoint("CENTER", castAura, "CENTER", 0.5, -0.5)
+    auraBorder:SetSize(auraSize, auraSize)
+    auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
+
+    castAura.spellID = nil
+    castAura:Hide()
+    button.castAura = castAura
+
     button:Hide()  -- Hidden until an interruptible cast is detected
 
     stdInterruptIcon = button
@@ -965,7 +1006,16 @@ function UIFrameFactory.CreateSpellIcons(addon)
     wipe(spellIcons)
     
     local profile = addon.db.profile
+    local orientation = profile.queueOrientation or "LEFT"
+    
+    -- For RIGHT/UP, reserve space at the icon-start edge so the grab tab
+    -- can sit at a predictable position (right for horizontal, bottom for vertical)
     local currentOffset = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        currentOffset = profile.iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
     
     for i = 1, profile.maxIcons do
         local button = UIFrameFactory.CreateSingleSpellIcon(addon, i, currentOffset, profile)
