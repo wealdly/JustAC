@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 37)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 38)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -120,6 +120,30 @@ local TRUSTED_CACHE_DURATION = 600  -- Trust out-of-combat checks for 10 minutes
 local nextExpirationCheck = 0  -- Throttle expiration checking to once per 5 seconds
 local EXPIRATION_CHECK_INTERVAL = 5
 
+--------------------------------------------------------------------------------
+-- Aura Instance ID Mapping (12.0 Combat-Safe Aura Detection)
+-- auraInstanceID is NeverSecret in 12.0 — it's always readable even in combat.
+-- We build a map of instanceID → spellID out of combat (when spellId is readable),
+-- then use it in combat to resolve secret spellId fields back to real values.
+-- UNIT_AURA addedAuras/removedAuraInstanceIDs keep the map current during combat.
+--------------------------------------------------------------------------------
+local instanceToSpellMap = {}   -- auraInstanceID → spellID
+local instanceToNameMap = {}    -- auraInstanceID → spell name
+local instanceToIconMap = {}    -- auraInstanceID → icon texture
+local instanceToTimingMap = {}  -- auraInstanceID → {duration, expirationTime, count, halfwayThreshold}
+
+-- Track spellIDs explicitly removed during combat (via UNIT_AURA removedAuraInstanceIDs)
+-- Prevents trustedOutOfCombatCache from re-adding auras the player manually cancelled
+-- Cleared on leaving combat (ClearActivationTracking)
+local combatRemovedSpellIDs = {}
+
+-- Pending activation queue: bridges UNIT_SPELLCAST_SUCCEEDED → UNIT_AURA addedAuras
+-- When a spell is cast in combat, we know the spellID but not the new auraInstanceID.
+-- When addedAuras fires with a secret spellId, we match by timing to map the instance.
+-- This enables proper removal tracking on subsequent remove/reapply cycles.
+local PENDING_ACTIVATION_WINDOW = 2.0  -- Max seconds between cast and UNIT_AURA addedAuras
+local pendingActivations = {}  -- Array of {spellID, timestamp}
+
 -- In-combat activation tracking (mirrors proc detection system)
 -- When player casts a spell in combat, record it so we know they have the buff/form
 -- Clear activation state on leaving combat to reset for next pull
@@ -144,16 +168,19 @@ end
 
 -- Invalidate aura cache on UNIT_AURA; keep inCombatActivations until combat ends
 -- Preserve trusted out-of-combat snapshot while in combat to avoid gaps caused by secret values
+-- Preserve instanceToSpellMap always — it's our combat-safe aura identity resolution
 function RedundancyFilter.InvalidateCache()
     wipe(cachedAuras)
     lastAuraCheck = 0
 
-    -- Only invalidate trusted cache when out of combat
-    -- In combat, keep the pre-combat snapshot intact
+    -- Only invalidate trusted cache and instance maps when out of combat
+    -- In combat, keep the pre-combat snapshot and instance maps intact
     if not UnitAffectingCombat("player") then
         wipe(trustedOutOfCombatCache)
         lastTrustedCacheTime = 0
         nextExpirationCheck = 0
+        -- Instance maps are rebuilt on next RefreshAuraCache out of combat
+        -- Don't wipe them here — they may still be valid and are cheap to rebuild
     end
 
     -- Prune expired activations (handles toggleable auras being turned off)
@@ -163,6 +190,130 @@ end
 -- Clear activation tracking (called only on leaving combat)
 function RedundancyFilter.ClearActivationTracking()
     wipe(inCombatActivations)
+    wipe(combatRemovedSpellIDs)
+    wipe(pendingActivations)
+end
+
+--------------------------------------------------------------------------------
+-- UNIT_AURA Incremental Update (12.0 Instance Map Maintenance)
+-- Called from JustAC:OnUnitAura with the updateInfo payload.
+-- Processes addedAuras (new auras with possibly non-secret data even in combat)
+-- and removedAuraInstanceIDs (clean removal from instance maps).
+--------------------------------------------------------------------------------
+function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
+    if not updateInfo then return end
+    
+    -- Process removed auras: clean up instance maps and track removed spellIDs
+    if updateInfo.removedAuraInstanceIDs then
+        for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+            -- Record the spellID before removing, so trusted cache merge doesn't re-add it
+            local removedSpellID = instanceToSpellMap[instanceID]
+            if removedSpellID then
+                combatRemovedSpellIDs[removedSpellID] = true
+                -- Also clear from inCombatActivations (player may have cast then cancelled)
+                inCombatActivations[removedSpellID] = nil
+            end
+            instanceToSpellMap[instanceID] = nil
+            instanceToNameMap[instanceID] = nil
+            instanceToIconMap[instanceID] = nil
+            instanceToTimingMap[instanceID] = nil
+        end
+    end
+    
+    -- Process added auras: populate instance maps for new auras
+    -- In 12.0, addedAuras is an array of AuraData tables for newly applied auras.
+    -- The spellId/name may be secret in combat, but we try anyway — if readable,
+    -- we get immediate mapping; if secret, match against pendingActivations by timing.
+    if updateInfo.addedAuras then
+        local now = GetTime()
+        
+        -- Prune expired pending activations first
+        for i = #pendingActivations, 1, -1 do
+            if now - pendingActivations[i].time > PENDING_ACTIVATION_WINDOW then
+                table.remove(pendingActivations, i)
+            end
+        end
+        
+        for _, auraData in ipairs(updateInfo.addedAuras) do
+            local instanceID = auraData.auraInstanceID
+            if instanceID then
+                local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
+                local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
+                local resolvedSpellID = nil
+                
+                -- Determine if this is a beneficial aura (everything we track is helpful)
+                -- isHelpful/isHarmful may or may not be secret; fail-open if unreadable
+                local isHelpful = auraData.isHelpful
+                local isHarmful = auraData.isHarmful
+                if BlizzardAPI.IsSecretValue(isHelpful) then isHelpful = nil end
+                if BlizzardAPI.IsSecretValue(isHarmful) then isHarmful = nil end
+                -- Skip harmful auras entirely — we only track beneficial spells
+                local isDefinitelyHarmful = (isHarmful == true) or (isHelpful == false)
+                
+                if not isDefinitelyHarmful then
+                    if not spellIdIsSecret and auraData.spellId then
+                        resolvedSpellID = auraData.spellId
+                    elseif spellIdIsSecret and #pendingActivations > 0 then
+                        -- Secret spellId: match against pending activations by timing
+                        -- Use oldest pending activation (FIFO) within the time window
+                        -- Only matches helpful auras (harmful ones skipped above)
+                        for i, pending in ipairs(pendingActivations) do
+                            if now - pending.time <= PENDING_ACTIVATION_WINDOW then
+                                resolvedSpellID = pending.spellID
+                                table.remove(pendingActivations, i)
+                                break
+                            end
+                        end
+                    end
+                end
+                
+                if resolvedSpellID then
+                    instanceToSpellMap[instanceID] = resolvedSpellID
+                    -- Aura re-applied: clear from removed tracking
+                    combatRemovedSpellIDs[resolvedSpellID] = nil
+                    
+                    -- Also cache timing info if available
+                    local dur = auraData.duration
+                    local exp = auraData.expirationTime
+                    local durIsSecret = BlizzardAPI.IsSecretValue(dur)
+                    local expIsSecret = BlizzardAPI.IsSecretValue(exp)
+                    if not durIsSecret and not expIsSecret and dur and exp then
+                        local halfwayThreshold = nil
+                        if dur > 0 and exp > 0 then
+                            halfwayThreshold = exp - (dur * 0.2)
+                        end
+                        instanceToTimingMap[instanceID] = {
+                            duration = dur,
+                            expirationTime = exp,
+                            count = auraData.applications or 1,
+                            halfwayThreshold = halfwayThreshold,
+                        }
+                    end
+                    
+                    -- Copy name/icon from previous mapping if we have them
+                    local prevName = instanceToNameMap[instanceID]
+                    if not prevName then
+                        -- Try to get from spell info cache (non-secret out of combat)
+                        local spellInfo = BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(resolvedSpellID)
+                        if spellInfo and spellInfo.name and not BlizzardAPI.IsSecretValue(spellInfo.name) then
+                            instanceToNameMap[instanceID] = spellInfo.name
+                        end
+                    end
+                end
+                if not nameIsSecret and auraData.name then
+                    instanceToNameMap[instanceID] = auraData.name
+                end
+                if auraData.icon and not BlizzardAPI.IsSecretValue(auraData.icon) then
+                    instanceToIconMap[instanceID] = auraData.icon
+                end
+            end
+        end
+    end
+    
+    -- updatedAuraInstanceIDs: auras that changed (e.g., stack count change)
+    -- We don't need to do anything special here — the cache invalidation will
+    -- cause RefreshAuraCache to re-read the current aura state on next access.
+    -- The instance map entries remain valid (same instanceID = same aura).
 end
 
 --------------------------------------------------------------------------------
@@ -262,10 +413,17 @@ end
 
 -- Record spell activation during combat (called from UNIT_SPELLCAST_SUCCEEDED)
 -- Mirrors proc detection system - reliable even with combat log restrictions
+-- Also queues a pending activation so addedAuras can map the auraInstanceID
 function RedundancyFilter.RecordSpellActivation(spellID)
     if not spellID then return end
     local now = GetTime()
     inCombatActivations[spellID] = now
+    
+    -- Queue for instance mapping: addedAuras will match by timing
+    -- Only queue known aura spells to avoid noise from damage abilities
+    if UNIQUE_AURA_SPELLS[spellID] or RAID_BUFF_SPELLS[spellID] then
+        pendingActivations[#pendingActivations + 1] = { spellID = spellID, time = now }
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -274,14 +432,14 @@ end
 
 -- Build cache of current player auras (by spellID, name, and icon)
 -- Now also stores duration and expiration time for pandemic window checks
+-- 12.0: Uses auraInstanceID mapping to resolve secret values in combat
 RefreshAuraCache = function()
     local now = GetTime()
     local inCombat = UnitAffectingCombat("player")
     
-    -- If in combat and we have a recent trusted out-of-combat cache, use it
-    -- Filter out auras based on how recent our validation was:
-    --   - Recent validation (<60s ago): Can trust expiration times, invalidate near expiry
-    --   - Older validation: Use conservative 80% threshold to account for drift
+    -- If in combat and we have a recent trusted out-of-combat cache, use it as FALLBACK
+    -- The instance map resolution below may produce better results, but if it can't
+    -- resolve everything, we still have trustedOutOfCombatCache as a safety net.
     -- CRITICAL: Only compare timestamps in combat - no arithmetic with cached values (may be secrets)
     -- Throttle expiration checks to once per 5s (UNIT_AURA handles most invalidation)
     if inCombat and trustedOutOfCombatCache.byID and (now - lastTrustedCacheTime) < TRUSTED_CACHE_DURATION then
@@ -313,11 +471,6 @@ RefreshAuraCache = function()
                 end
             end
         end
-        -- If we still have data, use trusted cache
-        if trustedOutOfCombatCache.byID and next(trustedOutOfCombatCache.byID) then
-            return trustedOutOfCombatCache
-        end
-        -- Trusted cache empty or fully expired, fall through to refresh
     end
     
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
@@ -330,23 +483,45 @@ RefreshAuraCache = function()
     cachedAuras.byIcon = {}
     cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
     
+    local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
+    
     -- Modern API (11.0+)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 40 do
             local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
             if not auraData then break end
             
-            -- Best-effort: If critical fields are secret, skip this aura but continue processing others
-            -- auraInstanceID is documented as NeverSecret in 12.0, so we can always track it
+            -- auraInstanceID is NeverSecret in 12.0 — always readable
+            local instanceID = auraData.auraInstanceID
             local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
             local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
             
             if spellIdIsSecret or nameIsSecret then
-                -- Mark that we encountered secrets (cache may be incomplete)
-                cachedAuras.hasSecrets = true
-                -- Continue to next aura - don't break! Best-effort: process what we can
+                -- 12.0 Instance Map Resolution: Use instanceID to look up known spellID
+                local mappedSpellID = instanceID and instanceToSpellMap[instanceID]
+                local mappedName = instanceID and instanceToNameMap[instanceID]
+                local mappedIcon = instanceID and instanceToIconMap[instanceID]
+                
+                if mappedSpellID then
+                    -- Successfully resolved via instance map!
+                    cachedAuras.byID[mappedSpellID] = true
+                    -- Use pre-cached timing from instance map (timing values are secret in combat)
+                    local mappedTiming = instanceToTimingMap[instanceID]
+                    if mappedTiming then
+                        cachedAuras.auraInfo[mappedSpellID] = mappedTiming
+                    end
+                    if mappedName then
+                        cachedAuras.byName[mappedName] = mappedSpellID
+                    end
+                    if mappedIcon then
+                        cachedAuras.byIcon[mappedIcon] = mappedName or true
+                    end
+                else
+                    -- Instance ID not in our map (new aura gained during combat)
+                    unresolvedSecrets = unresolvedSecrets + 1
+                end
             else
-                -- Safe to process this aura
+                -- Not secret — process normally and update instance maps
                 if auraData.spellId then
                     cachedAuras.byID[auraData.spellId] = true
                     -- Store aura timing info for pandemic check (use API-specific helper)
@@ -357,12 +532,25 @@ RefreshAuraCache = function()
                     if dur and dur > 0 and exp and exp > 0 then
                         halfwayThreshold = exp - (dur * 0.2)  -- Timestamp when aura reaches 20% remaining (80% consumed)
                     end
-                    cachedAuras.auraInfo[auraData.spellId] = {
+                    local timingInfo = {
                         duration = dur or 0,
                         expirationTime = exp or 0,
                         count = auraData.applications or 1,  -- Stack count
                         halfwayThreshold = halfwayThreshold,  -- Pre-calculated for in-combat comparison
                     }
+                    cachedAuras.auraInfo[auraData.spellId] = timingInfo
+                    
+                    -- Update instance maps (always, so they're current for combat)
+                    if instanceID then
+                        instanceToSpellMap[instanceID] = auraData.spellId
+                        instanceToTimingMap[instanceID] = timingInfo
+                        if auraData.name then
+                            instanceToNameMap[instanceID] = auraData.name
+                        end
+                        if auraData.icon then
+                            instanceToIconMap[instanceID] = auraData.icon
+                        end
+                    end
                 end
                 if auraData.name then
                     cachedAuras.byName[auraData.name] = auraData.spellId or true
@@ -372,7 +560,7 @@ RefreshAuraCache = function()
                 end
             end
         end
-    -- Fallback for older clients
+    -- Fallback for older clients (no instance ID support)
     elseif UnitAura then
         for i = 1, 40 do
             local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
@@ -383,8 +571,7 @@ RefreshAuraCache = function()
             local nameIsSecret = BlizzardAPI.IsSecretValue(name)
             
             if spellIdIsSecret or nameIsSecret then
-                cachedAuras.hasSecrets = true
-                -- Continue to next aura - don't break!
+                unresolvedSecrets = unresolvedSecrets + 1
             else
                 if spellId then
                     cachedAuras.byID[spellId] = true
@@ -415,6 +602,12 @@ RefreshAuraCache = function()
         end
     end
     
+    -- Mark hasSecrets only when there are UNRESOLVED secrets
+    -- If all secret auras were resolved via instance map, we have complete data
+    if unresolvedSecrets > 0 then
+        cachedAuras.hasSecrets = true
+    end
+    
     lastAuraCheck = now
     
     -- If out of combat and we got clean data (no secrets), save as trusted cache
@@ -437,6 +630,53 @@ RefreshAuraCache = function()
             }
         end
         lastTrustedCacheTime = now
+        
+        -- Clean instance maps: remove entries for auras no longer present
+        -- Out of combat, we have authoritative data — prune stale entries
+        local activeInstances = {}
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            for i = 1, 40 do
+                local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+                if not auraData then break end
+                if auraData.auraInstanceID then
+                    activeInstances[auraData.auraInstanceID] = true
+                end
+            end
+        end
+        for instanceID in pairs(instanceToSpellMap) do
+            if not activeInstances[instanceID] then
+                instanceToSpellMap[instanceID] = nil
+                instanceToNameMap[instanceID] = nil
+                instanceToIconMap[instanceID] = nil
+                instanceToTimingMap[instanceID] = nil
+            end
+        end
+    end
+    
+    -- In combat with unresolved secrets: merge trustedOutOfCombatCache as fallback
+    -- This handles auras we couldn't resolve via instance map (new mid-combat auras)
+    -- CRITICAL: Skip spellIDs in combatRemovedSpellIDs — player explicitly removed those
+    if inCombat and cachedAuras.hasSecrets and trustedOutOfCombatCache.byID then
+        for spellID, v in pairs(trustedOutOfCombatCache.byID) do
+            if not cachedAuras.byID[spellID] and not combatRemovedSpellIDs[spellID] then
+                cachedAuras.byID[spellID] = v
+            end
+        end
+        for name, v in pairs(trustedOutOfCombatCache.byName or {}) do
+            if not cachedAuras.byName[name] then
+                -- Check if the spell behind this name was removed
+                local nameSpellID = (type(v) == "number") and v
+                if not nameSpellID or not combatRemovedSpellIDs[nameSpellID] then
+                    cachedAuras.byName[name] = v
+                end
+            end
+        end
+        -- Merge timing info for pandemic checks
+        for spellID, info in pairs(trustedOutOfCombatCache.auraInfo or {}) do
+            if not cachedAuras.auraInfo[spellID] and not combatRemovedSpellIDs[spellID] then
+                cachedAuras.auraInfo[spellID] = info
+            end
+        end
     end
     
     return cachedAuras
@@ -465,7 +705,16 @@ end
 -- Returns true if aura should be allowed to refresh
 local function IsInPandemicWindow(spellID)
     local info = GetAuraInfo(spellID)
-    if not info then return true end  -- No aura = definitely allow
+    if not info then
+        -- No timing info available. Two scenarios:
+        -- 1) Buff is gone → allow recast (return true)
+        -- 2) Buff exists via inCombatActivations but timing data is secret → just cast, full duration
+        -- Check inCombatActivations to distinguish: if we KNOW it's active, don't allow refresh
+        if inCombatActivations[spellID] then
+            return false  -- Just cast in combat, assume full duration remaining
+        end
+        return true  -- No aura info and not tracked → allow
+    end
     
     local duration = info.duration
     local expirationTime = info.expirationTime
@@ -857,40 +1106,49 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- Position 1 doesn't get usability filtering (shows what Blizzard recommends)
     -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
     
-    -- Check if aura API is accessible (12.0+ secret values may block this)
-    -- Test both API availability check AND cache refresh for secrets
-    local auraAPIBlocked = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and not BlizzardAPI.IsRedundancyFilterAvailable()
+    -- Check if we have incomplete aura data (unresolved secrets after instance map resolution)
+    -- Instance maps make the raw auraAPIBlocked check redundant — hasSecrets is the
+    -- authoritative indicator of whether our aura cache is complete
     local auras = RefreshAuraCache()
+    local auraDataIncomplete = auras and auras.hasSecrets
     
-    -- If aura API blocked OR cache detected secrets, filter non-DPS spells
+    -- If cache has UNRESOLVED secrets, filter non-DPS spells as safety measure
     -- EXCEPTION 1: Defensive checks bypass this filter (heals are not "DPS-relevant" but are valid defensives)
     -- EXCEPTION 2: If we have no trusted cache (logged in during combat), fail-open to avoid hiding valid spells
-    -- IMPORTANT: Continue to remaining checks (pet/stealth/mount/etc) even when aura API blocked
-    if auraAPIBlocked or (auras and auras.hasSecrets) then
-        -- Check if we have any trusted pre-combat data to validate against
-        local hasTrustedData = trustedOutOfCombatCache.byID and next(trustedOutOfCombatCache.byID)
+    -- EXCEPTION 3: Skip if we have definitive knowledge about this spell's state:
+    --   - cachedAuras.byID[spellID]: resolved present via instance map → let unique aura check handle it
+    --   - combatRemovedSpellIDs[spellID]: explicitly removed during combat → let unique aura check handle it
+    -- IMPORTANT: Continue to remaining checks (pet/stealth/mount/etc) even when aura data incomplete
+    if auraDataIncomplete then
+        -- Skip non-DPS gate if we know this specific spell's state (present or removed)
+        local spellStateKnown = (auras.byID and auras.byID[spellID]) or combatRemovedSpellIDs[spellID]
         
-        -- Only filter non-DPS spells if we have trusted data OR are doing defensive checks
-        -- If no trusted data and not defensive, fail-open (allow spell through) to avoid false negatives
-        if not isDefensiveCheck and not IsDPSRelevant(spellID) then
-            if hasTrustedData then
-                -- Have pre-combat snapshot - safe to filter non-DPS spells
-                local now = GetTime()
-                local throttleKey = "nondps_" .. spellID
-                if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                    lastPrintTime[throttleKey] = now
-                    local reason = auraAPIBlocked and "aura API blocked" or "secrets detected in cache"
-                    local spellInfo = GetCachedSpellInfo(spellID)
-                    local spellName = spellInfo and spellInfo.name or "Unknown"
-                    print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ", have trusted cache)")
-                end
-                return true  -- Hide non-DPS spells
-            else
-                -- No trusted cache - fail-open for safety (avoid hiding valid spells)
-                if GetDebugMode() then
-                    local spellInfo = GetCachedSpellInfo(spellID)
-                    local spellName = spellInfo and spellInfo.name or "Unknown"
-                    print("|cff66ccffJAC|r |cffffff00ALLOWED|r: " .. spellName .. " (ID: " .. spellID .. ") - No trusted cache, fail-open")
+        if not spellStateKnown then
+            -- Check if we have any trusted pre-combat data to validate against
+            local hasTrustedData = trustedOutOfCombatCache.byID and next(trustedOutOfCombatCache.byID)
+            
+            -- Only filter non-DPS spells if we have trusted data OR are doing defensive checks
+            -- If no trusted data and not defensive, fail-open (allow spell through) to avoid false negatives
+            if not isDefensiveCheck and not IsDPSRelevant(spellID) then
+                if hasTrustedData then
+                    -- Have pre-combat snapshot - safe to filter non-DPS spells
+                    local now = GetTime()
+                    local throttleKey = "nondps_" .. spellID
+                    if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                        lastPrintTime[throttleKey] = now
+                        local reason = "unresolved secrets in cache"
+                        local spellInfo = GetCachedSpellInfo(spellID)
+                        local spellName = spellInfo and spellInfo.name or "Unknown"
+                        print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ", have trusted cache)")
+                    end
+                    return true  -- Hide non-DPS spells
+                else
+                    -- No trusted cache - fail-open for safety (avoid hiding valid spells)
+                    if GetDebugMode() then
+                        local spellInfo = GetCachedSpellInfo(spellID)
+                        local spellName = spellInfo and spellInfo.name or "Unknown"
+                        print("|cff66ccffJAC|r |cffffff00ALLOWED|r: " .. spellName .. " (ID: " .. spellID .. ") - No trusted cache, fail-open")
+                    end
                 end
             end
         end

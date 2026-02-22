@@ -26,6 +26,15 @@ local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
 
+-- Minimum enemy cast duration (seconds) to trigger interrupt/CC reminder.
+-- Sub-1s casts complete before a human can react — not worth spending resources on.
+local MIN_INTERRUPT_CAST_DURATION = 0.8
+
+-- Elapsed-time fallback for when castBar.maxValue is a secret value (12.0 combat).
+-- Track the spellID of the cast we first observed and when we first saw it.
+local trackedCastSpellID = nil
+local trackedCastStartTime = 0
+
 -- Check for proc overlay to highlight available abilities
 -- BlizzardAPI.IsSpellProcced already checks both base and override IDs
 local function IsSpellProcced(spellID)
@@ -492,6 +501,10 @@ local function HideInterruptIcon(intIcon)
         if intIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(intIcon); intIcon.hasInterruptGlow = false end
         if intIcon.hasProcGlow      then UIAnimations.HideProcGlow(intIcon);      intIcon.hasProcGlow      = false end
     end
+    -- Hide cast aura (enemy spell indicator)
+    if intIcon.castAura then
+        intIcon.castAura:Hide()
+    end
     intIcon:Hide()
 end
 
@@ -562,7 +575,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local queueDesaturation = GetQueueDesaturation()
     
     -- Check if player is channeling (grey out queue to emphasize not interrupting)
-    local isChanneling = UnitChannelInfo("player") ~= nil
+    -- PlayerChannelBarFrame is a visual frame — NeverSecret, avoids pcall for UnitChannelInfo
+    local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
     
     -- Cache frequently called functions to reduce table lookups in hot path
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
@@ -631,6 +645,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Determine if this is an "important" cast (for interrupt vs CC decision)
+                -- Check importance FIRST so dangerous casts bypass the duration filter.
                 local isImportantCast = true  -- default: treat as important
                 if interruptible and (interruptMode == "important" or ccAllCasts) then
                     local castSpellID = castBar.spellID
@@ -646,6 +661,41 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- "important" mode blocks non-important casts unless CC fallback is on
                 if interruptible and not isImportantCast and interruptMode == "important" and not ccAllCasts then
                     interruptible = false
+                end
+
+                -- Skip very short casts (< 1s) for non-important casts only.
+                -- Important/dangerous casts always trigger immediately.
+                -- Primary: try castBar.maxValue (total duration set by CastingBarMixin).
+                -- Fallback: if maxValue is a secret value (12.0 combat), track elapsed
+                -- time ourselves — only show interrupt after 1s of observed casting.
+                if interruptible and not isImportantCast and castBar.maxValue then
+                    local durOk, isShort = pcall(function() return castBar.maxValue < MIN_INTERRUPT_CAST_DURATION end)
+                    local durTestOk, shortCast = pcall(function() return isShort and true or false end)
+                    if durOk and durTestOk then
+                        -- maxValue was readable — use the direct comparison
+                        if shortCast then
+                            interruptible = false
+                        end
+                        -- Reset fallback tracker (not needed when maxValue is readable)
+                        trackedCastSpellID = nil
+                    else
+                        -- maxValue is secret — fall back to elapsed-time measurement.
+                        -- castBar.spellID may also be secret (PvP); wrap comparison
+                        -- in pcall to avoid taint from secret boolean in `if`.
+                        local castSpellID = castBar.spellID
+                        local trackOk, isNew = pcall(function() return castSpellID ~= trackedCastSpellID end)
+                        if trackOk and isNew then
+                            trackedCastSpellID = castSpellID
+                            trackedCastStartTime = currentTime
+                        elseif not trackOk and trackedCastSpellID == nil then
+                            -- First frame with a secret spellID — start timing
+                            trackedCastSpellID = true  -- sentinel: actively tracking
+                            trackedCastStartTime = currentTime
+                        end
+                        if (currentTime - trackedCastStartTime) < MIN_INTERRUPT_CAST_DURATION then
+                            interruptible = false  -- haven't observed long enough
+                        end
+                    end
                 end
 
                 if interruptible then
@@ -666,6 +716,22 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                                 intSpellID = sid
                                 shouldShowInterrupt = true
                                 break
+                            end
+                        end
+                        -- "All + CC" fallback: if CC was preferred but none available,
+                        -- fall back to kick.  "Important + CC" intentionally does NOT
+                        -- fall back — the whole point is to save the interrupt lockout.
+                        if not shouldShowInterrupt and ccOnly and interruptMode == "all" then
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid = entry.spellID
+                                local stype = entry.type
+                                if stype == "cc" and isBoss then
+                                    -- skip
+                                elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid
+                                    shouldShowInterrupt = true
+                                    break
+                                end
                             end
                         end
                     end
@@ -746,6 +812,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             if not intIcon.hasInterruptGlow then
                 UIAnimations.StartInterruptGlow(intIcon, isInCombat)
                 intIcon.hasInterruptGlow = true
+            end
+
+            -- Cast aura: passthrough the enemy cast bar icon texture from the nameplate
+            -- (castBar textures can be secret values in 12.0 combat — never compare them,
+            --  just pass through to SetTexture unconditionally; Blizzard handles secrets in UI)
+            if intIcon.castAura then
+                local castIcon = castBar and castBar.Icon
+                if castIcon and castIcon.GetTexture then
+                    intIcon.castAura.iconTexture:SetTexture(castIcon:GetTexture())
+                    if not intIcon.castAura:IsShown() then intIcon.castAura:Show() end
+                else
+                    if intIcon.castAura:IsShown() then intIcon.castAura:Hide() end
+                end
             end
 
             if not intIcon:IsShown() then intIcon:Show() end

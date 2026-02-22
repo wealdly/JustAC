@@ -1148,28 +1148,83 @@ local function CreateOptionsTable(addon)
                         desc = L["Queue Orientation desc"],
                         order = 15,
                         width = "normal",
-                        values = {
-                            LEFT = L["Left to Right"],
-                            RIGHT = L["Right to Left"],
-                            UP = L["Bottom to Top"],
-                            DOWN = L["Top to Bottom"],
-                        },
-                        get = function() return addon.db.profile.queueOrientation or "LEFT" end,
-                        set = function(_, val)
-                            addon.db.profile.queueOrientation = val
-                            -- Reset target frame anchor if it's invalid for the new axis
-                            local isHorizontal = (val == "LEFT" or val == "RIGHT")
+                        values = function()
                             local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
-                            if isHorizontal and (anchor == "LEFT" or anchor == "RIGHT") then
-                                addon.db.profile.targetFrameAnchor = "DISABLED"
-                                addon:UpdateTargetFrameAnchor()
-                            elseif not isHorizontal and (anchor == "TOP" or anchor == "BOTTOM") then
-                                addon.db.profile.targetFrameAnchor = "DISABLED"
-                                addon:UpdateTargetFrameAnchor()
+                            if anchor == "LEFT" then
+                                return {
+                                    UP_LEFT   = L["Up, Sidebar Left"],
+                                    DOWN_LEFT = L["Down, Sidebar Left"],
+                                }
+                            elseif anchor == "RIGHT" then
+                                return {
+                                    UP_RIGHT   = L["Up, Sidebar Right"],
+                                    DOWN_RIGHT = L["Down, Sidebar Right"],
+                                }
+                            elseif anchor == "TOP" then
+                                -- Queue above target → sidebar above (away from target)
+                                return {
+                                    LEFT_ABOVE  = L["Left, Sidebar Above"],
+                                    RIGHT_ABOVE = L["Right, Sidebar Above"],
+                                }
+                            elseif anchor == "BOTTOM" then
+                                -- Queue below target → sidebar below (away from target)
+                                return {
+                                    LEFT_BELOW  = L["Left, Sidebar Below"],
+                                    RIGHT_BELOW = L["Right, Sidebar Below"],
+                                }
+                            else
+                                return {
+                                    LEFT_ABOVE   = L["Left, Sidebar Above"],
+                                    LEFT_BELOW   = L["Left, Sidebar Below"],
+                                    RIGHT_ABOVE  = L["Right, Sidebar Above"],
+                                    RIGHT_BELOW  = L["Right, Sidebar Below"],
+                                    UP_LEFT      = L["Up, Sidebar Left"],
+                                    UP_RIGHT     = L["Up, Sidebar Right"],
+                                    DOWN_LEFT    = L["Down, Sidebar Left"],
+                                    DOWN_RIGHT   = L["Down, Sidebar Right"],
+                                }
                             end
-                            -- Migrate LEADING to SIDE1 (no longer a valid option)
-                            if addon.db.profile.defensives.position == "LEADING" then
-                                addon.db.profile.defensives.position = "SIDE1"
+                        end,
+                        sorting = function()
+                            local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
+                            if anchor == "LEFT" then
+                                return { "UP_LEFT", "DOWN_LEFT" }
+                            elseif anchor == "RIGHT" then
+                                return { "UP_RIGHT", "DOWN_RIGHT" }
+                            elseif anchor == "TOP" then
+                                return { "LEFT_ABOVE", "RIGHT_ABOVE" }
+                            elseif anchor == "BOTTOM" then
+                                return { "LEFT_BELOW", "RIGHT_BELOW" }
+                            else
+                                return { "LEFT_ABOVE", "LEFT_BELOW", "RIGHT_ABOVE", "RIGHT_BELOW", "UP_LEFT", "UP_RIGHT", "DOWN_LEFT", "DOWN_RIGHT" }
+                            end
+                        end,
+                        get = function()
+                            local o = addon.db.profile.queueOrientation or "LEFT"
+                            local s = addon.db.profile.defensives and addon.db.profile.defensives.position or "SIDE1"
+                            -- Migrate LEADING
+                            if s == "LEADING" then s = "SIDE1" end
+                            -- Map SIDE1/SIDE2 to human directions based on orientation axis
+                            if o == "LEFT" or o == "RIGHT" then
+                                -- Horizontal: SIDE1 = above, SIDE2 = below
+                                return o .. (s == "SIDE1" and "_ABOVE" or "_BELOW")
+                            else
+                                -- Vertical: SIDE1 = right, SIDE2 = left
+                                return o .. (s == "SIDE1" and "_RIGHT" or "_LEFT")
+                            end
+                        end,
+                        set = function(_, val)
+                            -- Split compound key: e.g. "LEFT_ABOVE" → orientation "LEFT", side "ABOVE"
+                            local orientation, side = val:match("^(%u+)_(%u+)$")
+                            if not orientation then return end
+                            addon.db.profile.queueOrientation = orientation
+                            -- Map human direction back to SIDE1/SIDE2
+                            if orientation == "LEFT" or orientation == "RIGHT" then
+                                -- Horizontal: ABOVE = SIDE1, BELOW = SIDE2
+                                addon.db.profile.defensives.position = (side == "ABOVE") and "SIDE1" or "SIDE2"
+                            else
+                                -- Vertical: RIGHT = SIDE1, LEFT = SIDE2
+                                addon.db.profile.defensives.position = (side == "RIGHT") and "SIDE1" or "SIDE2"
                             end
                             addon:UpdateFrameSize()
                         end,
@@ -1181,47 +1236,78 @@ local function CreateOptionsTable(addon)
                     targetFrameAnchor = {
                         type = "select",
                         name = L["Target Frame Anchor"],
-                        desc = L["Target Frame Anchor desc"],
+                        desc = function()
+                            if addon.IsStandardTargetFrame and not addon:IsStandardTargetFrame() then
+                                return L["Target Frame Replaced"]
+                            end
+                            return L["Target Frame Anchor desc"]
+                        end,
                         order = 16,
                         width = "normal",
                         values = function()
-                            local o = addon.db.profile.queueOrientation or "LEFT"
-                            if o == "LEFT" or o == "RIGHT" then
-                                local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
-                                if buffsOnTop == true then
-                                    return { DISABLED = L["Disabled"], BOTTOM = L["Bottom"] }
-                                elseif buffsOnTop == false then
-                                    return { DISABLED = L["Disabled"], TOP = L["Top"] }
-                                else
-                                    return { DISABLED = L["Disabled"], TOP = L["Top"], BOTTOM = L["Bottom"] }
-                                end
+                            -- Show all anchor positions; setter handles axis transitions
+                            local vals = { DISABLED = L["Disabled"], LEFT = L["Left"], RIGHT = L["Right"] }
+                            local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
+                            if buffsOnTop == true then
+                                vals.BOTTOM = L["Bottom"]
+                            elseif buffsOnTop == false then
+                                vals.TOP = L["Top"]
                             else
-                                return { DISABLED = L["Disabled"], LEFT = L["Left"], RIGHT = L["Right"] }
+                                vals.TOP = L["Top"]
+                                vals.BOTTOM = L["Bottom"]
                             end
+                            return vals
                         end,
                         sorting = function()
-                            local o = addon.db.profile.queueOrientation or "LEFT"
-                            if o == "LEFT" or o == "RIGHT" then
-                                local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
-                                if buffsOnTop == true then
-                                    return { "DISABLED", "BOTTOM" }
-                                elseif buffsOnTop == false then
-                                    return { "DISABLED", "TOP" }
-                                else
-                                    return { "DISABLED", "TOP", "BOTTOM" }
-                                end
+                            local keys = { "DISABLED" }
+                            local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
+                            if buffsOnTop == true then
+                                keys[#keys + 1] = "BOTTOM"
+                            elseif buffsOnTop == false then
+                                keys[#keys + 1] = "TOP"
                             else
-                                return { "DISABLED", "LEFT", "RIGHT" }
+                                keys[#keys + 1] = "TOP"
+                                keys[#keys + 1] = "BOTTOM"
                             end
+                            keys[#keys + 1] = "LEFT"
+                            keys[#keys + 1] = "RIGHT"
+                            return keys
                         end,
                         get = function() return addon.db.profile.targetFrameAnchor or "DISABLED" end,
                         set = function(_, val)
                             addon.db.profile.targetFrameAnchor = val
+                            -- Auto-transition layout if current is incompatible with new anchor
+                            if val ~= "DISABLED" then
+                                local o = addon.db.profile.queueOrientation or "LEFT"
+                                local s = addon.db.profile.defensives and addon.db.profile.defensives.position or "SIDE1"
+                                if s == "LEADING" then s = "SIDE1" end
+                                local isH = (o == "LEFT" or o == "RIGHT")
+                                if val == "LEFT" then
+                                    -- Need vertical + sidebar left (SIDE2)
+                                    if isH then addon.db.profile.queueOrientation = "UP" end
+                                    addon.db.profile.defensives.position = "SIDE2"
+                                elseif val == "RIGHT" then
+                                    -- Need vertical + sidebar right (SIDE1)
+                                    if isH then addon.db.profile.queueOrientation = "UP" end
+                                    addon.db.profile.defensives.position = "SIDE1"
+                                elseif val == "TOP" then
+                                    -- Queue above target → sidebar above (SIDE1, away from target)
+                                    if not isH then addon.db.profile.queueOrientation = "LEFT" end
+                                    addon.db.profile.defensives.position = "SIDE1"
+                                elseif val == "BOTTOM" then
+                                    -- Queue below target → sidebar below (SIDE2, away from target)
+                                    if not isH then addon.db.profile.queueOrientation = "LEFT" end
+                                    addon.db.profile.defensives.position = "SIDE2"
+                                end
+                            end
                             addon:UpdateTargetFrameAnchor()
+                            addon:UpdateFrameSize()
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            if dm == "disabled" or dm == "overlay" then return true end
+                            if addon.IsStandardTargetFrame and not addon:IsStandardTargetFrame() then return true end
+                            return false
                         end,
                     },
                     -- VISIBILITY (20-29)
@@ -1542,35 +1628,42 @@ local function CreateOptionsTable(addon)
                         order = 14,
                         width = "double",
                         values = {
-                            important = L["Interrupt Important"],
-                            all       = L["Interrupt All"],
-                            off       = L["Interrupt Off"],
+                            off          = L["Interrupt Off"],
+                            important    = L["Interrupt Important"],
+                            importantCC  = L["Interrupt Important CC"],
+                            allCC        = L["Interrupt All CC"],
+                            all          = L["Interrupt All"],
                         },
-                        sorting = { "important", "all", "off" },
-                        get = function() return addon.db.profile.interruptMode or "important" end,
+                        sorting = { "off", "important", "importantCC", "allCC", "all" },
+                        get = function()
+                            local mode = addon.db.profile.interruptMode or "important"
+                            if mode == "off" then return "off" end
+                            local cc = addon.db.profile.ccAllCasts
+                            if mode == "important" then return cc and "importantCC" or "important" end
+                            return cc and "allCC" or "all"
+                        end,
                         set = function(_, val)
-                            addon.db.profile.interruptMode = val
+                            if val == "off" then
+                                addon.db.profile.interruptMode = "off"
+                                addon.db.profile.ccAllCasts = false
+                            elseif val == "important" then
+                                addon.db.profile.interruptMode = "important"
+                                addon.db.profile.ccAllCasts = false
+                            elseif val == "importantCC" then
+                                addon.db.profile.interruptMode = "important"
+                                addon.db.profile.ccAllCasts = true
+                            elseif val == "allCC" then
+                                addon.db.profile.interruptMode = "all"
+                                addon.db.profile.ccAllCasts = true
+                            elseif val == "all" then
+                                addon.db.profile.interruptMode = "all"
+                                addon.db.profile.ccAllCasts = false
+                            end
                             addon:UpdateFrameSize()
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm == "disabled" or dm == "overlay"
-                        end,
-                    },
-                    ccAllCasts = {
-                        type = "toggle",
-                        name = L["CC All Casts"],
-                        desc = L["CC All Casts desc"],
-                        order = 14.5,
-                        width = "double",
-                        get = function() return addon.db.profile.ccAllCasts end,
-                        set = function(_, val)
-                            addon.db.profile.ccAllCasts = val
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            if dm == "disabled" or dm == "overlay" then return true end
-                            return (addon.db.profile.interruptMode or "important") == "off"
                         end,
                     },
                     -- DISPLAY (15-19)
@@ -1816,7 +1909,7 @@ local function CreateOptionsTable(addon)
                     maxIcons = {
                         type = "select",
                         name = L["Offensive Slots"],
-                        order = 13,
+                        order = 12,
                         width = "normal",
                         values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
                         sorting = { 1, 2, 3, 4, 5 },
@@ -1948,41 +2041,48 @@ local function CreateOptionsTable(addon)
                         type = "select",
                         name = L["Interrupt Mode"],
                         desc = L["Interrupt Mode desc"],
-                        order = 12,
+                        order = 13,
                         width = "double",
                         values = {
-                            important = L["Interrupt Important"],
-                            all       = L["Interrupt All"],
-                            off       = L["Interrupt Off"],
+                            off          = L["Interrupt Off"],
+                            important    = L["Interrupt Important"],
+                            importantCC  = L["Interrupt Important CC"],
+                            allCC        = L["Interrupt All CC"],
+                            all          = L["Interrupt All"],
                         },
-                        sorting = { "important", "all", "off" },
-                        get = function() return addon.db.profile.nameplateOverlay.interruptMode or "important" end,
+                        sorting = { "off", "important", "importantCC", "allCC", "all" },
+                        get = function()
+                            local npo = addon.db.profile.nameplateOverlay
+                            local mode = npo.interruptMode or "important"
+                            if mode == "off" then return "off" end
+                            local cc = npo.ccAllCasts
+                            if mode == "important" then return cc and "importantCC" or "important" end
+                            return cc and "allCC" or "all"
+                        end,
                         set = function(_, val)
-                            addon.db.profile.nameplateOverlay.interruptMode = val
+                            local npo = addon.db.profile.nameplateOverlay
+                            if val == "off" then
+                                npo.interruptMode = "off"
+                                npo.ccAllCasts = false
+                            elseif val == "important" then
+                                npo.interruptMode = "important"
+                                npo.ccAllCasts = false
+                            elseif val == "importantCC" then
+                                npo.interruptMode = "important"
+                                npo.ccAllCasts = true
+                            elseif val == "allCC" then
+                                npo.interruptMode = "all"
+                                npo.ccAllCasts = true
+                            elseif val == "all" then
+                                npo.interruptMode = "all"
+                                npo.ccAllCasts = false
+                            end
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm ~= "overlay" and dm ~= "both"
-                        end,
-                    },
-                    npoCCAllCasts = {
-                        type = "toggle",
-                        name = L["CC All Casts"],
-                        desc = L["CC All Casts desc"],
-                        order = 12.5,
-                        width = "double",
-                        get = function() return addon.db.profile.nameplateOverlay.ccAllCasts end,
-                        set = function(_, val)
-                            addon.db.profile.nameplateOverlay.ccAllCasts = val
-                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            if dm ~= "overlay" and dm ~= "both" then return true end
-                            return (addon.db.profile.nameplateOverlay.interruptMode or "important") == "off"
                         end,
                     },
                     defensiveSectionHeader = {
@@ -2211,28 +2311,6 @@ local function CreateOptionsTable(addon)
                         get = function() return addon.db.profile.defensives.iconScale or 1.0 end,
                         set = function(_, val)
                             addon.db.profile.defensives.iconScale = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function() return not addon.db.profile.defensives.enabled end,
-                    },
-                    position = {
-                        type = "select",
-                        name = L["Icon Position"],
-                        desc = L["Icon Position desc"],
-                        order = 7,
-                        width = "normal",
-                        values = function()
-                            local o = addon.db.profile.queueOrientation or "LEFT"
-                            if o == "LEFT" or o == "RIGHT" then
-                                return { SIDE1 = L["Top"], SIDE2 = L["Bottom"] }
-                            else
-                                return { SIDE1 = L["Right"], SIDE2 = L["Left"] }
-                            end
-                        end,
-                        sorting = { "SIDE1", "SIDE2" },
-                        get = function() return addon.db.profile.defensives.position or "SIDE1" end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.position = val
                             addon:UpdateFrameSize()
                         end,
                         disabled = function() return not addon.db.profile.defensives.enabled end,

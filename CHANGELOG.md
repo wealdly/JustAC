@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.2.0] - 2026-02-22
+
+### Added
+- Cast aura indicator above interrupt icon: shows the enemy's casting spell icon so you can see what you're interrupting (standard queue + nameplate overlay)
+- Nameplate overlay: channeling grey-out — interrupt and DPS icons now desaturate when the player is mid-channel, matching the main panel behavior
+- Nameplate overlay: out-of-range detection — interrupt and DPS hotkey text turns red when the target is beyond spell range, matching the main panel behavior
+
+### Changed
+- **Interrupt options consolidated into single dropdown** — replaced separate "Interrupt Mode" dropdown + "CC Non-Important Casts" checkbox with one 5-option dropdown: Off, Important Only, Important + CC, All + Smart CC, All Casts. Existing saved settings are preserved automatically.
+- Interrupt/CC reminders now only trigger on casts with 0.8s+ duration (important/dangerous casts bypass the filter and trigger immediately); when cast duration is a secret value (12.0 combat), falls back to elapsed-time measurement
+- **"All + Smart CC" mode falls back to kick** — non-important casts prefer CC but fall back to your interrupt if no CC is available; "Important + CC" intentionally does NOT fall back (saves interrupt lockout for dangerous casts)
+
+### Fixed
+- Interrupt icon for RIGHT/UP orientations now anchors adjacent to icon 1 instead of beyond the grab tab (was causing ~17px gap vs expected ~3px)
+- Standalone health bar for UP/DOWN orientations now goes to the side of the queue (perpendicular) instead of above it, matching how horizontal bars are perpendicular to horizontal queues
+- **CC/interrupt spells now correctly detected as off-cooldown in combat** — WoW 12.0 blanket-secrets `duration`/`startTime` from `C_Spell.GetSpellCooldown()` even when zero; now uses `isOnGCD` (NeverSecret) three-state field: `true`=GCD only (ready), `false`=real cooldown, `nil`=no cooldown (ready)
+- **Aura detection now works in combat via auraInstanceID mapping** — WoW 12.0 secrets `spellId`/`name` in combat but `auraInstanceID` is NeverSecret and stable; builds instanceID→spellID map out of combat, resolves auras in combat using the map; UNIT_AURA addedAuras/removedAuraInstanceIDs keep the map current; trustedOutOfCombatCache used as fallback only for truly unmapped auras (RedundancyFilter v37→v38)
+- **Buff removal now detected in combat** — removing a buff (e.g., right-clicking MOW off) now immediately shows the spell in queue; tracks removed spellIDs via `combatRemovedSpellIDs` to prevent trusted cache merge from re-adding them; non-DPS filter gate now uses `hasSecrets` (instance-map-aware) instead of raw `auraAPIBlocked`
+- **Buff recast in combat now correctly filtered** — recasting a buff (e.g., MOW) after removal in combat is now hidden from the queue again; IsInPandemicWindow returns false when inCombatActivations shows a fresh cast with no timing data
+- **Multi-cycle remove/reapply tracking in combat** — pending activation queue bridges UNIT_SPELLCAST_SUCCEEDED → UNIT_AURA addedAuras (2s FIFO window) to map new aura instance IDs when spellId is secret; supports unlimited remove/recast cycles within a single combat; filters harmful auras (debuffs) from consuming pending activation entries
+- **Interrupt list now refreshes on spec/talent changes** — `resolvedInterrupts` was only built during frame creation; now re-resolved in `OnSpellsChanged` and `OnSpecChange` so talent-gated CC/interrupt spells appear immediately; deferred to out-of-combat to prevent `IsSpellAvailable()` secret restrictions from wiping the list
+- **Channeling check now secret-safe** — replaced `UnitChannelInfo("player") ~= nil` with `PlayerChannelBarFrame:IsShown()` (NeverSecret visual frame) to avoid potential taint from secret return values
+- **Elapsed-time fallback now secret-safe** — the short-cast duration filter's `castBar.spellID` comparison is now pcall-wrapped; in PvP contexts where spellID is secret, prevents taint crash from secret boolean in control flow
+
 ## [4.1.1] - 2026-02-22
 
 ### Changed
