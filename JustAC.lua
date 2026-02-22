@@ -39,7 +39,7 @@ local defaults = {
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
-        targetFrameAnchor = "TOP",          -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
+        targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
@@ -206,6 +206,9 @@ function JustAC:OnEnable()
         self:Print("Error: Failed to create main frame")
         return
     end
+
+    -- Safety: clamp saved position to screen bounds (handles resolution/scale changes)
+    self:ClampFrameToScreen()
 
     -- Apply target frame anchor if enabled (before icons so position is correct)
     self:UpdateTargetFrameAnchor()
@@ -618,6 +621,9 @@ function JustAC:PLAYER_ENTERING_WORLD()
     -- Apply spec-based profile/disabled state on world entry (not just on spec change events)
     self:OnSpecChange()
 
+    -- Re-check bounds after loading screens (resolution/scale may differ per character)
+    self:ClampFrameToScreen()
+
     -- Re-assert target frame anchor after loading screens (WoW can reset frame positions)
     self:UpdateTargetFrameAnchor()
 
@@ -807,6 +813,46 @@ function JustAC:OnNamePlateRemoved(_, nameplateUnit)
     end
 end
 
+-- Lightweight bounds check: if the saved position puts the frame entirely
+-- off-screen (resolution change, UI scale change, etc.), reset to center.
+-- Only touches framePosition in the profile; does NOT fight with target
+-- frame anchoring (that runs immediately after).
+function JustAC:ClampFrameToScreen()
+    if not self.mainFrame then return end
+    local profile = self:GetProfile()
+    if not profile or not profile.framePosition then return end
+
+    local scale = self.mainFrame:GetEffectiveScale()
+    if not scale or scale <= 0 then return end
+
+    local screenW, screenH = GetScreenWidth(), GetScreenHeight()
+    if not screenW or screenW == 0 then return end
+
+    -- Convert saved offset to approximate screen position
+    -- (most anchor points use UIParent center as reference)
+    local pos = profile.framePosition
+    local x, y = pos.x or 0, pos.y or 0
+    local fw = (self.mainFrame:GetWidth() or 0) * 0.5
+    local fh = (self.mainFrame:GetHeight() or 0) * 0.5
+    local halfW, halfH = screenW * 0.5, screenH * 0.5
+
+    -- Rough center-of-frame in screen coords (works for CENTER-based points)
+    local cx, cy = halfW + x, halfH + y
+
+    -- Allow partial overlap (at least 20 px visible on any edge)
+    local margin = 20
+    if cx + fw < margin or cx - fw > screenW - margin
+       or cy + fh < margin or cy - fh > screenH - margin then
+        -- Off-screen: reset to default
+        pos.point = "CENTER"
+        pos.x = 0
+        pos.y = -150
+        self.mainFrame:ClearAllPoints()
+        self.mainFrame:SetPoint("CENTER", 0, -150)
+        self:DebugPrint("Frame was off-screen — reset to center")
+    end
+end
+
 function JustAC:UpdateTargetFrameAnchor()
     if not self.mainFrame then return end
     -- Guard against taint: TargetFrame is secure; SetPoint against it in combat
@@ -838,10 +884,17 @@ function JustAC:UpdateTargetFrameAnchor()
         return
     end
 
-    -- Anchor to Blizzard's default TargetFrame (even when hidden — it holds position)
-    -- Offsets account for TargetFrame's 232x100 template size, HitRectInsets
-    -- (top=4, bottom=9), and space for auras/castbar below the frame
-    if TargetFrame then
+    -- Detect if TargetFrame is usable: another addon (ElvUI, SUF, etc.) may have
+    -- hidden or replaced it.  A hidden TargetFrame still "exists" as a global, but
+    -- anchoring to it would place our icons off-screen or in the wrong spot.
+    local targetFrameUsable = TargetFrame
+        and type(TargetFrame.IsShown) == "function"
+        and not TargetFrame:IsForbidden()
+        -- TargetFrame is "shown" even with no target (it stays positioned).
+        -- If an addon hides it permanently, :GetPoint() returns nil.
+        and TargetFrame:GetPoint() ~= nil
+
+    if targetFrameUsable then
         self.targetframe_anchored = true
         self.mainFrame:ClearAllPoints()
         if anchor == "TOP" then
@@ -1143,6 +1196,12 @@ function JustAC:StartUpdates()
             return
         end
 
+        -- Freeze updates while the frame is being dragged (smooth drag, no wasted work)
+        if self.isDragging then
+            self.updateTimeLeft = 0.1
+            return
+        end
+
         -- Early exit: skip all work if UI is completely hidden (saves CPU when mounted, etc.)
         local mainFrame = self.mainFrame
         local mainHidden = not mainFrame or not mainFrame:IsShown()
@@ -1212,5 +1271,4 @@ end
 
 function JustAC:SavePosition()
     if UIFrameFactory and UIFrameFactory.SavePosition then UIFrameFactory.SavePosition(self) end
-    self:ForceUpdate()
 end
