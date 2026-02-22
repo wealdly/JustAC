@@ -50,6 +50,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Per-spell blacklist (Shift+Right-click to toggle)
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
+- Combat-safe aura tracking via `auraInstanceID` mapping — detects buff removal and reapply even when `spellId` is secret
 
 ### Performance Optimized
 
@@ -120,9 +121,9 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; fail-open design throughout
+- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; auraInstanceID mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; fail-open design throughout
 - **No External Spell Databases** — Native spell classification (SpellDB) replaces LibPlayerSpells
-- **Modular Architecture** — 12 LibStub modules with clear dependency order
+- **Modular Architecture** — 17 Lua files (15 LibStub modules) with clear dependency order
 - **Event-Driven** — Minimal polling; events mark queues dirty for responsive updates
 - **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven patterns)
 

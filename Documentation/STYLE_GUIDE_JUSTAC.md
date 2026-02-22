@@ -1,9 +1,9 @@
 # JustAC Style Guide - AI Reference
 
-**Version:** 2.5  
+**Version:** 2.6  
 **Format:** AI-optimized for quick parsing and rule extraction  
 **Addon:** WoW Assisted Combat Enhancement (JustAC)  
-**Last Updated:** 2025-11-18
+**Last Updated:** 2026-02-22
 
 ---
 
@@ -61,14 +61,14 @@ local ModuleName = LibStub:NewLibrary("JustAC-ModuleName", VERSION_NUMBER)
 if not ModuleName then return end
 
 -- Example from SpellQueue.lua
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 12)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 34)
 if not SpellQueue then return end
 ```
 
 **Version Numbers:**
 - Increment on breaking changes
 - Used by LibStub to prevent loading old versions
-- Current versions: BlizzardAPI=5, SpellQueue=12, ActionBarScanner=9, MacroParser=11, FormCache=5, UIManager=12
+- Current versions: BlizzardAPI=30, SpellQueue=34, ActionBarScanner=35, MacroParser=21, FormCache=11, RedundancyFilter=38, SpellDB=7, UIRenderer=14, UIFrameFactory=12, UIAnimations=4, UIHealthBar=5, UINameplateOverlay=1, DefensiveEngine=1, DebugCommands=15, Options=30
 
 ### Module Dependencies
 ```lua
@@ -168,13 +168,21 @@ function BlizzardAPI.GetNextCastSpell()
 ### Modules
 ```lua
 -- MUST: PascalCase with "JustAC-" prefix for LibStub
-"JustAC-SpellQueue"
-"JustAC-ActionBarScanner"
+"JustAC-SpellDB"
 "JustAC-BlizzardAPI"
 "JustAC-FormCache"
 "JustAC-MacroParser"
-"JustAC-UIManager"
+"JustAC-ActionBarScanner"
 "JustAC-RedundancyFilter"
+"JustAC-SpellQueue"
+"JustAC-UIHealthBar"
+"JustAC-UIAnimations"
+"JustAC-UIFrameFactory"
+"JustAC-UIRenderer"
+"JustAC-UINameplateOverlay"
+"JustAC-DefensiveEngine"
+"JustAC-DebugCommands"
+"JustAC-Options"
 ```
 
 ---
