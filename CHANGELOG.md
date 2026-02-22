@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.1.1] - 2026-02-22
+
+### Changed
+- Default `targetFrameAnchor` changed from `"TOP"` to `"DISABLED"` — new/reset profiles no longer snap to the target frame by default
+- Dragging the panel now auto-disables the target frame anchor so the frame stays where you put it
+- Frame is now only draggable via the grab tab — prevents accidental repositioning when interacting with icons
+
+### Fixed
+- Fixed frame snapping to right side of screen after update or profile reset (target frame anchor was re-applied on every drag stop)
+- Fixed inability to reposition the panel when target frame anchor was enabled — dragging would immediately snap the frame back
+- Added detection for unavailable/replaced TargetFrame (ElvUI, SUF, etc.) — anchoring gracefully falls back to saved position
+- Added off-screen safety check on load — if saved position is outside screen bounds (resolution/scale change), frame resets to center
+- Fixed update-freeze-during-drag not working (`isDragging` was set on grab tab but checked on addon object)
+- Fixed SavePosition saving garbage coordinates when frame was anchored to TargetFrame (now skips save when anchored)
+- Removed unnecessary ForceUpdate from SavePosition (saving coords shouldn't rebuild spell queue)
+
 ## [4.1.0] - 2026-02-21
 
 ### Added

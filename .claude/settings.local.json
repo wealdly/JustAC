@@ -34,7 +34,9 @@
       "Bash(powershell.exe -ExecutionPolicy Bypass -File build.ps1)",
       "Bash(awk:*)",
       "Bash(comm:*)",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "WebFetch(domain:wowpedia.fandom.com)",
+      "WebFetch(domain:www.curseforge.com)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"
