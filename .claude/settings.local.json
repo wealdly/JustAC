@@ -32,7 +32,9 @@
       "Bash(for f in deDE.lua esES.lua esMX.lua frFR.lua ptBR.lua ruRU.lua zhCN.lua zhTW.lua)",
       "Bash(python3:*)",
       "Bash(powershell.exe -ExecutionPolicy Bypass -File build.ps1)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(comm:*)",
+      "Bash(xxd:*)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"
