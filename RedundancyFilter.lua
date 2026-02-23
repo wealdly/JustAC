@@ -103,6 +103,14 @@ local PERSONAL_AURA_SPELLS = {
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
+-- Absolute minimum time-remaining threshold for long-duration buffs (poisons, raid buffs, etc).
+-- When less than this many seconds remain, stop filtering — show the recast suggestion so
+-- the player can reapply before or immediately after entering combat.
+-- expirationTime is cached out of combat as a plain Lua number (GetTime() timestamp),
+-- so remaining = expirationTime - GetTime() is valid arithmetic even in combat.
+-- auraInstanceID → expirationTime mapping (instanceToTimingMap) carries this into combat.
+local PRE_COMBAT_REFRESH_THRESHOLD = 300  -- 5 minutes in seconds
+local LONG_BUFF_DURATION_CUTOFF    = 600  -- Only apply absolute threshold to buffs >= 10 min
 
 -- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
 -- UNIT_AURA events invalidate the cache, so 0.5s is safe and reduces API calls by 60%
@@ -656,10 +664,24 @@ RefreshAuraCache = function()
     -- In combat with unresolved secrets: merge trustedOutOfCombatCache as fallback
     -- This handles auras we couldn't resolve via instance map (new mid-combat auras)
     -- CRITICAL: Skip spellIDs in combatRemovedSpellIDs — player explicitly removed those
+    -- CRITICAL: Skip auras whose cached expirationTime shows they're about to expire —
+    --   expirationTime is a plain Lua number captured out of combat, so the comparison
+    --   expirationTime - GetTime() is valid even in combat (no secret-value arithmetic).
     if inCombat and cachedAuras.hasSecrets and trustedOutOfCombatCache.byID then
+        local now_merge = GetTime()
         for spellID, v in pairs(trustedOutOfCombatCache.byID) do
             if not cachedAuras.byID[spellID] and not combatRemovedSpellIDs[spellID] then
-                cachedAuras.byID[spellID] = v
+                -- Don't merge if aura is expiring within PRE_COMBAT_REFRESH_THRESHOLD.
+                -- This stops long buffs (poisons, raid buffs) from appearing active when
+                -- they'll expire seconds into combat, causing queue icon 1 to get stuck.
+                local info = trustedOutOfCombatCache.auraInfo and trustedOutOfCombatCache.auraInfo[spellID]
+                local skipExpiring = info
+                    and info.expirationTime and info.expirationTime > 0
+                    and info.duration and info.duration >= LONG_BUFF_DURATION_CUTOFF
+                    and (info.expirationTime - now_merge) < PRE_COMBAT_REFRESH_THRESHOLD
+                if not skipExpiring then
+                    cachedAuras.byID[spellID] = v
+                end
             end
         end
         for name, v in pairs(trustedOutOfCombatCache.byName or {}) do
@@ -724,9 +746,19 @@ local function IsInPandemicWindow(spellID)
     
     local now = GetTime()
     local remaining = expirationTime - now
-    
+
     -- Allow refresh if remaining time is less than pandemic threshold
     local pandemicTime = duration * PANDEMIC_THRESHOLD
+
+    -- For long-duration buffs (>= 10 min, e.g. poisons, Mark of the Wild), apply an
+    -- absolute minimum window so the addon suggests reapplication with time to spare.
+    -- expirationTime is a plain Lua number cached out of combat — arithmetic is safe in combat.
+    -- The auraInstanceID → timing mapping (instanceToTimingMap) carries this value into combat
+    -- even when the aura API returns secret values for expirationTime directly.
+    if duration >= LONG_BUFF_DURATION_CUTOFF then
+        pandemicTime = math.max(pandemicTime, PRE_COMBAT_REFRESH_THRESHOLD)
+    end
+
     return remaining <= pandemicTime
 end
 
@@ -986,14 +1018,25 @@ local function CountActivePoisonBuffs()
     end
 
     -- FALLBACK 1: Aura cache by buff spell ID (works out of combat, pre-combat buffs)
+    -- Also checks cached expirationTime: if <= PRE_COMBAT_REFRESH_THRESHOLD seconds remain,
+    -- don't count the poison as "active" — the player should reapply before or at combat start.
+    -- expirationTime is a plain Lua number from the out-of-combat snapshot (or instanceToTimingMap),
+    -- so the arithmetic is valid even when the aura API returns secret values in combat.
     if auras.byID then
+        local now_poison = GetTime()
         for spellID in pairs(ROGUE_POISON_BUFF_IDS) do
             if auras.byID[spellID] then
-                local spellInfo = GetCachedSpellInfo(spellID)
-                local name = spellInfo and spellInfo.name
-                if name and not foundNames[name] then
-                    count = count + 1
-                    foundNames[name] = true
+                local auraInfo = auras.auraInfo and auras.auraInfo[spellID]
+                local expiringSoon = auraInfo
+                    and auraInfo.expirationTime and auraInfo.expirationTime > 0
+                    and (auraInfo.expirationTime - now_poison) < PRE_COMBAT_REFRESH_THRESHOLD
+                if not expiringSoon then
+                    local spellInfo = GetCachedSpellInfo(spellID)
+                    local name = spellInfo and spellInfo.name
+                    if name and not foundNames[name] then
+                        count = count + 1
+                        foundNames[name] = true
+                    end
                 end
             end
         end
