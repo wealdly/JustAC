@@ -1104,6 +1104,100 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Note: Defensive icon cooldowns are updated separately by UpdateDefensiveCooldowns()
     -- No need to update them here to avoid redundant calls
+
+    -- ── Burst CD Indicator ──────────────────────────────────────────────────
+    -- Small icon near position 1 that lights up when a major offensive CD is ready.
+    local burstIcon = addon.burstCDIndicator
+    if burstIcon and burstIcon.burstSpells then
+        local burstProfile = profile.burstCDIndicator
+        local burstEnabled = not burstProfile or burstProfile.enabled ~= false
+        if shouldShowFrame and burstEnabled and isInCombat then
+            -- Find the first burst spell that is ready (off CD)
+            local readySpellID = nil
+            local onCDSpellID = nil
+            local onCDRemaining = 0
+            local onCDDuration = 0
+            for _, sid in ipairs(burstIcon.burstSpells) do
+                local isOnCD, remaining, duration = BlizzardAPI.GetBurstCooldownState(sid)
+                if not isOnCD then
+                    readySpellID = sid
+                    break
+                else
+                    -- Track the one closest to being ready for CD swipe display
+                    if not onCDSpellID or remaining < onCDRemaining then
+                        onCDSpellID = sid
+                        onCDRemaining = remaining
+                        onCDDuration = duration
+                    end
+                end
+            end
+
+            local displaySpellID = readySpellID or onCDSpellID
+            if displaySpellID then
+                local spellChanged = (burstIcon.currentSpellID ~= displaySpellID)
+                if spellChanged then
+                    burstIcon.currentSpellID = displaySpellID
+                    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(displaySpellID)
+                    if info and info.iconID then
+                        burstIcon.iconTexture:SetTexture(info.iconID)
+                        burstIcon.iconTexture:Show()
+                    end
+                end
+
+                -- Ready vs on-CD visuals
+                local wasReady = burstIcon.isReady
+                burstIcon.isReady = (readySpellID ~= nil)
+
+                if burstIcon.isReady then
+                    -- Spell is ready: bright icon + green pulsing glow
+                    burstIcon.iconTexture:SetDesaturation(0)
+                    burstIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
+                    if burstIcon.cooldown then burstIcon.cooldown:Clear(); burstIcon.cooldown:Hide() end
+                    if not wasReady then
+                        burstIcon.glowTexture:Show()
+                        if burstIcon.pulseAnim and not burstIcon.pulseAnim:IsPlaying() then
+                            burstIcon.pulseAnim:Play()
+                        end
+                    end
+                else
+                    -- On cooldown: desaturated icon + CD swipe, no glow
+                    burstIcon.iconTexture:SetDesaturation(0.7)
+                    burstIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6, 0.8)
+                    burstIcon.glowTexture:Hide()
+                    if burstIcon.pulseAnim and burstIcon.pulseAnim:IsPlaying() then
+                        burstIcon.pulseAnim:Stop()
+                    end
+                    -- Show CD swipe (approximate via local tracking)
+                    if onCDDuration > 0 and burstIcon.cooldown then
+                        local startTime = GetTime() - (onCDDuration - onCDRemaining)
+                        burstIcon.cooldown:SetCooldown(startTime, onCDDuration)
+                        burstIcon.cooldown:Show()
+                    end
+                end
+
+                -- Show the indicator
+                if not burstIcon:IsShown() then
+                    burstIcon:SetAlpha(0)
+                    burstIcon:Show()
+                    if burstIcon.fadeIn then burstIcon.fadeIn:Play() end
+                end
+                burstIcon:SetAlpha(profile.frameOpacity or 1.0)
+            else
+                -- No burst spells tracked, hide
+                if burstIcon:IsShown() then burstIcon:Hide() end
+            end
+        else
+            -- Frame hidden or out of combat or disabled: hide burst indicator
+            if burstIcon:IsShown() then
+                burstIcon.glowTexture:Hide()
+                if burstIcon.pulseAnim and burstIcon.pulseAnim:IsPlaying() then
+                    burstIcon.pulseAnim:Stop()
+                end
+                burstIcon:Hide()
+                burstIcon.isReady = false
+            end
+        end
+    end
     
     -- Update frame visibility when state changes OR when actual visibility is out of sync
     -- The out-of-sync check catches a race where fadeOut's OnFinished hides the frame

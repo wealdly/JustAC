@@ -732,6 +732,40 @@ SpellDB.CLASS_INTERRUPT_DEFAULTS = {
     WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
 }
 
+--------------------------------------------------------------------------------
+-- BURST COOLDOWN SPELLS: Major offensive CDs (2+ min) per class
+-- These are tracked locally so a small indicator can show when they're ready,
+-- even though Blizzard's Combat Assistant deprioritises them in the queue.
+--------------------------------------------------------------------------------
+SpellDB.CLASS_BURST_DEFAULTS = {
+    PRIEST      = {228260},                          -- Void Eruption (Shadow)
+}
+
+--- Resolve the current player's burst cooldown spell IDs.
+--- Returns an ordered array of resolved spell IDs, or nil if none found.
+--- Each spell is checked for availability (learned + override resolved).
+function SpellDB.ResolveBurstCooldownSpells()
+    if not SpellDB.CLASS_BURST_DEFAULTS then return nil end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local defaults = SpellDB.CLASS_BURST_DEFAULTS[playerClass]
+    if not defaults then return nil end
+    local result = {}
+    for _, spellID in ipairs(defaults) do
+        local resolvedID = spellID
+        if FindSpellOverrideByID then
+            local ov = FindSpellOverrideByID(spellID)
+            if ov and ov ~= 0 and ov ~= spellID then resolvedID = ov end
+        end
+        if BlizzardAPI.IsSpellAvailable(resolvedID) then
+            result[#result + 1] = resolvedID
+        end
+    end
+    return #result > 0 and result or nil
+end
+
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local UnitClass = UnitClass
 local FindSpellOverrideByID = FindSpellOverrideByID

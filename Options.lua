@@ -1653,6 +1653,28 @@ local function CreateOptionsTable(addon)
                                 or not addon.db.profile.showInterrupt
                         end,
                     },
+                    showBurstCDIndicator = {
+                        type = "toggle",
+                        name = "Show Burst CD Indicator",
+                        desc = "Show a small icon next to the main spell that lights up when a major offensive cooldown (2+ min) is ready to use.",
+                        order = 14.6,
+                        width = "full",
+                        get = function()
+                            local bci = addon.db.profile.burstCDIndicator
+                            return not bci or bci.enabled ~= false
+                        end,
+                        set = function(_, val)
+                            if not addon.db.profile.burstCDIndicator then
+                                addon.db.profile.burstCDIndicator = {}
+                            end
+                            addon.db.profile.burstCDIndicator.enabled = val
+                            addon:UpdateFrameSize()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
                     -- DISPLAY (15-19)
                     displayHeader = {
                         type = "header",

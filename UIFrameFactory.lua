@@ -1058,6 +1058,155 @@ local function CreateInterruptIcon(addon, profile)
     addon.resolvedInterrupts = SpellDB.ResolveInterruptSpells()
 end
 
+--------------------------------------------------------------------------------
+-- Burst CD Indicator: small icon near position 1 that lights up when a major
+-- offensive cooldown (2+ min) is ready.  Uses local cooldown tracking since
+-- Blizzard's Combat Assistant deprioritises these spells.
+--------------------------------------------------------------------------------
+local burstIndicator = nil
+
+local function CreateBurstCDIndicator(addon, profile)
+    -- Cleanup existing
+    if burstIndicator then
+        burstIndicator:Hide()
+        burstIndicator:SetParent(nil)
+        burstIndicator = nil
+    end
+    addon.burstCDIndicator = nil
+
+    -- Check if feature is enabled (default: on)
+    if profile.burstCDIndicator and profile.burstCDIndicator.enabled == false then return end
+
+    -- Resolve which burst spells the player has
+    local burstSpells = SpellDB and SpellDB.ResolveBurstCooldownSpells and SpellDB.ResolveBurstCooldownSpells()
+    if not burstSpells or #burstSpells == 0 then return end
+
+    -- Register burst spells for local cooldown tracking
+    if BlizzardAPI and BlizzardAPI.RegisterBurstSpell then
+        for _, spellID in ipairs(burstSpells) do
+            BlizzardAPI.RegisterBurstSpell(spellID)
+        end
+    end
+
+    -- Size: 60% of position-1 icon size
+    local firstIconScale = profile.firstIconScale or 1.0
+    local baseSize = profile.iconSize * firstIconScale
+    local indicatorScale = (profile.burstCDIndicator and profile.burstCDIndicator.scale) or 1.0
+    local actualSize = math_floor(baseSize * indicatorScale)
+    if actualSize < 16 then actualSize = 16 end
+
+    local orientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing or 1
+
+    -- Create a simple frame (not a full button — no interaction needed)
+    local frame = CreateFrame("Frame", nil, addon.mainFrame)
+    frame:SetSize(actualSize, actualSize)
+    frame:SetFrameLevel(addon.mainFrame:GetFrameLevel() + 10)
+
+    -- Icon texture
+    local iconTex = frame:CreateTexture(nil, "ARTWORK")
+    iconTex:SetAllPoints(frame)
+    iconTex:Hide()
+    frame.iconTexture = iconTex
+
+    -- Mask for rounded corners (matches main icons)
+    local maskPadding = math_floor(actualSize * 0.17)
+    local iconMask = frame:CreateMaskTexture(nil, "ARTWORK")
+    iconMask:SetPoint("TOPLEFT", frame, "TOPLEFT", -maskPadding, maskPadding)
+    iconMask:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", maskPadding, -maskPadding)
+    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+    iconTex:AddMaskTexture(iconMask)
+
+    -- Border
+    local borderFrame = CreateFrame("Frame", nil, frame)
+    borderFrame:SetFrameLevel(frame:GetFrameLevel() + 3)
+    borderFrame:SetAllPoints(frame)
+    local normalTex = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    normalTex:SetPoint("CENTER", frame, "CENTER", 0.5, -0.5)
+    normalTex:SetSize(actualSize, actualSize)
+    normalTex:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    frame.NormalTexture = normalTex
+
+    -- Ready glow ring (green tint, visible when CD is up)
+    local glowFrame = CreateFrame("Frame", nil, frame)
+    glowFrame:SetPoint("CENTER", frame, "CENTER", 0.5, -0.5)
+    glowFrame:SetSize(actualSize + 6, actualSize + 6)
+    glowFrame:SetFrameLevel(frame:GetFrameLevel() + 4)
+    local glowTex = glowFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    glowTex:SetAllPoints(glowFrame)
+    glowTex:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    glowTex:SetVertexColor(0.2, 1.0, 0.2, 0.9)
+    glowTex:SetBlendMode("ADD")
+    glowTex:Hide()
+    frame.glowTexture = glowTex
+
+    -- Pulse animation for the glow when ready
+    local pulseGroup = glowFrame:CreateAnimationGroup()
+    pulseGroup:SetLooping("BOUNCE")
+    local pulseAlpha = pulseGroup:CreateAnimation("Alpha")
+    pulseAlpha:SetFromAlpha(0.5)
+    pulseAlpha:SetToAlpha(1.0)
+    pulseAlpha:SetDuration(0.6)
+    pulseAlpha:SetSmoothing("IN_OUT")
+    frame.pulseAnim = pulseGroup
+
+    -- Cooldown swipe (for showing remaining CD)
+    local cdContainer = CreateFrame("Frame", nil, frame)
+    cdContainer:SetAllPoints(frame)
+    cdContainer:SetClipsChildren(true)
+    local cooldown = CreateFrame("Cooldown", nil, cdContainer, "CooldownFrameTemplate")
+    cooldown:ClearAllPoints()
+    cooldown:SetPoint("TOPLEFT", frame, "TOPLEFT", 3, -3)
+    cooldown:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -3, 3)
+    cooldown:SetDrawEdge(false)
+    cooldown:SetDrawBling(false)
+    cooldown:SetDrawSwipe(true)
+    cooldown:SetReverse(false)
+    cooldown:SetSwipeColor(0, 0, 0, 0.65)
+    cooldown:SetHideCountdownNumbers(true)
+    cooldown:Clear()
+    cooldown:Hide()
+    frame.cooldown = cooldown
+
+    -- Fade-in animation
+    local fadeIn = frame:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.2)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    frame.fadeIn = fadeIn
+
+    -- Position: to the left of icon 1 (same row, adjacent)
+    local firstIconCenter = baseSize / 2
+    local effectiveSpacing = math_max(spacing, 3)
+
+    if orientation == "LEFT" then
+        -- Left of icon 1: anchor right edge to left edge of mainFrame
+        frame:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
+    elseif orientation == "RIGHT" then
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
+        frame:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, 0)
+    elseif orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH
+        frame:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, -effectiveSpacing)
+    elseif orientation == "DOWN" then
+        frame:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
+    end
+
+    -- State tracking
+    frame.burstSpells = burstSpells
+    frame.currentSpellID = nil
+    frame.isReady = false
+
+    frame:Hide()
+    burstIndicator = frame
+    addon.burstCDIndicator = frame
+end
+
 function UIFrameFactory.CreateSpellIcons(addon)
     if not addon.db or not addon.db.profile or not addon.mainFrame then return end
     
@@ -1105,6 +1254,9 @@ function UIFrameFactory.CreateSpellIcons(addon)
     
     -- Create defensive icons (1-3 positioned relative to position 1 based on user settings)
     CreateDefensiveIcons(addon, profile)
+
+    -- Create burst CD indicator (small icon next to position 1, shows when major offensive CD is ready)
+    CreateBurstCDIndicator(addon, profile)
 end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
