@@ -33,8 +33,9 @@ local lastInterruptUsedTime = 0
 local lastInterruptShownID  = nil
 -- CC-applied suppression: when the player lands a CC spell on a target, suppress the
 -- interrupt icon for a window so the next CC isn't suggested before the game registers
--- the CC state.  Conservative duration because actual CC duration is secret in 12.0.
-local CC_APPLIED_SUPPRESS = 4.0  -- seconds
+-- the CC state.  2s is enough to cover API state-registration lag; shorter than any
+-- meaningful CC duration so back-to-back CCs on the same target still work.
+local CC_APPLIED_SUPPRESS = 2.0  -- seconds
 local lastCCAppliedTime   = 0
 
 -- Check for proc overlay to highlight available abilities
