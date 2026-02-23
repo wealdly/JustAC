@@ -143,6 +143,130 @@ function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
 end
 
 --------------------------------------------------------------------------------
+-- Burst Cooldown Tracking (offensive major CDs — 2+ min)
+-- Uses the same local tracking mechanism as defensives.
+--------------------------------------------------------------------------------
+local trackedBurstSpells = {}
+local burstCooldowns = {}
+local burstCachedDurations = {}
+local burstInitialised = false
+
+local function IsBurstCooldownActive(spellID)
+    local data = burstCooldowns[spellID]
+    if not data then return false, 0, 0 end
+    local remaining = data.endTime - GetTime()
+    if remaining <= 0 then return false, 0, 0 end
+    return true, remaining, data.duration
+end
+
+local function RecordBurstCooldown(spellID)
+    if not spellID or spellID == 0 then return end
+    if not trackedBurstSpells[spellID] then return end
+
+    local now = GetTime()
+    local duration = 0
+    local inCombat = InCombatLockdown()
+
+    if not inCombat and C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
+        if cd and cd.duration and cd.duration > 0 then
+            if not (issecretvalue and issecretvalue(cd.duration)) then
+                duration = cd.duration
+                burstCachedDurations[spellID] = duration
+            end
+        end
+    end
+
+    if duration == 0 then
+        if burstCachedDurations[spellID] and burstCachedDurations[spellID] > 0 then
+            duration = burstCachedDurations[spellID]
+        else
+            local baseCooldownMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+            if baseCooldownMs and baseCooldownMs > 0 then
+                duration = baseCooldownMs / 1000
+            end
+        end
+    end
+
+    if duration > 0 then
+        burstCooldowns[spellID] = {
+            endTime = now + duration,
+            duration = duration,
+            startTime = now,
+        }
+    end
+end
+
+local function InitBurstTracking()
+    if burstInitialised then return end
+    burstInitialised = true
+
+    local burstFrame = CreateFrame("Frame")
+    burstFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    burstFrame:RegisterEvent("PLAYER_DEAD")
+    burstFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    burstFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    burstFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+    burstFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+
+    burstFrame:SetScript("OnEvent", function(self, event, ...)
+        if event == "UNIT_SPELLCAST_SUCCEEDED" then
+            local unit, castGUID, spellID = ...
+            if unit == "player" and spellID then
+                RecordBurstCooldown(spellID)
+            end
+        elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
+            wipe(burstCooldowns)
+        elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
+            wipe(burstCachedDurations)
+            wipe(burstCooldowns)
+            wipe(trackedBurstSpells)
+        end
+    end)
+end
+
+function BlizzardAPI.RegisterBurstSpell(spellID)
+    if not spellID or spellID == 0 then return end
+    trackedBurstSpells[spellID] = true
+    if not burstInitialised then
+        InitBurstTracking()
+    end
+end
+
+function BlizzardAPI.ClearTrackedBurstSpells()
+    wipe(trackedBurstSpells)
+    wipe(burstCooldowns)
+end
+
+--- Returns: isOnCD (bool), remainingTime (number), totalDuration (number)
+function BlizzardAPI.GetBurstCooldownState(spellID)
+    return IsBurstCooldownActive(spellID)
+end
+
+--- Returns the first burst spell that is ready (off cooldown), or nil.
+--- Also returns all tracked burst spells with their state for UI rendering.
+function BlizzardAPI.GetReadyBurstSpells()
+    local ready = {}
+    for spellID, _ in pairs(trackedBurstSpells) do
+        local isOnCD = IsBurstCooldownActive(spellID)
+        if not isOnCD then
+            ready[#ready + 1] = spellID
+        end
+    end
+    return ready
+end
+
+--- Returns all tracked burst spells with their state {spellID, isOnCD, remaining, duration}
+function BlizzardAPI.GetAllBurstSpellStates()
+    local states = {}
+    for spellID, _ in pairs(trackedBurstSpells) do
+        local isOnCD, remaining, duration = IsBurstCooldownActive(spellID)
+        states[#states + 1] = { spellID = spellID, isOnCD = isOnCD, remaining = remaining, duration = duration }
+    end
+    return states
+end
+
+--------------------------------------------------------------------------------
 -- Feature Availability (12.0+ secret value graceful degradation)
 --------------------------------------------------------------------------------
 
