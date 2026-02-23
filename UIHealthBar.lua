@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Health Bar Module - Shows player health bar for low-health warning
-local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 4)
+local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 5)
 if not UIHealthBar then return end
 
 -- Cache frequently used functions to reduce table lookups on every update
@@ -25,70 +25,133 @@ local healthBarFrame = nil
 local petHealthBarFrame = nil
 local lastUpdate = 0
 local lastPetUpdate = 0
+local lastVisibleCount = -1  -- cached visible icon count (defensive mode only)
 
--- Create the health bar frame
+-- Create the health bar frame.
+-- Two modes:
+--   Defensives enabled  + defensives.showHealthBar → spans defensive cluster, floats ABOVE it
+--   Defensives disabled + profile.showHealthBar    → spans offensive queue, sits at BAR_SPACING above mainFrame
 function UIHealthBar.CreateHealthBar(addon)
     if healthBarFrame then
         healthBarFrame:Hide()
         healthBarFrame:SetParent(nil)
         healthBarFrame = nil
     end
-    
+
     if not addon or not addon.mainFrame then return nil end
     if not addon.db or not addon.db.profile then return nil end
-    
+
     local profile = addon.db.profile
-    -- Health bar is independent of defensive queue - only check showHealthBar setting
-    if not profile.defensives or not profile.defensives.showHealthBar then
-        return nil
+    local defensivesEnabled = profile.defensives and profile.defensives.enabled
+
+    local useDefensiveDims
+    if defensivesEnabled then
+        if not profile.defensives.showHealthBar then return nil end
+        useDefensiveDims = true
+    else
+        if not profile.showHealthBar then return nil end
+        useDefensiveDims = false
     end
-    
+
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
-    
-    -- Calculate width/height based on visible icons
+
     local orientation = profile.queueOrientation or "LEFT"
-    local maxIcons = profile.maxIcons or 4
-    local iconSize = profile.iconSize or 36
-    local firstIconScale = profile.firstIconScale or 1.2
+    local iconSize    = profile.iconSize or 42
     local iconSpacing = profile.iconSpacing or 1
-    
-    local firstIconSize = iconSize * firstIconScale
-    local queueDimension
-    
-    if maxIcons == 1 then
-        -- Single icon: full width edge-to-edge
-        queueDimension = firstIconSize
+    local queueDimension, offset
+
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Health bars must match that shift to stay aligned.
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
+    if useDefensiveDims then
+        -- Span the defensive icon cluster; float on the far side (away from mainFrame)
+        local defIconScale = profile.defensives.iconScale or 1.0
+        local defIconSize  = iconSize * defIconScale
+        local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
+        local defPosition  = profile.defensives.position or "SIDE1"
+
+        if maxDefIcons == 1 then
+            queueDimension = defIconSize
+        else
+            queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
+        end
+        offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+
+        -- Defensive icons sit at math.max(iconSpacing, BAR_SPACING) from mainFrame edge;
+        -- bar floats BAR_SPACING beyond the outer edge of that cluster.
+        local defSpacing = math.max(iconSpacing, BAR_SPACING)
+        local barDist    = defSpacing + defIconSize + BAR_SPACING
+
+        if orientation == "LEFT" or orientation == "RIGHT" then
+            frame:SetSize(queueDimension, BAR_HEIGHT)
+        else
+            frame:SetSize(BAR_HEIGHT, queueDimension)
+        end
+
+        -- SIDE1 = above (horizontal) / right (vertical)
+        -- SIDE2 = below (horizontal) / left  (vertical)
+        if orientation == "LEFT" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,   barDist)
+            else
+                frame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset,  -barDist)
+            end
+        elseif orientation == "RIGHT" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),   barDist)
+            else
+                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve),  -barDist)
+            end
+        elseif orientation == "DOWN" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",    barDist,  -offset)
+            else
+                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",    -barDist,  -offset)
+            end
+        else -- UP
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset + grabTabReserve)
+            else
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset + grabTabReserve)
+            end
+        end
     else
-        -- Multiple icons: 25% into icon 1 to 75% into last icon
-        -- = 75% of firstIcon + middle icons + 75% of last icon
-        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
-    end
-    
-    if orientation == "LEFT" or orientation == "RIGHT" then
-        -- Horizontal queue: horizontal bar (width x height)
-        frame:SetSize(queueDimension, BAR_HEIGHT)
-    else -- UP or DOWN
-        -- Vertical queue: vertical bar (width x height)
-        frame:SetSize(BAR_HEIGHT, queueDimension)
-    end
-    
-    -- Positioning offset: 0 for single icon (edge-to-edge), 25% for multiple icons
-    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
-    
-    -- Position health bar based on queue orientation
-    if orientation == "LEFT" then
-        -- Horizontal queue left-to-right: bar above, starting at offset from left
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", offset, BAR_SPACING)
-    elseif orientation == "RIGHT" then
-        -- Horizontal queue right-to-left: bar above, ending at offset from right
-        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -offset, BAR_SPACING)
-    elseif orientation == "DOWN" then
-        -- Vertical queue downward: vertical bar to the right, starting at offset from top
-        frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING, -offset)
-    else -- UP
-        -- Vertical queue upward: vertical bar to the right, starting at offset from bottom
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset)
+        -- Span the offensive queue; original position just above mainFrame
+        local firstIconScale = profile.firstIconScale or 1.0
+        local maxIcons       = profile.maxIcons or 4
+        local firstIconSize  = iconSize * firstIconScale
+
+        if maxIcons == 1 then
+            queueDimension = firstIconSize
+        else
+            queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
+        end
+        offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+
+        if orientation == "LEFT" or orientation == "RIGHT" then
+            frame:SetSize(queueDimension, BAR_HEIGHT)
+        else
+            frame:SetSize(BAR_HEIGHT, queueDimension)
+        end
+
+        if orientation == "LEFT" then
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",    offset,     BAR_SPACING)
+        elseif orientation == "RIGHT" then
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",  -(offset + grabTabReserve),     BAR_SPACING)
+        elseif orientation == "DOWN" then
+            -- Bar to the right of mainFrame (perpendicular to vertical queue)
+            frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",   BAR_SPACING, -offset)
+        else -- UP
+            -- Bar to the right of mainFrame (perpendicular to vertical queue)
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING, offset + grabTabReserve)
+        end
     end
     
     -- Create StatusBar (accepts secret values!)
@@ -103,52 +166,28 @@ function UIHealthBar.CreateHealthBar(addon)
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
+        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
+        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
     
-    -- Set initial green color
-    statusBar:SetStatusBarColor(0.0, 0.8, 0.0, 1.0)
+    -- Set initial bright green color (matches nameplate overlay bar)
+    statusBar:SetStatusBarColor(0.0, 1.0, 0.0, 0.9)
     
-    -- Background
+    -- Solid dark-red background fills the bar frame
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
-    
-    -- Border frame for visual definition
-    local border = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    border:SetAllPoints(frame)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    border:SetBackdropBorderColor(0, 0, 0, 1)
-    
-    -- Tick marks at 25%, 50%, 75% for visual percentage reference
-    local tickMarks = {}
-    for i, percent in ipairs({0.25, 0.5, 0.75}) do
-        local tick = border:CreateTexture(nil, "OVERLAY")
-        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
-        tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)  -- Grey
-        
-        if orientation == "LEFT" or orientation == "RIGHT" then
-            -- Horizontal bar: vertical tick marks
-            tick:SetSize(1, BAR_HEIGHT)
-            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
-        else
-            -- Vertical bar: horizontal tick marks
-            tick:SetSize(BAR_HEIGHT, 1)
-            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
-        end
-        
-        tickMarks[i] = tick
+    if orientation == "UP" or orientation == "DOWN" then
+        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
+    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
     
     frame.statusBar = statusBar
     frame.background = bg
-    frame.border = border
-    frame.tickMarks = tickMarks
+    frame.useDefensiveDims = useDefensiveDims
     
     healthBarFrame = frame
+    lastVisibleCount = -1  -- force first resize
     
     -- Initial update
     UIHealthBar.Update(addon)
@@ -212,6 +251,91 @@ function UIHealthBar.UpdateSize(addon)
     UIHealthBar.CreateHealthBar(addon)
 end
 
+--- Dynamically resize the health bar to match the number of visible defensive icons.
+--- Only operates when the bar is in defensive-dims mode (useDefensiveDims = true).
+--- @param addon table  The main addon object
+--- @param visibleCount number  Number of currently visible defensive icons (0 = hide)
+function UIHealthBar.ResizeToCount(addon, visibleCount)
+    if not healthBarFrame then return end
+    if not healthBarFrame.useDefensiveDims then return end  -- offensive-mode bar: skip
+
+    -- Cache check: skip expensive recalc when count hasn't changed
+    if visibleCount == lastVisibleCount then return end
+    lastVisibleCount = visibleCount
+
+    if visibleCount <= 0 then
+        healthBarFrame:Hide()
+        return
+    end
+
+    local profile = addon.db and addon.db.profile
+    if not profile or not profile.defensives then return end
+
+    local orientation  = profile.queueOrientation or "LEFT"
+    local iconSize     = profile.iconSize or 42
+    local iconSpacing  = profile.iconSpacing or 1
+    local defIconScale = profile.defensives.iconScale or 1.0
+    local defIconSize  = iconSize * defIconScale
+    local defPosition  = profile.defensives.position or "SIDE1"
+
+    local queueDimension
+    if visibleCount == 1 then
+        queueDimension = defIconSize
+    else
+        queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
+    end
+    local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+
+    -- Resize
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
+    else
+        healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
+    end
+
+    -- Reposition to stay aligned above/below the visible cluster
+    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    local barDist    = defSpacing + defIconSize + BAR_SPACING
+
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Health bars must match that shift to stay aligned.
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
+    healthBarFrame:ClearAllPoints()
+    if orientation == "LEFT" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,   barDist)
+        else
+            healthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset,  -barDist)
+        end
+    elseif orientation == "RIGHT" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),   barDist)
+        else
+            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve),  -barDist)
+        end
+    elseif orientation == "DOWN" then
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",    barDist,  -offset)
+        else
+            healthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",    -barDist,  -offset)
+        end
+    else -- UP
+        if defPosition == "SIDE1" then
+            healthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  barDist,  offset + grabTabReserve)
+        else
+            healthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -barDist,  offset + grabTabReserve)
+        end
+    end
+
+    healthBarFrame:Show()
+end
+
 -- Clean up
 function UIHealthBar.Destroy()
     if healthBarFrame then
@@ -220,6 +344,7 @@ function UIHealthBar.Destroy()
         healthBarFrame = nil
     end
     lastUpdate = 0
+    lastVisibleCount = -1
 end
 
 --------------------------------------------------------------------------------
@@ -228,23 +353,27 @@ end
 -- UnitExists/UnitIsDead are NOT secret — used for visibility/dead state
 --------------------------------------------------------------------------------
 
--- Calculate bar dimensions based on queue layout (shared by both bars)
+-- Calculate bar dimensions based on the defensive icon cluster (shared by both bars)
 local function CalculateBarDimensions(profile)
-    local orientation = profile.queueOrientation or "LEFT"
-    local maxIcons = profile.maxIcons or 4
-    local iconSize = profile.iconSize or 36
-    local firstIconScale = profile.firstIconScale or 1.2
-    local iconSpacing = profile.iconSpacing or 1
-    local firstIconSize = iconSize * firstIconScale
+    local orientation  = profile.queueOrientation or "LEFT"
+    local iconSize     = profile.iconSize or 42
+    local iconSpacing  = profile.iconSpacing or 1
+    local defIconScale = profile.defensives and profile.defensives.iconScale or 1.0
+    local defIconSize  = iconSize * defIconScale
+    local maxDefIcons  = math.min(profile.defensives and profile.defensives.maxIcons or 1, 7)
+    local defPosition  = profile.defensives and profile.defensives.position or "SIDE1"
 
     local queueDimension
-    if maxIcons == 1 then
-        queueDimension = firstIconSize
+    if maxDefIcons == 1 then
+        queueDimension = defIconSize
     else
-        queueDimension = firstIconSize * 0.75 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.75
+        queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
     end
 
-    return orientation, queueDimension, firstIconSize, maxIcons
+    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    local barDist    = defSpacing + defIconSize + BAR_SPACING
+
+    return orientation, queueDimension, defIconSize, maxDefIcons, defPosition, barDist
 end
 
 -- Create the pet health bar frame
@@ -271,7 +400,17 @@ function UIHealthBar.CreatePetHealthBar(addon)
         or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
     if not hasPetSpells then return nil end
 
-    local orientation, queueDimension, firstIconSize, maxIcons = CalculateBarDimensions(profile)
+    local orientation, queueDimension, defIconSize, maxDefIcons, defPosition, barDist = CalculateBarDimensions(profile)
+
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position.  Pet health bars must match that shift.
+    local iconSpacing = profile.iconSpacing or 1
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
 
     -- Create container frame
     local frame = CreateFrame("Frame", nil, addon.mainFrame)
@@ -282,19 +421,37 @@ function UIHealthBar.CreatePetHealthBar(addon)
         frame:SetSize(BAR_HEIGHT, queueDimension)
     end
 
-    -- Position: stack above/beside the player health bar if it exists, else same offset
-    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.25)
+    -- Stack the pet bar beyond the player health bar when both are shown
+    local offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
     local playerBarExists = (healthBarFrame ~= nil) and profile.defensives.showHealthBar
     local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
+    local dist = barDist + extraOffset
 
+    -- Mirror CreateHealthBar's SIDE1/SIDE2 logic, offset one bar-height further out
     if orientation == "LEFT" then
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "TOPLEFT", offset, BAR_SPACING + extraOffset)
+        if defPosition == "SIDE1" then
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,  dist)
+        else
+            frame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset, -dist)
+        end
     elseif orientation == "RIGHT" then
-        frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT", -offset, BAR_SPACING + extraOffset)
+        if defPosition == "SIDE1" then
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),  dist)
+        else
+            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve), -dist)
+        end
     elseif orientation == "DOWN" then
-        frame:SetPoint("TOPLEFT", addon.mainFrame, "TOPRIGHT", BAR_SPACING + extraOffset, -offset)
+        if defPosition == "SIDE1" then
+            frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",     dist,   -offset)
+        else
+            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",     -dist,   -offset)
+        end
     else -- UP
-        frame:SetPoint("BOTTOMLEFT", addon.mainFrame, "BOTTOMRIGHT", BAR_SPACING + extraOffset, offset)
+        if defPosition == "SIDE1" then
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset + grabTabReserve)
+        else
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset + grabTabReserve)
+        end
     end
 
     -- Create StatusBar (accepts secret values!)
@@ -308,43 +465,21 @@ function UIHealthBar.CreatePetHealthBar(addon)
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
+        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
+        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
 
-    -- Teal/blue for pet (distinct from player's green)
-    statusBar:SetStatusBarColor(0.0, 0.6, 0.8, 1.0)
+    -- Teal-green for pet (green-leaning but distinct from player's pure green)
+    statusBar:SetStatusBarColor(0.0, 0.85, 0.4, 0.9)
 
     -- Background (dark red when pet is hurt/missing health shows through)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
-
-    -- Border
-    local border = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    border:SetAllPoints(frame)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    border:SetBackdropBorderColor(0, 0, 0, 1)
-
-    -- Tick marks at 25%, 50%, 75%
-    local tickMarks = {}
-    for i, percent in ipairs({0.25, 0.5, 0.75}) do
-        local tick = border:CreateTexture(nil, "OVERLAY")
-        tick:SetTexture("Interface\\Buttons\\WHITE8X8")
-        tick:SetVertexColor(0.5, 0.5, 0.5, 0.8)
-
-        if orientation == "LEFT" or orientation == "RIGHT" then
-            tick:SetSize(1, BAR_HEIGHT)
-            tick:SetPoint("BOTTOM", frame, "BOTTOMLEFT", queueDimension * percent, 0)
-        else
-            tick:SetSize(BAR_HEIGHT, 1)
-            tick:SetPoint("LEFT", frame, "BOTTOMLEFT", 0, queueDimension * percent)
-        end
-
-        tickMarks[i] = tick
+    if orientation == "UP" or orientation == "DOWN" then
+        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
+    bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
 
     -- Dead overlay (red tint, hidden by default)
     local deadOverlay = frame:CreateTexture(nil, "ARTWORK")
@@ -355,8 +490,6 @@ function UIHealthBar.CreatePetHealthBar(addon)
 
     frame.statusBar = statusBar
     frame.background = bg
-    frame.border = border
-    frame.tickMarks = tickMarks
     frame.deadOverlay = deadOverlay
 
     petHealthBarFrame = frame

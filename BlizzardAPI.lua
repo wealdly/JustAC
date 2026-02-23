@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Blizzard API Module - Wraps WoW C_* APIs with 12.0+ secret value handling
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 28)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 30)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -29,6 +29,10 @@ local C_Spell_IsSpellUsable = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local Enum_SpellBookSpellBank_Player = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+local GetItemCount = GetItemCount
+local GetItemCooldown = GetItemCooldown
+local GetItemInfo = GetItemInfo
+local GetItemSpell = GetItemSpell
 
 --------------------------------------------------------------------------------
 -- Local Cooldown Tracking (12.0+ secret value workaround)
@@ -145,7 +149,6 @@ end
 local featureAvailability = {
     healthAccess = true,
     auraAccess = true,
-    cooldownAccess = true,
     procAccess = true,
     lastCheck = 0,
 }
@@ -186,40 +189,16 @@ local function TestAuraAccess()
     return false
 end
 
--- Cooldowns flagged spell-by-spell as non-secret in 12.0
-local function TestCooldownAccess()
-    if not C_Spell_GetSpellCooldown then return true end
-
-    local ok, result = pcall(function()
-        if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
-            local spells = C_AssistedCombat.GetRotationSpells()
-            if spells and spells[1] and spells[1].spellId then
-                local cooldownInfo = C_Spell_GetSpellCooldown(spells[1].spellId)
-                if cooldownInfo then
-                    if issecretvalue then
-                        if issecretvalue(cooldownInfo.startTime) or issecretvalue(cooldownInfo.duration) then
-                            return false
-                        end
-                    end
-                end
-            end
-        end
-        return true
-    end)
-    
-    if not ok then return true end
-    return result
-end
-
 -- IsSpellOverlayed may return secret boolean in 12.0
+-- GetRotationSpells() returns a flat array of spell ID numbers (not objects)
 local function TestProcAccess()
     if not C_SpellActivationOverlay_IsSpellOverlayed then return true end
     
     local ok, result = pcall(function()
         if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
             local spells = C_AssistedCombat.GetRotationSpells()
-            if spells and spells[1] and spells[1].spellId then
-                local hasProc = C_SpellActivationOverlay_IsSpellOverlayed(spells[1].spellId)
+            if spells and spells[1] then
+                local hasProc = C_SpellActivationOverlay_IsSpellOverlayed(spells[1])
                 if hasProc ~= nil and issecretvalue then
                     if issecretvalue(hasProc) then
                         return false
@@ -242,12 +221,10 @@ local function RefreshFeatureAvailability()
 
     local oldHealthAccess = featureAvailability.healthAccess
     local oldAuraAccess = featureAvailability.auraAccess
-    local oldCooldownAccess = featureAvailability.cooldownAccess
     local oldProcAccess = featureAvailability.procAccess
 
     featureAvailability.healthAccess = TestHealthAccess()
     featureAvailability.auraAccess = TestAuraAccess()
-    featureAvailability.cooldownAccess = TestCooldownAccess()
     featureAvailability.procAccess = TestProcAccess()
     featureAvailability.lastCheck = now
 
@@ -261,9 +238,6 @@ local function RefreshFeatureAvailability()
             if oldAuraAccess ~= featureAvailability.auraAccess then
                 addon:Print("Aura API access: " .. (featureAvailability.auraAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
-            if oldCooldownAccess ~= featureAvailability.cooldownAccess then
-                addon:Print("Cooldown API access: " .. (featureAvailability.cooldownAccess and "AVAILABLE" or "BLOCKED (secrets)"))
-            end
             if oldProcAccess ~= featureAvailability.procAccess then
                 addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
@@ -271,41 +245,14 @@ local function RefreshFeatureAvailability()
     end
 end
 
-function BlizzardAPI.IsDefensivesFeatureAvailable()
-    RefreshFeatureAvailability()
-    return featureAvailability.healthAccess
-end
-
 function BlizzardAPI.IsRedundancyFilterAvailable()
     RefreshFeatureAvailability()
     return featureAvailability.auraAccess
 end
 
-function BlizzardAPI.IsCooldownFeatureAvailable()
-    RefreshFeatureAvailability()
-    return featureAvailability.cooldownAccess
-end
-
 function BlizzardAPI.IsProcFeatureAvailable()
     RefreshFeatureAvailability()
     return featureAvailability.procAccess
-end
-
-function BlizzardAPI.GetBypassFlags()
-    RefreshFeatureAvailability()
-    local bypassRedundancy = not BlizzardAPI.IsRedundancyFilterAvailable()
-    local bypassProcs = not BlizzardAPI.IsProcFeatureAvailable()
-    local bypassCooldown = not BlizzardAPI.IsCooldownFeatureAvailable()
-    local bypassDefensives = not BlizzardAPI.IsDefensivesFeatureAvailable()
-    local bypassSlot1Blacklist = bypassRedundancy or bypassProcs
-
-    return {
-        bypassRedundancy = bypassRedundancy,
-        bypassProcs = bypassProcs,
-        bypassCooldown = bypassCooldown,
-        bypassDefensives = bypassDefensives,
-        bypassSlot1Blacklist = bypassSlot1Blacklist,
-    }
 end
 
 function BlizzardAPI.RefreshFeatureAvailability()
@@ -318,7 +265,6 @@ function BlizzardAPI.GetFeatureAvailability()
     return {
         healthAccess = featureAvailability.healthAccess,
         auraAccess = featureAvailability.auraAccess,
-        cooldownAccess = featureAvailability.cooldownAccess,
         procAccess = featureAvailability.procAccess,
     }
 end
@@ -359,15 +305,22 @@ end
 -- API-Specific Secret-Aware Helpers
 --------------------------------------------------------------------------------
 
--- Fail-open if secret (assume ready)
+-- Check if a spell is ready (not on a real cooldown).
+-- 12.0 combat: duration/startTime are blanket-secreted.
+-- Uses isOnGCD (NeverSecret) three-state: true=GCD only, false=real CD, nil=no CD.
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if not cd then return true end
-    -- Check BOTH values for secret before any comparison or arithmetic
-    if BlizzardAPI.IsSecretValue(cd.startTime) or BlizzardAPI.IsSecretValue(cd.duration) then
-        return true  -- Fail-open: assume ready
-    end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return true end
+    -- isOnGCD three-state (NeverSecret):
+    --   true  → GCD only, spell is effectively ready
+    --   nil   → no cooldown at all, spell is ready
+    --   false → real cooldown is actively running
+    if cd.isOnGCD ~= false then return true end
+    -- isOnGCD == false → real cooldown running
+    -- If duration is secret, we know it's non-zero from isOnGCD==false
+    if issecretvalue and issecretvalue(cd.duration) then return false end
+    -- Out of combat: safe to compare
     return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
 end
 
@@ -599,7 +552,8 @@ function BlizzardAPI.GetActionInfo(slot)
 
     local actionType, id, subType, spell_id_from_macro = GetActionInfo(slot)
 
-    if actionType == "spell" and type(id) == "string" and id == "assistedcombat" then
+    -- Filter Assisted Combat placeholder slots (Blizzard uses subType == "assistedcombat")
+    if actionType == "spell" and (subType == "assistedcombat" or (type(id) == "string" and id == "assistedcombat")) then
         return nil, nil, nil, nil
     end
 
@@ -738,17 +692,25 @@ function BlizzardAPI.GetSpellCooldown(spellID)
     return 0, 0
 end
 
--- Sanitized values for comparison (0,0 if secret)
+-- Sanitized values for comparison.
+-- Returns start, duration, isOnRealCooldown (three returns).
+-- When secreted: returns 0, 0 but uses isOnGCD to infer cooldown state.
+-- Third return: true = definitely on real CD, false = definitely not, nil = unknown
 function BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not C_Spell_GetSpellCooldown then return 0, 0 end
-    local cd = C_Spell_GetSpellCooldown(spellID)
-    if not cd then return 0, 0 end
+    if not C_Spell_GetSpellCooldown then return 0, 0, false end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return 0, 0, false end
     local startTime = cd.startTime
     local duration = cd.duration
     if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
-        return 0, 0
+        -- Values are secret — use isOnGCD three-state to infer:
+        --   true  → GCD only, not on real CD
+        --   nil   → no cooldown, not on real CD
+        --   false → real cooldown actively running
+        local onRealCD = (cd.isOnGCD == false)
+        return 0, 0, onRealCD
     end
-    return startTime or 0, duration or 0
+    return startTime or 0, duration or 0, false
 end
 
 -- Blizzard's dummy GCD spell always returns current GCD state
@@ -769,18 +731,25 @@ function BlizzardAPI.GetGCDInfo()
     return 0, 0
 end
 
+-- Check if a spell is only on GCD (not a real cooldown).
+-- 12.0 combat: uses isOnGCD (NeverSecret) directly instead of comparing
+-- secreted start/duration values.
 function BlizzardAPI.IsSpellOnGCD(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return false end
 
-    local spellCD = C_Spell_GetSpellCooldown(spellID)
-    if not spellCD then return false end
+    local ok, spellCD = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not spellCD then return false end
 
-    local spellStart = spellCD.startTime
-    local spellDuration = spellCD.duration
-    if issecretvalue and (issecretvalue(spellStart) or issecretvalue(spellDuration)) then
+    -- isOnGCD is NeverSecret — true means "only GCD, no real CD"
+    if spellCD.isOnGCD == true then return true end
+
+    -- isOnGCD is nil (no cooldown) or false (real cooldown) → not GCD-only
+    -- Fall back to comparing start/duration when values are readable (out of combat)
+    if issecretvalue and (issecretvalue(spellCD.startTime) or issecretvalue(spellCD.duration)) then
         return false
     end
 
+    local spellDuration = spellCD.duration
     if not spellDuration or spellDuration == 0 then
         return false
     end
@@ -798,14 +767,17 @@ function BlizzardAPI.IsSpellOnGCD(spellID)
         return false
     end
 
-    return spellStart == gcdStart and spellDuration == gcdDuration
+    return spellCD.startTime == gcdStart and spellDuration == gcdDuration
 end
 
 -- 12.0 fallbacks: action bar usability, local cooldown tracking
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
 
-    local start, duration = BlizzardAPI.GetSpellCooldownValues(spellID)
+    local start, duration, onRealCD = BlizzardAPI.GetSpellCooldownValues(spellID)
+
+    -- If values were secret, use the isOnGCD-derived inference
+    if onRealCD == true then return true end
 
     if start and start > 0 and duration and duration > 0 then
         if BlizzardAPI.IsSpellOnGCD(spellID) then
@@ -1237,31 +1209,65 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false, false, false
     end
-    
+
     -- Check if spell is known/available
     local isKnown = BlizzardAPI.IsSpellAvailable(spellID)
     if not isKnown then
         return false, false, false, false, false
     end
-    
+
     -- Check if procced (instant/free cast available)
     local isProcced = BlizzardAPI.IsSpellProcced(spellID)
-    
-    -- Check redundancy (buff already active)
+
+    -- Check redundancy (buff already active — reliable, based on UnitBuff not cooldown)
     local RedundancyFilter = GetRedundancyFilter()
     local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
     if isRedundant then
         return false, true, true, false, isProcced
     end
-    
-    -- Check cooldown
-    local onCooldown = BlizzardAPI.IsSpellOnRealCooldown(spellID)
-    if onCooldown then
-        return false, true, false, true, isProcced
-    end
-    
-    -- Spell is usable
+
+    -- NOTE: We intentionally do NOT call IsSpellOnRealCooldown here.
+    -- Cooldown duration is a secret value in combat, so once we hide a defensive for being
+    -- on CD we can never reliably detect when it expires — it would stay hidden for the
+    -- whole combat session.  The cooldown swipe on the icon is the visual CD indicator.
+    -- Always show a known, non-redundant defensive regardless of cooldown state.
     return true, true, false, false, isProcced
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Item State Helper (mirrors CheckDefensiveSpellState for items)
+--------------------------------------------------------------------------------
+
+-- Check defensive item usability in one call
+-- Returns: isUsable, hasItem, onCooldown
+-- isUsable = hasItem AND NOT onCooldown
+function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+    if not itemID or itemID == 0 then
+        return false, false, false
+    end
+
+    -- Check if player has the item in bags/inventory
+    local count = GetItemCount(itemID) or 0
+    if count == 0 then
+        return false, false, false
+    end
+
+    -- Check cooldown (fail-open: if values are secret, assume NOT on cooldown)
+    local start, duration = GetItemCooldown(itemID)
+    local onCooldown = false
+    if start and duration then
+        local startIsSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+        local durIsSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+        if not startIsSecret and not durIsSecret then
+            onCooldown = start > 0 and duration > 1.5
+        end
+    end
+
+    if onCooldown then
+        return false, true, true
+    end
+
+    return true, true, false
 end
 
 --------------------------------------------------------------------------------

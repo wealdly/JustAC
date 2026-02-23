@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 13)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 14)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -9,6 +9,7 @@ local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations or not UIFrameFactory then
     return
@@ -17,17 +18,51 @@ end
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
+local UnitClassification = UnitClassification
+local UnitIsUnit = UnitIsUnit
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+
+-- Boss detection for CC immunity: UnitIsBossMob only flags a narrow category
+-- (gold-winged portrait mobs).  Dungeon bosses like Lord Godfrey are "elite"
+-- but appear in boss frames (boss1-boss5) and are CC-immune.
+local function IsBossTarget()
+    if UnitClassification("target") == "worldboss" then return true end
+    for i = 1, 5 do
+        if UnitIsUnit("target", "boss" .. i) then return true end
+    end
+    return false
+end
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
 
+-- Post-interrupt debounce: suppress interrupt reminder briefly after player
+-- uses an interrupt/CC so the cast bar's lingering visibility doesn't cause
+-- the addon to recommend the next spell in the list.
+local INTERRUPT_DEBOUNCE = 1.0  -- seconds
+local lastInterruptUsedTime = 0
+local lastInterruptShownID  = nil
+
 -- Check for proc overlay to highlight available abilities
 -- BlizzardAPI.IsSpellProcced already checks both base and override IDs
 local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
+end
+
+-- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
+-- Multi-modifier combos are checked first to prevent partial prefix matches.
+local function NormalizeHotkey(hotkey)
+    local n = hotkey:upper()
+    n = n:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
+    n = n:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
+    n = n:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
+    n = n:gsub("^S%-?(.+)",  "SHIFT-%1")
+    n = n:gsub("^C%-?(.+)",  "CTRL-%1")
+    n = n:gsub("^A%-?(.+)",  "ALT-%1")
+    n = n:gsub("^%+(.+)",    "MOD-%1")
+    return n
 end
 
 -- Update button cooldowns - Cooldown widgets handle secret values internally
@@ -110,7 +145,6 @@ local function UpdateButtonCooldowns(button)
                 -- Multi-charge spell: always show and pass values through
                 -- Widget handles the display, including secret values
                 if not button._chargeCooldownShown then
-                    button.chargeCooldown:SetDrawSwipe(true)
                     button.chargeCooldown:Show()
                     button._chargeCooldownShown = true
                 end
@@ -227,7 +261,10 @@ end
 -- Show the defensive icon with a specific spell or item
 -- isItem: true if id is an itemID (potion), false/nil if it's a spellID
 -- showGlow: true to show green marching ants glow (only slot 1 should have this)
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow)
+-- glowModeOverride: optional string ("all"/"primaryOnly"/"procOnly"/"none") that
+--   replaces the profile.defensives.glowMode read — used by the nameplate overlay
+--   so each display can have its own independent glow setting.
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -278,14 +315,19 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     -- Update cooldowns using Blizzard's logic (handles GCD, spell CD, and charges)
     UpdateButtonCooldowns(defensiveIcon)
 
-    -- Ensure cooldown frame is visible (may have been hidden by HideDefensiveIcon)
-    if defensiveIcon.cooldown then
-        defensiveIcon.cooldown:Show()
+    -- Hotkey lookup: needed for display AND for key press flash matching.
+    -- Caller may pass overrides (e.g. overlay uses its own showHotkey/showFlash settings).
+    local showHotkeys, showFlash
+    if showHotkeysOverride ~= nil then
+        showHotkeys = showHotkeysOverride
+    else
+        showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
     end
-
-    -- Hotkey lookup: needed for display AND for key press flash matching
-    local showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
-    local showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
+    if showFlashOverride ~= nil then
+        showFlash = showFlashOverride
+    else
+        showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
+    end
     local hotkey = ""
     if showHotkeys or showFlash then
         -- Find hotkey for item by scanning action bars
@@ -317,17 +359,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     -- Normalize hotkey for key press flash matching
     if hotkey ~= "" then
-        local normalized = hotkey:upper()
-        -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
-        -- Anchored patterns with lookahead via capture to avoid false positives on bare S/A/C keys
-        normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
-        normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
-        normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
-        normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
-        normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
-        normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
-        normalized = normalized:gsub("^%+(.+)", "MOD-%1")
-
+        local normalized = NormalizeHotkey(hotkey)
         if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
             defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
             defensiveIcon.hotkeyChangeTime = GetTime()
@@ -339,8 +371,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     local isInCombat = UnitAffectingCombat("player")
     
-    -- Defensive glow mode (independent from offensive glowMode)
-    local defGlowMode = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode or "all"
+    -- Defensive glow mode: use caller-supplied override (overlay) or fall back to
+    -- the main-panel profile setting.
+    local defGlowMode = glowModeOverride
+        or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
+        or "all"
 
     -- Start green crawl glow on slot 1 if glow mode includes primary
     local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
@@ -399,6 +434,10 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
             defensiveIcon.chargeCooldown:Hide()
             defensiveIcon.chargeCooldown:Clear()
         end
+        -- Reset cooldown state flags so UpdateButtonCooldowns re-shows widgets on reuse
+        defensiveIcon._cooldownShown = nil
+        defensiveIcon._chargeCooldownShown = nil
+        defensiveIcon._cachedMaxCharges = nil
         -- Reset cooldown cache for when icon gets reused
         defensiveIcon._lastCooldownStart = nil
         defensiveIcon._lastCooldownDuration = nil
@@ -453,6 +492,32 @@ function UIRenderer.HideDefensiveIcons(addon)
     end
 end
 
+-- Reset and hide the interrupt icon, clearing all cached state and glows.
+-- Shared helper used by both the "no interrupt" and "feature disabled" paths.
+local function HideInterruptIcon(intIcon)
+    intIcon.spellID = nil
+    intIcon.iconTexture:Hide()
+    if intIcon.cooldown then intIcon.cooldown:Clear(); intIcon.cooldown:Hide() end
+    intIcon._cooldownShown       = false
+    intIcon._chargeCooldownShown = false
+    intIcon.normalizedHotkey     = nil
+    intIcon.cachedHotkey         = nil
+    intIcon.cachedOutOfRange     = nil
+    intIcon.lastOutOfRange       = nil
+    intIcon.lastVisualState      = nil
+    intIcon.hotkeyText:SetText("")
+    intIcon.iconTexture:SetDesaturation(0)
+    if UIAnimations then
+        if intIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(intIcon); intIcon.hasInterruptGlow = false end
+        if intIcon.hasProcGlow      then UIAnimations.HideProcGlow(intIcon);      intIcon.hasProcGlow      = false end
+    end
+    -- Hide cast aura (enemy spell indicator)
+    if intIcon.castAura then
+        intIcon.castAura:Hide()
+    end
+    intIcon:Hide()
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
@@ -467,7 +532,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Determine if frame should be visible
     local shouldShowFrame = hasSpells
-    
+
+    -- Hide main queue when displayMode excludes it
+    local displayMode = profile.displayMode or "queue"
+    if displayMode == "disabled" or displayMode == "overlay" then
+        shouldShowFrame = false
+    end
+
     -- Hide queue out of combat if option is enabled
     if shouldShowFrame and profile.hideQueueOutOfCombat and not isInCombat then
         shouldShowFrame = false
@@ -514,7 +585,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local queueDesaturation = GetQueueDesaturation()
     
     -- Check if player is channeling (grey out queue to emphasize not interrupting)
-    local isChanneling = UnitChannelInfo("player") ~= nil
+    -- PlayerChannelBarFrame is a visual frame — NeverSecret, avoids pcall for UnitChannelInfo
+    local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
     
     -- Cache frequently called functions to reduce table lookups in hot path
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
@@ -553,7 +625,198 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
-    
+
+    -- ── Interrupt reminder (position 0) ─────────────────────────────────────
+    -- Detect interruptible cast via the target nameplate's cast bar frame
+    -- state.  Uses Icon:IsShown() for 12.0-safe interruptibility detection.
+    local intIcon = addon.interruptIcon
+    local resolvedInts = addon.resolvedInterrupts
+    local showInterrupt = profile.showInterrupt ~= false
+    local ccRegularMobs = profile.ccRegularMobs ~= false
+    if intIcon and resolvedInts and shouldShowFrame and showInterrupt then
+        local shouldShowInterrupt = false
+        local intSpellID = nil
+
+        -- Debounce: if we just used an interrupt/CC, suppress for a short window
+        -- so the lingering cast bar doesn't trigger the next spell in the list.
+        local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
+
+        if not debounceActive then
+            -- Look up the target nameplate to read its cast bar state
+            local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
+            local castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
+            if castBar then
+                local visOk, isVis = pcall(castBar.IsVisible, castBar)
+                local visTestOk, castVisible = pcall(function() return isVis and true or false end)
+                if visOk and visTestOk and castVisible then
+                    local interruptible = true  -- fail-open default
+                    -- Primary: Icon hidden = uninterruptible (12.0-safe).
+                    -- Nameplate castbars have HideIconWhenNotInterruptible=true;
+                    -- Blizzard's secure ShouldIconBeShown() resolves barType
+                    -- taint internally and returns a plain literal boolean, so
+                    -- Icon:IsShown() is NeverSecret on nameplate castbars.
+                    if castBar.Icon and castBar.HideIconWhenNotInterruptible then
+                        local iconOk, iconShown = pcall(castBar.Icon.IsShown, castBar.Icon)
+                        if iconOk and iconShown == false then
+                            interruptible = false  -- Icon hidden → cast not interruptible
+                        end
+                    -- Fallback: BorderShield (pre-12.0 or castbars without Icon hiding)
+                    elseif castBar.BorderShield then
+                        local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
+                        local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
+                        if shOk and shTestOk and shieldVisible then
+                            interruptible = false  -- shield visible → uninterruptible
+                        end
+                    end
+
+                    if interruptible then
+                        -- Target is casting an interruptible spell — find best
+                        -- available interrupt or CC.
+                        local isBoss = IsBossTarget()
+                        -- ccRegularMobs: prefer CC on non-boss mobs, save kick
+                        local preferCC = ccRegularMobs and not isBoss
+                        if preferCC then
+                            -- First pass: try CC spells only
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid = entry.spellID
+                                if entry.type == "cc" and BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid
+                                    shouldShowInterrupt = true
+                                    break
+                                end
+                            end
+                        end
+                        -- Fallback (or boss / CC disabled): use any available spell
+                        if not shouldShowInterrupt then
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid = entry.spellID
+                                local stype = entry.type
+                                -- Skip CC against bosses (immune to stuns/incapacitates)
+                                if stype == "cc" and isBoss then
+                                    -- skip
+                                elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid
+                                    shouldShowInterrupt = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Track when the shown interrupt goes on cooldown → start debounce
+        if lastInterruptShownID and not shouldShowInterrupt then
+            if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
+                lastInterruptUsedTime = currentTime
+            end
+            lastInterruptShownID = nil
+        end
+
+        -- De-dup: if the interrupt spell is already shown as offensive queue position 1, skip it
+        if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
+            shouldShowInterrupt = false
+        end
+
+        if shouldShowInterrupt and intSpellID then
+            lastInterruptShownID = intSpellID
+            local spellChanged = (intIcon.spellID ~= intSpellID)
+            if spellChanged then
+                intIcon.spellID = intSpellID
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(intSpellID)
+                if info and info.iconID then
+                    intIcon.iconTexture:SetTexture(info.iconID)
+                    intIcon.iconTexture:Show()
+                end
+                intIcon._cooldownShown       = false
+                intIcon._chargeCooldownShown = false
+                intIcon._cachedMaxCharges    = nil
+                intIcon.cachedHotkey         = nil
+            end
+
+            -- Cooldowns (throttled)
+            if spellChanged or shouldUpdateCooldowns then
+                UpdateButtonCooldowns(intIcon)
+            end
+
+            -- Hotkey
+            local intShowHotkeys = profile.showOffensiveHotkeys ~= false
+            if spellChanged or shouldUpdateCooldowns or not intIcon.cachedHotkey then
+                local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
+                intIcon.cachedHotkey = hotkey
+                local displayHotkey = intShowHotkeys and hotkey or ""
+                if (intIcon.hotkeyText:GetText() or "") ~= displayHotkey then
+                    intIcon.hotkeyText:SetText(displayHotkey)
+                end
+                if hotkey ~= "" then
+                    intIcon.normalizedHotkey = NormalizeHotkey(hotkey)
+                else
+                    intIcon.normalizedHotkey = nil
+                end
+            end
+
+            -- Out-of-range: red hotkey text when target is beyond interrupt range
+            if intShowHotkeys and intIcon.cachedHotkey and intIcon.cachedHotkey ~= "" then
+                if spellChanged or shouldUpdateCooldowns then
+                    local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
+                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                        intIcon.cachedOutOfRange = (inRange == false)
+                    else
+                        intIcon.cachedOutOfRange = false
+                    end
+                end
+                local isOutOfRange = intIcon.cachedOutOfRange or false
+                if intIcon.lastOutOfRange ~= isOutOfRange then
+                    intIcon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    intIcon.lastOutOfRange = isOutOfRange
+                end
+            end
+
+            -- Channeling grey-out: desaturate when player is channeling (can't interrupt)
+            local intVisualState = isChanneling and 1 or 3
+            if intIcon.lastVisualState ~= intVisualState then
+                if intVisualState == 1 then
+                    intIcon.iconTexture:SetDesaturation(1.0)
+                else
+                    intIcon.iconTexture:SetDesaturation(0)
+                end
+                intIcon.lastVisualState = intVisualState
+            end
+
+            -- Glow: red-tinted proc glow for interrupt urgency
+            if not intIcon.hasInterruptGlow then
+                UIAnimations.StartInterruptGlow(intIcon, isInCombat)
+                intIcon.hasInterruptGlow = true
+            end
+
+            -- Cast aura: passthrough the enemy cast bar icon texture from the nameplate
+            -- (castBar textures can be secret values in 12.0 combat — never compare them,
+            --  just pass through to SetTexture unconditionally; Blizzard handles secrets in UI)
+            if intIcon.castAura then
+                local castIcon = castBar and castBar.Icon
+                if castIcon and castIcon.GetTexture then
+                    intIcon.castAura.iconTexture:SetTexture(castIcon:GetTexture())
+                    if not intIcon.castAura:IsShown() then intIcon.castAura:Show() end
+                else
+                    if intIcon.castAura:IsShown() then intIcon.castAura:Hide() end
+                end
+            end
+
+            if not intIcon:IsShown() then intIcon:Show() end
+            local frameOpacity = profile.frameOpacity or 1.0
+            intIcon:SetAlpha(frameOpacity)
+        else
+            -- Hide interrupt icon
+            if intIcon.spellID or intIcon:IsShown() then
+                HideInterruptIcon(intIcon)
+            end
+        end
+    elseif intIcon and (intIcon.spellID or intIcon:IsShown()) then
+        -- Feature disabled or frame hidden — ensure interrupt icon is cleaned up
+        HideInterruptIcon(intIcon)
+    end
+
     -- Update individual icons (only when frame should be visible)
     if shouldShowFrame then
     for i = 1, maxIcons do
@@ -677,19 +940,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Normalize hotkey for key press flash matching
-                -- PERFORMANCE: Only normalize when hotkey actually changed (string ops are expensive)
+                -- Only normalize when hotkey actually changed (string ops are expensive)
                 if hotkeyChanged and hotkey ~= "" then
-                    local normalized = hotkey:upper()
-                    -- Expand modifier prefixes only when followed by a key (dash + key or key directly)
-                    -- Multi-modifier combos must be checked first to avoid partial matches
-                    normalized = normalized:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
-                    normalized = normalized:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
-                    normalized = normalized:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
-                    normalized = normalized:gsub("^S%-?(.+)", "SHIFT-%1")
-                    normalized = normalized:gsub("^C%-?(.+)", "CTRL-%1")
-                    normalized = normalized:gsub("^A%-?(.+)", "ALT-%1")
-                    normalized = normalized:gsub("^%+(.+)", "MOD-%1")  -- +5 -> MOD-5 (generic modifier)
-
+                    local normalized = NormalizeHotkey(hotkey)
                     -- Track previous hotkey for grace period (spell position changes)
                     if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
                         icon.previousNormalizedHotkey = icon.normalizedHotkey
@@ -778,6 +1031,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if icon.centerText then icon.centerText:Hide() end
                     if icon.chargeText then icon.chargeText:Hide() end
                     -- Reset all caches for when slot gets reused
+                    icon._cooldownShown = nil
+                    icon._chargeCooldownShown = nil
+                    icon._cachedMaxCharges = nil
                     icon._lastCooldownStart = nil
                     icon._lastCooldownDuration = nil
                     icon._cooldownIsSecret = nil
@@ -978,5 +1234,6 @@ function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
 
--- Public exports (UpdateButtonCooldowns is local, needs explicit assignment)
+-- Public exports (locals need explicit assignment)
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
+UIRenderer.NormalizeHotkey       = NormalizeHotkey

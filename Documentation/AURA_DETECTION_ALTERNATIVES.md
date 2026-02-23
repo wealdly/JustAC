@@ -2,6 +2,58 @@
 
 When `C_UnitAuras.GetAuraDataByIndex()` returns secret values, these alternatives may bypass restrictions.
 
+## IMPLEMENTED SOLUTION: auraInstanceID Mapping (RedundancyFilter v38)
+
+**Status:** ✅ Implemented and tested — handles multi-cycle removal/reapply in combat.
+
+`auraInstanceID` is a **NeverSecret** stable numeric handle. The same ID maps to the same aura across combat entry. New auras get new IDs. This field is always readable, even when `spellId` and `name` are secret.
+
+### Architecture
+
+```
+Out of combat:
+  RefreshAuraCache() → GetAuraDataByIndex() → populate instance maps
+    instanceToSpellMap[auraInstanceID] = spellId
+    instanceToNameMap[auraInstanceID] = name
+    instanceToIconMap[auraInstanceID] = icon
+    instanceToTimingMap[auraInstanceID] = {duration, expirationTime}
+
+In combat (spellId/name are secret):
+  RefreshAuraCache() → GetAuraDataByIndex() → resolve via instance maps
+    if IsSecretValue(data.spellId) then
+        data.spellId = instanceToSpellMap[data.auraInstanceID]
+    end
+
+UNIT_AURA(unit, updateInfo) keeps maps current:
+  removedAuraInstanceIDs → clean map entries, record in combatRemovedSpellIDs
+  addedAuras → map new instances (non-secret spellId or pending activation match)
+
+UNIT_SPELLCAST_SUCCEEDED → queue pending activations (FIFO, 2s window)
+  Bridges the gap: cast event fires BEFORE UNIT_AURA addedAuras
+  Only queues UNIQUE_AURA_SPELLS and RAID_BUFF_SPELLS
+  Harmful auras (isHarmful=true or isHelpful=false) filtered from matching
+
+PLAYER_REGEN_ENABLED → clear combat tracking state
+  Wipes inCombatActivations, combatRemovedSpellIDs, pendingActivations
+```
+
+### Key Design Decisions
+
+1. **Instance maps persist across combat** — populated out of combat, used in combat
+2. **Pending activation FIFO** — handles recast after removal when new instance has secret spellId
+3. **combatRemovedSpellIDs** — prevents trusted cache merge from re-hiding removed buffs
+4. **spellStateKnown bypass** — if a spell is resolved (in cache) or explicitly removed, skip the non-DPS blanket filter
+5. **IsInPandemicWindow** — returns false for fresh inCombatActivations (no timing = just cast = full duration)
+6. **Harmful aura filtering** — debuffs can't consume pending activation entries meant for buffs
+
+### Limitations
+
+- Auras applied for the first time during combat (never seen out of combat, no UNIT_SPELLCAST_SUCCEEDED) remain as unresolved secrets
+- If `isHelpful`/`isHarmful` are also secret, debuffs could theoretically consume pending matches (fail-open)
+- Instance maps grow unbounded within a combat session (cleaned on combat exit)
+
+---
+
 ## API Reference: Secret Value Restrictions
 
 Based on Blizzard API Documentation (`SecretPredicateAPIDocumentation.lua`):
@@ -240,9 +292,13 @@ end
 
 ⚠️ **NOT AVAILABLE IN 12.0** - Combat log access is also restricted by secrets
 
-## Recommended Strategy
+## Recommended Strategy — SUPERSEDED
 
-**Layered approach** - try methods in order until one works:
+> **Note:** The auraInstanceID mapping approach (documented at the top of this file) is the implemented solution.
+> The layered approach below was the original pre-implementation plan. It is preserved for reference
+> but is NOT the current code path.
+
+**Original layered approach** - try methods in order until one works:
 
 ```lua
 local function HasBuffBySpellID_Smart(spellID, spellName)
@@ -277,20 +333,15 @@ local function HasBuffBySpellID_Smart(spellID, spellName)
 end
 ```
 
-## Testing Priority
-
-1. **GetPlayerAuraBySpellID** - Most promising, direct lookup by spell ID
-2. **GetAuraDataBySpellName** - Alternative using spell names
-3. **Slot-based access** - Different iteration method
-4. **Hardcoded filtering** - Current fallback (hide common buffs when secrets detected)
+## Testing Priority — RESOLVED\n\nThe auraInstanceID mapping approach was implemented and tested successfully.\nThe methods below were candidates evaluated before implementation:\n\n1. **auraInstanceID mapping** - ✅ IMPLEMENTED (RedundancyFilter v38) — NeverSecret handles, maps built OOC, resolved in combat\n2. **GetPlayerAuraBySpellID** - Not used (still returns secrets for spellId field)\n3. **GetAuraDataBySpellName** - Not used (still returns secrets)\n4. **Slot-based access** - Not used (same underlying data, same secrets)\n5. **Hardcoded filtering** - Superseded by instance map approach", "oldString": "## Testing Priority\n\n1. **GetPlayerAuraBySpellID** - Most promising, direct lookup by spell ID\n2. **GetAuraDataBySpellName** - Alternative using spell names\n3. **Slot-based access** - Different iteration method\n4. **Hardcoded filtering** - Current fallback (hide common buffs when secrets detected)
 
 ## Implementation Notes
 
-- Test GetPlayerAuraBySpellID first - most likely to bypass secrets (targeted query)
-- If that fails, try spell name lookup (different code path)
-- Slot-based access is unlikely to help (same underlying data)
+- auraInstanceID mapping proved to be the winning approach (NeverSecret, stable handles)
+- GetPlayerAuraBySpellID still returns secrets for spellId field in combat
+- Slot-based access uses the same underlying data (same secrets)
 - Combat log is NOT available (also restricted by secrets)
-- Current fallback: whitelist filtering + hardcoded buff lists
+- Hardcoded whitelist filtering superseded by instance map approach
 
 ---
 

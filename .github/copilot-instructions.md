@@ -35,10 +35,10 @@ end
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 3.21.0
-- Hotfixes: 3.21.1, 3.21.2, etc. (bug fixes only)
-- Features: 3.22.0, 3.23.0, etc. (new functionality)
-- Breaking: 4.0.0, 5.0.0, etc. (major rewrites)
+- Current: 4.1.1
+- Hotfixes: 4.1.2, 4.1.3, etc. (bug fixes only)
+- Features: 4.2.0, 4.3.0, etc. (new functionality)
+- Breaking: 5.0.0, 6.0.0, etc. (major rewrites)
 
 Update in three places: `JustAC.toc`, `CHANGELOG.md`, `UNRELEASED.md`
 
@@ -116,6 +116,9 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 | `ACTIONBAR_SLOT_CHANGED` | ActionBarScanner slot cache |
 | `UPDATE_BINDINGS` | Binding cache (0.2s debounce) |
 | `SPELL_ACTIVATION_OVERLAY_GLOW_*` | Immediate UI refresh |
+| `UNIT_AURA(unit, updateInfo)` | RedundancyFilter instance maps (addedAuras/removedAuraInstanceIDs) |
+| `UNIT_SPELLCAST_SUCCEEDED` | RedundancyFilter pending activation queue |
+| `PLAYER_REGEN_ENABLED` | RedundancyFilter combat state (inCombatActivations, combatRemovedSpellIDs, pendingActivations) |
 
 ## Debug Commands
 
@@ -136,8 +139,13 @@ Two-tier health thresholds in `JustAC.lua`:
 
 **Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`
 
+**NeverSecret Fields (critical for combat-safe logic):**
+- `isOnGCD` — Three-state: `true`=GCD only (spell ready), `false`=real cooldown, `nil`=no cooldown (spell ready). Use `~= false` for readiness checks.
+- `auraInstanceID` — Stable numeric handle, same ID maps to same aura across combat. Use for tracking aura identity when `spellId`/`name` are secret.
+- `isHelpful` / `isHarmful` — Aura disposition (may be secret in some contexts, fail-open)
+
 **Secret Values (WoW 12.0+):**
-- Blizzard hides certain combat data in PvP/rated content to prevent automation
+- Blizzard hides certain combat data to prevent automation
 - **Detection:** `BlizzardAPI.IsSecretValue(value)` returns `true` for secret data
 - **Critical limitations:**
   - ❌ Cannot compare: `if charges > 2` crashes if `charges` is secret
@@ -145,24 +153,37 @@ Two-tier health thresholds in `JustAC.lua`:
   - ❌ Cannot use in conditionals: `if duration > 5` fails if `duration` is secret
   - ✅ Can pass to UI: `FontString:SetText(secretValue)` works (Blizzard handles internally)
   - ✅ Can pass to cooldown: `Cooldown:SetCooldown(start, secretDuration)` works
-- **Common secret values:**
-  - `currentCharges` (charge count in combat)
-  - `duration` (cooldown duration in rated PvP)
-  - `UnitHealth()` result (exact health in arena)
+- **Common secret values in combat:**
+  - `C_Spell.GetSpellCooldown()` → `duration`/`startTime` (blanket-secreted even when zero)
+  - `C_UnitAuras` → `spellId`, `name` (aura identity hidden in combat)
+  - `currentCharges` (charge count)
+  - `UnitHealth()` (potentially in some instanced content)
 - **Fail-open design:** `IsSecretValue()` shows extra content rather than hiding valid data
 - **Fallback pattern:** Cache non-secret structure data (e.g., `maxCharges`) for comparison
 
-**Example handling:**
+**Cooldown readiness pattern (use isOnGCD):**
 ```lua
-local charges = GetSpellCharges(spellID)
-if BlizzardAPI.IsSecretValue(charges) then
-    -- Pass directly to UI (Blizzard will show "?" or hide it)
-    button.Count:SetText(charges)
-else
-    -- Safe to compare/calculate
-    if charges > 1 then
-        button.Count:SetText(charges)
+local info = C_Spell.GetSpellCooldown(spellID)
+if info then
+    -- isOnGCD is NeverSecret: true=GCD only, false=real CD, nil=no CD
+    if info.isOnGCD ~= false then
+        -- Spell is ready (GCD or no cooldown)
+    else
+        -- Real cooldown active
     end
+end
+```
+
+**Aura tracking pattern (use auraInstanceID):**
+```lua
+-- Build instance map out of combat (spellId is readable)
+for i = 1, 40 do
+    local data = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+    if data then instanceToSpellMap[data.auraInstanceID] = data.spellId end
+end
+-- In combat: resolve via map when spellId is secret
+if BlizzardAPI.IsSecretValue(data.spellId) then
+    local resolved = instanceToSpellMap[data.auraInstanceID]
 end
 ```
 
@@ -171,14 +192,16 @@ end
 - `Documentation/STYLE_GUIDE_JUSTAC.md` — Full coding conventions (843 lines)
 - `Documentation/ASSISTED_COMBAT_API_DEEP_DIVE.md` — C_AssistedCombat reference (717 lines)
 - `Documentation/MACRO_PARSING_DEEP_DIVE.md` — Macro conditional parsing (904 lines)
-- `Documentation/12.0_COMPATIBILITY.md` — API compatibility notes
+- `Documentation/12.0_COMPATIBILITY.md` — API compatibility, secret values, implementation status
+- `Documentation/AURA_DETECTION_ALTERNATIVES.md` — Alternative aura detection methods for 12.0
+- `Documentation/VERSION_CONDITIONALS.md` — Version-conditional patterns for 12.0 compatibility
 - `README.md` — User-facing docs, installation, credits
 - `CHANGELOG.md` — Release history (GPL-3.0-or-later since v2.95)
 
 ## Build & Release
 
 PowerShell script `build.ps1` creates distributable package:
-- Extracts version from `JustAC.toc` (currently 3.21.0)
+- Extracts version from `JustAC.toc` (currently 4.1.1)
 - Packages core `.lua` files + `Libs/` folder
 - Removes duplicate nested lib folders (common packaging error)
 - Creates `dist/JustAC-<version>.zip` ready for CurseForge/GitHub

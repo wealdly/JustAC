@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 2)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 4)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -260,6 +260,98 @@ StopDefensiveGlow = function(icon)
     icon.defensiveAnimPaused = false
 end
 
+-- ── Interrupt Glow (red-tinted proc glow) ───────────────────────────────────
+-- Uses the bright proc glow flipbook (same atlas as ShowProcGlow) but tinted
+-- red for interrupt urgency.  Much more visible than the marching-ants flipbook
+-- which rendered nearly black when tinted red.
+-- Color scheme: blue/white = DPS,  green = defensive,  red = interrupt.
+
+local function CreateInterruptProcGlowFrame(parent)
+    local procFrame = CreateFrame("FRAME", nil, parent)
+    parent.InterruptProcGlowFrame = procFrame
+    procFrame:SetPoint("CENTER")
+    procFrame:SetSize(45 * 1.4, 45 * 1.4)
+    procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
+    procFrame:Hide()
+
+    local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
+    procFrame.ProcLoopFlipbook = procLoop
+    procLoop:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
+    procLoop:SetAllPoints(procFrame)
+    procLoop:SetAlpha(1)
+    -- Red tint — bright enough to see flipbook detail (RGB: 1.0, 0.55, 0.55)
+    procLoop:SetVertexColor(1.0, 0.55, 0.55, 1)
+
+    local loopGroup = procLoop:CreateAnimationGroup()
+    loopGroup:SetLooping("REPEAT")
+    procFrame.ProcLoop = loopGroup
+
+    local loopAlpha = loopGroup:CreateAnimation("Alpha")
+    loopAlpha:SetDuration(0.001)
+    loopAlpha:SetOrder(0)
+    loopAlpha:SetFromAlpha(1)
+    loopAlpha:SetToAlpha(1)
+
+    local loopFlip = loopGroup:CreateAnimation("FlipBook")
+    loopFlip:SetChildKey("ProcLoopFlipbook")
+    loopFlip:SetDuration(1)
+    loopFlip:SetOrder(0)
+    loopFlip:SetFlipBookRows(6)
+    loopFlip:SetFlipBookColumns(5)
+    loopFlip:SetFlipBookFrames(30)
+    loopFlip:SetFlipBookFrameWidth(0)
+    loopFlip:SetFlipBookFrameHeight(0)
+
+    procFrame:SetScript("OnHide", function()
+        if procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Stop()
+        end
+    end)
+
+    loopGroup:Play()
+    loopGroup:Stop()
+
+    return procFrame
+end
+
+local function StartInterruptGlow(icon, isInCombat)
+    if not icon then return end
+
+    local procFrame = icon.InterruptProcGlowFrame
+    if not procFrame then
+        procFrame = CreateInterruptProcGlowFrame(icon)
+    end
+
+    local width = icon:GetWidth()
+    procFrame:SetScale(width / 45)
+
+    procFrame.ProcLoopFlipbook:SetAlpha(1)
+    procFrame:Show()
+
+    if not procFrame.ProcLoop:IsPlaying() then
+        procFrame.ProcLoop:Play()
+    end
+
+    icon.hasInterruptGlow = true
+end
+
+local function StopInterruptGlow(icon)
+    if not icon then return end
+
+    if icon.InterruptProcGlowFrame then
+        icon.InterruptProcGlowFrame:Hide()
+        if icon.InterruptProcGlowFrame.ProcLoop:IsPlaying() then
+            icon.InterruptProcGlowFrame.ProcLoop:Stop()
+        end
+    end
+
+    -- Also hide the normal proc glow if it was shown for ImportantCast
+    HideProcGlow(icon)
+
+    icon.hasInterruptGlow = false
+    icon.interruptAnimPaused = false
+end
+
 local function StartFlash(button)
     if not button.Flash then return end
 
@@ -371,6 +463,8 @@ UIAnimations.StartAssistedGlow = StartAssistedGlow
 UIAnimations.StopAssistedGlow = StopAssistedGlow
 UIAnimations.StartDefensiveGlow = StartDefensiveGlow
 UIAnimations.StopDefensiveGlow = StopDefensiveGlow
+UIAnimations.StartInterruptGlow = StartInterruptGlow
+UIAnimations.StopInterruptGlow = StopInterruptGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.StartFlash = StartFlash

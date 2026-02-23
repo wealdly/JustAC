@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 33)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 34)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -22,7 +22,6 @@ local type = type
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
-local lastDisplayUpdate = 0
 
 -- Primary spell stabilization to prevent flicker during rapid transitions
 -- Holds the primary spell briefly if the new one matches what was just in slot 2
@@ -44,6 +43,11 @@ local recommendedSpells = {}
 -- Prevents re-checking the same spell multiple times per update cycle
 local filterResultCache = {}
 local filterCacheUpdateTime = 0
+
+-- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
+-- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
+-- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
+local cachedRotationList = nil
 
 -- Throttle interval for queue updates
 -- 0.1s in combat = 10 updates/sec (fast enough for responsiveness, slow enough to reduce flicker)
@@ -169,7 +173,8 @@ local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
 end
 
 -- Helper: Check if spell passes common filters (availability, usability, redundancy)
--- Uses per-update cache to avoid re-checking the same spell multiple times
+-- Used for position 1 and spell-book proc spells — includes usability (resources, CD) check.
+-- Uses per-update cache to avoid re-checking the same spell multiple times.
 local function PassesSpellFilters(spellID, profile)
     -- Check cache first (valid for this update cycle only)
     local cached = filterResultCache[spellID]
@@ -183,6 +188,23 @@ local function PassesSpellFilters(spellID, profile)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
 
     filterResultCache[spellID] = result
+    return result
+end
+
+-- Lighter filter for rotation list positions 2+ and defensive queue spells.
+-- Does NOT check IsSpellUsable: cooldown status is a secret value in combat, so we can never
+-- reliably detect when a spell comes off CD. The cooldown swipe handles the visual indicator.
+-- Filtering the spell out would remove it permanently for the rest of the combat session.
+local function PassesRotationFilters(spellID, profile)
+    local cached = filterResultCache["r_" .. spellID]
+    if cached ~= nil then
+        return cached
+    end
+
+    local result = IsSpellAvailable(spellID)
+       and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
+
+    filterResultCache["r_" .. spellID] = result
     return result
 end
 
@@ -245,10 +267,9 @@ function SpellQueue.GetCurrentSpellQueue()
         BlizzardAPI.ClearProcCache()
     end
     
-    -- Early check: determine which features are bypassed due to secrets
-    -- bypassProcs is used for proc categorization in the rotation list
-    local flags = BlizzardAPI and BlizzardAPI.GetBypassFlags and BlizzardAPI.GetBypassFlags() or {}
-    local bypassProcs = flags.bypassProcs or false
+    -- Check if proc detection is blocked by secret values
+    local bypassProcs = BlizzardAPI and BlizzardAPI.IsProcFeatureAvailable
+        and not BlizzardAPI.IsProcFeatureAvailable() or false
     
     -- Reuse pooled tables to avoid GC pressure
     wipe(recommendedSpells)
@@ -256,11 +277,12 @@ function SpellQueue.GetCurrentSpellQueue()
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
     
-    -- Cache hideItemAbilities setting for this update
     local hideItems = profile.hideItemAbilities
 
     -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
-    -- ALWAYS apply blacklist - if slot 1 is blacklisted, rotation spells shift up to fill it
+    -- NEVER filter position 1 — Blizzard's single-button assistant won't advance
+    -- until this spell is cast; hiding it freezes the entire rotation.
+    -- Blacklist only applies to positions 2+ (the rotation queue).
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
@@ -269,23 +291,8 @@ function SpellQueue.GetCurrentSpellQueue()
         -- Resolve override once for display (handles morphed spells like Metamorphosis)
         local displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
         
-        -- Check blacklist and item filter - ALWAYS apply, rotation spells will shift up if filtered
-        local isBlacklisted = IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
-        local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(displaySpellID)
-        local shouldFilter = isBlacklisted or isItemSpell
-        
-        if shouldFilter then
-            -- Filtered spell - don't add to queue, rotation spells will fill slot 1
-            -- Reset stabilization so we don't try to hold a filtered spell
-            if lastPrimarySpellID == displaySpellID or lastPrimarySpellID == baseSpellID then
-                lastPrimarySpellID = nil
-                lastPrimaryChangeTime = 0
-            end
-            -- Track to prevent duplicates in rotation list (we don't want it anywhere)
-            addedSpellIDs[displaySpellID] = true
-            addedSpellIDs[baseSpellID] = true
-        else
-            -- Not blacklisted - apply minimal stabilization
+        do
+            -- Position 1 is always shown — apply minimal stabilization
             -- If primary changed to what was slot 2, hold briefly to smooth transition
             local previousSlot2 = lastSpellIDs and lastSpellIDs[2]
             
@@ -322,7 +329,7 @@ function SpellQueue.GetCurrentSpellQueue()
             -- Position 1 is shown
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
-        end
+        end  -- do block
     else
         -- No primary spell, reset stabilization tracking
         lastPrimarySpellID = nil
@@ -365,7 +372,11 @@ function SpellQueue.GetCurrentSpellQueue()
     -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
     -- Apply all filters: no duplicates of position 1, blacklist, availability, usability, redundancy
     -- Procced spells are prioritized and moved to the front of the queue
-    local rotationList = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
+    -- PERFORMANCE: Use cached rotation list; only refreshed via InvalidateRotationCache()
+    if not cachedRotationList and BlizzardAPI and BlizzardAPI.GetRotationSpells then
+        cachedRotationList = BlizzardAPI.GetRotationSpells()
+    end
+    local rotationList = cachedRotationList
     if rotationList then
         -- Reuse pooled tables to avoid GC pressure (paired arrays for base/display spell IDs)
         -- Split procced into important vs regular for priority sorting
@@ -387,11 +398,13 @@ function SpellQueue.GetCurrentSpellQueue()
 
                     -- Skip if override already shown
                     if not addedSpellIDs[actualSpellID] then
-                        -- Filter: not blacklisted, not item, passes availability/usability/redundancy
+                        -- Filter: not blacklisted, not item, available, not redundant
+                        -- NOTE: intentionally skips IsSpellUsable — cooldowns are secret in combat
+                        -- and a spell filtered out for CD would never reappear this session.
                         local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(actualSpellID)
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and not isItemSpell
-                           and PassesSpellFilters(actualSpellID, profile) then
+                           and PassesRotationFilters(actualSpellID, profile) then
                             -- Mark as added to prevent duplicates (both actualSpellID and base spellID)
                             addedSpellIDs[actualSpellID] = true
                             addedSpellIDs[spellID] = true
@@ -446,7 +459,6 @@ end
 
 function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
-    lastDisplayUpdate = 0
     -- Reset stabilization to allow immediate response
     lastPrimarySpellID = nil
     lastPrimaryChangeTime = 0
@@ -463,7 +475,13 @@ end
 
 function SpellQueue.OnSpellsChanged()
     SpellQueue.ClearSpellCache()
+    SpellQueue.InvalidateRotationCache()
     SpellQueue.ForceUpdate()
+end
+
+-- Invalidate the cached rotation list — called on RotationSpellsUpdated and SPELLS_CHANGED
+function SpellQueue.InvalidateRotationCache()
+    cachedRotationList = nil
 end
 
 -- Debug function for testing

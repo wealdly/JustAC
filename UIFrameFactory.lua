@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 11)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 12)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -10,11 +10,14 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local ProfileHelpers = LibStub("JustAC-ProfileHelpers", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Cache frequently used functions to reduce table lookups on every update
+local GetTime = GetTime
+local pcall = pcall
+local wipe = wipe
 local math_max = math.max
 local math_floor = math.floor
-local wipe = wipe
 
 -- Visual constants (shared with UIRenderer)
 local HOTKEY_FONT_SCALE = 0.4
@@ -49,6 +52,7 @@ end
 -- Local state
 local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
+local stdInterruptIcon = nil  -- Standard queue interrupt icon ("position 0")
 
 -- Masque support
 local Masque = LibStub("Masque", true)
@@ -65,79 +69,23 @@ else
     GetMasqueDefensiveGroup = function() return nil end
 end
 
--- Helper: Create a single defensive icon button at the specified index (0-based)
--- Position offset is calculated based on index, orientation, and defensive position
-local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
-    local button = CreateFrame("Button", nil, addon.mainFrame)
+-- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
+-- Returns a button with all visual layers, cooldown frames, hotkey text and fade
+-- animations pre-built.  Positioning is left to the caller.
+--
+-- Parameters:
+--   parent       - parent Frame
+--   size         - icon size in pixels
+--   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
+--   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
+local function CreateBaseIcon(profile, parent, size, isClickable, isFirstIcon)
+    local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
 
-    button:SetSize(actualIconSize, actualIconSize)
+    button:SetSize(size, size)
 
-    -- Cooldown container: clips cooldown swipes but glows parent to button directly (not clipped)
-    local cooldownContainer = CreateFrame("Frame", nil, button)
-    cooldownContainer:SetAllPoints(button)
-    cooldownContainer:SetClipsChildren(true)
-    button.cooldownContainer = cooldownContainer
-
-    local firstIconCenter = actualIconSize / 2
-    -- Use health bar offset for SIDE1 when health bar shown, otherwise use consistent base spacing
-    -- Base spacing is BAR_SPACING (3px) minimum to visually separate from the queue
-    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-    local effectiveSpacing = healthBarOffset > 0 and healthBarOffset or math.max(spacing, baseSpacing)
-    
-    -- Calculate offset for additional icons (index 0 has no offset)
-    -- SIDE1/SIDE2: horizontal layout (along queue direction)
-    -- LEADING: stacking layout (perpendicular to leading edge)
-    local iconOffset = index * (actualIconSize + spacing)
-    
-    if queueOrientation == "LEFT" then
-        -- Queue grows left-to-right (grab tab on right)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = above (health bar side), icons grow rightward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = below, icons grow rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
-        else -- LEADING
-            -- LEADING = left side, icons stack upward
-            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
-        end
-    elseif queueOrientation == "RIGHT" then
-        -- Queue grows right-to-left (grab tab on left)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = above, icons grow leftward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = below, icons grow leftward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset, -effectiveSpacing)
-        else -- LEADING
-            -- LEADING = right side, icons stack upward
-            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
-        end
-    elseif queueOrientation == "UP" then
-        -- Queue grows bottom-to-top (grab tab on top)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = right side, icons grow upward
-            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side, icons grow upward
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset)
-        else -- LEADING
-            -- LEADING = bottom side, icons stack rightward
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
-        end
-    elseif queueOrientation == "DOWN" then
-        -- Queue grows top-to-bottom (grab tab on bottom)
-        if defPosition == "SIDE1" then
-            -- SIDE1 = right side, icons grow downward
-            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
-        elseif defPosition == "SIDE2" then
-            -- SIDE2 = left side, icons grow downward
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
-        else -- LEADING
-            -- LEADING = top side, icons stack rightward
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
-        end
+    if not isClickable then
+        button:EnableMouse(false)
     end
 
     -- Slot background (Blizzard style depth effect)
@@ -150,111 +98,132 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     iconTexture:SetAllPoints(button)
     iconTexture:Hide()
     button.iconTexture = iconTexture
-    
-    -- Mask texture to clip icon corners
-    local maskPadding = math_floor(actualIconSize * 0.17)
+
+    -- Mask texture to clip rounded corners on all icon layers
+    -- Applied to both slotBackground and iconTexture so neither bleeds outside the frame shape
+    local maskPadding = math_floor(size * 0.17)
     local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("TOPLEFT", button, "TOPLEFT", -maskPadding, maskPadding)
-    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", maskPadding, -maskPadding)
+    iconMask:SetPoint("TOPLEFT",     button, "TOPLEFT",     -maskPadding,  maskPadding)
+    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT",  maskPadding, -maskPadding)
     iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+    slotBackground:AddMaskTexture(iconMask)
     iconTexture:AddMaskTexture(iconMask)
     button.IconMask = iconMask
-    
-    -- Normal texture (button frame border)
-    local normalTexture = button:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    normalTexture:SetSize(actualIconSize, actualIconSize)
-    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
-    button.NormalTexture = normalTexture
-    
-    -- Pushed texture
-    local pushedTexture = button:CreateTexture(nil, "OVERLAY", nil, 1)
-    pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    pushedTexture:SetSize(actualIconSize, actualIconSize)
-    pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
-    pushedTexture:Hide()
-    button.PushedTexture = pushedTexture
-    
-    -- Highlight texture
-    local highlightTexture = button:CreateTexture(nil, "HIGHLIGHT", nil, 0)
-    highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    highlightTexture:SetSize(actualIconSize, actualIconSize)
-    highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    button.HighlightTexture = highlightTexture
-    
-    -- Flash overlay
+
+    -- Flash overlay (slightly outside the border, hidden until proc triggers it)
     local flashFrame = CreateFrame("Frame", nil, button)
     flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(actualIconSize + 2, actualIconSize + 2)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 10)  -- Higher level to ensure visibility
-    
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 7)  -- High sublevel on OVERLAY
+    flashFrame:SetSize(size + 2, size + 2)
+    flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
+
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
     flashTexture:SetAllPoints(flashFrame)
     flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
     flashTexture:SetBlendMode("ADD")
     flashTexture:Hide()
-    
+
     button.Flash = flashTexture
     button.FlashFrame = flashFrame
     button.flashing = 0
     button.flashtime = 0
 
-    -- Cooldown frames (matching Blizzard's ActionButtonTemplate structure)
-    -- Parent to cooldownContainer so swipes are clipped to button bounds (glows parent to button, not clipped)
-    -- Main cooldown frame (handles spell cooldown OR GCD, whichever is longer)
+    -- Cooldown container: SetClipsChildren clips swipe to icon bounds
+    -- Glow effects are parented to button directly so they're NOT clipped
+    local cooldownContainer = CreateFrame("Frame", nil, button)
+    cooldownContainer:SetAllPoints(button)
+    cooldownContainer:SetClipsChildren(true)
+    button.cooldownContainer = cooldownContainer
+
+    -- Main cooldown (spell CD or GCD, whichever is longer)
     local cooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    cooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    cooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
+    -- CooldownFrameTemplate sets setAllPoints="true" which anchors all 4 corners to the parent.
+    -- ClearAllPoints removes those before we inset; without this, TOPRIGHT/BOTTOMLEFT from the
+    -- template remain anchored to cooldownContainer (full button size) and override our inset.
+    cooldown:ClearAllPoints()
+    cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      4, -4)
+    cooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4,  4)
     cooldown:SetDrawEdge(false)
+    cooldown:SetDrawBling(false)   -- BlingTexture (star4 sparkle) renders outside frame bounds
     cooldown:SetDrawSwipe(true)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
-    -- Make countdown numbers smaller and more transparent (don't overlap hotkey text)
-    -- Access the countdown text region and modify its appearance
+    -- Smaller, more transparent countdown numbers so they don't overlap the hotkey
     local cooldownText = cooldown:GetRegions()
     if cooldownText and cooldownText.SetFont then
         local font, _, flags = cooldownText:GetFont()
         if font then
-            local smallerSize = math_floor(actualIconSize * 0.25)  -- 25% of icon size (was ~33%)
-            cooldownText:SetFont(font, smallerSize, flags)
-            cooldownText:SetTextColor(1, 1, 1, 0.5)  -- 50% alpha (more transparent)
+            cooldownText:SetFont(font, math_floor(size * 0.25), flags)
+            cooldownText:SetTextColor(1, 1, 1, 0.5)
         end
     end
 
-    -- Clear cooldown to prevent visual artifacts on load
     cooldown:Clear()
-    cooldown:Hide()  -- Hide until a cooldown is actually set
+    cooldown:Hide()
     button.cooldown = cooldown
 
-    -- Charge cooldown frame (shows charge regeneration for multi-charge spells)
-    -- Same 4px inset as main cooldown to match Blizzard's ActionButtonTemplate
+    -- Charge cooldown (charge regen for multi-charge spells)
     local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    chargeCooldown:SetPoint("TOPLEFT", iconTexture, "TOPLEFT", 4, -4)
-    chargeCooldown:SetPoint("BOTTOMRIGHT", iconTexture, "BOTTOMRIGHT", -4, 4)
-    chargeCooldown:SetDrawEdge(true)
-    chargeCooldown:SetDrawSwipe(true)
-    chargeCooldown:SetHideCountdownNumbers(true)  -- No countdown numbers on charge cooldown
-    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)  -- Above main cooldown so edge is visible
-    chargeCooldown:Clear()  -- Clear to prevent visual artifacts on load
+    chargeCooldown:ClearAllPoints()
+    chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      4, -4)
+    chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -4,  4)
+    -- Blizzard 12.0: charge cooldowns use the edge ring (not a swipe) to show recharge progress.
+    -- SetDrawSwipe(true) causes a large dark polygon that bleeds outside the clipping container.
+    -- The edge ring stays within icon bounds and is covered by borderFrame corners if it overflows.
+    chargeCooldown:SetDrawSwipe(false) -- No dark swipe overlay; edge ring is the visual
+    chargeCooldown:SetDrawEdge(true)   -- Edge ring shows recharge progress (matches Blizzard 12.0)
+    chargeCooldown:SetDrawBling(false)
+    chargeCooldown:SetHideCountdownNumbers(true)
+    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
+    chargeCooldown:Clear()
     chargeCooldown:Hide()
     button.chargeCooldown = chargeCooldown
-    
-    -- Hotkey text
+
+    -- Border overlay frame: sits ABOVE cooldowns (L+3) but BELOW glow animations (L+4+).
+    -- The border texture's opaque corners physically cover any cooldown swipe corner bleed.
+    -- NOTE: created after chargeCooldown so creation order puts it on top at the same level.
+    local borderFrame = CreateFrame("Frame", nil, button)
+    borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
+    borderFrame:SetAllPoints(button)
+
+    local normalTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    normalTexture:SetSize(size, size)
+    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    button.NormalTexture = normalTexture
+    button.borderFrame = borderFrame
+
+    if isClickable then
+        -- Pushed texture
+        local pushedTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+        pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+        pushedTexture:SetSize(size, size)
+        pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
+        pushedTexture:Hide()
+        button.PushedTexture = pushedTexture
+
+        -- Highlight texture
+        local highlightTexture = borderFrame:CreateTexture(nil, "HIGHLIGHT", nil, 0)
+        highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+        highlightTexture:SetSize(size, size)
+        highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+        button.HighlightTexture = highlightTexture
+    end
+    -- Hotkey / overlay text (highest frame level to stay above animations)
     local hotkeyFrame = CreateFrame("Frame", nil, button)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
+
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, true)
-    
+    ProfileHelpers.ApplyHotkeyProfile(profile, hotkeyText, button, true)
+
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
-    
-    -- Center text for "WAIT" indicator
+
+    -- "WAIT" center indicator
     local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
-    local centerFontSize = math_max(9, math_floor(actualIconSize * 0.26))
-    centerText:SetFont(STANDARD_TEXT_FONT, centerFontSize, "OUTLINE")
+    centerText:SetFont(STANDARD_TEXT_FONT, math_max(9, math_floor(size * 0.26)), "OUTLINE")
     centerText:SetTextColor(1, 0.9, 0.2, 1)
     centerText:SetJustifyH("CENTER")
     centerText:SetJustifyV("MIDDLE")
@@ -262,16 +231,39 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     centerText:SetText("")
     centerText:Hide()
     button.centerText = centerText
-    
-    -- Charge count text (bottom-right, like action bar charges)
+
+    -- Charge count (bottom-right, like Blizzard action bars)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
+    ProfileHelpers.ApplyChargeTextProfile(profile, chargeText, button)
     
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
 
-    -- State tracking
+    -- Fade-in / fade-out animations
+    local fadeIn = button:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.15)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    button.fadeIn = fadeIn
+
+    local fadeOut = button:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        button:Hide()
+        button:SetAlpha(0)
+    end)
+    button.fadeOut = fadeOut
+
+    -- State tracking fields
     button.lastCooldownStart = 0
     button.lastCooldownDuration = 0
     button.spellID = nil
@@ -279,7 +271,88 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     button.itemCastSpellID = nil
     button.currentID = nil
     button.isItem = nil
-    button.iconIndex = index  -- Track which slot this is
+
+    button._cooldownShown = false
+    button._chargeCooldownShown = false
+    button._cachedMaxCharges = nil
+
+    button.normalizedHotkey = nil
+    button.previousNormalizedHotkey = nil
+    button.hotkeyChangeTime = nil
+    button.spellChangeTime = nil
+    button.cachedHotkey = nil
+
+    button.hasAssistedGlow  = false
+    button.hasInterruptGlow = false
+    button.hasProcGlow      = false
+    button.hasDefensiveGlow = false
+
+    -- Do NOT set alpha to 0 here — defensive icons set it before showing via ShowDefensiveIcon,
+    -- and DPS icons are shown directly via icon:Show() without a fadeIn:Play() call.
+    button:Hide()
+
+    return button
+end
+
+-- Helper: Create a single defensive icon button at the specified index (0-based)
+-- Position offset is calculated based on index, orientation, and defensive position
+local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)
+    -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
+    local button = CreateBaseIcon(profile, addon.mainFrame, actualIconSize, true, true)
+    if not button then return nil end
+
+    -- Defensive-specific slot tracking
+    button.iconIndex = index
+
+    -- Position the button relative to mainFrame based on queue orientation and defensive position
+    local firstIconCenter = actualIconSize / 2
+    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+    local effectiveSpacing = math.max(spacing, baseSpacing)
+    local iconOffset = index * (actualIconSize + spacing)
+
+    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+    -- predictable position (right for horizontal, bottom for vertical).
+    -- Defensive icons must match that shift so they align with the queue icons.
+    local grabTabReserve = 0
+    if queueOrientation == "RIGHT" or queueOrientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (queueOrientation == "UP")
+        grabTabReserve = spacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
+    if queueOrientation == "LEFT" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
+        else -- LEADING
+            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
+        end
+    elseif queueOrientation == "RIGHT" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset - grabTabReserve, effectiveSpacing)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset - grabTabReserve, -effectiveSpacing)
+        else -- LEADING
+            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
+        end
+    elseif queueOrientation == "UP" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
+        else -- LEADING
+            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
+        end
+    elseif queueOrientation == "DOWN" then
+        if defPosition == "SIDE1" then
+            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
+        elseif defPosition == "SIDE2" then
+            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
+        else -- LEADING
+            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
+        end
+    end
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
@@ -353,33 +426,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    -- Fade-in animation
-    local fadeIn = button:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    button.fadeIn = fadeIn
-    
-    -- Fade-out animation
-    local fadeOut = button:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
-        button:Hide()
-        button:SetAlpha(0)
-    end)
-    button.fadeOut = fadeOut
-
-    button:SetAlpha(0)
-    button:Hide()
-    
     -- Register with Masque if available
     local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
     if MasqueDefensiveGroup then
@@ -431,39 +477,20 @@ local function CreateDefensiveIcons(addon, profile)
     if not profile.defensives or not profile.defensives.enabled then return end
     
     -- Calculate shared sizing
-    local defensiveIconScale = profile.defensives.iconScale or 1.2
+    local defensiveIconScale = profile.defensives.iconScale or 1.0
     local actualIconSize = profile.iconSize * defensiveIconScale
     local defPosition = profile.defensives.position or "SIDE1"
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     
-    -- Health bar offset calculation:
-    -- Health bar bottom = BAR_SPACING above mainFrame
-    -- Health bar top = BAR_SPACING + BAR_HEIGHT above mainFrame
-    -- Defensive bottom = BAR_SPACING above health bar top
-    -- So: defensive bottom = BAR_SPACING + BAR_HEIGHT + BAR_SPACING = BAR_HEIGHT + 2*BAR_SPACING
-    -- Add 1px visual compensation for Blizzard's -0.5px texture offset on both elements
-    -- Pet health bar stacks above player health bar when both are enabled
-    local healthBarOffset = 0
-    if defPosition == "SIDE1" and UIHealthBar then
-        local barSpacing = UIHealthBar.BAR_SPACING
-        local barHeight = UIHealthBar.BAR_HEIGHT
-        local barCount = 0
-        if profile.defensives.showHealthBar then barCount = barCount + 1 end
-        if profile.defensives.showPetHealthBar then barCount = barCount + 1 end
-        if barCount > 0 then
-            healthBarOffset = barCount * (barHeight + barSpacing) + barSpacing
-        end
-    end
-    
     -- Create maxIcons defensive buttons using a FRESH table
     -- (Don't reuse module-level table to avoid stale reference issues)
     local maxIcons = profile.defensives.maxIcons or 1
-    maxIcons = math.min(maxIcons, 3)  -- Cap at 3
-    
+    maxIcons = math.min(maxIcons, 7)  -- Cap at 7 (same as offensive queue)
+
     local newIcons = {}
     for i = 1, maxIcons do
-        local button = CreateSingleDefensiveButton(addon, profile, i - 1, actualIconSize, defPosition, queueOrientation, spacing, healthBarOffset)
+        local button = CreateSingleDefensiveButton(addon, profile, i - 1, actualIconSize, defPosition, queueOrientation, spacing)
         if button then
             newIcons[i] = button
             defensiveIcons[i] = button  -- Also update module-level for cleanup on next call
@@ -498,41 +525,12 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetPoint(pos.point, pos.x, pos.y)
     
     addon.mainFrame:EnableMouse(true)
-    addon.mainFrame:SetMovable(true)
+    addon.mainFrame:SetMovable(true)   -- Required: grab tab delegates StartMoving() to mainFrame
     addon.mainFrame:SetClampedToScreen(true)
-    addon.mainFrame:RegisterForDrag("LeftButton")
-    
-    addon.mainFrame:SetScript("OnDragStart", function()
-        local profile = addon:GetProfile()
-        if not IsPanelLocked(profile) then
-            -- Detach from target frame anchor before dragging so position saves correctly
-            if addon.targetframe_anchored then
-                addon.targetframe_anchored = false
-                addon.mainFrame:ClearAllPoints()
-                addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-            end
-            addon.mainFrame:StartMoving(true)  -- alwaysStartFromMouse = true
-        end
-    end)
-    addon.mainFrame:SetScript("OnDragStop", function()
-        addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
-        end
-    end)
     
     -- Show/hide grab tab on hover
     addon.mainFrame:SetScript("OnEnter", function()
-        if addon.grabTab and addon.grabTab.fadeIn then
-            -- Stop any fade-out in progress
-            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
-                addon.grabTab.fadeOut:Stop()
-            end
-            addon.grabTab:Show()
-            addon.grabTab.fadeIn:Play()
-        end
+        -- intentionally empty: grab tab only appears on direct hover
     end)
     
     addon.mainFrame:SetScript("OnLeave", function()
@@ -613,20 +611,16 @@ function UIFrameFactory.CreateGrabTab(addon)
     else
         addon.grabTab:SetSize(12, 20)
     end
+
+    -- Extend the clickable hit area beyond the visible tab (negative insets = larger area)
+    -- Makes the small tab much easier to grab, especially on high-DPI displays
+    addon.grabTab:SetHitRectInsets(-6, -6, -6, -6)
     
-    -- Position at the end of the queue based on orientation
-    -- Grab tab goes at the trailing edge with no additional offset
-    if orientation == "RIGHT" then
-        -- Icons grow left from right edge, grab tab at left
-        addon.grabTab:SetPoint("LEFT", addon.mainFrame, "LEFT", 0, 0)
-    elseif orientation == "UP" then
-        -- Icons grow down from bottom, grab tab at top
-        addon.grabTab:SetPoint("TOP", addon.mainFrame, "TOP", 0, 0)
-    elseif orientation == "DOWN" then
-        -- Icons grow up from top, grab tab at bottom
+    -- Predictable position: always at the right end (horizontal) or bottom (vertical).
+    -- For RIGHT/UP orientations the icons are shifted within the frame to make room.
+    if isVertical then
         addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "BOTTOM", 0, 0)
-    else -- LEFT (default)
-        -- Icons grow right from left edge, grab tab at right
+    else
         addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "RIGHT", 0, 0)
     end
     
@@ -680,8 +674,9 @@ function UIFrameFactory.CreateGrabTab(addon)
             return
         end
         
-        -- Mark as dragging to prevent fade-out
+        -- Mark as dragging (addon-level for OnUpdate freeze, tab-level for fade logic)
         self.isDragging = true
+        addon.isDragging = true
         
         -- Stop any fade animation and ensure fully visible
         if self.fadeOut and self.fadeOut:IsPlaying() then
@@ -693,8 +688,7 @@ function UIFrameFactory.CreateGrabTab(addon)
         self:SetAlpha(1)
         
         -- Detach from target frame anchor before dragging so position saves correctly
-        local profile = addon:GetProfile()
-        if addon.targetframe_anchored and profile then
+        if addon.targetframe_anchored then
             addon.targetframe_anchored = false
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
@@ -707,15 +701,26 @@ function UIFrameFactory.CreateGrabTab(addon)
     
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
-        UIFrameFactory.SavePosition(addon)
         
-        -- Re-apply target frame anchor if enabled
-        if addon.UpdateTargetFrameAnchor then
-            addon:UpdateTargetFrameAnchor()
+        -- User manually dragged — auto-disable target frame anchor so it doesn't snap back
+        local profile = addon:GetProfile()
+        if profile and profile.targetFrameAnchor and profile.targetFrameAnchor ~= "DISABLED" then
+            profile.targetFrameAnchor = "DISABLED"
+            addon.targetframe_anchored = false
+            if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
         end
         
-        -- Clear dragging flag and fade out if mouse isn't over frame/tab
+        UIFrameFactory.SavePosition(addon)
+        
+        -- Clear dragging flags (addon-level + tab-level)
         self.isDragging = false
+        addon.isDragging = false
+        
+        -- Mark queues dirty so icons refresh immediately at new position
+        if addon.MarkQueueDirty then addon:MarkQueueDirty() end
+        if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+        
+        -- Fade out if mouse isn't over frame/tab
         if not addon.mainFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
             self.fadeOut:Play()
         end
@@ -794,14 +799,184 @@ function UIFrameFactory.CreateGrabTab(addon)
     fadeOutAlpha:SetSmoothing("IN")
     fadeOut:SetToFinalAlpha(true)
     fadeOut:SetScript("OnFinished", function()
-        addon.grabTab:Hide()
+        -- Stay shown (alpha=0) so the frame keeps receiving mouse events
         addon.grabTab:SetAlpha(0)
     end)
     addon.grabTab.fadeOut = fadeOut
     
-    -- Start hidden with alpha 0, show on hover
+    -- Start invisible but shown so mouse detection works immediately
     addon.grabTab:SetAlpha(0)
-    addon.grabTab:Hide()
+    addon.grabTab:Show()
+end
+
+-- Create a single interrupt icon positioned in the "leading" direction before slot 1.
+-- The icon overhangs outside mainFrame (like defensive icons).
+local function CreateInterruptIcon(addon, profile)
+    -- Cleanup any existing interrupt icon
+    if stdInterruptIcon then
+        if UIAnimations then
+            if stdInterruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(stdInterruptIcon) end
+            if stdInterruptIcon.hasProcGlow      then UIAnimations.HideProcGlow(stdInterruptIcon)      end
+        end
+        local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+        if MasqueGroup then
+            MasqueGroup:RemoveButton(stdInterruptIcon)
+        end
+        stdInterruptIcon:Hide()
+        stdInterruptIcon:SetParent(nil)
+        stdInterruptIcon = nil
+    end
+    addon.interruptIcon = nil
+    addon.resolvedInterrupts = nil
+
+    if (profile.interruptMode or "important") == "off" then return end
+
+    local firstIconScale = profile.firstIconScale or 1.0
+    local actualIconSize = profile.iconSize * firstIconScale
+    local orientation = profile.queueOrientation or "LEFT"
+    local spacing = profile.iconSpacing or 1
+
+    local button = CreateBaseIcon(profile, addon.mainFrame, actualIconSize, true, true)
+    if not button then return end
+
+    -- Position before slot 1 (opposite of queue growth direction)
+    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+    local effectiveSpacing = math.max(spacing, baseSpacing)
+
+    -- For RIGHT/UP, icon 1 is shifted inward by grabTabReserve to make room for
+    -- the grab tab at the same edge.  We mirror that shift here so the interrupt
+    -- sits adjacent to icon 1 (effectiveSpacing gap) rather than beyond the grab tab.
+    if orientation == "LEFT" then
+        -- Queue grows left-to-right; interrupt goes to the LEFT of mainFrame
+        button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
+    elseif orientation == "RIGHT" then
+        -- Queue grows right-to-left; interrupt adjacent to icon 1 (covers grab tab)
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
+        button:SetPoint("LEFT", addon.mainFrame, "RIGHT", -(grabTabReserve - effectiveSpacing), 0)
+    elseif orientation == "UP" then
+        -- Queue grows bottom-to-top; interrupt adjacent to icon 1 (covers grab tab)
+        local GRAB_TAB_LENGTH = 12
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH
+        button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, grabTabReserve - effectiveSpacing)
+    elseif orientation == "DOWN" then
+        -- Queue grows top-to-bottom; interrupt goes ABOVE mainFrame
+        button:SetPoint("BOTTOM", addon.mainFrame, "TOP", 0, effectiveSpacing)
+    end
+
+    -- Ensure interrupt renders above the grab tab when they overlap (RIGHT/UP)
+    button:SetFrameLevel(button:GetFrameLevel() + 5)
+
+    -- Tooltip handling
+    button:SetScript("OnEnter", function(self)
+        if not self.spellID then return end
+
+        local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
+        if not tooltipMode and addon.db and addon.db.profile then
+            if addon.db.profile.showTooltips == false then
+                tooltipMode = "never"
+            elseif addon.db.profile.tooltipsInCombat then
+                tooltipMode = "always"
+            else
+                tooltipMode = "outOfCombat"
+            end
+        end
+        tooltipMode = tooltipMode or "outOfCombat"
+
+        local inCombat = UnitAffectingCombat("player")
+        local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
+
+        if showTooltip then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetSpellByID(self.spellID)
+
+            local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
+            local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
+
+            if hotkey and hotkey ~= "" then
+                GameTooltip:AddLine(" ")
+                if isOverride then
+                    GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
+                else
+                    GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+                end
+                GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+            else
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffff6666No hotkey found|r")
+            end
+
+            if not inCombat then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
+            end
+
+            GameTooltip:Show()
+        end
+    end)
+
+    button:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    -- Right-click for hotkey override
+    button:RegisterForClicks("RightButtonUp")
+    button:SetScript("OnClick", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            local profile = addon:GetProfile()
+            if IsPanelLocked(profile) then return end
+
+            if self.spellID then
+                addon:OpenHotkeyOverrideDialog(self.spellID)
+            end
+        end
+    end)
+
+    -- Register with Masque if available (matches DPS queue skinning)
+    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            HotKey = button.hotkeyText,
+            Normal = button.NormalTexture,
+        })
+    end
+
+    -- Cast aura: small icon above the interrupt button showing what the enemy is casting.
+    -- Reads castBar.spellID from the target nameplate; updated by UIRenderer each frame.
+    local auraSize = math.floor(actualIconSize * 0.55)
+    local castAura = CreateFrame("Frame", nil, button)
+    castAura:SetSize(auraSize, auraSize)
+    castAura:SetPoint("BOTTOM", button, "TOP", 0, 2)
+    castAura:SetFrameLevel(button:GetFrameLevel() + 2)
+
+    local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
+    auraIcon:SetAllPoints(castAura)
+    castAura.iconTexture = auraIcon
+
+    -- Rounded corner mask (matches queue icon style)
+    local auraMaskPadding = math.floor(auraSize * 0.17)
+    local auraMask = castAura:CreateMaskTexture(nil, "ARTWORK")
+    auraMask:SetPoint("TOPLEFT",     castAura, "TOPLEFT",     -auraMaskPadding,  auraMaskPadding)
+    auraMask:SetPoint("BOTTOMRIGHT", castAura, "BOTTOMRIGHT",  auraMaskPadding, -auraMaskPadding)
+    auraMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+    auraIcon:AddMaskTexture(auraMask)
+
+    local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
+    auraBorder:SetPoint("CENTER", castAura, "CENTER", 0.5, -0.5)
+    auraBorder:SetSize(auraSize, auraSize)
+    auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
+
+    castAura.spellID = nil
+    castAura:Hide()
+    button.castAura = castAura
+
+    button:Hide()  -- Hidden until an interruptible cast is detected
+
+    stdInterruptIcon = button
+    addon.interruptIcon = button
+    addon.resolvedInterrupts = SpellDB.ResolveInterruptSpells()
 end
 
 function UIFrameFactory.CreateSpellIcons(addon)
@@ -824,7 +999,16 @@ function UIFrameFactory.CreateSpellIcons(addon)
     wipe(spellIcons)
     
     local profile = addon.db.profile
+    local orientation = profile.queueOrientation or "LEFT"
+    
+    -- For RIGHT/UP, reserve space at the icon-start edge so the grab tab
+    -- can sit at a predictable position (right for horizontal, bottom for vertical)
     local currentOffset = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        currentOffset = profile.iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
     
     for i = 1, profile.maxIcons do
         local button = UIFrameFactory.CreateSingleSpellIcon(addon, i, currentOffset, profile)
@@ -837,24 +1021,25 @@ function UIFrameFactory.CreateSpellIcons(addon)
     
     addon.spellIcons = spellIcons
     
+    -- Create interrupt icon (position 0, hidden until interruptible cast detected)
+    CreateInterruptIcon(addon, profile)
+    
     -- Create defensive icons (1-3 positioned relative to position 1 based on user settings)
     CreateDefensiveIcons(addon, profile)
 end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
 function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
-    local button = CreateFrame("Button", nil, addon.mainFrame)
-    if not button then return nil end
-    
     local isFirstIcon = (index == 1)
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.0
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
-    
-    button:SetSize(actualIconSize, actualIconSize)
-    
+
+    -- Build shared icon skeleton (textures, cooldowns, hotkey text, animations)
+    local button = CreateBaseIcon(profile, addon.mainFrame, actualIconSize, true, isFirstIcon)
+    if not button then return nil end
+
     -- Position based on orientation
-    -- Icons start from one edge, grab tab is at the opposite edge
     if orientation == "RIGHT" then
         button:SetPoint("RIGHT", -offset, 0)
     elseif orientation == "UP" then
@@ -975,7 +1160,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)  -- Above flash (+10)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirstIcon)
+    ProfileHelpers.ApplyHotkeyProfile(profile, hotkeyText, button, isFirstIcon)
     
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
@@ -994,7 +1179,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     
     -- Charge count text (bottom-right, like action bar charges)
     local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    ProfileHelpers.ApplyChargeTextProfile(addon, chargeText, button)
+    ProfileHelpers.ApplyChargeTextProfile(profile, chargeText, button)
     
     chargeText:SetText("")
     chargeText:Hide()
@@ -1033,21 +1218,17 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             if IsPanelLocked(profile) then return end
 
             if self.spellID then
-                -- Spell-specific options
                 if IsShiftKeyDown() then
                     addon:ToggleSpellBlacklist(self.spellID)
                 else
                     addon:OpenHotkeyOverrideDialog(self.spellID)
                 end
             else
-                -- Empty slot - show general options
                 if IsShiftKeyDown() then
-                    -- Toggle lock
                     local nowLocked = TogglePanelLock(profile)
                     local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 else
-                    -- Open options panel
                     if addon.OpenOptionsPanel then
                         addon:OpenOptionsPanel()
                     else
@@ -1057,21 +1238,10 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             end
         end
     end)
-    
+
     button:SetScript("OnEnter", function(self)
-        -- Show grab tab when hovering over icons
-        if addon.grabTab and addon.grabTab.fadeIn then
-            -- Stop any fade-out in progress
-            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
-                addon.grabTab.fadeOut:Stop()
-            end
-            addon.grabTab:Show()
-            addon.grabTab.fadeIn:Play()
-        end
-        
         if self.spellID then
             local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
-            -- Migration: handle old settings
             if not tooltipMode and addon.db and addon.db.profile then
                 if addon.db.profile.showTooltips == false then
                     tooltipMode = "never"
@@ -1089,10 +1259,10 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             if showTooltip then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetSpellByID(self.spellID)
-                
+
                 local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
                 local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
-                
+
                 if hotkey and hotkey ~= "" then
                     GameTooltip:AddLine(" ")
                     if isOverride then
@@ -1105,7 +1275,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cffff6666No hotkey found|r")
                 end
-                
+
                 if not inCombat then
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
@@ -1113,28 +1283,22 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                     if isBlacklisted then
                         GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from blacklist|r")
                     else
-                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist|r")
+                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist (positions 2+ only)|r")
                     end
                 end
-                
+
                 GameTooltip:Show()
             end
         end
     end)
-    
+
     button:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
-        -- Hide grab tab if mouse isn't over main frame or grab tab, and not dragging
         if addon.grabTab and addon.grabTab.fadeOut and not addon.mainFrame:IsMouseOver() and not addon.grabTab:IsMouseOver() and not addon.grabTab.isDragging then
             addon.grabTab.fadeOut:Play()
         end
     end)
-    
-    button.lastCooldownStart = 0
-    button.lastCooldownDuration = 0
-    button.spellID = nil
-    button:Hide()
-    
+
     -- Register with Masque if available
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     if MasqueGroup then
@@ -1148,7 +1312,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
-    
+
     return button
 end
 
@@ -1159,7 +1323,7 @@ function UIFrameFactory.UpdateFrameSize(addon)
     local newMaxIcons = profile.maxIcons
     local newIconSize = profile.iconSize
     local newIconSpacing = profile.iconSpacing
-    local firstIconScale = profile.firstIconScale or 1.2
+    local firstIconScale = profile.firstIconScale or 1.0
     local orientation = profile.queueOrientation or "LEFT"
 
     UIFrameFactory.CreateSpellIcons(addon)
@@ -1209,11 +1373,16 @@ function UIFrameFactory.SavePosition(addon)
     local profile = addon:GetProfile()
     if not profile then return end
     
+    -- Guard: don't save while anchored to TargetFrame — GetPoint() would return
+    -- TargetFrame-relative offsets which are meaningless as a saved position.
+    if addon.targetframe_anchored then return end
+    
     local point, _, _, x, y = addon.mainFrame:GetPoint()
+    if not point then return end
     profile.framePosition = {
-        point = point or "CENTER",
+        point = point,
         x = x or 0,
-        y = y or -150
+        y = y or -150,
     }
 end
 

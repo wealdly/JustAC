@@ -3,9 +3,7 @@ local ProfileHelpers = LibStub:NewLibrary("JustAC-ProfileHelpers", 1)
 local math_floor = math.floor
 
 -- Helper function to set Hotkey to profile variables
-function ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirst)
-    local profile = addon:GetProfile()
-
+function ProfileHelpers.ApplyHotkeyProfile(profile, hotkeyText, button, isFirst)
     local db = profile.hotkeyText
     if not db or not hotkeyText or not button then return end
 
@@ -46,8 +44,7 @@ function ProfileHelpers.ApplyHotkeyProfile(addon, hotkeyText, button, isFirst)
     )
 end
 
-function ProfileHelpers.ApplyChargeTextProfile(addon, hotkeyText, button)
-    local profile = addon:GetProfile()
+function ProfileHelpers.ApplyChargeTextProfile(profile, hotkeyText, button)
 
     local db = profile.hotkeyText
     if not db or not hotkeyText or not button then return end

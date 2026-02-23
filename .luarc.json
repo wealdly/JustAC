@@ -46,6 +46,7 @@
             "UnitHealthMax",
             "UnitLevel",
             "UnitAffectingCombat",
+            "UnitCanAttack",
             "GetCVar",
             "GetCVarBool",
             "SetCVar",
@@ -132,7 +133,8 @@
             "tContains",
             "GameFontNormal",
             "GameFontHighlight",
-            "NumberFontNormal"
+            "NumberFontNormal",
+            "TargetFrame"
         ],
         "disable": [
             "lowercase-global",
