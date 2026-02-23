@@ -18,20 +18,7 @@ end
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
-local UnitClassification = UnitClassification
-local UnitIsUnit = UnitIsUnit
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
-
--- Boss detection for CC immunity: UnitIsBossMob only flags a narrow category
--- (gold-winged portrait mobs).  Dungeon bosses like Lord Godfrey are "elite"
--- but appear in boss frames (boss1-boss5) and are CC-immune.
-local function IsBossTarget()
-    if UnitClassification("target") == "worldboss" then return true end
-    for i = 1, 5 do
-        if UnitIsUnit("target", "boss" .. i) then return true end
-    end
-    return false
-end
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pairs = pairs
 local ipairs = ipairs
@@ -44,6 +31,11 @@ local math_floor = math.floor
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
 local lastInterruptUsedTime = 0
 local lastInterruptShownID  = nil
+-- CC-applied suppression: when the player lands a CC spell on a target, suppress the
+-- interrupt icon for a window so the next CC isn't suggested before the game registers
+-- the CC state.  Conservative duration because actual CC duration is secret in 12.0.
+local CC_APPLIED_SUPPRESS = 4.0  -- seconds
+local lastCCAppliedTime   = 0
 
 -- Check for proc overlay to highlight available abilities
 -- BlizzardAPI.IsSpellProcced already checks both base and override IDs
@@ -116,6 +108,14 @@ local function UpdateButtonCooldowns(button)
         end
         -- Always update - widget handles everything including secret values
         button.cooldown:SetCooldown(startTime, duration, modRate)
+        -- Hide countdown text if user disabled it (template may re-show it after SetCooldown)
+        if button.cooldownText then
+            local cdProfile = BlizzardAPI and BlizzardAPI.GetProfile()
+            local cdOverlays = cdProfile and cdProfile.textOverlays
+            if cdOverlays and cdOverlays.cooldown and cdOverlays.cooldown.show == false then
+                button.cooldownText:Hide()
+            end
+        end
     elseif button.cooldown then
         -- No cooldown info - clear the display only if needed
         if button._cooldownShown then
@@ -197,9 +197,16 @@ local function UpdateButtonCooldowns(button)
             end
 
             if showCharges then
-                -- Pass currentCharges directly - FontString displays secret values correctly
-                button.chargeText:SetText(currentCharges)
-                button.chargeText:Show()
+                local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
+                local chOverlays = chProfile and chProfile.textOverlays
+                local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
+                if showChargesCfg then
+                    -- Pass currentCharges directly - FontString displays secret values correctly
+                    button.chargeText:SetText(currentCharges)
+                    button.chargeText:Show()
+                else
+                    button.chargeText:Hide()
+                end
             else
                 button.chargeText:Hide()
             end
@@ -321,7 +328,8 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     if showHotkeysOverride ~= nil then
         showHotkeys = showHotkeysOverride
     else
-        showHotkeys = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showHotkeys ~= false
+        local defOverlays = addon.db and addon.db.profile and addon.db.profile.textOverlays
+        showHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
     end
     if showFlashOverride ~= nil then
         showFlash = showFlashOverride
@@ -493,8 +501,8 @@ function UIRenderer.HideDefensiveIcons(addon)
 end
 
 -- Reset and hide the interrupt icon, clearing all cached state and glows.
--- Shared helper used by both the "no interrupt" and "feature disabled" paths.
-local function HideInterruptIcon(intIcon)
+-- Exported so UINameplateOverlay can reuse the same cleanup logic.
+function UIRenderer.HideInterruptIcon(intIcon)
     intIcon.spellID = nil
     intIcon.iconTexture:Hide()
     if intIcon.cooldown then intIcon.cooldown:Clear(); intIcon.cooldown:Hide() end
@@ -590,7 +598,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Cache frequently called functions to reduce table lookups in hot path
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
-    local showHotkeys = profile.showOffensiveHotkeys ~= false
+    local overlays = profile.textOverlays
+    local showHotkeys = not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
     local showFlash = profile.showFlash ~= false
     -- Look up hotkeys when displaying text OR when flash needs normalizedHotkey for matching
     local GetSpellHotkey = (showHotkeys or showFlash) and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
@@ -640,6 +649,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         -- Debounce: if we just used an interrupt/CC, suppress for a short window
         -- so the lingering cast bar doesn't trigger the next spell in the list.
         local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
+                            or (currentTime - lastCCAppliedTime) < CC_APPLIED_SUPPRESS
 
         if not debounceActive then
             -- Look up the target nameplate to read its cast bar state
@@ -672,17 +682,24 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if interruptible then
                         -- Target is casting an interruptible spell — find best
                         -- available interrupt or CC.
-                        local isBoss = IsBossTarget()
+                        local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
+                        -- NeverSecret when available; nil-guarded for versions where API doesn't exist
+                        local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
                         -- ccRegularMobs: prefer CC on non-boss mobs, save kick
-                        local preferCC = ccRegularMobs and not isBoss
+                        local preferCC = ccRegularMobs and not targetCCImmune
                         if preferCC then
                             -- First pass: try CC spells only
-                            for _, entry in ipairs(resolvedInts) do
-                                local sid = entry.spellID
-                                if entry.type == "cc" and BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                    intSpellID = sid
-                                    shouldShowInterrupt = true
-                                    break
+                            -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
+                            if not targetAlreadyCC then
+                                for _, entry in ipairs(resolvedInts) do
+                                    local sid = entry.spellID
+                                    -- IsSpellUsable: checks current castability (form, stealth, resources)
+                                    -- IsSpellAvailable only checks if the spell is learned, not if it's castable now
+                                    if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                        intSpellID = sid
+                                        shouldShowInterrupt = true
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -691,10 +708,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                             for _, entry in ipairs(resolvedInts) do
                                 local sid = entry.spellID
                                 local stype = entry.type
-                                -- Skip CC against bosses (immune to stuns/incapacitates)
-                                if stype == "cc" and isBoss then
+                                -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
+                                if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
                                     -- skip
-                                elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
                                     intSpellID = sid
                                     shouldShowInterrupt = true
                                     break
@@ -706,12 +723,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
 
-        -- Track when the shown interrupt goes on cooldown → start debounce
-        if lastInterruptShownID and not shouldShowInterrupt then
+        -- Track when the shown interrupt goes on cooldown → start debounce.
+        -- NOTE: the CD check intentionally runs even when shouldShowInterrupt=true (another
+        -- spell ready): if the previously tracked spell just went on CD (was cast), we still
+        -- start the debounce so the game has time to register the CC state before we show
+        -- the next suggestion.  Without this, a second CC briefly flashes immediately after
+        -- the first one lands.
+        if lastInterruptShownID then
             if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
-                lastInterruptUsedTime = currentTime
+                lastInterruptUsedTime = currentTime  -- start debounce regardless of next spell
+                lastInterruptShownID = nil
+            elseif not shouldShowInterrupt then
+                lastInterruptShownID = nil  -- cast bar gone / target changed: just clear
             end
-            lastInterruptShownID = nil
         end
 
         -- De-dup: if the interrupt spell is already shown as offensive queue position 1, skip it
@@ -741,7 +765,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
 
             -- Hotkey
-            local intShowHotkeys = profile.showOffensiveHotkeys ~= false
+            local intOverlays = profile.textOverlays
+            local intShowHotkeys = not intOverlays or not intOverlays.hotkey or intOverlays.hotkey.show ~= false
             if spellChanged or shouldUpdateCooldowns or not intIcon.cachedHotkey then
                 local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
                 intIcon.cachedHotkey = hotkey
@@ -768,7 +793,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 local isOutOfRange = intIcon.cachedOutOfRange or false
                 if intIcon.lastOutOfRange ~= isOutOfRange then
-                    intIcon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    if isOutOfRange then
+                        intIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
+                    else
+                        local hkc = intOverlays and intOverlays.hotkey and intOverlays.hotkey.color
+                        intIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
+                    end
                     intIcon.lastOutOfRange = isOutOfRange
                 end
             end
@@ -809,12 +839,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         else
             -- Hide interrupt icon
             if intIcon.spellID or intIcon:IsShown() then
-                HideInterruptIcon(intIcon)
+                UIRenderer.HideInterruptIcon(intIcon)
             end
         end
     elseif intIcon and (intIcon.spellID or intIcon:IsShown()) then
         -- Feature disabled or frame hidden — ensure interrupt icon is cleaned up
-        HideInterruptIcon(intIcon)
+        UIRenderer.HideInterruptIcon(intIcon)
     end
 
     -- Update individual icons (only when frame should be visible)
@@ -976,7 +1006,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 -- PERFORMANCE: Only update text color when it actually changes
                 if icon.lastOutOfRange ~= isOutOfRange then
-                    icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    if isOutOfRange then
+                        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
+                    else
+                        local hkc = overlays and overlays.hotkey and overlays.hotkey.color
+                        icon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
+                    end
                     icon.lastOutOfRange = isOutOfRange
                 end
                 
@@ -1237,3 +1272,10 @@ end
 -- Public exports (locals need explicit assignment)
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.NormalizeHotkey       = NormalizeHotkey
+
+-- Called by JustAC when the player successfully casts a CC spell.
+-- Activates the CC_APPLIED_SUPPRESS window so the next CC suggestion is held
+-- back until the game can register the CC state on the target.
+function UIRenderer.NotifyCCApplied()
+    lastCCAppliedTime = GetTime()
+end

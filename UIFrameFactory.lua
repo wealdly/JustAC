@@ -30,6 +30,74 @@ UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
 UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
 UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
 
+-- Anchor presets for user-configurable text positions
+-- Each preset: {ox=xOffset, oy=yOffset, jh=justifyH}
+local HOTKEY_ANCHOR_PRESETS = {
+    TOPRIGHT    = {ox = -2, oy = -2, jh = "RIGHT"},
+    TOPLEFT     = {ox =  2, oy = -2, jh = "LEFT"},
+    TOP         = {ox =  0, oy = -2, jh = "CENTER"},
+    CENTER      = {ox =  0, oy =  0, jh = "CENTER"},
+    BOTTOMRIGHT = {ox = -2, oy =  2, jh = "RIGHT"},
+    BOTTOMLEFT  = {ox =  2, oy =  2, jh = "LEFT"},
+}
+local CHARGE_ANCHOR_PRESETS = {
+    BOTTOMRIGHT = {ox = -4, oy = 4, jh = "RIGHT"},
+    BOTTOMLEFT  = {ox =  4, oy = 4, jh = "LEFT"},
+    BOTTOM      = {ox =  0, oy = 4, jh = "CENTER"},
+}
+
+-- Apply text overlay settings to a button.
+-- overlaysBlock: the textOverlays sub-table (e.g. profile.textOverlays or
+-- profile.nameplateOverlay.textOverlays). Callers extract the correct block.
+-- Handles font size (scale × base), color, and anchor for hotkey, cooldown, and charge text.
+function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
+    local overlays = overlaysBlock
+
+    -- Hotkey text
+    if button.hotkeyText then
+        local cfg    = overlays and overlays.hotkey
+        local scale  = (cfg and cfg.fontScale) or 1.0
+        local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(size * HOTKEY_FONT_SCALE * scale))
+        button.hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+        local c = cfg and cfg.color
+        button.hotkeyText:SetTextColor((c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or 1)
+        local anchor = (cfg and cfg.anchor) or "TOPRIGHT"
+        local preset = HOTKEY_ANCHOR_PRESETS[anchor] or HOTKEY_ANCHOR_PRESETS.TOPRIGHT
+        button.hotkeyText:ClearAllPoints()
+        -- Anchor to hotkeyFrame (direct parent of hotkeyText) for reliable FontString positioning
+        button.hotkeyText:SetPoint(anchor, button.hotkeyFrame, anchor, preset.ox, preset.oy)
+        button.hotkeyText:SetJustifyH(preset.jh)
+    end
+
+    -- Cooldown countdown text
+    if button.cooldownText then
+        local cfg    = overlays and overlays.cooldown
+        local scale  = (cfg and cfg.fontScale) or 1.0
+        local font, _, flags = button.cooldownText:GetFont()
+        if font then
+            button.cooldownText:SetFont(font, math_floor(size * 0.25 * scale), flags)
+        end
+        local c = cfg and cfg.color
+        button.cooldownText:SetTextColor((c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or 0.5)
+    end
+
+    -- Charge count text
+    if button.chargeText then
+        local cfg    = overlays and overlays.charges
+        local scale  = (cfg and cfg.fontScale) or 1.0
+        local fontSize = math_max(HOTKEY_MIN_FONT_SIZE, math_floor(size * HOTKEY_FONT_SCALE * 0.65 * scale))
+        button.chargeText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+        local c = cfg and cfg.color
+        button.chargeText:SetTextColor((c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or 1)
+        local anchor = (cfg and cfg.anchor) or "BOTTOMRIGHT"
+        local preset = CHARGE_ANCHOR_PRESETS[anchor] or CHARGE_ANCHOR_PRESETS.BOTTOMRIGHT
+        button.chargeText:ClearAllPoints()
+        -- Anchor to hotkeyFrame (direct parent of chargeText) for reliable FontString positioning
+        button.chargeText:SetPoint(anchor, button.hotkeyFrame, anchor, preset.ox, preset.oy)
+        button.chargeText:SetJustifyH(preset.jh)
+    end
+end
+
 -- Panel interaction helpers
 local function IsPanelLocked(profile)
     if not profile then return false end
@@ -77,7 +145,7 @@ end
 --   size         - icon size in pixels
 --   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
 --   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
-local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
+local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
 
@@ -148,15 +216,9 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
-    -- Smaller, more transparent countdown numbers so they don't overlap the hotkey
+    -- Cooldown countdown text — stored for per-frame show/hide and ApplyTextOverlaySettings
     local cooldownText = cooldown:GetRegions()
-    if cooldownText and cooldownText.SetFont then
-        local font, _, flags = cooldownText:GetFont()
-        if font then
-            cooldownText:SetFont(font, math_floor(size * 0.25), flags)
-            cooldownText:SetTextColor(1, 1, 1, 0.5)
-        end
-    end
+    button.cooldownText = (cooldownText and cooldownText.SetFont) and cooldownText or nil
 
     cooldown:Clear()
     cooldown:Hide()
@@ -298,6 +360,10 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     -- and DPS icons are shown directly via icon:Show() without a fadeIn:Play() call.
     button:Hide()
 
+    -- NOTE: ApplyTextOverlaySettings is intentionally NOT called here.
+    -- It must be called by each caller AFTER Masque:AddButton(), so our anchor
+    -- overrides whatever position Masque's skin applies to the HotKey element.
+
     return button
 end
 
@@ -305,7 +371,7 @@ end
 -- Position offset is calculated based on index, orientation, and defensive position
 local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)
     -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true, profile)
     if not button then return nil end
 
     -- Defensive-specific slot tracking
@@ -443,7 +509,10 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
             Normal = button.NormalTexture,
         })
     end
-    
+
+    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
+    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
+
     return button
 end
 
@@ -843,7 +912,7 @@ local function CreateInterruptIcon(addon, profile)
     local orientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing or 1
 
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true, profile)
     if not button then return end
 
     -- Position before slot 1 (opposite of queue growth direction)
@@ -950,6 +1019,9 @@ local function CreateInterruptIcon(addon, profile)
         })
     end
 
+    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
+    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
+
     -- Cast aura: small icon above the interrupt button showing what the enemy is casting.
     -- Reads castBar.spellID from the target nameplate; updated by UIRenderer each frame.
     local auraSize = math.floor(actualIconSize * 0.55)
@@ -1043,7 +1115,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     local orientation = profile.queueOrientation or "LEFT"
 
     -- Build shared icon skeleton (textures, cooldowns, hotkey text, animations)
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon, profile)
     if not button then return nil end
 
     -- Position based on orientation
@@ -1159,6 +1231,9 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
             -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
+
+    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
+    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
 
     return button
 end

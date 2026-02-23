@@ -11,6 +11,7 @@ local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local UIAnimations     = LibStub("JustAC-UIAnimations",    true)
 local UIRenderer       = LibStub("JustAC-UIRenderer",      true)
+local UIFrameFactory   = LibStub("JustAC-UIFrameFactory",  true)
 local SpellQueue       = LibStub("JustAC-SpellQueue",      true)
 local SpellDB          = LibStub("JustAC-SpellDB",         true)
 
@@ -23,20 +24,7 @@ local UnitAffectingCombat = UnitAffectingCombat
 local UnitCanAttack      = UnitCanAttack
 local UnitHealth         = UnitHealth
 local UnitHealthMax      = UnitHealthMax
-local UnitClassification  = UnitClassification
-local UnitIsUnit         = UnitIsUnit
 local math_max           = math.max
-
--- Boss detection for CC immunity: UnitIsBossMob only flags a narrow category
--- (gold-winged portrait mobs).  Dungeon bosses appear in boss frames and
--- are CC-immune even though UnitIsBossMob returns false.
-local function IsBossTarget()
-    if UnitClassification("target") == "worldboss" then return true end
-    for i = 1, 5 do
-        if UnitIsUnit("target", "boss" .. i) then return true end
-    end
-    return false
-end
 local math_floor         = math.floor
 local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
 
@@ -46,6 +34,11 @@ local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-gl
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
 local npLastInterruptUsedTime = 0
 local npLastInterruptShownID  = nil
+-- CC-applied suppression: when the player lands a CC spell on a target, suppress the
+-- interrupt icon for a window so the next CC isn't suggested before the game registers
+-- the CC state.  Conservative duration because actual CC duration is secret in 12.0.
+local CC_APPLIED_SUPPRESS  = 4.0  -- seconds
+local npLastCCAppliedTime  = 0
 
 -- Layout constants
 local ICON_SPACING   = 2   -- px between successive icons in the cluster
@@ -79,7 +72,7 @@ local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainR
 --   • UIAnimations glow/flash functions (proc / assisted / defensive glows)
 --   • JustAC:CreateKeyPressDetector     (key-press flash via normalizedHotkey)
 -- ─────────────────────────────────────────────────────────────────────────────
-local function CreateOverlayIcon(iconSize)
+local function CreateOverlayIcon(iconSize, profile)
     local button = CreateFrame("Button", nil, UIParent)
     button:SetSize(iconSize, iconSize)
     button:EnableMouse(false)   -- always click-through; no tooltip, no drag
@@ -139,6 +132,9 @@ local function CreateOverlayIcon(iconSize)
     cooldown:Clear()
     cooldown:Hide()
     button.cooldown = cooldown
+    -- Store cooldown text region for ApplyTextOverlaySettings and per-frame show/hide
+    local cooldownText = cooldown:GetRegions()
+    button.cooldownText = (cooldownText and cooldownText.SetFont) and cooldownText or nil
 
     -- Charge cooldown (multi-charge recharge)
     local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
@@ -245,6 +241,13 @@ local function CreateOverlayIcon(iconSize)
 
     button:SetAlpha(0)
     button:Hide()
+
+    -- Apply nameplate-specific text overlay settings (independent from main queue settings)
+    if UIFrameFactory and UIFrameFactory.ApplyTextOverlaySettings then
+        local npoOverlays = profile and profile.nameplateOverlay and profile.nameplateOverlay.textOverlays
+        UIFrameFactory.ApplyTextOverlaySettings(button, iconSize, npoOverlays)
+    end
+
     return button
 end
 
@@ -546,13 +549,13 @@ function UINameplateOverlay.Create(addon)
     local maxDPS   = math.min(npo.maxIcons or 1, 5)
     local maxDef   = npo.showDefensives and math.min(npo.maxDefensiveIcons or 1, 5) or 0
 
-    for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize) end
-    for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize) end
+    for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize, profile) end
+    for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
 
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)
     local interruptMode = npo.interruptMode or "important"
     if interruptMode ~= "off" then
-        interruptIcon = CreateOverlayIcon(iconSize)
+        interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
 
         -- Cast aura: small icon above the interrupt button showing what the enemy is casting
@@ -723,7 +726,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
     local hasSpells   = spellIDs and #spellIDs > 0
     local npoGlowMode  = npo.glowMode or "all"
-    local showHotkey   = npo.showHotkey
+    local npoOverlays  = npo.textOverlays
+    local showHotkey   = not npoOverlays or not npoOverlays.hotkey or npoOverlays.hotkey.show ~= false
     local opacity      = npo.opacity or 1.0
     local now        = GetTime()
     local shouldUpdateCooldowns = (now - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -750,6 +754,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
         -- Debounce: if we just used an interrupt/CC, suppress for a short window
         -- so the lingering cast bar doesn't trigger the next spell in the list.
         local debounceActive = (now - npLastInterruptUsedTime) < INTERRUPT_DEBOUNCE
+                            or (now - npLastCCAppliedTime) < CC_APPLIED_SUPPRESS
 
         if not debounceActive then
             -- Read cast bar state from the target nameplate.
@@ -782,17 +787,23 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     if interruptible then
                         -- Target is casting an interruptible spell — find best
                         -- available interrupt or CC.
-                        local isBoss = IsBossTarget()
+                        local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
+                        -- NeverSecret when available; nil-guarded for versions where API doesn't exist
+                        local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
                         -- ccRegularMobs: prefer CC on non-boss mobs, save kick
-                        local preferCC = npoCCRegularMobs and not isBoss
+                        local preferCC = npoCCRegularMobs and not targetCCImmune
                         if preferCC then
                             -- First pass: try CC spells only
-                            for _, entry in ipairs(resolvedInterrupts) do
-                                local sid = entry.spellID
-                                if entry.type == "cc" and BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                    intSpellID = sid
-                                    shouldShowInterrupt = true
-                                    break
+                            -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
+                            if not targetAlreadyCC then
+                                for _, entry in ipairs(resolvedInterrupts) do
+                                    local sid = entry.spellID
+                                    -- IsSpellUsable: checks current castability (form, stealth, resources)
+                                    if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                        intSpellID = sid
+                                        shouldShowInterrupt = true
+                                        break
+                                    end
                                 end
                             end
                         end
@@ -801,10 +812,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
                             for _, entry in ipairs(resolvedInterrupts) do
                                 local sid = entry.spellID
                                 local stype = entry.type
-                                -- Skip CC against bosses (immune to stuns/incapacitates)
-                                if stype == "cc" and isBoss then
+                                -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
+                                if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
                                     -- skip
-                                elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
                                     intSpellID = sid
                                     shouldShowInterrupt = true
                                     break
@@ -816,12 +827,19 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
         end
 
-        -- Track when the shown interrupt goes on cooldown → start debounce
-        if npLastInterruptShownID and not shouldShowInterrupt then
+        -- Track when the shown interrupt goes on cooldown → start debounce.
+        -- NOTE: the CD check intentionally runs even when shouldShowInterrupt=true (another
+        -- spell ready): if the previously tracked spell just went on CD (was cast), we still
+        -- start the debounce so the game has time to register the CC state before we show
+        -- the next suggestion.  Without this, a second CC briefly flashes immediately after
+        -- the first one lands.
+        if npLastInterruptShownID then
             if SpellDB.IsInterruptOnCooldown(npLastInterruptShownID) then
-                npLastInterruptUsedTime = now
+                npLastInterruptUsedTime = now  -- start debounce regardless of next spell
+                npLastInterruptShownID = nil
+            elseif not shouldShowInterrupt then
+                npLastInterruptShownID = nil  -- cast bar gone / target changed: just clear
             end
-            npLastInterruptShownID = nil
         end
 
         -- De-dup: if the interrupt spell is already shown as overlay DPS position 1, skip it
@@ -877,7 +895,12 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
                 local isOutOfRange = interruptIcon.cachedOutOfRange or false
                 if interruptIcon.lastOutOfRange ~= isOutOfRange then
-                    interruptIcon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    if isOutOfRange then
+                        interruptIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
+                    else
+                        local hkc = npoOverlays and npoOverlays.hotkey and npoOverlays.hotkey.color
+                        interruptIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
+                    end
                     interruptIcon.lastOutOfRange = isOutOfRange
                 end
             end
@@ -916,24 +939,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
             if not interruptIcon:IsShown() then interruptIcon:Show() end
             interruptIcon:SetAlpha(opacity)
         else
-            -- Hide interrupt icon + cast aura
-            if interruptIcon.spellID then
-                interruptIcon.spellID = nil
-                interruptIcon.iconTexture:Hide()
-                if interruptIcon.cooldown then interruptIcon.cooldown:Clear(); interruptIcon.cooldown:Hide() end
-                interruptIcon._cooldownShown       = false
-                interruptIcon._chargeCooldownShown = false
-                interruptIcon.normalizedHotkey     = nil
-                interruptIcon.cachedHotkey         = nil
-                if UIAnimations then
-                    if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
-                    if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
-                end
-            end
-            if interruptIcon.castAura then
-                interruptIcon.castAura:Hide()
-            end
-            interruptIcon:Hide()
+            UIRenderer.HideInterruptIcon(interruptIcon)
         end
 
         -- Dynamic re-anchor: shift dpsIcons[1] when interrupt state toggles
@@ -1267,4 +1273,11 @@ function UINameplateOverlay.HideAll()
         interruptIcon:Hide()
         interruptShown = false
     end
+end
+
+-- Called by JustAC when the player successfully casts a CC spell.
+-- Activates the CC_APPLIED_SUPPRESS window so the next CC suggestion is held
+-- back until the game can register the CC state on the target.
+function UINameplateOverlay.NotifyCCApplied()
+    npLastCCAppliedTime = GetTime()
 end

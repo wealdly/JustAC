@@ -19,7 +19,7 @@ local defaults = {
         maxIcons = 4,
         iconSize = 42,
         iconSpacing = 1,
-        showOffensiveHotkeys = true, -- Show hotkey text on offensive queue icons
+        showOffensiveHotkeys = true, -- Legacy; migrated to textOverlays.hotkey.show on load
         gamepadIconStyle = "xbox",    -- Gamepad button icons: "generic", "xbox", "playstation"
         debugMode = false,
         isManualMode = false,
@@ -45,6 +45,27 @@ local defaults = {
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         showInterrupt = true,             -- Show interrupt/CC reminder on interruptible casts
         ccRegularMobs = true,             -- Prefer CC on non-boss mobs (fall back to kick when CC unavailable)
+        -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
+        textOverlays = {
+            hotkey = {
+                show      = true,
+                fontScale = 1.0,
+                color     = {r = 1, g = 1, b = 1, a = 1},
+                anchor    = "TOPRIGHT",    -- TOPRIGHT, TOPLEFT, TOP, CENTER, BOTTOMRIGHT, BOTTOMLEFT
+            },
+            cooldown = {
+                show      = true,
+                fontScale = 1.0,
+                color     = {r = 1, g = 1, b = 1, a = 0.5},
+                -- anchor not exposed: CooldownFrameTemplate manages it (always centered)
+            },
+            charges = {
+                show      = true,
+                fontScale = 1.0,
+                color     = {r = 1, g = 1, b = 1, a = 1},
+                anchor    = "BOTTOMRIGHT", -- BOTTOMRIGHT, BOTTOMLEFT, BOTTOM
+            },
+        },
         -- Nameplate Overlay feature (independent queue cluster on target nameplate)
         nameplateOverlay = {
             maxIcons          = 3,       -- 1-5 DPS queue slots
@@ -56,7 +77,7 @@ local defaults = {
             opacity           = 1.0, -- icon opacity (0.1–1.0)
             showGlow          = true,
             glowMode          = "all",
-            showHotkey        = true,
+            showHotkey        = true, -- Legacy; migrated to textOverlays.hotkey.show on load
             showFlash         = true, -- key-press flash feedback
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-5
@@ -64,6 +85,26 @@ local defaults = {
             showHealthBar        = true,
             showInterrupt        = true,        -- Show interrupt/CC reminder
             ccRegularMobs        = true,        -- Prefer CC on non-boss mobs
+            -- Text overlay settings for nameplate overlay icons (independent from main queue)
+            textOverlays = {
+                hotkey = {
+                    show      = true,
+                    fontScale = 1.0,
+                    color     = {r = 1, g = 1, b = 1, a = 1},
+                    anchor    = "TOPRIGHT",
+                },
+                cooldown = {
+                    show      = true,
+                    fontScale = 1.0,
+                    color     = {r = 1, g = 1, b = 1, a = 0.5},
+                },
+                charges = {
+                    show      = true,
+                    fontScale = 1.0,
+                    color     = {r = 1, g = 1, b = 1, a = 1},
+                    anchor    = "BOTTOMRIGHT",
+                },
+            },
         },
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
@@ -159,6 +200,25 @@ function JustAC:NormalizeSavedData()
         if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
             profile.panelInteraction = "locked"
         end
+        -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
+        -- Main queue: showOffensiveHotkeys / defensives.showHotkeys → textOverlays.hotkey.show
+        if profile.textOverlays and profile.textOverlays.hotkey then
+            if profile.showOffensiveHotkeys == false
+            or (profile.defensives and profile.defensives.showHotkeys == false) then
+                profile.textOverlays.hotkey.show = false
+            end
+        end
+        -- Nameplate overlay: nameplateOverlay.showHotkey → nameplateOverlay.textOverlays.hotkey.show
+        local npo = profile.nameplateOverlay
+        if npo and npo.textOverlays and npo.textOverlays.hotkey then
+            if npo.showHotkey == false then
+                npo.textOverlays.hotkey.show = false
+            end
+        end
+        -- Nil legacy keys so they don't persist in saved data after migration
+        profile.showOffensiveHotkeys = nil
+        if profile.defensives then profile.defensives.showHotkeys = nil end
+        if profile.nameplateOverlay then profile.nameplateOverlay.showHotkey = nil end
     end
 end
 
@@ -270,8 +330,9 @@ function JustAC:OnEnable()
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
-    self:RegisterEvent("UNIT_ENTERED_VEHICLE", "OnVehicleChanged")
-    self:RegisterEvent("UNIT_EXITED_VEHICLE", "OnVehicleChanged")
+    self:RegisterEvent("UNIT_ENTERED_VEHICLE",  "OnVehicleChanged")
+    self:RegisterEvent("UNIT_EXITED_VEHICLE",   "OnVehicleChanged")
+    self:RegisterEvent("UPDATE_POSSESS_BAR",    "OnPossessBarChanged")
 
     if EventRegistry then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
@@ -477,7 +538,20 @@ function JustAC:GetClassSpellList(listKey)
     if DefensiveEngine then return DefensiveEngine.GetClassSpellList(self, listKey) end
 end
 
+function JustAC:UpdateAlternateControlState()
+    -- Detect when the player is controlling a vehicle (replaces action bars) or
+    -- possessing an NPC via Mind Control / similar effects. In either case our
+    -- normal rotation spells are completely wrong, so suppress all rendering.
+    self.playerInAlternateControl = (UnitHasVehicleUI and UnitHasVehicleUI("player") or false)
+        or (IsPossessBarVisible and IsPossessBarVisible() or false)
+end
+
 function JustAC:UpdateDefensiveCooldowns()
+    if self.playerInAlternateControl then
+        -- Clear defensive icons immediately; leave them hidden until we regain control.
+        if UIRenderer then UIRenderer.HideDefensiveIcons(self) end
+        return
+    end
     if DefensiveEngine then DefensiveEngine.UpdateDefensiveCooldowns(self) end
 end
 
@@ -601,6 +675,15 @@ function JustAC:UpdateSpellQueue()
     if self.isDisabledMode then return end
     if not self.db or not self.db.profile or self.db.profile.isManualMode or not self.mainFrame or not SpellQueue or not UIRenderer then return end
 
+    -- Suppress queue while controlling a vehicle or possessing an NPC.
+    -- Our rotation spells are meaningless in these states; render an empty queue
+    -- so all icons hide cleanly through the normal renderer path.
+    if self.playerInAlternateControl then
+        UIRenderer.RenderSpellQueue(self, {})
+        if UINameplateOverlay then UINameplateOverlay.Render(self, {}) end
+        return
+    end
+
     -- Always build queue to keep caches warm (redundancy filter, aura tracking, etc.)
     -- even when frame is hidden - this ensures instant response when frame becomes visible
     -- Renderer will skip expensive operations (hotkey lookups, icon updates) when hidden
@@ -617,6 +700,12 @@ function JustAC:PLAYER_ENTERING_WORLD()
     if FormCache and FormCache.OnPlayerLogin then
         FormCache.OnPlayerLogin()
     end
+
+    -- Re-evaluate vehicle/possess state after loading screens (may enter a phased vehicle zone).
+    self:UpdateAlternateControlState()
+
+    -- Refresh creature type cache in case there is a pre-existing target on world enter.
+    if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
 
     -- Apply spec-based profile/disabled state on world entry (not just on spec change events)
     self:OnSpecChange()
@@ -789,6 +878,14 @@ end
 function JustAC:OnVehicleChanged(event, unit)
     if unit ~= "player" then return end
 
+    self:UpdateAlternateControlState()
+    self:InvalidateCaches({macros = true, hotkeys = true})
+    self:ForceUpdate()
+end
+
+function JustAC:OnPossessBarChanged()
+    -- Fires when Mind Control / possess effects begin or end.
+    self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
     self:ForceUpdate()
 end
@@ -822,6 +919,9 @@ end
 
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
+    -- Refresh per-target creature type cache for CC immunity detection.
+    -- UnitCreatureType is NeverSecret (static mob metadata), safe in and out of combat.
+    if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
     self:UpdateTargetFrameAnchor()
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
     -- ForceUpdateAll so the defensive overlay re-renders immediately on target switch
@@ -1052,6 +1152,17 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
 
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
+    end
+
+    -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
+    -- the next CC suggestion doesn't flash before the game registers the CC state on target.
+    -- spellID from UNIT_SPELLCAST_SUCCEEDED is NeverSecret (player's own cast).
+    do
+        local SpellDB = LibStub("JustAC-SpellDB", true)
+        if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
+            if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
+            if UINameplateOverlay and UINameplateOverlay.NotifyCCApplied then UINameplateOverlay.NotifyCCApplied() end
+        end
     end
 
     if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer) end
