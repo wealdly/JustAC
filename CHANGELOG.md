@@ -3,22 +3,16 @@
 ## [4.2.1] - 2026-02-23
 
 ### Added
-- **Post-interrupt debounce:** After using an interrupt or CC, the interrupt reminder is suppressed for 1 second to prevent flicker from the lingering cast bar.
-- **CC-applied suppression window:** When a CC spell lands, the interrupt reminder is further suppressed for 4 seconds to prevent immediately suggesting a follow-up CC before the game registers the crowd-control state.
-- **Queue suppressed in vehicles and NPC possession:** When the player is controlling a vehicle (action bars replaced) or possessing an NPC via Mind Control, the spell queue and defensive icons are hidden — the rotation suggestions would be meaningless in these states.
+- Text overlays (hotkey, cooldown timer, charge count) are now individually configurable — toggle each on/off, adjust font scale, color, and anchor position. Settings apply across all icon types: main queue, nameplate overlay, defensives, and interrupt icon
+- Long-duration buffs (poisons, Mark of the Wild, weapon imbues) now show a recast suggestion when less than 5 minutes remain — previously they were suppressed as "active" right up until expiry, leaving queue slot 1 stuck at the start of combat
+- 4-second hold after a CC lands before suggesting another, giving the game time to register the target's crowd-controlled state
+- Spell queue and defensive icons now hidden when controlling a vehicle or possessing an NPC (Mind Control, siege engines, questline vehicles) — your normal action bars are replaced in these states
 
 ### Changed
-- **Simplified interrupt options:** Replaced the 5-option interrupt mode dropdown with a simple on/off toggle + "Prefer CC on Regular Mobs" checkbox. On + CC off = kick every interruptible cast. On + CC on = prefer CC on non-boss mobs, fall back to kick if no CC ready. Off = disabled.
-- **Expanded CC immunity detection:** Now correctly suppresses CC suggestions against worldbosses, dungeon bosses (boss1–boss5 frames), Mechanical mobs, and Totem mobs. Previously only the narrow gold-portrait `UnitIsBossMob()` category was detected.
+- Mechanical and Totem mob types now recognized as CC-immune (in addition to worldbosses and dungeon bosses)
 
 ### Fixed
-- **Interrupt icon shown for non-interruptible casts (e.g., Brutal Jab):** Now uses `castBar.Icon:IsShown()` as the primary interruptibility check — Blizzard's `ShouldIconBeShown()` resolves barType internally and returns plain boolean literals. `BorderShield` retained as fallback for pre-12.0.
-- **Brief CC/interrupt flash between successive casts:** The debounce cooldown check now runs unconditionally — if the previously tracked spell went on cooldown (was cast), debounce starts regardless of whether another spell is immediately available.
-
-### Removed
-- **Duration filter for interrupt casts:** Removed `MIN_INTERRUPT_CAST_DURATION` heuristic — `Icon:IsShown()` reliably detects interruptible casts, making the duration guard unnecessary.
-- **Important cast detection:** Removed all `C_Spell.IsSpellImportant()` / `ImportantCastIndicator` code — broken by 12.0 secret values in combat, and no longer needed with the simplified interrupt model.
-- **`/jac casttest` debug command:** Removed (was a temporary diagnostic for interrupt taint investigation).
+- Fixed a second CC spell briefly flashing immediately after the first one was cast
 
 ## [4.2.0] - 2026-02-22
 
