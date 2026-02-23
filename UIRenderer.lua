@@ -18,22 +18,32 @@ end
 -- Cache frequently used functions to reduce table lookups on every update
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
-local UnitIsBossMob = UnitIsBossMob
+local UnitClassification = UnitClassification
+local UnitIsUnit = UnitIsUnit
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+
+-- Boss detection for CC immunity: UnitIsBossMob only flags a narrow category
+-- (gold-winged portrait mobs).  Dungeon bosses like Lord Godfrey are "elite"
+-- but appear in boss frames (boss1-boss5) and are CC-immune.
+local function IsBossTarget()
+    if UnitClassification("target") == "worldboss" then return true end
+    for i = 1, 5 do
+        if UnitIsUnit("target", "boss" .. i) then return true end
+    end
+    return false
+end
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
 
--- Minimum enemy cast duration (seconds) to trigger interrupt/CC reminder.
--- Sub-1s casts complete before a human can react — not worth spending resources on.
-local MIN_INTERRUPT_CAST_DURATION = 0.8
-
--- Elapsed-time fallback for when castBar.maxValue is a secret value (12.0 combat).
--- Track the spellID of the cast we first observed and when we first saw it.
-local trackedCastSpellID = nil
-local trackedCastStartTime = 0
+-- Post-interrupt debounce: suppress interrupt reminder briefly after player
+-- uses an interrupt/CC so the cast bar's lingering visibility doesn't cause
+-- the addon to recommend the next spell in the list.
+local INTERRUPT_DEBOUNCE = 1.0  -- seconds
+local lastInterruptUsedTime = 0
+local lastInterruptShownID  = nil
 
 -- Check for proc overlay to highlight available abilities
 -- BlizzardAPI.IsSpellProcced already checks both base and override IDs
@@ -617,114 +627,71 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     end
 
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
-    -- Standard queue version: detect interruptible cast via the target nameplate's
-    -- cast bar frame state.  Same pcall + secret-boolean-safe approach as the
-    -- nameplate overlay in UINameplateOverlay.
+    -- Detect interruptible cast via the target nameplate's cast bar frame
+    -- state.  Uses Icon:IsShown() for 12.0-safe interruptibility detection.
     local intIcon = addon.interruptIcon
     local resolvedInts = addon.resolvedInterrupts
-    local interruptMode = profile.interruptMode or "important"
-    local ccAllCasts = profile.ccAllCasts and true or false
-    if intIcon and resolvedInts and shouldShowFrame and interruptMode ~= "off" then
+    local showInterrupt = profile.showInterrupt ~= false
+    local ccRegularMobs = profile.ccRegularMobs ~= false
+    if intIcon and resolvedInts and shouldShowFrame and showInterrupt then
         local shouldShowInterrupt = false
         local intSpellID = nil
 
-        -- Look up the target nameplate to read its cast bar state
-        local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
-        local castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
-        if castBar then
-            local visOk, isVis = pcall(castBar.IsVisible, castBar)
-            local visTestOk, castVisible = pcall(function() return isVis and true or false end)
-            if visOk and visTestOk and castVisible then
-                local interruptible = true  -- fail-open default
-                if castBar.BorderShield then
-                    local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
-                    local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
-                    if shOk and shTestOk and shieldVisible then
-                        interruptible = false  -- shield visible → uninterruptible
-                    end
-                end
+        -- Debounce: if we just used an interrupt/CC, suppress for a short window
+        -- so the lingering cast bar doesn't trigger the next spell in the list.
+        local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
 
-                -- Determine if this is an "important" cast (for interrupt vs CC decision)
-                -- Check importance FIRST so dangerous casts bypass the duration filter.
-                local isImportantCast = true  -- default: treat as important
-                if interruptible and (interruptMode == "important" or ccAllCasts) then
-                    local castSpellID = castBar.spellID
-                    if castSpellID and C_Spell and C_Spell.IsSpellImportant then
-                        local impOk, isImportant = pcall(C_Spell.IsSpellImportant, castSpellID)
-                        local impTestOk, isImp = pcall(function() return isImportant and true or false end)
-                        if impOk and impTestOk then
-                            isImportantCast = isImp
+        if not debounceActive then
+            -- Look up the target nameplate to read its cast bar state
+            local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
+            local castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
+            if castBar then
+                local visOk, isVis = pcall(castBar.IsVisible, castBar)
+                local visTestOk, castVisible = pcall(function() return isVis and true or false end)
+                if visOk and visTestOk and castVisible then
+                    local interruptible = true  -- fail-open default
+                    -- Primary: Icon hidden = uninterruptible (12.0-safe).
+                    -- Nameplate castbars have HideIconWhenNotInterruptible=true;
+                    -- Blizzard's secure ShouldIconBeShown() resolves barType
+                    -- taint internally and returns a plain literal boolean, so
+                    -- Icon:IsShown() is NeverSecret on nameplate castbars.
+                    if castBar.Icon and castBar.HideIconWhenNotInterruptible then
+                        local iconOk, iconShown = pcall(castBar.Icon.IsShown, castBar.Icon)
+                        if iconOk and iconShown == false then
+                            interruptible = false  -- Icon hidden → cast not interruptible
+                        end
+                    -- Fallback: BorderShield (pre-12.0 or castbars without Icon hiding)
+                    elseif castBar.BorderShield then
+                        local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
+                        local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
+                        if shOk and shTestOk and shieldVisible then
+                            interruptible = false  -- shield visible → uninterruptible
                         end
                     end
-                end
 
-                -- "important" mode blocks non-important casts unless CC fallback is on
-                if interruptible and not isImportantCast and interruptMode == "important" and not ccAllCasts then
-                    interruptible = false
-                end
-
-                -- Skip very short casts (< 1s) for non-important casts only.
-                -- Important/dangerous casts always trigger immediately.
-                -- Primary: try castBar.maxValue (total duration set by CastingBarMixin).
-                -- Fallback: if maxValue is a secret value (12.0 combat), track elapsed
-                -- time ourselves — only show interrupt after 1s of observed casting.
-                if interruptible and not isImportantCast and castBar.maxValue then
-                    local durOk, isShort = pcall(function() return castBar.maxValue < MIN_INTERRUPT_CAST_DURATION end)
-                    local durTestOk, shortCast = pcall(function() return isShort and true or false end)
-                    if durOk and durTestOk then
-                        -- maxValue was readable — use the direct comparison
-                        if shortCast then
-                            interruptible = false
-                        end
-                        -- Reset fallback tracker (not needed when maxValue is readable)
-                        trackedCastSpellID = nil
-                    else
-                        -- maxValue is secret — fall back to elapsed-time measurement.
-                        -- castBar.spellID may also be secret (PvP); wrap comparison
-                        -- in pcall to avoid taint from secret boolean in `if`.
-                        local castSpellID = castBar.spellID
-                        local trackOk, isNew = pcall(function() return castSpellID ~= trackedCastSpellID end)
-                        if trackOk and isNew then
-                            trackedCastSpellID = castSpellID
-                            trackedCastStartTime = currentTime
-                        elseif not trackOk and trackedCastSpellID == nil then
-                            -- First frame with a secret spellID — start timing
-                            trackedCastSpellID = true  -- sentinel: actively tracking
-                            trackedCastStartTime = currentTime
-                        end
-                        if (currentTime - trackedCastStartTime) < MIN_INTERRUPT_CAST_DURATION then
-                            interruptible = false  -- haven't observed long enough
-                        end
-                    end
-                end
-
-                if interruptible then
-                    -- Target is casting — find best available interrupt or CC
-                    local isBoss = UnitIsBossMob and UnitIsBossMob("target")
-                    -- Non-important cast + ccAllCasts → prefer CC, save true interrupt lockout
-                    local ccOnly = ccAllCasts and not isImportantCast
-                    if not (ccOnly and isBoss) then
-                        for _, entry in ipairs(resolvedInts) do
-                            local sid = entry.spellID
-                            local stype = entry.type
-                            -- Skip CC spells against bosses (immune to stuns/incapacitates)
-                            if stype == "cc" and isBoss then
-                                -- skip this spell
-                            elseif stype == "interrupt" and ccOnly then
-                                -- save true interrupt for important casts
-                            elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                intSpellID = sid
-                                shouldShowInterrupt = true
-                                break
+                    if interruptible then
+                        -- Target is casting an interruptible spell — find best
+                        -- available interrupt or CC.
+                        local isBoss = IsBossTarget()
+                        -- ccRegularMobs: prefer CC on non-boss mobs, save kick
+                        local preferCC = ccRegularMobs and not isBoss
+                        if preferCC then
+                            -- First pass: try CC spells only
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid = entry.spellID
+                                if entry.type == "cc" and BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid
+                                    shouldShowInterrupt = true
+                                    break
+                                end
                             end
                         end
-                        -- "All + CC" fallback: if CC was preferred but none available,
-                        -- fall back to kick.  "Important + CC" intentionally does NOT
-                        -- fall back — the whole point is to save the interrupt lockout.
-                        if not shouldShowInterrupt and ccOnly and interruptMode == "all" then
+                        -- Fallback (or boss / CC disabled): use any available spell
+                        if not shouldShowInterrupt then
                             for _, entry in ipairs(resolvedInts) do
                                 local sid = entry.spellID
                                 local stype = entry.type
+                                -- Skip CC against bosses (immune to stuns/incapacitates)
                                 if stype == "cc" and isBoss then
                                     -- skip
                                 elseif BlizzardAPI.IsSpellAvailable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
@@ -739,12 +706,21 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
 
+        -- Track when the shown interrupt goes on cooldown → start debounce
+        if lastInterruptShownID and not shouldShowInterrupt then
+            if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
+                lastInterruptUsedTime = currentTime
+            end
+            lastInterruptShownID = nil
+        end
+
         -- De-dup: if the interrupt spell is already shown as offensive queue position 1, skip it
         if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
             shouldShowInterrupt = false
         end
 
         if shouldShowInterrupt and intSpellID then
+            lastInterruptShownID = intSpellID
             local spellChanged = (intIcon.spellID ~= intSpellID)
             if spellChanged then
                 intIcon.spellID = intSpellID

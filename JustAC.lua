@@ -43,8 +43,8 @@ local defaults = {
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
-        interruptMode = "important",      -- Interrupt reminder: "important" (lethal casts), "all", or "off"
-        ccAllCasts = true,                -- CC non-important casts on non-boss mobs (saves true interrupt)
+        showInterrupt = true,             -- Show interrupt/CC reminder on interruptible casts
+        ccRegularMobs = true,             -- Prefer CC on non-boss mobs (fall back to kick when CC unavailable)
         -- Nameplate Overlay feature (independent queue cluster on target nameplate)
         nameplateOverlay = {
             maxIcons          = 3,       -- 1-5 DPS queue slots
@@ -62,8 +62,8 @@ local defaults = {
             maxDefensiveIcons    = 3,    -- 1-5
             defensiveDisplayMode = "always", -- "combatOnly", "always"
             showHealthBar        = true,
-            interruptMode        = "important", -- "important", "all", or "off"
-            ccAllCasts           = true,        -- CC non-important casts on non-boss mobs
+            showInterrupt        = true,        -- Show interrupt/CC reminder
+            ccRegularMobs        = true,        -- Prefer CC on non-boss mobs
         },
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
