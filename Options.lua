@@ -1622,48 +1622,35 @@ local function CreateOptionsTable(addon)
                         end,
                     },
                     showInterrupt = {
-                        type = "select",
-                        name = L["Interrupt Mode"],
-                        desc = L["Interrupt Mode desc"],
+                        type = "toggle",
+                        name = L["Show Interrupt Reminder"],
+                        desc = L["Show Interrupt Reminder desc"],
                         order = 14,
-                        width = "double",
-                        values = {
-                            off          = L["Interrupt Off"],
-                            important    = L["Interrupt Important"],
-                            importantCC  = L["Interrupt Important CC"],
-                            allCC        = L["Interrupt All CC"],
-                            all          = L["Interrupt All"],
-                        },
-                        sorting = { "off", "important", "importantCC", "allCC", "all" },
-                        get = function()
-                            local mode = addon.db.profile.interruptMode or "important"
-                            if mode == "off" then return "off" end
-                            local cc = addon.db.profile.ccAllCasts
-                            if mode == "important" then return cc and "importantCC" or "important" end
-                            return cc and "allCC" or "all"
-                        end,
+                        width = "full",
+                        get = function() return addon.db.profile.showInterrupt ~= false end,
                         set = function(_, val)
-                            if val == "off" then
-                                addon.db.profile.interruptMode = "off"
-                                addon.db.profile.ccAllCasts = false
-                            elseif val == "important" then
-                                addon.db.profile.interruptMode = "important"
-                                addon.db.profile.ccAllCasts = false
-                            elseif val == "importantCC" then
-                                addon.db.profile.interruptMode = "important"
-                                addon.db.profile.ccAllCasts = true
-                            elseif val == "allCC" then
-                                addon.db.profile.interruptMode = "all"
-                                addon.db.profile.ccAllCasts = true
-                            elseif val == "all" then
-                                addon.db.profile.interruptMode = "all"
-                                addon.db.profile.ccAllCasts = false
-                            end
+                            addon.db.profile.showInterrupt = val
                             addon:UpdateFrameSize()
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    ccRegularMobs = {
+                        type = "toggle",
+                        name = L["CC Regular Mobs"],
+                        desc = L["CC Regular Mobs desc"],
+                        order = 14.5,
+                        width = "full",
+                        get = function() return addon.db.profile.ccRegularMobs ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.ccRegularMobs = val
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                                or not addon.db.profile.showInterrupt
                         end,
                     },
                     -- DISPLAY (15-19)
@@ -1786,8 +1773,8 @@ local function CreateOptionsTable(addon)
                             p.includeHiddenAbilities = true
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
-                            p.interruptMode          = "important"
-                            p.ccAllCasts             = true
+                            p.showInterrupt          = true
+                            p.ccRegularMobs          = true
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -2038,51 +2025,36 @@ local function CreateOptionsTable(addon)
                         order = 11,
                     },
                     showInterrupt = {
-                        type = "select",
-                        name = L["Interrupt Mode"],
-                        desc = L["Interrupt Mode desc"],
+                        type = "toggle",
+                        name = L["Show Interrupt Reminder"],
+                        desc = L["Show Interrupt Reminder desc"],
                         order = 13,
-                        width = "double",
-                        values = {
-                            off          = L["Interrupt Off"],
-                            important    = L["Interrupt Important"],
-                            importantCC  = L["Interrupt Important CC"],
-                            allCC        = L["Interrupt All CC"],
-                            all          = L["Interrupt All"],
-                        },
-                        sorting = { "off", "important", "importantCC", "allCC", "all" },
-                        get = function()
-                            local npo = addon.db.profile.nameplateOverlay
-                            local mode = npo.interruptMode or "important"
-                            if mode == "off" then return "off" end
-                            local cc = npo.ccAllCasts
-                            if mode == "important" then return cc and "importantCC" or "important" end
-                            return cc and "allCC" or "all"
-                        end,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.showInterrupt ~= false end,
                         set = function(_, val)
-                            local npo = addon.db.profile.nameplateOverlay
-                            if val == "off" then
-                                npo.interruptMode = "off"
-                                npo.ccAllCasts = false
-                            elseif val == "important" then
-                                npo.interruptMode = "important"
-                                npo.ccAllCasts = false
-                            elseif val == "importantCC" then
-                                npo.interruptMode = "important"
-                                npo.ccAllCasts = true
-                            elseif val == "allCC" then
-                                npo.interruptMode = "all"
-                                npo.ccAllCasts = true
-                            elseif val == "all" then
-                                npo.interruptMode = "all"
-                                npo.ccAllCasts = false
-                            end
+                            addon.db.profile.nameplateOverlay.showInterrupt = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm ~= "overlay" and dm ~= "both"
+                        end,
+                    },
+                    ccRegularMobs = {
+                        type = "toggle",
+                        name = L["CC Regular Mobs"],
+                        desc = L["CC Regular Mobs desc"],
+                        order = 13.5,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.ccRegularMobs ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.ccRegularMobs = val
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return (dm ~= "overlay" and dm ~= "both")
+                                or not addon.db.profile.nameplateOverlay.showInterrupt
                         end,
                     },
                     defensiveSectionHeader = {
@@ -2196,8 +2168,8 @@ local function CreateOptionsTable(addon)
                             npo.maxDefensiveIcons    = 3
                             npo.defensiveDisplayMode = "always"
                             npo.showHealthBar        = true
-                            npo.interruptMode        = "important"
-                            npo.ccAllCasts           = true
+                            npo.showInterrupt        = true
+                            npo.ccRegularMobs        = true
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
