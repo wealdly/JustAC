@@ -1292,6 +1292,32 @@ function BlizzardAPI.GetLowHealthState()
     return true, isCritical, alpha
 end
 
+--------------------------------------------------------------------------------
+-- Target CC Immunity Detection
+-- Shared by UIRenderer and UINameplateOverlay so both panels always agree.
+-- UnitCreatureType is NeverSecret (static mob metadata), safe in combat.
+-- Refreshed on PLAYER_TARGET_CHANGED and PLAYER_ENTERING_WORLD.
+--------------------------------------------------------------------------------
+
+local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
+local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
+local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
+local cachedTargetCreatureType = nil
+
+function BlizzardAPI.RefreshTargetCreatureType()
+    cachedTargetCreatureType = UnitCreatureType and UnitCreatureType("target")
+end
+
+function BlizzardAPI.IsTargetCCImmune()
+    if UnitClassification("target") == "worldboss" then return true end
+    for i = 1, 5 do
+        if UnitIsUnit("target", "boss" .. i) then return true end
+    end
+    -- Mechanical and Totem mobs are immune to all CC effects
+    local ct = cachedTargetCreatureType
+    return ct == "Mechanical" or ct == "Totem"
+end
+
 -- Falls back to LowHealthFrame when UnitHealth() returns secrets
 function BlizzardAPI.GetPlayerHealthPercentSafe()
     local exactPct = BlizzardAPI.GetPlayerHealthPercent()
