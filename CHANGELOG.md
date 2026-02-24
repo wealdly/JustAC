@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.3.0] - 2026-02-24
+
+### Refactored
+- Split monolithic `Options.lua` (3316 lines) into 9 modular files in `Options/` subfolder: SpellSearch, General, Offensive, Overlay, Defensives, Labels, Hotkeys, Profiles, Core
+- Moved 5 UI modules to `UI/` subfolder: UIHealthBar, UIAnimations, UIFrameFactory, UIRenderer, UINameplateOverlay
+- Extracted `TargetFrameAnchor.lua` and `KeyPressDetector.lua` from `JustAC.lua` into standalone modules
+
+### Fixed
+- **Hotkey text hidden after update:** Legacy migration (`defensives.showHotkeys = false`) was incorrectly hiding all hotkeys including offensive queue; now only migrates `showOffensiveHotkeys`
+- **Nameplate overlay defensive hotkeys ignoring Labels tab toggle:** Was reading legacy `npo.showHotkey` instead of `npo.textOverlays.hotkey.show`
+- **General tab "Reset to Defaults" set Target Frame Anchor to TOP instead of DISABLED** and did not reset sidebar position
+
 ## [4.2.2] - 2026-02-24
 
 ### Fixed

@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, TargetFrameAnchor, KeyPressDetector
 
 -- Class default tables are stored in SpellDB.lua for consistency
 -- Access via JustAC.CLASS_*_DEFAULTS (set in OnInitialize after SpellDB loads)
@@ -201,10 +201,13 @@ function JustAC:NormalizeSavedData()
             profile.panelInteraction = "locked"
         end
         -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
-        -- Main queue: showOffensiveHotkeys / defensives.showHotkeys → textOverlays.hotkey.show
+        -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
+        -- NOTE: defensives.showHotkeys is NOT migrated here — it was a separate
+        -- per-category toggle that no longer exists. Merging it into the unified
+        -- toggle would hide ALL hotkeys (offensive + defensive) for users who only
+        -- intended to hide defensive hotkeys. Fail-open: show hotkeys by default.
         if profile.textOverlays and profile.textOverlays.hotkey then
-            if profile.showOffensiveHotkeys == false
-            or (profile.defensives and profile.defensives.showHotkeys == false) then
+            if profile.showOffensiveHotkeys == false then
                 profile.textOverlays.hotkey.show = false
             end
         end
@@ -268,10 +271,10 @@ function JustAC:OnEnable()
     end
 
     -- Safety: clamp saved position to screen bounds (handles resolution/scale changes)
-    self:ClampFrameToScreen()
+    if TargetFrameAnchor then TargetFrameAnchor.ClampFrameToScreen(self) end
 
     -- Apply target frame anchor if enabled (before icons so position is correct)
-    self:UpdateTargetFrameAnchor()
+    if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
 
     UIFrameFactory.CreateSpellIcons(self)
 
@@ -293,7 +296,7 @@ function JustAC:OnEnable()
     self:StartUpdates()
 
     -- Create key press detector for flash feedback
-    self:CreateKeyPressDetector()
+    if KeyPressDetector then KeyPressDetector.Create(self) end
 
     -- Nameplate overlay (fully independent of main panel)
     if UINameplateOverlay then UINameplateOverlay.Create(self) end
@@ -502,7 +505,7 @@ function JustAC:RefreshConfig()
         self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
         -- Save before anchoring so we preserve UIParent-relative coords as fallback
         self:SavePosition()
-        self:UpdateTargetFrameAnchor()
+        if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     end
     if UINameplateOverlay then
         UINameplateOverlay.Destroy(self)
@@ -581,6 +584,10 @@ function JustAC:LoadModules()
     if not UINameplateOverlay then self:Print("Warning: UINameplateOverlay module not found") end
     DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
     if not DefensiveEngine then self:Print("Warning: DefensiveEngine module not found") end
+    TargetFrameAnchor = LibStub("JustAC-TargetFrameAnchor", true)
+    if not TargetFrameAnchor then self:Print("Warning: TargetFrameAnchor module not found") end
+    KeyPressDetector = LibStub("JustAC-KeyPressDetector", true)
+    if not KeyPressDetector then self:Print("Warning: KeyPressDetector module not found") end
 end
 
 function JustAC:SetHotkeyOverride(spellID, hotkeyText)
@@ -711,12 +718,12 @@ function JustAC:PLAYER_ENTERING_WORLD()
     self:OnSpecChange()
 
     -- Re-check bounds after loading screens (resolution/scale may differ per character)
-    self:ClampFrameToScreen()
+    if TargetFrameAnchor then TargetFrameAnchor.ClampFrameToScreen(self) end
 
     -- Re-check whether the standard TargetFrame is active (addons may replace it)
-    self:InvalidateTargetFrameCache()
+    if TargetFrameAnchor then TargetFrameAnchor.InvalidateCache() end
     -- Re-assert target frame anchor after loading screens (WoW can reset frame positions)
-    self:UpdateTargetFrameAnchor()
+    if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
 
     self:ForceUpdateAll()
 
@@ -794,7 +801,7 @@ function JustAC:OnCombatEvent(event)
             self.pendingLayoutRebuild = false
             self:UpdateFrameSize()
         else
-            self:UpdateTargetFrameAnchor()
+            if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
             self:ForceUpdateAll()
         end
         local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
@@ -933,7 +940,7 @@ function JustAC:OnTargetChanged()
     -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
     -- cache on every target switch and only populates it when the value is readable.
     if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
-    self:UpdateTargetFrameAnchor()
+    if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
     -- ForceUpdateAll so the defensive overlay re-renders immediately on target switch
     -- rather than waiting for the next UNIT_HEALTH event (which may not fire in combat
@@ -958,182 +965,19 @@ function JustAC:OnNamePlateRemoved(_, nameplateUnit)
     end
 end
 
--- Lightweight bounds check: if the saved position puts the frame entirely
--- off-screen (resolution change, UI scale change, etc.), reset to center.
--- Only touches framePosition in the profile; does NOT fight with target
--- frame anchoring (that runs immediately after).
+-- Delegated to TargetFrameAnchor module (thin wrappers for external callers)
 function JustAC:ClampFrameToScreen()
-    if not self.mainFrame then return end
-    local profile = self:GetProfile()
-    if not profile or not profile.framePosition then return end
-
-    local scale = self.mainFrame:GetEffectiveScale()
-    if not scale or scale <= 0 then return end
-
-    local screenW, screenH = GetScreenWidth(), GetScreenHeight()
-    if not screenW or screenW == 0 then return end
-
-    -- Convert saved offset to approximate screen position
-    -- (most anchor points use UIParent center as reference)
-    local pos = profile.framePosition
-    local x, y = pos.x or 0, pos.y or 0
-    local fw = (self.mainFrame:GetWidth() or 0) * 0.5
-    local fh = (self.mainFrame:GetHeight() or 0) * 0.5
-    local halfW, halfH = screenW * 0.5, screenH * 0.5
-
-    -- Rough center-of-frame in screen coords (works for CENTER-based points)
-    local cx, cy = halfW + x, halfH + y
-
-    -- Allow partial overlap (at least 20 px visible on any edge)
-    local margin = 20
-    if cx + fw < margin or cx - fw > screenW - margin
-       or cy + fh < margin or cy - fh > screenH - margin then
-        -- Off-screen: reset to default
-        pos.point = "CENTER"
-        pos.x = 0
-        pos.y = -150
-        self.mainFrame:ClearAllPoints()
-        self.mainFrame:SetPoint("CENTER", 0, -150)
-        self:DebugPrint("Frame was off-screen — reset to center")
-    end
+    if TargetFrameAnchor then TargetFrameAnchor.ClampFrameToScreen(self) end
 end
-
--- Cached result: nil=unchecked, true=standard frame active, false=replaced
-local standardTargetFrameStatus = nil
-
--- Whitelist check: is the genuine Blizzard TargetFrame active?
--- Returns false if a unit-frame addon (ElvUI, SUF, oUF, Pitbull, etc.) replaced it.
--- Cached per session — invalidated on PLAYER_ENTERING_WORLD / reload.
 function JustAC:IsStandardTargetFrame()
-    if standardTargetFrameStatus ~= nil then
-        return standardTargetFrameStatus
-    end
-
-    local tf = TargetFrame
-    if not tf or type(tf) ~= "table" then
-        standardTargetFrameStatus = false
-        return false
-    end
-
-    if type(tf.IsForbidden) == "function" and tf:IsForbidden() then
-        standardTargetFrameStatus = false
-        return false
-    end
-
-    -- Core whitelist signal: UnitFrame_Initialize registers UNIT_NAME_UPDATE.
-    -- Every replacement addon calls UnregisterAllEvents(), stripping this event.
-    if type(tf.IsEventRegistered) ~= "function" or not tf:IsEventRegistered("UNIT_NAME_UPDATE") then
-        standardTargetFrameStatus = false
-        self:DebugPrint("Target frame anchor unavailable: standard TargetFrame not active (events stripped by another addon)")
-        return false
-    end
-
-    -- Must be positioned (not orphaned by reparenting to nil/hidden ancestor)
-    if type(tf.GetPoint) ~= "function" or not tf:GetPoint() then
-        standardTargetFrameStatus = false
-        self:DebugPrint("Target frame anchor unavailable: TargetFrame has no anchor points")
-        return false
-    end
-
-    standardTargetFrameStatus = true
-    return true
+    if TargetFrameAnchor then return TargetFrameAnchor.IsStandardTargetFrame(self) end
+    return false
 end
-
 function JustAC:InvalidateTargetFrameCache()
-    standardTargetFrameStatus = nil
+    if TargetFrameAnchor then TargetFrameAnchor.InvalidateCache() end
 end
-
--- For vertical orientations, defensive icons and health bar extend sideways from
--- the main frame.  When anchored to the target frame, this sidebar can overlap it.
--- Returns the additional offset needed to keep the sidebar clear.
-local function GetVerticalSidebarOffset(profile, anchorSide)
-    local defProfile = profile.defensives
-    if not defProfile or defProfile.enabled == false then return 0 end
-
-    local defPosition = defProfile.position or "SIDE1"
-    -- SIDE1 extends RIGHT (vertical), SIDE2 extends LEFT (vertical)
-    -- LEFT anchor: conflict if SIDE1 (extends right, toward target frame)
-    -- RIGHT anchor: conflict if SIDE2 (extends left, toward target frame)
-    local conflicts = (anchorSide == "LEFT" and defPosition == "SIDE1")
-                   or (anchorSide == "RIGHT" and defPosition == "SIDE2")
-    if not conflicts then return 0 end
-
-    local iconSize     = profile.iconSize or 42
-    local defIconScale = defProfile.iconScale or 1.0
-    local defIconSize  = iconSize * defIconScale
-    local iconSpacing  = profile.iconSpacing or 1
-    local BAR_SPACING  = 3  -- matches UIHealthBar.BAR_SPACING
-    local BAR_HEIGHT   = 6  -- matches UIHealthBar.BAR_HEIGHT
-    local effectiveSpacing = math.max(iconSpacing, BAR_SPACING)
-
-    -- Defensive icon column extends: effectiveSpacing + one icon width
-    local width = effectiveSpacing + defIconSize
-    -- Health bar sits beyond the defensive cluster
-    if defProfile.showHealthBar then
-        width = width + BAR_SPACING + BAR_HEIGHT
-    end
-    return width
-end
-
 function JustAC:UpdateTargetFrameAnchor()
-    if not self.mainFrame then return end
-    -- Guard against taint: TargetFrame is secure; SetPoint against it in combat
-    -- can spread taint to the action bar system causing "action blocked" errors
-    if InCombatLockdown() then return end
-    local profile = self:GetProfile()
-    if not profile then return end
-
-    local anchor = profile.targetFrameAnchor
-    if not anchor or anchor == "DISABLED" then
-        -- Restore to saved position if we were previously anchored
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-            self.mainFrame:ClearAllPoints()
-            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        return
-    end
-
-    -- Whitelist: only anchor to the genuine Blizzard TargetFrame
-    if not self:IsStandardTargetFrame() then
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-            self.mainFrame:ClearAllPoints()
-            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        return
-    end
-
-    -- Guard: respect Edit Mode "Buffs on Top" setting.
-    -- TOP anchor conflicts when buffs are above the target frame; BOTTOM conflicts when below.
-    local buffsOnTop = TargetFrame.buffsOnTop
-    if (buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM") then
-        if self.targetframe_anchored then
-            self.targetframe_anchored = false
-            self.mainFrame:ClearAllPoints()
-            self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        return
-    end
-
-    local orientation = profile.queueOrientation or "LEFT"
-    local isVertical  = (orientation == "UP" or orientation == "DOWN")
-
-    self.targetframe_anchored = true
-    self.mainFrame:ClearAllPoints()
-    if anchor == "TOP" then
-        self.mainFrame:SetPoint("BOTTOM", TargetFrame, "TOP", 0, 2)
-    elseif anchor == "BOTTOM" then
-        self.mainFrame:SetPoint("TOP", TargetFrame, "BOTTOM", 0, -2)
-    elseif anchor == "LEFT" then
-        local gap = 2
-        if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "LEFT") end
-        self.mainFrame:SetPoint("RIGHT", TargetFrame, "LEFT", -gap, 0)
-    elseif anchor == "RIGHT" then
-        local gap = 2
-        if isVertical then gap = gap + GetVerticalSidebarOffset(profile, "RIGHT") end
-        self.mainFrame:SetPoint("LEFT", TargetFrame, "RIGHT", gap, 0)
-    end
+    if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
 end
 
 function JustAC:OnPetChanged(event, unit)
@@ -1178,164 +1022,6 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
 
     if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer) end
     self.castSuccessTimer = self:ScheduleTimer("ForceUpdate", 0.02)
-end
-
--- Pooled table for key press flash matching (avoids GC pressure on every key press)
-local iconsToFlash = {}
-
--- Monitor key presses to trigger flash on matching queue icons
-function JustAC:CreateKeyPressDetector()
-    if self.keyPressFrame then return end
-
-    local frame = CreateFrame("Frame", "JustACKeyPressFrame", UIParent)
-    frame:SetPropagateKeyboardInput(true)
-    self.keyPressFrame = frame
-
-    -- Cache function references at creation time (avoid table lookups in hot path)
-    local StartFlash = UIAnimations and UIAnimations.StartFlash
-    local IsShiftKeyDown = IsShiftKeyDown
-    local IsControlKeyDown = IsControlKeyDown
-    local IsAltKeyDown = IsAltKeyDown
-    local wipe = wipe
-    local GetTime = GetTime
-
-    frame:SetScript("OnKeyDown", function(_, key)
-        local addon = JustAC
-        if not addon or not StartFlash then return end
-
-        -- Skip pure modifier keys early
-        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
-            return
-        end
-
-        -- Build normalized key with modifiers (matches format in UIRenderer)
-        local modKey = ""
-        local shift = IsShiftKeyDown()
-        local ctrl = IsControlKeyDown()
-        local alt = IsAltKeyDown()
-
-        if ctrl and shift then
-            modKey = "CTRL-SHIFT-"
-        elseif shift and alt then
-            modKey = "SHIFT-ALT-"
-        elseif ctrl and alt then
-            modKey = "CTRL-ALT-"
-        elseif shift then
-            modKey = "SHIFT-"
-        elseif ctrl then
-            modKey = "CTRL-"
-        elseif alt then
-            modKey = "ALT-"
-        end
-
-        local normalizedKey = modKey .. key:upper()
-
-        -- Reuse pooled table to avoid GC pressure
-        wipe(iconsToFlash)
-        local now = GetTime()
-        local HOTKEY_GRACE_PERIOD = 0.15
-        local slot1PrevSpellID = nil
-
-        local profile = addon.db and addon.db.profile
-
-        -- Check offensive icons (if flash enabled)
-        local spellIcons = addon.spellIcons
-        if spellIcons and (not profile or profile.showFlash ~= false) then
-            -- Check slot 1 first (special handling for spell change timing)
-            local icon1 = spellIcons[1]
-            if icon1 and icon1:IsShown() and icon1.spellID then
-                -- Grace period uses spellChangeTime (not hotkeyChangeTime) because
-                -- the hotkey often stays the same when spell changes (same action bar slot)
-                local inGracePeriod = icon1.spellChangeTime and (now - icon1.spellChangeTime) < HOTKEY_GRACE_PERIOD
-                if icon1.previousSpellID and inGracePeriod then
-                    slot1PrevSpellID = icon1.previousSpellID
-                end
-
-                -- Match: current hotkey, previous hotkey, OR any match during grace period
-                local matched = icon1.normalizedHotkey == normalizedKey
-                if not matched and inGracePeriod then
-                    -- During grace period, also accept previous hotkey
-                    -- (user pressed key for the spell that just got cast)
-                    matched = icon1.previousNormalizedHotkey == normalizedKey
-                end
-                if matched then
-                    iconsToFlash[#iconsToFlash + 1] = icon1
-                end
-            end
-
-            -- Check remaining slots
-            for i = 2, #spellIcons do
-                local icon = spellIcons[i]
-                if icon and icon:IsShown() and icon.spellID then
-                    -- Inline match check
-                    local matched = icon.normalizedHotkey == normalizedKey
-
-                    -- Skip if same spell that was in slot 1 (just moved)
-                    if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
-                        matched = false
-                    end
-
-                    if matched then
-                        iconsToFlash[#iconsToFlash + 1] = icon
-                    end
-                end
-            end
-        end
-
-        -- Check defensive icons (if flash enabled)
-        local defFlash = not profile or not profile.defensives or profile.defensives.showFlash ~= false
-        if defFlash then
-            local defIcons = addon.defensiveIcons
-            if defIcons then
-                for _, defIcon in ipairs(defIcons) do
-                    if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
-                        iconsToFlash[#iconsToFlash + 1] = defIcon
-                    end
-                end
-            end
-
-            -- Legacy single defensive icon
-            local defIcon = addon.defensiveIcon
-            if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
-                iconsToFlash[#iconsToFlash + 1] = defIcon
-            end
-        end
-
-        -- Check standard queue interrupt icon
-        local intIcon = addon.interruptIcon
-        if intIcon and intIcon:IsShown() and intIcon.normalizedHotkey == normalizedKey then
-            iconsToFlash[#iconsToFlash + 1] = intIcon
-        end
-
-        -- Check nameplate DPS overlay icons (same flash logic as main queue)
-        local npIcons = addon.nameplateIcons
-        local npo = profile and profile.nameplateOverlay
-        if npIcons and (not npo or npo.showFlash ~= false) then
-            for _, npIcon in ipairs(npIcons) do
-                if npIcon and npIcon:IsShown() and npIcon.normalizedHotkey == normalizedKey then
-                    iconsToFlash[#iconsToFlash + 1] = npIcon
-                end
-            end
-        end
-
-        -- Check nameplate defensive overlay icons
-        local npDefFlash = not npo or npo.showFlash ~= false
-        if npDefFlash then
-            local npDefIcons = addon.nameplateDefIcons
-            if npDefIcons then
-                for _, npDefIcon in ipairs(npDefIcons) do
-                    if npDefIcon and npDefIcon:IsShown() and npDefIcon.normalizedHotkey == normalizedKey then
-                        iconsToFlash[#iconsToFlash + 1] = npDefIcon
-                    end
-                end
-            end
-        end
-
-        -- Flash all matched icons
-        for _, icon in ipairs(iconsToFlash) do
-            StartFlash(icon)
-        end
-    end)
 end
 
 function JustAC:OnCooldownUpdate()
@@ -1494,7 +1180,7 @@ function JustAC:UpdateFrameSize()
     if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
     -- Re-apply target frame anchor after resize (SetSize doesn't move the frame, but
     -- the anchor guard IsShown check may not have fired before the first render)
-    self:UpdateTargetFrameAnchor()
+    if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     -- ForceUpdateAll (not ForceUpdate) so OnHealthChanged fires → ResizeToCount
     -- runs immediately, keeping health bar width in sync with visible defensive icons.
     self:ForceUpdateAll()
