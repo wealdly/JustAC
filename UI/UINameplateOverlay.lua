@@ -557,13 +557,26 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
     end
 
-    -- Interrupt icon (position 0): anchored where dpsIcons[1] goes.
-    -- When shown, dpsIcons[1] re-anchors to chain off interruptIcon (handled by Render).
-    -- Start hidden — Render() will show/hide and re-anchor dpsIcons[1] dynamically.
+    -- Interrupt icon: anchored perpendicular to dpsIcons[1] so the main
+    -- DPS queue stays in a fixed position.
+    --   "out"       → above icon 1  (vertical pop-out from horizontal queue)
+    --   "up"/"down" → outside icon 1 (horizontal pop-out, away from nameplate)
     if interruptIcon then
         interruptIcon:ClearAllPoints()
-        interruptIcon:SetPoint(dpsPt, nameplate, dpsEdge, dpsGapX, 0)
         interruptIcon:SetSize(iconSize, iconSize)
+        if #dpsIcons > 0 then
+            if expansion == "out" then
+                -- Horizontal queue → interrupt goes above icon 1
+                interruptIcon:SetPoint("BOTTOM", dpsIcons[1], "TOP", 0, iconSpacing)
+            else
+                -- Vertical queue → interrupt goes on the outside
+                -- (right of queue when anchored right, left when anchored left)
+                interruptIcon:SetPoint(dpsPt, dpsIcons[1], dpsEdge, dpsChainX, 0)
+            end
+        else
+            -- Fallback: no DPS icons, anchor to nameplate directly
+            interruptIcon:SetPoint(dpsPt, nameplate, dpsEdge, dpsGapX, 0)
+        end
         interruptIcon:Hide()
         interruptShown = false
     end
@@ -629,13 +642,18 @@ function UINameplateOverlay.Create(addon)
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
 
-        -- Cast aura: small icon above the interrupt button showing what the enemy is casting
+        -- Cast aura: small icon attached to the interrupt button showing what
+        -- the enemy is casting.  Anchors above or below the interrupt icon
+        -- depending on expansion direction (same direction the interrupt pops).
         local auraSize = math_floor(iconSize * 0.55)
         local castAura = CreateFrame("Frame", nil, interruptIcon)
         castAura:SetSize(auraSize, auraSize)
-        castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
         castAura:SetFrameLevel(interruptIcon:GetFrameLevel() + 2)
         castAura:EnableMouse(false)
+
+        -- Aura always sits above the interrupt icon for visual consistency
+        -- regardless of queue orientation or anchor side.
+        castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
 
         local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
         auraIcon:SetAllPoints(castAura)
@@ -772,9 +790,6 @@ function UINameplateOverlay.UpdateAnchor(addon)
                 if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
                 if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
             end
-            if interruptIcon.castAura then
-                interruptIcon.castAura:Hide()
-            end
             interruptIcon:ClearAllPoints()
             interruptIcon:Hide()
             interruptShown = false
@@ -827,10 +842,14 @@ function UINameplateOverlay.Render(addon, spellIDs)
         local debounceActive = (now - npLastInterruptUsedTime) < INTERRUPT_DEBOUNCE
                             or (now - npLastCCAppliedTime) < CC_APPLIED_SUPPRESS
 
+        -- Hoist castBar to outer scope so the cast aura section below can
+        -- read the enemy spell icon even after the debounce block closes.
+        local castBar = nil
+
         if not debounceActive then
             -- Read cast bar state from the target nameplate.
             local uf = currentNameplate.UnitFrame
-            local castBar = uf and uf.castBar
+            castBar = uf and uf.castBar
             if castBar then
                 local visOk, isVis = pcall(castBar.IsVisible, castBar)
                 local visTestOk, castVisible = pcall(function() return isVis and true or false end)
@@ -993,9 +1012,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 interruptIcon.hasInterruptGlow = true
             end
 
-            -- Cast aura: passthrough the enemy cast bar icon texture from the nameplate
-            -- (castBar textures can be secret values in 12.0 combat — never compare them,
-            --  just pass through to SetTexture unconditionally; Blizzard handles secrets in UI)
+            -- Cast aura: passthrough the enemy cast bar icon texture from the
+            -- nameplate (textures can be secret values in 12.0 — pass directly
+            -- to SetTexture without any comparison; Blizzard handles secrets in UI)
             if interruptIcon.castAura then
                 local castIcon = castBar and castBar.Icon
                 if castIcon and castIcon.GetTexture then
@@ -1013,24 +1032,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
             UIRenderer.HideInterruptIcon(interruptIcon)
         end
 
-        -- Dynamic re-anchor: shift dpsIcons[1] when interrupt state toggles
-        if shouldShowInterrupt ~= interruptShown then
-            interruptShown = shouldShowInterrupt
-            if #dpsIcons > 0 then
-                dpsIcons[1]:ClearAllPoints()
-                if shouldShowInterrupt then
-                    -- Chain dpsIcons[1] off interruptIcon
-                    if anchorState.expansion == "out" then
-                        dpsIcons[1]:SetPoint(anchorState.dpsPt, interruptIcon, anchorState.dpsEdge, anchorState.dpsChainX, 0)
-                    else
-                        dpsIcons[1]:SetPoint(anchorState.chainPt, interruptIcon, anchorState.chainRelPt, anchorState.chainOffX, anchorState.chainOffY)
-                    end
-                else
-                    -- Restore dpsIcons[1] directly to nameplate
-                    dpsIcons[1]:SetPoint(anchorState.dpsPt, currentNameplate, anchorState.dpsEdge, anchorState.dpsGapX, 0)
-                end
-            end
-        end
+        -- Track interrupt visibility state (no re-anchor needed — interrupt
+        -- icon is perpendicular to queue, never displaces dpsIcons[1]).
+        interruptShown = shouldShowInterrupt
     end
     -- ── End interrupt reminder ───────────────────────────────────────────────
 
