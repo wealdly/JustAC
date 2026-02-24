@@ -1302,10 +1302,43 @@ end
 local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
 local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
+
+-- Creature type cache for CC immunity detection (Mechanical / Totem).
+--
+-- HARD LIMITATION (verified via in-game /script testing, 2026-02-23):
+--   In WoW 12.0+, BOTH UnitCreatureType() AND UnitGUID() return secret values
+--   while in combat. There is no in-combat API that can identify mob type on a
+--   *fresh* target. All known alternative approaches have been evaluated:
+--
+--   UnitCreatureType()  — SECRETED in combat. Primary data source, unusable.
+--   UnitGUID()          — SECRETED in combat. GUID-keyed cache is not viable.
+--   UnitCreatureFamily()— NOT secreted, but only distinguishes Beast from
+--                         everything else (nil for Mechanical/Undead/etc.).
+--   UnitClassification()— NOT secreted. Used for worldboss/boss slot detection.
+--   UnitIsUnit(boss1-5) — NOT secreted. Used for boss slot detection.
+--
+-- DESIGN CONSEQUENCE:
+--   The cache is populated out of combat (TARGET_CHANGED, PLAYER_REGEN_ENABLED).
+--   If the player tabs to a NEW target mid-combat (not yet cached), the creature
+--   type is unknowable and IsTargetCCImmune() returns false (fail-open: assume
+--   CC-able). This is intentional — showing a CC suggestion on a Mechanical mob
+--   is a minor UX annoyance; suppressing CC on a valid target would be harmful.
+--
+-- DO NOT attempt to replace this with GUID lookup or any other in-combat API
+-- read. All such approaches are blocked by Blizzard's secret value system.
 local cachedTargetCreatureType = nil
 
 function BlizzardAPI.RefreshTargetCreatureType()
-    cachedTargetCreatureType = UnitCreatureType and UnitCreatureType("target")
+    -- Always clear first. A stale value from the PREVIOUS target is worse than nil:
+    -- nil causes IsTargetCCImmune to fail-open (assume CC-able), which is the safe
+    -- default. Keeping the wrong type would suppress CC on a valid target.
+    cachedTargetCreatureType = nil
+    local ct = UnitCreatureType and UnitCreatureType("target")
+    -- UnitCreatureType() returns a secret string in combat; leave cache nil
+    -- so IsTargetCCImmune fails-open rather than using wrong data.
+    if not BlizzardAPI.IsSecretValue(ct) then
+        cachedTargetCreatureType = ct
+    end
 end
 
 function BlizzardAPI.IsTargetCCImmune()
@@ -1313,8 +1346,11 @@ function BlizzardAPI.IsTargetCCImmune()
     for i = 1, 5 do
         if UnitIsUnit("target", "boss" .. i) then return true end
     end
-    -- Mechanical and Totem mobs are immune to all CC effects
+    -- Mechanical and Totem mobs are immune to all CC effects.
+    -- Cache is nil when target changed mid-combat (see block comment above);
+    -- fail-open so we never incorrectly suppress CC on a valid target.
     local ct = cachedTargetCreatureType
+    if ct == nil or BlizzardAPI.IsSecretValue(ct) then return false end
     return ct == "Mechanical" or ct == "Totem"
 end
 
