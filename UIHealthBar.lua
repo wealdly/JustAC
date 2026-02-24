@@ -157,31 +157,83 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Create StatusBar (accepts secret values!)
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetAllPoints(frame)
-    statusBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    statusBar:GetStatusBarTexture():SetHorizTile(false)
-    statusBar:GetStatusBarTexture():SetVertTile(false)
-    
-    -- Set orientation based on queue direction
+    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     if orientation == "LEFT" or orientation == "RIGHT" then
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
-        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
-        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
     
     -- Set initial bright green color (matches nameplate overlay bar)
-    statusBar:SetStatusBarColor(0.0, 1.0, 0.0, 0.9)
+    statusBar:SetStatusBarColor(0.0, 0.80, 0.0, 0.9)
     
     -- Solid dark-red background fills the bar frame
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
-    bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    if orientation == "UP" or orientation == "DOWN" then
-        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
-    end
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
-    
+
+    -- 4-strip tube bevel on OVERLAY so the engine never clobbers them.
+    -- Horizontal: symmetric alphas (bright band dead-centre on 6 px bar).
+    -- Vertical:   asymmetric (near-queue heavier) — bar is wide enough.
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        local shBot1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shBot1:SetVertexColor(0, 0, 0, 0.35)
+        shBot1:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 0)
+        shBot1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
+        shBot1:SetHeight(1)
+
+        local shBot2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shBot2:SetVertexColor(0, 0, 0, 0.16)
+        shBot2:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 1)
+        shBot2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 1)
+        shBot2:SetHeight(1)
+
+        local shTop1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shTop1:SetVertexColor(0, 0, 0, 0.16)
+        shTop1:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, -1)
+        shTop1:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, -1)
+        shTop1:SetHeight(1)
+
+        local shTop2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shTop2:SetVertexColor(0, 0, 0, 0.35)
+        shTop2:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, 0)
+        shTop2:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, 0)
+        shTop2:SetHeight(1)
+    else
+        local shL1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shL1:SetVertexColor(0, 0, 0, 0.35)
+        shL1:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    0, 0)
+        shL1:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 0, 0)
+        shL1:SetWidth(1)
+
+        local shL2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shL2:SetVertexColor(0, 0, 0, 0.16)
+        shL2:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    1, 0)
+        shL2:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 1, 0)
+        shL2:SetWidth(1)
+
+        local shR1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shR1:SetVertexColor(0, 0, 0, 0.16)
+        shR1:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    -1, 0)
+        shR1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", -1, 0)
+        shR1:SetWidth(1)
+
+        local shR2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shR2:SetVertexColor(0, 0, 0, 0.35)
+        shR2:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    0, 0)
+        shR2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
+        shR2:SetWidth(1)
+    end
+
     frame.statusBar = statusBar
     frame.background = bg
     frame.useDefensiveDims = useDefensiveDims
@@ -457,29 +509,80 @@ function UIHealthBar.CreatePetHealthBar(addon)
     -- Create StatusBar (accepts secret values!)
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetAllPoints(frame)
-    statusBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    statusBar:GetStatusBarTexture():SetHorizTile(false)
-    statusBar:GetStatusBarTexture():SetVertTile(false)
-
+    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     if orientation == "LEFT" or orientation == "RIGHT" then
         statusBar:SetOrientation("HORIZONTAL")
     else
         statusBar:SetOrientation("VERTICAL")
-        -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
-        statusBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
     end
 
     -- Teal-green for pet (green-leaning but distinct from player's pure green)
-    statusBar:SetStatusBarColor(0.0, 0.85, 0.4, 0.9)
+    statusBar:SetStatusBarColor(0.0, 0.72, 0.34, 0.9)
 
     -- Background (dark red when pet is hurt/missing health shows through)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(statusBar)
-    bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    if orientation == "UP" or orientation == "DOWN" then
-        bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
-    end
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
+
+    -- 4-strip tube bevel (symmetric horizontal, same as player bar).
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        local shBot1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shBot1:SetVertexColor(0, 0, 0, 0.35)
+        shBot1:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 0)
+        shBot1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
+        shBot1:SetHeight(1)
+
+        local shBot2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shBot2:SetVertexColor(0, 0, 0, 0.16)
+        shBot2:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 1)
+        shBot2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 1)
+        shBot2:SetHeight(1)
+
+        local shTop1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shTop1:SetVertexColor(0, 0, 0, 0.16)
+        shTop1:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, -1)
+        shTop1:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, -1)
+        shTop1:SetHeight(1)
+
+        local shTop2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shTop2:SetVertexColor(0, 0, 0, 0.35)
+        shTop2:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, 0)
+        shTop2:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, 0)
+        shTop2:SetHeight(1)
+    else
+        local shL1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shL1:SetVertexColor(0, 0, 0, 0.35)
+        shL1:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    0, 0)
+        shL1:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 0, 0)
+        shL1:SetWidth(1)
+
+        local shL2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shL2:SetVertexColor(0, 0, 0, 0.16)
+        shL2:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    1, 0)
+        shL2:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 1, 0)
+        shL2:SetWidth(1)
+
+        local shR1 = statusBar:CreateTexture(nil, "OVERLAY")
+        shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shR1:SetVertexColor(0, 0, 0, 0.16)
+        shR1:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    -1, 0)
+        shR1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", -1, 0)
+        shR1:SetWidth(1)
+
+        local shR2 = statusBar:CreateTexture(nil, "OVERLAY")
+        shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
+        shR2:SetVertexColor(0, 0, 0, 0.35)
+        shR2:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    0, 0)
+        shR2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
+        shR2:SetWidth(1)
+    end
 
     -- Dead overlay (red tint, hidden by default)
     local deadOverlay = frame:CreateTexture(nil, "ARTWORK")

@@ -770,6 +770,8 @@ function JustAC:OnCombatEvent(event)
             UIAnimations.ResumeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
+        local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
         if UIRenderer and UIRenderer.SetCombatState then
@@ -786,9 +788,17 @@ function JustAC:OnCombatEvent(event)
         if self.interruptRefreshPending then
             self:RefreshInterruptSpells()
         end
-        -- Re-apply anchor in case it was changed during combat (InCombatLockdown blocked it)
-        self:UpdateTargetFrameAnchor()
-        self:ForceUpdateAll()
+        -- Re-apply anchor and rebuild layout if either was changed during combat.
+        -- UpdateFrameSize subsumes UpdateTargetFrameAnchor + ForceUpdateAll.
+        if self.pendingLayoutRebuild then
+            self.pendingLayoutRebuild = false
+            self:UpdateFrameSize()
+        else
+            self:UpdateTargetFrameAnchor()
+            self:ForceUpdateAll()
+        end
+        local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     end
 end
 
@@ -920,7 +930,8 @@ end
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
     -- Refresh per-target creature type cache for CC immunity detection.
-    -- UnitCreatureType is NeverSecret (static mob metadata), safe in and out of combat.
+    -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
+    -- cache on every target switch and only populates it when the value is readable.
     if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
     self:UpdateTargetFrameAnchor()
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end

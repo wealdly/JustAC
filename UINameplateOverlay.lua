@@ -259,10 +259,8 @@ end
 local function CreateOverlayHealthBar(initialWidth)
     local bar = CreateFrame("StatusBar", nil, UIParent)
     bar:SetSize(initialWidth, BAR_HEIGHT)
-    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-    bar:GetStatusBarTexture():SetHorizTile(false)
-    bar:GetStatusBarTexture():SetVertTile(false)
-    bar:SetStatusBarColor(0.0, 1.0, 0.0, 0.9)
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetStatusBarColor(0.0, 0.80, 0.0, 0.9)
     bar:SetMinMaxValues(0, 1)
     bar:SetValue(1)
     bar:EnableMouse(false)
@@ -270,9 +268,81 @@ local function CreateOverlayHealthBar(initialWidth)
     -- Bright red background so lost health is immediately visible.
     local bg = bar:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(bar)
-    bg:SetTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)
     bar.bg = bg
+
+    -- Horizontal bevel strips (4-strip symmetric tube).
+    -- Shown when orientation is HORIZONTAL, hidden when VERTICAL.
+    local shBot1 = bar:CreateTexture(nil, "OVERLAY")
+    shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shBot1:SetVertexColor(0, 0, 0, 0.35)
+    shBot1:SetPoint("BOTTOMLEFT",  bar, "BOTTOMLEFT",  0, 0)
+    shBot1:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+    shBot1:SetHeight(1)
+    shBot1:Hide()
+
+    local shBot2 = bar:CreateTexture(nil, "OVERLAY")
+    shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shBot2:SetVertexColor(0, 0, 0, 0.16)
+    shBot2:SetPoint("BOTTOMLEFT",  bar, "BOTTOMLEFT",  0, 1)
+    shBot2:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 1)
+    shBot2:SetHeight(1)
+    shBot2:Hide()
+
+    local shTop1 = bar:CreateTexture(nil, "OVERLAY")
+    shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shTop1:SetVertexColor(0, 0, 0, 0.16)
+    shTop1:SetPoint("TOPLEFT",  bar, "TOPLEFT",  0, -1)
+    shTop1:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, -1)
+    shTop1:SetHeight(1)
+    shTop1:Hide()
+
+    local shTop2 = bar:CreateTexture(nil, "OVERLAY")
+    shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shTop2:SetVertexColor(0, 0, 0, 0.35)
+    shTop2:SetPoint("TOPLEFT",  bar, "TOPLEFT",  0, 0)
+    shTop2:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+    shTop2:SetHeight(1)
+    shTop2:Hide()
+
+    bar.hBevelStrips = { shBot1, shBot2, shTop1, shTop2 }
+
+    -- Vertical bevel strips (symmetric, same alphas as horizontal).
+    -- Shown when orientation is VERTICAL, hidden when HORIZONTAL.
+    local shL1 = bar:CreateTexture(nil, "OVERLAY")
+    shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shL1:SetVertexColor(0, 0, 0, 0.35)
+    shL1:SetPoint("TOPLEFT",    bar, "TOPLEFT",    0, 0)
+    shL1:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+    shL1:SetWidth(1)
+    shL1:Hide()
+
+    local shL2 = bar:CreateTexture(nil, "OVERLAY")
+    shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shL2:SetVertexColor(0, 0, 0, 0.16)
+    shL2:SetPoint("TOPLEFT",    bar, "TOPLEFT",    1, 0)
+    shL2:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 1, 0)
+    shL2:SetWidth(1)
+    shL2:Hide()
+
+    local shR1 = bar:CreateTexture(nil, "OVERLAY")
+    shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shR1:SetVertexColor(0, 0, 0, 0.16)
+    shR1:SetPoint("TOPRIGHT",    bar, "TOPRIGHT",    -1, 0)
+    shR1:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -1, 0)
+    shR1:SetWidth(1)
+    shR1:Hide()
+
+    local shR2 = bar:CreateTexture(nil, "OVERLAY")
+    shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
+    shR2:SetVertexColor(0, 0, 0, 0.35)
+    shR2:SetPoint("TOPRIGHT",    bar, "TOPRIGHT",    0, 0)
+    shR2:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+    shR2:SetWidth(1)
+    shR2:Hide()
+
+    bar.bevelStrips = { shL1, shL2, shR1, shR2 }
 
     bar:SetAlpha(0)
     bar:Hide()
@@ -1137,10 +1207,12 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     local barWidth = math_floor(clusterWidth - 2 * inset)
                     healthBar:SetOrientation("HORIZONTAL")
                     healthBar:SetSize(barWidth, BAR_HEIGHT)
-                    -- Reset tex coords in case we switched from vertical
-                    healthBar:GetStatusBarTexture():SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
-                    if healthBar.bg then
-                        healthBar.bg:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
+                    -- Show horizontal bevel strips; hide vertical ones
+                    if healthBar.hBevelStrips then
+                        for _, s in ipairs(healthBar.hBevelStrips) do s:Show() end
+                    end
+                    if healthBar.bevelStrips then
+                        for _, s in ipairs(healthBar.bevelStrips) do s:Hide() end
                     end
                     if isLeft then
                         -- defIcons[1] is innermost (leftmost); cluster grows rightward.
@@ -1156,12 +1228,14 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
                     local barHeight = math_floor(clusterHeight - 2 * inset)
                     healthBar:SetOrientation("VERTICAL")  -- fills bottom→top
-                    healthBar:SetSize(BAR_HEIGHT, barHeight)
-                    -- Rotate the baked-in bevel/3D highlight 90° so it runs top-to-bottom
-                    healthBar:GetStatusBarTexture():SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
-                    if healthBar.bg then
-                        healthBar.bg:SetTexCoord(0, 1, 1, 1, 0, 0, 1, 0)
+                    -- Show vertical bevel strips; hide horizontal ones
+                    if healthBar.bevelStrips then
+                        for _, s in ipairs(healthBar.bevelStrips) do s:Show() end
                     end
+                    if healthBar.hBevelStrips then
+                        for _, s in ipairs(healthBar.hBevelStrips) do s:Hide() end
+                    end
+                    healthBar:SetSize(BAR_HEIGHT, barHeight)
                     if expansion == "up" then
                         -- defIcons[1] is at the bottom of the column; chain grows upward.
                         -- Bar anchors by its bottom corner to defIcons[1]'s bottom outer corner.
