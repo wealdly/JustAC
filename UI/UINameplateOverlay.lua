@@ -645,7 +645,7 @@ function UINameplateOverlay.Create(addon)
         -- Cast aura: small icon attached to the interrupt button showing what
         -- the enemy is casting.  Anchors above or below the interrupt icon
         -- depending on expansion direction (same direction the interrupt pops).
-        local auraSize = math_floor(iconSize * 0.55)
+        local auraSize = math_floor(iconSize * 0.7)
         local castAura = CreateFrame("Frame", nil, interruptIcon)
         castAura:SetSize(auraSize, auraSize)
         castAura:SetFrameLevel(interruptIcon:GetFrameLevel() + 2)
