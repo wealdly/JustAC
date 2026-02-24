@@ -1025,7 +1025,7 @@ local function CreateInterruptIcon(addon, profile)
     -- Cast aura: small icon showing what the enemy is casting, attached to
     -- the interrupt button.  Always placed on the side away from the queue
     -- so it doesn't overlap icon 1.
-    local auraSize = math.floor(actualIconSize * 0.55)
+    local auraSize = math.floor(actualIconSize * 0.7)
     local castAura = CreateFrame("Frame", nil, button)
     castAura:SetSize(auraSize, auraSize)
     castAura:SetFrameLevel(button:GetFrameLevel() + 2)
