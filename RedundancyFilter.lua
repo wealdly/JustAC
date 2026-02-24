@@ -109,7 +109,7 @@ local PANDEMIC_THRESHOLD = 0.30
 -- expirationTime is cached out of combat as a plain Lua number (GetTime() timestamp),
 -- so remaining = expirationTime - GetTime() is valid arithmetic even in combat.
 -- auraInstanceID → expirationTime mapping (instanceToTimingMap) carries this into combat.
-local PRE_COMBAT_REFRESH_THRESHOLD = 300  -- 5 minutes in seconds
+local PRE_COMBAT_REFRESH_THRESHOLD = 600  -- 10 minutes in seconds
 local LONG_BUFF_DURATION_CUTOFF    = 600  -- Only apply absolute threshold to buffs >= 10 min
 
 -- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
