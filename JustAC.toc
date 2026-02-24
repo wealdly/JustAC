@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.2.2
+## Version: 4.3.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB
@@ -39,12 +39,22 @@ MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
 SpellQueue.lua
-UIHealthBar.lua
-UIAnimations.lua
-UIFrameFactory.lua
-UIRenderer.lua
-UINameplateOverlay.lua
+UI\UIHealthBar.lua
+UI\UIAnimations.lua
+UI\UIFrameFactory.lua
+UI\UIRenderer.lua
+UI\UINameplateOverlay.lua
 DefensiveEngine.lua
 DebugCommands.lua
-Options.lua
+Options\SpellSearch.lua
+Options\General.lua
+Options\Offensive.lua
+Options\Overlay.lua
+Options\Defensives.lua
+Options\Labels.lua
+Options\Hotkeys.lua
+Options\Profiles.lua
+Options\Core.lua
+TargetFrameAnchor.lua
+KeyPressDetector.lua
 JustAC.lua

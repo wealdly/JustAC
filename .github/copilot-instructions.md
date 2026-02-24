@@ -35,7 +35,7 @@ end
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 4.1.1
+- Current: 4.2.2
 - Hotfixes: 4.1.2, 4.1.3, etc. (bug fixes only)
 - Features: 4.2.0, 4.3.0, etc. (new functionality)
 - Breaking: 5.0.0, 6.0.0, etc. (major rewrites)
@@ -44,12 +44,12 @@ Update in three places: `JustAC.toc`, `CHANGELOG.md`, `UNRELEASED.md`
 
 ## Architecture (Load Order Matters)
 
-10 LibStub modules in `JustAC.toc` — **MUST edit in dependency order**:
+LibStub modules in `JustAC.toc` — **MUST edit in dependency order**:
 
 ```
 BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter
                                     ↓
-                              SpellQueue → UIManager → DebugCommands → Options → JustAC
+              SpellQueue → UI/* → DefensiveEngine → DebugCommands → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
 ```
 
 | Module | Role | Key Exports | Current Version |
@@ -61,9 +61,27 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v32 |
 | `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | N/A |
 | `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v24 |
-| `UIManager.lua` | Icon rendering + glows, Masque integration | `RenderSpellQueue()`, frame management | v12 |
+| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()` | N/A |
+| **UI/** | **UI rendering subsystem (5 files)** | | |
+| `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v5 |
+| `UI/UIAnimations.lua` | Animation helpers (glow, flash) | `ApplyGlow()`, `ApplyFlash()` | v4 |
+| `UI/UIFrameFactory.lua` | Icon frame pool | `AcquireFrame()`, `ReleaseFrame()` | v12 |
+| `UI/UIRenderer.lua` | Icon rendering + Masque integration | `RenderSpellQueue()`, frame management | v14 |
+| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v1 |
+| `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v1 |
 | `DebugCommands.lua` | In-game diagnostics | `/jac test`, `/jac modules` | v1 |
-| `Options.lua` | AceConfig UI panel | Settings registration | N/A |
+| **Options/** | **Modular options panel (9 files)** | | |
+| `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()` | v1 |
+| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v1 |
+| `Options/Offensive.lua` | Offensive tab + blacklist management | `CreateTabArgs()`, `UpdateBlacklistOptions()` | v1 |
+| `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v1 |
+| `Options/Defensives.lua` | Defensives tab + spell list management | `CreateTabArgs()`, `UpdateDefensivesOptions()` | v1 |
+| `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v1 |
+| `Options/Hotkeys.lua` | Hotkey Overrides tab | `CreateTabArgs()`, `UpdateHotkeyOverrideOptions()` | v1 |
+| `Options/Profiles.lua` | Per-spec profile switching (injected into profiles) | `AddSpecProfileOptions()` | v1 |
+| `Options/Core.lua` | Options assembly, slash commands, initialization | `Initialize()`, `UpdateX()` forwards | v31 |
+| `TargetFrameAnchor.lua` | Anchor main frame to Blizzard TargetFrame | `UpdateTargetFrameAnchor()`, `ClampFrameToScreen()` | v1 |
+| `KeyPressDetector.lua` | Flash feedback on matching key press | `Create()` | v1 |
 | `JustAC.lua` | Core addon, events, defensive cooldowns | `OnInitialize()`, `OnUpdate()` | N/A (main addon) |
 
 ## Required Patterns

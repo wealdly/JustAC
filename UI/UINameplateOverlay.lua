@@ -1168,13 +1168,16 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     local npoGlowMode   = npo.glowMode or "all"
     local opacity       = npo.opacity or 1.0
     local iconSpacing   = npo.iconSpacing or ICON_SPACING
+    -- Read hotkey visibility from textOverlays (Labels tab), not legacy npo.showHotkey
+    local npoOverlaysDef = npo.textOverlays
+    local npoShowHotkey  = not npoOverlaysDef or not npoOverlaysDef.hotkey or npoOverlaysDef.hotkey.show ~= false
 
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
         local entry = defensiveQueue and defensiveQueue[i]
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npo.showHotkey, npo.showFlash ~= false)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, npo.showFlash ~= false)
             -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
             if icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
                 icon:SetAlpha(opacity)
