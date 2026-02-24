@@ -1122,7 +1122,9 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            if dm == "disabled" or dm == "overlay" then return true end
+                            -- ClearAllPoints on an anchored frame is blocked in combat
+                            return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
                         end,
                     },
                     iconSpacing = {
@@ -1139,7 +1141,8 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            if dm == "disabled" or dm == "overlay" then return true end
+                            return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
                         end,
                     },
                     queueOrientation = {
@@ -1230,7 +1233,8 @@ local function CreateOptionsTable(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            if dm == "disabled" or dm == "overlay" then return true end
+                            return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
                         end,
                     },
                     targetFrameAnchor = {
@@ -1300,14 +1304,21 @@ local function CreateOptionsTable(addon)
                                     addon.db.profile.defensives.position = "SIDE2"
                                 end
                             end
-                            addon:UpdateTargetFrameAnchor()
-                            addon:UpdateFrameSize()
+                            if InCombatLockdown() then
+                                -- SetPoint against TargetFrame is protected in combat.
+                                -- Defer both the anchor move and layout rebuild; the
+                                -- PLAYER_REGEN_ENABLED handler will apply both together.
+                                addon.pendingLayoutRebuild = true
+                            else
+                                addon:UpdateTargetFrameAnchor()
+                                addon:UpdateFrameSize()
+                            end
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             if dm == "disabled" or dm == "overlay" then return true end
                             if addon.IsStandardTargetFrame and not addon:IsStandardTargetFrame() then return true end
-                            return false
+                            return InCombatLockdown()  -- SetPoint to TargetFrame is protected in combat
                         end,
                     },
                     -- VISIBILITY (20-29)
@@ -1814,7 +1825,7 @@ local function CreateOptionsTable(addon)
                     hotkeyGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Hotkey Text"],
+                        name = "Standard: " .. L["Hotkey Text"],
                         order = 2.1,
                         args = {
                             show = {
@@ -1894,7 +1905,7 @@ local function CreateOptionsTable(addon)
                     cooldownGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Cooldown Text"],
+                        name = "Standard: " .. L["Cooldown Text"],
                         order = 2.2,
                         args = {
                             show = {
@@ -1950,7 +1961,7 @@ local function CreateOptionsTable(addon)
                     chargesGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Charge Count"],
+                        name = "Standard: " .. L["Charge Count"],
                         order = 2.3,
                         args = {
                             show = {
@@ -2027,13 +2038,13 @@ local function CreateOptionsTable(addon)
                     -- ── NAMEPLATE OVERLAY ────────────────────────────────────────────
                     overlayHeader = {
                         type = "header",
-                        name = L["Nameplate Overlay"],
+                        name = L["Nameplate Overlay"] .. " Queue",
                         order = 3,
                     },
                     npHotkeyGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Hotkey Text"],
+                        name = "Overlay: " .. L["Hotkey Text"],
                         order = 3.1,
                         args = {
                             show = {
@@ -2116,7 +2127,7 @@ local function CreateOptionsTable(addon)
                     npCooldownGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Cooldown Text"],
+                        name = "Overlay: " .. L["Cooldown Text"],
                         order = 3.2,
                         args = {
                             show = {
@@ -2174,7 +2185,7 @@ local function CreateOptionsTable(addon)
                     npChargesGroup = {
                         type = "group",
                         inline = true,
-                        name = L["Charge Count"],
+                        name = "Overlay: " .. L["Charge Count"],
                         order = 3.3,
                         args = {
                             show = {

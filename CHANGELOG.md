@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.2.2] - 2026-02-24
+
+### Fixed
+- **Long buffs (poisons, Mark of the Wild) shown as active when about to expire at combat start:** Stop filtering a long-duration buff (≥10 min) when less than 5 minutes remain. Three-layer fix: IsInPandemicWindow applies a 5-minute absolute floor for long buffs, trusted-cache combat merge skips re-adding expiring long buffs, CountActivePoisonBuffs skips counting expiring poisons.
+
 ## [4.2.1] - 2026-02-23
 
 ### Added
