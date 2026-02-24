@@ -652,10 +652,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
                             or (currentTime - lastCCAppliedTime) < CC_APPLIED_SUPPRESS
 
+        -- Hoist castBar to outer scope so the cast aura section below can
+        -- read the enemy spell icon even after the debounce block closes.
+        local castBar = nil
+
         if not debounceActive then
             -- Look up the target nameplate to read its cast bar state
             local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
-            local castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
+            castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
             if castBar then
                 local visOk, isVis = pcall(castBar.IsVisible, castBar)
                 local visTestOk, castVisible = pcall(function() return isVis and true or false end)

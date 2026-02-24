@@ -1022,13 +1022,21 @@ local function CreateInterruptIcon(addon, profile)
     -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
     UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
 
-    -- Cast aura: small icon above the interrupt button showing what the enemy is casting.
-    -- Reads castBar.spellID from the target nameplate; updated by UIRenderer each frame.
+    -- Cast aura: small icon showing what the enemy is casting, attached to
+    -- the interrupt button.  Always placed on the side away from the queue
+    -- so it doesn't overlap icon 1.
     local auraSize = math.floor(actualIconSize * 0.55)
     local castAura = CreateFrame("Frame", nil, button)
     castAura:SetSize(auraSize, auraSize)
-    castAura:SetPoint("BOTTOM", button, "TOP", 0, 2)
     castAura:SetFrameLevel(button:GetFrameLevel() + 2)
+
+    if orientation == "UP" then
+        -- Queue grows upward, interrupt is below → aura goes further below
+        castAura:SetPoint("TOP", button, "BOTTOM", 0, -2)
+    else
+        -- LEFT, RIGHT, DOWN → aura goes above interrupt (away from queue)
+        castAura:SetPoint("BOTTOM", button, "TOP", 0, 2)
+    end
 
     local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
     auraIcon:SetAllPoints(castAura)

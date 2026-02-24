@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.3.1] - 2026-02-24
+
+### Fixed
+- **Standard queue cast aura ("to interrupt" icon) not showing:** `castBar` variable was scoped inside the debounce block, making it nil when the cast aura rendering code ran — hoisted to outer scope in both UIRenderer and UINameplateOverlay
+- **Nameplate overlay interrupt icon shifted entire DPS queue:** Interrupt icon now positions perpendicular to icon 1 (above for horizontal queues, outside for vertical) instead of displacing it inline — dpsIcons[1] stays fixed
+- **Standard queue cast aura overlapped icon 1 in UP orientation:** Aura now anchors below the interrupt icon when queue grows upward (away from queue) instead of always above
+
+### Changed
+- Nameplate overlay interrupt icon now includes cast aura (enemy spell icon), consistent with standard queue — always positioned above the interrupt icon
+- Removed redundant dpsIcons[1] re-anchor dance in nameplate overlay Render() — no longer needed since interrupt is perpendicular to queue
+
 ## [4.3.0] - 2026-02-24
 
 ### Refactored
