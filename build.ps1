@@ -55,6 +55,7 @@ $coreFiles = @(
     "Options\Offensive.lua",
     "Options\Overlay.lua",
     "Options\Defensives.lua",
+    "Options\GapClosers.lua",
     "Options\Labels.lua",
     "Options\Hotkeys.lua",
     "Options\Profiles.lua",

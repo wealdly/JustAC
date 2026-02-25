@@ -381,7 +381,6 @@ function General.CreateTabArgs(addon)
                 end,
                 set = function(_, val)
                     addon.db.profile.tooltipMode = val
-                    -- Clear old settings after migration
                     addon.db.profile.showTooltips = nil
                     addon.db.profile.tooltipsInCombat = nil
                 end,
@@ -438,7 +437,6 @@ function General.CreateTabArgs(addon)
                 get = function() return addon.db.profile.gamepadIconStyle or "xbox" end,
                 set = function(_, val)
                     addon.db.profile.gamepadIconStyle = val
-                    -- Force keybind cache refresh
                     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
                     if ActionBarScanner and ActionBarScanner.ClearAllCaches then
                         ActionBarScanner.ClearAllCaches()

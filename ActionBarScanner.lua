@@ -9,7 +9,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local MacroParser = LibStub("JustAC-MacroParser", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local GetTime = GetTime
 local HasAction = HasAction
 local GetBindingKey = GetBindingKey
@@ -21,6 +21,8 @@ local FindSpellOverrideByID = FindSpellOverrideByID
 local pairs = pairs
 local ipairs = ipairs
 local wipe = wipe
+local string_find = string.find
+local math_max = math.max
 
 -- Gamepad face button atlas mappings by style (using _64 atlas with outline for better visibility)
 -- Format: {PAD1, PAD2, PAD3, PAD4, PAD5, PAD6}
@@ -248,8 +250,8 @@ local function CalculateActionSlot(buttonID, barType)
         page = 15
     end
     
-    local safePage = math.max(1, page)
-    local safeButtonID = math.max(1, math.min(buttonID, NUM_ACTIONBAR_BUTTONS))
+    local safePage = math_max(1, page)
+    local safeButtonID = math_max(1, math.min(buttonID, NUM_ACTIONBAR_BUTTONS))
     
     return safeButtonID + ((safePage - 1) * NUM_ACTIONBAR_BUTTONS)
 end
@@ -567,19 +569,19 @@ local function AbbreviateKeybind(key)
     -- WoW maps gamepad triggers to keyboard modifiers: LT→SHIFT, RT→CTRL
     -- Quick pre-check: skip keys that don't contain "PAD" or only contain it as part of "NUMPAD"
     local hasGamepadButton = false
-    local padPos = string.find(key, "PAD")
+    local padPos = string_find(key, "PAD")
     if padPos then
         -- Exclude NUMPAD keys: "PAD" at pos 4+ preceded by "NUM" is a numpad key, not gamepad
         local isNumpad = padPos >= 4 and string.sub(key, padPos - 3, padPos - 1) == "NUM"
         if not isNumpad then
-            hasGamepadButton = string.find(key, "PAD%d") or string.find(key, "PADD") or
-                               string.find(key, "PADLSTICK") or string.find(key, "PADRSTICK") or
-                               string.find(key, "PAD[LR]SHOULDER") or string.find(key, "PAD[LR]TRIGGER") or
-                               string.find(key, "PADPADDLE") or string.find(key, "PADFORWARD") or
-                               string.find(key, "PADBACK") or string.find(key, "PADSYSTEM") or string.find(key, "PADSOCIAL")
+            hasGamepadButton = string_find(key, "PAD%d") or string_find(key, "PADD") or
+                               string_find(key, "PADLSTICK") or string_find(key, "PADRSTICK") or
+                               string_find(key, "PAD[LR]SHOULDER") or string_find(key, "PAD[LR]TRIGGER") or
+                               string_find(key, "PADPADDLE") or string_find(key, "PADFORWARD") or
+                               string_find(key, "PADBACK") or string_find(key, "PADSYSTEM") or string_find(key, "PADSOCIAL")
         end
     end
-    local isGamepadModifierCombo = hasGamepadButton and (string.find(key, "^SHIFT%-") or string.find(key, "^CTRL%-"))
+    local isGamepadModifierCombo = hasGamepadButton and (string_find(key, "^SHIFT%-") or string_find(key, "^CTRL%-"))
     local iconSize = isGamepadModifierCombo and "10:10" or "14:14"
     
     -- Convert keyboard modifiers to gamepad trigger icons when combined with PAD buttons

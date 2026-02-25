@@ -12,12 +12,18 @@ local WOW_VERSION_12_0_0 = 120000
 local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
 local IS_MIDNIGHT_OR_LATER = CURRENT_VERSION >= WOW_VERSION_12_0_0
 
--- Hot path: cache frequently used global functions to reduce table lookups
+-- Hot path cache
 local GetTime = GetTime
 local pcall = pcall
 local type = type
 local wipe = wipe
+local ipairs = ipairs
+local math_max = math.max
+local math_min = math.min
 local bit_band = bit.band
+local UnitHealth = UnitHealth
+local UnitHealthMax = UnitHealthMax
+local UnitExists = UnitExists
 local IsSpellKnown = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 local C_SpellBook_IsSpellInSpellBook = C_SpellBook and C_SpellBook.IsSpellInSpellBook
@@ -634,7 +640,7 @@ function BlizzardAPI.TestAssistedCombatAPI()
     local rotationSpells = BlizzardAPI.GetRotationSpells()
     if rotationSpells and #rotationSpells > 0 then
         print("|JAC| Current rotation spells: " .. #rotationSpells .. " entries")
-        for i = 1, math.min(#rotationSpells, 5) do
+        for i = 1, math_min(#rotationSpells, 5) do
             local spellInfo = BlizzardAPI.GetSpellInfo(rotationSpells[i])
             local name = spellInfo and spellInfo.name or "Unknown"
             print("|JAC|   " .. i .. ": " .. name .. " (" .. tostring(rotationSpells[i]) .. ")")
@@ -840,8 +846,11 @@ function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     return false
 end
 
--- 12.0: Falls back to action bar state when secret
-function BlizzardAPI.IsSpellUsable(spellID)
+-- 12.0: Falls back to action bar state when secret.
+-- failOpen (default true): return true when usability can't be determined.
+-- Pass false for gap closers where suggesting an unusable spell is worse than skipping.
+function BlizzardAPI.IsSpellUsable(spellID, failOpen)
+    if failOpen == nil then failOpen = true end
     if not spellID or spellID == 0 then return false, false end
 
     if C_Spell_IsSpellUsable then
@@ -858,13 +867,13 @@ function BlizzardAPI.IsSpellUsable(spellID)
                         end
                     end
                 end
-                return true, false
+                return failOpen, false
             end
             return isUsable, notEnoughResources
         end
     end
 
-    return true, false
+    return failOpen, false
 end
 
 --------------------------------------------------------------------------------
@@ -1302,6 +1311,7 @@ end
 local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
 local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
+local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
 
 -- Creature type cache for CC immunity detection (Mechanical / Totem).
 --
@@ -1354,6 +1364,23 @@ function BlizzardAPI.IsTargetCCImmune()
     return ct == "Mechanical" or ct == "Totem"
 end
 
+--- Check whether the current target is worth interrupting at all.
+--- Returns false for trivial targets (minus mobs, minions) where spending
+--- any interrupt/CC cooldown is a waste.  All APIs used here are NeverSecret
+--- in 12.0 combat (verified 2026-02-24).
+---
+--- Design: fail-open.  If anything errors, assume target IS worth interrupting.
+function BlizzardAPI.IsTargetInterruptWorthy()
+    -- "minus" mobs are trivial adds (e.g. Explosive affix, swarm adds).
+    -- Not worth a 15-24s kick cooldown.
+    if UnitClassification("target") == "minus" then return false end
+    -- Minions are pets, totems, treants, guardians.  UnitIsMinion() is
+    -- NeverSecret and covers the same ground as the secreted
+    -- UnitCreatureType() Mechanical/Totem check — but works IN combat.
+    if UnitIsMinion and UnitIsMinion("target") then return false end
+    return true
+end
+
 -- Falls back to LowHealthFrame when UnitHealth() returns secrets
 function BlizzardAPI.GetPlayerHealthPercentSafe()
     local exactPct = BlizzardAPI.GetPlayerHealthPercent()
@@ -1364,10 +1391,10 @@ function BlizzardAPI.GetPlayerHealthPercentSafe()
     local isLow, isCritical, alpha = BlizzardAPI.GetLowHealthState()
     if isCritical then
         local pct = 20 - (alpha - 0.5) * 30
-        return math.max(5, math.min(20, pct)), true
+        return math_max(5, math_min(20, pct)), true
     elseif isLow then
         local pct = 35 - alpha * 30
-        return math.max(20, math.min(35, pct)), true
+        return math_max(20, math_min(35, pct)), true
     else
         return 100, true
     end

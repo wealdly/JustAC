@@ -14,7 +14,14 @@ function Defensives.CreateTabArgs(addon)
         type = "group",
         name = L["Defensives"],
         order = 4,
+        childGroups = "tab",
         args = {
+            -- ── SUB-TAB 1: QUEUE SETTINGS ───────────────────────────────────
+            settings = {
+                type = "group",
+                name = L["Queue Settings"],
+                order = 1,
+                args = {
             -- QUEUE CONTENT (2-4)
             header = {
                 type = "header",
@@ -178,7 +185,6 @@ function Defensives.CreateTabArgs(addon)
                 end,
                 set = function(_, val)
                     addon.db.profile.defensives.displayMode = val
-                    -- Clear old settings
                     addon.db.profile.defensives.showOnlyInCombat = nil
                     addon.db.profile.defensives.alwaysShowDefensive = nil
                     addon:ForceUpdateAll()
@@ -251,7 +257,14 @@ function Defensives.CreateTabArgs(addon)
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },
-            -- SPELL LISTS (20+)
+                },
+            },
+            -- ── SUB-TAB 2: PRIORITY LISTS ────────────────────────────────────
+            priorityLists = {
+                type = "group",
+                name = L["Priority Lists"],
+                order = 2,
+                args = {
             spellListGroup = {
                 type = "group",
                 inline = true,
@@ -388,6 +401,8 @@ function Defensives.CreateTabArgs(addon)
                     -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
                 },
             },
+                },
+            },
         },
     }
 end
@@ -396,11 +411,13 @@ function Defensives.UpdateDefensivesOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable or not SpellQueue then return end
 
-    local spellListGroup = optionsTable.args.defensives.args.spellListGroup
+    local priorityTab = optionsTable.args.defensives.args.priorityLists
+    if not priorityTab then return end
+    local spellListGroup = priorityTab.args.spellListGroup
     if not spellListGroup then return end
     local spellListArgs = spellListGroup.args
 
-    -- Clear old dynamic entries (preserve static elements within the spell list group)
+    -- Clear dynamic entries, preserve static ones
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
@@ -421,7 +438,6 @@ function Defensives.UpdateDefensivesOptions(addon)
     local defensives = addon.db.profile.defensives
     if not defensives then return end
 
-    -- Resolve per-class spell lists
     local _, playerClass = UnitClass("player")
     local selfHealSpells, cooldownSpells, petRezSpells, petHealSpells
     if playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
@@ -460,7 +476,6 @@ function Defensives.UpdateDefensivesOptions(addon)
         SpellSearch.CreateAddSpellInput(addon, spellListArgs, petHealSpells, "petheal", 130, "Pet Heals", updateFunc)
     end
 
-    -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

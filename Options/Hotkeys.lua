@@ -34,7 +34,6 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
 
     local hotkeyArgs = optionsTable.args.hotkeyOverrides.args
 
-    -- Clear old entries (preserve static ones)
     local keysToClear = {}
     for key, _ in pairs(hotkeyArgs) do
         if key ~= "info" then
@@ -47,13 +46,9 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
 
     local hotkeyOverrides = addon.db.profile.hotkeyOverrides or {}
 
-    -- Ensure spellbook cache is built
     SpellSearch.BuildSpellbookCache()
-
-    -- Initialize filter storage
     SpellSearch.filterState.hotkey = SpellSearch.filterState.hotkey or ""
 
-    -- Add hotkey input section with autocomplete
     hotkeyArgs.addHeader = {
         type = "header",
         name = L["Add Hotkey Override"],
@@ -80,7 +75,6 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         order = 2.2,
         width = "double",
         values = function()
-            -- Convert overrides dict to array for exclusion
             local excludeList = {}
             for spellID, _ in pairs(hotkeyOverrides) do
                 table.insert(excludeList, spellID)
@@ -91,7 +85,6 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
                 SpellSearch.previewState.hotkey = nil
                 return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
-            -- Set preview to first result (shown in dropdown, not yet added)
             SpellSearch.previewState.hotkey = next(results)
             return results
         end,
@@ -179,7 +172,6 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         order = 2.5,
     }
     
-    -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local overrideList = {}
     for spellID, hotkeyValue in pairs(hotkeyOverrides) do
         if type(spellID) == "number" and spellID > 0 and type(hotkeyValue) == "string" then
@@ -260,7 +252,6 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         end
     end
     
-    -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

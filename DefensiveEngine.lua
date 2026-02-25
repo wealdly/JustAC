@@ -7,10 +7,14 @@ local MAJOR, MINOR = "JustAC-DefensiveEngine", 1
 local lib = LibStub:NewLibrary(MAJOR, MINOR)
 if not lib then return end
 
--- WoW API upvalues (hot path optimization)
+-- Hot path cache
 local GetTime = GetTime
 local UnitClass = UnitClass
 local UnitAffectingCombat = UnitAffectingCombat
+local UnitExists = UnitExists
+local UnitIsDead = UnitIsDead
+local UnitCanAttack = UnitCanAttack
+local GetSpecialization = GetSpecialization
 local GetActionInfo = GetActionInfo
 local GetItemCount = GetItemCount
 local GetItemCooldown = GetItemCooldown
@@ -18,6 +22,7 @@ local GetItemInfo = GetItemInfo
 local GetItemSpell = GetItemSpell
 local GetSpellDescription = GetSpellDescription
 local FindSpellOverrideByID = FindSpellOverrideByID
+local IsActionInRange = IsActionInRange
 local C_Spell = C_Spell
 local wipe = wipe
 local ipairs = ipairs
@@ -46,6 +51,22 @@ local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
 local usableResults = {}
 local usableAddedHere = {}
+
+-- Forward declarations for functions referenced before definition
+local AppendUsableSpells
+
+-- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
+-- Impending Victory is talented, so we use the active replacement instead of the base spell.
+-- Returns the original ID when no override exists.
+local function ResolveSpellID(spellID)
+    if FindSpellOverrideByID then
+        local overrideID = FindSpellOverrideByID(spellID)
+        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
+            return overrideID
+        end
+    end
+    return spellID
+end
 
 -- Healing potion cache
 local HEALTHSTONE_ITEM_ID = 5512
@@ -188,6 +209,35 @@ function lib.InitializeDefensiveSpells(addon)
     end
 
     lib.RegisterDefensivesForTracking(addon)
+end
+
+--- Populate gap-closer defaults into the profile if the current spec's list is empty.
+--- Mirrors the defensive auto-population pattern so the Options panel shows entries
+--- without requiring the user to click "Restore Class Defaults".
+function lib.InitializeGapClosers(addon)
+    local profile = addon:GetProfile()
+    if not profile then return end
+
+    if not profile.gapClosers then
+        profile.gapClosers = { enabled = true, classSpells = {} }
+    end
+    if not profile.gapClosers.classSpells then
+        profile.gapClosers.classSpells = {}
+    end
+
+    local specKey = lib.GetGapCloserSpecKey()
+    if not specKey then return end
+
+    if not profile.gapClosers.classSpells[specKey] or #profile.gapClosers.classSpells[specKey] == 0 then
+        local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
+        if defaults then
+            profile.gapClosers.classSpells[specKey] = {}
+            for i, spellID in ipairs(defaults) do
+                profile.gapClosers.classSpells[specKey][i] = spellID
+            end
+            lib.InvalidateGapCloserCache()
+        end
+    end
 end
 
 -- Enables 12.0 compatibility when C_Spell.GetSpellCooldown returns secrets
@@ -376,20 +426,12 @@ function lib.OnHealthChanged(addon, event, unit)
         -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
         -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
         if petNeedsRez and #defensiveQueue < maxIcons then
-            local petRez = lib.GetUsableDefensiveSpells(addon, lib.GetClassSpellList(addon, "petRezSpells"), maxIcons - #defensiveQueue, defensiveAlreadyAdded)
-            for _, entry in ipairs(petRez) do
-                defensiveQueue[#defensiveQueue + 1] = entry
-                defensiveAlreadyAdded[entry.spellID] = true
-            end
+            AppendUsableSpells(addon, defensiveQueue, lib.GetClassSpellList(addon, "petRezSpells"), maxIcons, defensiveAlreadyAdded)
         end
 
         -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
         if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-            local petHeals = lib.GetUsableDefensiveSpells(addon, lib.GetClassSpellList(addon, "petHealSpells"), maxIcons - #defensiveQueue, defensiveAlreadyAdded)
-            for _, entry in ipairs(petHeals) do
-                defensiveQueue[#defensiveQueue + 1] = entry
-                defensiveAlreadyAdded[entry.spellID] = true
-            end
+            AppendUsableSpells(addon, defensiveQueue, lib.GetClassSpellList(addon, "petHealSpells"), maxIcons, defensiveAlreadyAdded)
         end
 
         if #defensiveQueue > 0 then
@@ -578,19 +620,6 @@ function lib.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     alreadyAdded = alreadyAdded or {}
     wipe(usableAddedHere)
 
-    -- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
-    -- Impending Victory is talented, so we use the active replacement instead of the base spell.
-    -- Returns the original ID when no override exists.
-    local function ResolveSpellID(spellID)
-        if FindSpellOverrideByID then
-            local overrideID = FindSpellOverrideByID(spellID)
-            if overrideID and overrideID ~= 0 and overrideID ~= spellID then
-                return overrideID
-            end
-        end
-        return spellID
-    end
-
     -- First pass: add procced spells (higher priority) - items can't proc
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
@@ -637,6 +666,20 @@ function lib.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     end
 
     return usableResults
+end
+
+-- Append usable defensive spells from a spell list into a results table with dedup tracking.
+-- If procsOnly is true, only entries with isProcced=true are appended.
+-- Callers MUST consume results before next GetUsableDefensiveSpells call (pooled table).
+AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded, procsOnly)
+    if #results >= maxIcons then return end
+    local spells = lib.GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
+    for _, entry in ipairs(spells) do
+        if not procsOnly or entry.isProcced then
+            results[#results + 1] = entry
+            alreadyAdded[entry.spellID] = true
+        end
+    end
 end
 
 -- Display order: instant procs first, then by health threshold (higher priority first)
@@ -702,13 +745,7 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
                 if spellID and spellID > 0 then
                     -- Resolve talent override so proc and list entries share the same tracking key
                     -- (e.g. Victory Rush proc 34428 → Impending Victory 202168)
-                    local resolvedID = spellID
-                    if FindSpellOverrideByID then
-                        local overrideID = FindSpellOverrideByID(spellID)
-                        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
-                            resolvedID = overrideID
-                        end
-                    end
+                    local resolvedID = ResolveSpellID(spellID)
                     if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
                         local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
@@ -726,61 +763,24 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
     local selfHealSpells = lib.GetClassSpellList(addon, "selfHealSpells")
     local cooldownSpells = lib.GetClassSpellList(addon, "cooldownSpells")
 
-    if #results < maxIcons then
-        local procs = lib.GetUsableDefensiveSpells(addon, selfHealSpells, maxIcons - #results, alreadyAdded)
-        for _, entry in ipairs(procs) do
-            if entry.isProcced then
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
-    end
-    if #results < maxIcons then
-        local procs = lib.GetUsableDefensiveSpells(addon, cooldownSpells, maxIcons - #results, alreadyAdded)
-        for _, entry in ipairs(procs) do
-            if entry.isProcced then
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
-    end
+    -- Procced spells from configured lists (any health level)
+    AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded, true)
+    AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded, true)
 
     if displayMode == "combatOnly" and not inCombat then
         return results
     end
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
-    if showAllAvailable and not isLow and not isCritical and #results < maxIcons then
-        local spells = lib.GetUsableDefensiveSpells(addon, selfHealSpells, maxIcons - #results, alreadyAdded)
-        for _, entry in ipairs(spells) do
-            results[#results + 1] = entry
-            alreadyAdded[entry.spellID] = true
-        end
-        if #results < maxIcons then
-            local cooldowns = lib.GetUsableDefensiveSpells(addon, cooldownSpells, maxIcons - #results, alreadyAdded)
-            for _, entry in ipairs(cooldowns) do
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
+    if showAllAvailable and not isLow and not isCritical then
+        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
+        AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
         return results
     end
 
     if isCritical then
-        if #results < maxIcons then
-            local spells = lib.GetUsableDefensiveSpells(addon, cooldownSpells, maxIcons - #results, alreadyAdded)
-            for _, entry in ipairs(spells) do
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
-        if #results < maxIcons then
-            local spells = lib.GetUsableDefensiveSpells(addon, selfHealSpells, maxIcons - #results, alreadyAdded)
-            for _, entry in ipairs(spells) do
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
+        AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
+        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
         if #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
             local potionID = lib.FindHealingPotionOnActionBar(addon)
             if potionID and not alreadyAdded[potionID] then
@@ -789,20 +789,8 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
             end
         end
     elseif isLow then
-        if #results < maxIcons then
-            local spells = lib.GetUsableDefensiveSpells(addon, selfHealSpells, maxIcons - #results, alreadyAdded)
-            for _, entry in ipairs(spells) do
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
-        if #results < maxIcons then
-            local spells = lib.GetUsableDefensiveSpells(addon, cooldownSpells, maxIcons - #results, alreadyAdded)
-            for _, entry in ipairs(spells) do
-                results[#results + 1] = entry
-                alreadyAdded[entry.spellID] = true
-            end
-        end
+        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
+        AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
     end
 
     return results
@@ -950,4 +938,360 @@ function lib.UpdateDefensiveCooldowns(addon)
             end
         end
     end
+end
+
+--------------------------------------------------------------------------------
+-- Gap-Closer System
+-- Suggests a gap-closer spell (Charge, Shadowstep, etc.) when the target is out
+-- of melee range.  Triggered by ACTION_RANGE_CHECK_UPDATE (NeverSecret event).
+-- The spell is injected into the spell queue at position 2 — position 1 is always
+-- Blizzard's single-button assistant suggestion and is never replaced.
+--------------------------------------------------------------------------------
+
+-- Debounce: prevent icon flickering when standing at the edge of melee range.
+-- HIDE debounce only: hold the icon briefly after coming back into range so it
+-- doesn't vanish on a single in-range frame.  No show debounce — showing the gap
+-- closer instantly is correct because the slot would otherwise fill with a rotation
+-- spell, and the subsequent debounce expiry would cause a visible blink.
+local GAP_CLOSER_HIDE_DEBOUNCE = 0.15  -- seconds before icon disappears
+local lastOutOfRangeTime = 0
+
+-- Cached gap-closer spell list for the current class+spec (wipe on spec change)
+local cachedGapCloserSpells = nil
+local cachedGapCloserSpecKey = nil
+
+-- Melee range reference: a fixed per-spec spell whose action bar slot we poll
+-- with IsActionInRange() to decide "out of melee range".  Replaces the old
+-- broad slotRangeState approach that tracked all 120 slots and could fire
+-- false-positive out-of-range on non-melee abilities.
+local cachedMeleeRefSpellID = nil
+local cachedMeleeRefSlot = nil
+local cachedMeleeRefSpecKey = nil
+
+--- Try to find an action bar slot for a spell ID (base + talent override).
+--- Returns slot number or nil.
+local function FindSlotForSpell(spellID)
+    if not ActionBarScanner or not ActionBarScanner.GetSlotForSpell then return nil end
+    local resolved = ResolveSpellID(spellID)
+    local slot = ActionBarScanner.GetSlotForSpell(resolved)
+    if not slot and resolved ~= spellID then
+        slot = ActionBarScanner.GetSlotForSpell(spellID)
+    end
+    return slot
+end
+
+--- Get the melee range reference spell + slot for the current spec.
+--- Priority chain: user override → SpellDB default[1] → SpellDB default[2].
+--- First spell found on the action bar wins.  Caches result until spec change
+--- or InvalidateGapCloserCache().
+local function ResolveMeleeReference(addon)
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil, nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil, nil end
+    local specKey = playerClass .. "_" .. spec
+
+    -- Return cache if still valid
+    if cachedMeleeRefSpecKey == specKey and cachedMeleeRefSlot then
+        return cachedMeleeRefSpellID, cachedMeleeRefSlot
+    end
+
+    -- 1) Check profile for user override
+    local profile = addon and addon.db and addon.db.profile
+    local gc = profile and profile.gapClosers
+    if gc and gc.meleeRangeSpell and gc.meleeRangeSpell > 0 then
+        local slot = FindSlotForSpell(gc.meleeRangeSpell)
+        if slot then
+            cachedMeleeRefSpellID = gc.meleeRangeSpell
+            cachedMeleeRefSlot = slot
+            cachedMeleeRefSpecKey = specKey
+            return cachedMeleeRefSpellID, cachedMeleeRefSlot
+        end
+    end
+
+    -- 2) Try SpellDB defaults: [1] primary, [2] hidden backup
+    if SpellDB and SpellDB.MELEE_RANGE_REFERENCE_SPELLS then
+        local defaults = SpellDB.MELEE_RANGE_REFERENCE_SPELLS[specKey]
+        if defaults then
+            for i = 1, 2 do
+                local refID = defaults[i]
+                if refID then
+                    local slot = FindSlotForSpell(refID)
+                    if slot then
+                        cachedMeleeRefSpellID = refID
+                        cachedMeleeRefSlot = slot
+                        cachedMeleeRefSpecKey = specKey
+                        return cachedMeleeRefSpellID, cachedMeleeRefSlot
+                    end
+                end
+            end
+        end
+    end
+
+    cachedMeleeRefSpecKey = specKey
+    cachedMeleeRefSpellID = nil
+    cachedMeleeRefSlot = nil
+    return nil, nil
+end
+
+--- Called from JustAC:OnActionRangeUpdate(slot, isInRange, checksRange)
+--- Returns true if this event was for the melee reference slot (caller uses
+--- this to decide whether to trigger a queue rebuild).
+function lib.OnActionRangeUpdate(slot, isInRange, checksRange)
+    if not slot then return false end
+    if checksRange == false then return false end
+    -- Only track the melee reference spell's slot
+    if cachedMeleeRefSlot and slot == cachedMeleeRefSlot then
+        if not isInRange then
+            lastOutOfRangeTime = GetTime()
+        end
+        return true
+    end
+    return false
+end
+
+--- Clear range state (target changed, combat ended, etc.)
+function lib.ClearRangeState()
+    lastOutOfRangeTime = 0
+    -- Don't clear cachedMeleeRefSlot here — the reference spell's slot
+    -- doesn't change between targets, only the range state does.
+    -- Slot is invalidated by InvalidateGapCloserCache() on spec/profile change.
+end
+
+--- Invalidate cached gap-closer spell list (spec change, profile change)
+function lib.InvalidateGapCloserCache()
+    cachedGapCloserSpells = nil
+    cachedGapCloserSpecKey = nil
+    cachedMeleeRefSpellID = nil
+    cachedMeleeRefSlot = nil
+    cachedMeleeRefSpecKey = nil
+end
+
+--- Resolve the gap-closer spell list for the current class+spec.
+--- Reads from profile (user-configured) with SpellDB defaults as fallback.
+--- Returns an array of spell IDs, or nil if no gap-closers for this spec.
+local function ResolveGapCloserSpells(addon)
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil end
+    local specKey = playerClass .. "_" .. spec
+
+    -- Return cache if still valid
+    if cachedGapCloserSpells and cachedGapCloserSpecKey == specKey then
+        return cachedGapCloserSpells
+    end
+
+    -- Check profile for user-configured list
+    local profile = addon:GetProfile()
+    local gc = profile and profile.gapClosers
+    if gc and gc.classSpells and gc.classSpells[specKey] and #gc.classSpells[specKey] > 0 then
+        cachedGapCloserSpells = gc.classSpells[specKey]
+        cachedGapCloserSpecKey = specKey
+        return cachedGapCloserSpells
+    end
+
+    -- Fall back to SpellDB defaults
+    if SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS then
+        local defaults = SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
+        if defaults then
+            cachedGapCloserSpells = defaults
+            cachedGapCloserSpecKey = specKey
+            return cachedGapCloserSpells
+        end
+    end
+
+    cachedGapCloserSpecKey = specKey
+    cachedGapCloserSpells = nil
+    return nil
+end
+
+--- Check whether the target is out of melee range by polling the melee
+--- reference spell's action bar slot.  Uses a fixed per-spec ability (e.g.
+--- Backstab, Crusader Strike) so ranged/utility slots can't cause false
+--- positives.  Returns true = out of melee range.
+local function IsMeleeTargetOutOfRange(addon)
+    local _, slot = ResolveMeleeReference(addon)
+    if not slot then return false end  -- fail-closed: no reference = no gap closer
+    local inRange = IsActionInRange(slot)
+    return inRange == false  -- false=out of range, nil=no range check, true=in range
+end
+
+--- Returns the first usable gap-closer spell ID for the current spec, or nil.
+--- "Usable" = known, IsSpellUsable(failOpen=false), on an action bar slot, and
+--- not on a real cooldown (isOnGCD ~= false).
+--- Returns: resolvedID, baseID  (resolvedID is the talent-overridden form;
+---   baseID is the original list entry, e.g. Roll vs Chi Torpedo).
+--- @param addon table              The JustAC addon object
+--- @param addedSpellIDs table|nil  Set of already-queued spell IDs to skip (prevent duplicates)
+function lib.GetGapCloserSpell(addon, addedSpellIDs)
+    if not addon or not addon.db or not addon.db.profile then return nil end
+    local gc = addon.db.profile.gapClosers
+    if not gc or not gc.enabled then return nil end
+
+    -- Must have a hostile target that is alive
+    if not UnitExists("target") or UnitIsDead("target") or not UnitCanAttack("player", "target") then
+        return nil
+    end
+
+    -- Check range: is the melee reference spell out of range?
+    local outOfRange = IsMeleeTargetOutOfRange(addon)
+    local now = GetTime()
+
+    if outOfRange then
+        -- No show debounce: display gap closer immediately when out of range.
+        -- A show debounce would cause slot 2 to blink (rotation spell fills it
+        -- during the debounce window, then gets displaced by the gap closer).
+    else
+        -- Hide debounce: hold the icon briefly after returning to range
+        if lastOutOfRangeTime == 0 or (now - lastOutOfRangeTime) > GAP_CLOSER_HIDE_DEBOUNCE then
+            return nil
+        end
+    end
+
+    local spellList = ResolveGapCloserSpells(addon)
+    if not spellList then return nil end
+
+    for _, spellID in ipairs(spellList) do
+        if spellID and spellID > 0 then
+            -- Resolve talent overrides (e.g., Chi Torpedo replacing Roll)
+            local resolvedID = ResolveSpellID(spellID)
+
+            -- Skip if already in the queue
+            if addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID]) then
+                -- skip: already shown
+            else
+                -- Check: spell is known
+                local isAvailable = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)
+                if isAvailable then
+                    -- Gap closers fail CLOSED (failOpen=false): if we can't confirm
+                    -- usability (secret values), skip to the next spell rather than
+                    -- suggesting an unusable stealth-only ability like Shadowstrike.
+                    local isUsable = false
+                    if BlizzardAPI.IsSpellUsable then
+                        isUsable = BlizzardAPI.IsSpellUsable(resolvedID, false)
+                    end
+                    if isUsable then
+                        -- Check: spell is actually on an action bar slot.
+                        -- Stealth-only spells like Shadowstrike (185438) may report
+                        -- IsSpellUsable=true even out of stealth, but they won't be
+                        -- on any bar slot (the button shows Backstab instead).
+                        -- Skip spells with no slot — they can't get a keybind anyway.
+                        if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+                            local slot = ActionBarScanner.GetSlotForSpell(resolvedID)
+                            if not slot then
+                                -- Also try the base spell ID (in case override resolves differently)
+                                if resolvedID ~= spellID then
+                                    slot = ActionBarScanner.GetSlotForSpell(spellID)
+                                end
+                                if not slot then
+                                    -- Not on any action bar — skip to next candidate
+                                    -- (e.g. Shadowstep will be tried next)
+                                end
+                            end
+                            if slot then
+                                -- Check: spell is ready (not on a real cooldown)
+                                -- isOnGCD is NeverSecret: true=GCD only (ready), false=real CD, nil=no CD (ready)
+                                local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
+                                if isReady then
+                                    return resolvedID, spellID
+                                end
+                            end
+                        else
+                            -- No ActionBarScanner: fall back to cooldown check only
+                            local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
+                            if isReady then
+                                return resolvedID, spellID
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+--- Returns true if the given spellID is ANY known gap-closer for the current spec.
+--- Checks both the user's configured list AND the SpellDB defaults, plus their
+--- active talent overrides.  This ensures that even if a user removes a spell
+--- from their personal list, Blizzard suggesting it at position 1 still suppresses
+--- our gap-closer injection at position 2.
+function lib.IsGapCloserSpell(addon, spellID)
+    if not spellID or spellID == 0 then return false end
+
+    -- Helper: scan a spell list for a match (base ID or talent override)
+    local function ListContains(list)
+        if not list then return false end
+        for _, gcSpellID in ipairs(list) do
+            if gcSpellID == spellID then return true end
+            if ResolveSpellID(gcSpellID) == spellID then return true end
+        end
+        return false
+    end
+
+    -- Check user-configured list
+    if addon then
+        local userList = ResolveGapCloserSpells(addon)
+        if ListContains(userList) then return true end
+    end
+
+    -- Check SpellDB defaults (catches spells the user removed from their list)
+    local defaults = SpellDB and SpellDB.GetGapCloserDefaults and SpellDB.GetGapCloserDefaults()
+    if defaults and ListContains(defaults) then return true end
+
+    return false
+end
+
+--- Mark all gap-closer spell IDs (base + talent-resolved forms) into a set.
+--- Called by SpellQueue to suppress gap-closer spells from the rotation list
+--- when the gap-closer system is enabled — our insertion controls when they appear.
+function lib.MarkGapCloserSpellIDs(addon, spellIDSet)
+    if not addon or not spellIDSet then return end
+    local spellList = ResolveGapCloserSpells(addon)
+    if not spellList then return end
+    for _, spellID in ipairs(spellList) do
+        if spellID and spellID > 0 then
+            spellIDSet[spellID] = true
+            local resolvedID = ResolveSpellID(spellID)
+            if resolvedID ~= spellID then
+                spellIDSet[resolvedID] = true
+            end
+        end
+    end
+end
+
+--- Restore gap-closer defaults for the current spec
+function lib.RestoreGapCloserDefaults(addon)
+    local profile = addon:GetProfile()
+    if not profile or not profile.gapClosers then return end
+
+    local specKey = lib.GetGapCloserSpecKey()
+    if not specKey then return end
+
+    if not profile.gapClosers.classSpells then
+        profile.gapClosers.classSpells = {}
+    end
+
+    local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
+    if defaults then
+        profile.gapClosers.classSpells[specKey] = {}
+        for i, spellID in ipairs(defaults) do
+            profile.gapClosers.classSpells[specKey][i] = spellID
+        end
+    else
+        profile.gapClosers.classSpells[specKey] = nil
+    end
+
+    lib.InvalidateGapCloserCache()
+end
+
+--- Get the gap-closer spell list key for the current spec
+function lib.GetGapCloserSpecKey()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil end
+    return playerClass .. "_" .. spec
 end
