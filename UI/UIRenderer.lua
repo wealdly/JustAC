@@ -15,31 +15,28 @@ if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations
     return
 end
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
+local pcall = pcall
 local pairs = pairs
 local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
 
--- Post-interrupt debounce: suppress interrupt reminder briefly after player
--- uses an interrupt/CC so the cast bar's lingering visibility doesn't cause
--- the addon to recommend the next spell in the list.
+-- Post-interrupt debounce: cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
 local lastInterruptUsedTime = 0
 local lastInterruptShownID  = nil
--- CC-applied suppression: when the player lands a CC spell on a target, suppress the
--- interrupt icon for a window so the next CC isn't suggested before the game registers
--- the CC state.  2s is enough to cover API state-registration lag; shorter than any
--- meaningful CC duration so back-to-back CCs on the same target still work.
+-- CC-applied suppression: 2s covers state-registration lag; short enough for back-to-back CCs to still work.
 local CC_APPLIED_SUPPRESS = 2.0  -- seconds
 local lastCCAppliedTime   = 0
 
--- Check for proc overlay to highlight available abilities
--- BlizzardAPI.IsSpellProcced already checks both base and override IDs
+-- Check for proc overlay to highlight available abilities.
+-- BlizzardAPI.IsSpellProcced checks both base and override IDs.
+-- Gap-closers (synthetic procs) have their own red crawl path; not included here.
 local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
 end
@@ -386,28 +383,27 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
         or "all"
 
-    -- Start green crawl glow on slot 1 if glow mode includes primary
-    local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
-    if showMarching then
-        UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
-    else
-        UIAnimations.StopDefensiveGlow(defensiveIcon)
-    end
-
     -- Check if defensive spell has an active proc (only for spells, not items)
     local isProc = not isItem and IsSpellProcced(id)
-
-    -- Show custom proc glow if spell is procced and glow mode includes proc
     local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
+
     if wantProcGlow then
+        -- Proc glow replaces defensive crawl to avoid confusing layered animations
+        UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.ShowProcGlow(defensiveIcon)
     else
         UIAnimations.HideProcGlow(defensiveIcon)
+        -- Show green crawl glow on slot 1 if glow mode includes primary
+        local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
+        if showMarching then
+            UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
+        else
+            UIAnimations.StopDefensiveGlow(defensiveIcon)
+        end
     end
     
     -- Show with fade-in animation if not already visible
     if not defensiveIcon:IsShown() then
-        -- Stop any fade-out in progress
         if defensiveIcon.fadeOut and defensiveIcon.fadeOut:IsPlaying() then
             defensiveIcon.fadeOut:Stop()
         end
@@ -452,14 +448,12 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon._lastCooldownDuration = nil
         defensiveIcon._cooldownIsSecret = nil
         defensiveIcon.hotkeyText:SetText("")
-        -- Hide charge count
         if defensiveIcon.chargeText then
             defensiveIcon.chargeText:Hide()
         end
         
         -- Fade out instead of instant hide
         if defensiveIcon.fadeOut and not defensiveIcon.fadeOut:IsPlaying() then
-            -- Stop any fade-in in progress
             if defensiveIcon.fadeIn and defensiveIcon.fadeIn:IsPlaying() then
                 defensiveIcon.fadeIn:Stop()
             end
@@ -586,18 +580,17 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
     
-    -- Cache commonly accessed values
     local maxIcons = profile.maxIcons
     local glowMode = profile.glowMode or (profile.focusEmphasis == false and "procOnly") or "all"
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
+    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow ~= false
     local queueDesaturation = GetQueueDesaturation()
     
     -- Check if player is channeling (grey out queue to emphasize not interrupting)
     -- PlayerChannelBarFrame is a visual frame — NeverSecret, avoids pcall for UnitChannelInfo
     local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
     
-    -- Cache frequently called functions to reduce table lookups in hot path
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local overlays = profile.textOverlays
     local showHotkeys = not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
@@ -620,18 +613,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             local icon = spellIconsRef[i]
             if icon then
                 -- Stop all glow effects to prevent "large highlight frame" bug
-                if icon.hasAssistedGlow then
-                    UIAnimations.StopAssistedGlow(icon)
-                    icon.hasAssistedGlow = false
-                end
-                if icon.hasProcGlow then
-                    UIAnimations.HideProcGlow(icon)
-                    icon.hasProcGlow = false
-                end
-                if icon.hasDefensiveGlow then
-                    UIAnimations.StopDefensiveGlow(icon)
-                    icon.hasDefensiveGlow = false
-                end
+                if icon.hasAssistedGlow   then UIAnimations.StopAssistedGlow(icon);  icon.hasAssistedGlow   = false end
+                if icon.hasProcGlow       then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow       = false end
+                if icon.hasGapCloserGlow  then UIAnimations.StopGapCloserGlow(icon);  icon.hasGapCloserGlow  = false end
+                if icon.hasDefensiveGlow  then UIAnimations.StopDefensiveGlow(icon);  icon.hasDefensiveGlow  = false end
             end
         end
     end
@@ -656,7 +641,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         -- read the enemy spell icon even after the debounce block closes.
         local castBar = nil
 
-        if not debounceActive then
+        if not debounceActive and BlizzardAPI.IsTargetInterruptWorthy() then
             -- Look up the target nameplate to read its cast bar state
             local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
             castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
@@ -819,7 +804,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 intIcon.lastVisualState = intVisualState
             end
 
-            -- Glow: red-tinted proc glow for interrupt urgency
+            -- Glow: gold marching ants crawl for interrupt urgency
             if not intIcon.hasInterruptGlow then
                 UIAnimations.StartInterruptGlow(intIcon, isInCombat)
                 intIcon.hasInterruptGlow = true
@@ -926,13 +911,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     UpdateButtonCooldowns(icon)
                 end
 
-                -- Check if spell has an active proc (overlay)
-                -- NOTE: Proc check is cheap (table lookup), so we check every frame for responsiveness
-                -- Proc glows should appear instantly when ability becomes available
-                local isProc = IsSpellProcced(spellID)
+                -- Show custom proc glow if spell is procced (any position)
+                -- Proc glow replaces ALL other glows (assisted crawl, gap-closer crawl)
+                -- to avoid confusing layered animations.  Gap-closers get their own
+                -- red marching ants crawl only when no proc is active.
+                local isSyntheticProc = SpellQueue and SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
+                local isGapCloser = isSyntheticProc
+                local isRealProc = BlizzardAPI.IsSpellProcced(spellID)
+                local wantProcGlow = isRealProc and showProcGlow
 
                 -- Show blue/white assisted crawl on position 1 if glow mode includes primary
-                local shouldShowAssisted = (i == 1 and showPrimaryGlow)
+                -- Suppressed when proc glow or gap-closer crawl is active (they replace assisted)
+                local wantGapCloserGlow = isGapCloser and showGapCloserGlow
+                local shouldShowAssisted = (i == 1 and showPrimaryGlow and not wantProcGlow and not wantGapCloserGlow)
                 if shouldShowAssisted then
                     -- Call every frame to update animation state based on combat status
                     UIAnimations.StartAssistedGlow(icon, isInCombat)
@@ -942,14 +933,29 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.hasAssistedGlow = false
                 end
 
-                -- Show custom proc glow if spell is procced (any position)
-                local wantProcGlow = isProc and showProcGlow
-                if wantProcGlow and not icon.hasProcGlow then
-                    UIAnimations.ShowProcGlow(icon)
-                    icon.hasProcGlow = true
-                elseif not wantProcGlow and icon.hasProcGlow then
-                    UIAnimations.HideProcGlow(icon)
-                    icon.hasProcGlow = false
+                if wantProcGlow then
+                    -- Proc glow wins: stop gap-closer crawl
+                    if icon.hasGapCloserGlow then
+                        UIAnimations.StopGapCloserGlow(icon)
+                        icon.hasGapCloserGlow = false
+                    end
+                    if not icon.hasProcGlow then
+                        UIAnimations.ShowProcGlow(icon)
+                        icon.hasProcGlow = true
+                    end
+                else
+                    if icon.hasProcGlow then
+                        UIAnimations.HideProcGlow(icon)
+                        icon.hasProcGlow = false
+                    end
+                    -- Gap-closer crawl only when no proc glow is active
+                    if wantGapCloserGlow and not icon.hasGapCloserGlow then
+                        UIAnimations.StartGapCloserGlow(icon)
+                        icon.hasGapCloserGlow = true
+                    elseif not wantGapCloserGlow and icon.hasGapCloserGlow then
+                        UIAnimations.StopGapCloserGlow(icon)
+                        icon.hasGapCloserGlow = false
+                    end
                 end
 
                 -- Hotkey lookup optimization: only query ActionBarScanner when action bars change
@@ -1081,14 +1087,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.cachedIsUsable = nil
                     icon.cachedNotEnoughResources = nil
                     icon.isWaitingSpell = nil
-                    icon.hasAssistedGlow = false
-                    icon.hasProcGlow = false
+                    icon.hasAssistedGlow   = false
+                    icon.hasProcGlow        = false
+                    icon.hasGapCloserGlow   = false
                     icon.lastOutOfRange = nil
                     icon.lastVisualState = nil
                     icon.lastBaseDesaturation = nil
                     icon.cachedOutOfRange = nil
                     icon.cachedNormalizedHotkey = nil
                     UIAnimations.StopAssistedGlow(icon)
+                    UIAnimations.StopGapCloserGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance
                     -- Don't hide the entire icon frame
@@ -1121,7 +1129,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         if frameStateChanged or spellCountChanged or visibilityDesynced then
             if shouldShowFrame then
                 if not addon.mainFrame:IsShown() or isFadingOut then
-                    -- Stop any fade-out in progress
                     if isFadingOut then
                         addon.mainFrame.fadeOut:Stop()
                     end
@@ -1137,13 +1144,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if addon.mainFrame:IsShown() then
                     -- Fade out instead of instant hide
                     if addon.mainFrame.fadeOut and not isFadingOut then
-                        -- Stop any fade-in in progress
                         if addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying() then
                             addon.mainFrame.fadeIn:Stop()
                         end
                         addon.mainFrame.fadeOut:Play()
                     else
-                        -- Fallback or already fading out
                         if not addon.mainFrame.fadeOut then
                             addon.mainFrame:Hide()
                             addon.mainFrame:SetAlpha(0)

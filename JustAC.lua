@@ -129,6 +129,12 @@ local defaults = {
             classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
         },
+        -- Gap-closer feature (suggest movement spells when target is out of melee range)
+        gapClosers = {
+            enabled = true,
+            -- showGlow defaults to nil → getter treats as false (glow off by default)
+            classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {100, 6544}
+        },
     },
     char = {
         lastKnownSpec = nil,
@@ -242,6 +248,7 @@ function JustAC:OnInitialize()
         JustAC.CLASS_PETHEAL_DEFAULTS = SpellDB.CLASS_PETHEAL_DEFAULTS
         JustAC.CLASS_PET_REZ_DEFAULTS = SpellDB.CLASS_PET_REZ_DEFAULTS
         JustAC.CLASS_INTERRUPT_DEFAULTS = SpellDB.CLASS_INTERRUPT_DEFAULTS
+        JustAC.CLASS_GAPCLOSER_DEFAULTS = SpellDB.CLASS_GAPCLOSER_DEFAULTS
     end
     
     self:NormalizeSavedData()
@@ -330,6 +337,7 @@ function JustAC:OnEnable()
     self:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "OnProcGlowChange")
     self:RegisterEvent("SPELL_UPDATE_ICON", "OnSpellIconChanged")
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
+    self:RegisterEvent("ACTION_RANGE_CHECK_UPDATE", "OnActionRangeUpdate")
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
@@ -511,7 +519,15 @@ function JustAC:RefreshConfig()
         UINameplateOverlay.Destroy(self)
         UINameplateOverlay.Create(self)
     end
-    -- No trailing ForceUpdate needed — UpdateFrameSize already calls ForceUpdateAll
+
+    -- Refresh options panel dynamic entries if it's been initialized
+    local Options = LibStub("JustAC-Options", true)
+    if Options then
+        if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
+        if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
+        if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
+        if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
+    end
 end
 
 -- Only on explicit profile reset (not change/copy)
@@ -532,7 +548,10 @@ function JustAC:OnHealthChanged(event, unit)
     if DefensiveEngine then DefensiveEngine.OnHealthChanged(self, event, unit) end
 end
 function JustAC:InitializeDefensiveSpells()
-    if DefensiveEngine then DefensiveEngine.InitializeDefensiveSpells(self) end
+    if DefensiveEngine then
+        DefensiveEngine.InitializeDefensiveSpells(self)
+        DefensiveEngine.InitializeGapClosers(self)
+    end
 end
 function JustAC:RestoreDefensiveDefaults(listType)
     if DefensiveEngine then DefensiveEngine.RestoreDefensiveDefaults(self, listType) end
@@ -837,6 +856,10 @@ function JustAC:OnSpecChange()
     end
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
+    -- Populate gap closer defaults for the new spec if empty
+    if DefensiveEngine and DefensiveEngine.InitializeGapClosers then
+        DefensiveEngine.InitializeGapClosers(self)
+    end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
     self:ForceUpdate()
@@ -936,6 +959,13 @@ end
 
 function JustAC:OnTargetChanged()
     self:MarkQueueDirty()
+    -- Clear gap-closer range state on target switch.  The melee reference
+    -- spell's slot is re-resolved lazily on the next GetGapCloserSpell call
+    -- (via IsActionInRange), so no seeding pass is needed.
+    if DefensiveEngine then
+        DefensiveEngine.ClearRangeState()
+    end
+    if SpellQueue then SpellQueue.ForceUpdate() end
     -- Refresh per-target creature type cache for CC immunity detection.
     -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
     -- cache on every target switch and only populates it when the value is readable.
@@ -946,6 +976,21 @@ function JustAC:OnTargetChanged()
     -- rather than waiting for the next UNIT_HEALTH event (which may not fire in combat
     -- when health is a secret value).
     self:ForceUpdateAll()
+end
+
+function JustAC:OnActionRangeUpdate(_, slot, isInRange, checksRange)
+    if DefensiveEngine then
+        local isRefSlot = DefensiveEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
+        -- Only rebuild the queue when the melee reference slot changes range.
+        -- This prevents every random ability's range event from triggering
+        -- a gap-closer re-evaluation.  Trigger on both directions so we
+        -- show the gap closer instantly on out-of-range AND remove it
+        -- promptly on return-to-range.
+        if isRefSlot then
+            if SpellQueue then SpellQueue.ForceUpdate() end
+            self:MarkQueueDirty()
+        end
+    end
 end
 
 function JustAC:OnNamePlateAdded(_, nameplateUnit)
@@ -1056,6 +1101,7 @@ function JustAC:OpenOptionsPanel()
         if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
         if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
+        if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
     end
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)

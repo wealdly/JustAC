@@ -1,5 +1,59 @@
 # Changelog
 
+## [4.4.0] - 2026-02-24
+
+### Fixed
+- **SpellDB audit** — full classification review of all spell IDs (SpellDB v7→v8)
+  - **CRITICAL:** Removed Storm Elemental (192249) from defensives — DPS cooldown for Elemental Shaman
+  - **CRITICAL:** Removed Deathbolt (264106) from defensives — offensive damage ability
+  - **CRITICAL:** Removed Mirror Image (55342) from defensives — DPS cooldown for Fire/Frost
+  - **CRITICAL:** Moved Holy Word: Chastise (88625) from healing → crowd control (damage + incapacitate)
+  - Moved Wind Rush Totem (192077), Mana Tide Totem (16191), Ice Floes (108839) from defensives → utility
+  - Moved Wild Charge (102401) from healing → utility (movement ability)
+  - Moved Cleanse Toxins (213644) from healing → utility (dispel, consistent with other class dispels)
+  - Moved Blistering Scales (360827) from healing → defensive (shield + thorns, not a heal)
+  - Removed stale entries: Hand of the Protector (213652, merged into WoG), Greater Heal (289666, not learnable), Soul Harvester (386997, hero talent tree name not a spell), Earthwarden (203974, passive talent), Feral Charge (16979, removed from game)
+- **Gap-closer audit** — fixed spell lists and added usability check
+  - Removed Vengeful Retreat from DH Havoc (jumps backward, not a gap closer)
+  - Added Shadowstrike (185438) as priority 1 for Sub Rogue (teleport gap closer in stealth)
+  - Added Grappling Hook (195457) for Outlaw Rogue between Shadowstep and Sprint
+  - Added `IsSpellUsable` check to gap-closer evaluation so stealth-only spells only show when actually usable
+  - Added action bar slot check to gap-closer evaluation: spells not on any bar (e.g. Shadowstrike out of stealth) are skipped, falling through to the next candidate (e.g. Shadowstep)
+- **Melee range detection overhaul** — replaced broad per-slot `slotRangeState` tracking with a fixed per-spec melee reference spell
+  - Old system tracked all 120 action bar slots; any out-of-range event (including ranged abilities) could trigger false-positive gap-closer insertion
+  - New system uses a priority chain: user override → SpellDB default[1] → SpellDB default[2]; first spell found on the action bar wins
+  - Two hardcoded candidates per spec (e.g. Backstab + Shadowstrike for Sub Rogue); primary shown in options, backup is hidden
+  - New **Melee Range Reference** group in Gap-Closers options: shows current default, allows user override via spell ID input
+  - `OnActionRangeUpdate` now only triggers queue rebuilds when the melee reference slot changes range (not every slot)
+  - `SeedRangeState()` loop over 120 slots eliminated — replaced by direct `IsActionInRange(slot)` check on the single reference slot
+- **Gap-closer OOC visibility** — fixed gap closer not always appearing out of combat
+  - `IsPrimarySpellOutOfRange` replaced by `IsMeleeTargetOutOfRange` (uses fixed reference spell instead of queue position 1)
+  - `OnActionRangeUpdate` now calls `SpellQueue.ForceUpdate()` on melee reference slot range transitions so the queue rebuilds immediately
+- **Gap-closer position-1 dedup** — when Blizzard's Assisted Combat suggests a gap closer (e.g. Charge) as the primary spell at position 1, JustAC no longer injects a second gap closer at position 2
+  - New `DefensiveEngine.IsGapCloserSpell()` checks both base IDs and talent overrides
+- **SpellQueue dead code cleanup** (v34→v35) — removed dead stabilization code, fixed `lastSpellIDs` aliasing bug, removed unused functions/variables
+
+### Added
+- **Gap-Closer System** — suggests gap-closing abilities (Charge, Shadowstep, Fel Rush, etc.) when the target is out of melee range
+  - Appears at position 2, before spellbook procs (highest priority after Blizzard's primary suggestion)
+  - Uses `ACTION_RANGE_CHECK_UPDATE` (NeverSecret) for range detection via a fixed per-spec melee reference spell — fully combat-safe under 12.0 secret value system
+  - Uses `isOnGCD` (NeverSecret) for cooldown readiness checks
+  - 150ms debounce on hide path to prevent flicker during kiting; show path is instant
+  - Spec-aware defaults for all melee specs (Warrior, Rogue, DK, DH, Feral/Guardian Druid, Survival Hunter, WW/BM Monk, Ret/Prot Paladin, Enhancement Shaman)
+  - Per-spec spell list stored in profile (`gapClosers.classSpells[CLASS_SPECINDEX]`)
+  - New **Gap-Closers** options tab with priority list management, restore defaults, and spell search
+  - Red emphasis glow (same tint as interrupts) on gap-closer icons, with independent toggle (`showGlow`) separate from the proc glow dropdown
+  - Gap-closer and interrupt icons now use red-tinted marching ants crawl instead of red proc glow — proc glow is reserved for actual spell procs
+  - Gap-closer crawl animates even out of combat (unlike other crawls which pause OOC)
+- `BlizzardAPI.IsTargetInterruptWorthy()` — combat-safe check to suppress interrupt/CC suggestions on trivial targets
+  - `"minus"` classification mobs (swarm adds, Explosive orbs) — not worth a kick CD
+  - `UnitIsMinion()` targets (pets, totems, treants, guardians) — combat-safe replacement for secreted `UnitCreatureType()` Mechanical/Totem check
+- Interrupt guard in both UIRenderer and UINameplateOverlay — skips cast bar processing entirely for unworthy targets
+
+### Documentation
+- New "Combat-Safe Signal Reference" section in `Documentation/12.0_COMPATIBILITY.md` — authoritative matrix of all APIs tested in 12.0 combat with verification dates
+- Updated `copilot-instructions.md` NeverSecret section with newly verified target APIs
+
 ## [4.3.1] - 2026-02-24
 
 ### Fixed

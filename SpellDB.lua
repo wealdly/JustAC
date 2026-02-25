@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 7)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 8)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ local DEFENSIVE_SPELLS = {
     [108238] = true,  -- Renewal
     [22842] = true,   -- Frenzied Regeneration
     [192081] = true,  -- Ironfur
-    [203974] = true,  -- Earthwarden
+    -- REMOVED: Earthwarden (203974) - passive talent, not castable
     
     -- Evoker
     [363916] = true,  -- Obsidian Scales
@@ -47,6 +47,7 @@ local DEFENSIVE_SPELLS = {
     [357170] = true,  -- Time Dilation
     [378441] = true,  -- Time Stop
     [406732] = true,  -- Spatial Paradox (also supportive/healing for Preservation)
+    [360827] = true,  -- Blistering Scales (Augmentation - shield + thorns)
 
     -- Hunter
     [186265] = true,  -- Aspect of the Turtle
@@ -58,14 +59,14 @@ local DEFENSIVE_SPELLS = {
     
     -- Mage
     [45438] = true,   -- Ice Block
-    [55342] = true,   -- Mirror Image
+    -- MOVED: Mirror Image (55342) - DPS cooldown, not defensive
     [66] = true,      -- Invisibility
     [110959] = true,  -- Greater Invisibility
     [235313] = true,  -- Blazing Barrier
     [235450] = true,  -- Prismatic Barrier
     [11426] = true,   -- Ice Barrier
     [342245] = true,  -- Alter Time
-    [108839] = true,  -- Ice Floes
+    -- MOVED: Ice Floes (108839) - cast-while-moving utility, not defensive
     
     -- Monk
     [115176] = true,  -- Zen Meditation
@@ -126,17 +127,17 @@ local DEFENSIVE_SPELLS = {
     [108281] = true,  -- Ancestral Guidance
     [114052] = true,  -- Ascendance (Restoration)
     [98008] = true,   -- Spirit Link Totem
-    [192077] = true,  -- Wind Rush Totem
-    [192249] = true,  -- Storm Elemental
-    [16191] = true,   -- Mana Tide Totem
+    -- MOVED: Wind Rush Totem (192077) - movement speed utility, not defensive
+    -- REMOVED: Storm Elemental (192249) - offensive DPS cooldown for Elemental Shaman
+    -- MOVED: Mana Tide Totem (16191) - mana restoration utility, not defensive
     
     -- Warlock
     [104773] = true,  -- Unending Resolve
     [108416] = true,  -- Dark Pact
     [212295] = true,  -- Nether Ward
     -- MOVED: Mortal Coil (6789) - horror CC, classified as crowd control
-    [386997] = true,  -- Soul Harvester
-    [264106] = true,  -- Deathbolt (defensive talent)
+    -- REMOVED: Soul Harvester (386997) - hero talent tree name, not a castable spell
+    -- REMOVED: Deathbolt (264106) - offensive damage ability, not defensive
     
     -- Warrior
     [871] = true,     -- Shield Wall
@@ -168,7 +169,7 @@ local HEALING_SPELLS = {
     [33763] = true,   -- Lifebloom
     [48438] = true,   -- Wild Growth
     [102351] = true,  -- Cenarion Ward
-    [102401] = true,  -- Wild Charge (Resto)
+    -- MOVED: Wild Charge (102401) - movement ability, classified as utility
     [145205] = true,  -- Efflorescence
     [155777] = true,  -- Rejuvenation (Germination)
     [197721] = true,  -- Flourish
@@ -180,7 +181,7 @@ local HEALING_SPELLS = {
     -- Evoker
     [355913] = true,  -- Emerald Blossom
     [360823] = true,  -- Naturalize
-    [360827] = true,  -- Blistering Scales
+    -- MOVED: Blistering Scales (360827) - defensive shield + thorns, classified as defensive
     [360995] = true,  -- Verdant Embrace
     [361469] = true,  -- Living Flame (heal)
     [363534] = true,  -- Rewind
@@ -217,7 +218,7 @@ local HEALING_SPELLS = {
     [114158] = true,  -- Light's Hammer
     [114165] = true,  -- Holy Prism
     -- REMOVED: Light of the Protector (183998) - replaced by Word of Glory
-    [213644] = true,  -- Cleanse Toxins
+    -- MOVED: Cleanse Toxins (213644) - dispel, classified as utility
     [223306] = true,  -- Bestow Faith
     [200025] = true,  -- Beacon of Virtue
     [216331] = true,  -- Avenging Crusader
@@ -227,7 +228,7 @@ local HEALING_SPELLS = {
     [388013] = true,  -- Blessing of Spring
     [31821] = true,   -- Aura Mastery
     [4987] = true,    -- Cleanse
-    [213652] = true,  -- Hand of the Protector
+    -- REMOVED: Hand of the Protector (213652) - merged into Word of Glory
     
     -- Priest
     [17] = true,      -- Power Word: Shield
@@ -240,12 +241,12 @@ local HEALING_SPELLS = {
     [32546] = true,   -- Binding Heal
     [34861] = true,   -- Holy Word: Sanctify
     [64843] = true,   -- Divine Hymn
-    [88625] = true,   -- Holy Word: Chastise (disc talent heal)
+    -- MOVED: Holy Word: Chastise (88625) - damage + incapacitate, classified as CC
     [110744] = true,  -- Divine Star (heal)
     [120517] = true,  -- Halo (heal)
     [200183] = true,  -- Apotheosis
     [204883] = true,  -- Circle of Healing
-    [289666] = true,  -- Greater Heal
+    -- REMOVED: Greater Heal (289666) - not a learnable spell in retail
     [73325] = true,   -- Leap of Faith
     [596] = true,     -- Prayer of Healing
     [33076] = true,   -- Prayer of Mending
@@ -370,6 +371,7 @@ local CROWD_CONTROL_SPELLS = {
     [9484] = true,    -- Shackle Undead
     [15487] = true,   -- Silence
     [64044] = true,   -- Psychic Horror
+    [88625] = true,   -- Holy Word: Chastise (incapacitate)
     [205369] = true,  -- Mind Bomb
     [605] = true,     -- Mind Control
     
@@ -537,6 +539,11 @@ local UTILITY_SPELLS = {
     [131347] = true,  -- Glide (DH)
     [202138] = true,  -- Sigil of Chains (DH)
     [375087] = true,  -- Dragonriding abilities
+    [192077] = true,  -- Wind Rush Totem (Shaman - movement speed)
+    [16191] = true,   -- Mana Tide Totem (Shaman - mana restoration)
+    [108839] = true,  -- Ice Floes (Mage - cast while moving)
+    [102401] = true,  -- Wild Charge (Druid - movement)
+    [213644] = true,  -- Cleanse Toxins (Paladin - dispel)
 }
 
 --------------------------------------------------------------------------------
@@ -732,8 +739,126 @@ SpellDB.CLASS_INTERRUPT_DEFAULTS = {
     WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
 }
 
--- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
+-- Gap-closer spells for melee specs (shown when target is out of melee range).
+-- Spec-aware: keyed by "CLASS_SPECINDEX" so only melee specs get suggestions.
+-- GetSpecialization() returns the spec index (1-4); compose key as CLASS .. "_" .. specIndex.
+-- Omitted entries = ranged/healer spec → no gap-closer suggestions.
+-- Priority-ordered: first usable spell is shown.
+-- Hot-path locals for gap-closer helpers (config-time only, but keep consistent)
 local UnitClass = UnitClass
+local GetSpecialization = GetSpecialization
+
+SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
+    -- Death Knight: all specs are melee
+    DEATHKNIGHT_1 = {49576},                         -- Blood: Death Grip
+    DEATHKNIGHT_2 = {49576},                         -- Frost: Death Grip
+    DEATHKNIGHT_3 = {49576},                         -- Unholy: Death Grip
+
+    -- Demon Hunter: Havoc is melee (spec 1), Vengeance is melee tank (spec 2)
+    DEMONHUNTER_1 = {195072},                        -- Havoc: Fel Rush
+    -- REMOVED: Vengeful Retreat (198793) - jumps backward, not a gap closer
+    DEMONHUNTER_2 = {189110},                        -- Vengeance: Infernal Strike
+
+    -- Druid: Feral (2) and Guardian (3) are melee
+    DRUID_2 = {102401},                              -- Feral: Wild Charge
+    DRUID_3 = {102401},                              -- Guardian: Wild Charge
+
+    -- Evoker: Augmentation (3) is mid-range, not truly melee — omit all
+
+    -- Hunter: Survival (3) is melee
+    HUNTER_3 = {186270},                             -- Survival: Harpoon
+
+    -- Monk: Windwalker (3) is melee, Brewmaster (1) is melee tank
+    MONK_1 = {109132, 115008},                       -- Brewmaster: Roll, Chi Torpedo
+    MONK_3 = {109132, 115008, 101545},               -- Windwalker: Roll, Chi Torpedo, Flying Serpent Kick
+
+    -- Paladin: Retribution (3) is melee, Protection (2) is melee tank
+    PALADIN_2 = {190784},                            -- Protection: Divine Steed
+    PALADIN_3 = {190784},                            -- Retribution: Divine Steed
+
+    -- Rogue: all specs are melee
+    ROGUE_1 = {36554, 2983},                         -- Assassination: Shadowstep, Sprint
+    ROGUE_2 = {36554, 195457, 2983},                 -- Outlaw: Shadowstep, Grappling Hook, Sprint
+    ROGUE_3 = {185438, 36554, 2983},                 -- Subtlety: Shadowstrike (stealth), Shadowstep, Sprint
+
+    -- Shaman: Enhancement (2) is melee
+    SHAMAN_2 = {192063, 58875},                      -- Enhancement: Gust of Wind, Spirit Walk
+
+    -- Warrior: all specs are melee
+    WARRIOR_1 = {100, 6544},                         -- Arms: Charge, Heroic Leap
+    WARRIOR_2 = {100, 6544},                         -- Fury: Charge, Heroic Leap
+    WARRIOR_3 = {100, 6544},                         -- Protection: Charge, Heroic Leap
+}
+
+--------------------------------------------------------------------------------
+-- MELEE RANGE REFERENCE SPELLS
+-- Two core melee abilities per spec, ordered by priority.  We poll their
+-- action-bar slot with IsActionInRange() to decide "out of melee range".
+-- [1] = primary (shown as default in options), [2] = hidden backup.
+-- The engine tries user override first, then [1], then [2] — first one
+-- found on the action bar wins.  Must be reliable, always-known, ~5 yd
+-- melee abilities the player is likely to have on their bar.
+--------------------------------------------------------------------------------
+SpellDB.MELEE_RANGE_REFERENCE_SPELLS = {
+    -- Death Knight
+    DEATHKNIGHT_1 = {49998, 206930},  -- Blood: Death Strike, Heart Strike
+    DEATHKNIGHT_2 = {49020, 49998},   -- Frost: Obliterate, Death Strike
+    DEATHKNIGHT_3 = {55090, 49998},   -- Unholy: Scourge Strike, Death Strike
+
+    -- Demon Hunter
+    DEMONHUNTER_1 = {162794, 232893}, -- Havoc: Chaos Strike, Felblade
+    DEMONHUNTER_2 = {228477, 204513}, -- Vengeance: Soul Cleave, Shear
+
+    -- Druid
+    DRUID_2 = {5221, 1822},           -- Feral: Shred, Rake
+    DRUID_3 = {33917, 77758},         -- Guardian: Mangle, Thrash
+
+    -- Hunter
+    HUNTER_3 = {259387, 186270},      -- Survival: Mongoose Bite, Raptor Strike
+
+    -- Monk
+    MONK_1 = {100780, 205523},        -- Brewmaster: Tiger Palm, Blackout Kick
+    MONK_3 = {100780, 107428},        -- Windwalker: Tiger Palm, Rising Sun Kick
+
+    -- Paladin
+    PALADIN_2 = {35395, 53600},       -- Protection: Crusader Strike, Shield of the Righteous
+    PALADIN_3 = {35395, 215661},      -- Retribution: Crusader Strike, Justicar's Vengeance
+
+    -- Rogue
+    ROGUE_1 = {1329, 703},            -- Assassination: Mutilate, Garrote
+    ROGUE_2 = {193315, 315341},       -- Outlaw: Sinister Strike, Between the Eyes (ranged fallback)
+    ROGUE_3 = {53, 196819},           -- Subtlety: Backstab, Shadowstrike (stealth swap)
+
+    -- Shaman
+    SHAMAN_2 = {17364, 60103},        -- Enhancement: Stormstrike, Lava Lash
+
+    -- Warrior
+    WARRIOR_1 = {12294, 262161},      -- Arms: Mortal Strike, Warbreaker
+    WARRIOR_2 = {23881, 85288},       -- Fury: Bloodthirst, Raging Blow
+    WARRIOR_3 = {23922, 6572},        -- Protection: Shield Slam, Revenge
+}
+
+--- Check whether the current spec has gap-closer defaults (i.e. is a melee spec).
+--- Returns true if CLASS_GAPCLOSER_DEFAULTS has an entry for the current class+spec.
+function SpellDB.IsMeleeSpec()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return false end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return false end
+    local key = playerClass .. "_" .. spec
+    return SpellDB.CLASS_GAPCLOSER_DEFAULTS[key] ~= nil
+end
+
+--- Return the gap-closer default list for the current class+spec, or nil.
+function SpellDB.GetGapCloserDefaults()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil end
+    return SpellDB.CLASS_GAPCLOSER_DEFAULTS[playerClass .. "_" .. spec]
+end
+
+-- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
 local pcall = pcall
 local issecretvalue = issecretvalue

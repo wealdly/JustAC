@@ -7,7 +7,7 @@ if not MacroParser then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local type = type
 local tonumber = tonumber
 local string_lower = string.lower
@@ -16,7 +16,11 @@ local string_find = string.find
 local string_gmatch = string.gmatch
 local string_sub = string.sub
 local table_insert = table.insert
+local pairs = pairs
+local pcall = pcall
+local wipe = wipe
 
+local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local IsStealthed = IsStealthed
 local IsSpellKnown = IsSpellKnown

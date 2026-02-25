@@ -4,7 +4,7 @@
 local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 5)
 if not UIHealthBar then return end
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local UnitExists = UnitExists

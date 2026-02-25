@@ -162,6 +162,17 @@ Two-tier health thresholds in `JustAC.lua`:
 - `auraInstanceID` — Stable numeric handle, same ID maps to same aura across combat. Use for tracking aura identity when `spellId`/`name` are secret.
 - `isHelpful` / `isHarmful` — Aura disposition (may be secret in some contexts, fail-open)
 
+**NeverSecret Target APIs (verified 2026-02-24):**
+- `UnitClassification("target")` — `"normal"`, `"elite"`, `"worldboss"`, `"rare"`, `"rareelite"`, `"minus"`
+- `UnitIsUnit("target", "boss1-5")` — Boss slot detection
+- `UnitIsPlayer("target")` — Player vs NPC (confirmed `issecretvalue()=false`)
+- `UnitIsMinion("target")` — Pets, totems, treants (combat-safe creature-type replacement)
+- `UnitThreatSituation("player", "target")` — 0-3 threat state
+- `UnitIsCrowdControlled("target")` — Target already CC'd
+- `nameplate.UnitFrame.isPlayer` / `.isFriend` — Cached table fields, bypass secret system
+
+**See:** `Documentation/12.0_COMPATIBILITY.md` → "Combat-Safe Signal Reference" for full matrix
+
 **Secret Values (WoW 12.0+):**
 - Blizzard hides certain combat data to prevent automation
 - **Detection:** `BlizzardAPI.IsSecretValue(value)` returns `true` for secret data

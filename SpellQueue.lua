@@ -1,14 +1,14 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 34)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 35)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local IsMounted = IsMounted
@@ -17,32 +17,30 @@ local UnitExists = UnitExists
 local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
+local ipairs = ipairs
 
 -- NOTE: Local spell info cache was removed — now delegates to BlizzardAPI.GetCachedSpellInfo()
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 
--- Primary spell stabilization to prevent flicker during rapid transitions
--- Holds the primary spell briefly if the new one matches what was just in slot 2
-local lastPrimarySpellID = nil
-local lastPrimaryChangeTime = 0
-local PRIMARY_STABILIZATION_WINDOW = 0.05  -- 50ms - very tight, just enough to smooth GCD transitions
+-- Lazy-resolved references for gap-closer (DefensiveEngine loads after SpellQueue in TOC)
+local cachedDefensiveEngine = nil
+local cachedAddon = nil
 
--- Reusable tables to avoid GC pressure in hot loop
--- Using paired arrays: proccedBase[i]/proccedDisplay[i] for base/display spell IDs
-local proccedBase = {}
-local proccedDisplay = {}
-local normalBase = {}
-local normalDisplay = {}
--- Pooled tables for GetCurrentSpellQueue (wiped at start of each call)
+-- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
+-- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
+local syntheticProcs = {}
+
+-- Reusable pooled tables (wiped at start of each queue build to avoid GC pressure)
+local proccedSpells = {}
+local normalSpells = {}
 local addedSpellIDs = {}
 local recommendedSpells = {}
 
 -- Per-update cache for spell filter results (cleared at start of each GetCurrentSpellQueue call)
 -- Prevents re-checking the same spell multiple times per update cycle
 local filterResultCache = {}
-local filterCacheUpdateTime = 0
 
 -- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
@@ -58,12 +56,10 @@ local function GetQueueThrottleInterval()
 end
 
 function SpellQueue.GetCachedSpellInfo(spellID)
-    -- Delegate to BlizzardAPI's unified spell cache
     return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
 end
 
 function SpellQueue.ClearSpellCache()
-    -- Delegate to BlizzardAPI's unified spell cache
     if BlizzardAPI and BlizzardAPI.ClearSpellCache then
         BlizzardAPI.ClearSpellCache()
     end
@@ -73,20 +69,6 @@ function SpellQueue.ClearAvailabilityCache()
     if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then
         BlizzardAPI.ClearAvailabilityCache()
     end
-end
-
-function SpellQueue.CompareSpellArrays(arr1, arr2)
-    if arr1 == arr2 then return true end
-    if not arr1 or not arr2 then return false end
-    
-    local len1, len2 = #arr1, #arr2
-    if len1 ~= len2 then return false end
-    if len1 == 0 then return true end
-    
-    for i = 1, len1 do
-        if arr1[i] ~= arr2[i] then return false end
-    end
-    return true
 end
 
 function SpellQueue.IsSpellBlacklisted(spellID)
@@ -121,7 +103,6 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
         if addon and addon.DebugPrint then addon:DebugPrint("Blacklisted: " .. spellName) end
     end
     
-    -- Refresh options panel if open
     local Options = LibStub("JustAC-Options", true)
     if Options and Options.UpdateBlacklistOptions and addon then
         Options.UpdateBlacklistOptions(addon)
@@ -164,12 +145,6 @@ local function IsSpellUsable(spellID)
     -- The renderer's cooldown swipe already shows if a spell is on cooldown
     local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
     return isUsable
-end
-
--- Helper: Check if either base or display spell ID is blacklisted
-local function IsSpellOrDisplayBlacklisted(baseSpellID, displaySpellID)
-    return SpellQueue.IsSpellBlacklisted(displaySpellID) or
-           (baseSpellID ~= displaySpellID and SpellQueue.IsSpellBlacklisted(baseSpellID))
 end
 
 -- Helper: Check if spell passes common filters (availability, usability, redundancy)
@@ -274,6 +249,7 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Reuse pooled tables to avoid GC pressure
     wipe(recommendedSpells)
     wipe(addedSpellIDs)
+    wipe(syntheticProcs)
     local maxIcons = profile.maxIcons or 10
     local spellCount = 0
     
@@ -286,54 +262,72 @@ function SpellQueue.GetCurrentSpellQueue()
     local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
     
     if primarySpellID and primarySpellID > 0 then
-        local baseSpellID = primarySpellID
-        
-        -- Resolve override once for display (handles morphed spells like Metamorphosis)
-        local displaySpellID = BlizzardAPI.GetDisplaySpellID(baseSpellID)
-        
-        do
-            -- Position 1 is always shown — apply minimal stabilization
-            -- If primary changed to what was slot 2, hold briefly to smooth transition
-            local previousSlot2 = lastSpellIDs and lastSpellIDs[2]
-            
-            -- Track original IDs before stabilization to prevent duplicates
-            local originalDisplaySpellID = displaySpellID
-            local originalBaseSpellID = baseSpellID
-            
-            if displaySpellID ~= lastPrimarySpellID then
-                if previousSlot2 and displaySpellID == previousSlot2 then
-                    -- New primary matches old slot 2 - hold previous primary briefly (if not blacklisted)
-                    local prevBlacklisted = lastPrimarySpellID and SpellQueue.IsSpellBlacklisted(lastPrimarySpellID)
-                    if (now - lastPrimaryChangeTime) < PRIMARY_STABILIZATION_WINDOW and lastPrimarySpellID and not prevBlacklisted then
-                        -- Still in stabilization window, use previous primary
-                        displaySpellID = lastPrimarySpellID
-                        baseSpellID = lastPrimarySpellID  -- Keep consistent
+        local displaySpellID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+
+        addedSpellIDs[displaySpellID] = true
+        addedSpellIDs[primarySpellID] = true
+
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = displaySpellID
+    end
+
+    -- Gap-closer injection.
+    -- In combat:     insert at position 2 (never replace Blizzard's primary).
+    -- Out of combat: promote to position 1 (the rotation hasn't started yet,
+    --                so the gap closer is the first thing the player should press).
+    -- Skip entirely if position 1 is already a gap closer (Blizzard's assisted
+    -- combat system can suggest gap closers like Charge as the primary spell).
+    -- DefensiveEngine loads after SpellQueue in the TOC, so we resolve it lazily.
+    if spellCount < maxIcons then
+        if not cachedDefensiveEngine then
+            cachedDefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+        end
+        if not cachedAddon then
+            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        end
+        if cachedDefensiveEngine and cachedDefensiveEngine.GetGapCloserSpell and cachedAddon then
+            -- If position 1 is already a gap closer, skip injection entirely
+            local pos1Display = recommendedSpells[1]
+            local pos1IsGapCloser = false
+            if cachedDefensiveEngine.IsGapCloserSpell then
+                pos1IsGapCloser = (primarySpellID and cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
+                    or (pos1Display and pos1Display ~= primarySpellID and cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, pos1Display))
+            end
+
+            if not pos1IsGapCloser then
+                local gcSpell, gcBase = cachedDefensiveEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
+                if gcSpell then
+                    local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
+                    if spellCount >= 1 then
+                        -- Promote gap closer to position 1: the primary spell is
+                        -- out of range so you can't cast it — the gap closer is
+                        -- always the correct first action.
+                        for i = spellCount, 1, -1 do
+                            recommendedSpells[i + 1] = recommendedSpells[i]
+                        end
+                        recommendedSpells[1] = gcSpell
                     else
-                        -- Stabilization window passed, first change, or prev was blacklisted
-                        lastPrimarySpellID = displaySpellID
-                        lastPrimaryChangeTime = now
+                        recommendedSpells[1] = gcSpell
                     end
-                else
-                    -- Different change (not a shift-up), accept immediately
-                    lastPrimarySpellID = displaySpellID
-                    lastPrimaryChangeTime = now
+                    spellCount = spellCount + 1
+                    addedSpellIDs[gcSpell] = true
+                    addedSpellIDs[gcDisplay] = true
+                    if gcBase and gcBase ~= gcSpell then
+                        addedSpellIDs[gcBase] = true
+                    end
+                    syntheticProcs[gcSpell] = true
+                    syntheticProcs[gcDisplay] = true
                 end
             end
-            
-            -- Track all IDs (display, base, original) to prevent duplicates during stabilization
-            addedSpellIDs[displaySpellID] = true
-            addedSpellIDs[baseSpellID] = true
-            addedSpellIDs[originalDisplaySpellID] = true
-            addedSpellIDs[originalBaseSpellID] = true
-            
-            -- Position 1 is shown
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = displaySpellID
-        end  -- do block
-    else
-        -- No primary spell, reset stabilization tracking
-        lastPrimarySpellID = nil
-        lastPrimaryChangeTime = 0
+
+            -- Suppress ALL gap-closer spells from the rotation list (positions 2+).
+            -- When the gap-closer system is enabled, our insertion controls when
+            -- these spells appear — letting them leak into the rotation causes
+            -- duplicates or inconsistent position changes.
+            if cachedDefensiveEngine.MarkGapCloserSpellIDs then
+                cachedDefensiveEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
+            end
+        end
     end
 
     -- Check for procced spells from spellbook that aren't in the rotation list
@@ -378,98 +372,92 @@ function SpellQueue.GetCurrentSpellQueue()
     end
     local rotationList = cachedRotationList
     if rotationList then
-        -- Reuse pooled tables to avoid GC pressure (paired arrays for base/display spell IDs)
-        -- Split procced into important vs regular for priority sorting
-        wipe(proccedBase)
-        wipe(proccedDisplay)
-        wipe(normalBase)
-        wipe(normalDisplay)
+        wipe(proccedSpells)
+        wipe(normalSpells)
         local proccedCount, normalCount = 0, 0
         local rotationCount = #rotationList
 
-        -- First pass: categorize spells into procced and normal
+        -- First pass: categorize into procced (priority) and normal
         for i = 1, rotationCount do
             local spellID = rotationList[i]
             if spellID and not addedSpellIDs[spellID] then
-                -- Early blacklist check on base spell ID (before GetDisplaySpellID call)
                 if not SpellQueue.IsSpellBlacklisted(spellID) then
-                    -- Get the actual spell we'd display (might be an override)
                     local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
 
-                    -- Skip if override already shown
                     if not addedSpellIDs[actualSpellID] then
-                        -- Filter: not blacklisted, not item, available, not redundant
-                        -- NOTE: intentionally skips IsSpellUsable — cooldowns are secret in combat
-                        -- and a spell filtered out for CD would never reappear this session.
                         local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(actualSpellID)
                         if not SpellQueue.IsSpellBlacklisted(actualSpellID)
                            and not isItemSpell
                            and PassesRotationFilters(actualSpellID, profile) then
-                            -- Mark as added to prevent duplicates (both actualSpellID and base spellID)
                             addedSpellIDs[actualSpellID] = true
                             addedSpellIDs[spellID] = true
-                            
-                            -- Categorize: procs shown first, then normal (proc detection bypassed if secrets detected)
+
                             local isProcced = not bypassProcs and BlizzardAPI.IsSpellProcced(actualSpellID)
                             if isProcced then
                                 proccedCount = proccedCount + 1
-                                proccedBase[proccedCount] = spellID
-                                proccedDisplay[proccedCount] = actualSpellID
+                                proccedSpells[proccedCount] = actualSpellID
                             else
                                 normalCount = normalCount + 1
-                                normalBase[normalCount] = spellID
-                                normalDisplay[normalCount] = actualSpellID
+                                normalSpells[normalCount] = actualSpellID
                             end
                         end
                     end
                 end
             end
         end
-        
-        -- Second pass: add procced spells first, then normal
-        -- addedSpellIDs updated in first pass; avoid duplicate updates
-        -- Extra safety check: verify no duplicates slip through (shouldn't happen but failsafe)
+
+        -- Second pass: append procced first, then normal
         for i = 1, proccedCount do
             if spellCount >= maxIcons then break end
-            local spellToAdd = proccedDisplay[i]
-            -- Paranoid duplicate check (should already be in addedSpellIDs)
-            if not recommendedSpells[1] or spellToAdd ~= recommendedSpells[1] then
-                spellCount = spellCount + 1
-                recommendedSpells[spellCount] = spellToAdd
-            end
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = proccedSpells[i]
         end
-        
-        -- Only process normal spells if we still have room
-        if spellCount < maxIcons then
-            for i = 1, normalCount do
-                if spellCount >= maxIcons then break end
-                local spellToAdd = normalDisplay[i]
-                -- Paranoid duplicate check against position 1
-                if not recommendedSpells[1] or spellToAdd ~= recommendedSpells[1] then
-                    spellCount = spellCount + 1
-                    recommendedSpells[spellCount] = spellToAdd
-                end
-            end
+        for i = 1, normalCount do
+            if spellCount >= maxIcons then break end
+            spellCount = spellCount + 1
+            recommendedSpells[spellCount] = normalSpells[i]
         end
     end
 
-    lastSpellIDs = recommendedSpells
+    -- Copy to lastSpellIDs (separate table so wipe(recommendedSpells) doesn't destroy cached results)
+    wipe(lastSpellIDs)
+    for i = 1, spellCount do
+        lastSpellIDs[i] = recommendedSpells[i]
+    end
     return recommendedSpells
 end
 
 function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
-    -- Reset stabilization to allow immediate response
-    lastPrimarySpellID = nil
-    lastPrimaryChangeTime = 0
-    -- Don't wipe lastSpellIDs to avoid blinking
+end
+
+--- Returns true if spellID was injected as a synthetic proc (gap-closer, etc.)
+--- by the most recent GetCurrentSpellQueue() call.
+function SpellQueue.IsSyntheticProc(spellID)
+    return syntheticProcs[spellID] == true
+end
+
+--- Returns true if spellID is ANY known gap-closer for the current spec
+--- (regardless of whether it was injected by our system this frame).
+--- Used by renderers to keep the gap-closer glow when Blizzard suggests a
+--- gap closer at position 1 after our injection is removed (in-range transition).
+function SpellQueue.IsGapCloserSpell(spellID)
+    if not cachedDefensiveEngine or not cachedDefensiveEngine.IsGapCloserSpell then
+        if not cachedDefensiveEngine then
+            cachedDefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+        end
+        if not cachedDefensiveEngine or not cachedDefensiveEngine.IsGapCloserSpell then
+            return false
+        end
+    end
+    if not cachedAddon then
+        cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    end
+    return cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, spellID)
 end
 
 function SpellQueue.OnSpecChange()
     SpellQueue.ClearSpellCache()
-    -- Reset stabilization for new spec
-    lastPrimarySpellID = nil
-    lastPrimaryChangeTime = 0
     SpellQueue.ForceUpdate()
 end
 

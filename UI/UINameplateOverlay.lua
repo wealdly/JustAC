@@ -25,19 +25,16 @@ local UnitCanAttack      = UnitCanAttack
 local UnitHealth         = UnitHealth
 local UnitHealthMax      = UnitHealthMax
 local math_max           = math.max
+local math_min           = math.min
 local math_floor         = math.floor
+local ipairs             = ipairs
 local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
 
--- Post-interrupt debounce: suppress interrupt reminder briefly after player
--- uses an interrupt/CC so the cast bar's lingering visibility doesn't cause
--- the addon to recommend the next spell in the list.
+-- Post-interrupt debounce: cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
 local npLastInterruptUsedTime = 0
 local npLastInterruptShownID  = nil
--- CC-applied suppression: when the player lands a CC spell on a target, suppress the
--- interrupt icon for a window so the next CC isn't suggested before the game registers
--- the CC state.  2s is enough to cover API state-registration lag; shorter than any
--- meaningful CC duration so back-to-back CCs on the same target still work.
+-- CC-applied suppression: 2s covers state-registration lag; short enough for back-to-back CCs to still work.
 local CC_APPLIED_SUPPRESS  = 2.0  -- seconds
 local npLastCCAppliedTime  = 0
 
@@ -174,6 +171,7 @@ local function CreateOverlayIcon(iconSize, profile)
     hotkeyText:SetTextColor(1, 1, 1, 1)
     hotkeyText:SetJustifyH("RIGHT")
     hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", -3, -3)
+    button.hotkeyFrame = hotkeyFrame
     button.hotkeyText = hotkeyText
 
     -- Charge count text (bottom-right; required by UpdateButtonCooldowns)
@@ -235,10 +233,11 @@ local function CreateOverlayIcon(iconSize, profile)
     button.cachedHotkey             = nil
 
     -- Glow state flags
-    button.hasAssistedGlow  = false
-    button.hasInterruptGlow = false
-    button.hasProcGlow      = false
-    button.hasDefensiveGlow = false
+    button.hasAssistedGlow    = false
+    button.hasInterruptGlow   = false
+    button.hasProcGlow        = false
+    button.hasGapCloserGlow   = false
+    button.hasDefensiveGlow   = false
 
     button:SetAlpha(0)
     button:Hide()
@@ -630,8 +629,8 @@ function UINameplateOverlay.Create(addon)
     UINameplateOverlay.Destroy(addon)   -- clean slate
 
     local iconSize = npo.iconSize or 26
-    local maxDPS   = math.min(npo.maxIcons or 1, 5)
-    local maxDef   = npo.showDefensives and math.min(npo.maxDefensiveIcons or 1, 5) or 0
+    local maxDPS   = math_min(npo.maxIcons or 1, 5)
+    local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 1, 5) or 0
 
     for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize, profile) end
     for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
@@ -767,8 +766,9 @@ function UINameplateOverlay.UpdateAnchor(addon)
         -- Detach and hide every element
         for _, icon in ipairs(dpsIcons) do
             if UIAnimations then
-                if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon);  icon.hasAssistedGlow  = false end
-                if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow      = false end
+                if icon.hasAssistedGlow    then UIAnimations.StopAssistedGlow(icon);    icon.hasAssistedGlow    = false end
+                if icon.hasProcGlow        then UIAnimations.HideProcGlow(icon);        icon.hasProcGlow        = false end
+                if icon.hasGapCloserGlow   then UIAnimations.StopGapCloserGlow(icon);   icon.hasGapCloserGlow   = false end
             end
             icon:ClearAllPoints()
             icon:Hide()
@@ -812,6 +812,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
     local hasSpells   = spellIDs and #spellIDs > 0
     local npoGlowMode  = npo.glowMode or "all"
+    local npoShowProcGlow = (npoGlowMode == "all" or npoGlowMode == "procOnly")
+    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow ~= false
     local npoOverlays  = npo.textOverlays
     local showHotkey   = not npoOverlays or not npoOverlays.hotkey or npoOverlays.hotkey.show ~= false
     local opacity      = npo.opacity or 1.0
@@ -821,7 +823,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local inCombat = UnitAffectingCombat("player")
 
     local GetCachedSpellInfo = SpellQueue  and SpellQueue.GetCachedSpellInfo
-    local IsSpellProcced     = BlizzardAPI and BlizzardAPI.IsSpellProcced
+    local IsSyntheticProc    = SpellQueue  and SpellQueue.IsSyntheticProc
+    local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
     -- Check if player is channeling (grey out icons to emphasize not interrupting)
@@ -846,7 +849,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
         -- read the enemy spell icon even after the debounce block closes.
         local castBar = nil
 
-        if not debounceActive then
+        if not debounceActive and BlizzardAPI.IsTargetInterruptWorthy() then
             -- Read cast bar state from the target nameplate.
             local uf = currentNameplate.UnitFrame
             castBar = uf and uf.castBar
@@ -1076,11 +1079,25 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.hasAssistedGlow = false
             end
 
-            local isProc = IsSpellProcced and IsSpellProcced(spellID)
-            if isProc and (npoGlowMode == "all" or npoGlowMode == "procOnly") then
+            local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
+            local isGapCloser = isSyntheticProc
+                or (SpellQueue and SpellQueue.IsGapCloserSpell and SpellQueue.IsGapCloserSpell(spellID))
+            local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
+
+            -- Gap-closer glow takes priority over standard proc glow
+            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
+            local wantProcGlow = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+
+            if wantProcGlow then
                 if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon); icon.hasProcGlow = true end
             elseif icon.hasProcGlow then
                 UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false
+            end
+
+            if isGapCloser and showGapCloserGlow then
+                if not icon.hasGapCloserGlow then UIAnimations.StartGapCloserGlow(icon); icon.hasGapCloserGlow = true end
+            elseif icon.hasGapCloserGlow then
+                UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false
             end
 
             -- Hotkey: look up on spell change or throttle interval; always track

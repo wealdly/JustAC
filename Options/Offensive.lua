@@ -10,213 +10,224 @@ local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function Offensive.CreateTabArgs(addon)
+    local GapClosers = LibStub("JustAC-OptionsGapClosers", true)
     return {
         type = "group",
         name = L["Offensive"],
         order = 3,
+        childGroups = "tab",
         args = {
-            -- QUEUE CONTENT (10-19)
-            contentHeader = {
-                type = "header",
-                name = L["Queue Content"],
-                order = 10,
-            },
-            includeHiddenAbilities = {
-                type = "toggle",
-                name = L["Include All Available Abilities"],
-                desc = L["Include All Available Abilities desc"],
-                order = 11,
-                width = "full",
-                get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
-                set = function(_, val)
-                    addon.db.profile.includeHiddenAbilities = val
-                    addon:ForceUpdate()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            showSpellbookProcs = {
-                type = "toggle",
-                name = L["Insert Procced Abilities"],
-                desc = L["Insert Procced Abilities desc"],
-                order = 12,
-                width = "full",
-                get = function() return addon.db.profile.showSpellbookProcs or false end,
-                set = function(_, val)
-                    addon.db.profile.showSpellbookProcs = val
-                    addon:ForceUpdate()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            hideItemAbilities = {
-                type = "toggle",
-                name = L["Allow Item Abilities"],
-                desc = L["Allow Item Abilities desc"],
-                order = 13,
-                width = "full",
-                get = function() return not addon.db.profile.hideItemAbilities end,
-                set = function(_, val)
-                    addon.db.profile.hideItemAbilities = not val
-                    addon:ForceUpdate()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            showInterrupt = {
-                type = "toggle",
-                name = L["Show Interrupt Reminder"],
-                desc = L["Show Interrupt Reminder desc"],
-                order = 14,
-                width = "full",
-                get = function() return addon.db.profile.showInterrupt ~= false end,
-                set = function(_, val)
-                    addon.db.profile.showInterrupt = val
-                    addon:UpdateFrameSize()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            ccRegularMobs = {
-                type = "toggle",
-                name = L["CC Regular Mobs"],
-                desc = L["CC Regular Mobs desc"],
-                order = 14.5,
-                width = "full",
-                get = function() return addon.db.profile.ccRegularMobs ~= false end,
-                set = function(_, val)
-                    addon.db.profile.ccRegularMobs = val
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                        or not addon.db.profile.showInterrupt
-                end,
-            },
-            -- DISPLAY (15-19)
-            displayHeader = {
-                type = "header",
-                name = L["Display"],
-                order = 15,
-            },
-            maxIcons = {
-                type = "range",
-                name = L["Max Icons"],
-                desc = L["Max Icons desc"],
-                min = 1, max = 7, step = 1,
-                order = 15.5,
-                width = "normal",
-                get = function() return addon.db.profile.maxIcons or 4 end,
-                set = function(_, val)
-                    addon.db.profile.maxIcons = val
-                    addon:UpdateFrameSize()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            firstIconScale = {
-                type = "range",
-                name = L["Primary Spell Scale"],
-                desc = L["Primary Spell Scale desc"],
-                min = 0.5, max = 2.0, step = 0.1,
-                order = 16,
-                width = "normal",
-                get = function() return addon.db.profile.firstIconScale or 1.0 end,
-                set = function(_, val)
-                    addon.db.profile.firstIconScale = val
-                    addon:UpdateFrameSize()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            glowMode = {
-                type = "select",
-                name = L["Highlight Mode"],
-                desc = L["Highlight Mode desc"],
-                order = 18,
-                width = "normal",
-                values = {
-                    all = L["All Glows"],
-                    primaryOnly = L["Primary Only"],
-                    procOnly = L["Proc Only"],
-                    none = L["No Glows"],
-                },
-                sorting = {"all", "primaryOnly", "procOnly", "none"},
-                get = function() return addon.db.profile.glowMode or "all" end,
-                set = function(_, val)
-                    addon.db.profile.glowMode = val
-                    addon:ForceUpdate()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            showFlash = {
-                type = "toggle",
-                name = L["Show Key Press Flash"],
-                desc = L["Show Key Press Flash desc"],
-                order = 19,
-                width = "full",
-                get = function() return addon.db.profile.showFlash ~= false end,
-                set = function(_, val)
-                    addon.db.profile.showFlash = val
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            -- RESET (19.8+)
-            resetHeader = {
-                type = "header",
-                name = "",
-                order = 19.8,
-            },
-            resetDefaults = {
-                type = "execute",
-                name = L["Reset to Defaults"],
-                desc = L["Reset Offensive desc"],
-                order = 19.9,
-                width = "normal",
-                func = function()
-                    local p = addon.db.profile
-                    p.maxIcons               = 4
-                    p.firstIconScale         = 1.0
-                    p.glowMode               = "all"
-                    p.showFlash              = true
-                    p.includeHiddenAbilities = true
-                    p.showSpellbookProcs     = true
-                    p.hideItemAbilities      = false
-                    p.showInterrupt          = true
-                    p.ccRegularMobs          = true
-                    addon:UpdateFrameSize()
-                    addon:ForceUpdate()
-                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm == "disabled" or dm == "overlay"
-                end,
-            },
-            -- BLACKLIST (20+)
-            blacklistGroup = {
+            -- Sub-tab 1: Queue Settings
+            settings = {
                 type = "group",
-                inline = true,
+                name = L["Queue Settings"],
+                order = 1,
+                args = {
+                    -- QUEUE CONTENT (10-19)
+                    contentHeader = {
+                        type = "header",
+                        name = L["Queue Content"],
+                        order = 10,
+                    },
+                    includeHiddenAbilities = {
+                        type = "toggle",
+                        name = L["Include All Available Abilities"],
+                        desc = L["Include All Available Abilities desc"],
+                        order = 11,
+                        width = "full",
+                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.includeHiddenAbilities = val
+                            addon:ForceUpdate()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    showSpellbookProcs = {
+                        type = "toggle",
+                        name = L["Insert Procced Abilities"],
+                        desc = L["Insert Procced Abilities desc"],
+                        order = 12,
+                        width = "full",
+                        get = function() return addon.db.profile.showSpellbookProcs or false end,
+                        set = function(_, val)
+                            addon.db.profile.showSpellbookProcs = val
+                            addon:ForceUpdate()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    hideItemAbilities = {
+                        type = "toggle",
+                        name = L["Allow Item Abilities"],
+                        desc = L["Allow Item Abilities desc"],
+                        order = 13,
+                        width = "full",
+                        get = function() return not addon.db.profile.hideItemAbilities end,
+                        set = function(_, val)
+                            addon.db.profile.hideItemAbilities = not val
+                            addon:ForceUpdate()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    showInterrupt = {
+                        type = "toggle",
+                        name = L["Show Interrupt Reminder"],
+                        desc = L["Show Interrupt Reminder desc"],
+                        order = 14,
+                        width = "full",
+                        get = function() return addon.db.profile.showInterrupt ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.showInterrupt = val
+                            addon:UpdateFrameSize()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    ccRegularMobs = {
+                        type = "toggle",
+                        name = L["CC Regular Mobs"],
+                        desc = L["CC Regular Mobs desc"],
+                        order = 14.5,
+                        width = "full",
+                        get = function() return addon.db.profile.ccRegularMobs ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.ccRegularMobs = val
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                                or not addon.db.profile.showInterrupt
+                        end,
+                    },
+                    -- DISPLAY (15-19)
+                    displayHeader = {
+                        type = "header",
+                        name = L["Display"],
+                        order = 15,
+                    },
+                    maxIcons = {
+                        type = "range",
+                        name = L["Max Icons"],
+                        desc = L["Max Icons desc"],
+                        min = 1, max = 7, step = 1,
+                        order = 15.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.maxIcons or 4 end,
+                        set = function(_, val)
+                            addon.db.profile.maxIcons = val
+                            addon:UpdateFrameSize()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    firstIconScale = {
+                        type = "range",
+                        name = L["Primary Spell Scale"],
+                        desc = L["Primary Spell Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 16,
+                        width = "normal",
+                        get = function() return addon.db.profile.firstIconScale or 1.0 end,
+                        set = function(_, val)
+                            addon.db.profile.firstIconScale = val
+                            addon:UpdateFrameSize()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    glowMode = {
+                        type = "select",
+                        name = L["Highlight Mode"],
+                        desc = L["Highlight Mode desc"],
+                        order = 18,
+                        width = "normal",
+                        values = {
+                            all = L["All Glows"],
+                            primaryOnly = L["Primary Only"],
+                            procOnly = L["Proc Only"],
+                            none = L["No Glows"],
+                        },
+                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        get = function() return addon.db.profile.glowMode or "all" end,
+                        set = function(_, val)
+                            addon.db.profile.glowMode = val
+                            addon:ForceUpdate()
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    showFlash = {
+                        type = "toggle",
+                        name = L["Show Key Press Flash"],
+                        desc = L["Show Key Press Flash desc"],
+                        order = 19,
+                        width = "full",
+                        get = function() return addon.db.profile.showFlash ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.showFlash = val
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                    -- RESET (19.8+)
+                    resetHeader = {
+                        type = "header",
+                        name = "",
+                        order = 19.8,
+                    },
+                    resetDefaults = {
+                        type = "execute",
+                        name = L["Reset to Defaults"],
+                        desc = L["Reset Offensive desc"],
+                        order = 19.9,
+                        width = "normal",
+                        func = function()
+                            local p = addon.db.profile
+                            p.maxIcons               = 4
+                            p.firstIconScale         = 1.0
+                            p.glowMode               = "all"
+                            p.showFlash              = true
+                            p.includeHiddenAbilities = true
+                            p.showSpellbookProcs     = true
+                            p.hideItemAbilities      = false
+                            p.showInterrupt          = true
+                            p.ccRegularMobs          = true
+                            addon:UpdateFrameSize()
+                            addon:ForceUpdate()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local dm = addon.db.profile.displayMode or "queue"
+                            return dm == "disabled" or dm == "overlay"
+                        end,
+                    },
+                },
+            },
+            -- Sub-tab 2: Gap-Closers
+            gapClosers = (GapClosers and GapClosers.CreateTabArgs) and GapClosers.CreateTabArgs(addon) or nil,
+            -- Sub-tab 3: Blacklist
+            blacklist = {
+                type = "group",
                 name = L["Blacklist"],
-                order = 20,
+                order = 3,
                 args = {
                     info = {
                         type = "description",
@@ -238,16 +249,15 @@ function Offensive.UpdateBlacklistOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable then return end
 
-    local blacklistGroup = optionsTable.args.offensive.args.blacklistGroup
-    if not blacklistGroup then return end
-    local blacklistArgs = blacklistGroup.args
+    local blacklistTab = optionsTable.args.offensive.args.blacklist
+    if not blacklistTab then return end
+    local blacklistArgs = blacklistTab.args
 
     -- Static keys to preserve (defined in CreateTabArgs)
     local staticKeys = {
         info = true,
     }
 
-    -- Clear old dynamic entries
     local keysToClear = {}
     for key, _ in pairs(blacklistArgs) do
         if not staticKeys[key] then
@@ -258,19 +268,14 @@ function Offensive.UpdateBlacklistOptions(addon)
         blacklistArgs[key] = nil
     end
 
-    -- Ensure blacklistedSpells table exists in saved variables
     if not addon.db.char.blacklistedSpells then
         addon.db.char.blacklistedSpells = {}
     end
     local blacklistedSpells = addon.db.char.blacklistedSpells
     
-    -- Ensure spellbook cache is built
     SpellSearch.BuildSpellbookCache()
-
-    -- Initialize filter storage
     SpellSearch.filterState.blacklist = SpellSearch.filterState.blacklist or ""
 
-    -- Add spell input section with autocomplete
     blacklistArgs.addHeader = {
         type = "header",
         name = L["Add Spell to Blacklist"],
@@ -297,7 +302,6 @@ function Offensive.UpdateBlacklistOptions(addon)
         order = 22.2,
         width = "double",
         values = function()
-            -- Convert blacklist dict to array for exclusion
             local excludeList = {}
             for spellID, _ in pairs(blacklistedSpells) do
                 table.insert(excludeList, spellID)
@@ -308,7 +312,6 @@ function Offensive.UpdateBlacklistOptions(addon)
                 SpellSearch.previewState.blacklist = nil
                 return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
-            -- Set preview to first result (shown in dropdown, not yet added)
             SpellSearch.previewState.blacklist = next(results)
             return results
         end,
@@ -383,7 +386,6 @@ function Offensive.UpdateBlacklistOptions(addon)
         order = 22.5,
     }
     
-    -- Build sorted list of spell IDs (keys are already normalized to numbers on load)
     local spellList = {}
     for spellID, _ in pairs(blacklistedSpells) do
         if type(spellID) == "number" and spellID > 0 then
@@ -451,7 +453,6 @@ function Offensive.UpdateBlacklistOptions(addon)
         end
     end
     
-    -- Notify AceConfig that the options table changed
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

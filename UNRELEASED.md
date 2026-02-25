@@ -2,9 +2,7 @@
 
 Changes accumulated since last version release. Will be moved to CHANGELOG.md on next version bump.
 
-## Current Version: 4.3.1
-
-(No unreleased changes yet)
+## Current Version: 4.4.0
 
 **Instructions:**
 

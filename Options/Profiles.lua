@@ -76,7 +76,6 @@ function Profiles.AddSpecProfileOptions(addon)
                 get = function() return addon.db.char.specProfilesEnabled end,
                 set = function(_, val)
                     addon.db.char.specProfilesEnabled = val
-                    -- Refresh options panel to show/hide spec dropdowns
                     if AceConfigRegistry then
                         AceConfigRegistry:NotifyChange("JustAssistedCombat")
                     end
