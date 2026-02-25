@@ -35,7 +35,9 @@ local defaults = {
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
         showHealthBar = false,         -- Standalone health bar (only shown when defensives disabled)
+        showPetHealthBar = false,      -- Standalone pet health bar (only shown when defensives disabled)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
+        blacklistPosition1 = false,    -- Apply blacklist to position 1 (Blizzard's primary suggestion)
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -71,7 +73,6 @@ local defaults = {
             maxIcons          = 3,       -- 1-5 DPS queue slots
             reverseAnchor     = false,   -- false = RIGHT (default), true = LEFT
             expansion         = "out",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
-            healthBarPosition = "outside", -- "outside" (far end of cluster) or "inside" (nameplate end); up/down only
             iconSize          = 32,
             iconSpacing       = 2,   -- px between successive icons in the cluster
             opacity           = 1.0, -- icon opacity (0.1–1.0)

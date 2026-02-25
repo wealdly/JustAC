@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Health Bar Module - Shows player health bar for low-health warning
-local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 5)
+local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 7)
 if not UIHealthBar then return end
 
 -- Hot path cache
@@ -25,7 +25,8 @@ local healthBarFrame = nil
 local petHealthBarFrame = nil
 local lastUpdate = 0
 local lastPetUpdate = 0
-local lastVisibleCount = -1  -- cached visible icon count (defensive mode only)
+local lastVisibleCount = -1     -- cached visible icon count (defensive mode only)
+local lastPetVisibleCount = -1  -- cached visible icon count for pet bar
 
 -- Create the health bar frame.
 -- Two modes:
@@ -429,6 +430,9 @@ local function CalculateBarDimensions(profile)
 end
 
 -- Create the pet health bar frame
+-- Two modes (mirrors CreateHealthBar):
+--   Defensives enabled  + defensives.showPetHealthBar → spans defensive cluster, stacks beyond player bar
+--   Defensives disabled + profile.showPetHealthBar    → spans offensive queue, stacks beyond player bar
 function UIHealthBar.CreatePetHealthBar(addon)
     if petHealthBarFrame then
         petHealthBarFrame:Hide()
@@ -440,8 +444,15 @@ function UIHealthBar.CreatePetHealthBar(addon)
     if not addon.db or not addon.db.profile then return nil end
 
     local profile = addon.db.profile
-    if not profile.defensives or not profile.defensives.showPetHealthBar then
-        return nil
+    local defensivesEnabled = profile.defensives and profile.defensives.enabled
+
+    local useDefensiveDims
+    if defensivesEnabled then
+        if not profile.defensives or not profile.defensives.showPetHealthBar then return nil end
+        useDefensiveDims = true
+    else
+        if not profile.showPetHealthBar then return nil end
+        useDefensiveDims = false
     end
 
     -- Only create for pet classes
@@ -452,11 +463,16 @@ function UIHealthBar.CreatePetHealthBar(addon)
         or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
     if not hasPetSpells then return nil end
 
-    local orientation, queueDimension, defIconSize, maxDefIcons, defPosition, barDist = CalculateBarDimensions(profile)
+    -- Create container frame
+    local frame = CreateFrame("Frame", nil, addon.mainFrame)
+
+    local orientation = profile.queueOrientation or "LEFT"
+    local iconSize    = profile.iconSize or 42
+    local iconSpacing = profile.iconSpacing or 1
+    local queueDimension, offset
 
     -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
     -- predictable position.  Pet health bars must match that shift.
-    local iconSpacing = profile.iconSpacing or 1
     local grabTabReserve = 0
     if orientation == "RIGHT" or orientation == "UP" then
         local GRAB_TAB_LENGTH = 12
@@ -464,45 +480,92 @@ function UIHealthBar.CreatePetHealthBar(addon)
         grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
     end
 
-    -- Create container frame
-    local frame = CreateFrame("Frame", nil, addon.mainFrame)
+    if useDefensiveDims then
+        -- Span the defensive icon cluster
+        local defIconScale = profile.defensives.iconScale or 1.0
+        local defIconSize  = iconSize * defIconScale
+        local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
+        local defPosition  = profile.defensives.position or "SIDE1"
 
-    if orientation == "LEFT" or orientation == "RIGHT" then
-        frame:SetSize(queueDimension, BAR_HEIGHT)
+        if maxDefIcons == 1 then
+            queueDimension = defIconSize
+        else
+            queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
+        end
+        offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+
+        local defSpacing = math.max(iconSpacing, BAR_SPACING)
+        local barDist    = defSpacing + defIconSize + BAR_SPACING
+
+        -- Stack beyond player health bar when both are shown
+        local playerBarExists = (healthBarFrame ~= nil) and profile.defensives.showHealthBar
+        local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
+        local dist = barDist + extraOffset
+
+        if orientation == "LEFT" or orientation == "RIGHT" then
+            frame:SetSize(queueDimension, BAR_HEIGHT)
+        else
+            frame:SetSize(BAR_HEIGHT, queueDimension)
+        end
+
+        -- SIDE1/SIDE2 positioning, offset one bar-height further out
+        if orientation == "LEFT" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,  dist)
+            else
+                frame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset, -dist)
+            end
+        elseif orientation == "RIGHT" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),  dist)
+            else
+                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve), -dist)
+            end
+        elseif orientation == "DOWN" then
+            if defPosition == "SIDE1" then
+                frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",     dist,   -offset)
+            else
+                frame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",     -dist,   -offset)
+            end
+        else -- UP
+            if defPosition == "SIDE1" then
+                frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset + grabTabReserve)
+            else
+                frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset + grabTabReserve)
+            end
+        end
     else
-        frame:SetSize(BAR_HEIGHT, queueDimension)
-    end
+        -- Span the offensive queue; stack beyond player bar above mainFrame
+        local firstIconScale = profile.firstIconScale or 1.0
+        local maxIcons       = profile.maxIcons or 4
+        local firstIconSize  = iconSize * firstIconScale
 
-    -- Stack the pet bar beyond the player health bar when both are shown
-    local offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
-    local playerBarExists = (healthBarFrame ~= nil) and profile.defensives.showHealthBar
-    local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
-    local dist = barDist + extraOffset
+        if maxIcons == 1 then
+            queueDimension = firstIconSize
+        else
+            queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
+        end
+        offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
 
-    -- Mirror CreateHealthBar's SIDE1/SIDE2 logic, offset one bar-height further out
-    if orientation == "LEFT" then
-        if defPosition == "SIDE1" then
-            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,  dist)
+        if orientation == "LEFT" or orientation == "RIGHT" then
+            frame:SetSize(queueDimension, BAR_HEIGHT)
         else
-            frame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset, -dist)
+            frame:SetSize(BAR_HEIGHT, queueDimension)
         end
-    elseif orientation == "RIGHT" then
-        if defPosition == "SIDE1" then
-            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),  dist)
-        else
-            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve), -dist)
-        end
-    elseif orientation == "DOWN" then
-        if defPosition == "SIDE1" then
-            frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",     dist,   -offset)
-        else
-            frame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",     -dist,   -offset)
-        end
-    else -- UP
-        if defPosition == "SIDE1" then
-            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset + grabTabReserve)
-        else
-            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset + grabTabReserve)
+
+        -- Stack beyond player health bar when both are shown
+        local playerBarExists = (healthBarFrame ~= nil) and profile.showHealthBar
+        local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
+        local baseDist = BAR_SPACING + extraOffset
+
+        if orientation == "LEFT" then
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",    offset,     baseDist)
+        elseif orientation == "RIGHT" then
+            frame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",  -(offset + grabTabReserve),     baseDist)
+        elseif orientation == "DOWN" then
+            frame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",   baseDist, -offset)
+        else -- UP
+            frame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT", baseDist, offset + grabTabReserve)
         end
     end
 
@@ -516,8 +579,8 @@ function UIHealthBar.CreatePetHealthBar(addon)
         statusBar:SetOrientation("VERTICAL")
     end
 
-    -- Teal-green for pet (green-leaning but distinct from player's pure green)
-    statusBar:SetStatusBarColor(0.0, 0.72, 0.34, 0.9)
+    -- Warm yellow for pet (distinct from player's green and UI blue/mana)
+    statusBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
 
     -- Background (dark red when pet is hurt/missing health shows through)
     local bg = statusBar:CreateTexture(nil, "BACKGROUND")
@@ -594,6 +657,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
     frame.statusBar = statusBar
     frame.background = bg
     frame.deadOverlay = deadOverlay
+    frame.useDefensiveDims = useDefensiveDims
 
     petHealthBarFrame = frame
 
@@ -679,6 +743,95 @@ function UIHealthBar.GetPetFrame()
     return petHealthBarFrame
 end
 
+--- Dynamically resize the pet health bar to match the number of visible defensive icons.
+--- Mirrors ResizeToCount but stacks beyond the player health bar.
+--- @param addon table  The main addon object
+--- @param visibleCount number  Number of currently visible defensive icons (0 = hide)
+function UIHealthBar.ResizePetToCount(addon, visibleCount)
+    if not petHealthBarFrame then return end
+
+    -- Standalone mode spans the offensive queue — no per-count resize needed
+    if not petHealthBarFrame.useDefensiveDims then return end
+
+    -- Cache check: skip expensive recalc when count hasn't changed
+    if visibleCount == lastPetVisibleCount then return end
+    lastPetVisibleCount = visibleCount
+
+    if visibleCount <= 0 then
+        petHealthBarFrame:Hide()
+        return
+    end
+
+    local profile = addon.db and addon.db.profile
+    if not profile or not profile.defensives then return end
+
+    local orientation  = profile.queueOrientation or "LEFT"
+    local iconSize     = profile.iconSize or 42
+    local iconSpacing  = profile.iconSpacing or 1
+    local defIconScale = profile.defensives.iconScale or 1.0
+    local defIconSize  = iconSize * defIconScale
+    local defPosition  = profile.defensives.position or "SIDE1"
+
+    local queueDimension
+    if visibleCount == 1 then
+        queueDimension = defIconSize
+    else
+        queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
+    end
+    local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+
+    -- Resize
+    if orientation == "LEFT" or orientation == "RIGHT" then
+        petHealthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
+    else
+        petHealthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
+    end
+
+    -- Reposition: stack beyond the player health bar
+    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    local barDist    = defSpacing + defIconSize + BAR_SPACING
+    local playerBarExists = (healthBarFrame ~= nil)
+        and ((profile.defensives and profile.defensives.showHealthBar) or profile.showHealthBar)
+    local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
+    local dist = barDist + extraOffset
+
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        local isVert = (orientation == "UP")
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
+    end
+
+    petHealthBarFrame:ClearAllPoints()
+    if orientation == "LEFT" then
+        if defPosition == "SIDE1" then
+            petHealthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "TOPLEFT",      offset,  dist)
+        else
+            petHealthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "BOTTOMLEFT",   offset, -dist)
+        end
+    elseif orientation == "RIGHT" then
+        if defPosition == "SIDE1" then
+            petHealthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "TOPRIGHT",    -(offset + grabTabReserve),  dist)
+        else
+            petHealthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve), -dist)
+        end
+    elseif orientation == "DOWN" then
+        if defPosition == "SIDE1" then
+            petHealthBarFrame:SetPoint("TOPLEFT",     addon.mainFrame, "TOPRIGHT",     dist,   -offset)
+        else
+            petHealthBarFrame:SetPoint("TOPRIGHT",    addon.mainFrame, "TOPLEFT",     -dist,   -offset)
+        end
+    else -- UP
+        if defPosition == "SIDE1" then
+            petHealthBarFrame:SetPoint("BOTTOMLEFT",  addon.mainFrame, "BOTTOMRIGHT",  dist,    offset + grabTabReserve)
+        else
+            petHealthBarFrame:SetPoint("BOTTOMRIGHT", addon.mainFrame, "BOTTOMLEFT",  -dist,    offset + grabTabReserve)
+        end
+    end
+
+    petHealthBarFrame:Show()
+end
+
 function UIHealthBar.UpdatePetSize(addon)
     if not addon or not addon.db or not addon.db.profile then return end
     if petHealthBarFrame then
@@ -694,4 +847,5 @@ function UIHealthBar.DestroyPet()
         petHealthBarFrame = nil
     end
     lastPetUpdate = 0
+    lastPetVisibleCount = -1
 end
