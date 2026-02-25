@@ -339,6 +339,41 @@ function General.CreateTabArgs(addon)
                     if val and UIHealthBar and UIHealthBar.CreateHealthBar then
                         UIHealthBar.CreateHealthBar(addon)
                     end
+                    -- Recreate pet bar so it picks up the new player-bar stacking offset
+                    if UIHealthBar and UIHealthBar.DestroyPet then
+                        UIHealthBar.DestroyPet()
+                    end
+                    if addon.db.profile.showPetHealthBar and UIHealthBar and UIHealthBar.CreatePetHealthBar then
+                        UIHealthBar.CreatePetHealthBar(addon)
+                    end
+                    addon:ForceUpdateAll()
+                end,
+                disabled = function()
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" or dm == "overlay" then return true end
+                    return addon.db.profile.defensives.enabled
+                end,
+            },
+            showPetHealthBar = {
+                type = "toggle",
+                name = function()
+                    if addon.db.profile.defensives.enabled then
+                        return L["Show Pet Health Bar"] .. "  |cff888888(" .. L["disabled when Defensive Queue is enabled"] .. ")|r"
+                    end
+                    return L["Show Pet Health Bar"]
+                end,
+                desc = L["Show Pet Health Bar desc"],
+                order = 25,
+                width = "full",
+                get = function() return addon.db.profile.showPetHealthBar end,
+                set = function(_, val)
+                    addon.db.profile.showPetHealthBar = val
+                    if UIHealthBar and UIHealthBar.DestroyPet then
+                        UIHealthBar.DestroyPet()
+                    end
+                    if val and UIHealthBar and UIHealthBar.CreatePetHealthBar then
+                        UIHealthBar.CreatePetHealthBar(addon)
+                    end
                     addon:ForceUpdateAll()
                 end,
                 disabled = function()
@@ -502,6 +537,7 @@ function General.CreateTabArgs(addon)
                     p.hideQueueWhenMounted  = false
                     p.requireHostileTarget  = false
                     p.showHealthBar         = false
+                    p.showPetHealthBar      = false
                     p.tooltipMode           = "always"
                     p.frameOpacity          = 1.0
                     p.queueIconDesaturation = 0

@@ -84,7 +84,7 @@ L["Out of Combat Only"] = "Nur außerhalb des Kampfes"
 L["Always"] = "Immer"
 
 -- Defensive display mode dropdown
-L["Defensive Display Mode"] = "Anzeigemodus"
+L["Defensive Display Mode"] = "Defensiv-Sichtbarkeit"
 L["Defensive Display Mode desc"] = "Bei niedriger Gesundheit: Nur anzeigen wenn Gesundheit unter Schwellwerte fällt\nNur im Kampf: Immer im Kampf anzeigen\nImmer: Jederzeit anzeigen"
 L["When Health Low"] = "Bei niedriger Gesundheit"
 L["In Combat Only"] = "Nur im Kampf"
@@ -208,7 +208,6 @@ L["Show Pet Health Bar desc"] = "Kompakte Begleiter-Lebensleiste (nur Begleiterk
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Warteschlangen-Symbole direkt an die Namensplakette des Ziels heften. Vollständig unabhängig vom Hauptpanel — beides kann separat aktiviert werden."
-L["Offensive Slots"] = "Offensiv-Plätze"
 L["Offensive Queue"] = "Offensiv-Warteschlange"
 L["Defensive Suggestions"] = "Defensiv-Vorschläge"
 L["Reverse Anchor"] = "Anker umkehren"
@@ -218,15 +217,11 @@ L["Nameplate Show Defensives"] = "Defensiv-Symbole anzeigen"
 L["Nameplate Show Defensives desc"] = "Defensiv-Symbole auf der gegenüberliegenden Seite der Namensplakette anzeigen."
 L["Nameplate Defensive Display Mode"] = "Defensiv-Sichtbarkeit"
 L["Nameplate Defensive Display Mode desc"] = "Nur im Kampf: Defensiv-Symbole nur im Kampf anzeigen.\nImmer: Jederzeit anzeigen."
-L["Nameplate Defensive Count"] = "Defensiv-Plätze"
 L["Show Interrupt Reminder"] = "Unterbrechungs-Erinnerung"
 L["Show Interrupt Reminder desc"] = "Ein Unterbrechungs- oder CC-Erinnerungssymbol anzeigen, wenn das Ziel einen unterbrechbaren Zauber wirkt."
 L["CC Regular Mobs"] = "CC bei normalen Gegnern bevorzugen"
 L["CC Regular Mobs desc"] = "Bei Nicht-Boss-Gegnern Massenkontrolle (Betäubungen) gegenüber Unterbrechung bevorzugen. Auf Bosse wird immer Unterbrechung verwendet."
-L["Nameplate Show Health Bar"] = "Lebensleiste anzeigen"
-L["Nameplate Show Health Bar desc"] = "Kompakte Spieler-Lebensleiste über den Defensiv-Symbolen. Wird ohne sichtbare Defensiven automatisch ausgeblendet."
-L["Health Bar Position"] = "Leistenposition"
-L["Health Bar Position desc"] = "Steuert wo die Lebensleiste relativ zu den Symbolen erscheint. Außen: jenseits der äußeren Kante. Innen: zwischen Namensplakette und Symbol 1."
+
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Auf Standard zurücksetzen"
@@ -258,9 +253,7 @@ L["Bottom Left"] = "Unten links"
 L["Bottom Center"] = "Unten Mitte"
 L["Reset Icon Labels desc"] = "Alle Symbolbeschriftungs-Einstellungen auf Standardwerte zurücksetzen."
 
--- Expansion Direction / positioning (7 keys)
-L["Outside"] = "Außen"
-L["Inside"] = "Innen"
+-- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Erweiterungsrichtung"
 L["Expansion Direction desc"] = "Stapelrichtung der Symbole bei mehreren Plätzen. Horizontal erweitert von der Namensplakette weg. Vertikal hoch/runter stapelt über/unter Platz 1."
 L["Horizontal (Out)"] = "Horizontal (raus)"
@@ -277,3 +270,16 @@ L["Restore Gap-Closer Defaults desc"] = "Annäherungsliste auf Klassen-Standardz
 L["No Gap-Closer Spells"] = "Keine Annäherungszauber konfiguriert. Dropdown nutzen oder Klassen-Standards wiederherstellen."
 L["Show Gap-Closer Glow"] = "Annäherungsleuchten anzeigen"
 L["Show Gap-Closer Glow desc"] = "Rotes Leuchten auf Annäherungssymbolen anzeigen, um deren Verfügbarkeit hervorzuheben."
+L["Gap-Closer Behavior Note"] = "Annäherungszauber ersetzen Position 1, wenn das Ziel außer Reichweite ist."
+L["Gap-Closer Ranged Spec Note"] = "Keine Standard-Annäherungszauber für diese Spezialisierung. Bei Bedarf können unten manuell Zauber hinzugefügt werden."
+L["Melee Range Reference"] = "Nahkampfreichweiten-Referenz"
+L["Melee Range Spell desc"] = "Annäherungszauber werden ausgelöst, wenn diese Fähigkeit außer Reichweite ist. Muss in der Aktionsleiste sein."
+L["Melee Range Spell ID"] = "Zauber-ID überschreiben"
+L["Melee Range Spell Override desc"] = "Zauber-ID-Überschreibung (leer = automatisch)"
+L["Default"] = "Standard"
+L["Unknown"] = "Unbekannt"
+L["None"] = "Keiner"
+
+-- Blacklist Position 1
+L["Blacklist Position 1"] = "Auf Position 1 anwenden"
+L["Blacklist Position 1 desc"] = "Die Sperrliste auch auf Position 1 (Blizzards Hauptvorschlag) anwenden. Warnung: Das Ausblenden des Hauptzaubers kann die Rotation stoppen — Blizzards System wartet auf dessen Ausführung."

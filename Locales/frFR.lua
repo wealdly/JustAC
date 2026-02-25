@@ -84,7 +84,7 @@ L["Out of Combat Only"] = "Hors combat uniquement"
 L["Always"] = "Toujours"
 
 -- Defensive display mode dropdown
-L["Defensive Display Mode"] = "Mode d'affichage"
+L["Defensive Display Mode"] = "Visibilité défensive"
 L["Defensive Display Mode desc"] = "Santé basse : Afficher uniquement sous les seuils\nEn combat uniquement : Toujours afficher en combat\nToujours : Afficher en permanence"
 L["When Health Low"] = "Santé basse"
 L["In Combat Only"] = "En combat uniquement"
@@ -208,7 +208,6 @@ L["Show Pet Health Bar desc"] = "Barre de santé compacte du familier (classes a
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Attacher les icônes directement à la plaque de nom de la cible. Indépendant du panneau principal — l'un ou les deux peuvent être activés."
-L["Offensive Slots"] = "Emplacements offensifs"
 L["Offensive Queue"] = "File offensive"
 L["Defensive Suggestions"] = "Suggestions défensives"
 L["Reverse Anchor"] = "Inverser l'ancrage"
@@ -218,15 +217,11 @@ L["Nameplate Show Defensives"] = "Afficher les icônes défensives"
 L["Nameplate Show Defensives desc"] = "Afficher les icônes défensives du côté opposé de la plaque."
 L["Nameplate Defensive Display Mode"] = "Visibilité défensive"
 L["Nameplate Defensive Display Mode desc"] = "En combat uniquement : icônes défensives seulement en combat.\nToujours : afficher en permanence."
-L["Nameplate Defensive Count"] = "Emplacements défensifs"
 L["Show Interrupt Reminder"] = "Rappel d'interruption"
 L["Show Interrupt Reminder desc"] = "Afficher une icône de rappel quand la cible lance un sort interruptible."
 L["CC Regular Mobs"] = "Préférer CC sur les mobs normaux"
 L["CC Regular Mobs desc"] = "Sur les mobs non-boss, préférer le contrôle de foule (étourdissements, incapacitations) à l'interruption. Sur les boss, toujours utiliser l'interruption."
-L["Nameplate Show Health Bar"] = "Afficher la barre de santé"
-L["Nameplate Show Health Bar desc"] = "Barre de santé compacte au-dessus des icônes défensives. Se masque sans défensifs visibles."
-L["Health Bar Position"] = "Position de la barre"
-L["Health Bar Position desc"] = "Position de la barre par rapport aux icônes. Extérieur : au-delà du bord des icônes. Intérieur : entre la plaque et l'icône 1."
+
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Réinitialiser"
@@ -258,9 +253,7 @@ L["Bottom Left"] = "Bas gauche"
 L["Bottom Center"] = "Bas centre"
 L["Reset Icon Labels desc"] = "Réinitialiser tous les paramètres de libellés des icônes à leurs valeurs par défaut."
 
--- Expansion Direction / positioning (7 keys)
-L["Outside"] = "Extérieur"
-L["Inside"] = "Intérieur"
+-- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Direction d'expansion"
 L["Expansion Direction desc"] = "Direction d'empilement des icônes. Horizontal s'étend depuis la plaque. Vertical haut/bas empile au-dessus/en dessous de l'emplacement 1."
 L["Horizontal (Out)"] = "Horizontal (vers l'ext.)"
@@ -277,3 +270,16 @@ L["Restore Gap-Closer Defaults desc"] = "Réinitialiser la liste d'approche aux 
 L["No Gap-Closer Spells"] = "Aucun sort d'approche configuré. Utilisez le menu déroulant ou cliquez sur Restaurer les défauts de classe."
 L["Show Gap-Closer Glow"] = "Lueur d'approche"
 L["Show Gap-Closer Glow desc"] = "Affiche une lueur rouge sur les icônes d'approche pour indiquer leur disponibilité."
+L["Gap-Closer Behavior Note"] = "Les sorts d'approche remplacent la position 1 quand la cible est hors de portée."
+L["Gap-Closer Ranged Spec Note"] = "Pas de sorts d'approche par défaut pour cette spécialisation. Vous pouvez ajouter des sorts manuellement ci-dessous si nécessaire."
+L["Melee Range Reference"] = "Référence de portée de mêlée"
+L["Melee Range Spell desc"] = "Les sorts d'approche se déclenchent quand cette capacité est hors de portée. Doit être dans votre barre d'action."
+L["Melee Range Spell ID"] = "ID de sort personnalisé"
+L["Melee Range Spell Override desc"] = "Remplacement de l'ID de sort (vide = auto)"
+L["Default"] = "Par défaut"
+L["Unknown"] = "Inconnu"
+L["None"] = "Aucun"
+
+-- Blacklist Position 1
+L["Blacklist Position 1"] = "Appliquer à la position 1"
+L["Blacklist Position 1 desc"] = "Appliquer également la liste noire à la position 1 (suggestion principale de Blizzard). Avertissement : masquer le sort principal peut bloquer la rotation — le système de Blizzard attend qu'il soit lancé."

@@ -40,32 +40,6 @@ function Overlay.CreateTabArgs(addon)
                     return dm ~= "overlay" and dm ~= "both"
                 end,
             },
-            healthBarPosition = {
-                type = "select",
-                name = L["Health Bar Position"],
-                desc = L["Health Bar Position desc"],
-                order = 25,
-                width = "normal",
-                values = {
-                    outside = L["Outside"],
-                    inside  = L["Inside"],
-                },
-                sorting = { "outside", "inside" },
-                get = function() return addon.db.profile.nameplateOverlay.healthBarPosition or "outside" end,
-                set = function(_, val)
-                    addon.db.profile.nameplateOverlay.healthBarPosition = val
-                    local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm ~= "overlay" and dm ~= "both" then return true end
-                    local npo = addon.db.profile.nameplateOverlay
-                    if not npo.showDefensives or not npo.showHealthBar then return true end
-                    -- Only meaningful for vertical expansion (up/down)
-                    return (npo.expansion or "out") == "out"
-                end,
-            },
             expansion = {
                 type = "select",
                 name = L["Expansion Direction"],
@@ -93,6 +67,7 @@ function Overlay.CreateTabArgs(addon)
             maxIcons = {
                 type = "select",
                 name = L["Offensive Slots"],
+                desc = L["Max Icons desc"],
                 order = 12,
                 width = "normal",
                 values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
@@ -111,6 +86,7 @@ function Overlay.CreateTabArgs(addon)
             iconSize = {
                 type = "range",
                 name = L["Nameplate Icon Size"],
+                desc = L["Icon Size desc"],
                 order = 5,
                 width = "normal",
                 min = 16, max = 48, step = 2,
@@ -128,6 +104,7 @@ function Overlay.CreateTabArgs(addon)
             iconSpacing = {
                 type = "range",
                 name = L["Spacing"],
+                desc = L["Spacing desc"],
                 order = 6,
                 width = "normal",
                 min = 0, max = 10, step = 1,
@@ -145,6 +122,7 @@ function Overlay.CreateTabArgs(addon)
             opacity = {
                 type = "range",
                 name = L["Frame Opacity"],
+                desc = L["Frame Opacity desc"],
                 order = 7,
                 width = "normal",
                 min = 0.1, max = 1.0, step = 0.05,
@@ -190,6 +168,7 @@ function Overlay.CreateTabArgs(addon)
             showFlash = {
                 type = "toggle",
                 name = L["Show Key Press Flash"],
+                desc = L["Show Key Press Flash desc"],
                 order = 10,
                 width = "normal",
                 get = function() return addon.db.profile.nameplateOverlay.showFlash ~= false end,
@@ -287,6 +266,7 @@ function Overlay.CreateTabArgs(addon)
             maxDefensiveIcons = {
                 type = "select",
                 name = L["Nameplate Defensive Count"],
+                desc = L["Defensive Max Icons desc"],
                 order = 23,
                 width = "normal",
                 values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
@@ -305,8 +285,8 @@ function Overlay.CreateTabArgs(addon)
             },
             showHealthBar = {
                 type = "toggle",
-                name = L["Nameplate Show Health Bar"],
-                desc = L["Nameplate Show Health Bar desc"],
+                name = L["Nameplate Show Health Bars"],
+                desc = L["Nameplate Show Health Bars desc"],
                 order = 24,
                 width = "full",
                 get = function() return addon.db.profile.nameplateOverlay.showHealthBar end,
@@ -317,7 +297,8 @@ function Overlay.CreateTabArgs(addon)
                 end,
                 disabled = function()
                     local dm = addon.db.profile.displayMode or "queue"
-                    return dm ~= "overlay" and dm ~= "both"
+                    if dm ~= "overlay" and dm ~= "both" then return true end
+                    return not addon.db.profile.nameplateOverlay.showDefensives
                 end,
             },
             -- RESET (990+)
@@ -338,7 +319,6 @@ function Overlay.CreateTabArgs(addon)
                     npo.maxIcons             = 3
                     npo.reverseAnchor        = false
                     npo.expansion            = "out"
-                    npo.healthBarPosition    = "outside"
                     npo.iconSize             = 32
                     npo.iconSpacing          = 2
                     npo.opacity              = 1.0
