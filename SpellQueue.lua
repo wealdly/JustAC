@@ -24,8 +24,8 @@ local ipairs = ipairs
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 
--- Lazy-resolved references for gap-closer (DefensiveEngine loads after SpellQueue in TOC)
-local cachedDefensiveEngine = nil
+-- Lazy-resolved references for gap-closer (GapCloserEngine loads after SpellQueue in TOC)
+local cachedGapCloserEngine = nil
 local cachedAddon = nil
 
 -- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
@@ -288,25 +288,25 @@ function SpellQueue.GetCurrentSpellQueue()
     -- right to make room.
     -- Skip entirely if position 1 is already a gap closer (Blizzard's assisted
     -- combat system can suggest gap closers like Charge as the primary spell).
-    -- DefensiveEngine loads after SpellQueue in the TOC, so we resolve it lazily.
+    -- GapCloserEngine loads after SpellQueue in the TOC, so we resolve it lazily.
     if spellCount < maxIcons then
-        if not cachedDefensiveEngine then
-            cachedDefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+        if not cachedGapCloserEngine then
+            cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
         end
         if not cachedAddon then
             cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
         end
-        if cachedDefensiveEngine and cachedDefensiveEngine.GetGapCloserSpell and cachedAddon then
+        if cachedGapCloserEngine and cachedGapCloserEngine.GetGapCloserSpell and cachedAddon then
             -- If position 1 is already a gap closer, skip injection entirely
             local pos1Display = recommendedSpells[1]
             local pos1IsGapCloser = false
-            if cachedDefensiveEngine.IsGapCloserSpell then
-                pos1IsGapCloser = (primarySpellID and cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
-                    or (pos1Display and pos1Display ~= primarySpellID and cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, pos1Display))
+            if cachedGapCloserEngine.IsGapCloserSpell then
+                pos1IsGapCloser = (primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
+                    or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
             end
 
             if not pos1IsGapCloser then
-                local gcSpell, gcBase = cachedDefensiveEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
+                local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
                 if gcSpell then
                     local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
                     if spellCount >= 1 then
@@ -335,8 +335,8 @@ function SpellQueue.GetCurrentSpellQueue()
             -- When the gap-closer system is enabled, our insertion controls when
             -- these spells appear — letting them leak into the rotation causes
             -- duplicates or inconsistent position changes.
-            if cachedDefensiveEngine.MarkGapCloserSpellIDs then
-                cachedDefensiveEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
+            if cachedGapCloserEngine.MarkGapCloserSpellIDs then
+                cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
             end
         end
     end
@@ -481,18 +481,18 @@ end
 --- Used by renderers to keep the gap-closer glow when Blizzard suggests a
 --- gap closer at position 1 after our injection is removed (in-range transition).
 function SpellQueue.IsGapCloserSpell(spellID)
-    if not cachedDefensiveEngine or not cachedDefensiveEngine.IsGapCloserSpell then
-        if not cachedDefensiveEngine then
-            cachedDefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+    if not cachedGapCloserEngine or not cachedGapCloserEngine.IsGapCloserSpell then
+        if not cachedGapCloserEngine then
+            cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
         end
-        if not cachedDefensiveEngine or not cachedDefensiveEngine.IsGapCloserSpell then
+        if not cachedGapCloserEngine or not cachedGapCloserEngine.IsGapCloserSpell then
             return false
         end
     end
     if not cachedAddon then
         cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
     end
-    return cachedDefensiveEngine.IsGapCloserSpell(cachedAddon, spellID)
+    return cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, spellID)
 end
 
 function SpellQueue.OnSpecChange()
