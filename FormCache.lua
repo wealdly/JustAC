@@ -6,7 +6,11 @@ if not FormCache then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
+local GetTime = GetTime
+local pcall = pcall
+local pairs = pairs
+local ipairs = ipairs
 
 local cachedFormData = {
     -- Stance bar position (1-N) matching macro [form:X] conditionals (0 = caster/no form)

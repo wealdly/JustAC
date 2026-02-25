@@ -9,7 +9,7 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
--- Hot path optimization
+-- Hot path cache
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
@@ -32,6 +32,7 @@ SpellSearch.filterState = {
     hotkey = "",
     petrez = "",
     petheal = "",
+    gapcloser = "",
 }
 
 -- Preview state: first result shown in dropdown (not yet added)
@@ -42,6 +43,7 @@ SpellSearch.previewState = {
     hotkey = nil,
     petrez = nil,
     petheal = nil,
+    gapcloser = nil,
 }
 
 -- Storage for hotkey value input (not spell search)
@@ -389,10 +391,7 @@ end
 -- Helper to create add spell input with autocomplete dropdown
 -------------------------------------------------------------------------------
 function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listType, order, listName, updateFunc)
-    -- Ensure spellbook cache is built
     SpellSearch.BuildSpellbookCache()
-
-    -- Initialize filter storage
     SpellSearch.filterState[listType] = SpellSearch.filterState[listType] or ""
 
     -- Search input field (type to filter by name or ID, or -itemID/item:ID for items)
@@ -418,7 +417,6 @@ function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listT
         end
     }
 
-    -- Dynamic dropdown showing filtered spells
     defensivesArgs["search_dropdown_" .. listType] = {
         type = "select",
         name = "",
@@ -427,7 +425,6 @@ function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listT
         width = "double",
         values = function()
             local results = SpellSearch.GetFilteredSpellbookSpells(SpellSearch.filterState[listType], spellList)
-            -- Merge item results from action bars + bags (only when allowItems is enabled)
             if addon.db and addon.db.profile
                 and addon.db.profile.defensives and addon.db.profile.defensives.allowItems == true then
                 local itemResults = SpellSearch.GetFilteredActionBarItems(SpellSearch.filterState[listType], spellList)
@@ -441,7 +438,6 @@ function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listT
                 SpellSearch.previewState[listType] = nil
                 return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
             end
-            -- Set preview to first result (shown in dropdown, not yet added)
             SpellSearch.previewState[listType] = next(results)
             return results
         end,
@@ -497,7 +493,6 @@ function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listT
 
             local numVal = tonumber(val)
 
-            -- Negative number = item ID
             if numVal and numVal < 0 then
                 if not itemsEnabled then
                     addon:Print("Enable 'Allow Items in Spell Lists' to add items")
@@ -510,10 +505,8 @@ function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listT
                 return
             end
 
-            -- Positive number = spell ID
             local spellID = numVal
 
-            -- If not a number, try looking up by name
             if not spellID then
                 spellID = SpellSearch.LookupSpellByName(val)
                 if not spellID then

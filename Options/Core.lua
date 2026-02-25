@@ -13,6 +13,7 @@ local General     = LibStub("JustAC-OptionsGeneral", true)
 local Offensive   = LibStub("JustAC-OptionsOffensive", true)
 local Overlay     = LibStub("JustAC-OptionsOverlay", true)
 local Defensives  = LibStub("JustAC-OptionsDefensives", true)
+local GapClosers  = LibStub("JustAC-OptionsGapClosers", true)
 local Labels      = LibStub("JustAC-OptionsLabels", true)
 local Hotkeys     = LibStub("JustAC-OptionsHotkeys", true)
 local Profiles    = LibStub("JustAC-OptionsProfiles", true)
@@ -39,6 +40,13 @@ function Options.UpdateDefensivesOptions(addon)
     if not Defensives then Defensives = LibStub("JustAC-OptionsDefensives", true) end
     if Defensives and Defensives.UpdateDefensivesOptions then
         Defensives.UpdateDefensivesOptions(addon)
+    end
+end
+
+function Options.UpdateGapCloserOptions(addon)
+    if not GapClosers then GapClosers = LibStub("JustAC-OptionsGapClosers", true) end
+    if GapClosers and GapClosers.UpdateGapCloserOptions then
+        GapClosers.UpdateGapCloserOptions(addon)
     end
 end
 
@@ -78,13 +86,13 @@ end
 -------------------------------------------------------------------------------
 local function HandleSlashCommand(addon, input)
     if not input or input == "" or input:match("^%s*$") then
-        -- Ensure defensive spells initialized before opening panel
         if addon.InitializeDefensiveSpells then
             addon:InitializeDefensiveSpells()
         end
         Options.UpdateBlacklistOptions(addon)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
+        Options.UpdateGapCloserOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
         return
     end
@@ -96,13 +104,13 @@ local function HandleSlashCommand(addon, input)
     local DebugCommands = LibStub("JustAC-DebugCommands", true)
 
     if command == "config" or command == "options" then
-        -- Ensure defensive spells initialized before opening panel
         if addon.InitializeDefensiveSpells then
             addon:InitializeDefensiveSpells()
         end
         Options.UpdateBlacklistOptions(addon)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
+        Options.UpdateGapCloserOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
 
     elseif command == "toggle" then
@@ -120,7 +128,6 @@ local function HandleSlashCommand(addon, input)
     elseif command == "debug" then
         if addon.db and addon.db.profile then
             addon.db.profile.debugMode = not addon.db.profile.debugMode
-            -- Refresh cached debug mode immediately
             if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
                 BlizzardAPI.RefreshDebugMode()
             end
@@ -155,7 +162,6 @@ local function HandleSlashCommand(addon, input)
             addon.mainFrame:ClearAllPoints()
             addon.mainFrame:SetPoint("CENTER", 0, -150)
             addon:SavePosition()
-            -- Re-apply target frame anchor if enabled
             addon:UpdateTargetFrameAnchor()
             addon:Print("Position reset to center")
         end

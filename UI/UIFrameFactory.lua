@@ -11,7 +11,7 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
@@ -499,7 +499,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    -- Register with Masque if available
     local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
     if MasqueDefensiveGroup then
         MasqueDefensiveGroup:AddButton(button, {
@@ -516,7 +515,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     return button
 end
 
--- Create multiple defensive icons (1-3 based on maxIcons setting)
 local function CreateDefensiveIcons(addon, profile)
     local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
     
@@ -559,8 +557,7 @@ local function CreateDefensiveIcons(addon, profile)
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
     
-    -- Create maxIcons defensive buttons using a FRESH table
-    -- (Don't reuse module-level table to avoid stale reference issues)
+    -- Don't reuse module-level table to avoid stale reference issues.
     local maxIcons = profile.defensives.maxIcons or 1
     maxIcons = math.min(maxIcons, 7)  -- Cap at 7 (same as offensive queue)
 
@@ -576,8 +573,7 @@ local function CreateDefensiveIcons(addon, profile)
     -- Expose to addon (use the fresh table, not the module-level one)
     addon.defensiveIcons = newIcons
     addon.defensiveIcon = newIcons[1]  -- Backward compatibility
-    
-    -- Restore saved states
+
     local UIRenderer = LibStub("JustAC-UIRenderer", true)
     for i, state in pairs(savedStates) do
         if newIcons[i] and state.isShown and UIRenderer and UIRenderer.ShowDefensiveIcon then
@@ -604,7 +600,6 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetMovable(true)   -- Required: grab tab delegates StartMoving() to mainFrame
     addon.mainFrame:SetClampedToScreen(true)
     
-    -- Show/hide grab tab on hover
     addon.mainFrame:SetScript("OnEnter", function()
         -- intentionally empty: grab tab only appears on direct hover
     end)
@@ -623,12 +618,10 @@ function UIFrameFactory.CreateMainFrame(addon)
             if not profile then return end
             
             if IsShiftKeyDown() then
-                -- Toggle lock
                 local nowLocked = TogglePanelLock(profile)
                 local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                 if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
             else
-                -- Open options panel
                 if addon.OpenOptionsPanel then
                     addon:OpenOptionsPanel()
                 else
@@ -788,7 +781,6 @@ function UIFrameFactory.CreateGrabTab(addon)
         
         UIFrameFactory.SavePosition(addon)
         
-        -- Clear dragging flags (addon-level + tab-level)
         self.isDragging = false
         addon.isDragging = false
         
@@ -805,7 +797,7 @@ function UIFrameFactory.CreateGrabTab(addon)
     addon.grabTab:SetScript("OnClick", function(self, mouseButton)
         if mouseButton == "RightButton" then
             if IsShiftKeyDown() then
-                -- Shift+Right-click: toggle lock (safe in combat - only modifies addon db)
+                -- Safe in combat: only modifies addon db, no restricted API calls
                 local profile = addon:GetProfile()
                 if profile then
                     local nowLocked = TogglePanelLock(profile)
@@ -813,7 +805,6 @@ function UIFrameFactory.CreateGrabTab(addon)
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 end
             else
-                -- Right-click: open options panel
                 if addon.OpenOptionsPanel then
                     addon:OpenOptionsPanel()
                 else
@@ -824,7 +815,6 @@ function UIFrameFactory.CreateGrabTab(addon)
     end)
 
     addon.grabTab:SetScript("OnEnter", function()
-        -- Stop any fade-out in progress and ensure fully visible
         if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
             addon.grabTab.fadeOut:Stop()
         end
@@ -1008,7 +998,6 @@ local function CreateInterruptIcon(addon, profile)
         end
     end)
 
-    -- Register with Masque if available (matches DPS queue skinning)
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     if MasqueGroup then
         MasqueGroup:AddButton(button, {
@@ -1122,7 +1111,6 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
 
-    -- Build shared icon skeleton (textures, cooldowns, hotkey text, animations)
     local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon, profile)
     if not button then return nil end
 
@@ -1226,7 +1214,6 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
         end
     end)
 
-    -- Register with Masque if available
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     if MasqueGroup then
         MasqueGroup:AddButton(button, {

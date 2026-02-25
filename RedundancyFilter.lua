@@ -7,10 +7,14 @@ if not RedundancyFilter then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
--- Cache frequently used functions to reduce table lookups on every update
+-- Hot path cache
 local GetTime = GetTime
 local pcall = pcall
 local wipe = wipe
+local pairs = pairs
+local ipairs = ipairs
+local UnitAffectingCombat = UnitAffectingCombat
+local table_remove = table.remove
 
 
 -- Spell classification tables (manual, covers essential spells)
@@ -169,7 +173,6 @@ local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
 
--- Spell info cache: delegate to BlizzardAPI's unified cache
 local function GetCachedSpellInfo(spellID)
     return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
 end
@@ -211,7 +214,6 @@ end
 function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     if not updateInfo then return end
     
-    -- Process removed auras: clean up instance maps and track removed spellIDs
     if updateInfo.removedAuraInstanceIDs then
         for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
             -- Record the spellID before removing, so trusted cache merge doesn't re-add it
@@ -235,10 +237,9 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     if updateInfo.addedAuras then
         local now = GetTime()
         
-        -- Prune expired pending activations first
         for i = #pendingActivations, 1, -1 do
             if now - pendingActivations[i].time > PENDING_ACTIVATION_WINDOW then
-                table.remove(pendingActivations, i)
+                table_remove(pendingActivations, i)
             end
         end
         
@@ -268,7 +269,7 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                         for i, pending in ipairs(pendingActivations) do
                             if now - pending.time <= PENDING_ACTIVATION_WINDOW then
                                 resolvedSpellID = pending.spellID
-                                table.remove(pendingActivations, i)
+                                table_remove(pendingActivations, i)
                                 break
                             end
                         end
@@ -277,10 +278,8 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                 
                 if resolvedSpellID then
                     instanceToSpellMap[instanceID] = resolvedSpellID
-                    -- Aura re-applied: clear from removed tracking
                     combatRemovedSpellIDs[resolvedSpellID] = nil
                     
-                    -- Also cache timing info if available
                     local dur = auraData.duration
                     local exp = auraData.expirationTime
                     local durIsSecret = BlizzardAPI.IsSecretValue(dur)
@@ -335,7 +334,6 @@ local function SafeCall(func, fallback, ...)
     return ok and result or fallback
 end
 
--- Convenience wrappers using SafeCall
 local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
 local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
 local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
@@ -511,7 +509,6 @@ RefreshAuraCache = function()
                 local mappedIcon = instanceID and instanceToIconMap[instanceID]
                 
                 if mappedSpellID then
-                    -- Successfully resolved via instance map!
                     cachedAuras.byID[mappedSpellID] = true
                     -- Use pre-cached timing from instance map (timing values are secret in combat)
                     local mappedTiming = instanceToTimingMap[instanceID]
@@ -620,7 +617,6 @@ RefreshAuraCache = function()
     
     -- If out of combat and we got clean data (no secrets), save as trusted cache
     if not inCombat and not cachedAuras.hasSecrets then
-        -- Deep copy to trusted cache
         wipe(trustedOutOfCombatCache)
         trustedOutOfCombatCache.byID = {}
         trustedOutOfCombatCache.byName = {}
@@ -639,7 +635,6 @@ RefreshAuraCache = function()
         end
         lastTrustedCacheTime = now
         
-        -- Clean instance maps: remove entries for auras no longer present
         -- Out of combat, we have authoritative data — prune stale entries
         local activeInstances = {}
         if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -693,7 +688,6 @@ RefreshAuraCache = function()
                 end
             end
         end
-        -- Merge timing info for pandemic checks
         for spellID, info in pairs(trustedOutOfCombatCache.auraInfo or {}) do
             if not cachedAuras.auraInfo[spellID] and not combatRemovedSpellIDs[spellID] then
                 cachedAuras.auraInfo[spellID] = info
@@ -708,10 +702,8 @@ end
 local function HasBuffBySpellID(spellID)
     if not spellID then return false end
     
-    -- Check in-combat activation tracking first (mirrors proc detection)
     if inCombatActivations[spellID] then return true end
     
-    -- Then check cached aura data
     local auras = RefreshAuraCache()
     return auras.byID and auras.byID[spellID]
 end
