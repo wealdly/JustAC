@@ -142,6 +142,35 @@ function GapClosers.CreateTabArgs(addon)
                     },
                 },
             },
+            -- RESET (9+)
+            resetHeader = {
+                type = "header",
+                name = "",
+                order = 9,
+            },
+            resetDefaults = {
+                type = "execute",
+                name = L["Reset to Defaults"],
+                desc = L["Reset Gap-Closers desc"],
+                order = 9.1,
+                width = "normal",
+                func = function()
+                    local profile = addon:GetProfile()
+                    if not profile then return end
+                    if not profile.gapClosers then
+                        profile.gapClosers = { enabled = true, classSpells = {} }
+                    end
+                    profile.gapClosers.enabled = true
+                    profile.gapClosers.showGlow = nil  -- default: nil (treated as false)
+                    profile.gapClosers.meleeRangeSpell = nil  -- default: nil (auto-detect)
+                    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                    if GCE and GCE.InvalidateGapCloserCache then
+                        GCE.InvalidateGapCloserCache()
+                    end
+                    addon:ForceUpdateAll()
+                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                end,
+            },
             -- SPELL LIST (10+)
             spellListGroup = {
                 type = "group",
