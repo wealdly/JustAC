@@ -49,7 +49,7 @@ LibStub modules in `JustAC.toc` — **MUST edit in dependency order**:
 ```
 BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter
                                     ↓
-              SpellQueue → UI/* → DefensiveEngine → DebugCommands → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
+              SpellQueue → UI/* → DefensiveEngine → GapCloserEngine → DebugCommands → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
 ```
 
 | Module | Role | Key Exports | Current Version |
@@ -69,6 +69,7 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | `UI/UIRenderer.lua` | Icon rendering + Masque integration | `RenderSpellQueue()`, frame management | v14 |
 | `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v1 |
 | `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v1 |
+| `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()` | v1 |
 | `DebugCommands.lua` | In-game diagnostics | `/jac test`, `/jac modules` | v1 |
 | **Options/** | **Modular options panel (9 files)** | | |
 | `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()` | v1 |

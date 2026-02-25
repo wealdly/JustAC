@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, TargetFrameAnchor, KeyPressDetector
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector
 
 -- Class default tables are stored in SpellDB.lua for consistency
 -- Access via JustAC.CLASS_*_DEFAULTS (set in OnInitialize after SpellDB loads)
@@ -554,7 +554,9 @@ end
 function JustAC:InitializeDefensiveSpells()
     if DefensiveEngine then
         DefensiveEngine.InitializeDefensiveSpells(self)
-        DefensiveEngine.InitializeGapClosers(self)
+    end
+    if GapCloserEngine then
+        GapCloserEngine.InitializeGapClosers(self)
     end
 end
 function JustAC:RestoreDefensiveDefaults(listType)
@@ -607,6 +609,8 @@ function JustAC:LoadModules()
     if not UINameplateOverlay then self:Print("Warning: UINameplateOverlay module not found") end
     DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
     if not DefensiveEngine then self:Print("Warning: DefensiveEngine module not found") end
+    GapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
+    if not GapCloserEngine then self:Print("Warning: GapCloserEngine module not found") end
     TargetFrameAnchor = LibStub("JustAC-TargetFrameAnchor", true)
     if not TargetFrameAnchor then self:Print("Warning: TargetFrameAnchor module not found") end
     KeyPressDetector = LibStub("JustAC-KeyPressDetector", true)
@@ -865,8 +869,8 @@ function JustAC:OnSpecChange()
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
     -- Populate gap closer defaults for the new spec if empty
-    if DefensiveEngine and DefensiveEngine.InitializeGapClosers then
-        DefensiveEngine.InitializeGapClosers(self)
+    if GapCloserEngine and GapCloserEngine.InitializeGapClosers then
+        GapCloserEngine.InitializeGapClosers(self)
     end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
@@ -890,9 +894,9 @@ function JustAC:OnShapeshiftFormChanged()
     -- melee range reference slot may now point at a different spell or be
     -- absent entirely.  Invalidate so ResolveMeleeReference re-queries the
     -- correct form-bar slots on the next GetGapCloserSpell call.
-    if DefensiveEngine then
-        DefensiveEngine.InvalidateGapCloserCache()
-        DefensiveEngine.ClearRangeState()
+    if GapCloserEngine then
+        GapCloserEngine.InvalidateGapCloserCache()
+        GapCloserEngine.ClearRangeState()
     end
     self:InvalidateCaches({macros = true, hotkeys = true})
     self:ForceUpdate()
@@ -978,8 +982,8 @@ function JustAC:OnTargetChanged()
     -- Clear gap-closer range state on target switch.  The melee reference
     -- spell's slot is re-resolved lazily on the next GetGapCloserSpell call
     -- (via IsActionInRange), so no seeding pass is needed.
-    if DefensiveEngine then
-        DefensiveEngine.ClearRangeState()
+    if GapCloserEngine then
+        GapCloserEngine.ClearRangeState()
     end
     if SpellQueue then SpellQueue.ForceUpdate() end
     -- Refresh per-target creature type cache for CC immunity detection.
@@ -995,8 +999,8 @@ function JustAC:OnTargetChanged()
 end
 
 function JustAC:OnActionRangeUpdate(_, slot, isInRange, checksRange)
-    if DefensiveEngine then
-        local isRefSlot = DefensiveEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
+    if GapCloserEngine then
+        local isRefSlot = GapCloserEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
         -- Only rebuild the queue when the melee reference slot changes range.
         -- This prevents every random ability's range event from triggering
         -- a gap-closer re-evaluation.  Trigger on both directions so we

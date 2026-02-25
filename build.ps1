@@ -49,6 +49,7 @@ $coreFiles = @(
     "UI\UIRenderer.lua",
     "UI\UINameplateOverlay.lua",
     "DefensiveEngine.lua",
+    "GapCloserEngine.lua",
     "DebugCommands.lua",
     "Options\SpellSearch.lua",
     "Options\General.lua",

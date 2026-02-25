@@ -6,7 +6,7 @@ if not GapClosers then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+local GapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
@@ -97,9 +97,9 @@ function GapClosers.CreateTabArgs(addon)
                     currentDefault = {
                         type = "description",
                         name = function()
-                            local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
+                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                             local SDB = LibStub("JustAC-SpellDB", true)
-                            local specKey = DE and DE.GetGapCloserSpecKey and DE.GetGapCloserSpecKey()
+                            local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()
                             if not specKey or not SDB or not SDB.MELEE_RANGE_REFERENCE_SPELLS then
                                 return L["Default"] .. ": " .. L["Unknown"]
                             end
@@ -133,9 +133,9 @@ function GapClosers.CreateTabArgs(addon)
                             end
                             local id = tonumber(val) or 0
                             profile.gapClosers.meleeRangeSpell = id > 0 and id or nil
-                            local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
-                            if DE and DE.InvalidateGapCloserCache then
-                                DE.InvalidateGapCloserCache()
+                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                            if GCE and GCE.InvalidateGapCloserCache then
+                                GCE.InvalidateGapCloserCache()
                             end
                             addon:ForceUpdateAll()
                         end,
@@ -182,9 +182,9 @@ function GapClosers.CreateTabArgs(addon)
                         order = 32,
                         width = "normal",
                         func = function()
-                            local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
-                            if DE and DE.RestoreGapCloserDefaults then
-                                DE.RestoreGapCloserDefaults(addon)
+                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                            if GCE and GCE.RestoreGapCloserDefaults then
+                                GCE.RestoreGapCloserDefaults(addon)
                             end
                             GapClosers.UpdateGapCloserOptions(addon)
                         end,
@@ -199,9 +199,9 @@ end
 function GapClosers.UpdateGapCloserOptions(addon)
     -- Ensure gap-closer defaults are populated before reading data
     -- (covers profile reset, first load, spec change without prior init)
-    local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
-    if DE and DE.InitializeGapClosers then
-        DE.InitializeGapClosers(addon)
+    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+    if GCE and GCE.InitializeGapClosers then
+        GCE.InitializeGapClosers(addon)
     end
 
     local optionsTable = addon and addon.optionsTable
@@ -230,8 +230,8 @@ function GapClosers.UpdateGapCloserOptions(addon)
         spellListArgs[key] = nil
     end
 
-    local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
-    local specKey = DE and DE.GetGapCloserSpecKey and DE.GetGapCloserSpecKey()
+    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+    local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()
     if not specKey then return end
 
     local profile = addon:GetProfile()
@@ -269,9 +269,9 @@ function GapClosers.UpdateGapCloserOptions(addon)
 
     local updateFunc = function()
         -- Invalidate engine cache so ResolveGapCloserSpells picks up changes
-        local DE = DefensiveEngine or LibStub("JustAC-DefensiveEngine", true)
-        if DE and DE.InvalidateGapCloserCache then
-            DE.InvalidateGapCloserCache()
+        local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+        if GCE and GCE.InvalidateGapCloserCache then
+            GCE.InvalidateGapCloserCache()
         end
         GapClosers.UpdateGapCloserOptions(addon)
     end

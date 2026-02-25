@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.4.3] - 2026-02-25
+
+### Changed
+- **Extracted GapCloserEngine from DefensiveEngine** — Gap-closer system moved to its own `GapCloserEngine.lua` module. Gap closers inject into the offensive queue and had no coupling with defensive spell evaluation. DefensiveEngine reduced to its actual scope: health-based defensive queue, proc detection, potions.
+
 ## [4.4.2] - 2026-02-25
 
 ### Fixed
