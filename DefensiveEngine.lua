@@ -16,6 +16,7 @@ local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
 local GetSpecialization = GetSpecialization
 local GetActionInfo = GetActionInfo
+local IsStealthed = IsStealthed
 local GetItemCount = GetItemCount
 local GetItemCooldown = GetItemCooldown
 local GetItemInfo = GetItemInfo
@@ -1135,23 +1136,83 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
     local gc = addon.db.profile.gapClosers
     if not gc or not gc.enabled then return nil end
 
-    -- Early exit: if no melee range reference spell resolves (no user override
-    -- and no SpellDB default on the action bar), we can't determine range and
-    -- there's nothing to do.  This skips the entire path for ranged specs and
-    -- melee specs whose reference spell isn't on any bar.  ResolveMeleeReference
-    -- caches its result per spec key, so subsequent calls are a table lookup.
-    local _, meleeRefSlot = ResolveMeleeReference(addon)
-    if not meleeRefSlot then return nil end
-
     -- Must have a hostile target that is alive
     if not UnitExists("target") or UnitIsDead("target") or not UnitCanAttack("player", "target") then
         return nil
     end
 
-    -- Check range using the already-resolved melee reference slot
+    -- IsStealthed() is NeverSecret and covers Stealth, Vanish, Shadow Dance, etc.
+    local stealthed = IsStealthed and IsStealthed() or false
+    local spellList = ResolveGapCloserSpells(addon)
+
+    ----------------------------------------------------------------------------
+    -- STEALTH GAP CLOSERS — evaluate before the melee range gate.
+    -- When stealthed, the melee reference spell may transform on the action bar
+    -- (e.g. Backstab → Shadowstrike with 25yd range), causing IsActionInRange
+    -- on its slot to report the override's range instead of true melee range.
+    -- Stealth gap closers like Shadowstrike teleport TO the target, so their
+    -- own castable range IS the gap-closer range.  We check their own slot
+    -- directly.  Dedup via addedSpellIDs prevents showing them when Blizzard's
+    -- assisted combat already suggests them at position 1.
+    ----------------------------------------------------------------------------
+    if stealthed and spellList then
+        for _, spellID in ipairs(spellList) do
+            if spellID and spellID > 0 and SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+                and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] then
+                local resolvedID = ResolveSpellID(spellID)
+                if not (addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID])) then
+                    local isAvailable = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)
+                    if isAvailable then
+                        local isUsable = false
+                        if BlizzardAPI.IsSpellUsable then
+                            isUsable = BlizzardAPI.IsSpellUsable(resolvedID, false)
+                        end
+                        if isUsable then
+                            local slot = nil
+                            if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+                                slot = ActionBarScanner.GetSlotForSpell(resolvedID)
+                                if not slot and resolvedID ~= spellID then
+                                    slot = ActionBarScanner.GetSlotForSpell(spellID)
+                                end
+                            end
+                            if slot then
+                                -- Check spell's own range (e.g. 25yd for Shadowstrike)
+                                local ownInRange = IsActionInRange(slot)
+                                if ownInRange ~= false then
+                                    local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
+                                    if isReady then
+                                        return resolvedID, spellID
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Melee range reference check.  If no reference resolves (ranged spec or
+    -- nothing on the action bar), skip non-stealth gap closers entirely.
+    local _, meleeRefSlot = ResolveMeleeReference(addon)
+    if not meleeRefSlot then return nil end
+
+    -- Check range using the melee reference slot
     local inRange = IsActionInRange(meleeRefSlot)
     local outOfRange = (inRange == false)  -- false=out of range, nil=no range check, true=in range
     local now = GetTime()
+
+    -- If stealthed and the melee reference spell is overridden to a stealth
+    -- gap closer with extended range (e.g. Backstab slot shows Shadowstrike
+    -- at 25yd), the range check is unreliable.  Force "out of range" so
+    -- non-stealth gap closers like Shadowstep and Sprint can still fire.
+    if not outOfRange and stealthed and cachedMeleeRefSpellID then
+        local overrideID = ResolveSpellID(cachedMeleeRefSpellID)
+        if overrideID ~= cachedMeleeRefSpellID and SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+            and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[overrideID] then
+            outOfRange = true
+        end
+    end
 
     if outOfRange then
         -- No show debounce: display gap closer immediately when out of range.
@@ -1164,7 +1225,6 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
         end
     end
 
-    local spellList = ResolveGapCloserSpells(addon)
     if not spellList then return nil end
 
     for _, spellID in ipairs(spellList) do
@@ -1172,8 +1232,14 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
             -- Resolve talent overrides (e.g., Chi Torpedo replacing Roll)
             local resolvedID = ResolveSpellID(spellID)
 
+            -- Skip stealth-only gap closers in the normal loop.
+            -- When stealthed: already evaluated in the dedicated stealth path above.
+            -- When not stealthed: gap-closer component is inactive (no teleport).
+            if SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+                and (SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] or SpellDB.GAP_CLOSER_REQUIRES_STEALTH[resolvedID]) then
+                -- skip: handled by stealth gap-closer path or inactive
             -- Skip if already in the queue
-            if addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID]) then
+            elseif addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID]) then
                 -- skip: already shown
             else
                 -- Check: spell is known
@@ -1181,17 +1247,16 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
                 if isAvailable then
                     -- Gap closers fail CLOSED (failOpen=false): if we can't confirm
                     -- usability (secret values), skip to the next spell rather than
-                    -- suggesting an unusable stealth-only ability like Shadowstrike.
+                    -- suggesting an unusable ability.
                     local isUsable = false
                     if BlizzardAPI.IsSpellUsable then
                         isUsable = BlizzardAPI.IsSpellUsable(resolvedID, false)
                     end
                     if isUsable then
                         -- Check: spell is actually on an action bar slot.
-                        -- Stealth-only spells like Shadowstrike (185438) may report
-                        -- IsSpellUsable=true even out of stealth, but they won't be
-                        -- on any bar slot (the button shows Backstab instead).
-                        -- Skip spells with no slot — they can't get a keybind anyway.
+                        -- Some spells may not be on any bar slot (e.g. the button
+                        -- shows a different spell via override). Skip spells with no
+                        -- slot — they can't get a keybind anyway.
                         if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
                             local slot = ActionBarScanner.GetSlotForSpell(resolvedID)
                             if not slot then
@@ -1206,7 +1271,8 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
                             end
                             if slot then
                                 -- Check: spell is ready (not on a real cooldown)
-                                -- isOnGCD is NeverSecret: true=GCD only (ready), false=real CD, nil=no CD (ready)
+                                -- 12.0: isOnGCD==true means GCD-only; nil is ambiguous,
+                                -- so IsSpellReady also checks local CD tracking + action bar state
                                 local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
                                 if isReady then
                                     return resolvedID, spellID

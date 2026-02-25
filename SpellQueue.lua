@@ -168,11 +168,14 @@ local function PassesSpellFilters(spellID, profile)
 end
 
 -- Lighter filter for rotation list positions 2+ and defensive queue spells.
--- Does NOT check IsSpellUsable or IsSpellReady: cooldown status is fully secreted
--- in 12.0 combat (GetActionCooldown start/duration are secret, isOnGCD returns nil
--- instead of false for real cooldowns outside SPELL_UPDATE_COOLDOWN events).
--- Local cooldown tracking (via UNIT_SPELLCAST_SUCCEEDED) is handled separately
--- in the categorization pass to de-prioritize (not filter) on-CD spells.
+-- Does NOT check IsSpellUsable or IsSpellReady: most cooldown info is secreted
+-- in 12.0 combat (GetSpellCooldown duration/startTime are secret). isOnGCD has
+-- three NeverSecret states: true=GCD only (ready), false=real CD (flagged spells
+-- like Judgment/BoJ/Wake only), nil=ambiguous (off CD OR unflagged on CD).
+-- Since isOnGCD==false only covers Blizzard-flagged rotation builders, not major
+-- CDs, filtering here would be partial. Local cooldown tracking
+-- (via UNIT_SPELLCAST_SUCCEEDED) is handled separately in the categorization
+-- pass to de-prioritize (not filter) on-CD spells.
 local function PassesRotationFilters(spellID, profile)
     local cached = filterResultCache["r_" .. spellID]
     if cached ~= nil then
@@ -280,9 +283,9 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     -- Gap-closer injection.
-    -- In combat:     insert at position 2 (never replace Blizzard's primary).
-    -- Out of combat: promote to position 1 (the rotation hasn't started yet,
-    --                so the gap closer is the first thing the player should press).
+    -- Promote gap closer to position 1: the primary spell is out of range so
+    -- the gap closer is always the correct first action.  Existing spells shift
+    -- right to make room.
     -- Skip entirely if position 1 is already a gap closer (Blizzard's assisted
     -- combat system can suggest gap closers like Charge as the primary spell).
     -- DefensiveEngine loads after SpellQueue in the TOC, so we resolve it lazily.
