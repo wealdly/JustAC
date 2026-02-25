@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 2)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 3)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -31,6 +31,8 @@ local math_min           = math.min
 local math_floor         = math.floor
 local ipairs             = ipairs
 local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
+local GetCVar            = GetCVar
+local SetCVar            = SetCVar
 
 -- Post-interrupt debounce: cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
@@ -58,6 +60,7 @@ local petHealthBar     = nil  -- pet health StatusBar (warm yellow)
 local currentNameplate = nil  -- nameplate frame we're currently anchored to
 local savedCCAnchors   = nil  -- saved Blizzard CC frame anchors for restoration
 local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
+local savedNameplateShowEnemies = nil  -- original CVar value before we forced it on
 local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -646,6 +649,16 @@ function UINameplateOverlay.Create(addon)
 
     UINameplateOverlay.Destroy(addon)   -- clean slate
 
+    -- Force-enable enemy nameplates so the overlay has a frame to anchor to.
+    -- Save the user's original CVar only on the first Create (not on Destroy→Create
+    -- rebuilds, where savedNameplateShowEnemies is already populated).
+    if savedNameplateShowEnemies == nil then
+        savedNameplateShowEnemies = GetCVar("nameplateShowEnemies")
+    end
+    if GetCVar("nameplateShowEnemies") ~= "1" then
+        SetCVar("nameplateShowEnemies", "1")
+    end
+
     local iconSize = npo.iconSize or 26
     local maxDPS   = math_min(npo.maxIcons or 1, 5)
     local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 1, 5) or 0
@@ -750,6 +763,15 @@ function UINameplateOverlay.Destroy(addon)
     wipe(dpsIcons)
     wipe(defIcons)
     currentNameplate = nil
+
+    -- Restore the user's original nameplateShowEnemies CVar.
+    -- Only restore when we actually saved a value (Create was called).
+    if savedNameplateShowEnemies ~= nil then
+        if GetCVar("nameplateShowEnemies") ~= savedNameplateShowEnemies then
+            SetCVar("nameplateShowEnemies", savedNameplateShowEnemies)
+        end
+        savedNameplateShowEnemies = nil
+    end
 
     if addon then
         addon.nameplateIcons    = nil

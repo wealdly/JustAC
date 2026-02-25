@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: KeyPressDetector - Flash feedback when key press matches queued spell hotkey
-local KPD = LibStub:NewLibrary("JustAC-KeyPressDetector", 1)
+-- JustAC: KeyPressDetector - Flash feedback when key/mouse press matches queued spell hotkey
+local KPD = LibStub:NewLibrary("JustAC-KeyPressDetector", 2)
 if not KPD then return end
 
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
@@ -10,6 +10,7 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local IsShiftKeyDown = IsShiftKeyDown
 local IsControlKeyDown = IsControlKeyDown
 local IsAltKeyDown = IsAltKeyDown
+local IsMouseButtonDown = IsMouseButtonDown
 local wipe = wipe
 local GetTime = GetTime
 local ipairs = ipairs
@@ -20,6 +21,43 @@ local iconsToFlash = {}
 -- Grace period: accept previous hotkey briefly after spell changes
 -- (user pressed key for the spell that just got cast, slot shifted)
 local HOTKEY_GRACE_PERIOD = 0.15
+
+-- Mouse button polling: detect down-transitions for flash matching.
+-- OnKeyDown doesn't fire for mouse buttons, so we poll IsMouseButtonDown each frame.
+-- Buttons 1-2 (left/right) are excluded: they fire constantly and are almost never
+-- bound to combat spells. Buttons 3-5 cover middle-click and side buttons.
+-- Gaming mice with extra buttons (6+) typically remap them to keyboard keys in driver
+-- software, so WoW sees them as regular keyboard input handled by OnKeyDown.
+local MOUSE_BUTTONS = {
+    { api = "MiddleButton", binding = "BUTTON3" },
+    { api = "Button4",      binding = "BUTTON4" },
+    { api = "Button5",      binding = "BUTTON5" },
+}
+local prevMouseDown = {}
+
+-------------------------------------------------------------------------------
+-- Build modifier key prefix from current keyboard state
+-------------------------------------------------------------------------------
+local function BuildModifierPrefix()
+    local shift = IsShiftKeyDown()
+    local ctrl = IsControlKeyDown()
+    local alt = IsAltKeyDown()
+
+    if ctrl and shift then
+        return "CTRL-SHIFT-"
+    elseif shift and alt then
+        return "SHIFT-ALT-"
+    elseif ctrl and alt then
+        return "CTRL-ALT-"
+    elseif shift then
+        return "SHIFT-"
+    elseif ctrl then
+        return "CTRL-"
+    elseif alt then
+        return "ALT-"
+    end
+    return ""
+end
 
 -------------------------------------------------------------------------------
 -- Create the key press detector frame
@@ -34,35 +72,11 @@ function KPD.Create(addon)
     -- Cache function reference at creation time (avoid table lookup in hot path)
     local StartFlash = UIAnimations and UIAnimations.StartFlash
 
-    frame:SetScript("OnKeyDown", function(_, key)
+    ---------------------------------------------------------------------------
+    -- Shared: match normalizedKey against all icon groups and flash matches
+    ---------------------------------------------------------------------------
+    local function MatchAndFlash(normalizedKey)
         if not addon or not StartFlash then return end
-
-        -- Skip pure modifier keys early
-        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
-            return
-        end
-
-        -- Build normalized key with modifiers (matches format in UIRenderer)
-        local modKey = ""
-        local shift = IsShiftKeyDown()
-        local ctrl = IsControlKeyDown()
-        local alt = IsAltKeyDown()
-
-        if ctrl and shift then
-            modKey = "CTRL-SHIFT-"
-        elseif shift and alt then
-            modKey = "SHIFT-ALT-"
-        elseif ctrl and alt then
-            modKey = "CTRL-ALT-"
-        elseif shift then
-            modKey = "SHIFT-"
-        elseif ctrl then
-            modKey = "CTRL-"
-        elseif alt then
-            modKey = "ALT-"
-        end
-
-        local normalizedKey = modKey .. key:upper()
 
         -- Reuse pooled table to avoid GC pressure
         wipe(iconsToFlash)
@@ -167,6 +181,37 @@ function KPD.Create(addon)
         -- Flash all matched icons
         for _, icon in ipairs(iconsToFlash) do
             StartFlash(icon)
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- Keyboard detection (global via SetPropagateKeyboardInput)
+    ---------------------------------------------------------------------------
+    frame:SetScript("OnKeyDown", function(_, key)
+        if not addon or not StartFlash then return end
+
+        -- Skip pure modifier keys early
+        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
+            return
+        end
+
+        MatchAndFlash(BuildModifierPrefix() .. key:upper())
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Mouse button detection (poll IsMouseButtonDown for down-transitions)
+    -- OnKeyDown never fires for mouse buttons, so we detect state transitions
+    -- each frame. Cost: 3 IsMouseButtonDown calls + 3 boolean comparisons/frame.
+    ---------------------------------------------------------------------------
+    frame:SetScript("OnUpdate", function()
+        if not addon or not StartFlash then return end
+
+        for i, btn in ipairs(MOUSE_BUTTONS) do
+            local down = IsMouseButtonDown(btn.api)
+            if down and not prevMouseDown[i] then
+                MatchAndFlash(BuildModifierPrefix() .. btn.binding)
+            end
+            prevMouseDown[i] = down
         end
     end)
 end

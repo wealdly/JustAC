@@ -129,6 +129,7 @@ local AURA_CACHE_DURATION = 0.5
 local trustedOutOfCombatCache = {}
 local lastTrustedCacheTime = 0
 local TRUSTED_CACHE_DURATION = 600  -- Trust out-of-combat checks for 10 minutes (invalidated by events)
+local TRUSTED_CACHE_RECENT_THRESHOLD = 300  -- Cache younger than 5 min uses exact expiration; older uses 80% threshold
 local nextExpirationCheck = 0  -- Throttle expiration checking to once per 5 seconds
 local EXPIRATION_CHECK_INTERVAL = 5
 
@@ -263,14 +264,16 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                     if not spellIdIsSecret and auraData.spellId then
                         resolvedSpellID = auraData.spellId
                     elseif spellIdIsSecret and #pendingActivations > 0 then
-                        -- Secret spellId: match against pending activations by timing
-                        -- Use oldest pending activation (FIFO) within the time window
-                        -- Only matches helpful auras (harmful ones skipped above)
-                        for i, pending in ipairs(pendingActivations) do
+                        -- Secret spellId: match against pending activations by timing.
+                        -- Only safe when exactly one pending activation exists —
+                        -- with multiple pending, we can't reliably determine which
+                        -- cast produced this aura, so skip and fail-open (show spell).
+                        -- Only matches helpful auras (harmful ones skipped above).
+                        if #pendingActivations == 1 then
+                            local pending = pendingActivations[1]
                             if now - pending.time <= PENDING_ACTIVATION_WINDOW then
                                 resolvedSpellID = pending.spellID
-                                table_remove(pendingActivations, i)
-                                break
+                                table_remove(pendingActivations, 1)
                             end
                         end
                     end
@@ -453,7 +456,7 @@ RefreshAuraCache = function()
         if now >= nextExpirationCheck then
             nextExpirationCheck = now + EXPIRATION_CHECK_INTERVAL
             local cacheAge = now - lastTrustedCacheTime
-            local useConservativeThreshold = cacheAge > 300  -- Recent = last 5 minutes
+            local useConservativeThreshold = cacheAge > TRUSTED_CACHE_RECENT_THRESHOLD
             
             for spellID, auraInfo in pairs(trustedOutOfCombatCache.auraInfo or {}) do
                 local shouldInvalidate = false

@@ -429,12 +429,8 @@ local function PauseAllGlows(addon)
                     icon.ProcGlowFrame.Anim:Stop()
                 end
             end
-            if icon.GapCloserHighlightFrame and icon.GapCloserHighlightFrame:IsShown() then
-                icon.GapCloserHighlightFrame:Hide()
-                if icon.GapCloserHighlightFrame.Flipbook and icon.GapCloserHighlightFrame.Flipbook.Anim then
-                    icon.GapCloserHighlightFrame.Flipbook.Anim:Stop()
-                end
-            end
+            -- Gap-closer glow deliberately excluded: it always animates
+            -- (even OOC) and ResumeAllGlows has no matching restore code.
         end
     end
 end

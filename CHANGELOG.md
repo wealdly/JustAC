@@ -1,5 +1,45 @@
 # Changelog
 
+## [4.4.2] - 2026-02-25
+
+### Fixed
+- **Gap-closer glow missing after leaving combat:** `PauseAllGlows` (fired on `PLAYER_REGEN_ENABLED`) hid the gap-closer crawl frame and stopped its animation, but did not reset the renderer's `hasGapCloserGlow` tracking flag. Removed gap-closer glow from `PauseAllGlows`; added stale-flag guard in UIRenderer as defensive fallback.
+- **Shadowstrike gap-closer not suggesting in stealth:** Shadowstrike (185438) was not in Sub Rogue gap-closer defaults, and the melee range reference (Backstab) transforms to Shadowstrike on the action bar in stealth, changing range from 5yd to 25yd. Added Shadowstrike as first entry; stealth-only gap closers now evaluate before the melee range gate using their own slot range.
+- **Melee range reference stability audit (Rogue):** Fixed unstable backup references — `ROGUE_2` changed from Between the Eyes (20yd ranged) to Kidney Shot (5yd melee); `ROGUE_3` changed from Shadowstrike (25yd) to Kidney Shot. All other class/spec references verified stable.
+- **Druid gap-closer disabled after form change:** `OnShapeshiftFormChanged` did not invalidate the melee range reference cache. Now invalidates gap closer cache + range state on `UPDATE_SHAPESHIFT_FORM`.
+- **IsSpellReady() cooldown detection in 12.0 combat:** Now uses full `isOnGCD` three-state: `true`=GCD only (ready), `false`=real CD (flagged spells), `nil`=ambiguous (falls back to local CD tracking + charge checks + action bar usability). Fixes DefensiveEngine suggesting spells on cooldown.
+- **GetSpellCooldownValues() `isOnRealCooldown`:** Now checks `isOnGCD == false` (definitive for flagged spells), then local CD tracking for unflagged spells. Returns `nil` (unknown) instead of `false` when ambiguous.
+- **Nameplate overlay invisible without enemy nameplates:** Now auto-enables `nameplateShowEnemies` CVar when display mode is "Overlay" or "Both", restores original setting on disable/unload.
+- **Mouse hotkey flash detection:** Added `OnUpdate` polling via `IsMouseButtonDown` for mouse button down-transitions (M3/M4/M5, with or without modifiers).
+- **Mouse hotkey normalization mismatch:** Added reverse mouse abbreviations (`M%d` → `BUTTON%d`, `MWU` → `MOUSEWHEELUP`, `MWD` → `MOUSEWHEELDOWN`) so normalized hotkeys match WoW binding format.
+
+### Changed
+- Updated all `isOnGCD` documentation to reflect verified three-state behavior
+- Updated `UnitHealth("player")` documentation: confirmed SECRET in open world combat
+- Updated `UnitPower("player")` documentation: per-type secrecy — continuous resources SECRET, discrete resources NeverSecret
+- Corrected `GetComboPoints()` from SECRET to NeverSecret
+- Added `isEnabled`, `modRate`, `activeCategory` fields to cooldown signal reference (all SECRET)
+- Documented `LuaDurationObject` API, `C_Secrets.ShouldSpellCooldownBeSecret()`, `SecrecyLevel` enum
+- **CheckCooldownCompletions() now uses SPELL_UPDATE_COOLDOWN spellID payload** — O(1) lookup when event fires with non-nil spellID; falls back to full scan on nil
+- **PassesRotationFilters() comment corrected** — accurately documents isOnGCD three-state behavior
+- **Central maxCharges cache in BlizzardAPI** — `GetCachedMaxCharges(spellID)` replaces per-button state; proactive scan on combat exit
+- **UIRenderer per-button `_cachedMaxCharges` removed** — replaced with central `BlizzardAPI.GetCachedMaxCharges()` lookups
+
+### Added
+- **New combat-safe signals discovered and verified:** `C_ActionBar.IsActionInRange()`, `IsInterruptAction()`, `C_Spell.IsExternalDefensive()`, `C_CooldownViewer` category/info APIs, `C_UnitAuras.GetCooldownAuraBySpellID()`, `ACTION_RANGE_CHECK_UPDATE`, `ACTION_USABLE_CHANGED`, `IsAttackAction()`, `IsCurrentAction()`, `GetSessionDurationSeconds()`
+- **SPELL_UPDATE_COOLDOWN spellID is NeverSecret** — per-spell CD state change events with `startRecoveryCategory` (133=GCD, 0=own CD)
+- **UnitPower secrecy mapped per-type** — continuous primary resources SECRET, discrete secondary resources NeverSecret, `UnitPowerMax`/`UnitPowerType` always NeverSecret
+- **C_Spell.IsSpellUsable, GetSpellPowerCost, IsCurrentSpell verified NeverSecret** in combat
+- **C_Spell.GetSpellCharges ALL SECRET** (including maxCharges) — must cache out of combat
+- **C_Spell.IsSpellInRange verified NeverSecret** — existing range check code confirmed correct
+- **LossOfControl API documented from source** — `locType`, `priority`, `displayType`, `auraInstanceID` NeverSecret
+- **DB2 tables catalogued** — `CooldownSet`/`CooldownSetSpell`, `SpellActivationOverlay`, `AssistedCombat`/`AssistedCombatRule`/`AssistedCombatStep`, `LossOfControlType`
+- **Event-driven CD tracking potential identified** — `SPELL_UPDATE_COOLDOWN` spellID + `isOnGCD` state machine could replace timer-based local CD tracking
+
+### Documentation
+- Updated `Documentation/12.0_COMPATIBILITY.md` combat-safe signal reference with all Session 2/2b/2c/2d findings
+- Updated `copilot-instructions.md` NeverSecret sections with verified API behaviors
+
 ## [4.4.1] - 2026-02-24
 
 ### Performance

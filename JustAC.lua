@@ -433,6 +433,9 @@ function JustAC:OnDisable()
         EventRegistry:UnregisterCallback("AssistedCombatManager.OnSetActionSpell", self)
     end
     
+    -- Tear down nameplate overlay (restores nameplateShowEnemies CVar)
+    if UINameplateOverlay then UINameplateOverlay.Destroy(self) end
+
     if self.mainFrame then
         self.mainFrame:Hide()
     end
@@ -801,6 +804,10 @@ function JustAC:OnCombatEvent(event)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
+        -- UnitCreatureType() is readable again out of combat; refresh for next pull
+        if BlizzardAPI and BlizzardAPI.RefreshTargetCreatureType then
+            BlizzardAPI.RefreshTargetCreatureType()
+        end
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(false)
         end
@@ -879,6 +886,14 @@ function JustAC:OnSpellIconChanged()
 end
 
 function JustAC:OnShapeshiftFormChanged()
+    -- Form changes swap the active action bar (Druid Cat/Bear/etc.), so the
+    -- melee range reference slot may now point at a different spell or be
+    -- absent entirely.  Invalidate so ResolveMeleeReference re-queries the
+    -- correct form-bar slots on the next GetGapCloserSpell call.
+    if DefensiveEngine then
+        DefensiveEngine.InvalidateGapCloserCache()
+        DefensiveEngine.ClearRangeState()
+    end
     self:InvalidateCaches({macros = true, hotkeys = true})
     self:ForceUpdate()
 end

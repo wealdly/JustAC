@@ -155,12 +155,31 @@ Two-tier health thresholds in `JustAC.lua`:
 
 ## 12.0 Compatibility & Secret Values
 
-**Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`
+**Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`, `C_Spell.IsSpellInRange()`, `C_Spell.IsExternalDefensive()`
 
 **NeverSecret Fields (critical for combat-safe logic):**
-- `isOnGCD` — Three-state: `true`=GCD only (spell ready), `false`=real cooldown, `nil`=no cooldown (spell ready). Use `~= false` for readiness checks.
+- `isOnGCD` — Three-state NeverSecret (verified 2026-02-25): `true`=GCD only (spell ready), `false`=real cooldown running (only for Blizzard-flagged spells like Judgment, Blade of Justice, Wake of Ashes), `nil`/absent=ambiguous (off CD OR unflagged spell on CD — indistinguishable). Major CDs (Divine Toll, Shadow Blades) never show `false`. Use `isOnGCD == false` for definitive CD detection; fall back to local cooldown tracking + action bar usability when `nil`. Flagged spells go `nil→false` immediately at cast (no transient `true` state). State machine: `nil`→`false` (cast) → `false`→`nil` (CD expires). Unflagged: `nil`→`true` (GCD) → `true`→`nil` (GCD ends).
+- `timeUntilEndOfStartRecovery` — SECRET in combat. Counts down GCD remaining (unflagged spells) or total CD remaining (flagged spells). Display-only via UI pipeline. Note: despite the name suggesting "GCD recovery", it tracks total CD remaining for flagged spells (e.g. 28.2s of 30s Wake CD).
 - `auraInstanceID` — Stable numeric handle, same ID maps to same aura across combat. Use for tracking aura identity when `spellId`/`name` are secret.
 - `isHelpful` / `isHarmful` — Aura disposition (may be secret in some contexts, fail-open)
+
+**NeverSecret Spell APIs (verified 2026-02-25):**
+- `C_Spell.IsSpellUsable(id)` — Real `bool, bool` in combat (usable + noMana). Verified NeverSecret on Ret Paladin.
+- `C_Spell.GetSpellPowerCost(id)` — ALL fields NeverSecret: `type`, `cost`, `minCost`, `costPercentOfMax`. Cacheable at registration. Use with IsUsableAction to distinguish CD vs resource issues.
+- `C_Spell.IsCurrentSpell(id)` — Real `bool` in combat. Active cast/channel detection at spell level.
+- `C_Spell.GetSpellInfo(id)` — `name`, `iconID` NeverSecret in combat. Display pipeline safe.
+- `C_Spell.GetSpellCharges(id)` — **ALL fields SECRET** (including maxCharges). Cache maxCharges out of combat.
+
+**NeverSecret Power APIs (verified 2026-02-25):**
+- `UnitPowerType("player")` — NeverSecret. Returns primary power type enum (0=Mana, 1=Rage, 3=Energy, etc.).
+- `UnitPowerMax("player"[, type])` — NeverSecret for ALL power types. Cacheable at combat exit.
+- `UnitPower("player", type)` — **Per-type secrecy:** Continuous resources (Mana=0, Rage=1, Energy=3, Focus=2, Runic Power=6) are SECRET. Discrete secondary resources (Combo Points=4, Holy Power=9, Soul Shards=7, Chi=12, Arcane Charges=16) are **NeverSecret**.
+- `GetComboPoints("player","target")` — **NeverSecret** (verified on Rogue). Equivalent to `UnitPower("player", 4)`.
+
+**Secret in combat (verified 2026-02-25):**
+- `UnitHealth("player")` — SECRET even in open world combat
+- `UnitPower("player")` — SECRET (default=primary resource: energy, mana, rage, focus)
+- Target health/power — `UnitHealth/UnitHealthMax/UnitPower/UnitPowerMax("target")` — ALL SECRET
 
 **NeverSecret Target APIs (verified 2026-02-24):**
 - `UnitClassification("target")` — `"normal"`, `"elite"`, `"worldboss"`, `"rare"`, `"rareelite"`, `"minus"`
@@ -170,6 +189,32 @@ Two-tier health thresholds in `JustAC.lua`:
 - `UnitThreatSituation("player", "target")` — 0-3 threat state
 - `UnitIsCrowdControlled("target")` — Target already CC'd
 - `nameplate.UnitFrame.isPlayer` / `.isFriend` — Cached table fields, bypass secret system
+
+**NeverSecret Action Bar APIs (verified 2026-02-25):**
+- `C_ActionBar.IsActionInRange(slot, "target")` — Real `bool` in combat. Range check per action slot.
+- `C_ActionBar.IsInterruptAction(slot)` — Real `bool` in combat. Identifies interrupt spell slots.
+- `C_ActionBar.IsUsableAction(slot)` — Real `bool, bool` in combat. Usable + noMana.
+- `C_ActionBar.IsAttackAction(slot)` — Real `bool` in combat. Auto-attack slot detection.
+- `C_ActionBar.IsCurrentAction(slot)` — Real `bool` in combat. Active cast/channel/toggle only (NOT melee swing).
+- `ACTION_RANGE_CHECK_UPDATE` event — Push-based per-slot range (`isInRange`, `checksRange`). Requires `EnableActionRangeCheck(slot, true)`.
+- `ACTION_USABLE_CHANGED` event — Batched `ActionUsableState[]` with per-slot `usable`/`noMana` bools.
+- `C_Spell.IsExternalDefensive(spellID)` — Real `bool`. Static classification, always works.
+- `C_DamageMeter.GetSessionDurationSeconds(type)` — Real combat timer (seconds). No SecretWhen.
+
+**NeverSecret Cooldown Events (verified 2026-02-25):**
+- `SPELL_UPDATE_COOLDOWN` event — **spellID payload is NeverSecret in combat.** Returns `spellID`, `baseSpellID`, `category`, `startRecoveryCategory`. `startRecoveryCategory=133` = GCD. Fires per-spell on CD state change (~10× per cast due to GCD cascade). `spellID=nil` = batch "refresh all". Duplicate events per spell (base + override).
+- `ACTIONBAR_UPDATE_COOLDOWN` event — **Fires every frame (~15-18Hz).** No payload. Useless as discrete signal. Do NOT use for event-driven logic.
+- `SPELL_UPDATE_USABLE` event — No payload. Fires on usability transitions (CD expire, resource change).
+
+**NeverSecret Spell Classification APIs (verified 2026-02-25):**
+- `C_CooldownViewer.GetCooldownViewerCategorySet(cat, false)` — Returns cooldownIDs per category (0=Essential, 1=Utility, 2=TrackedBuff, 3=TrackedBar). Non-secret in combat.
+- `C_CooldownViewer.GetCooldownViewerCooldownInfo(id)` — Returns static metadata (spellID, isKnown, category, flags). `hasAura` is static config flag, NOT live state.
+
+**NeverSecret LossOfControl fields (from source, untested in-game):**
+- `locType` — CC type string ("STUN", "SILENCE", "ROOT", "FEAR", etc.)
+- `priority` — CC priority ranking
+- `displayType` — Visual type enum
+- `auraInstanceID` — Links to aura instance map
 
 **See:** `Documentation/12.0_COMPATIBILITY.md` → "Combat-Safe Signal Reference" for full matrix
 
@@ -182,6 +227,7 @@ Two-tier health thresholds in `JustAC.lua`:
   - ❌ Cannot use in conditionals: `if duration > 5` fails if `duration` is secret
   - ✅ Can pass to UI: `FontString:SetText(secretValue)` works (Blizzard handles internally)
   - ✅ Can pass to cooldown: `Cooldown:SetCooldown(start, secretDuration)` works
+  - ✅ Can pass LuaDurationObject: `Cooldown:SetCooldownFromDurationObject(dur)` works (12.0 opaque pipeline)
 - **Common secret values in combat:**
   - `C_Spell.GetSpellCooldown()` → `duration`/`startTime` (blanket-secreted even when zero)
   - `C_UnitAuras` → `spellId`, `name` (aura identity hidden in combat)
@@ -190,15 +236,22 @@ Two-tier health thresholds in `JustAC.lua`:
 - **Fail-open design:** `IsSecretValue()` shows extra content rather than hiding valid data
 - **Fallback pattern:** Cache non-secret structure data (e.g., `maxCharges`) for comparison
 
-**Cooldown readiness pattern (use isOnGCD):**
+**Cooldown readiness pattern (isOnGCD + local tracking fallback):**
 ```lua
 local info = C_Spell.GetSpellCooldown(spellID)
 if info then
-    -- isOnGCD is NeverSecret: true=GCD only, false=real CD, nil=no CD
-    if info.isOnGCD ~= false then
-        -- Spell is ready (GCD or no cooldown)
+    -- isOnGCD == true → on GCD only, spell is ready
+    if info.isOnGCD == true then
+        -- Spell is ready (just on GCD)
+    elseif info.isOnGCD == false then
+        -- Real cooldown running (only for flagged spells: Judgment, BoJ, Wake, etc.)
+    elseif issecretvalue(info.duration) then
+        -- In combat: isOnGCD is nil for BOTH "off CD" and "unflagged spell on CD"
+        -- Must use local cooldown tracking or action bar fallback
+        -- See BlizzardAPI.IsSpellReady() for full fallback chain
     else
-        -- Real cooldown active
+        -- Out of combat: can compare duration directly
+        if info.duration == 0 then -- ready end
     end
 end
 ```
