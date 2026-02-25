@@ -623,11 +623,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
     -- Detect interruptible cast via the target nameplate's cast bar frame
     -- state.  Uses Icon:IsShown() for 12.0-safe interruptibility detection.
+    -- interruptMode: "disabled" | "kickOnly" | "ccPrefer"
+    -- ("importantOnly" reserved for future — all important-cast signals are SECRET in 12.0)
     local intIcon = addon.interruptIcon
     local resolvedInts = addon.resolvedInterrupts
-    local showInterrupt = profile.showInterrupt ~= false
-    local ccRegularMobs = profile.ccRegularMobs ~= false
-    if intIcon and resolvedInts and shouldShowFrame and showInterrupt then
+    local interruptMode = profile.interruptMode or "ccPrefer"
+    -- Fallback: if saved data contains retired "importantOnly", treat as "kickOnly"
+    if interruptMode == "importantOnly" then interruptMode = "kickOnly" end
+    if intIcon and resolvedInts and shouldShowFrame and interruptMode ~= "disabled" then
         local shouldShowInterrupt = false
         local intSpellID = nil
 
@@ -669,41 +672,73 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     end
 
                     if interruptible then
-                        -- Target is casting an interruptible spell — find best
-                        -- available interrupt or CC.
-                        local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
-                        -- NeverSecret when available; nil-guarded for versions where API doesn't exist
-                        local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
-                        -- ccRegularMobs: prefer CC on non-boss mobs, save kick
-                        local preferCC = ccRegularMobs and not targetCCImmune
-                        if preferCC then
-                            -- First pass: try CC spells only
-                            -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
-                            if not targetAlreadyCC then
+                        -- Check if Blizzard flags this as an important (lethal) cast.
+                        -- Both isHighlightedImportantCast and ImportantCastIndicator:IsShown()
+                        -- are secret booleans in 12.0 (spellID taint propagates through
+                        -- SetShown). Direct comparison crashes. Use pcall to attempt the
+                        -- comparison: if it succeeds, we get the real answer; if it errors,
+                        -- the value is secret and we can't distinguish true from false.
+                        -- Important-cast detection: ALL signals are SECRET in 12.0
+                        -- (spellID taint propagates through IsSpellImportant, SetShown,
+                        -- IsShown, IsPlaying). Detection code kept for future use.
+                        -- For ccPrefer: treat secret as not-important (still uses
+                        -- normal CC/kick logic, which is fine).
+                        local isImportantCast = false
+                        if castBar.ImportantCastIndicator then
+                            local impOk, impShown = pcall(castBar.ImportantCastIndicator.IsShown, castBar.ImportantCastIndicator)
+                            if impOk then
+                                local cmpOk, cmpResult = pcall(function() return impShown == true end)
+                                if cmpOk then
+                                    isImportantCast = cmpResult
+                                end
+                                -- cmpOk=false: secret boolean, fall through with false
+                            end
+                        end
+
+                        -- "importantOnly" mode (reserved for future): skip non-important casts
+                        -- Currently unreachable — importantOnly falls back to kickOnly above
+                        if interruptMode == "importantOnly" and not isImportantCast then
+                            interruptible = false
+                        end
+
+                        if interruptible then
+                            -- Target is casting an interruptible spell — find best
+                            -- available interrupt or CC.
+                            local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
+                            -- NeverSecret when available; nil-guarded for versions where API doesn't exist
+                            local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
+                            -- "ccPrefer" mode on non-boss, non-important casts: prefer CC to save kick CD
+                            -- Important casts always get a hard interrupt (kick), never CC
+                            local preferCC = interruptMode == "ccPrefer" and not targetCCImmune and not isImportantCast
+                            if preferCC then
+                                -- First pass: try CC spells only
+                                -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
+                                if not targetAlreadyCC then
+                                    for _, entry in ipairs(resolvedInts) do
+                                        local sid = entry.spellID
+                                        -- IsSpellUsable: checks current castability (form, stealth, resources)
+                                        -- IsSpellAvailable only checks if the spell is learned, not if it's castable now
+                                        if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                            intSpellID = sid
+                                            shouldShowInterrupt = true
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                            -- Fallback (or boss / kick-only / important cast): use any available spell
+                            if not shouldShowInterrupt then
                                 for _, entry in ipairs(resolvedInts) do
                                     local sid = entry.spellID
-                                    -- IsSpellUsable: checks current castability (form, stealth, resources)
-                                    -- IsSpellAvailable only checks if the spell is learned, not if it's castable now
-                                    if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    local stype = entry.type
+                                    -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
+                                    if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
+                                        -- skip
+                                    elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
                                         intSpellID = sid
                                         shouldShowInterrupt = true
                                         break
                                     end
-                                end
-                            end
-                        end
-                        -- Fallback (or boss / CC disabled): use any available spell
-                        if not shouldShowInterrupt then
-                            for _, entry in ipairs(resolvedInts) do
-                                local sid = entry.spellID
-                                local stype = entry.type
-                                -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
-                                if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                                    -- skip
-                                elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                    intSpellID = sid
-                                    shouldShowInterrupt = true
-                                    break
                                 end
                             end
                         end

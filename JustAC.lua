@@ -45,8 +45,7 @@ local defaults = {
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
-        showInterrupt = true,             -- Show interrupt/CC reminder on interruptible casts
-        ccRegularMobs = true,             -- Prefer CC on non-boss mobs (fall back to kick when CC unavailable)
+        interruptMode = "ccPrefer",        -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
             hotkey = {
@@ -84,8 +83,7 @@ local defaults = {
             maxDefensiveIcons    = 3,    -- 1-5
             defensiveDisplayMode = "always", -- "combatOnly", "always"
             showHealthBar        = true,
-            showInterrupt        = true,        -- Show interrupt/CC reminder
-            ccRegularMobs        = true,        -- Prefer CC on non-boss mobs
+            interruptMode        = "ccPrefer",  -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
             -- Text overlay settings for nameplate overlay icons (independent from main queue)
             textOverlays = {
                 hotkey = {
@@ -225,10 +223,31 @@ function JustAC:NormalizeSavedData()
                 npo.textOverlays.hotkey.show = false
             end
         end
+        -- Migrate showInterrupt + ccRegularMobs → interruptMode (one-time)
+        if profile.showInterrupt ~= nil or profile.ccRegularMobs ~= nil then
+            if profile.showInterrupt == false then
+                profile.interruptMode = "disabled"
+            elseif profile.ccRegularMobs == false then
+                profile.interruptMode = "kickOnly"
+            else
+                profile.interruptMode = "ccPrefer"
+            end
+        end
+        if npo and (npo.showInterrupt ~= nil or npo.ccRegularMobs ~= nil) then
+            if npo.showInterrupt == false then
+                npo.interruptMode = "disabled"
+            elseif npo.ccRegularMobs == false then
+                npo.interruptMode = "kickOnly"
+            else
+                npo.interruptMode = "ccPrefer"
+            end
+        end
         -- Nil legacy keys so they don't persist in saved data after migration
         profile.showOffensiveHotkeys = nil
+        profile.showInterrupt = nil
+        profile.ccRegularMobs = nil
         if profile.defensives then profile.defensives.showHotkeys = nil end
-        if profile.nameplateOverlay then profile.nameplateOverlay.showHotkey = nil end
+        if npo then npo.showInterrupt = nil; npo.ccRegularMobs = nil; npo.showHotkey = nil end
     end
 end
 
@@ -260,6 +279,7 @@ function JustAC:OnInitialize()
     self.db.RegisterCallback(self, "OnProfileChanged", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileCopied", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileReset", "OnProfileReset")
+    self.db.RegisterCallback(self, "OnProfileDeleted", "OnProfileDeleted")
     
     if Options and Options.Initialize then
         Options.Initialize(self)
@@ -540,6 +560,24 @@ end
 -- AceDB already resets profile-level settings to defaults.
 function JustAC:OnProfileReset()
     self:RefreshConfig()
+end
+
+-- Clean up spec-profile mappings that reference a deleted profile.
+-- AceDB fires OnProfileDeleted(db, profileKey) after removing the profile data.
+function JustAC:OnProfileDeleted(event, db, deletedName)
+    if not self.db or not self.db.char or not self.db.char.specProfiles then return end
+    local changed = false
+    for specIndex, profileName in pairs(self.db.char.specProfiles) do
+        if profileName == deletedName then
+            self.db.char.specProfiles[specIndex] = nil
+            changed = true
+        end
+    end
+    if changed then
+        self:DebugPrint("Cleared spec-profile mappings for deleted profile: " .. tostring(deletedName))
+        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+    end
 end
 
 function JustAC:ShowWelcomeMessage()
