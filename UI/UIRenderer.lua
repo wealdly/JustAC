@@ -43,8 +43,10 @@ end
 
 -- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
 -- Multi-modifier combos are checked first to prevent partial prefix matches.
+-- Mouse abbreviations are reversed so matching uses WoW's raw binding names (BUTTON1-N).
 local function NormalizeHotkey(hotkey)
     local n = hotkey:upper()
+    -- Expand modifier prefixes (order matters: multi-mod first to avoid partial match)
     n = n:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
     n = n:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
     n = n:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
@@ -52,6 +54,10 @@ local function NormalizeHotkey(hotkey)
     n = n:gsub("^C%-?(.+)",  "CTRL-%1")
     n = n:gsub("^A%-?(.+)",  "ALT-%1")
     n = n:gsub("^%+(.+)",    "MOD-%1")
+    -- Reverse mouse abbreviations from AbbreviateKeybind (M4→BUTTON4, MWU→MOUSEWHEELUP)
+    n = n:gsub("MWU$", "MOUSEWHEELUP")
+    n = n:gsub("MWD$", "MOUSEWHEELDOWN")
+    n = n:gsub("M(%d+)$", "BUTTON%1")
     return n
 end
 
@@ -123,20 +129,20 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- Charge cooldown (recharging next charge)
-    -- maxCharges is spell structure (rarely secret), currentCharges is combat state (can be secret)
-    -- For multi-charge spells (maxCharges > 1), always pass values through to the widget
+    -- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25)
+    -- Use centrally-cached maxCharges from BlizzardAPI to decide multi-charge display
     if button.chargeCooldown then
         local maxCharges = chargeInfo and chargeInfo.maxCharges
         local currentCharges = chargeInfo and chargeInfo.currentCharges
         
         if maxCharges and currentCharges then
-            -- Cache maxCharges when known (spell structure, rarely changes)
+            -- Determine effective maxCharges: prefer non-secret live value, fall back to central cache
+            local effectiveMaxCharges
             if not BlizzardAPI.IsSecretValue(maxCharges) then
-                button._cachedMaxCharges = maxCharges
+                effectiveMaxCharges = maxCharges
+            else
+                effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
             end
-            
-            -- Use cached or current maxCharges to determine if multi-charge spell
-            local effectiveMaxCharges = button._cachedMaxCharges or (not BlizzardAPI.IsSecretValue(maxCharges) and maxCharges) or 0
             local isMultiCharge = effectiveMaxCharges > 1
             
             if isMultiCharge then
@@ -172,26 +178,20 @@ local function UpdateButtonCooldowns(button)
 
     -- Show charge count only for multi-charge spells
     -- IMPORTANT: currentCharges can be a secret value in combat
-    -- We check maxCharges to decide whether to show charges at all
+    -- We use centrally-cached maxCharges to decide whether to show charges at all
     -- SetText() can display secret values directly - they render as the actual number
     if button.chargeText and chargeInfo then
         local maxCharges = chargeInfo.maxCharges
         local currentCharges = chargeInfo.currentCharges
 
-        -- maxCharges defines spell structure (static), currentCharges is combat state (can be secret)
         if maxCharges and currentCharges then
-            -- Safe comparison: maxCharges is usually not secret (spell structure)
             local showCharges = false
             if not BlizzardAPI.IsSecretValue(maxCharges) then
                 showCharges = maxCharges > 1
-            elseif button._cachedMaxCharges then
-                -- Fall back to cached value if current is somehow secret
-                showCharges = button._cachedMaxCharges > 1
-            end
-
-            -- Cache maxCharges when it's a real value
-            if not BlizzardAPI.IsSecretValue(maxCharges) then
-                button._cachedMaxCharges = maxCharges
+            else
+                -- Fall back to central cache (populated out of combat)
+                local cached = BlizzardAPI.GetCachedMaxCharges(id)
+                if cached then showCharges = cached > 1 end
             end
 
             if showCharges then
@@ -442,7 +442,6 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         -- Reset cooldown state flags so UpdateButtonCooldowns re-shows widgets on reuse
         defensiveIcon._cooldownShown = nil
         defensiveIcon._chargeCooldownShown = nil
-        defensiveIcon._cachedMaxCharges = nil
         -- Reset cooldown cache for when icon gets reused
         defensiveIcon._lastCooldownStart = nil
         defensiveIcon._lastCooldownDuration = nil
@@ -745,7 +744,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 intIcon._cooldownShown       = false
                 intIcon._chargeCooldownShown = false
-                intIcon._cachedMaxCharges    = nil
                 intIcon.cachedHotkey         = nil
             end
 
@@ -949,6 +947,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         icon.hasProcGlow = false
                     end
                     -- Gap-closer crawl only when no proc glow is active
+                    -- Stale flag guard: if external code (e.g. PauseAllGlows) hid
+                    -- the frame without resetting hasGapCloserGlow, re-sync here.
+                    if icon.hasGapCloserGlow and icon.GapCloserHighlightFrame
+                        and not icon.GapCloserHighlightFrame:IsShown() then
+                        icon.hasGapCloserGlow = false
+                    end
                     if wantGapCloserGlow and not icon.hasGapCloserGlow then
                         UIAnimations.StartGapCloserGlow(icon)
                         icon.hasGapCloserGlow = true
@@ -1079,7 +1083,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     -- Reset all caches for when slot gets reused
                     icon._cooldownShown = nil
                     icon._chargeCooldownShown = nil
-                    icon._cachedMaxCharges = nil
                     icon._lastCooldownStart = nil
                     icon._lastCooldownDuration = nil
                     icon._cooldownIsSecret = nil

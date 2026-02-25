@@ -824,10 +824,11 @@ SpellDB.MELEE_RANGE_REFERENCE_SPELLS = {
     PALADIN_2 = {35395, 53600},       -- Protection: Crusader Strike, Shield of the Righteous
     PALADIN_3 = {35395, 215661},      -- Retribution: Crusader Strike, Justicar's Vengeance
 
-    -- Rogue
+    -- Rogue (backups must be stealth-stable: primary builders transform
+    -- in stealth, but Kidney Shot never changes range)
     ROGUE_1 = {1329, 703},            -- Assassination: Mutilate, Garrote
-    ROGUE_2 = {193315, 315341},       -- Outlaw: Sinister Strike, Between the Eyes (ranged fallback)
-    ROGUE_3 = {53, 196819},           -- Subtlety: Backstab, Shadowstrike (stealth swap)
+    ROGUE_2 = {193315, 408},          -- Outlaw: Sinister Strike, Kidney Shot (melee-stable fallback)
+    ROGUE_3 = {53, 408},              -- Subtlety: Backstab, Kidney Shot (melee-stable fallback)
 
     -- Shaman
     SHAMAN_2 = {17364, 60103},        -- Enhancement: Stormstrike, Lava Lash
@@ -836,6 +837,18 @@ SpellDB.MELEE_RANGE_REFERENCE_SPELLS = {
     WARRIOR_1 = {12294, 262161},      -- Arms: Mortal Strike, Warbreaker
     WARRIOR_2 = {23881, 85288},       -- Fury: Bloodthirst, Raging Blow
     WARRIOR_3 = {23922, 6572},        -- Protection: Shield Slam, Revenge
+}
+
+--------------------------------------------------------------------------------
+-- GAP-CLOSERS THAT ONLY WORK IN STEALTH
+-- Spells whose gap-closer (teleport/charge) component requires stealth or
+-- Shadow Dance.  The spell itself is usable out of stealth (e.g. Shadowstrike
+-- functions as a regular melee attack), but DefensiveEngine should only
+-- suggest it as a gap-closer when the player is actually stealthed.
+-- Keyed by spell ID → true.
+--------------------------------------------------------------------------------
+SpellDB.GAP_CLOSER_REQUIRES_STEALTH = {
+    [185438] = true,  -- Shadowstrike (Sub Rogue): teleports only in stealth/Shadow Dance
 }
 
 --- Check whether the current spec has gap-closer defaults (i.e. is a melee spec).

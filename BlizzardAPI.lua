@@ -46,6 +46,7 @@ local GetItemSpell = GetItemSpell
 -- Track cooldowns locally when API returns secrets in 12.0+ (fail-open approach)
 local localCooldowns = {}
 local cachedDurations = {}
+local cachedMaxCharges = {}
 local trackedDefensiveSpells = {}
 local trackedRotationSpells = {}
 local cooldownEventFrame = nil
@@ -163,14 +164,77 @@ end
 
 local function ClearCachedDurations()
     wipe(cachedDurations)
+    wipe(cachedMaxCharges)
     wipe(localCooldowns)
+end
+
+--- Cache maxCharges for a spell (call out of combat, fields are SECRET in combat).
+local function CacheChargesForSpell(spellID)
+    if not spellID or not C_Spell_GetSpellCharges then return end
+    if InCombatLockdown() then return end  -- fields are ALL SECRET in combat
+    local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+    if ok and chargeInfo and chargeInfo.maxCharges then
+        if not (issecretvalue and issecretvalue(chargeInfo.maxCharges)) then
+            cachedMaxCharges[spellID] = chargeInfo.maxCharges
+        end
+    end
+end
+
+--- Pre-cache cooldown durations for all tracked spells.
+--- Called on PLAYER_REGEN_ENABLED — all CD fields are readable out of combat.
+--- This prevents first-combat-session edge cases where RecordSpellCooldown
+--- has no cached duration and falls back to unmodified GetSpellBaseCooldown.
+local function ScanCooldownDurations()
+    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    local function scanSpell(spellID)
+        -- Skip if already cached with a real value
+        if cachedDurations[spellID] and cachedDurations[spellID] > 0 then return end
+        local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+        if ok and cd and cd.duration and cd.duration > 0 then
+            if not (issecretvalue and issecretvalue(cd.duration)) then
+                if cd.duration > MIN_TRACKABLE_CD_MS / 1000 then
+                    cachedDurations[spellID] = cd.duration
+                end
+            end
+        end
+        -- Also cache maxCharges while we're at it
+        CacheChargesForSpell(spellID)
+    end
+    for spellID in pairs(trackedRotationSpells) do
+        scanSpell(spellID)
+    end
+    for spellID in pairs(trackedDefensiveSpells) do
+        scanSpell(spellID)
+    end
 end
 
 --- Check tracked spells with active local cooldowns for early CD completion.
 --- Called on SPELL_UPDATE_COOLDOWN — if isOnGCD is true for a spell we think
 --- is on cooldown, the real CD has ended (e.g., CDR proc reduced it).
-local function CheckCooldownCompletions()
+--- NOTE: Only works for spells that trigger GCD. Off-GCD spells (Shadow Blades,
+--- Shadow Dance, etc.) go from nil→nil so this can't detect their early completion.
+--- For those, the local timer naturally expires or action bar usability catches it.
+---
+--- @param eventSpellID number|nil  spellID from SPELL_UPDATE_COOLDOWN payload.
+---   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
+---   is checked (O(1) instead of O(n)). When nil (batch "refresh all" signal),
+---   falls back to iterating all tracked cooldowns.
+local function CheckCooldownCompletions(eventSpellID)
     if not C_Spell_GetSpellCooldown then return end
+
+    -- Targeted check: event told us exactly which spell changed
+    if eventSpellID then
+        local data = localCooldowns[eventSpellID]
+        if data and GetTime() < data.endTime then
+            local ok, cd = pcall(C_Spell_GetSpellCooldown, eventSpellID)
+            if ok and cd and cd.isOnGCD == true then
+                localCooldowns[eventSpellID] = nil
+            end
+        end
+        return
+    end
+
+    -- Batch refresh (nil spellID): scan all tracked cooldowns
     for spellID, data in pairs(localCooldowns) do
         if GetTime() < data.endTime then
             local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
@@ -195,6 +259,7 @@ local function InitCooldownTracking()
     cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     cooldownEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    cooldownEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     
     cooldownEventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -203,10 +268,15 @@ local function InitCooldownTracking()
                 RecordSpellCooldown(spellID)
             end
         elseif event == "SPELL_UPDATE_COOLDOWN" then
-            -- Check if any tracked spells had their CD end early (CDR procs, etc.)
-            CheckCooldownCompletions()
+            -- spellID payload is NeverSecret in combat (verified 2026-02-25)
+            local spellID = ...
+            CheckCooldownCompletions(spellID)
         elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
             ClearLocalCooldowns()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Combat exit: scan all tracked spells while CD fields are readable
+            ClearLocalCooldowns()
+            ScanCooldownDurations()
         elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
             ClearCachedDurations()
         end
@@ -216,6 +286,8 @@ end
 function BlizzardAPI.RegisterDefensiveSpell(spellID)
     if not spellID or spellID == 0 then return end
     trackedDefensiveSpells[spellID] = true
+    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
+    CacheChargesForSpell(spellID)
     if not cooldownEventFrame then
         InitCooldownTracking()
     end
@@ -252,6 +324,8 @@ function BlizzardAPI.RegisterRotationSpell(spellID)
     end
     if effectiveCdMs < MIN_TRACKABLE_CD_MS then return end
     trackedRotationSpells[spellID] = true
+    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
+    CacheChargesForSpell(spellID)
     if not cooldownEventFrame then
         InitCooldownTracking()
     end
@@ -265,6 +339,13 @@ end
 
 function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
     return IsLocalCooldownActive(spellID)
+end
+
+--- Get cached maxCharges for a spell. Returns nil if unknown.
+--- Populated at spell registration (out of combat) and refreshed on combat exit.
+--- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25).
+function BlizzardAPI.GetCachedMaxCharges(spellID)
+    return cachedMaxCharges[spellID]
 end
 
 --- Debug: dump local cooldown tracking state for a specific spell
@@ -460,21 +541,70 @@ end
 
 -- Check if a spell is ready (not on a real cooldown).
 -- 12.0 combat: duration/startTime are blanket-secreted.
--- Uses isOnGCD (NeverSecret) three-state: true=GCD only, false=real CD, nil=no CD.
+-- isOnGCD is NeverSecret with three observable states:
+--   true  → GCD only (spell is ready, just on GCD)
+--   false → real cooldown running (only for spells Blizzard flags internally;
+--           typically short-CD rotation spells like Judgment, Blade of Justice)
+--   nil   → absent (spell off CD OR unflagged spell on CD — ambiguous)
+-- When isOnGCD is nil in combat, fall back to local cooldown tracking
+-- and action bar usability to detect real cooldowns.
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cd then return true end
-    -- isOnGCD three-state (NeverSecret):
-    --   true  → GCD only, spell is effectively ready
-    --   nil   → no cooldown at all, spell is ready
-    --   false → real cooldown is actively running
-    if cd.isOnGCD ~= false then return true end
-    -- isOnGCD == false → real cooldown running
-    -- If duration is secret, we know it's non-zero from isOnGCD==false
-    if issecretvalue and issecretvalue(cd.duration) then return false end
-    -- Out of combat: safe to compare
-    return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
+
+    -- isOnGCD == true → on GCD only, spell is effectively ready
+    if cd.isOnGCD == true then return true end
+
+    -- isOnGCD == false → real cooldown running (definitive for flagged spells)
+    if cd.isOnGCD == false then return false end
+
+    -- Out of combat: duration/startTime are readable
+    if not (issecretvalue and issecretvalue(cd.duration)) then
+        return cd.startTime == 0 or (cd.startTime + cd.duration) <= GetTime()
+    end
+
+    -- In combat with secreted values and isOnGCD == nil:
+    -- Spell is either off cooldown OR on CD but unflagged (major CDs like
+    -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
+
+    -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
+    if IsLocalCooldownActive(spellID) then return false end
+
+    -- Charge-based: if we have charges, spell is usable
+    if C_Spell_GetSpellCharges then
+        local csOk, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+        if csOk and chargeInfo and chargeInfo.currentCharges then
+            if not (issecretvalue and issecretvalue(chargeInfo.currentCharges)) then
+                return chargeInfo.currentCharges > 0
+            end
+            -- currentCharges is SECRET — use cached maxCharges to know if this
+            -- is even a charge spell (if not, skip to action bar fallback)
+            local cached = cachedMaxCharges[spellID]
+            if cached and cached > 1 then
+                -- Multi-charge spell but charges are secret — fail-open (assume usable)
+                return true
+            end
+        end
+    end
+
+    -- Action bar usability (visual state, NeverSecret)
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
+        local slot = ActionBarScanner.GetSlotForSpell(spellID)
+        if slot and C_ActionBar and C_ActionBar.IsUsableAction then
+            local actionUsable, notEnoughMana = C_ActionBar.IsUsableAction(slot)
+            if not (issecretvalue and (issecretvalue(actionUsable) or issecretvalue(notEnoughMana))) then
+                -- Not usable AND not a mana issue → likely on cooldown
+                if actionUsable == false and not notEnoughMana then return false end
+                -- Usable → spell is ready
+                if actionUsable == true then return true end
+            end
+        end
+    end
+
+    -- Fail-open: assume ready when we can't determine state
+    return true
 end
 
 function BlizzardAPI.GetAuraSpellID(unit, index, filter)
@@ -847,7 +977,7 @@ end
 
 -- Sanitized values for comparison.
 -- Returns start, duration, isOnRealCooldown (three returns).
--- When secreted: returns 0, 0 but uses isOnGCD to infer cooldown state.
+-- When secreted: returns 0, 0 but uses isOnGCD + local tracking to infer cooldown state.
 -- Third return: true = definitely on real CD, false = definitely not, nil = unknown
 function BlizzardAPI.GetSpellCooldownValues(spellID)
     if not C_Spell_GetSpellCooldown then return 0, 0, false end
@@ -856,12 +986,16 @@ function BlizzardAPI.GetSpellCooldownValues(spellID)
     local startTime = cd.startTime
     local duration = cd.duration
     if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
-        -- Values are secret — use isOnGCD three-state to infer:
-        --   true  → GCD only, not on real CD
-        --   nil   → no cooldown, not on real CD
-        --   false → real cooldown actively running
-        local onRealCD = (cd.isOnGCD == false)
-        return 0, 0, onRealCD
+        -- Values are secret in combat.
+        -- isOnGCD == true → GCD only, not on real CD
+        if cd.isOnGCD == true then return 0, 0, false end
+        -- isOnGCD == false → real cooldown running (flagged spells)
+        if cd.isOnGCD == false then return 0, 0, true end
+        -- isOnGCD == nil → ambiguous (off CD or unflagged spell on CD)
+        -- Use local cooldown tracking as tiebreaker
+        if IsLocalCooldownActive(spellID) then return 0, 0, true end
+        -- No local tracking data → unknown, report nil
+        return 0, 0, nil
     end
     return startTime or 0, duration or 0, false
 end
@@ -885,8 +1019,8 @@ function BlizzardAPI.GetGCDInfo()
 end
 
 -- Check if a spell is only on GCD (not a real cooldown).
--- 12.0 combat: uses isOnGCD (NeverSecret) directly instead of comparing
--- secreted start/duration values.
+-- 12.0 combat: isOnGCD == true is the only reliable in-combat signal.
+-- isOnGCD is absent (nil) for both "off CD" and "real CD" — cannot distinguish.
 function BlizzardAPI.IsSpellOnGCD(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return false end
 
@@ -896,7 +1030,7 @@ function BlizzardAPI.IsSpellOnGCD(spellID)
     -- isOnGCD is NeverSecret — true means "only GCD, no real CD"
     if spellCD.isOnGCD == true then return true end
 
-    -- isOnGCD is nil (no cooldown) or false (real cooldown) → not GCD-only
+    -- isOnGCD is nil → either no cooldown or real cooldown (indistinguishable in combat)
     -- Fall back to comparing start/duration when values are readable (out of combat)
     if issecretvalue and (issecretvalue(spellCD.startTime) or issecretvalue(spellCD.duration)) then
         return false
@@ -923,13 +1057,13 @@ function BlizzardAPI.IsSpellOnGCD(spellID)
     return spellCD.startTime == gcdStart and spellDuration == gcdDuration
 end
 
--- 12.0 fallbacks: action bar usability, local cooldown tracking
+-- 12.0 fallbacks: local cooldown tracking, action bar usability
 function BlizzardAPI.IsSpellOnRealCooldown(spellID)
     if not spellID then return false end
 
     local start, duration, onRealCD = BlizzardAPI.GetSpellCooldownValues(spellID)
 
-    -- If values were secret, use the isOnGCD-derived inference
+    -- If values were secret with definitive answer from tracking
     if onRealCD == true then return true end
 
     if start and start > 0 and duration and duration > 0 then
