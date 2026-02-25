@@ -84,7 +84,7 @@ L["Out of Combat Only"] = "Apenas fora de combate"
 L["Always"] = "Sempre"
 
 -- Defensive display mode dropdown
-L["Defensive Display Mode"] = "Modo de exibição"
+L["Defensive Display Mode"] = "Visibilidade defensiva"
 L["Defensive Display Mode desc"] = "Vida baixa: Mostrar apenas quando a vida cai abaixo dos limites\nApenas em combate: Sempre mostrar em combate\nSempre: Mostrar o tempo todo"
 L["When Health Low"] = "Vida baixa"
 L["In Combat Only"] = "Apenas em combate"
@@ -208,7 +208,6 @@ L["Show Pet Health Bar desc"] = "Barra de vida compacta do pet (apenas classes c
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Anexar ícones da fila diretamente à placa de nome do alvo. Independente do painel principal — ambos podem ser ativados separadamente."
-L["Offensive Slots"] = "Espaços ofensivos"
 L["Offensive Queue"] = "Fila ofensiva"
 L["Defensive Suggestions"] = "Sugestões defensivas"
 L["Reverse Anchor"] = "Inverter âncora"
@@ -218,15 +217,11 @@ L["Nameplate Show Defensives"] = "Mostrar ícones defensivos"
 L["Nameplate Show Defensives desc"] = "Mostrar ícones defensivos no lado oposto da placa."
 L["Nameplate Defensive Display Mode"] = "Visibilidade defensiva"
 L["Nameplate Defensive Display Mode desc"] = "Apenas em combate: ícones defensivos apenas em combate.\nSempre: mostrar o tempo todo."
-L["Nameplate Defensive Count"] = "Espaços defensivos"
 L["Show Interrupt Reminder"] = "Lembrete de interrupção"
 L["Show Interrupt Reminder desc"] = "Mostrar um ícone de lembrete quando o alvo está lançando uma magia interrompível."
 L["CC Regular Mobs"] = "Preferir CC em mobs normais"
 L["CC Regular Mobs desc"] = "Em mobs não-chefe, preferir controle de multidão (atordoamentos, incapacitações) sobre interrupção. Em chefes, sempre usa interrupção."
-L["Nameplate Show Health Bar"] = "Mostrar barra de vida"
-L["Nameplate Show Health Bar desc"] = "Barra de vida compacta sobre os ícones defensivos. Oculta-se automaticamente sem defensivos visíveis."
-L["Health Bar Position"] = "Posição da barra"
-L["Health Bar Position desc"] = "Posição da barra em relação aos ícones. Exterior: além da borda. Interior: entre a placa e o ícone 1."
+
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Redefinir padrões"
@@ -258,9 +253,7 @@ L["Bottom Left"] = "Inferior esquerdo"
 L["Bottom Center"] = "Inferior centro"
 L["Reset Icon Labels desc"] = "Redefinir todas as configurações de rótulos de ícone para os valores padrão."
 
--- Expansion Direction / positioning (7 keys)
-L["Outside"] = "Exterior"
-L["Inside"] = "Interior"
+-- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Direção de expansão"
 L["Expansion Direction desc"] = "Direção de empilhamento dos ícones. Horizontal se expande a partir da placa. Vertical cima/baixo empilha acima/abaixo do espaço 1."
 L["Horizontal (Out)"] = "Horizontal (para fora)"
@@ -277,3 +270,16 @@ L["Restore Gap-Closer Defaults desc"] = "Redefinir a lista de aproximação para
 L["No Gap-Closer Spells"] = "Nenhum feitiço de aproximação configurado. Use o menu suspenso para adicionar um ou clique em Restaurar padrões da classe."
 L["Show Gap-Closer Glow"] = "Brilho de aproximação"
 L["Show Gap-Closer Glow desc"] = "Exibe um brilho vermelho nos ícones de aproximação para destacar que estão disponíveis."
+L["Gap-Closer Behavior Note"] = "Habilidades de aproximação substituem a posição 1 quando o alvo está fora de alcance."
+L["Gap-Closer Ranged Spec Note"] = "Sem habilidades de aproximação padrão para esta especialização. Você pode adicionar magias manualmente abaixo se necessário."
+L["Melee Range Reference"] = "Referência de alcance corpo a corpo"
+L["Melee Range Spell desc"] = "Habilidades de aproximação são ativadas quando esta habilidade está fora de alcance. Deve estar na sua barra de ação."
+L["Melee Range Spell ID"] = "ID de magia personalizado"
+L["Melee Range Spell Override desc"] = "Substituição do ID de magia (vazio = automático)"
+L["Default"] = "Padrão"
+L["Unknown"] = "Desconhecido"
+L["None"] = "Nenhum"
+
+-- Blacklist Position 1
+L["Blacklist Position 1"] = "Aplicar à posição 1"
+L["Blacklist Position 1 desc"] = "Aplicar a lista negra também à posição 1 (sugestão principal da Blizzard). Aviso: ocultar a magia principal pode travar a rotação — o sistema da Blizzard espera que ela seja lançada."

@@ -1,5 +1,28 @@
 # Changelog
 
+## [4.4.1] - 2026-02-24
+
+### Performance
+- Gap-closer engine: early exit when no melee range reference spell resolves (skips target/range/spell checks for ranged specs and melee specs without a reference spell on the action bar)
+- Inlined range check in `GetGapCloserSpell` to reuse the already-resolved slot from `ResolveMeleeReference`
+
+### UI
+- Removed dead "Bar Position" (healthBarPosition) dropdown from Overlay tab — setting was stored and read but never applied to health bar anchoring
+- Gap-Closers options tab: show soft notice for non-melee specs ("No default gap-closers for this specialization") instead of hiding controls
+- **Show Pet Health Bar** — New standalone toggle in General tab, mirrors "Show Health Bar". Lets users show a pet health bar (offensive queue width) even when the Defensive Queue is disabled. When defensives are enabled, the existing defensive-section toggle takes over. UIHealthBar v7.
+- **Overlay pet health bar** — "Show Health Bars" toggle in Overlay tab now creates both player and pet health bars above the defensive cluster. Pet bar uses warm yellow color, auto-hides when no pet exists. Both bars gated by "Show Defensive Icons". UINameplateOverlay v2.
+- **Cross-section naming consistency** — Aligned option labels across all tabs: Overlay "Offensive Slots"/"Defensive Slots" → "Max Icons" (matches Standard Queue), Defensives "Display Mode" → "Defensive Visibility" (matches Overlay, avoids collision with General "Display Mode"), "Key Press Flash" → "Show Key Press Flash" (matches all other "Show X" toggles). Added 6 missing `desc` tooltips to Overlay controls. Removed dead `L["Nameplate Show Health Bar"]` singular keys from all 9 locale files. Updated all 8 translations.
+
+### Investigated
+- **Rotation queue cooldown filtering** — `isOnGCD` returns `nil` (not `false`) for real cooldowns outside `SPELL_UPDATE_COOLDOWN` events; `GetActionCooldown` start/duration fully secreted in 12.0 combat; `C_ActionBar.GetActionCharges` also secreted; `IsUsableAction` returns true even on cooldown; `cooldown:IsShown()` includes GCD (can't distinguish)
+
+### Changed
+- **Rotation queue cooldown de-prioritization** — Spells with base CD > 3s are tracked locally via `UNIT_SPELLCAST_SUCCEEDED` + `GetSpellBaseCooldown()` (not secret). On-cooldown spells are moved to the end of the queue (below procced and normal spells) rather than filtered out. Fail-open: untracked spells show normally.
+- **Tooltip cooldown parsing** — `RegisterRotationSpell()` now scans the spell tooltip for talent-modified cooldown values (e.g., "30 sec cooldown" for Bestial Wrath with Beast Within). Falls back to `GetSpellBaseCooldown` only if tooltip parsing fails. Tooltip is re-scanned on talent/spec changes via natural re-registration flow.
+- **Blacklist position 1 option** — New toggle in Offensive > Blacklist: "Apply to Position 1". Off by default. When enabled, blacklisted spells are also hidden from position 1 (Blizzard's primary suggestion). Warning in tooltip about rotation stalling.
+- **BlizzardAPI v32**: Added `ParseTooltipCooldown()` for traited cooldown detection; `GetBestCooldownDuration()` now uses 3-tier fallback (observed cast → tooltip → base API); `RegisterRotationSpell()` pre-caches traited duration
+- **SpellQueue v36**: Three-tier rotation sort (procced → normal → on-cooldown), auto-registers rotation spells on list fetch, clears registrations on cache invalidation
+
 ## [4.4.0] - 2026-02-24
 
 ### Fixed

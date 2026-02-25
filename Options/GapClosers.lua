@@ -7,6 +7,7 @@ if not GapClosers then return end
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function GapClosers.CreateTabArgs(addon)
@@ -15,6 +16,16 @@ function GapClosers.CreateTabArgs(addon)
         name = L["Gap-Closers"],
         order = 2,
         args = {
+            rangedSpecNote = {
+                type = "description",
+                name = "|cFFFF8800" .. L["Gap-Closer Ranged Spec Note"] .. "|r",
+                order = -1,
+                fontSize = "medium",
+                hidden = function()
+                    if not SpellDB then SpellDB = LibStub("JustAC-SpellDB", true) end
+                    return not SpellDB or not SpellDB.IsMeleeSpec or SpellDB.IsMeleeSpec()
+                end,
+            },
             behaviorNote = {
                 type = "description",
                 name = L["Gap-Closer Behavior Note"],

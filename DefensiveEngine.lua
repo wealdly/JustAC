@@ -354,7 +354,10 @@ function lib.OnHealthChanged(addon, event, unit)
         if def.showHealthBar and UIHealthBar and UIHealthBar.Update then UIHealthBar.Update(addon) end
         if def.showPetHealthBar and UIHealthBar and UIHealthBar.UpdatePet then UIHealthBar.UpdatePet(addon) end
     end
-    if overlayActive and npo.showHealthBar then UINameplateOverlay.UpdateHealthBar() end
+    if overlayActive and npo.showHealthBar then
+        UINameplateOverlay.UpdateHealthBar()
+        UINameplateOverlay.UpdatePetHealthBar()
+    end
 
     -- Throttle defensive queue updates (expensive: table allocations, spell lookups)
     local now = GetTime()
@@ -440,16 +443,18 @@ function lib.OnHealthChanged(addon, event, unit)
             elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
                 UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
             end
-            -- Scale health bar to match visible defensive icon count
+            -- Scale health bars to match visible defensive icon count
             if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, #defensiveQueue) end
+            if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, #defensiveQueue) end
         else
             if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
                 UIRenderer.HideDefensiveIcons(addon)
             elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
                 UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
             end
-            -- No defensive icons visible; collapse health bar
+            -- No defensive icons visible; collapse health bars
             if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, 0) end
+            if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, 0) end
         end
     else
         -- Defensives disabled on main panel: ensure icons are hidden
@@ -458,8 +463,9 @@ function lib.OnHealthChanged(addon, event, unit)
         elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
             UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
         end
-        -- Collapse health bar when defensives disabled
+        -- Collapse health bars when defensives disabled
         if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, 0) end
+        if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, 0) end
     end
 
     -- Nameplate overlay defensive queue — independent of defensives.enabled.
@@ -1129,13 +1135,22 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
     local gc = addon.db.profile.gapClosers
     if not gc or not gc.enabled then return nil end
 
+    -- Early exit: if no melee range reference spell resolves (no user override
+    -- and no SpellDB default on the action bar), we can't determine range and
+    -- there's nothing to do.  This skips the entire path for ranged specs and
+    -- melee specs whose reference spell isn't on any bar.  ResolveMeleeReference
+    -- caches its result per spec key, so subsequent calls are a table lookup.
+    local _, meleeRefSlot = ResolveMeleeReference(addon)
+    if not meleeRefSlot then return nil end
+
     -- Must have a hostile target that is alive
     if not UnitExists("target") or UnitIsDead("target") or not UnitCanAttack("player", "target") then
         return nil
     end
 
-    -- Check range: is the melee reference spell out of range?
-    local outOfRange = IsMeleeTargetOutOfRange(addon)
+    -- Check range using the already-resolved melee reference slot
+    local inRange = IsActionInRange(meleeRefSlot)
+    local outOfRange = (inRange == false)  -- false=out of range, nil=no range check, true=in range
     local now = GetTime()
 
     if outOfRange then

@@ -208,6 +208,7 @@ function Offensive.CreateTabArgs(addon)
                             p.includeHiddenAbilities = true
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
+                            p.blacklistPosition1     = false
                             p.showInterrupt          = true
                             p.ccRegularMobs          = true
                             addon:UpdateFrameSize()
@@ -235,6 +236,18 @@ function Offensive.CreateTabArgs(addon)
                         order = 1,
                         fontSize = "medium"
                     },
+                    blacklistPosition1 = {
+                        type = "toggle",
+                        name = L["Blacklist Position 1"],
+                        desc = L["Blacklist Position 1 desc"],
+                        order = 1.5,
+                        width = "full",
+                        get = function() return addon.db.profile.blacklistPosition1 end,
+                        set = function(_, val)
+                            addon.db.profile.blacklistPosition1 = val
+                            addon:ForceUpdate()
+                        end,
+                    },
                     -- Dynamic blacklist entries added by UpdateBlacklistOptions
                 },
             },
@@ -256,6 +269,7 @@ function Offensive.UpdateBlacklistOptions(addon)
     -- Static keys to preserve (defined in CreateTabArgs)
     local staticKeys = {
         info = true,
+        blacklistPosition1 = true,
     }
 
     local keysToClear = {}
