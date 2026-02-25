@@ -77,36 +77,27 @@ function Offensive.CreateTabArgs(addon)
                             return dm == "disabled" or dm == "overlay"
                         end,
                     },
-                    showInterrupt = {
-                        type = "toggle",
-                        name = L["Show Interrupt Reminder"],
-                        desc = L["Show Interrupt Reminder desc"],
+                    interruptMode = {
+                        type = "select",
+                        name = L["Interrupt Mode"],
+                        desc = L["Interrupt Mode desc"],
                         order = 14,
-                        width = "full",
-                        get = function() return addon.db.profile.showInterrupt ~= false end,
+                        width = "double",
+                        values = {
+                            disabled      = L["Interrupt Mode Disabled"],
+                            -- importantOnly reserved for future use (12.0 secret values block detection)
+                            kickOnly      = L["Interrupt Mode Kick Only"],
+                            ccPrefer      = L["Interrupt Mode CC Prefer"],
+                        },
+                        sorting = { "disabled", "kickOnly", "ccPrefer" },
+                        get = function() return addon.db.profile.interruptMode or "ccPrefer" end,
                         set = function(_, val)
-                            addon.db.profile.showInterrupt = val
+                            addon.db.profile.interruptMode = val
                             addon:UpdateFrameSize()
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
                             return dm == "disabled" or dm == "overlay"
-                        end,
-                    },
-                    ccRegularMobs = {
-                        type = "toggle",
-                        name = L["CC Regular Mobs"],
-                        desc = L["CC Regular Mobs desc"],
-                        order = 14.5,
-                        width = "full",
-                        get = function() return addon.db.profile.ccRegularMobs ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.ccRegularMobs = val
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
-                                or not addon.db.profile.showInterrupt
                         end,
                     },
                     -- DISPLAY (15-19)
@@ -209,8 +200,7 @@ function Offensive.CreateTabArgs(addon)
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
                             p.blacklistPosition1     = false
-                            p.showInterrupt          = true
-                            p.ccRegularMobs          = true
+                            p.interruptMode          = "ccPrefer"
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end

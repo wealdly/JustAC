@@ -253,6 +253,10 @@ function Defensives.CreateTabArgs(addon)
                     def.allowItems        = true
                     def.autoInsertPotions = true
                     def.displayMode       = "always"
+                    -- Clear legacy migration keys
+                    def.showOnlyInCombat    = nil
+                    def.alwaysShowDefensive = nil
+                    def.showHotkeys         = nil
                     addon:UpdateFrameSize()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,

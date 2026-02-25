@@ -1,4 +1,16 @@
+
 # Changelog
+
+## [4.4.4] - 2026-02-25
+
+### Changed
+- **Interrupt Reminder dropdown** — The old `Show Interrupt Reminder` toggle + `Prefer CC on Regular Mobs` toggle have been consolidated into a single `Interrupt Reminder` dropdown with three modes:
+  - **Disabled** — No interrupt reminders
+  - **Interrupt Only** — Shows on all interruptible casts, always suggests your interrupt
+  - **Prefer CC on Trash** — Shows on all interruptible casts, prefers crowd control on non-boss mobs (previous default behavior)
+- **Important Casts Only mode reserved** — `importantOnly` option removed from UI. All important-cast detection signals (`isHighlightedImportantCast`, `C_Spell.IsSpellImportant()`, `ImportantCastIndicator:IsShown()`, `IsPlaying()`) return secret booleans in 12.0 — unusable for branching logic. Detection code kept in place for future re-enablement. Stale saved data gracefully falls back to `kickOnly`.
+- **Interruptibility detection hardened** — Uses `castBar.Icon:IsShown()` (NeverSecret, verified 2026-02-25) on nameplate castbars with `HideIconWhenNotInterruptible=true`. Falls back to `BorderShield:IsShown()` on castbars without icon hiding.
+- **Settings migration** — `showInterrupt=true` + `ccRegularMobs=true` → `"ccPrefer"`, `showInterrupt=true` + `ccRegularMobs=false` → `"kickOnly"`, `showInterrupt=false` → `"disabled"`. Legacy keys cleaned from saved data after migration.
 
 ## [4.4.3] - 2026-02-25
 

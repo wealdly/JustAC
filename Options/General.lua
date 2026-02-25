@@ -543,6 +543,10 @@ function General.CreateTabArgs(addon)
                     p.queueIconDesaturation = 0
                     p.gamepadIconStyle      = "xbox"
                     p.panelInteraction      = "unlocked"
+                    -- Clear legacy migration keys
+                    p.panelLocked           = nil
+                    p.showTooltips          = nil
+                    p.tooltipsInCombat      = nil
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
                     addon:UpdateFrameSize()

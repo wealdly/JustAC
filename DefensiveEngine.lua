@@ -52,6 +52,76 @@ local usableAddedHere = {}
 
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
+local ResolveHealthState
+
+-- Spell list type configuration — maps restoreKey (used by Options) to
+-- the profile listKey and SpellDB defaults table name.
+local SPELL_LIST_CONFIG = {
+    { listKey = "selfHealSpells", restoreKey = "selfheal", defaultsKey = "CLASS_SELFHEAL_DEFAULTS" },
+    { listKey = "cooldownSpells", restoreKey = "cooldown", defaultsKey = "CLASS_COOLDOWN_DEFAULTS" },
+    { listKey = "petHealSpells",  restoreKey = "petheal",  defaultsKey = "CLASS_PETHEAL_DEFAULTS" },
+    { listKey = "petRezSpells",   restoreKey = "petrez",   defaultsKey = "CLASS_PET_REZ_DEFAULTS" },
+}
+
+-- Copy a source spell list into dest[listKey], used by init/migrate/restore.
+local function CopySpellList(dest, listKey, source)
+    dest[listKey] = {}
+    for i, spellID in ipairs(source) do
+        dest[listKey][i] = spellID
+    end
+end
+
+-- Hide multi-icon or single-icon defensive frames (handles both layouts).
+local function HideDefensiveIconFrames(addon)
+    if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
+        UIRenderer.HideDefensiveIcons(addon)
+    elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
+        UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
+    end
+end
+
+-- Resize both player and pet health bars to match visible defensive icon count.
+local function ResizeHealthBars(addon, count)
+    if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, count) end
+    if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, count) end
+end
+
+-- Secret-safe item cooldown check. Returns true when the item is on a real cooldown
+-- (duration > 1.5s, excluding GCD). Fail-open: returns false when values are secret.
+local function IsItemOnCooldown(itemID)
+    local start, duration = GetItemCooldown(itemID)
+    if not start or not duration then return false end
+    local startIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
+    local durIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+    if startIsSecret or durIsSecret then return false end
+    return start > 0 and duration > 1.5
+end
+
+-- Resolve player health into isLow/isCritical booleans.
+-- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states:
+--   "low"  = ~35% health → shows self-heals
+--   "critical" = ~20% health → shows major cooldowns
+-- Thresholds only matter out of combat (between pulls, open world, etc.)
+ResolveHealthState = function(profile)
+    local healthPercent, isEstimated = nil, false
+    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
+        healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+    end
+
+    if isEstimated then
+        local lowState, critState = false, false
+        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
+            lowState, critState = BlizzardAPI.GetLowHealthState()
+        end
+        return lowState, critState
+    elseif healthPercent then
+        local def = profile and profile.defensives
+        local selfHealThreshold = def and def.selfHealThreshold or 80
+        local cooldownThreshold = def and def.cooldownThreshold or 60
+        return healthPercent <= selfHealThreshold, healthPercent <= cooldownThreshold
+    end
+    return false, false
+end
 
 -- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
 -- Impending Victory is talented, so we use the active replacement instead of the base spell.
@@ -109,32 +179,14 @@ function lib.MigrateDefensiveSpellsToClassSpells(addon)
 
     -- Ensure classSpells table exists
     if not def.classSpells then def.classSpells = {} end
-
-    -- Only migrate if this class doesn't already have nested data
-    if not def.classSpells[playerClass] then
-        def.classSpells[playerClass] = {}
-    end
+    if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
     local cs = def.classSpells[playerClass]
 
     -- Move flat lists into per-class structure (don't overwrite existing)
-    if def.selfHealSpells and #def.selfHealSpells > 0 and (not cs.selfHealSpells or #cs.selfHealSpells == 0) then
-        cs.selfHealSpells = {}
-        for i, spellID in ipairs(def.selfHealSpells) do
-            cs.selfHealSpells[i] = spellID
-        end
-    end
-
-    if def.cooldownSpells and #def.cooldownSpells > 0 and (not cs.cooldownSpells or #cs.cooldownSpells == 0) then
-        cs.cooldownSpells = {}
-        for i, spellID in ipairs(def.cooldownSpells) do
-            cs.cooldownSpells[i] = spellID
-        end
-    end
-
-    if def.petHealSpells and #def.petHealSpells > 0 and (not cs.petHealSpells or #cs.petHealSpells == 0) then
-        cs.petHealSpells = {}
-        for i, spellID in ipairs(def.petHealSpells) do
-            cs.petHealSpells[i] = spellID
+    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
+        local flatList = def[cfg.listKey]
+        if flatList and #flatList > 0 and (not cs[cfg.listKey] or #cs[cfg.listKey] == 0) then
+            CopySpellList(cs, cfg.listKey, flatList)
         end
     end
 
@@ -166,42 +218,12 @@ function lib.InitializeDefensiveSpells(addon)
     if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
     local cs = def.classSpells[playerClass]
 
-    if not cs.selfHealSpells or #cs.selfHealSpells == 0 then
-        local healDefaults = SpellDB and SpellDB.CLASS_SELFHEAL_DEFAULTS and SpellDB.CLASS_SELFHEAL_DEFAULTS[playerClass]
-        if healDefaults then
-            cs.selfHealSpells = {}
-            for i, spellID in ipairs(healDefaults) do
-                cs.selfHealSpells[i] = spellID
-            end
-        end
-    end
-
-    if not cs.cooldownSpells or #cs.cooldownSpells == 0 then
-        local cdDefaults = SpellDB and SpellDB.CLASS_COOLDOWN_DEFAULTS and SpellDB.CLASS_COOLDOWN_DEFAULTS[playerClass]
-        if cdDefaults then
-            cs.cooldownSpells = {}
-            for i, spellID in ipairs(cdDefaults) do
-                cs.cooldownSpells[i] = spellID
-            end
-        end
-    end
-
-    if not cs.petHealSpells or #cs.petHealSpells == 0 then
-        local petDefaults = SpellDB and SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass]
-        if petDefaults then
-            cs.petHealSpells = {}
-            for i, spellID in ipairs(petDefaults) do
-                cs.petHealSpells[i] = spellID
-            end
-        end
-    end
-
-    if not cs.petRezSpells or #cs.petRezSpells == 0 then
-        local rezDefaults = SpellDB and SpellDB.CLASS_PET_REZ_DEFAULTS and SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass]
-        if rezDefaults then
-            cs.petRezSpells = {}
-            for i, spellID in ipairs(rezDefaults) do
-                cs.petRezSpells[i] = spellID
+    -- Populate empty spell lists from SpellDB defaults
+    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
+        if not cs[cfg.listKey] or #cs[cfg.listKey] == 0 then
+            local defaults = SpellDB and SpellDB[cfg.defaultsKey] and SpellDB[cfg.defaultsKey][playerClass]
+            if defaults then
+                CopySpellList(cs, cfg.listKey, defaults)
             end
         end
     end
@@ -247,37 +269,13 @@ function lib.RestoreDefensiveDefaults(addon, listType)
     if not profile.defensives.classSpells[playerClass] then profile.defensives.classSpells[playerClass] = {} end
     local cs = profile.defensives.classSpells[playerClass]
 
-    if listType == "selfheal" then
-        local healDefaults = SpellDB and SpellDB.CLASS_SELFHEAL_DEFAULTS and SpellDB.CLASS_SELFHEAL_DEFAULTS[playerClass]
-        if healDefaults then
-            cs.selfHealSpells = {}
-            for i, spellID in ipairs(healDefaults) do
-                cs.selfHealSpells[i] = spellID
+    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
+        if cfg.restoreKey == listType then
+            local defaults = SpellDB and SpellDB[cfg.defaultsKey] and SpellDB[cfg.defaultsKey][playerClass]
+            if defaults then
+                CopySpellList(cs, cfg.listKey, defaults)
             end
-        end
-    elseif listType == "cooldown" then
-        local cdDefaults = SpellDB and SpellDB.CLASS_COOLDOWN_DEFAULTS and SpellDB.CLASS_COOLDOWN_DEFAULTS[playerClass]
-        if cdDefaults then
-            cs.cooldownSpells = {}
-            for i, spellID in ipairs(cdDefaults) do
-                cs.cooldownSpells[i] = spellID
-            end
-        end
-    elseif listType == "petheal" then
-        local petDefaults = SpellDB and SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass]
-        if petDefaults then
-            cs.petHealSpells = {}
-            for i, spellID in ipairs(petDefaults) do
-                cs.petHealSpells[i] = spellID
-            end
-        end
-    elseif listType == "petrez" then
-        local rezDefaults = SpellDB and SpellDB.CLASS_PET_REZ_DEFAULTS and SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass]
-        if rezDefaults then
-            cs.petRezSpells = {}
-            for i, spellID in ipairs(rezDefaults) do
-                cs.petRezSpells[i] = spellID
-            end
+            break
         end
     end
 
@@ -306,11 +304,7 @@ function lib.OnHealthChanged(addon, event, unit)
     -- showHealthBar is also off, needsAnyWork is false and the normal else-branch that
     -- hides icons is never reached.
     if def and not def.enabled then
-        if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-            UIRenderer.HideDefensiveIcons(addon)
-        elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-            UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
-        end
+        HideDefensiveIconFrames(addon)
     end
 
     -- Early exit: nothing at all to do for health events
@@ -339,36 +333,7 @@ function lib.OnHealthChanged(addon, event, unit)
 
     -- Health state — computed once, shared by main panel and overlay paths
     local inCombat = UnitAffectingCombat("player")
-
-    -- Falls back to LowHealthFrame when UnitHealth() returns secrets
-    local healthPercent, isEstimated = nil, false
-    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
-        healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
-    end
-
-    local selfHealThreshold = def and def.selfHealThreshold or 80
-    local cooldownThreshold = def and def.cooldownThreshold or 60
-
-    -- 12.0: UnitHealth() is secret in combat (PvE and PvP). When isEstimated=true,
-    -- thresholds above are ignored — we use Blizzard's LowHealthFrame binary states:
-    --   "low"  = ~35% health → shows self-heals
-    --   "critical" = ~20% health → shows major cooldowns
-    -- Thresholds only matter out of combat (between pulls, open world, etc.)
-    local isCritical, isLow
-    if isEstimated then
-        local lowState, critState = false, false
-        if BlizzardAPI.GetLowHealthState then
-            lowState, critState = BlizzardAPI.GetLowHealthState()
-        end
-        isCritical = critState
-        isLow = lowState
-    elseif healthPercent then
-        isLow = healthPercent <= selfHealThreshold
-        isCritical = healthPercent <= cooldownThreshold
-    else
-        isCritical = false
-        isLow = false
-    end
+    local isLow, isCritical = ResolveHealthState(profile)
 
     -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
     -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
@@ -412,29 +377,15 @@ function lib.OnHealthChanged(addon, event, unit)
             elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
                 UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
             end
-            -- Scale health bars to match visible defensive icon count
-            if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, #defensiveQueue) end
-            if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, #defensiveQueue) end
+            ResizeHealthBars(addon, #defensiveQueue)
         else
-            if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-                UIRenderer.HideDefensiveIcons(addon)
-            elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-                UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
-            end
-            -- No defensive icons visible; collapse health bars
-            if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, 0) end
-            if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, 0) end
+            HideDefensiveIconFrames(addon)
+            ResizeHealthBars(addon, 0)
         end
     else
         -- Defensives disabled on main panel: ensure icons are hidden
-        if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
-            UIRenderer.HideDefensiveIcons(addon)
-        elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-            UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
-        end
-        -- Collapse health bars when defensives disabled
-        if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, 0) end
-        if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, 0) end
+        HideDefensiveIconFrames(addon)
+        ResizeHealthBars(addon, 0)
     end
 
     -- Nameplate overlay defensive queue — independent of defensives.enabled.
@@ -681,21 +632,9 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
         isCritical = passedIsCritical or false
         inCombat = passedInCombat or UnitAffectingCombat("player")
     else
-        local healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+        -- Safety net: resolve health state from scratch if caller didn't pass it
+        isLow, isCritical = ResolveHealthState(profile)
         inCombat = UnitAffectingCombat("player")
-        if isEstimated then
-            local lowState, critState = false, false
-            if BlizzardAPI.GetLowHealthState then
-                lowState, critState = BlizzardAPI.GetLowHealthState()
-            end
-            isLow = lowState
-            isCritical = critState
-        else
-            local selfHealThreshold = profile.defensives.selfHealThreshold or 80
-            local cooldownThreshold = profile.defensives.cooldownThreshold or 60
-            isLow = healthPercent <= selfHealThreshold
-            isCritical = healthPercent <= cooldownThreshold
-        end
     end
 
     local displayMode = overrideDisplayMode or profile.defensives.displayMode
@@ -734,6 +673,9 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
         end
     end
 
+    -- Early exit: proc injection already filled the queue
+    if #results >= maxIcons then return results end
+
     -- Resolve per-class spell lists once for this update cycle
     local selfHealSpells = lib.GetClassSpellList(addon, "selfHealSpells")
     local cooldownSpells = lib.GetClassSpellList(addon, "cooldownSpells")
@@ -741,6 +683,9 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
     -- Procced spells from configured lists (any health level)
     AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded, true)
     AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded, true)
+
+    -- Early exit: proc passes filled the queue
+    if #results >= maxIcons then return results end
 
     if displayMode == "combatOnly" and not inCombat then
         return results
@@ -819,19 +764,8 @@ function lib.FindHealingPotionOnActionBar(addon)
         -- Still check cooldown/count on cached result (these change in combat)
         if cachedPotionID then
             local count = GetItemCount(cachedPotionID) or 0
-            if count > 0 then
-                local start, duration = GetItemCooldown(cachedPotionID)
-                local onCooldown = false
-                if start and duration then
-                    local startIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
-                    local durIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
-                    if not startIsSecret and not durIsSecret then
-                        onCooldown = start > 0 and duration > 1.5
-                    end
-                end
-                if not onCooldown then
-                    return cachedPotionID, cachedPotionSlot
-                end
+            if count > 0 and not IsItemOnCooldown(cachedPotionID) then
+                return cachedPotionID, cachedPotionSlot
             end
         end
         return nil, nil
@@ -845,31 +779,17 @@ function lib.FindHealingPotionOnActionBar(addon)
         local actionType, id = GetActionInfo(slot)
         if actionType == "item" and id then
             local count = GetItemCount(id) or 0
-            if count > 0 then
-                local start, duration = GetItemCooldown(id)
-                -- Fail-open: if values are secret or nil, assume NOT on cooldown (show item)
-                local onCooldown = false
-                if start and duration then
-                    local startIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
-                    local durIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
-                    if not startIsSecret and not durIsSecret then
-                        onCooldown = start > 0 and duration > 1.5
-                    end
-                    -- If secret, onCooldown stays false (fail-open: show the item)
+            if count > 0 and not IsItemOnCooldown(id) then
+                if id == HEALTHSTONE_ITEM_ID then
+                    cachedPotionID = id
+                    cachedPotionSlot = slot
+                    potionCacheValid = true
+                    return id, slot
                 end
 
-                if not onCooldown then
-                    if id == HEALTHSTONE_ITEM_ID then
-                        cachedPotionID = id
-                        cachedPotionSlot = slot
-                        potionCacheValid = true
-                        return id, slot
-                    end
-
-                    if not bestPotion and IsHealingConsumable(id) then
-                        bestPotion = id
-                        bestSlot = slot
-                    end
+                if not bestPotion and IsHealingConsumable(id) then
+                    bestPotion = id
+                    bestSlot = slot
                 end
             end
         end

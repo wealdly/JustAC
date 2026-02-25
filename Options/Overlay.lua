@@ -185,37 +185,28 @@ function Overlay.CreateTabArgs(addon)
                 name = L["Offensive Queue"],
                 order = 11,
             },
-            showInterrupt = {
-                type = "toggle",
-                name = L["Show Interrupt Reminder"],
-                desc = L["Show Interrupt Reminder desc"],
+            interruptMode = {
+                type = "select",
+                name = L["Interrupt Mode"],
+                desc = L["Interrupt Mode desc"],
                 order = 13,
-                width = "full",
-                get = function() return addon.db.profile.nameplateOverlay.showInterrupt ~= false end,
+                width = "double",
+                values = {
+                    disabled      = L["Interrupt Mode Disabled"],
+                    -- importantOnly reserved for future use (12.0 secret values block detection)
+                    kickOnly      = L["Interrupt Mode Kick Only"],
+                    ccPrefer      = L["Interrupt Mode CC Prefer"],
+                },
+                sorting = { "disabled", "kickOnly", "ccPrefer" },
+                get = function() return addon.db.profile.nameplateOverlay.interruptMode or "ccPrefer" end,
                 set = function(_, val)
-                    addon.db.profile.nameplateOverlay.showInterrupt = val
+                    addon.db.profile.nameplateOverlay.interruptMode = val
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                 end,
                 disabled = function()
                     local dm = addon.db.profile.displayMode or "queue"
                     return dm ~= "overlay" and dm ~= "both"
-                end,
-            },
-            ccRegularMobs = {
-                type = "toggle",
-                name = L["CC Regular Mobs"],
-                desc = L["CC Regular Mobs desc"],
-                order = 13.5,
-                width = "full",
-                get = function() return addon.db.profile.nameplateOverlay.ccRegularMobs ~= false end,
-                set = function(_, val)
-                    addon.db.profile.nameplateOverlay.ccRegularMobs = val
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return (dm ~= "overlay" and dm ~= "both")
-                        or not addon.db.profile.nameplateOverlay.showInterrupt
                 end,
             },
             defensiveSectionHeader = {
@@ -329,8 +320,13 @@ function Overlay.CreateTabArgs(addon)
                     npo.maxDefensiveIcons    = 3
                     npo.defensiveDisplayMode = "always"
                     npo.showHealthBar        = true
-                    npo.showInterrupt        = true
-                    npo.ccRegularMobs        = true
+                    npo.interruptMode        = "ccPrefer"
+                    -- Restore textOverlays (wipe destroyed them; Labels tab depends on this)
+                    npo.textOverlays = {
+                        hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT" },
+                        cooldown = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=0.5} },
+                        charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
+                    }
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
