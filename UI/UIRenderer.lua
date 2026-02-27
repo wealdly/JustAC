@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module - Updates button icons, cooldowns, and animations each frame
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 14)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 15)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -17,7 +17,6 @@ end
 
 -- Hot path cache
 local GetTime = GetTime
-local UnitAffectingCombat = UnitAffectingCombat
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local pcall = pcall
@@ -67,6 +66,11 @@ local PlaySoundFile = PlaySoundFile
 -- Debounce: shared across both renderers so "both" display mode fires only one sound.
 local lastInterruptSoundTime = 0
 local INTERRUPT_SOUND_DEBOUNCE = 0.5  -- seconds
+
+-- Per-frame interrupt evaluation cache (shared between RenderSpellQueue and UINameplateOverlay.Render).
+-- Ensures both renderers see identical interrupt state and share a single debounce timer.
+local lastInterruptEvalTime = -1
+local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, interruptMode = nil }
 
 -- Check for proc overlay to highlight available abilities.
 -- BlizzardAPI.IsSpellProcced checks both base and override IDs.
@@ -409,8 +413,9 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.normalizedHotkey = nil
     end
 
-    local isInCombat = UnitAffectingCombat("player")
-    
+    -- Use module-level isInCombat, maintained by SetCombatState() on PLAYER_REGEN_DISABLED/ENABLED.
+    -- Avoids repeated UnitAffectingCombat calls when multiple defensive icons update in the same cycle.
+
     -- Defensive glow mode: use caller-supplied override (overlay) or fall back to
     -- the main-panel profile setting.
     local defGlowMode = glowModeOverride
@@ -480,6 +485,8 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon._lastCooldownStart = nil
         defensiveIcon._lastCooldownDuration = nil
         defensiveIcon._cooldownIsSecret = nil
+        defensiveIcon.normalizedHotkey = nil
+        defensiveIcon.previousNormalizedHotkey = nil
         defensiveIcon.hotkeyText:SetText("")
         if defensiveIcon.chargeText then
             defensiveIcon.chargeText:Hide()
@@ -567,6 +574,24 @@ function UIRenderer.PlayInterruptAlertSound(profile)
     PlaySoundFile(soundID, "Master")
 end
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Glow state resolver — one clear intent instead of six cascading booleans
+-- ─────────────────────────────────────────────────────────────────────────────
+local GLOW_NONE       = 0   -- no glow
+local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
+local GLOW_PROC       = 2   -- gold burst (spell is procced / critically available)
+local GLOW_GAP_CLOSER = 3   -- red crawl (gap-closer, target out of melee range)
+
+--- Resolve which glow a DPS icon should display. Priority: gap-closer > proc > assisted > none.
+--- Inputs are pre-computed by the caller; no WoW API calls inside this function.
+local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
+    local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
+    if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
+    if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
+    if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
+    return GLOW_NONE
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
@@ -579,48 +604,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local hasSpells = spellIDs and #spellIDs > 0
     local spellCount = hasSpells and #spellIDs or 0
     
-    -- Determine if frame should be visible
-    local shouldShowFrame = hasSpells
-
-    -- Hide main queue when displayMode excludes it
+    -- Determine if frame should be visible.
+    -- Profile conditions (OOC, healer, mounted, hostile target) are evaluated once per queue
+    -- build in SpellQueue.GetCurrentSpellQueue() and cached via SpellQueue.ShouldShowQueue().
+    -- UIRenderer only checks display mode (its own concern) and whether spells exist.
     local displayMode = profile.displayMode or "queue"
-    if displayMode == "disabled" or displayMode == "overlay" then
-        shouldShowFrame = false
-    end
-
-    -- Hide queue out of combat if option is enabled
-    if shouldShowFrame and profile.hideQueueOutOfCombat and not isInCombat then
-        shouldShowFrame = false
-    end
-    
-    -- Hide queue for healer specs if option is enabled
-    if shouldShowFrame and profile.hideQueueForHealers and BlizzardAPI and BlizzardAPI.IsCurrentSpecHealer and BlizzardAPI.IsCurrentSpecHealer() then
-        shouldShowFrame = false
-    end
-    
-    -- Hide queue when mounted if option is enabled
-    -- Also treats Druid Travel Form (3) and Flight Form (27) as "mounted"
-    if shouldShowFrame and profile.hideQueueWhenMounted then
-        local isMounted = IsMounted()
-        if not isMounted then
-            -- Check for Druid mount forms (Travel Form = 3, Flight Form = 27)
-            local formID = GetShapeshiftFormID()
-            if formID == 3 or formID == 27 then
-                isMounted = true
-            end
-        end
-        if isMounted then
-            shouldShowFrame = false
-        end
-    end
-
-    -- Hide queue if no hostile target when option is enabled (only applies out of combat)
-    if shouldShowFrame and profile.requireHostileTarget and not isInCombat then
-        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
-        if not hasHostileTarget then
-            shouldShowFrame = false
-        end
-    end
+    local shouldShowFrame = hasSpells
+        and displayMode ~= "disabled"
+        and displayMode ~= "overlay"
+        and SpellQueue.ShouldShowQueue()
 
     -- Only update frame state if it actually changed
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)
@@ -678,136 +670,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Fallback: if saved data contains retired "importantOnly", treat as "kickOnly"
     if interruptMode == "importantOnly" then interruptMode = "kickOnly" end
     if intIcon and resolvedInts and shouldShowFrame and interruptMode ~= "disabled" then
-        local shouldShowInterrupt = false
-        local intSpellID = nil
-
-        -- Debounce: if we just used an interrupt/CC, suppress for a short window
-        -- so the lingering cast bar doesn't trigger the next spell in the list.
-        local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
-                            or (currentTime - lastCCAppliedTime) < CC_APPLIED_SUPPRESS
-
-        -- Hoist castBar to outer scope so the cast aura section below can
-        -- read the enemy spell icon even after the debounce block closes.
-        local castBar = nil
-
-        if not debounceActive and BlizzardAPI.IsTargetInterruptWorthy() then
-            -- Look up the target nameplate to read its cast bar state
-            local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
-            castBar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
-            if castBar then
-                local visOk, isVis = pcall(castBar.IsVisible, castBar)
-                local visTestOk, castVisible = pcall(function() return isVis and true or false end)
-                if visOk and visTestOk and castVisible then
-                    local interruptible = true  -- fail-open default
-                    -- Primary: Icon hidden = uninterruptible (12.0-safe).
-                    -- Nameplate castbars have HideIconWhenNotInterruptible=true;
-                    -- Blizzard's secure ShouldIconBeShown() resolves barType
-                    -- taint internally and returns a plain literal boolean, so
-                    -- Icon:IsShown() is NeverSecret on nameplate castbars.
-                    if castBar.Icon and castBar.HideIconWhenNotInterruptible then
-                        local iconOk, iconShown = pcall(castBar.Icon.IsShown, castBar.Icon)
-                        if iconOk and iconShown == false then
-                            interruptible = false  -- Icon hidden → cast not interruptible
-                        end
-                    -- Fallback: BorderShield (pre-12.0 or castbars without Icon hiding)
-                    elseif castBar.BorderShield then
-                        local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
-                        local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
-                        if shOk and shTestOk and shieldVisible then
-                            interruptible = false  -- shield visible → uninterruptible
-                        end
-                    end
-
-                    if interruptible then
-                        -- Check if Blizzard flags this as an important (lethal) cast.
-                        -- Both isHighlightedImportantCast and ImportantCastIndicator:IsShown()
-                        -- are secret booleans in 12.0 (spellID taint propagates through
-                        -- SetShown). Direct comparison crashes. Use pcall to attempt the
-                        -- comparison: if it succeeds, we get the real answer; if it errors,
-                        -- the value is secret and we can't distinguish true from false.
-                        -- Important-cast detection: ALL signals are SECRET in 12.0
-                        -- (spellID taint propagates through IsSpellImportant, SetShown,
-                        -- IsShown, IsPlaying). Detection code kept for future use.
-                        -- For ccPrefer: treat secret as not-important (still uses
-                        -- normal CC/kick logic, which is fine).
-                        local isImportantCast = false
-                        if castBar.ImportantCastIndicator then
-                            local impOk, impShown = pcall(castBar.ImportantCastIndicator.IsShown, castBar.ImportantCastIndicator)
-                            if impOk then
-                                local cmpOk, cmpResult = pcall(function() return impShown == true end)
-                                if cmpOk then
-                                    isImportantCast = cmpResult
-                                end
-                                -- cmpOk=false: secret boolean, fall through with false
-                            end
-                        end
-
-                        -- "importantOnly" mode (reserved for future): skip non-important casts
-                        -- Currently unreachable — importantOnly falls back to kickOnly above
-                        if interruptMode == "importantOnly" and not isImportantCast then
-                            interruptible = false
-                        end
-
-                        if interruptible then
-                            -- Target is casting an interruptible spell — find best
-                            -- available interrupt or CC.
-                            local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
-                            -- NeverSecret when available; nil-guarded for versions where API doesn't exist
-                            local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
-                            -- "ccPrefer" mode on non-boss, non-important casts: prefer CC to save kick CD
-                            -- Important casts always get a hard interrupt (kick), never CC
-                            local preferCC = interruptMode == "ccPrefer" and not targetCCImmune and not isImportantCast
-                            if preferCC then
-                                -- First pass: try CC spells only
-                                -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
-                                if not targetAlreadyCC then
-                                    for _, entry in ipairs(resolvedInts) do
-                                        local sid = entry.spellID
-                                        -- IsSpellUsable: checks current castability (form, stealth, resources)
-                                        -- IsSpellAvailable only checks if the spell is learned, not if it's castable now
-                                        if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                            intSpellID = sid
-                                            shouldShowInterrupt = true
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                            -- Fallback (or boss / kick-only / important cast): use any available spell
-                            if not shouldShowInterrupt then
-                                for _, entry in ipairs(resolvedInts) do
-                                    local sid = entry.spellID
-                                    local stype = entry.type
-                                    -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
-                                    if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                                        -- skip
-                                    elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                        intSpellID = sid
-                                        shouldShowInterrupt = true
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Track when the shown interrupt goes on cooldown → start debounce.
-        -- NOTE: the CD check intentionally runs even when shouldShowInterrupt=true (another
-        -- spell ready): if the previously tracked spell just went on CD (was cast), we still
-        -- start the debounce so the game has time to register the CC state before we show
-        -- the next suggestion.  Without this, a second CC briefly flashes immediately after
-        -- the first one lands.
-        if lastInterruptShownID then
-            if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
-                lastInterruptUsedTime = currentTime  -- start debounce regardless of next spell
-                lastInterruptShownID = nil
-            elseif not shouldShowInterrupt then
-                lastInterruptShownID = nil  -- cast bar gone / target changed: just clear
-            end
-        end
+        -- Delegate to UIRenderer.EvaluateInterrupt() — single evaluation shared between
+        -- RenderSpellQueue and UINameplateOverlay.Render so both renderers see identical
+        -- interrupt state and share a single debounce timer (one player, one interrupt).
+        local intResult           = UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
+        local shouldShowInterrupt = intResult.shouldShow
+        local intSpellID          = intResult.spellID
+        local castBar             = intResult.castBar
 
         -- De-dup: if the interrupt spell is already shown as offensive queue position 1, skip it
         if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
@@ -815,7 +684,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
 
         if shouldShowInterrupt and intSpellID then
-            lastInterruptShownID = intSpellID
             local spellChanged = (intIcon.spellID ~= intSpellID)
             if spellChanged then
                 intIcon.spellID = intSpellID
@@ -968,7 +836,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Check for "Waiting for..." spells (Assisted Combat's resource-wait indicator)
                 -- Cache the pattern check result when spell changes to avoid repeated string operations
                 if spellChanged then
-                    icon.isWaitingSpell = spellInfo.name and spellInfo.name:find("^Waiting for") or false
+                    icon.isWaitingSpell = spellInfo.name ~= nil and spellInfo.name:find("^Waiting for") ~= nil
                 end
                 local centerText = icon.centerText
                 if centerText then
@@ -998,17 +866,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Proc glow replaces ALL other glows (assisted crawl, gap-closer crawl)
                 -- to avoid confusing layered animations.  Gap-closers get their own
                 -- red marching ants crawl only when no proc is active.
-                local isSyntheticProc = SpellQueue and SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
-                local isGapCloser = isSyntheticProc
-                local isRealProc = BlizzardAPI.IsSpellProcced(spellID)
-                local wantProcGlow = isRealProc and showProcGlow
+                -- Resolve the single active glow for this icon (one enum instead of six booleans).
+                local glowState = ResolveGlowState(i, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
 
-                -- Show blue/white assisted crawl on position 1 if glow mode includes primary
-                -- Suppressed when proc glow or gap-closer crawl is active (they replace assisted)
-                local wantGapCloserGlow = isGapCloser and showGapCloserGlow
-                local shouldShowAssisted = (i == 1 and showPrimaryGlow and not wantProcGlow and not wantGapCloserGlow)
-                if shouldShowAssisted then
-                    -- Call every frame to update animation state based on combat status
+                if glowState == GLOW_ASSISTED then
                     UIAnimations.StartAssistedGlow(icon, isInCombat)
                     icon.hasAssistedGlow = true
                 elseif icon.hasAssistedGlow then
@@ -1016,32 +877,20 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.hasAssistedGlow = false
                 end
 
-                if wantProcGlow then
-                    -- Proc glow wins: stop gap-closer crawl
-                    if icon.hasGapCloserGlow then
-                        UIAnimations.StopGapCloserGlow(icon)
-                        icon.hasGapCloserGlow = false
-                    end
-                    if not icon.hasProcGlow then
-                        UIAnimations.ShowProcGlow(icon)
-                        icon.hasProcGlow = true
-                    end
+                if glowState == GLOW_PROC then
+                    if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
+                    if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon); icon.hasProcGlow = true end
                 else
-                    if icon.hasProcGlow then
-                        UIAnimations.HideProcGlow(icon)
-                        icon.hasProcGlow = false
-                    end
-                    -- Gap-closer crawl only when no proc glow is active
-                    -- Stale flag guard: if external code (e.g. PauseAllGlows) hid
-                    -- the frame without resetting hasGapCloserGlow, re-sync here.
+                    if icon.hasProcGlow then UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false end
+                    -- Stale flag guard: re-sync if external code hid the frame without clearing the flag.
                     if icon.hasGapCloserGlow and icon.GapCloserHighlightFrame
                         and not icon.GapCloserHighlightFrame:IsShown() then
                         icon.hasGapCloserGlow = false
                     end
-                    if wantGapCloserGlow and not icon.hasGapCloserGlow then
+                    if glowState == GLOW_GAP_CLOSER and not icon.hasGapCloserGlow then
                         UIAnimations.StartGapCloserGlow(icon)
                         icon.hasGapCloserGlow = true
-                    elseif not wantGapCloserGlow and icon.hasGapCloserGlow then
+                    elseif glowState ~= GLOW_GAP_CLOSER and icon.hasGapCloserGlow then
                         UIAnimations.StopGapCloserGlow(icon)
                         icon.hasGapCloserGlow = false
                     end
@@ -1078,11 +927,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         icon.previousNormalizedHotkey = icon.normalizedHotkey
                         icon.hotkeyChangeTime = currentTime
                     end
-                    icon.cachedNormalizedHotkey = normalized
                     icon.normalizedHotkey = normalized
                 elseif hotkeyChanged then
                     -- Hotkey became empty
-                    icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil
                 end
 
@@ -1182,9 +1029,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastVisualState = nil
                     icon.lastBaseDesaturation = nil
                     icon.cachedOutOfRange = nil
-                    icon.cachedNormalizedHotkey = nil
                     icon.normalizedHotkey = nil  -- Must clear: stale value causes wrong previousNormalizedHotkey on slot refill
                     UIAnimations.StopAssistedGlow(icon)
+                    UIAnimations.HideProcGlow(icon)
                     UIAnimations.StopGapCloserGlow(icon)
                     icon.hotkeyText:SetText("")
                     -- Keep SlotBackground and NormalTexture visible for empty slot appearance
@@ -1361,6 +1208,115 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
     }
     
     StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, {spellID = spellID})
+end
+
+--- Evaluate whether an interrupt reminder should be shown and which spell to use.
+--- Called by both RenderSpellQueue and UINameplateOverlay.Render each frame.
+--- Result is cached per-frame (≤0.015 s window) so both renderers see the same answer
+--- and debounce state is shared — one player, one interrupt debounce timer.
+---
+--- @param resolvedInts  table?   ordered {spellID, type} array from SpellDB.ResolveInterruptSpells
+--- @param interruptMode string   "kickOnly" | "ccPrefer" | "importantOnly" (retired)
+--- @param currentTime   number   GetTime() value from the caller
+--- @return table  { shouldShow, spellID, castBar } — reused each call; do NOT hold across frames
+function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
+    -- Cache is keyed on both time AND interruptMode: if the two renderers have different
+    -- modes configured, each gets its own evaluation rather than sharing a stale result.
+    if (currentTime - lastInterruptEvalTime) < 0.015
+        and cachedIntResult.interruptMode == interruptMode then
+        return cachedIntResult
+    end
+    lastInterruptEvalTime = currentTime
+    cachedIntResult.interruptMode = interruptMode
+
+    local shouldShow = false
+    local intSpellID = nil
+    local castBar    = nil
+
+    local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
+                        or (currentTime - lastCCAppliedTime)    < CC_APPLIED_SUPPRESS
+
+    if not debounceActive and resolvedInts and BlizzardAPI.IsTargetInterruptWorthy() then
+        local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
+        local bar = nameplate and nameplate.UnitFrame and nameplate.UnitFrame.castBar
+        if bar then
+            local visOk, isVis = pcall(bar.IsVisible, bar)
+            local visTestOk, castVisible = pcall(function() return isVis and true or false end)
+            if visOk and visTestOk and castVisible then
+                local interruptible = true
+                -- Primary: Icon hidden = uninterruptible (Icon:IsShown() is NeverSecret; 12.0-safe)
+                if bar.Icon and bar.HideIconWhenNotInterruptible then
+                    local iconOk, iconShown = pcall(bar.Icon.IsShown, bar.Icon)
+                    if iconOk and iconShown == false then interruptible = false end
+                -- Fallback: BorderShield (pre-12.0 or castbars without icon hiding)
+                elseif bar.BorderShield then
+                    local shOk, shShown = pcall(bar.BorderShield.IsShown, bar.BorderShield)
+                    local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
+                    if shOk and shTestOk and shieldVisible then interruptible = false end
+                end
+
+                if interruptible then
+                    -- Important-cast detection: ALL signals are SECRET in 12.0.
+                    -- Detection code kept for future re-enablement; treat secret as not-important.
+                    local isImportantCast = false
+                    if bar.ImportantCastIndicator then
+                        local impOk, impShown = pcall(bar.ImportantCastIndicator.IsShown, bar.ImportantCastIndicator)
+                        if impOk then
+                            local cmpOk, cmpResult = pcall(function() return impShown == true end)
+                            if cmpOk then isImportantCast = cmpResult end
+                        end
+                    end
+                    -- importantOnly reserved for future; currently unreachable (falls back to kickOnly)
+                    if interruptMode == "importantOnly" and not isImportantCast then interruptible = false end
+
+                    if interruptible then
+                        local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
+                        local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
+                        local preferCC = interruptMode == "ccPrefer" and not targetCCImmune and not isImportantCast
+                        if preferCC and not targetAlreadyCC then
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid = entry.spellID
+                                if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid; shouldShow = true; break
+                                end
+                            end
+                        end
+                        if not shouldShow then
+                            for _, entry in ipairs(resolvedInts) do
+                                local sid, stype = entry.spellID, entry.type
+                                if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
+                                    -- skip
+                                elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                                    intSpellID = sid; shouldShow = true; break
+                                end
+                            end
+                        end
+                        if shouldShow then castBar = bar end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Debounce tracking: detect when the suggested spell goes on cooldown (= was cast).
+    -- Runs every frame regardless of shouldShow so the debounce window starts immediately
+    -- on cast even if another spell is already ready to show.
+    if lastInterruptShownID then
+        if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
+            lastInterruptUsedTime = currentTime
+            lastInterruptShownID  = nil
+        elseif not shouldShow then
+            lastInterruptShownID = nil
+        end
+    end
+    if shouldShow and intSpellID then
+        lastInterruptShownID = intSpellID
+    end
+
+    cachedIntResult.shouldShow = shouldShow
+    cachedIntResult.spellID    = intSpellID
+    cachedIntResult.castBar    = castBar
+    return cachedIntResult
 end
 
 -- Set combat state (affects glow animation behavior)

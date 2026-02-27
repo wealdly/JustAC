@@ -1,6 +1,22 @@
 
 # Changelog
 
+## [4.4.6] - 2026-02-27
+
+### Fixed
+- **Proc glow lingering on empty offensive slot:** When a procced spell left a slot, the slot-clear path set `hasProcGlow = false` and wiped state but forgot to call `UIAnimations.HideProcGlow()` — the animation frame stayed visible until another spell filled the slot. Now calls `HideProcGlow` alongside `StopAssistedGlow` and `StopGapCloserGlow` in the empty-slot branch.
+- **`HideDefensiveIcon` left `normalizedHotkey` populated:** After a defensive slot was hidden, `normalizedHotkey` and `previousNormalizedHotkey` retained the previous spell's hotkey. Harmless (gated by `IsShown()`), but inconsistent with the offensive-slot clear path which always nils both fields. Now cleared in `HideDefensiveIcon`.
+- **`isWaitingSpell` could be `nil` instead of `false`:** `spellInfo.name and name:find(…) or false` returns `nil` when `spellInfo.name` is `nil` (Lua `and`/`or` semantics). Changed to explicit `~= nil` comparisons so the flag is always a proper boolean.
+- **`GetCurrentSpellQueue` returned pooled table on full build (SpellQueue v37):** The full-build code path `return recommendedSpells` returned the pooled table that is `wipe()`d at the start of every queue build — any caller holding the reference across frames would see an empty table. Early-exit paths correctly returned the stable `lastSpellIDs` copy; the full-build path now matches them. Callers can safely hold the returned reference.
+- **Duplicate interrupt debounce state between UIRenderer and UINameplateOverlay:** Both renderers maintained separate `lastInterruptUsedTime` / `lastInterruptShownID` / `lastCCAppliedTime` debounce locals. When the player used an interrupt, only the evaluating renderer debounced; the other could fire a redundant suggestion on the same frame. Interrupt evaluation is now consolidated in `UIRenderer.EvaluateInterrupt()`, cached per 0.015 s and keyed on `interruptMode`, called by both renderers — one player, one debounce timer. `UINameplateOverlay.NotifyCCApplied()` now delegates to `UIRenderer.NotifyCCApplied()` and `JustAC.lua` no longer needs a second call.
+
+### Changed
+- **`rotationFilterCache` split from `filterResultCache` (SpellQueue):** `PassesRotationFilters()` was keying its cache with `"r_" .. spellID` — a string concatenation on every rotation-spell evaluation in the hot path. Now uses a dedicated `rotationFilterCache` table keyed by the plain integer `spellID`. Both tables are wiped together at the start of each queue build. No behaviour change; eliminates ~N string allocations per update cycle where N = rotation list length.
+- **Dead `cachedNormalizedHotkey` field removed (UIRenderer):** The field was assigned in three places (hotkey normalized, hotkey cleared, slot emptied) but never read anywhere — `normalizedHotkey` (the live field read by `KeyPressDetector`) was always set alongside it. All three assignments removed.
+- **Visibility predicate unified via `SpellQueue.ShouldShowQueue()` (SpellQueue v37, UIRenderer v15):** UIRenderer previously re-evaluated all four visibility conditions (out-of-combat, healer spec, mounted, hostile target) every render frame, duplicating the logic already in `SpellQueue.GetCurrentSpellQueue()`. `GetCurrentSpellQueue()` now caches the final verdict in `lastShouldShowQueue` and exposes it via `SpellQueue.ShouldShowQueue()`. UIRenderer reads the cached result — one evaluation per queue build instead of one per render frame.
+- **Glow state resolved via `ResolveGlowState()` enum (UIRenderer v15):** Six cascading boolean locals (`isSyntheticProc`, `isGapCloser`, `isRealProc`, `wantProcGlow`, `wantGapCloserGlow`, `shouldShowAssisted`) per icon per frame replaced with a single `ResolveGlowState(position, spellID, …)` call returning a `GLOW_NONE / GLOW_ASSISTED / GLOW_PROC / GLOW_GAP_CLOSER` integer. Application uses a clear 4-branch structure — easier to extend with new glow types.
+- **`UnitAffectingCombat` call count reduced in hot path:** `GetQueueThrottleInterval()` function removed; `inCombat` is now computed once at the top of `GetCurrentSpellQueue()` and reused for both the throttle interval and all four visibility checks. `ShowDefensiveIcon` no longer calls `UnitAffectingCombat` per icon per update — uses the module-level `isInCombat` maintained by `SetCombatState()` on PLAYER_REGEN events. Net reduction: ~2 + N redundant calls per update cycle (N = visible defensive icons).
+
 ## [4.4.5] - 2026-02-27
 
 ### Fixed

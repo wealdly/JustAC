@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 3)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 4)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -33,15 +33,6 @@ local ipairs             = ipairs
 local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
 local GetCVar            = GetCVar
 local SetCVar            = SetCVar
-
--- Post-interrupt debounce: cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
-local INTERRUPT_DEBOUNCE = 1.0  -- seconds
-local npLastInterruptUsedTime = 0
-local npLastInterruptShownID  = nil
-
--- CC-applied suppression: 2s covers state-registration lag; short enough for back-to-back CCs to still work.
-local CC_APPLIED_SUPPRESS  = 2.0  -- seconds
-local npLastCCAppliedTime  = 0
 
 -- Layout constants
 local ICON_SPACING   = 2   -- px between successive icons in the cluster
@@ -893,135 +884,13 @@ function UINameplateOverlay.Render(addon, spellIDs)
     -- Fallback: if saved data contains retired "importantOnly", treat as "kickOnly"
     if npoInterruptMode == "importantOnly" then npoInterruptMode = "kickOnly" end
     if interruptIcon and resolvedInterrupts and npoInterruptMode ~= "disabled" then
-        local shouldShowInterrupt = false
-        local intSpellID = nil
-
-        -- Debounce: if we just used an interrupt/CC, suppress for a short window
-        -- so the lingering cast bar doesn't trigger the next spell in the list.
-        local debounceActive = (now - npLastInterruptUsedTime) < INTERRUPT_DEBOUNCE
-                            or (now - npLastCCAppliedTime) < CC_APPLIED_SUPPRESS
-
-        -- Hoist castBar to outer scope so the cast aura section below can
-        -- read the enemy spell icon even after the debounce block closes.
-        local castBar = nil
-
-        if not debounceActive and BlizzardAPI.IsTargetInterruptWorthy() then
-            -- Read cast bar state from the target nameplate.
-            local uf = currentNameplate.UnitFrame
-            castBar = uf and uf.castBar
-            if castBar then
-                local visOk, isVis = pcall(castBar.IsVisible, castBar)
-                local visTestOk, castVisible = pcall(function() return isVis and true or false end)
-                if visOk and visTestOk and castVisible then
-                    local interruptible = true  -- fail-open default
-                    -- Primary: Icon hidden = uninterruptible (12.0-safe).
-                    -- Nameplate castbars have HideIconWhenNotInterruptible=true;
-                    -- Blizzard's secure ShouldIconBeShown() resolves barType
-                    -- taint internally and returns a plain literal boolean, so
-                    -- Icon:IsShown() is NeverSecret on nameplate castbars.
-                    if castBar.Icon and castBar.HideIconWhenNotInterruptible then
-                        local iconOk, iconShown = pcall(castBar.Icon.IsShown, castBar.Icon)
-                        if iconOk and iconShown == false then
-                            interruptible = false  -- Icon hidden → cast not interruptible
-                        end
-                    -- Fallback: BorderShield (pre-12.0 or castbars without Icon hiding)
-                    elseif castBar.BorderShield then
-                        local shOk, shShown = pcall(castBar.BorderShield.IsShown, castBar.BorderShield)
-                        local shTestOk, shieldVisible = pcall(function() return shShown and true or false end)
-                        if shOk and shTestOk and shieldVisible then
-                            interruptible = false  -- shield visible → uninterruptible
-                        end
-                    end
-
-                    if interruptible then
-                        -- Check if Blizzard flags this as an important (lethal) cast.
-                        -- Both isHighlightedImportantCast and ImportantCastIndicator:IsShown()
-                        -- are secret booleans in 12.0 (spellID taint propagates through
-                        -- SetShown). Direct comparison crashes. Use pcall to attempt the
-                        -- comparison: if it succeeds, we get the real answer; if it errors,
-                        -- the value is secret and we can't distinguish true from false.
-                        -- Important-cast detection: ALL signals are SECRET in 12.0
-                        -- (spellID taint propagates through IsSpellImportant, SetShown,
-                        -- IsShown, IsPlaying). Detection code kept for future use.
-                        -- For ccPrefer: treat secret as not-important (still uses
-                        -- normal CC/kick logic, which is fine).
-                        local isImportantCast = false
-                        if castBar.ImportantCastIndicator then
-                            local impOk, impShown = pcall(castBar.ImportantCastIndicator.IsShown, castBar.ImportantCastIndicator)
-                            if impOk then
-                                local cmpOk, cmpResult = pcall(function() return impShown == true end)
-                                if cmpOk then
-                                    isImportantCast = cmpResult
-                                end
-                                -- cmpOk=false: secret boolean, fall through with false
-                            end
-                        end
-
-                        -- "importantOnly" mode (reserved for future): skip non-important casts
-                        -- Currently unreachable — importantOnly falls back to kickOnly above
-                        if npoInterruptMode == "importantOnly" and not isImportantCast then
-                            interruptible = false
-                        end
-
-                        if interruptible then
-                            -- Target is casting an interruptible spell — find best
-                            -- available interrupt or CC.
-                            local targetCCImmune = BlizzardAPI.IsTargetCCImmune()
-                            -- NeverSecret when available; nil-guarded for versions where API doesn't exist
-                            local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
-                            -- "ccPrefer" mode on non-boss, non-important casts: prefer CC to save kick CD
-                            -- Important casts always get a hard interrupt (kick), never CC
-                            local preferCC = npoInterruptMode == "ccPrefer" and not targetCCImmune and not isImportantCast
-                            if preferCC then
-                                -- First pass: try CC spells only
-                                -- Skip if target is already CC'd (no point re-CCing an incapacitated mob)
-                                if not targetAlreadyCC then
-                                    for _, entry in ipairs(resolvedInterrupts) do
-                                        local sid = entry.spellID
-                                        -- IsSpellUsable: checks current castability (form, stealth, resources)
-                                        if entry.type == "cc" and BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                            intSpellID = sid
-                                            shouldShowInterrupt = true
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                            -- Fallback (or boss / kick-only / important cast): use any available spell
-                            if not shouldShowInterrupt then
-                                for _, entry in ipairs(resolvedInterrupts) do
-                                    local sid = entry.spellID
-                                    local stype = entry.type
-                                    -- Skip: CC vs bosses (immune), or any interrupt vs already-CC'd target (can't cast while CC'd)
-                                    if (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                                        -- skip
-                                    elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
-                                        intSpellID = sid
-                                        shouldShowInterrupt = true
-                                        break
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Track when the shown interrupt goes on cooldown → start debounce.
-        -- NOTE: the CD check intentionally runs even when shouldShowInterrupt=true (another
-        -- spell ready): if the previously tracked spell just went on CD (was cast), we still
-        -- start the debounce so the game has time to register the CC state before we show
-        -- the next suggestion.  Without this, a second CC briefly flashes immediately after
-        -- the first one lands.
-        if npLastInterruptShownID then
-            if SpellDB.IsInterruptOnCooldown(npLastInterruptShownID) then
-                npLastInterruptUsedTime = now  -- start debounce regardless of next spell
-                npLastInterruptShownID = nil
-            elseif not shouldShowInterrupt then
-                npLastInterruptShownID = nil  -- cast bar gone / target changed: just clear
-            end
-        end
+        -- Delegate to UIRenderer.EvaluateInterrupt() — single evaluation shared between
+        -- RenderSpellQueue and UINameplateOverlay.Render so both renderers see identical
+        -- interrupt state and share a single debounce timer (one player, one interrupt).
+        local intResult           = UIRenderer.EvaluateInterrupt(resolvedInterrupts, npoInterruptMode, now)
+        local shouldShowInterrupt = intResult.shouldShow
+        local intSpellID          = intResult.spellID
+        local castBar             = intResult.castBar
 
         -- De-dup: if the interrupt spell is already shown as overlay DPS position 1, skip it
         if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
@@ -1029,7 +898,6 @@ function UINameplateOverlay.Render(addon, spellIDs)
         end
 
         if shouldShowInterrupt and intSpellID then
-            npLastInterruptShownID = intSpellID
             local spellChanged = (interruptIcon.spellID ~= intSpellID)
             if spellChanged then
                 interruptIcon.spellID = intSpellID
@@ -1554,8 +1422,8 @@ function UINameplateOverlay.HideAll()
 end
 
 -- Called by JustAC when the player successfully casts a CC spell.
--- Activates the CC_APPLIED_SUPPRESS window so the next CC suggestion is held
--- back until the game can register the CC state on the target.
+-- Delegates to UIRenderer.NotifyCCApplied() so the shared debounce state
+-- (now consolidated there) is updated regardless of which renderer is active.
 function UINameplateOverlay.NotifyCCApplied()
-    npLastCCAppliedTime = GetTime()
+    if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
 end

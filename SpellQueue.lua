@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 36)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 37)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -23,6 +23,9 @@ local ipairs = ipairs
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
+-- Cached visibility verdict from GetCurrentSpellQueue(); read by UIRenderer via ShouldShowQueue().
+-- Avoids re-evaluating the same mount/healer/OOC conditions every render frame.
+local lastShouldShowQueue = true
 
 -- Lazy-resolved references for gap-closer (GapCloserEngine loads after SpellQueue in TOC)
 local cachedGapCloserEngine = nil
@@ -42,19 +45,13 @@ local recommendedSpells = {}
 -- Per-update cache for spell filter results (cleared at start of each GetCurrentSpellQueue call)
 -- Prevents re-checking the same spell multiple times per update cycle
 local filterResultCache = {}
+-- Separate table for rotation-filter results (avoids string concat "r_"..spellID in the hot path)
+local rotationFilterCache = {}
 
 -- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
 -- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
 local cachedRotationList = nil
-
--- Throttle interval for queue updates
--- 0.1s in combat = 10 updates/sec (fast enough for responsiveness, slow enough to reduce flicker)
--- 0.15s out of combat = slightly more relaxed when timing doesn't matter
-local function GetQueueThrottleInterval()
-    local inCombat = UnitAffectingCombat("player")
-    return inCombat and 0.10 or 0.15
-end
 
 function SpellQueue.GetCachedSpellInfo(spellID)
     return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
@@ -177,7 +174,7 @@ end
 -- (via UNIT_SPELLCAST_SUCCEEDED) is handled separately in the categorization
 -- pass to de-prioritize (not filter) on-CD spells.
 local function PassesRotationFilters(spellID, profile)
-    local cached = filterResultCache["r_" .. spellID]
+    local cached = rotationFilterCache[spellID]
     if cached ~= nil then
         return cached
     end
@@ -185,7 +182,7 @@ local function PassesRotationFilters(spellID, profile)
     local result = IsSpellAvailable(spellID)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
 
-    filterResultCache["r_" .. spellID] = result
+    rotationFilterCache[spellID] = result
     return result
 end
 
@@ -196,24 +193,24 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     local now = GetTime()
-    local throttleInterval = GetQueueThrottleInterval()
-    
-    -- More responsive throttling - don't skip updates as much
+    -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
+    -- 0.1s in combat = 10 updates/sec; 0.15s out of combat when timing is less critical.
+    local inCombat = UnitAffectingCombat("player")
+    local throttleInterval = inCombat and 0.10 or 0.15
+
     if now - lastQueueUpdate < throttleInterval then
         return lastSpellIDs or {}
     end
     
-    -- PERFORMANCE: Skip expensive processing when frame would be hidden
-    -- These checks mirror UIRenderer.RenderSpellQueue visibility logic
-    local inCombat = UnitAffectingCombat("player")
-    
     -- Check if queue should be hidden based on settings
     if profile.hideQueueOutOfCombat and not inCombat then
+        lastShouldShowQueue = false
         lastQueueUpdate = now
         return lastSpellIDs or {}
     end
     
     if profile.hideQueueForHealers and BlizzardAPI.IsCurrentSpecHealer and BlizzardAPI.IsCurrentSpecHealer() then
+        lastShouldShowQueue = false
         lastQueueUpdate = now
         return lastSpellIDs or {}
     end
@@ -227,6 +224,7 @@ function SpellQueue.GetCurrentSpellQueue()
             end
         end
         if isMounted then
+            lastShouldShowQueue = false
             lastQueueUpdate = now
             return lastSpellIDs or {}
         end
@@ -235,15 +233,19 @@ function SpellQueue.GetCurrentSpellQueue()
     if profile.requireHostileTarget and not inCombat then
         local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
         if not hasHostileTarget then
+            lastShouldShowQueue = false
             lastQueueUpdate = now
             return lastSpellIDs or {}
         end
     end
-    
+
+    -- All visibility conditions passed: queue should be shown.
+    lastShouldShowQueue = true
     lastQueueUpdate = now
 
     -- PERFORMANCE: Clear per-update caches at start of each update cycle
     wipe(filterResultCache)
+    wipe(rotationFilterCache)
     if BlizzardAPI.ClearProcCache then
         BlizzardAPI.ClearProcCache()
     end
@@ -463,11 +465,18 @@ function SpellQueue.GetCurrentSpellQueue()
     for i = 1, spellCount do
         lastSpellIDs[i] = recommendedSpells[i]
     end
-    return recommendedSpells
+    return lastSpellIDs
 end
 
 function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
+end
+
+--- Returns the cached visibility verdict from the last GetCurrentSpellQueue() build.
+--- True when all profile conditions (OOC, healer, mounted, hostile target) allow display.
+--- UIRenderer reads this instead of re-evaluating the same conditions every render frame.
+function SpellQueue.ShouldShowQueue()
+    return lastShouldShowQueue
 end
 
 --- Returns true if spellID was injected as a synthetic proc (gap-closer, etc.)
