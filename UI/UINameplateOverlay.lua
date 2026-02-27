@@ -38,6 +38,7 @@ local SetCVar            = SetCVar
 local INTERRUPT_DEBOUNCE = 1.0  -- seconds
 local npLastInterruptUsedTime = 0
 local npLastInterruptShownID  = nil
+
 -- CC-applied suppression: 2s covers state-registration lag; short enough for back-to-back CCs to still work.
 local CC_APPLIED_SUPPRESS  = 2.0  -- seconds
 local npLastCCAppliedTime  = 0
@@ -1116,7 +1117,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            if not interruptIcon:IsShown() then interruptIcon:Show() end
+            if not interruptIcon:IsShown() then
+                UIRenderer.PlayInterruptAlertSound(profile)
+                interruptIcon:Show()
+            end
             interruptIcon:SetAlpha(opacity)
         else
             UIRenderer.HideInterruptIcon(interruptIcon)
