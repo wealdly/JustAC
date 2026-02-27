@@ -238,10 +238,6 @@ L["Nameplate Show Defensives desc"] = "Show defensive queue icons on the opposit
 L["Nameplate Defensive Display Mode"] = "Defensive Visibility"
 L["Nameplate Defensive Display Mode desc"] = "In Combat Only: show defensive icons only while in combat.\nAlways: show at all times (matches the main defensive panel's Always option)."
 L["Nameplate Defensive Count"] = "Max Icons"
-L["Show Interrupt Reminder"] = "Show Interrupt Reminder"
-L["Show Interrupt Reminder desc"] = "Show an interrupt or CC reminder icon when the target is casting an interruptible spell."
-L["CC Regular Mobs"] = "Prefer CC on Regular Mobs"
-L["CC Regular Mobs desc"] = "On non-boss mobs, prefer crowd control (stuns, incapacitates) over your interrupt. Falls back to interrupt if no CC is available. On bosses, always uses interrupt."
 L["Interrupt Mode"] = "Interrupt Reminder"
 L["Interrupt Mode desc"] = "Controls when the interrupt reminder icon appears and which ability it suggests."
 L["Sounds"] = "Sounds"
@@ -249,12 +245,8 @@ L["Interrupt Alert"] = "Interrupt Alert"
 L["Interrupt Alert Sound"] = "Interrupt Alert"  -- legacy key, kept for safety
 L["Interrupt Alert Sound desc"] = "Play a sound when the interrupt reminder icon first appears."
 L["Interrupt Mode Disabled"] = "Disabled"
-L["Interrupt Mode Important Only"] = "Important Casts Only"
-L["Interrupt Mode Important Only desc"] = "Only show on dangerous casts (lethal abilities). Always suggests your interrupt (kick), never CC."
 L["Interrupt Mode Kick Only"] = "Interrupt Only"
-L["Interrupt Mode Kick Only desc"] = "Show on all interruptible casts. Always suggests your interrupt."
 L["Interrupt Mode CC Prefer"] = "Prefer CC on Trash"
-L["Interrupt Mode CC Prefer desc"] = "Show on all interruptible casts. Prefer crowd control on non-boss mobs; use interrupt on bosses."
 L["Nameplate Show Health Bars"] = "Show Health Bars"
 L["Nameplate Show Health Bars desc"] = "Show compact player and pet health bars above the defensive icon cluster. Pet bar auto-hides when no pet is active. Hides automatically when no defensives are visible."
 
@@ -267,7 +259,6 @@ L["Reset Defensives desc"] = "Reset Defensive display and behavior settings to d
 
 -- Icon Labels
 L["Icon Labels"] = "Icon Labels"
-L["Icon Labels desc"] = "Customize font scale, color, and position for icon text labels. Standard Queue and Nameplate Overlay are configured independently."
 L["Hotkey Text"] = "Hotkey Text"
 L["Cooldown Text"] = "Cooldown Countdown"
 L["Charge Count"] = "Charge Count"
