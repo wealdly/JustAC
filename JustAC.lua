@@ -1119,8 +1119,9 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     do
         local SpellDB = LibStub("JustAC-SpellDB", true)
         if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
+            -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
+            -- so one call covers both renderers (debounce state is now shared in UIRenderer).
             if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
-            if UINameplateOverlay and UINameplateOverlay.NotifyCCApplied then UINameplateOverlay.NotifyCCApplied() end
         end
     end
 
