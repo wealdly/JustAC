@@ -36,7 +36,13 @@
       "Bash(comm:*)",
       "Bash(xxd:*)",
       "WebFetch(domain:wowpedia.fandom.com)",
-      "WebFetch(domain:www.curseforge.com)"
+      "WebFetch(domain:www.curseforge.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:www.wowinterface.com)",
+      "WebFetch(domain:www.mmo-champion.com)",
+      "WebFetch(domain:wago.io)",
+      "WebFetch(domain:us.forums.blizzard.com)",
+      "WebFetch(domain:wow.zamimg.com)"
     ],
     "additionalDirectories": [
       "r:\\WOW\\_retail_\\Interface\\AddOns\\JustAC"

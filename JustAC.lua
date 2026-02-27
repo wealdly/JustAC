@@ -46,6 +46,7 @@ local defaults = {
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "ccPrefer",        -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
+        interruptAlertSound = "none",      -- Alert sound when interrupt icon first appears; see INTERRUPT_ALERT_SOUNDS in UIRenderer.lua
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
             hotkey = {

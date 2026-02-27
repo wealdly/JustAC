@@ -134,7 +134,10 @@
             "GameFontNormal",
             "GameFontHighlight",
             "NumberFontNormal",
-            "TargetFrame"
+            "TargetFrame",
+            "PlaySound",
+            "PlaySoundFile",
+            "StopSound"
         ],
         "disable": [
             "lowercase-global",
