@@ -895,12 +895,20 @@ function ActionBarScanner.OnKeybindsChanged()
 
     ActionBarScanner.lastKeybindChangeTime = now
     isRebuildingBindings = true
-    InvalidateBindingCache()
-    InvalidateKeybindCache()
+    -- Soft invalidation only: clear the raw binding-key cache so that the eventual
+    -- fresh lookup re-reads from WoW, but do NOT wipe spellHotkeyCache yet.
+    -- Gamepad bindings are often not committed when UPDATE_BINDINGS first fires;
+    -- wiping spellHotkeyCache immediately causes the next render to call GetBindingKey
+    -- before PAD keys are registered, returning keyboard text that then gets
+    -- fast-path cached as glyphs permanently.  The 0.3s delayed refresh below
+    -- does the full hard wipe once bindings have settled.
+    bindingCacheValid = false
+    wipe(bindingKeyCache)
     isRebuildingBindings = false
-    
-    -- Gamepad bindings may not be committed when UPDATE_BINDINGS fires
-    -- Schedule a delayed second refresh to catch late-committed gamepad data
+
+    -- Gamepad bindings may not be committed when UPDATE_BINDINGS fires.
+    -- Full hard invalidation deferred to here so GetSpellHotkey fast-path
+    -- continues returning cached glyphs during the settling window.
     C_Timer.After(0.3, function()
         InvalidateBindingCache()
         InvalidateKeybindCache()

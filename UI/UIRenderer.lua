@@ -34,6 +34,40 @@ local lastInterruptShownID  = nil
 local CC_APPLIED_SUPPRESS = 2.0  -- seconds
 local lastCCAppliedTime   = 0
 
+-- Alert sounds for interrupt reminder (FileDataIDs for PlaySoundFile()).
+-- Played once when the interrupt icon first becomes visible.
+-- Shared via UIRenderer.PlayInterruptAlertSound so both renderers fire only once.
+-- IDs sourced from SilverDragon — all are verified working FileDataIDs.
+local INTERRUPT_ALERT_SOUNDS = {
+    shing        = 566240,  -- Shing!        — sharp metallic bling
+    wham         = 566946,  -- Wham!         — heavy thud, impossible to miss
+    simonChime   = 566076,  -- Simon Chime   — classic alert chime
+    shortCircuit = 568975,  -- Short Circuit — crisp electric snap
+    pvpFlag      = 569200,  -- PvP Flag      — PVP flag taken
+    pvpFlagHorde = 568165,  -- PvP Flag (H)  — Horde flag taken
+    pvpAlliance  = 568320,  -- PvP Alliance  — Alliance warning fanfare
+    pvpHorde     = 569112,  -- PvP Horde     — Horde warning fanfare
+    thunderCrack = 566202,  -- Thunder Crack — deep outdoor crack
+    warDrums     = 567275,  -- War Drums     — heavy tribal drums
+    dwarfHorn    = 566064,  -- Dwarf Horn    — short brass horn
+    scourgeHorn  = 567386,  -- Scourge Horn  — eerie undead horn
+    explosion    = 566982,  -- Explosion     — large boom
+    cheer        = 567283,  -- Cheer         — crowd cheer
+    felPortal    = 569215,  -- Fel Portal    — demonic portal open
+    felNova      = 568582,  -- Fel Nova      — arcane/fel pulse
+    humm         = 569518,  -- Humm          — soft ambient tone
+    cartoonFX    = 566543,  -- Cartoon FX    — light cartoon pop
+    rubberDucky  = 566121,  -- Rubber Ducky  — squeaky duck
+    pygmyDrums   = 566508,  -- Pygmy Drums   — quick drum rattle
+    grimrailHorn = 1023633, -- Grimrail Horn — train horn blast
+    squireHorn   = 598079,  -- Squire Horn   — mounted herald horn
+    gruntlingHorn= 598196,  -- Gruntling Horn— goblin herald horn
+}
+local PlaySoundFile = PlaySoundFile
+-- Debounce: shared across both renderers so "both" display mode fires only one sound.
+local lastInterruptSoundTime = 0
+local INTERRUPT_SOUND_DEBOUNCE = 0.5  -- seconds
+
 -- Check for proc overlay to highlight available abilities.
 -- BlizzardAPI.IsSpellProcced checks both base and override IDs.
 -- Gap-closers (synthetic procs) have their own red crawl path; not included here.
@@ -520,6 +554,19 @@ function UIRenderer.HideInterruptIcon(intIcon)
     intIcon:Hide()
 end
 
+-- Play the configured interrupt alert sound (profile.interruptAlertSound).
+-- Shared by both renderers; debounce prevents double-fire in "both" display mode.
+function UIRenderer.PlayInterruptAlertSound(profile)
+    local alertSound = profile.interruptAlertSound
+    if not alertSound or alertSound == "none" then return end
+    local soundID = INTERRUPT_ALERT_SOUNDS[alertSound]
+    if not soundID then return end
+    local now = GetTime()
+    if (now - lastInterruptSoundTime) < INTERRUPT_SOUND_DEBOUNCE then return end
+    lastInterruptSoundTime = now
+    PlaySoundFile(soundID, "Master")
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
@@ -856,7 +903,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
 
-            if not intIcon:IsShown() then intIcon:Show() end
+            if not intIcon:IsShown() then
+                UIRenderer.PlayInterruptAlertSound(profile)
+                intIcon:Show()
+            end
             local frameOpacity = profile.frameOpacity or 1.0
             intIcon:SetAlpha(frameOpacity)
         else
@@ -1133,6 +1183,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastBaseDesaturation = nil
                     icon.cachedOutOfRange = nil
                     icon.cachedNormalizedHotkey = nil
+                    icon.normalizedHotkey = nil  -- Must clear: stale value causes wrong previousNormalizedHotkey on slot refill
                     UIAnimations.StopAssistedGlow(icon)
                     UIAnimations.StopGapCloserGlow(icon)
                     icon.hotkeyText:SetText("")

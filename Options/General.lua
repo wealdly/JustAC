@@ -482,6 +482,51 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            -- SOUNDS (38-39)
+            soundsHeader = {
+                type = "header",
+                name = L["Sounds"],
+                order = 38,
+            },
+            interruptAlertSound = {
+                type = "select",
+                name = L["Interrupt Alert"],
+                desc = L["Interrupt Alert Sound desc"],
+                order = 38.5,
+                width = "double",
+                values = {
+                    none          = L["Disabled"],
+                    shing         = "Shing!",
+                    wham          = "Wham!",
+                    simonChime    = "Simon Chime",
+                    shortCircuit  = "Short Circuit",
+                    pvpFlag       = "PvP Flag",
+                    pvpFlagHorde  = "PvP Flag (Horde)",
+                    pvpAlliance   = "PvP Alliance",
+                    pvpHorde      = "PvP Horde",
+                    thunderCrack  = "Thunder Crack",
+                    warDrums      = "War Drums",
+                    dwarfHorn     = "Dwarf Horn",
+                    scourgeHorn   = "Scourge Horn",
+                    explosion     = "Explosion",
+                    cheer         = "Cheer",
+                    felPortal     = "Fel Portal",
+                    felNova       = "Fel Nova",
+                    humm          = "Humm",
+                    cartoonFX     = "Cartoon FX",
+                    rubberDucky   = "Rubber Ducky",
+                    pygmyDrums    = "Pygmy Drums",
+                    grimrailHorn  = "Grimrail Horn",
+                    squireHorn    = "Squire Horn",
+                    gruntlingHorn = "Gruntling Horn",
+                },
+                sorting = { "none", "shing", "wham", "simonChime", "shortCircuit", "pvpFlag", "pvpFlagHorde", "pvpAlliance", "pvpHorde", "thunderCrack", "warDrums", "dwarfHorn", "scourgeHorn", "explosion", "cheer", "felPortal", "felNova", "humm", "cartoonFX", "rubberDucky", "pygmyDrums", "grimrailHorn", "squireHorn", "gruntlingHorn" },
+                get = function() return addon.db.profile.interruptAlertSound or "none" end,
+                set = function(_, val) addon.db.profile.interruptAlertSound = val end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             -- SYSTEM (40-49)
             systemHeader = {
                 type = "header",
@@ -543,6 +588,7 @@ function General.CreateTabArgs(addon)
                     p.queueIconDesaturation = 0
                     p.gamepadIconStyle      = "xbox"
                     p.panelInteraction      = "unlocked"
+                    p.interruptAlertSound   = "none"
                     -- Clear legacy migration keys
                     p.panelLocked           = nil
                     p.showTooltips          = nil
