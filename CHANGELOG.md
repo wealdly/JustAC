@@ -1,6 +1,12 @@
 
 # Changelog
 
+## [4.4.7] - 2026-02-27
+
+### Fixed
+- **Custom hotkey overrides with full-word modifiers were silently corrupted:** `NormalizeHotkey` matched the single-letter abbreviated patterns (e.g. `^S%-?`) against full words like `"SHIFT-2"`, capturing `"HIFT-2"` and producing `"SHIFT-HIFT-2"`. Flash/press detection never matched so the icon never flashed. Full-word patterns (`SHIFT`, `CTRL`, `ALT` and two-word combos) now run first and are fully consumed before the abbreviated patterns are checked.
+- **`+` separator not accepted in custom hotkey overrides:** User-typed `"Shift+2"` was stored as-is and normalized to `"SHIFT+2"`, which never matched `"SHIFT-2"` from the keybind scan. Full-word patterns now accept both `-` and `+` as separator, so `"Shift+2"`, `"Shift-2"`, and `"S-2"` all resolve to `"SHIFT-2"` and match correctly.
+
 ## [4.4.6] - 2026-02-27
 
 ### Fixed
