@@ -84,13 +84,24 @@ end
 -- Mouse abbreviations are reversed so matching uses WoW's raw binding names (BUTTON1-N).
 local function NormalizeHotkey(hotkey)
     local n = hotkey:upper()
-    -- Expand modifier prefixes (order matters: multi-mod first to avoid partial match)
-    n = n:gsub("^CA%-?(.+)", "CTRL-ALT-%1")
-    n = n:gsub("^CS%-?(.+)", "CTRL-SHIFT-%1")
-    n = n:gsub("^SA%-?(.+)", "SHIFT-ALT-%1")
-    n = n:gsub("^S%-?(.+)",  "SHIFT-%1")
-    n = n:gsub("^C%-?(.+)",  "CTRL-%1")
-    n = n:gsub("^A%-?(.+)",  "ALT-%1")
+    -- Full-word modifier prefixes MUST come first so "SHIFT-2" isn't misread as
+    -- the single-letter "S" prefix pattern below (which would produce "SHIFT-HIFT-2").
+    -- Accept both "-" and "+" separators so user-typed "Shift+2" and "Shift-2" both work.
+    n = n:gsub("^CTRL%-ALT[%-%+](.+)",   "CTRL-ALT-%1")
+    n = n:gsub("^CTRL%-SHIFT[%-%+](.+)", "CTRL-SHIFT-%1")
+    n = n:gsub("^SHIFT%-ALT[%-%+](.+)",  "SHIFT-ALT-%1")
+    n = n:gsub("^SHIFT[%-%+](.+)",       "SHIFT-%1")
+    n = n:gsub("^CTRL[%-%+](.+)",        "CTRL-%1")
+    n = n:gsub("^ALT[%-%+](.+)",         "ALT-%1")
+    -- Abbreviated prefixes from AbbreviateKeybind: S-X, C-X, A-X, CA-X, CS-X, SA-X.
+    -- Require the hyphen (%-) not optional: "^S%-?" would match the "S" in "SHIFT-..."
+    -- after the full-word patterns above have already run, corrupting any remaining input.
+    n = n:gsub("^CA%-(.+)",  "CTRL-ALT-%1")
+    n = n:gsub("^CS%-(.+)",  "CTRL-SHIFT-%1")
+    n = n:gsub("^SA%-(.+)",  "SHIFT-ALT-%1")
+    n = n:gsub("^S%-(.+)",   "SHIFT-%1")
+    n = n:gsub("^C%-(.+)",   "CTRL-%1")
+    n = n:gsub("^A%-(.+)",   "ALT-%1")
     n = n:gsub("^%+(.+)",    "MOD-%1")
     -- Reverse mouse abbreviations from AbbreviateKeybind (M4→BUTTON4, MWU→MOUSEWHEELUP)
     n = n:gsub("MWU$", "MOUSEWHEELUP")
