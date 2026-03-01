@@ -223,7 +223,7 @@ L["Melee Range Spell Override desc"] = "주문 ID 재정의 (빈칸 = 자동)"
 L["Default"] = "기본값"
 L["Unknown"] = "알 수 없음"
 L["None"] = "없음"
-`
+
 -- Nameplate Overlay
 L["Nameplate Overlay"] = "이름표 오버레이"
 L["Nameplate Overlay desc"] = "대상 이름표에 대기열 아이콘을 직접 붙입니다. 메인 패널과 완전히 독립적이며 둘 다 활성화할 수 있습니다."
@@ -283,4 +283,5 @@ L["Expansion Direction desc"] = "여러 슬롯이 있을 때 아이콘이 쌓이
 L["Horizontal (Out)"] = "수평 (바깥쪽)"
 L["Vertical - Up"] = "수직 - 위"
 L["Vertical - Down"] = "수직 - 아래"
+
 
