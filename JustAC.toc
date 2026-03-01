@@ -26,6 +26,7 @@ Libs\\AceLocale-3.0\\AceLocale-3.0.xml
 Locales\enUS.lua
 Locales\deDE.lua
 Locales\frFR.lua
+Locales\koKR.lua
 Locales\ruRU.lua
 Locales\esES.lua
 Locales\esMX.lua
