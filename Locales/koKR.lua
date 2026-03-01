@@ -5,7 +5,6 @@
 local L = LibStub("AceLocale-3.0"):NewLocale("JustAssistedCombat", "koKR")
 if not L then return end
 
-
 -- General UI
 L["JustAssistedCombat"] = "방금 지원된 전투"
 L["General"] = "일반"
@@ -284,3 +283,4 @@ L["Expansion Direction desc"] = "여러 슬롯이 있을 때 아이콘이 쌓이
 L["Horizontal (Out)"] = "수평 (바깥쪽)"
 L["Vertical - Up"] = "수직 - 위"
 L["Vertical - Down"] = "수직 - 아래"
+
