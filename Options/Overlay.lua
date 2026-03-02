@@ -193,11 +193,11 @@ function Overlay.CreateTabArgs(addon)
                 width = "double",
                 values = {
                     disabled      = L["Interrupt Mode Disabled"],
-                    -- importantOnly reserved for future use (12.0 secret values block detection)
                     kickOnly      = L["Interrupt Mode Kick Only"],
+                    ccShielded    = L["Interrupt Mode CC Shielded"],
                     ccPrefer      = L["Interrupt Mode CC Prefer"],
                 },
-                sorting = { "disabled", "kickOnly", "ccPrefer" },
+                sorting = { "disabled", "kickOnly", "ccShielded", "ccPrefer" },
                 get = function() return addon.db.profile.nameplateOverlay.interruptMode or "ccPrefer" end,
                 set = function(_, val)
                     addon.db.profile.nameplateOverlay.interruptMode = val

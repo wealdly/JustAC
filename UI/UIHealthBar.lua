@@ -4,6 +4,8 @@
 local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 7)
 if not UIHealthBar then return end
 
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+
 -- Hot path cache
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
@@ -684,7 +686,7 @@ function UIHealthBar.UpdatePet(addon)
 
     local ok, isDead = pcall(UnitIsDead, "pet")
     -- UnitIsDead is NOT secret in 12.0 — safe to compare directly
-    if ok and isDead and not (issecretvalue and issecretvalue(isDead)) then
+    if ok and isDead and not BlizzardAPI.IsSecretValue(isDead) then
         -- Pet is dead: show empty bar with red overlay
         if petHealthBarFrame.statusBar then
             petHealthBarFrame.statusBar:SetValue(0)
