@@ -451,6 +451,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.lastCooldownStart = nil
         defensiveIcon.lastCooldownDuration = nil
         defensiveIcon.lastCooldownWasSecret = false
+        -- Reset usability visual state so new spell gets a fresh check
+        defensiveIcon.cachedDefUsable = nil
+        defensiveIcon.cachedDefNoResource = nil
+        defensiveIcon.lastDefVisualState = nil
     end
     
     UpdateButtonCooldowns(defensiveIcon)
@@ -504,6 +508,65 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.normalizedHotkey = normalized
     else
         defensiveIcon.normalizedHotkey = nil
+    end
+
+    -- ── Usability visual state ──────────────────────────────────────────────
+    -- Blue tint when out of resources; desaturated when on cooldown.
+    -- No channeling grey-out: defensives are emergency buttons — player may
+    -- want to cancel a channel to pop a defensive at low health.
+    -- Uses BlizzardAPI.IsSpellUsable / C_ActionBar.IsUsableAction (NeverSecret).
+    -- States: 2=no resources (blue tint), 4=on cooldown (desaturated), 3=normal
+    local now = GetTime()
+    local defVisualState = 3  -- default: normal
+    do
+        -- Throttle usability checks to COOLDOWN_UPDATE_INTERVAL (~80ms)
+        if idChanged or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
+            defensiveIcon.lastDefUsableCheck = now
+            if isItem then
+                -- Item usability: scan for action bar slot then use C_ActionBar.IsUsableAction
+                local itemUsable = true
+                local itemNoResource = false
+                for slot = 1, 180 do
+                    local actionType, actionID = GetActionInfo(slot)
+                    if actionType == "item" and actionID == id then
+                        local slotUsable, slotNoMana = C_ActionBar.IsUsableAction(slot)
+                        if not BlizzardAPI.IsSecretValue(slotUsable) and not BlizzardAPI.IsSecretValue(slotNoMana) then
+                            itemUsable = slotUsable or false
+                            itemNoResource = slotNoMana or false
+                        end
+                        break
+                    end
+                end
+                defensiveIcon.cachedDefUsable = itemUsable
+                defensiveIcon.cachedDefNoResource = itemNoResource
+            else
+                defensiveIcon.cachedDefUsable, defensiveIcon.cachedDefNoResource = BlizzardAPI.IsSpellUsable(id)
+            end
+        end
+        if not defensiveIcon.cachedDefUsable then
+            if defensiveIcon.cachedDefNoResource then
+                defVisualState = 2  -- no resources → blue tint
+            else
+                defVisualState = 4  -- on cooldown → desaturated
+            end
+        end
+    end
+
+    if defensiveIcon.lastDefVisualState ~= defVisualState then
+        if defVisualState == 2 then
+            -- No resources: blue tint
+            defensiveIcon.iconTexture:SetDesaturation(0)
+            defensiveIcon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
+        elseif defVisualState == 4 then
+            -- On cooldown: desaturated (greyed out)
+            defensiveIcon.iconTexture:SetDesaturation(0.8)
+            defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
+        else
+            -- Normal: full color
+            defensiveIcon.iconTexture:SetDesaturation(0)
+            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
+        end
+        defensiveIcon.lastDefVisualState = defVisualState
     end
 
     -- Module-level isInCombat avoids per-icon UnitAffectingCombat calls.
@@ -573,6 +636,13 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon.normalizedHotkey = nil
         defensiveIcon.previousNormalizedHotkey = nil
         defensiveIcon.hotkeyText:SetText("")
+        -- Reset usability visual state
+        defensiveIcon.cachedDefUsable = nil
+        defensiveIcon.cachedDefNoResource = nil
+        defensiveIcon.lastDefVisualState = nil
+        defensiveIcon.lastDefUsableCheck = nil
+        defensiveIcon.iconTexture:SetDesaturation(0)
+        defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
         if defensiveIcon.chargeText then
             defensiveIcon.chargeText:Hide()
         end
