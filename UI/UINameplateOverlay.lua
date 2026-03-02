@@ -42,7 +42,7 @@ local BAR_SPACING    = 2   -- px between health bar and first DPS icon (matches 
 
 -- Cooldown update throttle (matches UIRenderer)
 local lastCooldownUpdate       = 0
-local COOLDOWN_UPDATE_INTERVAL = 0.15
+local COOLDOWN_UPDATE_INTERVAL = 0.08
 
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
@@ -857,7 +857,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local hasSpells   = spellIDs and #spellIDs > 0
     local npoGlowMode  = npo.glowMode or "all"
     local npoShowProcGlow = (npoGlowMode == "all" or npoGlowMode == "procOnly")
-    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow ~= false
+    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
     local npoOverlays  = npo.textOverlays
     local showHotkey   = not npoOverlays or not npoOverlays.hotkey or npoOverlays.hotkey.show ~= false
     local opacity      = npo.opacity or 1.0

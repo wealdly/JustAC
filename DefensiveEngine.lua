@@ -610,7 +610,12 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
     if not profile or not profile.defensives then return {} end
 
     local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 1
-    local showProcs = (overrides and overrides.showProcs ~= nil) and overrides.showProcs or (profile.defensives.showProcs ~= false)
+    local showProcs
+    if overrides and overrides.showProcs ~= nil then
+        showProcs = overrides.showProcs
+    else
+        showProcs = profile.defensives.showProcs ~= false
+    end
     local results = {}
     -- Reuse pooled table for tracking added spells
     wipe(defensiveAlreadyAdded)

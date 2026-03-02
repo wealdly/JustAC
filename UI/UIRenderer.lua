@@ -391,7 +391,7 @@ local lastFrameState = {
 
 -- Swipe animates smoothly once set; no need to update every frame.
 local lastCooldownUpdate = 0
-local COOLDOWN_UPDATE_INTERVAL = 0.15
+local COOLDOWN_UPDATE_INTERVAL = 0.08
 
 -- Stale atlas markup can appear if cached hotkeys survive a binding change.
 function UIRenderer.InvalidateHotkeyCache()
