@@ -194,9 +194,9 @@ function SpellQueue.GetCurrentSpellQueue()
 
     local now = GetTime()
     -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
-    -- 0.1s in combat = 10 updates/sec; 0.15s out of combat when timing is less critical.
+    -- 0.05s in combat = 20 updates/sec; 0.12s out of combat when timing is less critical.
     local inCombat = UnitAffectingCombat("player")
-    local throttleInterval = inCombat and 0.10 or 0.15
+    local throttleInterval = inCombat and 0.05 or 0.12
 
     if now - lastQueueUpdate < throttleInterval then
         return lastSpellIDs or {}

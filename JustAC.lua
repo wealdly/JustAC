@@ -1147,7 +1147,7 @@ end
 
 function JustAC:OnCooldownUpdate()
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.1)
+    self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.04)
 end
 
 function JustAC:ForceUpdateAll()
@@ -1159,7 +1159,7 @@ end
 
 function JustAC:ScheduleUpdate()
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    self.cooldownTimer = self:ScheduleTimer("ForceUpdate", 0.1)
+    self.cooldownTimer = self:ScheduleTimer("ForceUpdate", 0.04)
 end
 
 function JustAC:ForceUpdate()
@@ -1270,7 +1270,7 @@ function JustAC:StartUpdates()
             if not spellQueueDirty and not defensiveQueueDirty then
                 updateRate = IDLE_CHECK_INTERVAL
             else
-                updateRate = math_max(cachedUpdateRate * 2.5, 0.15)
+                updateRate = math_max(cachedUpdateRate * 2.0, 0.10)
             end
         end
 
