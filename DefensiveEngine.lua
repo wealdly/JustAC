@@ -48,6 +48,26 @@ local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
 local usableResults = {}
 local usableAddedHere = {}
+local resourceBlockedBuffer = {}  -- holds spells that are known/non-redundant but currently unusable
+
+-- Stable in-place sort: move unusable entries to the end of the queue
+-- while preserving relative order within each group (castable vs blocked).
+local function SortUnusableToEnd(results)
+    if #results <= 1 then return end
+    -- Simple two-pass: collect castable, then blocked, overwrite in place.
+    local castable, blocked = {}, {}
+    for _, entry in ipairs(results) do
+        if entry.unusable then
+            blocked[#blocked + 1] = entry
+        else
+            castable[#castable + 1] = entry
+        end
+    end
+    if #blocked == 0 then return end  -- nothing to reorder
+    local idx = 0
+    for _, e in ipairs(castable) do idx = idx + 1; results[idx] = e end
+    for _, e in ipairs(blocked)  do idx = idx + 1; results[idx] = e end
+end
 
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
@@ -119,10 +139,13 @@ local function IsItemOnCooldown(itemID)
 end
 
 -- Resolve player health into isLow/isCritical booleans.
--- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states:
---   "low"  = ~35% health → shows self-heals
---   "critical" = ~20% health → shows major cooldowns
--- Thresholds only matter out of combat (between pulls, open world, etc.)
+-- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states.
+-- Because the configurable thresholds (80%/60%) are undetectable when health is secret,
+-- we promote both tiers:
+--   No LowHealthFrame signal (>35%): isLow=true (self-heals always shown in combat)
+--   "low"  signal (~35% health):     isCritical=true (cooldowns + potions activated)
+--   "critical" signal (~20% health): isCritical=true (same, cooldowns sort first via queue)
+-- Out of combat (exact health available): original configurable thresholds apply.
 ResolveHealthState = function(profile)
     local healthPercent, isEstimated = nil, false
     if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
@@ -130,11 +153,14 @@ ResolveHealthState = function(profile)
     end
 
     if isEstimated then
+        -- Secret health: promote tiers since configurable thresholds are undetectable.
         local lowState, critState = false, false
         if BlizzardAPI and BlizzardAPI.GetLowHealthState then
             lowState, critState = BlizzardAPI.GetLowHealthState()
         end
-        return lowState, critState
+        -- Self-heals always available in combat (can't detect 80% threshold).
+        -- Cooldowns trigger at "low" (~35%) — first detectable signal replaces 60% threshold.
+        return true, lowState or critState
     elseif healthPercent then
         local def = profile and profile.defensives
         local selfHealThreshold = def and def.selfHealThreshold or 80
@@ -557,17 +583,29 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
         end
     end
 
-    -- Second pass: add non-procced usable spells AND usable items
+    -- Second pass: add non-procced usable spells AND usable items.
+    -- Unusable spells (known + non-redundant but on cooldown or lacking resources) are
+    -- collected separately and appended at the end so castable spells sort first.
+    wipe(resourceBlockedBuffer)
     local itemsEnabled = profile.defensives and profile.defensives.allowItems
     for _, entry in ipairs(spellList) do
-        if #usableResults >= maxCount then break end
+        if #usableResults >= maxCount and #resourceBlockedBuffer >= maxCount then break end
         if entry and entry > 0 then
             local resolvedID = BlizzardAPI.ResolveSpellID(entry)
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
                 -- Positive entry = spell
                 local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
-                    usableResults[#usableResults + 1] = {spellID = resolvedID, isItem = false, isProcced = isProcced}
+                    -- Spell is known and non-redundant — check if actually castable.
+                    -- IsSpellUsable is NeverSecret (falls back to C_ActionBar.IsUsableAction).
+                    -- Returns false for both cooldown-blocked AND resource-blocked spells.
+                    local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
+                    if not castable and #usableResults + #resourceBlockedBuffer < maxCount then
+                        -- Unusable: deprioritize but keep in queue for visual feedback.
+                        resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = isProcced, unusable = true, noResources = notEnoughResources}
+                    elseif castable and #usableResults < maxCount then
+                        usableResults[#usableResults + 1] = {spellID = resolvedID, isItem = false, isProcced = isProcced}
+                    end
                     usableAddedHere[resolvedID] = true
                     usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
                 end
@@ -583,6 +621,12 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                 usableAddedHere[itemID] = true
             end
         end
+    end
+
+    -- Append resource-blocked spells after all castable ones.
+    for _, blocked in ipairs(resourceBlockedBuffer) do
+        if #usableResults >= maxCount then break end
+        usableResults[#usableResults + 1] = blocked
     end
 
     return usableResults
@@ -689,6 +733,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
     if #results >= maxIcons then return results end
 
     if displayMode == "combatOnly" and not inCombat then
+        SortUnusableToEnd(results)
         return results
     end
 
@@ -696,6 +741,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
     if showAllAvailable and not isLow and not isCritical then
         AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
         AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
+        SortUnusableToEnd(results)
         return results
     end
 
@@ -714,6 +760,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
         AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
     end
 
+    SortUnusableToEnd(results)
     return results
 end
 
