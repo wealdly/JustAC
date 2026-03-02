@@ -5,8 +5,8 @@
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
 local MAJOR, MINOR = "JustAC-GapCloserEngine", 1
-local lib = LibStub:NewLibrary(MAJOR, MINOR)
-if not lib then return end
+local GapCloserEngine = LibStub:NewLibrary(MAJOR, MINOR)
+if not GapCloserEngine then return end
 
 -- Hot path cache
 local GetTime = GetTime
@@ -16,7 +16,6 @@ local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
 local GetSpecialization = GetSpecialization
 local IsStealthed = IsStealthed
-local FindSpellOverrideByID = FindSpellOverrideByID
 local IsActionInRange = IsActionInRange
 local C_Spell = C_Spell
 local ipairs = ipairs
@@ -25,23 +24,6 @@ local ipairs = ipairs
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner  = LibStub("JustAC-ActionBarScanner", true)
 local SpellDB           = LibStub("JustAC-SpellDB", true)
-
---------------------------------------------------------------------------------
--- Shared helpers
---------------------------------------------------------------------------------
-
--- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
--- Impending Victory is talented, so we use the active replacement instead of the base spell.
--- Returns the original ID when no override exists.
-local function ResolveSpellID(spellID)
-    if FindSpellOverrideByID then
-        local overrideID = FindSpellOverrideByID(spellID)
-        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
-            return overrideID
-        end
-    end
-    return spellID
-end
 
 --------------------------------------------------------------------------------
 -- Constants
@@ -54,6 +36,13 @@ end
 -- visible blink.
 local GAP_CLOSER_HIDE_DEBOUNCE = 0.15  -- seconds before icon disappears
 local lastOutOfRangeTime = 0
+
+-- Target-switch cooldown: suppress gap-closer suggestions briefly after
+-- PLAYER_TARGET_CHANGED so IsActionInRange can stabilize on the new target.
+-- Without this, a stale out-of-range frame from the previous target can
+-- cause a false-positive gap-closer flash on the new (in-range) target.
+local TARGET_SWITCH_COOLDOWN = 0.2  -- seconds
+local lastTargetSwitchTime = 0
 
 --------------------------------------------------------------------------------
 -- Cached state
@@ -79,12 +68,45 @@ local cachedMeleeRefSpecKey = nil
 --- Returns slot number or nil.
 local function FindSlotForSpell(spellID)
     if not ActionBarScanner or not ActionBarScanner.GetSlotForSpell then return nil end
-    local resolved = ResolveSpellID(spellID)
+    local resolved = BlizzardAPI.ResolveSpellID(spellID)
     local slot = ActionBarScanner.GetSlotForSpell(resolved)
     if not slot and resolved ~= spellID then
         slot = ActionBarScanner.GetSlotForSpell(spellID)
     end
     return slot
+end
+
+--- Evaluate a single gap-closer candidate: resolve → dedup → available →
+--- usable(failClosed) → action bar slot → ready.  Returns resolvedID, baseID
+--- on success, or nil if the spell doesn't pass all gates.
+--- @param spellID      number       Base spell ID from the gap-closer list
+--- @param addedSpellIDs table|nil   Set of already-queued spell IDs to skip
+--- @param checkRange    boolean|nil  If true, also verify the spell's own slot is in range
+local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
+    if not spellID or spellID <= 0 then return nil end
+    local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
+
+    -- Dedup: skip if already shown in the queue
+    if addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID]) then
+        return nil
+    end
+
+    if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
+
+    -- Fail closed: if we can't confirm usability (secret values), skip
+    if not BlizzardAPI.IsSpellUsable(resolvedID, false) then return nil end
+
+    -- FindSlotForSpell resolves overrides internally, so passing the base
+    -- spellID checks both the resolved form and the original.
+    local slot = FindSlotForSpell(spellID)
+    if not slot then return nil end
+
+    -- Optional own-range check (stealth gap closers with extended range)
+    if checkRange and IsActionInRange(slot) == false then return nil end
+
+    if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
+
+    return resolvedID, spellID
 end
 
 --- Get the melee range reference spell + slot for the current spec.
@@ -185,7 +207,7 @@ end
 --------------------------------------------------------------------------------
 
 --- Get the gap-closer spell list key for the current spec
-function lib.GetGapCloserSpecKey()
+function GapCloserEngine.GetGapCloserSpecKey()
     local _, playerClass = UnitClass("player")
     if not playerClass then return nil end
     local spec = GetSpecialization and GetSpecialization()
@@ -194,7 +216,7 @@ function lib.GetGapCloserSpecKey()
 end
 
 --- Initialize gap-closer defaults for the current spec if not yet populated
-function lib.InitializeGapClosers(addon)
+function GapCloserEngine.InitializeGapClosers(addon)
     local profile = addon:GetProfile()
     if not profile then return end
 
@@ -205,7 +227,7 @@ function lib.InitializeGapClosers(addon)
         profile.gapClosers.classSpells = {}
     end
 
-    local specKey = lib.GetGapCloserSpecKey()
+    local specKey = GapCloserEngine.GetGapCloserSpecKey()
     if not specKey then return end
 
     if not profile.gapClosers.classSpells[specKey] or #profile.gapClosers.classSpells[specKey] == 0 then
@@ -215,7 +237,7 @@ function lib.InitializeGapClosers(addon)
             for i, spellID in ipairs(defaults) do
                 profile.gapClosers.classSpells[specKey][i] = spellID
             end
-            lib.InvalidateGapCloserCache()
+            GapCloserEngine.InvalidateGapCloserCache()
         end
     end
 end
@@ -223,7 +245,7 @@ end
 --- Called from JustAC:OnActionRangeUpdate(slot, isInRange, checksRange)
 --- Returns true if this event was for the melee reference slot (caller uses
 --- this to decide whether to trigger a queue rebuild).
-function lib.OnActionRangeUpdate(slot, isInRange, checksRange)
+function GapCloserEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
     if not slot then return false end
     if checksRange == false then return false end
     -- Only track the melee reference spell's slot
@@ -237,15 +259,16 @@ function lib.OnActionRangeUpdate(slot, isInRange, checksRange)
 end
 
 --- Clear range state (target changed, combat ended, etc.)
-function lib.ClearRangeState()
+function GapCloserEngine.ClearRangeState()
     lastOutOfRangeTime = 0
+    lastTargetSwitchTime = GetTime()
     -- Don't clear cachedMeleeRefSlot here — the reference spell's slot
     -- doesn't change between targets, only the range state does.
     -- Slot is invalidated by InvalidateGapCloserCache() on spec/profile change.
 end
 
 --- Invalidate cached gap-closer spell list (spec change, profile change)
-function lib.InvalidateGapCloserCache()
+function GapCloserEngine.InvalidateGapCloserCache()
     cachedGapCloserSpells = nil
     cachedGapCloserSpecKey = nil
     cachedMeleeRefSpellID = nil
@@ -260,13 +283,21 @@ end
 ---   baseID is the original list entry, e.g. Roll vs Chi Torpedo).
 --- @param addon table              The JustAC addon object
 --- @param addedSpellIDs table|nil  Set of already-queued spell IDs to skip (prevent duplicates)
-function lib.GetGapCloserSpell(addon, addedSpellIDs)
+function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
     if not addon or not addon.db or not addon.db.profile then return nil end
     local gc = addon.db.profile.gapClosers
     if not gc or not gc.enabled then return nil end
 
     -- Must have a hostile target that is alive
     if not UnitExists("target") or UnitIsDead("target") or not UnitCanAttack("player", "target") then
+        return nil
+    end
+
+    -- Target-switch cooldown: suppress gap-closer suggestions briefly after
+    -- switching targets so IsActionInRange can settle on the new target.
+    -- Without this, a stale out-of-range frame from the old target can cause
+    -- a false-positive gap-closer flash on a new target that's already in range.
+    if lastTargetSwitchTime > 0 and (GetTime() - lastTargetSwitchTime) < TARGET_SWITCH_COOLDOWN then
         return nil
     end
 
@@ -286,37 +317,10 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
     ----------------------------------------------------------------------------
     if stealthed and spellList then
         for _, spellID in ipairs(spellList) do
-            if spellID and spellID > 0 and SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+            if spellID and spellID > 0 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
                 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] then
-                local resolvedID = ResolveSpellID(spellID)
-                if not (addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID])) then
-                    local isAvailable = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)
-                    if isAvailable then
-                        local isUsable = false
-                        if BlizzardAPI.IsSpellUsable then
-                            isUsable = BlizzardAPI.IsSpellUsable(resolvedID, false)
-                        end
-                        if isUsable then
-                            local slot = nil
-                            if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
-                                slot = ActionBarScanner.GetSlotForSpell(resolvedID)
-                                if not slot and resolvedID ~= spellID then
-                                    slot = ActionBarScanner.GetSlotForSpell(spellID)
-                                end
-                            end
-                            if slot then
-                                -- Check spell's own range (e.g. 25yd for Shadowstrike)
-                                local ownInRange = IsActionInRange(slot)
-                                if ownInRange ~= false then
-                                    local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
-                                    if isReady then
-                                        return resolvedID, spellID
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
+                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs, true)
+                if resolved then return resolved, base end
             end
         end
     end
@@ -326,8 +330,29 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
     local _, meleeRefSlot = ResolveMeleeReference(addon)
     if not meleeRefSlot then return nil end
 
-    -- Check range using the melee reference slot
-    local inRange = IsActionInRange(meleeRefSlot)
+    -- If the primary reference spell is currently showing a different spell on
+    -- its slot (state-driven transform, e.g. Stormstrike → Windstrike during
+    -- Ascendance), IsActionInRange would report the override's wider range.
+    -- Fall back to the SpellDB backup candidate [2] if it's on the action bar.
+    -- GetDisplaySpellID (C_Spell.GetOverrideSpell) covers aura/stance transforms;
+    -- the stealth guard below still handles talent-driven overrides separately.
+    local activeRefSlot = meleeRefSlot
+    if cachedMeleeRefSpellID then
+        local displayID = BlizzardAPI.GetDisplaySpellID(cachedMeleeRefSpellID)
+        if displayID and displayID ~= cachedMeleeRefSpellID then
+            local specKey = GapCloserEngine.GetGapCloserSpecKey()
+            local defaults = specKey and SpellDB.MELEE_RANGE_REFERENCE_SPELLS
+                and SpellDB.MELEE_RANGE_REFERENCE_SPELLS[specKey]
+            local backupID = defaults and defaults[2]
+            if backupID then
+                local backupSlot = FindSlotForSpell(backupID)
+                if backupSlot then activeRefSlot = backupSlot end
+            end
+        end
+    end
+
+    -- Check range using the (possibly backup) melee reference slot
+    local inRange = IsActionInRange(activeRefSlot)
     local outOfRange = (inRange == false)  -- false=out of range, nil=no range check, true=in range
     local now = GetTime()
 
@@ -336,8 +361,8 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
     -- at 25yd), the range check is unreliable.  Force "out of range" so
     -- non-stealth gap closers like Shadowstep and Sprint can still fire.
     if not outOfRange and stealthed and cachedMeleeRefSpellID then
-        local overrideID = ResolveSpellID(cachedMeleeRefSpellID)
-        if overrideID ~= cachedMeleeRefSpellID and SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+        local overrideID = BlizzardAPI.ResolveSpellID(cachedMeleeRefSpellID)
+        if overrideID ~= cachedMeleeRefSpellID and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
             and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[overrideID] then
             outOfRange = true
         end
@@ -358,64 +383,15 @@ function lib.GetGapCloserSpell(addon, addedSpellIDs)
 
     for _, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
-            -- Resolve talent overrides (e.g., Chi Torpedo replacing Roll)
-            local resolvedID = ResolveSpellID(spellID)
-
             -- Skip stealth-only gap closers in the normal loop.
             -- When stealthed: already evaluated in the dedicated stealth path above.
             -- When not stealthed: gap-closer component is inactive (no teleport).
-            if SpellDB and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
-                and (SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] or SpellDB.GAP_CLOSER_REQUIRES_STEALTH[resolvedID]) then
-                -- skip: handled by stealth gap-closer path or inactive
-            -- Skip if already in the queue
-            elseif addedSpellIDs and (addedSpellIDs[resolvedID] or addedSpellIDs[spellID]) then
-                -- skip: already shown
-            else
-                -- Check: spell is known
-                local isAvailable = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)
-                if isAvailable then
-                    -- Gap closers fail CLOSED (failOpen=false): if we can't confirm
-                    -- usability (secret values), skip to the next spell rather than
-                    -- suggesting an unusable ability.
-                    local isUsable = false
-                    if BlizzardAPI.IsSpellUsable then
-                        isUsable = BlizzardAPI.IsSpellUsable(resolvedID, false)
-                    end
-                    if isUsable then
-                        -- Check: spell is actually on an action bar slot.
-                        -- Some spells may not be on any bar slot (e.g. the button
-                        -- shows a different spell via override). Skip spells with no
-                        -- slot — they can't get a keybind anyway.
-                        if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
-                            local slot = ActionBarScanner.GetSlotForSpell(resolvedID)
-                            if not slot then
-                                -- Also try the base spell ID (in case override resolves differently)
-                                if resolvedID ~= spellID then
-                                    slot = ActionBarScanner.GetSlotForSpell(spellID)
-                                end
-                                if not slot then
-                                    -- Not on any action bar — skip to next candidate
-                                    -- (e.g. Shadowstep will be tried next)
-                                end
-                            end
-                            if slot then
-                                -- Check: spell is ready (not on a real cooldown)
-                                -- 12.0: isOnGCD==true means GCD-only; nil is ambiguous,
-                                -- so IsSpellReady also checks local CD tracking + action bar state
-                                local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
-                                if isReady then
-                                    return resolvedID, spellID
-                                end
-                            end
-                        else
-                            -- No ActionBarScanner: fall back to cooldown check only
-                            local isReady = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
-                            if isReady then
-                                return resolvedID, spellID
-                            end
-                        end
-                    end
-                end
+            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
+            local isStealth = SpellDB.GAP_CLOSER_REQUIRES_STEALTH
+                and (SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] or SpellDB.GAP_CLOSER_REQUIRES_STEALTH[resolvedID])
+            if not isStealth then
+                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs)
+                if resolved then return resolved, base end
             end
         end
     end
@@ -428,7 +404,7 @@ end
 --- active talent overrides.  This ensures that even if a user removes a spell
 --- from their personal list, Blizzard suggesting it at position 1 still suppresses
 --- our gap-closer injection at position 2.
-function lib.IsGapCloserSpell(addon, spellID)
+function GapCloserEngine.IsGapCloserSpell(addon, spellID)
     if not spellID or spellID == 0 then return false end
 
     -- Helper: scan a spell list for a match (base ID or talent override)
@@ -436,7 +412,7 @@ function lib.IsGapCloserSpell(addon, spellID)
         if not list then return false end
         for _, gcSpellID in ipairs(list) do
             if gcSpellID == spellID then return true end
-            if ResolveSpellID(gcSpellID) == spellID then return true end
+            if BlizzardAPI.ResolveSpellID(gcSpellID) == spellID then return true end
         end
         return false
     end
@@ -457,14 +433,14 @@ end
 --- Mark all gap-closer spell IDs (base + talent-resolved forms) into a set.
 --- Called by SpellQueue to suppress gap-closer spells from the rotation list
 --- when the gap-closer system is enabled — our insertion controls when they appear.
-function lib.MarkGapCloserSpellIDs(addon, spellIDSet)
+function GapCloserEngine.MarkGapCloserSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
     local spellList = ResolveGapCloserSpells(addon)
     if not spellList then return end
     for _, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
             spellIDSet[spellID] = true
-            local resolvedID = ResolveSpellID(spellID)
+            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
             if resolvedID ~= spellID then
                 spellIDSet[resolvedID] = true
             end
@@ -473,11 +449,11 @@ function lib.MarkGapCloserSpellIDs(addon, spellIDSet)
 end
 
 --- Restore gap-closer defaults for the current spec
-function lib.RestoreGapCloserDefaults(addon)
+function GapCloserEngine.RestoreGapCloserDefaults(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.gapClosers then return end
 
-    local specKey = lib.GetGapCloserSpecKey()
+    local specKey = GapCloserEngine.GetGapCloserSpecKey()
     if not specKey then return end
 
     if not profile.gapClosers.classSpells then
@@ -494,5 +470,5 @@ function lib.RestoreGapCloserDefaults(addon)
         profile.gapClosers.classSpells[specKey] = nil
     end
 
-    lib.InvalidateGapCloserCache()
+    GapCloserEngine.InvalidateGapCloserCache()
 end

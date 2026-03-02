@@ -851,6 +851,10 @@ function JustAC:OnCombatEvent(event)
         if BlizzardAPI and BlizzardAPI.RefreshTargetCreatureType then
             BlizzardAPI.RefreshTargetCreatureType()
         end
+        -- Reset CC-failure learning for the next combat session
+        if BlizzardAPI and BlizzardAPI.ResetCCFailureLearning then
+            BlizzardAPI.ResetCCFailureLearning()
+        end
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(false)
         end
@@ -949,6 +953,10 @@ end
 function JustAC:OnUnitAura(event, unit, updateInfo)
     if unit ~= "player" then return end
 
+    -- Any player aura change (including mount removal) must break the mainHidden early
+    -- exit in OnUpdate so the queue can re-evaluate IsMounted() / visibility conditions.
+    self:MarkQueueDirty()
+
     -- 12.0: Pass updateInfo to RedundancyFilter for incremental instance map updates
     -- This captures addedAuras (new aura identity) and removedAuraInstanceIDs (cleanup)
     -- BEFORE cache invalidation, so the map is current when RefreshAuraCache runs
@@ -1028,7 +1036,10 @@ function JustAC:OnTargetChanged()
     -- Refresh per-target creature type cache for CC immunity detection.
     -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
     -- cache on every target switch and only populates it when the value is readable.
-    if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
+    if BlizzardAPI then
+        BlizzardAPI.RefreshTargetCreatureType()
+        if BlizzardAPI.ResetTargetCastState then BlizzardAPI.ResetTargetCastState() end
+    end
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
     -- ForceUpdateAll so the defensive overlay re-renders immediately on target switch
@@ -1122,6 +1133,11 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
             -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
             -- so one call covers both renderers (debounce state is now shared in UIRenderer).
             if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
+            -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
+            -- will check if UnitIsCrowdControlled("target") became true.
+            if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget then
+                BlizzardAPI.NotifyCCCastOnTarget()
+            end
         end
     end
 
@@ -1231,7 +1247,8 @@ function JustAC:StartUpdates()
         local defIcons = self.defensiveIcons
         local defHidden = not defIcons or #defIcons == 0
         local npHidden = not self.nameplateIcons or #self.nameplateIcons == 0
-        if mainHidden and defHidden and not self.defensiveIcon and npHidden then
+        if mainHidden and defHidden and not self.defensiveIcon and npHidden
+                and not spellQueueDirty then
             self.updateTimeLeft = IDLE_CHECK_INTERVAL
             return
         end

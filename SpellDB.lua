@@ -874,7 +874,6 @@ end
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
 local pcall = pcall
-local issecretvalue = issecretvalue
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 
 --- Check whether a spell is on a real cooldown (not just GCD).
@@ -900,7 +899,8 @@ function SpellDB.IsInterruptOnCooldown(spellID)
     if cdInfo.isOnGCD ~= false then return false end
     -- isOnGCD == false → real cooldown running
     -- If duration is secret, we already know it's non-zero from isOnGCD==false
-    if issecretvalue and issecretvalue(cdInfo.duration) then return true end
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BlizzardAPI and BlizzardAPI.IsSecretValue(cdInfo.duration) then return true end
     -- Regular number: 0 = off CD, >0 = on CD (out of combat path)
     return cdInfo.duration > 0
 end

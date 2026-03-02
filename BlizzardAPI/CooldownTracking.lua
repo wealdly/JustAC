@@ -1,0 +1,354 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
+-- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
+-- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 1
+local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
+if not Sub then return end
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
+
+-- Hot path cache
+local GetTime               = GetTime
+local pcall                 = pcall
+local type                  = type
+local wipe                  = wipe
+local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
+local C_Spell_GetSpellCharges  = C_Spell and C_Spell.GetSpellCharges
+local GetSpellBaseCooldown     = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
+local _G                       = _G                   ---@diagnostic disable-line: undefined-global
+local IsSecretValue = BlizzardAPI.IsSecretValue
+local Unsecret      = BlizzardAPI.Unsecret
+
+--------------------------------------------------------------------------------
+-- Local Cooldown Tracking (12.0+ secret value workaround)
+--------------------------------------------------------------------------------
+-- Track cooldowns locally when API returns secrets in 12.0+ (fail-open approach)
+local localCooldowns = {}
+local cachedDurations = {}
+local cachedMaxCharges = {}
+local trackedDefensiveSpells = {}
+local trackedRotationSpells = {}
+local cooldownEventFrame = nil
+
+-- Minimum base cooldown (ms) to track — ignore GCD-only spells
+local MIN_TRACKABLE_CD_MS = 3000
+
+-- Hidden tooltip for parsing traited cooldown values
+local probeTooltip = nil
+
+--- Parse the talent-modified cooldown from a spell's tooltip.
+--- Tooltip right-side text shows values like "30 sec cooldown" or "2 min cooldown"
+--- which reflect talent modifications (e.g., Beast Within reducing BW from 90s to 30s).
+--- @param spellID number
+--- @return number|nil duration in seconds, or nil if not found
+local function ParseTooltipCooldown(spellID)
+    if not spellID or type(spellID) ~= "number" or spellID == 0 then return nil end
+    -- Tooltip text is secreted in combat — skip entirely
+    if InCombatLockdown() then return nil end
+
+    -- Create the hidden scanning tooltip once
+    if not probeTooltip then
+        probeTooltip = CreateFrame("GameTooltip", "JustACCDProbe", nil, "GameTooltipTemplate")
+    end
+
+    probeTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    probeTooltip:ClearLines()
+    local ok = pcall(probeTooltip.SetSpellByID, probeTooltip, spellID)
+    if not ok then return nil end
+
+    -- Scan right-side text for cooldown patterns (line 2 is typically "Instant  30 sec cooldown")
+    for i = 1, probeTooltip:NumLines() do
+        local rightText = _G["JustACCDProbeTextRight" .. i]
+        if rightText then
+            local text = rightText:GetText()
+            if text and not IsSecretValue(text) then
+                -- Match "X sec cooldown" or "X.Y sec cooldown"
+                local secVal = text:match("([%d%.]+) sec cooldown")
+                if secVal then
+                    return tonumber(secVal)
+                end
+                -- Match "X min cooldown" or "X.Y min cooldown"
+                local minVal = text:match("([%d%.]+) min cooldown")
+                if minVal then
+                    return tonumber(minVal) * 60
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function IsLocalCooldownActive(spellID)
+    local data = localCooldowns[spellID]
+    if not data then return false end
+    return GetTime() < data.endTime
+end
+
+local function GetBestCooldownDuration(spellID)
+    -- 1. Actual observed duration from a previous cast (most accurate)
+    if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
+        return cachedDurations[spellID]
+    end
+    -- 2. Tooltip-parsed duration (reflects talent modifications)
+    local tooltipCD = ParseTooltipCooldown(spellID)
+    if tooltipCD and tooltipCD > 0 then
+        cachedDurations[spellID] = tooltipCD
+        return tooltipCD
+    end
+    -- 3. Base cooldown from API (unmodified by talents — last resort)
+    local baseCooldownMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+    if baseCooldownMs and baseCooldownMs > 0 then
+        return baseCooldownMs / 1000
+    end
+    return 0
+end
+
+local function RecordSpellCooldown(spellID)
+    if not spellID or spellID == 0 then return end
+    if not trackedDefensiveSpells[spellID] and not trackedRotationSpells[spellID] then return end
+
+    local now = GetTime()
+    local duration = 0
+    local inCombat = InCombatLockdown()
+
+    if not inCombat and C_Spell_GetSpellCooldown then
+        local cd = C_Spell_GetSpellCooldown(spellID)
+        if cd and cd.duration and cd.duration > 0 then
+            if not IsSecretValue(cd.duration) then
+                -- Only cache if it's a real cooldown (> 3s), not a GCD read
+                if cd.duration > MIN_TRACKABLE_CD_MS / 1000 then
+                    duration = cd.duration
+                    cachedDurations[spellID] = duration
+                end
+            end
+        end
+    end
+
+    if duration == 0 then
+        duration = GetBestCooldownDuration(spellID)
+    end
+
+    if duration > 0 then
+        localCooldowns[spellID] = {
+            endTime = now + duration,
+            duration = duration,
+            startTime = now,
+        }
+    end
+end
+
+local function ClearLocalCooldowns()
+    wipe(localCooldowns)
+end
+
+local function ClearCachedDurations()
+    wipe(cachedDurations)
+    wipe(cachedMaxCharges)
+    wipe(localCooldowns)
+end
+
+--- Cache maxCharges for a spell (call out of combat, fields are SECRET in combat).
+local function CacheChargesForSpell(spellID)
+    if not spellID or not C_Spell_GetSpellCharges then return end
+    if InCombatLockdown() then return end  -- fields are ALL SECRET in combat
+    local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+    if ok and chargeInfo then
+        local maxCharges = Unsecret(chargeInfo.maxCharges)
+        if maxCharges then cachedMaxCharges[spellID] = maxCharges end
+    end
+end
+
+--- Pre-cache cooldown durations for all tracked spells.
+--- Called on PLAYER_REGEN_ENABLED — all CD fields are readable out of combat.
+--- This prevents first-combat-session edge cases where RecordSpellCooldown
+--- has no cached duration and falls back to unmodified GetSpellBaseCooldown.
+local function ScanCooldownDurations()
+    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    local function scanSpell(spellID)
+        -- Skip if already cached with a real value
+        if cachedDurations[spellID] and cachedDurations[spellID] > 0 then return end
+        local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+        if ok and cd then
+            local duration = Unsecret(cd.duration)
+            if duration and duration > 0 and duration > MIN_TRACKABLE_CD_MS / 1000 then
+                cachedDurations[spellID] = duration
+            end
+        end
+        -- Also cache maxCharges while we're at it
+        CacheChargesForSpell(spellID)
+    end
+    for spellID in pairs(trackedRotationSpells) do
+        scanSpell(spellID)
+    end
+    for spellID in pairs(trackedDefensiveSpells) do
+        scanSpell(spellID)
+    end
+end
+
+--- Check tracked spells with active local cooldowns for early CD completion.
+--- Called on SPELL_UPDATE_COOLDOWN — if isOnGCD is true for a spell we think
+--- is on cooldown, the real CD has ended (e.g., CDR proc reduced it).
+--- NOTE: Only works for spells that trigger GCD. Off-GCD spells (Shadow Blades,
+--- Shadow Dance, etc.) go from nil→nil so this can't detect their early completion.
+--- For those, the local timer naturally expires or action bar usability catches it.
+---
+--- @param eventSpellID number|nil  spellID from SPELL_UPDATE_COOLDOWN payload.
+---   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
+---   is checked (O(1) instead of O(n)). When nil (batch "refresh all" signal),
+---   falls back to iterating all tracked cooldowns.
+local function CheckCooldownCompletions(eventSpellID)
+    if not C_Spell_GetSpellCooldown then return end
+
+    -- Targeted check: event told us exactly which spell changed
+    if eventSpellID then
+        local data = localCooldowns[eventSpellID]
+        if data and GetTime() < data.endTime then
+            local ok, cd = pcall(C_Spell_GetSpellCooldown, eventSpellID)
+            if ok and cd and cd.isOnGCD == true then
+                localCooldowns[eventSpellID] = nil
+            end
+        end
+        return
+    end
+
+    -- Batch refresh (nil spellID): scan all tracked cooldowns
+    for spellID, data in pairs(localCooldowns) do
+        if GetTime() < data.endTime then
+            local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+            if ok and cd then
+                -- isOnGCD is NeverSecret: true = GCD only (real CD done)
+                if cd.isOnGCD == true then
+                    localCooldowns[spellID] = nil
+                end
+            end
+        end
+    end
+end
+
+local function InitCooldownTracking()
+    if cooldownEventFrame then return end
+
+    cooldownEventFrame = CreateFrame("Frame")
+    cooldownEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    cooldownEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+    cooldownEventFrame:RegisterEvent("PLAYER_DEAD")
+    cooldownEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+    cooldownEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    cooldownEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+    cooldownEventFrame:SetScript("OnEvent", function(self, event, ...)
+        if event == "UNIT_SPELLCAST_SUCCEEDED" then
+            local unit, castGUID, spellID = ...
+            if unit == "player" and spellID then
+                RecordSpellCooldown(spellID)
+            end
+        elseif event == "SPELL_UPDATE_COOLDOWN" then
+            -- spellID payload is NeverSecret in combat (verified 2026-02-25)
+            local spellID = ...
+            CheckCooldownCompletions(spellID)
+        elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
+            ClearLocalCooldowns()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            -- Combat exit: scan all tracked spells while CD fields are readable
+            ClearLocalCooldowns()
+            ScanCooldownDurations()
+        elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
+            ClearCachedDurations()
+        end
+    end)
+end
+
+function BlizzardAPI.RegisterDefensiveSpell(spellID)
+    if not spellID or spellID == 0 then return end
+    trackedDefensiveSpells[spellID] = true
+    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
+    CacheChargesForSpell(spellID)
+    if not cooldownEventFrame then
+        InitCooldownTracking()
+    end
+end
+
+function BlizzardAPI.ClearTrackedDefensives()
+    wipe(trackedDefensiveSpells)
+    wipe(localCooldowns)
+end
+
+--- Register a rotation spell for local cooldown tracking.
+--- Only tracks spells with effective CD > MIN_TRACKABLE_CD_MS (3s)
+--- to avoid treating GCD-only spells as on-cooldown.
+function BlizzardAPI.RegisterRotationSpell(spellID)
+    if not spellID or spellID == 0 then return end
+    -- Already registered — skip redundant tooltip scan
+    if trackedRotationSpells[spellID] then return end
+
+    -- Only track spells with a real cooldown (> 3s)
+    -- Check cached duration first (avoids tooltip scan if already known)
+    local effectiveCdMs
+    if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
+        effectiveCdMs = cachedDurations[spellID] * 1000
+    else
+        -- Tooltip reflects talent modifications (only works out of combat)
+        local tooltipCD = ParseTooltipCooldown(spellID)
+        if tooltipCD and tooltipCD > 0 then
+            effectiveCdMs = tooltipCD * 1000
+            cachedDurations[spellID] = tooltipCD
+        else
+            -- Fall back to base CD (unmodified by talents)
+            effectiveCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) or 0
+        end
+    end
+    if effectiveCdMs < MIN_TRACKABLE_CD_MS then return end
+    trackedRotationSpells[spellID] = true
+    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
+    CacheChargesForSpell(spellID)
+    if not cooldownEventFrame then
+        InitCooldownTracking()
+    end
+end
+
+function BlizzardAPI.ClearTrackedRotationSpells()
+    wipe(trackedRotationSpells)
+    -- Don't wipe localCooldowns here — defensives may still need them.
+    -- Stale rotation entries expire naturally via endTime.
+end
+
+function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
+    return IsLocalCooldownActive(spellID)
+end
+
+--- Get cached maxCharges for a spell. Returns nil if unknown.
+--- Populated at spell registration (out of combat) and refreshed on combat exit.
+--- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25).
+function BlizzardAPI.GetCachedMaxCharges(spellID)
+    return cachedMaxCharges[spellID]
+end
+
+--- Debug: dump local cooldown tracking state for a specific spell
+--- Call with colon or dot: BlizzardAPI:DebugCooldownTracking(19574)
+function BlizzardAPI.DebugCooldownTracking(selfOrID, maybeID)
+    local spellID = maybeID or selfOrID
+    if type(spellID) ~= "number" then
+        print("|cffff0000[JustAC CD Debug] Usage: :DebugCooldownTracking(spellID)|r")
+        return
+    end
+    print("|cff00ff00[JustAC CD Debug]|r spellID:", spellID)
+    print("  trackedRotation:", trackedRotationSpells[spellID] and "YES" or "no")
+    print("  trackedDefensive:", trackedDefensiveSpells[spellID] and "YES" or "no")
+    local cd = localCooldowns[spellID]
+    if cd then
+        local remaining = cd.endTime - GetTime()
+        print("  localCD: endTime=" .. string.format("%.1f", cd.endTime) .. " dur=" .. cd.duration .. " remaining=" .. string.format("%.1f", remaining))
+    else
+        print("  localCD: NONE")
+    end
+    local cached = cachedDurations[spellID]
+    print("  cachedDuration:", cached or "nil")
+    print("  isOnLocalCD:", IsLocalCooldownActive(spellID) and "YES" or "no")
+    local ttOk, ttCD = pcall(ParseTooltipCooldown, spellID)
+    print("  tooltipCD:", ttOk and (ttCD or "nil") or ("ERROR: " .. tostring(ttCD)))
+    local baseCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+    print("  baseCDms:", baseCdMs or "nil")
+    print("  eventFrame:", cooldownEventFrame and "EXISTS" or "nil")
+end

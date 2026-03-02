@@ -1,0 +1,406 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2025 wealdly
+-- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
+-- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 2
+local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
+if not Sub then return end
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
+
+-- Hot path cache
+local math_max         = math.max
+local math_min         = math.min
+local GetTime          = GetTime
+local GetItemCount     = GetItemCount
+local GetItemCooldown  = GetItemCooldown
+local UnitClassification = UnitClassification ---@diagnostic disable-line: undefined-global
+local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
+local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
+local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
+local UnitIsCrowdControlled = UnitIsCrowdControlled ---@diagnostic disable-line: undefined-global
+local IsSecretValue = BlizzardAPI.IsSecretValue
+local Unsecret      = BlizzardAPI.Unsecret
+
+-- Pre-built boss unit tokens (avoids string concat on hot path)
+local BOSS_UNITS = { "boss1", "boss2", "boss3", "boss4", "boss5" }
+local GetNumShapeshiftForms = GetNumShapeshiftForms
+local GetShapeshiftFormInfo = GetShapeshiftFormInfo
+
+--------------------------------------------------------------------------------
+-- Defensive Spell State Helper (consolidates common validation pattern)
+--------------------------------------------------------------------------------
+
+-- Cache for RedundancyFilter lookup (lazy-loaded)
+local cachedRedundancyFilter = nil
+local function GetRedundancyFilter()
+    if cachedRedundancyFilter == nil then
+        cachedRedundancyFilter = LibStub("JustAC-RedundancyFilter", true) or false
+    end
+    return cachedRedundancyFilter or nil
+end
+
+-- Check defensive spell usability in one call (avoids repeated API lookups)
+-- Returns: isUsable, isKnown, isRedundant, onCooldown, isProcced
+-- isUsable = isKnown AND NOT isRedundant AND NOT onCooldown
+function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
+    if not spellID or spellID == 0 then
+        return false, false, false, false, false
+    end
+
+    -- Check if spell is known/available
+    local isKnown = BlizzardAPI.IsSpellAvailable(spellID)
+    if not isKnown then
+        return false, false, false, false, false
+    end
+
+    -- Check if procced (instant/free cast available)
+    local isProcced = BlizzardAPI.IsSpellProcced(spellID)
+
+    -- Check redundancy (buff already active — reliable, based on UnitBuff not cooldown)
+    local RedundancyFilter = GetRedundancyFilter()
+    local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
+    if isRedundant then
+        return false, true, true, false, isProcced
+    end
+
+    -- NOTE: We intentionally do NOT call IsSpellOnRealCooldown here.
+    -- Cooldown duration is a secret value in combat, so once we hide a defensive for being
+    -- on CD we can never reliably detect when it expires — it would stay hidden for the
+    -- whole combat session.  The cooldown swipe on the icon is the visual CD indicator.
+    -- Always show a known, non-redundant defensive regardless of cooldown state.
+    return true, true, false, false, isProcced
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Item State Helper (mirrors CheckDefensiveSpellState for items)
+--------------------------------------------------------------------------------
+
+-- Check defensive item usability in one call
+-- Returns: isUsable, hasItem, onCooldown
+-- isUsable = hasItem AND NOT onCooldown
+function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+    if not itemID or itemID == 0 then
+        return false, false, false
+    end
+
+    -- Check if player has the item in bags/inventory
+    local count = GetItemCount(itemID) or 0
+    if count == 0 then
+        return false, false, false
+    end
+
+    -- Check cooldown (fail-open: if values are secret, assume NOT on cooldown)
+    local start, duration = GetItemCooldown(itemID)
+    local onCooldown = false
+    if start and duration then
+        if not IsSecretValue(start) and not IsSecretValue(duration) then
+            onCooldown = start > 0 and duration > 1.5
+        end
+    end
+
+    if onCooldown then
+        return false, true, true
+    end
+
+    return true, true, false
+end
+
+--------------------------------------------------------------------------------
+-- Low Health Detection via LowHealthFrame (works when UnitHealth() is secret)
+--------------------------------------------------------------------------------
+
+function BlizzardAPI.GetLowHealthState()
+    local frame = LowHealthFrame ---@diagnostic disable-line: undefined-global
+    if not frame then
+        return false, false, 0
+    end
+
+    local isShown = frame:IsShown()
+    if not isShown then
+        return false, false, 0
+    end
+
+    -- Alpha indicates severity (~0.3-0.5 at 35%, ~0.8-1.0 at critical)
+    local alpha = frame:GetAlpha() or 0
+    local isCritical = alpha > 0.5
+
+    return true, isCritical, alpha
+end
+
+--------------------------------------------------------------------------------
+-- Target CC Immunity Detection
+-- Shared by UIRenderer and UINameplateOverlay so both panels always agree.
+-- Refreshed on PLAYER_TARGET_CHANGED and PLAYER_REGEN_ENABLED.
+-- UnitCreatureType is SECRET in combat; cached out of combat only.
+--------------------------------------------------------------------------------
+
+-- Creature type cache for CC immunity detection (Mechanical / Totem).
+--
+-- HARD LIMITATION (verified via in-game /script testing, 2026-02-23):
+--   In WoW 12.0+, BOTH UnitCreatureType() AND UnitGUID() return secret values
+--   while in combat. There is no in-combat API that can identify mob type on a
+--   *fresh* target. All known alternative approaches have been evaluated:
+--
+--   UnitCreatureType()  — SECRETED in combat. Primary data source, unusable.
+--   UnitGUID()          — SECRETED in combat. GUID-keyed cache is not viable.
+--   UnitCreatureFamily()— NOT secreted, but only distinguishes Beast from
+--                         everything else (nil for Mechanical/Undead/etc.).
+--   UnitClassification()— NOT secreted. Used for worldboss/boss slot detection.
+--   UnitIsUnit(boss1-5) — NOT secreted. Used for boss slot detection.
+--
+-- DESIGN CONSEQUENCE:
+--   The cache is populated out of combat (TARGET_CHANGED, PLAYER_REGEN_ENABLED).
+--   If the player tabs to a NEW target mid-combat (not yet cached), the creature
+--   type is unknowable and IsTargetCCImmune() returns false (fail-open: assume
+--   CC-able). This is intentional — showing a CC suggestion on a Mechanical mob
+--   is a minor UX annoyance; suppressing CC on a valid target would be harmful.
+--
+-- DO NOT attempt to replace this with GUID lookup or any other in-combat API
+-- read. All such approaches are blocked by Blizzard's secret value system.
+local cachedTargetCreatureType = nil
+
+-- CC-failure learning: if we suggested a CC and the target didn't become
+-- crowd-controlled, mark the current target as CC-immune for the rest of
+-- combat.  Uses UnitIsCrowdControlled() which is NeverSecret (verified
+-- 2026-02-24).  Reset on PLAYER_TARGET_CHANGED and PLAYER_REGEN_ENABLED.
+local CC_FAILURE_CHECK_DELAY = 0.4  -- seconds after CC cast to check result
+local ccCastTime = 0                -- GetTime() when player cast a CC
+local ccFailureObserved = false     -- true = current target resisted/immune
+local ccFailureChecked  = false     -- true = we already checked this cast
+
+function BlizzardAPI.RefreshTargetCreatureType()
+    -- Always clear first. A stale value from the PREVIOUS target is worse than nil:
+    -- nil causes IsTargetCCImmune to fail-open (assume CC-able), which is the safe
+    -- default. Keeping the wrong type would suppress CC on a valid target.
+    cachedTargetCreatureType = nil
+    -- Also reset CC-failure learning on target switch — the new target might
+    -- be CC-able even if the previous one wasn't.
+    ccCastTime = 0
+    ccFailureObserved = false
+    ccFailureChecked  = false
+    local ct = UnitCreatureType and UnitCreatureType("target")
+    -- UnitCreatureType() returns a secret string in combat; leave cache nil
+    -- so IsTargetCCImmune fails-open rather than using wrong data.
+    if not IsSecretValue(ct) then
+        cachedTargetCreatureType = ct
+    end
+end
+
+--- Called when the player successfully casts a CC spell on the current target.
+--- Starts the CC-failure detection timer so we can check if the CC took effect.
+function BlizzardAPI.NotifyCCCastOnTarget()
+    ccCastTime = GetTime()
+    ccFailureChecked = false
+    -- Don't clear ccFailureObserved here — if we already know this target is
+    -- immune, keep that knowledge.
+end
+
+--- Called on PLAYER_REGEN_ENABLED to reset CC-failure learning for the next
+--- combat session.
+function BlizzardAPI.ResetCCFailureLearning()
+    ccCastTime = 0
+    ccFailureObserved = false
+    ccFailureChecked  = false
+end
+
+function BlizzardAPI.IsTargetCCImmune()
+    -- 1) World bosses and boss-frame mobs are always CC-immune.
+    --    UnitClassification: NeverSecret (no SecretWhenUnitIdentityRestricted).
+    --    UnitIsUnit: NeverSecret for boss1-5 comparison (verified 2026-02-23).
+    if UnitClassification("target") == "worldboss" then return true end
+    for i = 1, 5 do
+        if UnitIsUnit("target", BOSS_UNITS[i]) then return true end
+    end
+
+    -- 2) Minions (pets, totems, treants, guardians) are CC-immune.
+    --    UnitIsMinion: NeverSecret (no SecretWhenUnitIdentityRestricted,
+    --    verified 2026-02-24).
+    if UnitIsMinion and UnitIsMinion("target") then return true end
+
+    -- NOTE: UnitLevel == -1 (skull mobs) intentionally NOT checked here.
+    -- Many skull-level mobs (open-world rares, M+ elites) are fully CC-able.
+    -- Actual bosses are already caught by worldboss + boss1-5 checks above.
+    --
+    -- NOTE: Mechanical creature type intentionally NOT checked here.
+    -- Mechanicals are immune to creature-type-restricted CCs (Sap, Polymorph,
+    -- Hex), but universal stuns (Kidney Shot, Cheap Shot, HoJ, Leg Sweep)
+    -- work on them. Our CC lists contain universal stuns.
+
+    -- 3) CC-failure learning: if we cast a CC on this target and it didn't
+    --    take effect, treat the target as CC-immune.  Uses
+    --    UnitIsCrowdControlled (NeverSecret, verified 2026-02-24).
+    --    Early-out: skip the timer check if no CC is pending.
+    if ccFailureObserved then return true end
+    if ccCastTime > 0 and not ccFailureChecked
+        and (GetTime() - ccCastTime) >= CC_FAILURE_CHECK_DELAY then
+        ccFailureChecked = true
+        if UnitIsCrowdControlled then
+            local isCCd = UnitIsCrowdControlled("target")
+            if IsSecretValue(isCCd) then
+                -- Secret value — can't determine, fail-open
+            elseif not isCCd then
+                ccFailureObserved = true
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+--- Check whether the current target is worth interrupting at all.
+--- Returns false for trivial targets (minus mobs, minions) where spending
+--- any interrupt/CC cooldown is a waste.  All APIs used here are NeverSecret
+--- in 12.0 combat (verified 2026-02-24).
+---
+--- Design: fail-open.  If anything errors, assume target IS worth interrupting.
+function BlizzardAPI.IsTargetInterruptWorthy()
+    -- "minus" mobs are trivial adds (e.g. Explosive affix, swarm adds).
+    -- Not worth a 15-24s kick cooldown.
+    if UnitClassification("target") == "minus" then return false end
+    -- Minions are pets, totems, treants, guardians.  UnitIsMinion() is
+    -- NeverSecret and covers the same ground as the secreted
+    -- UnitCreatureType() Mechanical/Totem check — but works IN combat.
+    if UnitIsMinion and UnitIsMinion("target") then return false end
+    return true
+end
+
+-- Falls back to LowHealthFrame when UnitHealth() returns secrets
+function BlizzardAPI.GetPlayerHealthPercentSafe()
+    local exactPct = BlizzardAPI.GetPlayerHealthPercent()
+    if exactPct then
+        return exactPct, false
+    end
+
+    local isLow, isCritical, alpha = BlizzardAPI.GetLowHealthState()
+    if isCritical then
+        local pct = 20 - (alpha - 0.5) * 30
+        return math_max(5, math_min(20, pct)), true
+    elseif isLow then
+        local pct = 35 - alpha * 30
+        return math_max(20, math_min(35, pct)), true
+    else
+        return 100, true
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Shapeshift form wrappers (pcall-safe; used by FormCache)
+--------------------------------------------------------------------------------
+
+--- Returns the number of shapeshift forms available, or 0 on error.
+function BlizzardAPI.GetNumShapeshiftForms()
+    local ok, result = pcall(GetNumShapeshiftForms)
+    return ok and result or 0
+end
+
+--- Returns icon, active, castable, spellID for the given shapeshift form index.
+--- Returns nil, nil, nil, nil on error.
+function BlizzardAPI.GetShapeshiftFormInfo(index)
+    local ok, icon, active, castable, spellID = pcall(GetShapeshiftFormInfo, index)
+    if ok then
+        return icon, active, castable, spellID
+    end
+    return nil, nil, nil, nil
+end
+
+--------------------------------------------------------------------------------
+-- Target cast interruptibility tracking (event-driven, NeverSecret)
+--------------------------------------------------------------------------------
+-- UNIT_SPELLCAST_INTERRUPTIBLE / UNIT_SPELLCAST_NOT_INTERRUPTIBLE fire with
+-- real (non-secret) payloads. By tracking these events we get a definitive
+-- boolean for the target's cast interruptibility, even when UnitCastingInfo's
+-- notInterruptible field is secret in combat.
+--
+-- On the INITIAL cast start, UnitCastingInfo's notInterruptible is secret.
+-- We set targetCastInterruptKnown = false until one of the INTERRUPTIBLE /
+-- NOT_INTERRUPTIBLE events fires (which happens within the same frame for
+-- most casts). Callers should fall back to issecretvalue() + fail-open
+-- when targetCastInterruptKnown is false.
+--
+-- Pattern learned from:
+--   oUF (ElvUI): derives notInterruptible from event name string
+--   DetailsFramework (Plater): events replace secret value with real boolean
+--   SUF (NoSelph): events drive overlay SetAlphaFromBoolean
+--
+-- Reset on: PLAYER_TARGET_CHANGED, UNIT_SPELLCAST_STOP, CHANNEL_STOP,
+--           UNIT_SPELLCAST_FAILED, UNIT_SPELLCAST_INTERRUPTED
+--------------------------------------------------------------------------------
+local targetCastInterruptible = true   -- fail-open default
+local targetCastInterruptKnown = false -- true once event provides definitive state
+local targetCastActive = false         -- true when a cast/channel is in progress
+
+local castEventFrame = nil
+
+local function InitTargetCastTracking()
+    if castEventFrame then return end
+    castEventFrame = CreateFrame("Frame")
+
+    -- Unit events filtered to "target" only — zero overhead for player/party casts
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTIBLE", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "target")
+    -- PLAYER_TARGET_CHANGED is a global event (not unit-filterable)
+    castEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+
+    castEventFrame:SetScript("OnEvent", function(_, event)
+        if event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
+            -- Event name IS the data (oUF pattern) — never secret
+            targetCastInterruptible = true
+            targetCastInterruptKnown = true
+        elseif event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+            targetCastInterruptible = false
+            targetCastInterruptKnown = true
+        elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+            -- New cast started; interruptibility unknown until next event
+            targetCastActive = true
+            targetCastInterruptKnown = false
+            targetCastInterruptible = true  -- fail-open until event clarifies
+        elseif event == "UNIT_SPELLCAST_STOP"
+            or event == "UNIT_SPELLCAST_CHANNEL_STOP"
+            or event == "UNIT_SPELLCAST_FAILED"
+            or event == "UNIT_SPELLCAST_INTERRUPTED" then
+            -- Cast ended — reset state
+            targetCastActive = false
+            targetCastInterruptKnown = false
+            targetCastInterruptible = true
+        elseif event == "PLAYER_TARGET_CHANGED" then
+            -- New target — previous state is stale
+            targetCastActive = false
+            targetCastInterruptKnown = false
+            targetCastInterruptible = true
+        end
+    end)
+end
+
+--- Returns (isCasting, isInterruptible, isKnown)
+---  isCasting:       true if a cast/channel event is active on the target
+---  isInterruptible: true if the last INTERRUPTIBLE/NOT_INTERRUPTIBLE event
+---                   said it was interruptible (fail-open default)
+---  isKnown:         true if the state was set by a definitive event
+---                   (false = initial cast start, event hasn't fired yet)
+function BlizzardAPI.GetTargetCastInterruptState()
+    return targetCastActive, targetCastInterruptible, targetCastInterruptKnown
+end
+
+--- Reset target cast tracking. Called from JustAC:OnTargetChanged and
+--- anywhere else that needs to clear stale state.
+function BlizzardAPI.ResetTargetCastState()
+    targetCastActive = false
+    targetCastInterruptKnown = false
+    targetCastInterruptible = true
+end
+
+--- Initialize the target cast tracking frame. Called once from
+--- BlizzardAPI initialization or first use.
+function BlizzardAPI.InitTargetCastTracking()
+    InitTargetCastTracking()
+end
+
+-- Auto-initialize at load time (cheap: one hidden frame, 9 event registrations).
+InitTargetCastTracking()

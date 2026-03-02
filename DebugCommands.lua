@@ -259,7 +259,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
     if BlizzardAPI then
         local healthPct = BlizzardAPI.GetPlayerHealthPercent and BlizzardAPI.GetPlayerHealthPercent()
         if healthPct then
-            if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(healthPct) then
+            if BlizzardAPI.IsSecretValue(healthPct) then
                 addon:Print("  Current Health: |cffff6600SECRET|r")
             else
                 addon:Print("  Current Health: " .. string.format("%.1f%%", healthPct))
@@ -386,8 +386,8 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     if C_SpellBook and C_SpellBook.GetSpellCooldown then
         local ok, cd = pcall(C_SpellBook.GetSpellCooldown, spellID)
         if ok and cd then
-            local startSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(cd.startTime)
-            local durSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(cd.duration)
+            local startSecret = BlizzardAPI.IsSecretValue(cd.startTime)
+            local durSecret = BlizzardAPI.IsSecretValue(cd.duration)
 
             addon:Print("   startTime: " .. SafeFormat(cd.startTime, startSecret) ..
                 (startSecret and " |cffff6600(SECRET)|r" or ""))
@@ -410,8 +410,8 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     addon:Print("2. BlizzardAPI.GetSpellCooldown (C_Spell):")
     if BlizzardAPI and BlizzardAPI.GetSpellCooldown then
         local start, dur = BlizzardAPI.GetSpellCooldown(spellID)
-        local startSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
-        local durSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(dur)
+        local startSecret = BlizzardAPI.IsSecretValue(start)
+        local durSecret = BlizzardAPI.IsSecretValue(dur)
 
         addon:Print("   start: " .. SafeFormat(start, startSecret) ..
             (startSecret and " |cffff6600(SECRET)|r" or ""))
@@ -435,8 +435,8 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
             addon:Print("   Slot: " .. slot)
             if ActionBarScanner.GetActionBarCooldown then
                 local start, dur = ActionBarScanner.GetActionBarCooldown(spellID)
-                local startSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
-                local durSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(dur)
+                local startSecret = BlizzardAPI.IsSecretValue(start)
+                local durSecret = BlizzardAPI.IsSecretValue(dur)
 
                 addon:Print("   start: " .. SafeFormat(start, startSecret) ..
                     (startSecret and " |cffff6600(SECRET)|r" or ""))
@@ -460,8 +460,8 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     addon:Print("4. GCD (dummy spell 61304):")
     if BlizzardAPI and BlizzardAPI.GetGCDInfo then
         local gcdStart, gcdDur = BlizzardAPI.GetGCDInfo()
-        local startSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(gcdStart)
-        local durSecret = BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(gcdDur)
+        local startSecret = BlizzardAPI.IsSecretValue(gcdStart)
+        local durSecret = BlizzardAPI.IsSecretValue(gcdDur)
 
         addon:Print("   start: " .. SafeFormat(gcdStart, startSecret) ..
             (startSecret and " |cffff6600(SECRET)|r" or ""))
