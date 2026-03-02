@@ -26,24 +26,26 @@ local spellbookCacheBuilt = false
 
 -- Filter state for spell search (all panels)
 SpellSearch.filterState = {
-    selfheal = "",
-    cooldown = "",
-    blacklist = "",
-    hotkey = "",
-    petrez = "",
-    petheal = "",
-    gapcloser = "",
+    selfheal   = "",
+    cooldown   = "",
+    blacklist  = "",
+    hotkey     = "",
+    petrez     = "",
+    petheal    = "",
+    gapcloser  = "",
+    meleerange = "",
 }
 
 -- Preview state: first result shown in dropdown (not yet added)
 SpellSearch.previewState = {
-    selfheal = nil,
-    cooldown = nil,
-    blacklist = nil,
-    hotkey = nil,
-    petrez = nil,
-    petheal = nil,
-    gapcloser = nil,
+    selfheal   = nil,
+    cooldown   = nil,
+    blacklist  = nil,
+    hotkey     = nil,
+    petrez     = nil,
+    petheal    = nil,
+    gapcloser  = nil,
+    meleerange = nil,
 }
 
 -- Storage for hotkey value input (not spell search)
@@ -331,7 +333,7 @@ function SpellSearch.CreateSpellListEntries(addon, defensivesArgs, spellList, li
             if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
                 local cdInfo = C_Spell.GetSpellCooldown(entry)
                 local duration = cdInfo and cdInfo.duration
-                local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
+                local isSecret = BlizzardAPI.IsSecretValue(duration)
                 if duration and not isSecret and duration > 1.5 then
                     cooldownInfo = " |cff888888(" .. math.floor(duration) .. "s)|r"
                 end

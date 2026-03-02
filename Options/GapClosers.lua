@@ -108,36 +108,106 @@ function GapClosers.CreateTabArgs(addon)
                             if not refID then return L["Default"] .. ": " .. L["None"] end
                             local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(refID)
                             local name = info and info.name or tostring(refID)
-                            return L["Default"] .. ": |cFF00FF00" .. name .. "|r (" .. refID .. ")"
+                            local line = L["Default"] .. ": |cFF00FF00" .. name .. "|r (" .. refID .. ")"
+                            -- Append active override if set
+                            local profile = addon:GetProfile()
+                            local gc = profile and profile.gapClosers
+                            local overrideID = gc and gc.meleeRangeSpell
+                            if overrideID and overrideID > 0 then
+                                local oi = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(overrideID)
+                                local oname = oi and oi.name or tostring(overrideID)
+                                line = line .. "\n" .. L["Override"] .. ": |cFFFFD100" .. oname .. "|r (" .. overrideID .. ")"
+                            end
+                            return line
                         end,
                         order = 2,
                         fontSize = "medium",
                     },
-                    meleeRangeSpell = {
+                    meleeRange_search = {
                         type = "input",
-                        name = L["Melee Range Spell ID"],
+                        name = L["Search Spell"],
                         desc = L["Melee Range Spell Override desc"],
                         order = 3,
-                        width = "normal",
+                        width = "double",
                         get = function()
-                            local profile = addon:GetProfile()
-                            local gc = profile and profile.gapClosers
-                            local val = gc and gc.meleeRangeSpell or 0
-                            return val > 0 and tostring(val) or ""
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            return (SpellSearch and SpellSearch.filterState.meleerange) or ""
                         end,
                         set = function(_, val)
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            if SpellSearch then SpellSearch.filterState.meleerange = val or "" end
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                    },
+                    meleeRange_dropdown = {
+                        type = "select",
+                        name = "",
+                        desc = L["Select spell to add"],
+                        order = 3.1,
+                        width = "double",
+                        values = function()
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            if not SpellSearch then return {} end
+                            local filter = SpellSearch.filterState.meleerange or ""
+                            local results = SpellSearch.GetFilteredSpellbookSpells(filter, nil)
+                            if next(results) == nil and #filter:trim() >= 2 then
+                                SpellSearch.previewState.meleerange = nil
+                                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
+                            end
+                            SpellSearch.previewState.meleerange = next(results)
+                            return results
+                        end,
+                        get = function()
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            return SpellSearch and SpellSearch.previewState.meleerange
+                        end,
+                        set = function(_, spellID)
+                            if not spellID or spellID == 0 then return end
                             local profile = addon:GetProfile()
                             if not profile then return end
                             if not profile.gapClosers then
                                 profile.gapClosers = { enabled = true, classSpells = {} }
                             end
-                            local id = tonumber(val) or 0
-                            profile.gapClosers.meleeRangeSpell = id > 0 and id or nil
-                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                            if GCE and GCE.InvalidateGapCloserCache then
-                                GCE.InvalidateGapCloserCache()
+                            profile.gapClosers.meleeRangeSpell = spellID
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            if SpellSearch then
+                                SpellSearch.filterState.meleerange  = ""
+                                SpellSearch.previewState.meleerange = nil
                             end
+                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                            if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
                             addon:ForceUpdateAll()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            local filter = SpellSearch and SpellSearch.filterState.meleerange or ""
+                            return #filter:trim() < 2
+                        end,
+                    },
+                    meleeRange_clear = {
+                        type = "execute",
+                        name = L["Clear Override"],
+                        order = 3.2,
+                        width = "half",
+                        func = function()
+                            local profile = addon:GetProfile()
+                            if not profile or not profile.gapClosers then return end
+                            profile.gapClosers.meleeRangeSpell = nil
+                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
+                            if SpellSearch then
+                                SpellSearch.filterState.meleerange  = ""
+                                SpellSearch.previewState.meleerange = nil
+                            end
+                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                            if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
+                            addon:ForceUpdateAll()
+                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                        end,
+                        disabled = function()
+                            local profile = addon:GetProfile()
+                            local gc = profile and profile.gapClosers
+                            return not (gc and gc.meleeRangeSpell and gc.meleeRangeSpell > 0)
                         end,
                     },
                 },

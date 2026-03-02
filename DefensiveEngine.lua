@@ -4,8 +4,8 @@
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
 local MAJOR, MINOR = "JustAC-DefensiveEngine", 1
-local lib = LibStub:NewLibrary(MAJOR, MINOR)
-if not lib then return end
+local DefensiveEngine = LibStub:NewLibrary(MAJOR, MINOR)
+if not DefensiveEngine then return end
 
 -- Hot path cache
 local GetTime = GetTime
@@ -20,7 +20,6 @@ local GetItemCooldown = GetItemCooldown
 local GetItemInfo = GetItemInfo
 local GetItemSpell = GetItemSpell
 local GetSpellDescription = GetSpellDescription
-local FindSpellOverrideByID = FindSpellOverrideByID
 local C_Spell = C_Spell
 local wipe = wipe
 local ipairs = ipairs
@@ -86,14 +85,36 @@ local function ResizeHealthBars(addon, count)
     if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, count) end
 end
 
+-- Show or hide main-panel defensive icons based on a resolved queue.
+local function ApplyMainPanelQueue(addon, defensiveQueue)
+    if #defensiveQueue > 0 then
+        if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
+            UIRenderer.ShowDefensiveIcons(addon, defensiveQueue)
+        elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
+            UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
+        end
+        ResizeHealthBars(addon, #defensiveQueue)
+    else
+        HideDefensiveIconFrames(addon)
+        ResizeHealthBars(addon, 0)
+    end
+end
+
+-- Show or hide nameplate overlay defensive icons based on a resolved queue.
+local function ApplyOverlayQueue(addon, npoQueue)
+    if #npoQueue > 0 then
+        UINameplateOverlay.RenderDefensives(addon, npoQueue)
+    else
+        UINameplateOverlay.HideDefensiveIcons()
+    end
+end
+
 -- Secret-safe item cooldown check. Returns true when the item is on a real cooldown
 -- (duration > 1.5s, excluding GCD). Fail-open: returns false when values are secret.
 local function IsItemOnCooldown(itemID)
     local start, duration = GetItemCooldown(itemID)
     if not start or not duration then return false end
-    local startIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(start)
-    local durIsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(duration)
-    if startIsSecret or durIsSecret then return false end
+    if BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration) then return false end
     return start > 0 and duration > 1.5
 end
 
@@ -123,19 +144,6 @@ ResolveHealthState = function(profile)
     return false, false
 end
 
--- Resolve a talent override for a spell: FindSpellOverrideByID(34428) returns 202168 when
--- Impending Victory is talented, so we use the active replacement instead of the base spell.
--- Returns the original ID when no override exists.
-local function ResolveSpellID(spellID)
-    if FindSpellOverrideByID then
-        local overrideID = FindSpellOverrideByID(spellID)
-        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
-            return overrideID
-        end
-    end
-    return spellID
-end
-
 -- Healing potion cache
 local HEALTHSTONE_ITEM_ID = 5512
 local cachedPotionID = nil
@@ -148,7 +156,7 @@ local potionCacheValid = false
 
 -- Returns the spell list for a given type ("selfHealSpells", "cooldownSpells", "petHealSpells")
 -- for the current player class from the per-class nested structure.
-function lib.GetClassSpellList(addon, listKey)
+function DefensiveEngine.GetClassSpellList(addon, listKey)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return nil end
 
@@ -163,7 +171,7 @@ end
 
 -- Migrate pre-3.25 flat spell lists (selfHealSpells/cooldownSpells/petHealSpells)
 -- into the new per-class classSpells structure. Safe to call multiple times.
-function lib.MigrateDefensiveSpellsToClassSpells(addon)
+function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
@@ -202,7 +210,7 @@ end
 -- Initialization & registration
 --------------------------------------------------------------------------------
 
-function lib.InitializeDefensiveSpells(addon)
+function DefensiveEngine.InitializeDefensiveSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
@@ -210,7 +218,7 @@ function lib.InitializeDefensiveSpells(addon)
     if not playerClass then return end
 
     -- Migrate legacy flat lists on first load
-    lib.MigrateDefensiveSpellsToClassSpells(addon)
+    DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
 
     -- Ensure classSpells table structure exists
     local def = profile.defensives
@@ -228,11 +236,11 @@ function lib.InitializeDefensiveSpells(addon)
         end
     end
 
-    lib.RegisterDefensivesForTracking(addon)
+    DefensiveEngine.RegisterDefensivesForTracking(addon)
 end
 
 -- Enables 12.0 compatibility when C_Spell.GetSpellCooldown returns secrets
-function lib.RegisterDefensivesForTracking(addon)
+function DefensiveEngine.RegisterDefensivesForTracking(addon)
     if not BlizzardAPI or not BlizzardAPI.RegisterDefensiveSpell then return end
 
     local profile = addon:GetProfile()
@@ -245,7 +253,7 @@ function lib.RegisterDefensivesForTracking(addon)
     -- Table-driven iteration: register all defensive spell lists
     local spellListTypes = { "selfHealSpells", "cooldownSpells", "petHealSpells", "petRezSpells" }
     for _, listType in ipairs(spellListTypes) do
-        local spellList = lib.GetClassSpellList(addon, listType)
+        local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
         if spellList then
             for _, entry in ipairs(spellList) do
                 -- Only register positive entries (spells) — negative entries are items
@@ -257,7 +265,7 @@ function lib.RegisterDefensivesForTracking(addon)
     end
 end
 
-function lib.RestoreDefensiveDefaults(addon, listType)
+function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
@@ -279,15 +287,15 @@ function lib.RestoreDefensiveDefaults(addon, listType)
         end
     end
 
-    lib.RegisterDefensivesForTracking(addon)
-    lib.OnHealthChanged(addon, nil, "player")
+    DefensiveEngine.RegisterDefensivesForTracking(addon)
+    DefensiveEngine.OnHealthChanged(addon, nil, "player")
 end
 
 --------------------------------------------------------------------------------
 -- Health change handler — main defensive queue dispatch
 --------------------------------------------------------------------------------
 
-function lib.OnHealthChanged(addon, event, unit)
+function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if addon.isDisabledMode then return end
     if unit ~= "player" and unit ~= "pet" then return end
 
@@ -357,31 +365,21 @@ function lib.OnHealthChanged(addon, event, unit)
 
     -- Main panel defensive queue (gated by defensives.enabled)
     if def and def.enabled then
-        local defensiveQueue = lib.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions)
+        local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 1
 
         -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
         -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
         if petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, lib.GetClassSpellList(addon, "petRezSpells"), maxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), maxIcons, defensiveAlreadyAdded)
         end
 
         -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
         if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, lib.GetClassSpellList(addon, "petHealSpells"), maxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), maxIcons, defensiveAlreadyAdded)
         end
 
-        if #defensiveQueue > 0 then
-            if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
-                UIRenderer.ShowDefensiveIcons(addon, defensiveQueue)
-            elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
-                UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
-            end
-            ResizeHealthBars(addon, #defensiveQueue)
-        else
-            HideDefensiveIconFrames(addon)
-            ResizeHealthBars(addon, 0)
-        end
+        ApplyMainPanelQueue(addon, defensiveQueue)
     else
         -- Defensives disabled on main panel: ensure icons are hidden
         HideDefensiveIconFrames(addon)
@@ -394,12 +392,8 @@ function lib.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
         local npoMaxIcons    = npo.maxDefensiveIcons or 1
-        local npoQueue = lib.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions, npoDisplayMode, npoMaxIcons, true)
-        if #npoQueue > 0 then
-            UINameplateOverlay.RenderDefensives(addon, npoQueue)
-        else
-            UINameplateOverlay.HideDefensiveIcons()
-        end
+        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=true})
+        ApplyOverlayQueue(addon, npoQueue)
     end
 end
 
@@ -408,7 +402,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Returns any procced defensive spell (Victory Rush, etc.) at ANY health level
-function lib.GetProccedDefensiveSpell(addon)
+function DefensiveEngine.GetProccedDefensiveSpell(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return nil end
 
@@ -430,8 +424,8 @@ function lib.GetProccedDefensiveSpell(addon)
         end
     end
 
-    local selfHealSpells = lib.GetClassSpellList(addon, "selfHealSpells")
-    local cooldownSpells = lib.GetClassSpellList(addon, "cooldownSpells")
+    local selfHealSpells = DefensiveEngine.GetClassSpellList(addon, "selfHealSpells")
+    local cooldownSpells = DefensiveEngine.GetClassSpellList(addon, "cooldownSpells")
     for pass = 1, 2 do
         local spellList = pass == 1 and selfHealSpells or cooldownSpells
         if spellList then
@@ -451,7 +445,7 @@ function lib.GetProccedDefensiveSpell(addon)
 end
 
 -- First usable spell from list, prioritizing procs (Victory Rush, free heal procs)
-function lib.GetBestDefensiveSpell(addon, spellList)
+function DefensiveEngine.GetBestDefensiveSpell(addon, spellList)
     if not spellList then return nil end
 
     local profile = addon:GetProfile()
@@ -536,7 +530,7 @@ end
 -- Uses module-level pooled tables (usableResults/usableAddedHere) to avoid per-call allocations
 -- IMPORTANT: Caller must consume results before next call (table is reused)
 -- List entries: positive = spell ID, negative = item ID (-itemID)
-function lib.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
+function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     wipe(usableResults)
     if not spellList or maxCount <= 0 then return usableResults end
 
@@ -550,7 +544,7 @@ function lib.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
         if entry and entry > 0 then
-            local resolvedID = ResolveSpellID(entry)
+            local resolvedID = BlizzardAPI.ResolveSpellID(entry)
             -- Check both the original and resolved IDs to handle proc injection cross-dedup
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
                 local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
@@ -568,7 +562,7 @@ function lib.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     for _, entry in ipairs(spellList) do
         if #usableResults >= maxCount then break end
         if entry and entry > 0 then
-            local resolvedID = ResolveSpellID(entry)
+            local resolvedID = BlizzardAPI.ResolveSpellID(entry)
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
                 -- Positive entry = spell
                 local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
@@ -599,7 +593,7 @@ end
 -- Callers MUST consume results before next GetUsableDefensiveSpells call (pooled table).
 AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded, procsOnly)
     if #results >= maxIcons then return end
-    local spells = lib.GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
+    local spells = DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
     for _, entry in ipairs(spells) do
         if not procsOnly or entry.isProcced then
             results[#results + 1] = entry
@@ -609,12 +603,14 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
 end
 
 -- Display order: instant procs first, then by health threshold (higher priority first)
-function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passedInCombat, passedExclusions, overrideDisplayMode, overrideMaxIcons, overrideShowProcs)
+-- overrides (optional table): displayMode, maxIcons, showProcs — override profile defaults for
+-- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
+function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
 
-    local maxIcons = overrideMaxIcons or profile.defensives.maxIcons or 1
-    local showProcs = (overrideShowProcs ~= nil) and overrideShowProcs or (profile.defensives.showProcs ~= false)
+    local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 1
+    local showProcs = (overrides and overrides.showProcs ~= nil) and overrides.showProcs or (profile.defensives.showProcs ~= false)
     local results = {}
     -- Reuse pooled table for tracking added spells
     wipe(defensiveAlreadyAdded)
@@ -637,7 +633,7 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
         inCombat = UnitAffectingCombat("player")
     end
 
-    local displayMode = overrideDisplayMode or profile.defensives.displayMode
+    local displayMode = (overrides and overrides.displayMode) or profile.defensives.displayMode
     if not displayMode then
         local showOnlyInCombat = profile.defensives.showOnlyInCombat
         local alwaysShow = profile.defensives.alwaysShowDefensive
@@ -659,7 +655,7 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
                 if spellID and spellID > 0 then
                     -- Resolve talent override so proc and list entries share the same tracking key
                     -- (e.g. Victory Rush proc 34428 → Impending Victory 202168)
-                    local resolvedID = ResolveSpellID(spellID)
+                    local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
                     if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
                         local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
@@ -677,8 +673,8 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
     if #results >= maxIcons then return results end
 
     -- Resolve per-class spell lists once for this update cycle
-    local selfHealSpells = lib.GetClassSpellList(addon, "selfHealSpells")
-    local cooldownSpells = lib.GetClassSpellList(addon, "cooldownSpells")
+    local selfHealSpells = DefensiveEngine.GetClassSpellList(addon, "selfHealSpells")
+    local cooldownSpells = DefensiveEngine.GetClassSpellList(addon, "cooldownSpells")
 
     -- Procced spells from configured lists (any health level)
     AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded, true)
@@ -702,7 +698,7 @@ function lib.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passed
         AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
         AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
         if #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
-            local potionID = lib.FindHealingPotionOnActionBar(addon)
+            local potionID = DefensiveEngine.FindHealingPotionOnActionBar(addon)
             if potionID and not alreadyAdded[potionID] then
                 results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
                 alreadyAdded[potionID] = true
@@ -720,7 +716,7 @@ end
 -- Healing potion subsystem
 --------------------------------------------------------------------------------
 
-function lib.InvalidatePotionCache()
+function DefensiveEngine.InvalidatePotionCache()
     potionCacheValid = false
 end
 
@@ -759,7 +755,7 @@ end
 
 -- Returns itemID, actionSlot for first usable healing consumable (Healthstone prioritized)
 -- Uses cached result from last action bar scan; call InvalidatePotionCache() on bar/bag changes
-function lib.FindHealingPotionOnActionBar(addon)
+function DefensiveEngine.FindHealingPotionOnActionBar(addon)
     if potionCacheValid then
         -- Still check cooldown/count on cached result (these change in combat)
         if cachedPotionID then
@@ -805,7 +801,7 @@ end
 -- Cooldown polling
 --------------------------------------------------------------------------------
 
-function lib.UpdateDefensiveCooldowns(addon)
+function DefensiveEngine.UpdateDefensiveCooldowns(addon)
     if addon.isDisabledMode then return end
     if not addon.db or not addon.db.profile or addon.db.profile.isManualMode then return end
 

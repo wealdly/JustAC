@@ -1370,7 +1370,7 @@ function UINameplateOverlay.UpdatePetHealthBar()
     if not petHealthBar:IsShown() then return end
 
     local ok, isDead = pcall(UnitIsDead, "pet")
-    if ok and isDead and not (issecretvalue and issecretvalue(isDead)) then
+    if ok and isDead and not BlizzardAPI.IsSecretValue(isDead) then
         petHealthBar:SetStatusBarColor(0.8, 0.1, 0.1, 0.9)
         petHealthBar:SetValue(0)
         return

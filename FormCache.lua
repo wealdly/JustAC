@@ -8,7 +8,6 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 -- Hot path cache
 local GetTime = GetTime
-local pcall = pcall
 local pairs = pairs
 local ipairs = ipairs
 
@@ -68,18 +67,6 @@ local function GetModernSpellBookItemInfo(spellIndex)
     return nil, nil
 end
 
-local function SafeGetNumShapeshiftForms()
-    local ok, result = pcall(GetNumShapeshiftForms)
-    return ok and result or 0
-end
-
-local function SafeGetShapeshiftFormInfo(index)
-    local ok, icon, active, castable, spellID = pcall(GetShapeshiftFormInfo, index)
-    if ok then
-        return icon, active, castable, spellID
-    end
-    return nil, nil, nil, nil
-end
 
 local function ScanSpellbookForFormSpells()
     local formSpells = {}
@@ -110,9 +97,9 @@ local function ScanSpellbookForFormSpells()
                         end
                         
                         if not isFormSpell then
-                            local numForms = SafeGetNumShapeshiftForms()
+                            local numForms = BlizzardAPI.GetNumShapeshiftForms()
                             for i = 1, numForms do
-                                local icon, active, castable, formSpellID = SafeGetShapeshiftFormInfo(i)
+                                local icon, active, castable, formSpellID = BlizzardAPI.GetShapeshiftFormInfo(i)
                                 if formSpellID and formSpellID == spellID then
                                     isFormSpell = true
                                     break
@@ -133,9 +120,9 @@ local function ScanSpellbookForFormSpells()
 end
 
 local function DetermineSpellFormTarget(spellID, spellName)
-    local numForms = SafeGetNumShapeshiftForms()
+    local numForms = BlizzardAPI.GetNumShapeshiftForms()
     for i = 1, numForms do
-        local icon, active, castable, formSpellID = SafeGetShapeshiftFormInfo(i)
+        local icon, active, castable, formSpellID = BlizzardAPI.GetShapeshiftFormInfo(i)
         if formSpellID and formSpellID == spellID then
             return i
         end
@@ -180,7 +167,7 @@ end
 -- GetShapeshiftForm() returns nil during loading; iteration is always reliable
 local function FindActiveStanceIndex(numForms)
     for i = 1, numForms do
-        local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(i)
+        local icon, active, castable, spellID = BlizzardAPI.GetShapeshiftFormInfo(i)
         if active and active ~= 0 then
             return i
         end
@@ -195,13 +182,13 @@ local function UpdateFormCache()
         return
     end
     
-    local numForms = SafeGetNumShapeshiftForms()
+    local numForms = BlizzardAPI.GetNumShapeshiftForms()
     
     local stanceIndex = FindActiveStanceIndex(numForms)
     
     local formName = ""
     if stanceIndex > 0 and stanceIndex <= numForms then
-        local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(stanceIndex)
+        local icon, active, castable, spellID = BlizzardAPI.GetShapeshiftFormInfo(stanceIndex)
         if spellID then
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
             if spellInfo and spellInfo.name then
@@ -236,7 +223,7 @@ local function UpdateFormCache()
     }
     
     for i = 1, numForms do
-        local icon, active, castable, spellID = SafeGetShapeshiftFormInfo(i)
+        local icon, active, castable, spellID = BlizzardAPI.GetShapeshiftFormInfo(i)
         if icon and spellID then
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
             local name = spellInfo and spellInfo.name or ("Form " .. i)

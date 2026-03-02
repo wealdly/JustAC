@@ -1,6 +1,34 @@
 
 # Changelog
 
+## [4.5.0] - 2026-03-02
+
+### Added
+- **Third-party nameplate cast bar discovery chain (UIRenderer v16):** Interrupt detection now cascades through Blizzard → Plater → ElvUI cast bars via `FindVisibleCastBar()`. Previously only worked with Blizzard's default nameplate cast bar; Plater and ElvUI users got no interrupt suggestions. Source-verified paths: `nameplate.UnitFrame.castBar` (Blizzard, capital U), `nameplate.unitFrame.castBar` (Plater, lowercase u), child `.Castbar` (ElvUI/oUF, capital C).
+- **API fallback for interrupt detection when nameplates disabled:** `IsTargetCastInterruptible()` falls back to `UnitCastingInfo`/`UnitChannelInfo` with `issecretvalue()` guard and fail-open design when no cast bar frame is available (nameplates off + addon target frame).
+- **Event-driven interrupt interruptibility tracking (StateHelpers v2):** `UNIT_SPELLCAST_INTERRUPTIBLE` / `NOT_INTERRUPTIBLE` events on `"target"` now provide a definitive real boolean for interruptibility (never secret). Used as the preferred signal before frame field inspection or API fallback. Pattern learned from oUF (ElvUI) and DetailsFramework (Plater) source.
+- **`ResetTargetCastState()` on target change (JustAC.lua):** Clears stale event-driven interruptibility state when target changes, preventing carry-over from previous target's cast.
+
+### Changed
+- **Unified `IsTargetCastInterruptible()` replaces three functions:** `IsCastBarInterruptible()`, `IsTargetCastingFallback()`, and redundant `GetTargetCastInterruptState()` calls merged into a single `IsTargetCastInterruptible(nameplate)` → `(isCasting, isInterruptible, castBar)`. Event tracker queried once instead of independently in two functions.
+- **Single-pass spell selection in `EvaluateInterrupt()`:** Two separate loops (CC-prefer pass + fallback pass) merged into one loop with inline `fallbackID` tracking. Fewer iterations when `preferCC` is false (immediate break on first usable).
+- **Dead `importantOnly` interrupt mode removed:** `ImportantCastIndicator` pcall chain and `importantOnly` mode guard were entirely unreachable (all signals SECRET in 12.0, mode retired). ~12 lines removed from `EvaluateInterrupt()`.
+- **Comment cleanup — "why not how":** ~180 lines of "how" comments removed or shortened across UIRenderer.lua. Retained all gotcha/safety comments (secret values, case sensitivity, race conditions, ordering constraints). Deduplicated repeated "widget handles secret values" explanations (was 6×, now once at function header).
+
+### Refactor
+- Split `BlizzardAPI.lua` (1 719 lines) into four cohesive submodules under `BlizzardAPI\`:
+  - `CooldownTracking.lua` — local CD event frame, tooltip probe, charge cache
+  - `SecretValues.lua` — feature availability, secret value utilities, secrecy API wrappers, C_Secrets namespace
+  - `SpellQuery.lua` — addon access, spell info/usability/proc cache, rotation API, item detection, availability, health helpers
+  - `StateHelpers.lua` — defensive/item state helpers, LowHealthFrame detection, target CC immunity, shapeshift form wrappers
+- Root `BlizzardAPI.lua` reduced to 14 lines (LibStub registration + version constants); public API surface unchanged for all 17 consumers
+- Each submodule uses its own LibStub identity (`JustAC-BlizzardAPI-*`) for reload safety
+- Extracted `ResolveSpellID` from `DefensiveEngine` and `GapCloserEngine` into `BlizzardAPI.ResolveSpellID` (single canonical implementation)
+- Renamed `lib` → `DefensiveEngine` / `GapCloserEngine` in respective module exports for clarity
+- Moved shapeshift Safe* wrappers (`SafeGetNumShapeshiftForms`, `SafeGetShapeshiftFormInfo`) from `FormCache` into `BlizzardAPI.GetNumShapeshiftForms` / `BlizzardAPI.GetShapeshiftFormInfo`
+- Reduced `GetDefensiveSpellQueue` from 8 parameters to 6 by consolidating override flags into an `overrides` table
+- Added `ApplyMainPanelQueue` / `ApplyOverlayQueue` helpers in `DefensiveEngine` to decouple UI dispatch from queue resolution logic
+
 ## [4.4.7] - 2026-02-27
 
 ### Fixed
