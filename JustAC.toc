@@ -9,6 +9,7 @@
 ## OptionalDeps: Ace3, Masque
 
 ## X-Category: Combat
+## X-Curse-Project-ID: 1289544
 
 # Embeded Library Fallback
 Libs\\LibStub\\LibStub.lua
