@@ -80,7 +80,8 @@ local defaults = {
             showHotkey        = true, -- Legacy; migrated to textOverlays.hotkey.show on load
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-5
-            defensiveDisplayMode = "always", -- "combatOnly", "always"
+            defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
+            defensiveGlowMode    = "all",
             showHealthBar        = true,
             -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
@@ -242,10 +243,6 @@ function JustAC:NormalizeSavedData()
                 profile.showFlash = false
             end
             profile.defensives.showFlash = nil
-        end
-        -- glowMode: defensives had its own copy → use profile-level only
-        if profile.defensives and profile.defensives.glowMode ~= nil then
-            profile.defensives.glowMode = nil
         end
         -- textOverlays: overlay had full parallel copy → central show/color/anchor, keep overlay fontScale
         if npo and npo.textOverlays then
