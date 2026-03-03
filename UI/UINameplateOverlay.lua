@@ -1398,6 +1398,12 @@ function UINameplateOverlay.RefreshInterruptSpells()
     end
 end
 
+--- Returns true when the overlay is currently anchored to a nameplate.
+--- Used by UIRenderer/DefensiveEngine to decide whether to fall back to the main panel.
+function UINameplateOverlay.IsAnchored()
+    return currentNameplate ~= nil
+end
+
 --- Hide every overlay element (called from EnterDisabledMode).
 function UINameplateOverlay.HideAll()
     for _, icon in ipairs(dpsIcons) do

@@ -386,18 +386,20 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- Resolve overlay state once (UINameplateOverlay may not be loaded)
     local npo = UINameplateOverlay and (profile and profile.nameplateOverlay)
     local overlayDM = profile and profile.displayMode or "queue"
+    local overlayAnchored = UINameplateOverlay and UINameplateOverlay.IsAnchored and UINameplateOverlay.IsAnchored()
     local overlayActive = npo and (overlayDM == "overlay" or overlayDM == "both")
+    -- Overlay-only fallback: when overlay has no nameplate, run the main panel
+    -- defensive path so users never lose defensive suggestions entirely.
+    local overlayFallback = overlayDM == "overlay" and overlayActive and not overlayAnchored
 
-    -- When main panel defensives are off, hide any icons that may be visible from a
-    -- previous enabled state.  Must happen before the early exits below because if
-    -- showHealthBar is also off, needsAnyWork is false and the normal else-branch that
-    -- hides icons is never reached.
-    if def and not def.enabled then
+    -- When main panel defensives are off (and no overlay fallback in effect),
+    -- hide any icons that may be visible from a previous enabled state.
+    if def and not def.enabled and not overlayFallback then
         HideDefensiveIconFrames(addon)
     end
 
     -- Early exit: nothing at all to do for health events
-    local needsAnyWork = (def and (def.enabled or def.showHealthBar or def.showPetHealthBar))
+    local needsAnyWork = (def and (def.enabled or overlayFallback or def.showHealthBar or def.showPetHealthBar))
         or (overlayActive and (npo.showHealthBar or npo.showDefensives))
     if not needsAnyWork then return end
 
@@ -417,7 +419,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     lastHealthUpdate = now
 
     -- Skip queue work if neither path needs it
-    local needsDefensives = (def and def.enabled) or (overlayActive and npo.showDefensives)
+    local needsDefensives = (def and (def.enabled or overlayFallback)) or (overlayActive and npo.showDefensives)
     if not needsDefensives then return end
 
     -- Health state — computed once, shared by main panel and overlay paths
@@ -444,8 +446,8 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         end
     end
 
-    -- Main panel defensive queue (gated by defensives.enabled)
-    if def and def.enabled then
+    -- Main panel defensive queue (gated by defensives.enabled, or overlay fallback)
+    if def and (def.enabled or overlayFallback) then
         local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 1
 
