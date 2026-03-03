@@ -69,7 +69,9 @@ L["Up"] = "Up"
 L["Dn"] = "Dn"
 
 -- Descriptions
-L["General description"] = "Configure the appearance and behavior of the spell queue display."
+L["General description"] = "Settings that apply to both Standard Queue and Nameplate Overlay."
+L["Standard Queue description"] = "Configure the appearance and behavior of the standard queue panel."
+L["Shared Behavior"] = "Shared Behavior"
 L["Icon Layout"] = "Icon Layout"
 L["Visibility"] = "Visibility"
 L["Queue Content"] = "Queue Content"
@@ -263,6 +265,7 @@ L["Nameplate Show Health Bars desc"] = "Show compact player and pet health bars 
 -- Reset buttons
 L["Reset to Defaults"] = "Reset to Defaults"
 L["Reset General desc"] = "Reset all General settings to their default values."
+L["Reset Standard Queue desc"] = "Reset all Standard Queue settings to their default values."
 L["Reset Offensive desc"] = "Reset offensive display and content settings to defaults. The blacklist is not affected."
 L["Reset Overlay desc"] = "Reset all Overlay settings to their default values."
 L["Reset Defensives desc"] = "Reset Defensive display and behavior settings to defaults. Spell lists are not affected."

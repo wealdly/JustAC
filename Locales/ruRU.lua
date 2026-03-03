@@ -69,7 +69,9 @@ L["Up"] = "Вверх"
 L["Dn"] = "Вниз"
 
 -- Descriptions
-L["General description"] = "Настроить внешний вид и поведение очереди заклинаний."
+L["General description"] = "Настройки, общие для стандартной очереди и оверлея."
+L["Standard Queue description"] = "Настроить внешний вид и поведение очереди заклинаний."
+L["Shared Behavior"] = "Общее поведение"
 L["Icon Layout"] = "Расположение иконок"
 L["Visibility"] = "Видимость"
 L["Queue Content"] = "Содержимое очереди"
@@ -239,6 +241,7 @@ L["Nameplate Show Health Bars desc"] = "Компактные полосы здо
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Сбросить настройки"
 L["Reset General desc"] = "Сбросить все основные настройки на значения по умолчанию."
+L["Reset Standard Queue desc"] = "Сбросить все настройки стандартной очереди на значения по умолчанию."
 L["Reset Offensive desc"] = "Сбросить настройки атаки. Чёрный список не затрагивается."
 L["Reset Overlay desc"] = "Сбросить все настройки Оверлея на значения по умолчанию."
 L["Reset Defensives desc"] = "Сбросить защитные настройки. Списки заклинаний не затрагиваются."

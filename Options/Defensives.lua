@@ -51,7 +51,14 @@ function Defensives.CreateTabArgs(addon)
                     addon.db.profile.defensives.showProcs = val
                     addon:ForceUpdateAll()
                 end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
+                disabled = function()
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
+                end,
             },
             -- ITEMS (4.3-4.9)
             itemsHeader = {
@@ -71,7 +78,12 @@ function Defensives.CreateTabArgs(addon)
                     Defensives.UpdateDefensivesOptions(addon)
                 end,
                 disabled = function()
-                    return not addon.db.profile.defensives.enabled
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
                 end,
             },
             autoInsertPotions = {
@@ -86,7 +98,12 @@ function Defensives.CreateTabArgs(addon)
                     addon:ForceUpdateAll()
                 end,
                 disabled = function()
-                    return not addon.db.profile.defensives.enabled
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
                 end,
             },
             -- DISPLAY (5-9)
