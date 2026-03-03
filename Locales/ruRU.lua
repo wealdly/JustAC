@@ -137,8 +137,8 @@ L["Major Cooldowns Priority desc"] = "Экстренная защита когд
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "Показать полосу здоровья"
-L["Show Health Bar desc"] = "Компактная полоса здоровья рядом с очередью"
+L["Show Health Bars"] = "Показать полосы здоровья"
+L["Show Health Bars desc"] = "Компактные полосы здоровья игрока и питомца рядом с очередью"
 L["disabled when Defensive Queue is enabled"] = "отключено при включённой защитной очереди"
 L["Defensive Icon Scale"] = "Масштаб защитной иконки"
 L["Defensive Icon Scale desc"] = "Множитель масштаба для защитных иконок"

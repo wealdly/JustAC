@@ -437,13 +437,13 @@ function StandardQueue.CreateTabArgs(addon)
                     -- HEALTH BARS (10-19)
                     healthBarHeader = {
                         type = "header",
-                        name = L["Show Health Bar"],
+                        name = L["Show Health Bars"],
                         order = 10,
                     },
                     showHealthBar = {
                         type = "toggle",
-                        name = L["Show Health Bar"],
-                        desc = L["Show Health Bar desc"],
+                        name = L["Show Health Bars"],
+                        desc = L["Show Health Bars desc"],
                         order = 11,
                         width = "full",
                         get = function() return addon.db.profile.defensives.showHealthBar end,

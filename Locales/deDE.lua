@@ -137,8 +137,8 @@ L["Major Cooldowns Priority desc"] = "Notfall-Defensiven wenn Selbstheilung nich
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "Gesundheitsleiste anzeigen"
-L["Show Health Bar desc"] = "Kompakte Gesundheitsleiste neben der Warteschlange"
+L["Show Health Bars"] = "Lebensleisten anzeigen"
+L["Show Health Bars desc"] = "Kompakte Spieler- und Begleiter-Lebensleisten neben der Warteschlange"
 L["disabled when Defensive Queue is enabled"] = "deaktiviert wenn Defensiv-Warteschlange aktiv ist"
 L["Defensive Icon Scale"] = "Defensiv-Symbol-Skalierung"
 L["Defensive Icon Scale desc"] = "Skalierungsmultiplikator für Defensiv-Symbole"
