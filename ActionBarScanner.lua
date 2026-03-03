@@ -132,10 +132,6 @@ local HOTKEY_REFRESH_INTERVAL = 0.25  -- Refresh stale entries max 4x/sec (enoug
 
 local verboseDebugMode = false
 
-function ActionBarScanner.SetVerboseDebug(enabled)
-    verboseDebugMode = enabled
-end
-
 -- Track page, form, and override state to detect when keybinds need refresh
 local cachedStateData = {
     page = 1,
@@ -996,13 +992,6 @@ function ActionBarScanner.HasKeybind(spellID)
     if not spellID then return false end
     local hotkey = ActionBarScanner.GetSpellHotkey(spellID)
     return hotkey and hotkey ~= ""
-end
-
-function ActionBarScanner.ClearSpellHotkeyCache(spellID)
-    if spellID then
-        spellHotkeyCache[spellID] = nil
-        spellSlotCache[spellID] = nil
-    end
 end
 
 function ActionBarScanner.ClearAllCaches()

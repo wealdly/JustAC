@@ -339,7 +339,6 @@ end
 
 local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
 local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
-local function SafeHasPetSpells() return SafeCall(HasPetSpells, false) end
 local function SafeIsMounted() return SafeCall(IsMounted, false) end
 local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
@@ -861,11 +860,6 @@ end
 -- Pet Detection
 --------------------------------------------------------------------------------
 
-local function HasActivePet()
-    -- UnitExists/HasPetUI/HasPetSpells are fast C calls, no cache needed
-    return SafeUnitExists("pet") or SafeHasPetUI() or SafeHasPetSpells()
-end
-
 -- Check if pet is alive (exists AND not dead)
 -- 12.0: UnitIsDead result may be secret for non-player units
 local function IsPetAlive()
@@ -885,22 +879,6 @@ end
 --------------------------------------------------------------------------------
 -- Form/Stance Detection
 --------------------------------------------------------------------------------
-
-local function IsFormChangeSpell(spellID)
-    if not spellID then return false end
-    if not FormCache then return false end
-    
-    -- Fast path: check direct spell-to-form mapping first
-    local targetFormID = FormCache.GetFormIDBySpellID(spellID)
-    if targetFormID then return true end
-    
-    -- Fallback: check by name patterns (Form, Stance, Presence, etc.)
-    local spellInfo = GetCachedSpellInfo(spellID)
-    if not spellInfo or not spellInfo.name then return false end
-    
-    local name = spellInfo.name
-    return name:match("Form$") or name:match("Stance$") or name:match("Presence$")
-end
 
 --------------------------------------------------------------------------------
 -- Spell Category Detection (dynamic, no hardcoded spell lists)
@@ -1318,35 +1296,6 @@ end
 --------------------------------------------------------------------------------
 -- Debug / Diagnostic Functions
 --------------------------------------------------------------------------------
-
--- Get native spell classification info for a spell (for debugging)
--- Replaces legacy GetLPSInfo - now uses native tables instead of LibPlayerSpells
-function RedundancyFilter.GetSpellClassification(spellID)
-    if not spellID then
-        return { spellID = nil, known = false }
-    end
-    
-    local spellInfo = GetCachedSpellInfo(spellID)
-    local isAura, isPersonal, isUnique = IsAuraSpell(spellID)
-    
-    return {
-        spellID = spellID,
-        name = spellInfo and spellInfo.name or "Unknown",
-        known = true,
-        -- Native classification flags
-        isRaidBuff = RAID_BUFF_SPELLS[spellID] or false,
-        isPetSummon = PET_SUMMON_SPELLS[spellID] or false,
-        isUniqueAura = isUnique,
-        isPersonalAura = isPersonal,
-        isAura = isAura,
-        -- Derived from checks
-        isDPSRelevant = IsDPSRelevant(spellID),
-        isRoguePoison = IsRoguePoisonSpell(spellID),
-        isWeaponEnchant = IsWeaponEnchantSpell(spellID),
-        -- 12.0 compliance note
-        source = "native",  -- Was "LibPlayerSpells", now "native"
-    }
-end
 
 
 

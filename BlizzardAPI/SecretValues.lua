@@ -217,13 +217,6 @@ function BlizzardAPI.IsSpellReady(spellID)
     return true
 end
 
-function BlizzardAPI.GetAuraSpellID(unit, index, filter)
-    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil end
-    local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
-    if not aura then return nil end
-    return Unsecret(aura.spellId)
-end
-
 function BlizzardAPI.GetAuraTiming(unit, index, filter)
     if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end
     local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
@@ -231,97 +224,8 @@ function BlizzardAPI.GetAuraTiming(unit, index, filter)
     return Unsecret(aura.duration), Unsecret(aura.expirationTime)
 end
 
-function BlizzardAPI.GetSpellCharges(spellID)
-    if not spellID or not C_Spell_GetSpellCharges then return nil, nil end
-    local chargeInfo = C_Spell_GetSpellCharges(spellID)
-    if not chargeInfo then return nil, nil end
-    return Unsecret(chargeInfo.currentCharges), Unsecret(chargeInfo.maxCharges)
-end
-
---------------------------------------------------------------------------------
--- Secrecy API Wrappers (12.0+)
---------------------------------------------------------------------------------
-
-function BlizzardAPI.GetSpellCooldownSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellCooldownSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellCooldownSecrecy, spellID)
-        if ok then return lvl end
-    end
-    return nil
-end
-
--- Returns nil, nil when values are secret
-function BlizzardAPI.GetSafeSpellCooldown(spellID)
-    if not C_Spell_GetSpellCooldown then return nil, nil end
-    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return nil, nil end
-    return Unsecret(cd.startTime), Unsecret(cd.duration)
-end
-
-function BlizzardAPI.GetSpellAuraSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellAuraSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellAuraSecrecy, spellID)
-        if ok then return lvl end
-    end
-    return nil
-end
-
-function BlizzardAPI.GetSpellCastSecrecy(spellID)
-    if C_Secrets and C_Secrets.GetSpellCastSecrecy then
-        local ok, lvl = pcall(C_Secrets.GetSpellCastSecrecy, spellID)
-        if ok then return lvl end
-    end
-    return nil
-end
-
-function BlizzardAPI.ShouldUnitHealthMaxBeSecret(unitToken)
-    if C_Secrets and C_Secrets.ShouldUnitHealthMaxBeSecret then
-        local ok, res = pcall(C_Secrets.ShouldUnitHealthMaxBeSecret, unitToken)
-        if ok then return res end
-    end
-    return nil
-end
-
-function BlizzardAPI.GetInterfaceVersion()
-    return _interfaceVersion
-end
-
 function BlizzardAPI.IsMidnightOrLater()
     return IS_MIDNIGHT_OR_LATER
 end
 
-function BlizzardAPI.VersionCall(pre12Func, post12Func, ...)
-    if IS_MIDNIGHT_OR_LATER then
-        return post12Func and post12Func(...) or nil
-    else
-        return pre12Func and pre12Func(...) or nil
-    end
-end
 
---------------------------------------------------------------------------------
--- C_Secrets Namespace Wrappers (12.0+)
---------------------------------------------------------------------------------
-
-function BlizzardAPI.ShouldSpellCooldownBeSecret(spellID)
-    if C_Secrets and C_Secrets.ShouldSpellCooldownBeSecret then
-        local ok, result = pcall(C_Secrets.ShouldSpellCooldownBeSecret, spellID)
-        if ok then return result end
-    end
-    return nil
-end
-
-function BlizzardAPI.ShouldSpellAuraBeSecret(spellID)
-    if C_Secrets and C_Secrets.ShouldSpellAuraBeSecret then
-        local ok, result = pcall(C_Secrets.ShouldSpellAuraBeSecret, spellID)
-        if ok then return result end
-    end
-    return nil
-end
-
-function BlizzardAPI.ShouldUnitSpellCastBeSecret(unit)
-    if C_Secrets and C_Secrets.ShouldUnitSpellCastBeSecret then
-        local ok, result = pcall(C_Secrets.ShouldUnitSpellCastBeSecret, unit)
-        if ok then return result end
-    end
-    return nil
-end
