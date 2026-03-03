@@ -35,7 +35,7 @@ end
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 4.5.4
+- Current: 4.5.6
 - Hotfixes: 4.5.5, 4.5.6, etc. (bug fixes only)
 - Features: 4.6.0, 4.7.0, etc. (new functionality)
 - Breaking: 5.0.0, 6.0.0, etc. (major rewrites)

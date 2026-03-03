@@ -1,6 +1,17 @@
 
 # Changelog
 
+## [4.5.6] - 2026-03-03
+
+### Changed
+- **Overlay interrupt positioning**: Interrupt icon now anchors inline at "position 0" (between icon 1 and the nameplate edge) instead of perpendicular (above icon 1). Mirrors the standard queue's `CreateInterruptIcon` pattern. Queue icons 1+ never shift when the interrupt appears/hides. Cast aura direction adapts to expansion mode ("up" → below interrupt, otherwise above).
+
+### Added
+- **Replace Quest Indicator** (Overlay): Suppresses the engine-rendered quest exclamation mark (`!`) on nameplates and renders our own version above the nameplate center, preventing overlap with the icon queue. Uses `UnitIsQuestBoss()` for detection and `SetCVar("ShowQuestUnitCircles", "0")` for suppression. Original CVar restored on disable/unload. Enabled by default; toggle in Overlay → Layout.
+
+### Fixed
+- **RedundancyFilter v40**: NeverSecret aura timing data (duration, expirationTime) was always zero in combat. `GetAuraTiming` used `Unsecret()` which trusts `issecretvalue()` — returns `true` even for NeverSecret fields (generic marking). Switched to pcall arithmetic bypass (`auraData.duration + 0`) matching the pattern already used for spellId. Fixes long-duration buff expiration reminders (raid buffs, rogue poisons) not appearing when buffs near expiry.
+
 ## [4.5.5] - 2026-03-03
 
 ### Added

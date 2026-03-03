@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 5)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 6)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -554,25 +554,40 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
     end
 
-    -- Interrupt icon: anchored perpendicular to dpsIcons[1] so the main
-    -- DPS queue stays in a fixed position.
-    --   "out"       → above icon 1  (vertical pop-out from horizontal queue)
-    --   "up"/"down" → outside icon 1 (horizontal pop-out, away from nameplate)
+    -- Interrupt icon: inline "position 0" — sits between icon 1 and the
+    -- nameplate edge (the leading direction, opposite queue growth).  Icon 1
+    -- anchors directly to the nameplate so it never shifts when the interrupt
+    -- appears/hides.  Mirrors the standard queue's CreateInterruptIcon pattern
+    -- where the interrupt "overhangs outside mainFrame".
+    --   "out"       → inline toward nameplate (between icon 1 and nameplate edge)
+    --   "up"/"down" → inline toward nameplate (below icon 1 for "up", above for "down")
     if interruptIcon then
         interruptIcon:ClearAllPoints()
         interruptIcon:SetSize(iconSize, iconSize)
         if #dpsIcons > 0 then
             if expansion == "out" then
-                -- Horizontal queue → interrupt goes above icon 1
-                interruptIcon:SetPoint("BOTTOM", dpsIcons[1], "TOP", 0, iconSpacing)
+                -- Horizontal queue → interrupt inline, between icon 1 and nameplate
+                interruptIcon:SetPoint(dpsEdge, dpsIcons[1], dpsPt, -dpsChainX, 0)
             else
-                -- Vertical queue → interrupt goes on the outside
-                -- (right of queue when anchored right, left when anchored left)
-                interruptIcon:SetPoint(dpsPt, dpsIcons[1], dpsEdge, dpsChainX, 0)
+                -- Vertical queue → interrupt inline before icon 1 in chain direction
+                -- (below icon 1 for "up", above icon 1 for "down")
+                interruptIcon:SetPoint(chainRelPt, dpsIcons[1], chainPt, -chainOffX, -chainOffY)
             end
         else
             -- Fallback: no DPS icons, anchor to nameplate directly
             interruptIcon:SetPoint(dpsPt, nameplate, dpsEdge, dpsGapX, 0)
+        end
+        -- Re-anchor cast aura based on expansion: the aura sits on the side
+        -- of the interrupt facing away from the queue (perpendicular pop-out).
+        --   "out"/"down" → above interrupt
+        --   "up"         → below interrupt (away from upward-growing queue)
+        if interruptIcon.castAura then
+            interruptIcon.castAura:ClearAllPoints()
+            if expansion == "up" then
+                interruptIcon.castAura:SetPoint("TOP", interruptIcon, "BOTTOM", 0, -2)
+            else
+                interruptIcon.castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
+            end
         end
         interruptIcon:Hide()
         interruptShown = false
@@ -1059,7 +1074,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
         end
 
         -- Track interrupt visibility state (no re-anchor needed — interrupt
-        -- icon is perpendicular to queue, never displaces dpsIcons[1]).
+        -- icon is at inline position 0, never displaces dpsIcons[1]).
         interruptShown = shouldShowInterrupt
     end
     -- ── End interrupt reminder ───────────────────────────────────────────────
