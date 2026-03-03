@@ -12,6 +12,8 @@
   - **Defensives** tab renamed its settings sub-tab to "Queue Content" (only content settings remain: `showProcs`, `allowItems`, `autoInsertPotions`).
   - Tab order updated: General(1) → Standard Queue(2) → Overlay(3) → Offensive(4) → Defensives(5) → Labels(6) → Hotkeys(7) → Profiles(8).
 - **Overlay defensive display mode**: Added "When Health Low" (`healthBased`) option for feature parity with the standard queue panel.
+- **Overlay restructured into sub-tabs**: Layout, Offensive Display, Defensive Display — matching the Standard Queue's organization. Each sub-tab has its own scoped reset button.
+- **Overlay glow modes split**: Offensive and defensive overlay icons now have independent Highlight Mode settings (`npo.glowMode` for offensive, `npo.defensiveGlowMode` for defensive), matching Standard Queue parity. Existing users' offensive glow setting is preserved; defensive defaults to "All Glows".
 
 ### Fixed
 - **Overlay respects shared `showProcs` setting**: The nameplate overlay defensive queue previously hardcoded `showProcs=true`, ignoring the user's "Insert Procced Defensives" setting. Now correctly reads `profile.defensives.showProcs`.
