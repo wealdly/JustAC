@@ -26,6 +26,7 @@ local spellbookCacheBuilt = false
 
 -- Filter state for spell search (all panels)
 SpellSearch.filterState = {
+    defensive  = "",
     selfheal   = "",
     cooldown   = "",
     blacklist  = "",
@@ -38,6 +39,7 @@ SpellSearch.filterState = {
 
 -- Preview state: first result shown in dropdown (not yet added)
 SpellSearch.previewState = {
+    defensive  = nil,
     selfheal   = nil,
     cooldown   = nil,
     blacklist  = nil,

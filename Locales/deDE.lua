@@ -117,12 +117,15 @@ L["Enable Defensive Suggestions desc"] = "Defensiv-Vorschläge basierend auf Ges
 L["Custom Hotkey desc"] = "Text, der als Hotkey angezeigt werden soll (z.B. 'F1', 'Strg+Q', 'Maus4')"
 L["Move up desc"] = "In der Priorität nach oben verschieben"
 L["Move down desc"] = "In der Priorität nach unten verschieben"
-L["Restore Class Defaults desc"] = "Die Selbstheilungsliste auf Standard-Zauber für Ihre Klasse zurücksetzen"
+L["Restore Class Defaults desc"] = "Die Defensivliste auf Standard-Zauber für Ihre Klasse zurücksetzen"
+L["Restore Defensive Defaults desc"] = "Die Defensivliste auf Standard-Zauber für Ihre Klasse zurücksetzen"
 L["Restore Cooldowns Defaults desc"] = "Die Cooldown-Liste auf Standard-Zauber für Ihre Klasse zurücksetzen"
 
 -- Additional sections
 L["Self-Heal Priority List"] = "Selbstheilungs-Prioritätsliste (zuerst geprüft)"
 L["Self-Heal Priority desc"] = "Schnelle Heilungen für Ihre Rotation."
+L["Defensive Priority List"] = "Defensiv-Prioritätsliste"
+L["Defensive Priority desc"] = "Einheitliche Prioritätsreihenfolge — Selbstheilung und Cooldowns in einer Liste. Ziehen zum Sortieren."
 L["Restore Class Defaults"] = "Klassen-Standardwerte wiederherstellen"
 L["Major Cooldowns Priority List"] = "Große Cooldowns-Prioritätsliste (Notfall)"
 L["Major Cooldowns Priority desc"] = "Notfall-Defensiven wenn Selbstheilung nicht verfügbar."

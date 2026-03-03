@@ -117,12 +117,15 @@ L["Enable Defensive Suggestions desc"] = "Afficher les sorts défensifs quand la
 L["Custom Hotkey desc"] = "Texte à afficher comme raccourci (par ex. 'F1', 'Ctrl+Q', 'Souris4')"
 L["Move up desc"] = "Monter dans la priorité"
 L["Move down desc"] = "Descendre dans la priorité"
-L["Restore Class Defaults desc"] = "Réinitialiser la liste d'auto-soin aux sorts par défaut"
+L["Restore Class Defaults desc"] = "Réinitialiser la liste défensive aux sorts par défaut"
+L["Restore Defensive Defaults desc"] = "Réinitialiser la liste défensive aux sorts par défaut"
 L["Restore Cooldowns Defaults desc"] = "Réinitialiser la liste de temps de recharge aux sorts par défaut"
 
 -- Additional sections
 L["Self-Heal Priority List"] = "Liste de priorité d'auto-soin (vérifiée en premier)"
 L["Self-Heal Priority desc"] = "Soins rapides pour votre rotation."
+L["Defensive Priority List"] = "Liste de priorité défensive"
+L["Defensive Priority desc"] = "Ordre de priorité unifié — auto-soins et temps de recharge en une seule liste. Réorganisez pour définir la priorité."
 L["Restore Class Defaults"] = "Restaurer les valeurs par défaut"
 L["Major Cooldowns Priority List"] = "Liste de priorité des temps de recharge majeurs (urgence)"
 L["Major Cooldowns Priority desc"] = "Défensifs d'urgence quand auto-soins indisponibles."

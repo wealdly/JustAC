@@ -107,6 +107,12 @@ local function RecordSpellCooldown(spellID)
     if not spellID or spellID == 0 then return end
     if not trackedDefensiveSpells[spellID] and not trackedRotationSpells[spellID] then return end
 
+    -- Skip charge-based spells: local CD tracking records a full-duration cooldown
+    -- on every cast, but charge spells remain usable while charges > 0.
+    -- IsSpellUsable (NeverSecret) handles charge depletion correctly at the call site.
+    local maxCharges = cachedMaxCharges[spellID]
+    if maxCharges and maxCharges > 1 then return end
+
     local now = GetTime()
     local duration = 0
     local inCombat = InCombatLockdown()

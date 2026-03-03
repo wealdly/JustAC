@@ -289,13 +289,11 @@ function DebugCommands.DefensiveDiagnostics(addon)
     addon:Print("")
     addon:Print("Configured Spells:")
     local _, playerClass = UnitClass("player")
-    local selfHeals = addon:GetClassSpellList("selfHealSpells") or {}
-    local cooldowns = addon:GetClassSpellList("cooldownSpells") or {}
+    local defensives = addon:GetClassSpellList("defensiveSpells") or {}
     local petHeals = addon:GetClassSpellList("petHealSpells") or {}
     local petRez = addon:GetClassSpellList("petRezSpells") or {}
     addon:Print("  Class: " .. (playerClass or "UNKNOWN"))
-    addon:Print("  Self-Heals: " .. #selfHeals .. " spells")
-    addon:Print("  Cooldowns: " .. #cooldowns .. " spells")
+    addon:Print("  Defensives: " .. #defensives .. " spells")
     if #petRez > 0 then
         addon:Print("  Pet Rez/Summon: " .. #petRez .. " spells")
     end

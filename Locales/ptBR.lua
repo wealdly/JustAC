@@ -117,12 +117,15 @@ L["Enable Defensive Suggestions desc"] = "Mostrar defensivos quando a vida está
 L["Custom Hotkey desc"] = "Texto personalizado (ex: F1, Ctrl+Q)"
 L["Move up desc"] = "Subir prioridade"
 L["Move down desc"] = "Descer prioridade"
-L["Restore Class Defaults desc"] = "Redefinir autocuras da classe"
+L["Restore Class Defaults desc"] = "Redefinir a lista defensiva para os padrões da classe"
+L["Restore Defensive Defaults desc"] = "Redefinir a lista defensiva para os padrões da classe"
 L["Restore Cooldowns Defaults desc"] = "Redefinir recargas da classe"
 
 -- Additional sections
 L["Self-Heal Priority List"] = "Prioridade de autocura (primeiro)"
 L["Self-Heal Priority desc"] = "Curas rápidas para sua rotação."
+L["Defensive Priority List"] = "Lista de prioridade defensiva"
+L["Defensive Priority desc"] = "Ordem de prioridade unificada — autocuras e recargas em uma lista. Reordene para definir a prioridade."
 L["Restore Class Defaults"] = "Restaurar padrões da classe"
 L["Major Cooldowns Priority List"] = "Prioridade de recargas (emergência)"
 L["Major Cooldowns Priority desc"] = "Defensivos de emergência quando a vida está crítica."
