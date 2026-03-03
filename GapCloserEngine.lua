@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local MAJOR, MINOR = "JustAC-GapCloserEngine", 1
+local MAJOR, MINOR = "JustAC-GapCloserEngine", 2
 local GapCloserEngine = LibStub:NewLibrary(MAJOR, MINOR)
 if not GapCloserEngine then return end
 
@@ -109,6 +109,18 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     return resolvedID, spellID
 end
 
+-- 12.0+ push-based range check: EnableActionRangeCheck opts a slot into
+-- ACTION_RANGE_CHECK_UPDATE events, eliminating poll-based IsActionInRange.
+-- Detected once at load time; omitted on pre-12.0 clients.
+local EnableActionRangeCheck = C_ActionBar and C_ActionBar.EnableActionRangeCheck
+
+--- Helper: register/unregister a slot for push-based ACTION_RANGE_CHECK_UPDATE.
+--- Safely no-ops on pre-12.0 clients where the API doesn't exist.
+local function SetRangeCheckEnabled(slot, enabled)
+    if not EnableActionRangeCheck or not slot then return end
+    pcall(EnableActionRangeCheck, slot, enabled)
+end
+
 --- Get the melee range reference spell + slot for the current spec.
 --- Priority chain: user override → SpellDB default[1] → SpellDB default[2].
 --- First spell found on the action bar wins.  Caches result until spec change
@@ -125,15 +137,22 @@ local function ResolveMeleeReference(addon)
         return cachedMeleeRefSpellID, cachedMeleeRefSlot
     end
 
+    -- If switching to a different slot, disable range check on the old one.
+    local previousSlot = cachedMeleeRefSlot
+
     -- 1) Check profile for user override
     local profile = addon and addon.db and addon.db.profile
     local gc = profile and profile.gapClosers
     if gc and gc.meleeRangeSpell and gc.meleeRangeSpell > 0 then
         local slot = FindSlotForSpell(gc.meleeRangeSpell)
         if slot then
+            if previousSlot and previousSlot ~= slot then
+                SetRangeCheckEnabled(previousSlot, false)
+            end
             cachedMeleeRefSpellID = gc.meleeRangeSpell
             cachedMeleeRefSlot = slot
             cachedMeleeRefSpecKey = specKey
+            SetRangeCheckEnabled(slot, true)
             return cachedMeleeRefSpellID, cachedMeleeRefSlot
         end
     end
@@ -147,9 +166,13 @@ local function ResolveMeleeReference(addon)
                 if refID then
                     local slot = FindSlotForSpell(refID)
                     if slot then
+                        if previousSlot and previousSlot ~= slot then
+                            SetRangeCheckEnabled(previousSlot, false)
+                        end
                         cachedMeleeRefSpellID = refID
                         cachedMeleeRefSlot = slot
                         cachedMeleeRefSpecKey = specKey
+                        SetRangeCheckEnabled(slot, true)
                         return cachedMeleeRefSpellID, cachedMeleeRefSlot
                     end
                 end
@@ -157,6 +180,10 @@ local function ResolveMeleeReference(addon)
         end
     end
 
+    -- No slot found — disable range check on previous slot if any.
+    if previousSlot then
+        SetRangeCheckEnabled(previousSlot, false)
+    end
     cachedMeleeRefSpecKey = specKey
     cachedMeleeRefSpellID = nil
     cachedMeleeRefSlot = nil
@@ -269,6 +296,10 @@ end
 
 --- Invalidate cached gap-closer spell list (spec change, profile change)
 function GapCloserEngine.InvalidateGapCloserCache()
+    -- Disable push-based range check on the old melee reference slot.
+    if cachedMeleeRefSlot then
+        SetRangeCheckEnabled(cachedMeleeRefSlot, false)
+    end
     cachedGapCloserSpells = nil
     cachedGapCloserSpecKey = nil
     cachedMeleeRefSpellID = nil
