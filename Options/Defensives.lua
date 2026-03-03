@@ -236,7 +236,6 @@ function Defensives.CreateTabArgs(addon)
                     def.iconScale        = 1.0
                     def.maxIcons         = 4
                     def.selfHealThreshold = 80
-                    def.cooldownThreshold = 60
                     def.petHealThreshold  = 50
                     def.allowItems        = true
                     def.autoInsertPotions = true
@@ -246,6 +245,8 @@ function Defensives.CreateTabArgs(addon)
                     def.showOnlyInCombat    = nil
                     def.alwaysShowDefensive = nil
                     def.showHotkeys         = nil
+                    def.ignoreHealthPriority = nil
+                    def.cooldownThreshold   = nil
                     addon:UpdateFrameSize()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
@@ -270,50 +271,27 @@ function Defensives.CreateTabArgs(addon)
                 args = {
                     selfHealHeader = {
                         type = "header",
-                        name = L["Self-Heal Priority List"],
+                        name = L["Defensive Priority List"],
                         order = 20,
                     },
                     selfHealInfo = {
                         type = "description",
-                        name = L["Self-Heal Priority desc"],
+                        name = L["Defensive Priority desc"],
                         order = 21,
                         fontSize = "small"
                     },
                     restoreSelfHealDefaults = {
                         type = "execute",
                         name = L["Restore Class Defaults"],
-                        desc = L["Restore Class Defaults desc"],
+                        desc = L["Restore Defensive Defaults desc"],
                         order = 42,
                         width = "normal",
                         func = function()
-                            addon:RestoreDefensiveDefaults("selfheal")
+                            addon:RestoreDefensiveDefaults("defensive")
                             Defensives.UpdateDefensivesOptions(addon)
                         end,
                     },
-                    -- Dynamic selfHealSpells entries added by UpdateDefensivesOptions
-                    cooldownHeader = {
-                        type = "header",
-                        name = L["Major Cooldowns Priority List"],
-                        order = 50,
-                    },
-                    cooldownInfo = {
-                        type = "description",
-                        name = L["Major Cooldowns Priority desc"],
-                        order = 51,
-                        fontSize = "small"
-                    },
-                    restoreCooldownDefaults = {
-                        type = "execute",
-                        name = L["Restore Class Defaults name"],
-                        desc = L["Restore Cooldowns Defaults desc"],
-                        order = 72,
-                        width = "normal",
-                        func = function()
-                            addon:RestoreDefensiveDefaults("cooldown")
-                            Defensives.UpdateDefensivesOptions(addon)
-                        end,
-                    },
-                    -- Dynamic cooldownSpells entries added by UpdateDefensivesOptions
+                    -- Dynamic defensiveSpells entries added by UpdateDefensivesOptions
                     -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
                     petRezHeader = {
                         type = "header",
@@ -413,7 +391,6 @@ function Defensives.UpdateDefensivesOptions(addon)
     -- Clear dynamic entries, preserve static ones
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
-        cooldownHeader = true, cooldownInfo = true, restoreCooldownDefaults = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }
@@ -432,10 +409,9 @@ function Defensives.UpdateDefensivesOptions(addon)
     if not defensives then return end
 
     local _, playerClass = UnitClass("player")
-    local selfHealSpells, cooldownSpells, petRezSpells, petHealSpells
+    local defensiveSpells, petRezSpells, petHealSpells
     if playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
-        selfHealSpells = defensives.classSpells[playerClass].selfHealSpells
-        cooldownSpells = defensives.classSpells[playerClass].cooldownSpells
+        defensiveSpells = defensives.classSpells[playerClass].defensiveSpells
         petRezSpells = defensives.classSpells[playerClass].petRezSpells
         petHealSpells = defensives.classSpells[playerClass].petHealSpells
     end
@@ -449,13 +425,9 @@ function Defensives.UpdateDefensivesOptions(addon)
 
     local updateFunc = function() Defensives.UpdateDefensivesOptions(addon) end
 
-    -- Self-heal spells (order 22.0-39.9, allowing 180 entries)
-    SpellSearch.CreateSpellListEntries(addon, spellListArgs, selfHealSpells, "selfheal", 22, updateFunc)
-    SpellSearch.CreateAddSpellInput(addon, spellListArgs, selfHealSpells, "selfheal", 40, "Self-Heals", updateFunc)
-
-    -- Cooldown spells (order 52.0-69.9, allowing 180 entries)
-    SpellSearch.CreateSpellListEntries(addon, spellListArgs, cooldownSpells, "cooldown", 52, updateFunc)
-    SpellSearch.CreateAddSpellInput(addon, spellListArgs, cooldownSpells, "cooldown", 70, "Cooldowns", updateFunc)
+    -- Unified defensive spells (order 22.0-39.9, allowing 180 entries)
+    SpellSearch.CreateSpellListEntries(addon, spellListArgs, defensiveSpells, "defensive", 22, updateFunc)
+    SpellSearch.CreateAddSpellInput(addon, spellListArgs, defensiveSpells, "defensive", 40, "Defensives", updateFunc)
 
     -- Pet Rez/Summon spells (order 82.0-99.9, pet classes only)
     if isPetClass and petRezSpells then

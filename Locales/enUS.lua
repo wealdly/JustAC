@@ -88,6 +88,8 @@ L["Defensive Display Mode"] = "Defensive Visibility"
 L["Defensive Display Mode desc"] = "When Health Low: Show only when health drops below thresholds\nIn Combat Only: Always show while in combat\nAlways: Show at all times"
 L["When Health Low"] = "When Health Low"
 L["In Combat Only"] = "In Combat Only"
+L["Ignore Health Priority"] = "Ignore Health Priority"
+L["Ignore Health Priority desc"] = "Show all defensive spells at equal priority regardless of health level. When disabled, cooldowns are prioritized at low health and potions at critical health."
 
 -- Detailed descriptions
 L["Max Icons desc"] = "Maximum spell icons to display (1 = primary, 2+ = queue)"
@@ -126,12 +128,15 @@ L["Enable Defensive Suggestions desc"] = "Show defensive spells when health drop
 L["Custom Hotkey desc"] = "Text to display as hotkey (e.g., 'F1', 'Ctrl+Q', 'Mouse4')"
 L["Move up desc"] = "Move up in priority"
 L["Move down desc"] = "Move down in priority"
-L["Restore Class Defaults desc"] = "Reset the self-heal list to default spells for your class"
+L["Restore Class Defaults desc"] = "Reset the defensive list to default spells for your class"
+L["Restore Defensive Defaults desc"] = "Reset the defensive list to default spells for your class"
 L["Restore Cooldowns Defaults desc"] = "Reset the cooldown list to default spells for your class"
 
 -- Additional sections
 L["Self-Heal Priority List"] = "Self-Heal Priority List (checked first)"
 L["Self-Heal Priority desc"] = "First usable spell is shown. Reorder to set priority."
+L["Defensive Priority List"] = "Defensive Priority List"
+L["Defensive Priority desc"] = "Unified priority order — self-heals and cooldowns in one list. Reorder to set priority."
 L["Restore Class Defaults"] = "Restore Class Defaults"
 L["Major Cooldowns Priority List"] = "Major Cooldowns Priority List (emergency)"
 L["Major Cooldowns Priority desc"] = "First usable spell is shown. Reorder to set priority."

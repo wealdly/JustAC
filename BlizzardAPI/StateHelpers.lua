@@ -63,11 +63,10 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
         return false, true, true, false, isProcced
     end
 
-    -- NOTE: We intentionally do NOT call IsSpellOnRealCooldown here.
-    -- Cooldown duration is a secret value in combat, so once we hide a defensive for being
-    -- on CD we can never reliably detect when it expires — it would stay hidden for the
-    -- whole combat session.  The cooldown swipe on the icon is the visual CD indicator.
-    -- Always show a known, non-redundant defensive regardless of cooldown state.
+    -- NOTE: Cooldown-based deprioritization is handled by the caller
+    -- (DefensiveEngine.GetUsableDefensiveSpells) via BlizzardAPI.IsSpellOnLocalCooldown()
+    -- and BlizzardAPI.IsSpellUsable(). This function only gates on known + non-redundant.
+    -- Spells on CD are deprioritized (sorted to end) but never hidden from the queue.
     return true, true, false, false, isProcced
 end
 

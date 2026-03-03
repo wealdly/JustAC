@@ -117,12 +117,15 @@ L["Enable Defensive Suggestions desc"] = "Показывать защитные 
 L["Custom Hotkey desc"] = "Текст для отображения как горячая клавиша (например, 'F1', 'Ctrl+Q', 'Мышь4')"
 L["Move up desc"] = "Переместить выше в приоритете"
 L["Move down desc"] = "Переместить ниже в приоритете"
-L["Restore Class Defaults desc"] = "Сбросить список самолечения на стандартные заклинания для вашего класса"
+L["Restore Class Defaults desc"] = "Сбросить список защитных на стандартные заклинания для вашего класса"
+L["Restore Defensive Defaults desc"] = "Сбросить список защитных на стандартные заклинания для вашего класса"
 L["Restore Cooldowns Defaults desc"] = "Сбросить список перезарядок на стандартные заклинания для вашего класса"
 
 -- Additional sections
 L["Self-Heal Priority List"] = "Список приоритетов самолечения (проверяется первым)"
 L["Self-Heal Priority desc"] = "Быстрые исцеления для ротации."
+L["Defensive Priority List"] = "Список приоритетов защитных"
+L["Defensive Priority desc"] = "Единый порядок приоритетов — самолечение и перезарядки в одном списке. Перетащите для изменения приоритета."
 L["Restore Class Defaults"] = "Восстановить настройки класса"
 L["Major Cooldowns Priority List"] = "Список приоритетов больших перезарядок (экстренные)"
 L["Major Cooldowns Priority desc"] = "Экстренная защита когда самолечение недоступно."
