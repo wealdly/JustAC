@@ -159,7 +159,7 @@ function Labels.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Icon Labels"],
-        order = 5.5,
+        order = 6,
         childGroups = "tab",
         args = {
             -- ── SUB-TAB 1: STANDARD QUEUE ───────────────────────────────

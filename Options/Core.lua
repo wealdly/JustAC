@@ -71,7 +71,7 @@ local function CreateOptionsTable(addon)
         type = "group",
         name = L["Profiles"],
         desc = L["Profiles desc"],
-        order = 6,
+        order = 8,
         args = {},
     }
 
@@ -222,7 +222,7 @@ function Options.Initialize(addon)
 
     if AceDBOptions then
         addon.optionsTable.args.profiles = AceDBOptions:GetOptionsTable(addon.db)
-        addon.optionsTable.args.profiles.order = 10
+        addon.optionsTable.args.profiles.order = 8
 
         -- Remove verbose AceDBOptions descriptions to save vertical space
         local profileArgs = addon.optionsTable.args.profiles.args
