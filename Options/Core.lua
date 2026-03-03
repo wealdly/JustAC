@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options/Core - Assembles all option tabs, handles initialization & slash commands
-local Options = LibStub:NewLibrary("JustAC-Options", 31)
+local Options = LibStub:NewLibrary("JustAC-Options", 32)
 if not Options then return end
 
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
@@ -9,8 +9,9 @@ local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Sub-module references (resolved lazily)
-local General     = LibStub("JustAC-OptionsGeneral", true)
-local Offensive   = LibStub("JustAC-OptionsOffensive", true)
+local General       = LibStub("JustAC-OptionsGeneral", true)
+local StandardQueue = LibStub("JustAC-OptionsStandardQueue", true)
+local Offensive     = LibStub("JustAC-OptionsOffensive", true)
 local Overlay     = LibStub("JustAC-OptionsOverlay", true)
 local Defensives  = LibStub("JustAC-OptionsDefensives", true)
 local GapClosers  = LibStub("JustAC-OptionsGapClosers", true)
@@ -57,8 +58,9 @@ local function CreateOptionsTable(addon)
     local args = {}
 
     -- Each sub-module contributes its tab via CreateTabArgs
-    if General   then args.general          = General.CreateTabArgs(addon)   end
-    if Overlay   then args.nameplateOverlay = Overlay.CreateTabArgs(addon)   end
+    if General       then args.general          = General.CreateTabArgs(addon)       end
+    if StandardQueue then args.standardQueue    = StandardQueue.CreateTabArgs(addon)  end
+    if Overlay       then args.nameplateOverlay = Overlay.CreateTabArgs(addon)        end
     if Offensive then args.offensive        = Offensive.CreateTabArgs(addon) end
     if Defensives then args.defensives      = Defensives.CreateTabArgs(addon) end
     if Labels    then args.iconLabels       = Labels.CreateTabArgs(addon)    end
