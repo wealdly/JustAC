@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 2
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 3
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -20,6 +20,9 @@ local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undef
 local UnitIsCrowdControlled = UnitIsCrowdControlled ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local Unsecret      = BlizzardAPI.Unsecret
+local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
+local strsplit      = strsplit       ---@diagnostic disable-line: undefined-global
+local wipe          = wipe
 
 -- Pre-built boss unit tokens (avoids string concat on hot path)
 local BOSS_UNITS = { "boss1", "boss2", "boss3", "boss4", "boss5" }
@@ -158,6 +161,28 @@ end
 -- read. All such approaches are blocked by Blizzard's secret value system.
 local cachedTargetCreatureType = nil
 
+-- Instance-level CC immunity cache (keyed by NPC ID from GUID).
+-- UnitGUID() is SECRET in combat, so NPC ID is only populated when a target is
+-- acquired out of combat (pre-pull) or on PLAYER_REGEN_ENABLED.  When a CC
+-- failure is detected and the NPC ID is known, that mob TYPE is remembered for
+-- the rest of the instance — all future mobs with the same NPC ID are suppressed
+-- without needing to re-learn.
+local ccImmuneNPCIDs = {}           -- [npcID] = true; persists across pulls
+local currentTargetNPCID = nil      -- NPC ID from GUID when readable
+
+--- Extract NPC ID from a WoW GUID string.
+--- Creature GUIDs: "Creature-0-SERVERID-INSTANCEID-ZONEID-NPCID-SPAWNUID"
+--- Vehicle GUIDs:  "Vehicle-0-..." (same layout)
+--- Returns tonumber(npcID) or nil for non-creature GUIDs (Player, Pet, etc.).
+local function ExtractNPCID(guid)
+    if not guid then return nil end
+    local unitType, _, _, _, _, npcID = strsplit("-", guid)
+    if unitType == "Creature" or unitType == "Vehicle" then
+        return tonumber(npcID)
+    end
+    return nil
+end
+
 -- CC-failure learning: if we suggested a CC and the target didn't become
 -- crowd-controlled, mark the current target as CC-immune for the rest of
 -- combat.  Uses UnitIsCrowdControlled() which is NeverSecret (verified
@@ -172,6 +197,7 @@ function BlizzardAPI.RefreshTargetCreatureType()
     -- nil causes IsTargetCCImmune to fail-open (assume CC-able), which is the safe
     -- default. Keeping the wrong type would suppress CC on a valid target.
     cachedTargetCreatureType = nil
+    currentTargetNPCID = nil
     -- Also reset CC-failure learning on target switch — the new target might
     -- be CC-able even if the previous one wasn't.
     ccCastTime = 0
@@ -182,6 +208,12 @@ function BlizzardAPI.RefreshTargetCreatureType()
     -- so IsTargetCCImmune fails-open rather than using wrong data.
     if not IsSecretValue(ct) then
         cachedTargetCreatureType = ct
+    end
+    -- Extract NPC ID from GUID (only readable out of combat; secret in combat).
+    -- Used to persist CC immunity per mob TYPE across pulls within an instance.
+    local guid = UnitGUID and UnitGUID("target")
+    if guid and not IsSecretValue(guid) then
+        currentTargetNPCID = ExtractNPCID(guid)
     end
 end
 
@@ -194,12 +226,42 @@ function BlizzardAPI.NotifyCCCastOnTarget()
     -- immune, keep that knowledge.
 end
 
---- Called on PLAYER_REGEN_ENABLED to reset CC-failure learning for the next
---- combat session.
+--- Called on PLAYER_REGEN_ENABLED to reset per-target CC-failure learning for
+--- the next combat session.  Instance-level ccImmuneNPCIDs is NOT cleared here
+--- — it persists across pulls until the player changes zone.
 function BlizzardAPI.ResetCCFailureLearning()
     ccCastTime = 0
     ccFailureObserved = false
     ccFailureChecked  = false
+end
+
+--- Called on PLAYER_REGEN_ENABLED BEFORE ResetCCFailureLearning to backfill the
+--- instance NPC ID cache.  If a CC failure was observed on a target whose NPC ID
+--- wasn't known during combat (tab-targeted mid-fight), and the player is still
+--- targeting that mob when combat ends, we can now read GUID and persist the
+--- immunity for future pulls.
+function BlizzardAPI.BackfillCCImmunity()
+    if not ccFailureObserved then return end
+    if currentTargetNPCID then
+        -- NPC ID was known during combat — already persisted in IsTargetCCImmune
+        return
+    end
+    -- Combat just ended; GUID is readable again. If the player is still
+    -- targeting the mob that resisted CC, extract its NPC ID.
+    local guid = UnitGUID and UnitGUID("target")
+    if guid and not IsSecretValue(guid) then
+        local npcID = ExtractNPCID(guid)
+        if npcID then
+            ccImmuneNPCIDs[npcID] = true
+        end
+    end
+end
+
+--- Clear the instance-level CC immunity cache.  Called on PLAYER_ENTERING_WORLD
+--- (zone changes, loading screens) so stale data from a previous instance or
+--- zone doesn't bleed into the next one.
+function BlizzardAPI.ResetInstanceCCCache()
+    wipe(ccImmuneNPCIDs)
 end
 
 function BlizzardAPI.IsTargetCCImmune()
@@ -225,8 +287,14 @@ function BlizzardAPI.IsTargetCCImmune()
     -- Hex), but universal stuns (Kidney Shot, Cheap Shot, HoJ, Leg Sweep)
     -- work on them. Our CC lists contain universal stuns.
 
-    -- 3) CC-failure learning: if we cast a CC on this target and it didn't
-    --    take effect, treat the target as CC-immune.  Uses
+    -- 3) Instance-level NPC ID cache: if we previously learned that this mob
+    --    TYPE is CC-immune (on a prior pull), suppress CC immediately.
+    if currentTargetNPCID and ccImmuneNPCIDs[currentTargetNPCID] then
+        return true
+    end
+
+    -- 4) Per-target CC-failure learning: if we cast a CC on this target and it
+    --    didn't take effect, treat the target as CC-immune.  Uses
     --    UnitIsCrowdControlled (NeverSecret, verified 2026-02-24).
     --    Early-out: skip the timer check if no CC is pending.
     if ccFailureObserved then return true end
@@ -239,6 +307,11 @@ function BlizzardAPI.IsTargetCCImmune()
                 -- Secret value — can't determine, fail-open
             elseif not isCCd then
                 ccFailureObserved = true
+                -- Persist to instance cache if NPC ID is known (target was
+                -- acquired out of combat or NPC ID was populated earlier).
+                if currentTargetNPCID then
+                    ccImmuneNPCIDs[currentTargetNPCID] = true
+                end
                 return true
             end
         end
