@@ -156,8 +156,8 @@ L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "Show Health Bar"
-L["Show Health Bar desc"] = "Show a compact health bar next to the queue"
+L["Show Health Bars"] = "Show Health Bars"
+L["Show Health Bars desc"] = "Show compact player and pet health bars next to the queue"
 L["disabled when Defensive Queue is enabled"] = "disabled when Defensive Queue is enabled"
 L["Show Pet Health Bar"] = "Show Pet Health Bar"
 L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only). Uses teal color. Auto-hides when no pet is active."
@@ -263,6 +263,8 @@ L["Interrupt Mode CC Shielded"] = "Kick + CC — Also stun/fear uninterruptible 
 L["Interrupt Mode CC Prefer"] = "Prefer CC — Stuns over kicks; kick on bosses"
 L["Nameplate Show Health Bars"] = "Show Health Bars"
 L["Nameplate Show Health Bars desc"] = "Show compact player and pet health bars above the defensive icon cluster. Pet bar auto-hides when no pet is active. Hides automatically when no defensives are visible."
+L["Replace Quest Indicator"] = "Replace Quest Indicator"
+L["Replace Quest Indicator desc"] = "Hide the engine-rendered quest exclamation mark on nameplates and show our own version above the nameplate, so it doesn't overlap with the icon queue."
 
 -- Reset buttons
 L["Reset to Defaults"] = "Reset to Defaults"

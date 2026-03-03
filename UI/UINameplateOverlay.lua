@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 4)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 5)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -53,9 +53,12 @@ local currentNameplate = nil  -- nameplate frame we're currently anchored to
 local savedCCAnchors   = nil  -- saved Blizzard CC frame anchors for restoration
 local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
 local savedNameplateShowEnemies = nil  -- original CVar value before we forced it on
+local savedShowQuestUnitCircles = nil -- original CVar value before we suppressed quest indicators
+local questIndicator   = nil  -- our replacement quest "!" texture on the nameplate
 local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-global
 
 -- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
 local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainRelPt, chainOffX, chainOffY, iconSpacing }
@@ -705,6 +708,29 @@ function UINameplateOverlay.Create(addon)
         petHealthBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
     end
 
+    -- Quest indicator replacement: suppress engine-rendered quest circles and
+    -- render our own "!" icon on the nameplate.  Our version is positioned so
+    -- it cannot overlap the icon queue.
+    if npo.replaceQuestIndicator ~= false then
+        if savedShowQuestUnitCircles == nil then
+            savedShowQuestUnitCircles = GetCVar("ShowQuestUnitCircles")
+        end
+        if GetCVar("ShowQuestUnitCircles") ~= "0" then
+            SetCVar("ShowQuestUnitCircles", "0")
+        end
+        -- Create the replacement texture (hidden until UpdateAnchor detects a quest mob)
+        local qSize = math_floor(iconSize * 0.65)
+        questIndicator = CreateFrame("Frame", nil, UIParent)
+        questIndicator:SetSize(qSize, qSize)
+        questIndicator:SetFrameStrata("HIGH")
+        questIndicator:EnableMouse(false)
+        local qTex = questIndicator:CreateTexture(nil, "ARTWORK")
+        qTex:SetAllPoints(questIndicator)
+        qTex:SetAtlas("QuestNormal", false)
+        questIndicator.texture = qTex
+        questIndicator:Hide()
+    end
+
     addon.nameplateIcons    = dpsIcons
     addon.nameplateDefIcons = defIcons
 
@@ -753,6 +779,14 @@ function UINameplateOverlay.Destroy(addon)
 
     RestoreCCFrames()  -- restore Blizzard CC frame anchors before wiping state
 
+    -- Clean up quest indicator
+    if questIndicator then
+        questIndicator:ClearAllPoints()
+        questIndicator:Hide()
+        questIndicator:SetParent(nil)
+        questIndicator = nil
+    end
+
     wipe(dpsIcons)
     wipe(defIcons)
     currentNameplate = nil
@@ -764,6 +798,14 @@ function UINameplateOverlay.Destroy(addon)
             SetCVar("nameplateShowEnemies", savedNameplateShowEnemies)
         end
         savedNameplateShowEnemies = nil
+    end
+
+    -- Restore the user's original ShowQuestUnitCircles CVar.
+    if savedShowQuestUnitCircles ~= nil then
+        if GetCVar("ShowQuestUnitCircles") ~= savedShowQuestUnitCircles then
+            SetCVar("ShowQuestUnitCircles", savedShowQuestUnitCircles)
+        end
+        savedShowQuestUnitCircles = nil
     end
 
     if addon then
@@ -800,9 +842,29 @@ function UINameplateOverlay.UpdateAnchor(addon)
         -- Displace Blizzard CC frames so they don't overlap our icon cluster
         DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, showHealthBar, iconSize)
         -- Individual icons become visible when Render() / RenderDefensives() fills them
+
+        -- Quest indicator: show our replacement "!" on quest-relevant targets.
+        -- Anchored ABOVE the nameplate center so it never collides with our side-anchored queue.
+        if questIndicator then
+            questIndicator:ClearAllPoints()
+            local isQuest = UnitIsQuestBoss and UnitIsQuestBoss("target")
+            if isQuest then
+                questIndicator:SetParent(nameplate)
+                questIndicator:SetPoint("BOTTOM", nameplate, "TOP", 0, 2)
+                questIndicator:Show()
+            else
+                questIndicator:Hide()
+            end
+        end
     else
         currentNameplate = nil
         RestoreCCFrames()  -- put CC frames back when we detach
+
+        -- Hide quest indicator when no valid nameplate
+        if questIndicator then
+            questIndicator:ClearAllPoints()
+            questIndicator:Hide()
+        end
 
         -- Detach and hide every element
         for _, icon in ipairs(dpsIcons) do
