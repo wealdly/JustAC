@@ -69,7 +69,9 @@ L["Up"] = "Cima"
 L["Dn"] = "Baixo"
 
 -- Descriptions
-L["General description"] = "Configurar a aparência e o comportamento da fila de magias."
+L["General description"] = "Configurações compartilhadas entre a fila padrão e a sobreposição."
+L["Standard Queue description"] = "Configurar a aparência e o comportamento da fila de magias."
+L["Shared Behavior"] = "Comportamento compartilhado"
 L["Icon Layout"] = "Layout dos ícones"
 L["Visibility"] = "Visibilidade"
 L["Queue Content"] = "Conteúdo da fila"
@@ -239,6 +241,7 @@ L["Nameplate Show Health Bars desc"] = "Mostrar barras de vida compactas do joga
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Redefinir padrões"
 L["Reset General desc"] = "Redefinir todos os ajustes gerais para os valores padrão."
+L["Reset Standard Queue desc"] = "Redefinir todos os ajustes da fila padrão para os valores padrão."
 L["Reset Offensive desc"] = "Redefinir ajustes ofensivos. A lista negra não é afetada."
 L["Reset Overlay desc"] = "Redefinir todos os ajustes do Overlay para os valores padrão."
 L["Reset Defensives desc"] = "Redefinir ajustes defensivos. As listas de magias não são afetadas."

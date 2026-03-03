@@ -69,7 +69,9 @@ L["Up"] = "Haut"
 L["Dn"] = "Bas"
 
 -- Descriptions
-L["General description"] = "Configurer l'apparence et le comportement de la file de sorts."
+L["General description"] = "Paramètres partagés entre la file standard et l'overlay."
+L["Standard Queue description"] = "Configurer l'apparence et le comportement de la file de sorts."
+L["Shared Behavior"] = "Comportement partagé"
 L["Icon Layout"] = "Disposition des icônes"
 L["Visibility"] = "Visibilité"
 L["Queue Content"] = "Contenu de la file"
@@ -239,6 +241,7 @@ L["Nameplate Show Health Bars desc"] = "Afficher des barres de santé compactes 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Réinitialiser"
 L["Reset General desc"] = "Réinitialiser tous les paramètres généraux à leurs valeurs par défaut."
+L["Reset Standard Queue desc"] = "Réinitialiser tous les paramètres de la file standard à leurs valeurs par défaut."
 L["Reset Offensive desc"] = "Réinitialiser les paramètres offensifs. La liste noire n'est pas affectée."
 L["Reset Overlay desc"] = "Réinitialiser tous les paramètres de l'Overlay à leurs valeurs par défaut."
 L["Reset Defensives desc"] = "Réinitialiser les paramètres défensifs. Les listes de sorts ne sont pas affectées."
