@@ -16,25 +16,35 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 
 ## Features
 
-### Dual Display Modes
+### Dual Display Surfaces
 
-- **Standard Queue** — Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring.
-- **Nameplate Overlay** — Icon cluster attached directly to the target nameplate. Fully independent settings. Either or both modes can run simultaneously.
+- **Standard Queue** — Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring. Sub-tabs for Layout, Offensive Display, Defensive Display, and Appearance.
+- **Nameplate Overlay** — Icon cluster attached directly to the target nameplate. Mirrors the Standard Queue's sub-tab structure with independent settings. Falls back to the main panel when the nameplate isn't rendered.
+- Either or both surfaces can run simultaneously via the Display Mode setting.
 
 ### Smart Interrupt Reminders
 
 - Shows your interrupt ability before the DPS queue when the target is casting
 - **Important Only** mode filters to lethal/must-interrupt casts (`C_Spell.IsSpellImportant`)
 - **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts
-- Boss-aware: CC abilities automatically filtered against CC-immune targets
+- Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
+- Third-party nameplate support — auto-discovers cast bars from Plater, ElvUI, and Blizzard nameplates
 
 ### Defensive Suggestions
 
-- Two-tier health-based system: self-heals at ~80% HP, major cooldowns at ~60% HP
+- Unified priority list: self-heals and major cooldowns combined with configurable per-class ordering
 - Procced defensives (Victory Rush, free heals) shown at any health level
+- Usability-aware visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate on cooldown
 - Pet rez/summon and pet heal support for Hunter, Warlock, Death Knight
 - Compact health bar (player + pet) with automatic resize
 - Items supported (potions, healthstones) with auto-detection from action bars
+- Combat-safe health detection via LowHealthFrame signal (~35%) for 12.0 secret-value compatibility
+
+### Gap-Closer Suggestions
+
+- Suggests movement/gap-closer spells when the target is out of melee range
+- Injects into the offensive queue for natural flow
+- Push-based range detection via `C_ActionBar.EnableActionRangeCheck` for minimal polling
 
 ### Smart Hotkey Detection
 
@@ -43,6 +53,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Handles dynamic spell transforms (e.g. Templar Strike → Templar Slash) via override scanning
 - Gamepad support with Xbox/PlayStation/Generic button icon styles
 - Custom hotkey overrides via right-click menu
+- Key press flash feedback when you press the suggested keybind
 
 ### Intelligent Filtering
 
@@ -51,28 +62,37 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
 - Combat-safe aura tracking via `auraInstanceID` mapping — detects buff removal and reapply even when `spellId` is secret
+- NeverSecret aura whitelist (~50 spells) for direct resolution without instance-map lookup
 
 ### Performance Optimized
 
 - Event-driven updates with minimal polling
-- Throttled cooldown/range checks (6-7x/sec instead of every frame)
+- Push-based cooldown and range events (`SPELL_UPDATE_COOLDOWN`, `ACTION_RANGE_CHECK_UPDATE`)
 - Pooled table allocation to reduce garbage collection pressure
 - Cached spell info, override lookups, and filter results per update cycle
-- Gamepad keybind hash computed once, not per-lookup
+- 12.0 opaque cooldown pipeline (`SetCooldownFromDurationObject`) bypasses secret-value handling entirely
 
 ## Installation
 
-1. Download and extract to `Interface\AddOns\JustAC`
+1. Download from [CurseForge](https://www.curseforge.com/wow/addons/justac) or extract to `Interface\AddOns\JustAC`
 2. Enable "Assisted Combat" in WoW's Game Menu → Edit Mode → Combat section
 3. `/jac` to access options
 
 ## Configuration
 
-- **Display Mode** — Standard Queue, Nameplate Overlay, Both, or Disabled
-- **Interrupt Reminder** — Important Only (default), All Casts, or Off; with optional CC for non-important casts
-- **Defensives** — Enable/disable, configure health thresholds, spell priority lists per class
-- **Per-Spec Profiles** — Automatic profile switching by specialization; set healer specs to "Disabled"
-- **Visibility** — Hide out of combat, when mounted, for healer specs, or without hostile target
+Options are organized into 8 tabs:
+
+| Tab | Purpose |
+|-----|---------|
+| **General** | Display mode, visibility rules, mounting/combat/target toggles |
+| **Standard Queue** | Layout, offensive display, defensive display, appearance (4 sub-tabs) |
+| **Overlay** | Nameplate overlay layout, offensive display, defensive display (3 sub-tabs) |
+| **Offensive** | Queue content settings, blacklist, gap-closers, interrupt mode |
+| **Defensives** | Queue content settings, spell priority list, health thresholds |
+| **Labels** | Icon text overlays (keybinds, spell names) per surface |
+| **Hotkeys** | Custom keybind overrides per spell |
+| **Profiles** | AceDB profiles with automatic per-spec switching |
+
 - **Localization** — English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Simplified/Traditional Chinese
 
 ## Acknowledgments & Credits
@@ -121,11 +141,11 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; auraInstanceID mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; fail-open design throughout
+- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
 - **No External Spell Databases** — Native spell classification (SpellDB) replaces LibPlayerSpells
-- **Modular Architecture** — 17 Lua files (15 LibStub modules) with clear dependency order
-- **Event-Driven** — Minimal polling; events mark queues dirty for responsive updates
-- **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven patterns)
+- **Modular Architecture** — 30 Lua files across 4 subdirectories (BlizzardAPI, UI, Options, Locales) with clear dependency order
+- **Event-Driven** — Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
+- **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)
 
 ## Commands
 
