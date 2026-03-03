@@ -137,8 +137,8 @@ L["Major Cooldowns Priority desc"] = "Défensifs d'urgence quand auto-soins indi
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "Afficher la barre de santé"
-L["Show Health Bar desc"] = "Barre de santé compacte à côté de la file"
+L["Show Health Bars"] = "Afficher les barres de santé"
+L["Show Health Bars desc"] = "Barres de santé compactes du joueur et du familier à côté de la file"
 L["disabled when Defensive Queue is enabled"] = "désactivé quand la file défensive est activée"
 L["Defensive Icon Scale"] = "Échelle de l'icône défensive"
 L["Defensive Icon Scale desc"] = "Multiplicateur d'échelle pour les icônes défensives"

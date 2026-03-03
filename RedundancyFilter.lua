@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 39)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 40)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -591,8 +591,16 @@ RefreshAuraCache = function()
                     if ok and realSpellId and NEVER_SECRET_AURA_SPELLS[realSpellId] then
                         -- spellId was readable (NeverSecret) despite IsSecretValue returning true.
                         -- Process as a normal non-secret aura.
+                        -- IMPORTANT: Don't use BlizzardAPI.GetAuraTiming here — it calls
+                        -- Unsecret() which trusts issecretvalue(). For NeverSecret fields,
+                        -- issecretvalue() still returns true (generic marking), but the
+                        -- actual values ARE readable via forced evaluation. Use the same
+                        -- pcall bypass used for spellId to extract duration/expirationTime.
                         cachedAuras.byID[realSpellId] = true
-                        local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
+                        local durOk, dur = pcall(function() return auraData.duration + 0 end)
+                        local expOk, exp = pcall(function() return auraData.expirationTime + 0 end)
+                        if not durOk then dur = nil end
+                        if not expOk then exp = nil end
                         local halfwayThreshold = nil
                         if dur and dur > 0 and exp and exp > 0 then
                             halfwayThreshold = exp - (dur * 0.2)

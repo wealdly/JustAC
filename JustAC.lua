@@ -83,6 +83,7 @@ local defaults = {
             defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
             defensiveGlowMode    = "all",
             showHealthBar        = true,
+            replaceQuestIndicator = true,  -- suppress engine "!" on nameplates; show our own
             -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
                 hotkey   = { fontScale = 1.0 },

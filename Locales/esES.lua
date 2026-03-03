@@ -135,8 +135,8 @@ L["Major Cooldowns Priority desc"] = "Defensivos de emergencia cuando la salud e
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "Mostrar barra de salud"
-L["Show Health Bar desc"] = "Barra de salud compacta junto a la cola"
+L["Show Health Bars"] = "Mostrar barras de salud"
+L["Show Health Bars desc"] = "Barras de salud compactas del jugador y mascota junto a la cola"
 L["disabled when Defensive Queue is enabled"] = "desactivado cuando la cola defensiva está habilitada"
 L["Defensive Icon Scale"] = "Escala de icono defensivo"
 L["Defensive Icon Scale desc"] = "Escala de iconos defensivos"

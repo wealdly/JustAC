@@ -111,6 +111,20 @@ function Overlay.CreateTabArgs(addon)
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
+                    replaceQuestIndicator = {
+                        type = "toggle",
+                        name = L["Replace Quest Indicator"],
+                        desc = L["Replace Quest Indicator desc"],
+                        order = 6,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.replaceQuestIndicator ~= false end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.replaceQuestIndicator = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function() return overlayDisabled(addon) end,
+                    },
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -130,6 +144,7 @@ function Overlay.CreateTabArgs(addon)
                             npo.iconSize      = 32
                             npo.iconSpacing   = 2
                             npo.opacity       = 1.0
+                            npo.replaceQuestIndicator = true
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end

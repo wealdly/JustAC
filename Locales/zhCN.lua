@@ -137,8 +137,8 @@ L["Major Cooldowns Priority desc"] = "第一个可用的法术将被显示。拖
 -- Defensive thresholds
 
 -- Defensive display options
-L["Show Health Bar"] = "显示生命条"
-L["Show Health Bar desc"] = "在队列旁显示紧凑型生命条"
+L["Show Health Bars"] = "显示生命条"
+L["Show Health Bars desc"] = "在队列旁显示紧凑型玩家和宠物生命条"
 L["disabled when Defensive Queue is enabled"] = "防御队列启用时已禁用"
 L["Defensive Icon Scale"] = "图标缩放"
 L["Defensive Icon Scale desc"] = "防御法术图标的缩放倍数"
