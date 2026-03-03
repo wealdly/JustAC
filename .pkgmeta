@@ -1,5 +1,9 @@
 package-as: JustAC
 
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
 ignore:
     - .git
     - .github
