@@ -3,4 +3,16 @@ dist/
 
 # Development files
 .luarc.json
+.claude/
+.vscode/
 *.code-workspace
+
+# Duplicate nested Ace3 lib folders (packaging artifact)
+Libs/AceAddon-3.0/AceAddon-3.0/
+Libs/AceConsole-3.0/AceConsole-3.0/
+Libs/AceDB-3.0/AceDB-3.0/
+Libs/AceDBOptions-3.0/AceDBOptions-3.0/
+Libs/AceEvent-3.0/AceEvent-3.0/
+Libs/AceTimer-3.0/AceTimer-3.0/
+Libs/CallbackHandler-1.0/CallbackHandler-1.0/
+Libs/LibStub/LibStub/
