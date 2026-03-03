@@ -95,6 +95,28 @@ function Defensives.CreateTabArgs(addon)
                 name = L["Display"],
                 order = 5,
             },
+            glowMode = {
+                type = "select",
+                name = L["Highlight Mode"],
+                desc = L["Highlight Mode desc"],
+                order = 7,
+                width = "normal",
+                values = {
+                    all         = L["All Glows"],
+                    primaryOnly = L["Primary Only"],
+                    procOnly    = L["Proc Only"],
+                    none        = L["No Glows"],
+                },
+                sorting = {"all", "primaryOnly", "procOnly", "none"},
+                get = function()
+                    return addon.db.profile.defensives.glowMode or "all"
+                end,
+                set = function(_, val)
+                    addon.db.profile.defensives.glowMode = val
+                    addon:ForceUpdateAll()
+                end,
+                disabled = function() return not addon.db.profile.defensives.enabled end,
+            },
             maxIcons = {
                 type = "range",
                 name = L["Defensive Max Icons"],
@@ -120,38 +142,6 @@ function Defensives.CreateTabArgs(addon)
                 set = function(_, val)
                     addon.db.profile.defensives.iconScale = val
                     addon:UpdateFrameSize()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            glowMode = {
-                type = "select",
-                name = L["Highlight Mode"],
-                desc = L["Highlight Mode desc"],
-                order = 7.5,
-                width = "normal",
-                values = {
-                    all = L["All Glows"],
-                    primaryOnly = L["Primary Only"],
-                    procOnly = L["Proc Only"],
-                    none = L["No Glows"],
-                },
-                sorting = {"all", "primaryOnly", "procOnly", "none"},
-                get = function() return addon.db.profile.defensives.glowMode or "all" end,
-                set = function(_, val)
-                    addon.db.profile.defensives.glowMode = val
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            showFlash = {
-                type = "toggle",
-                name = L["Show Key Press Flash"],
-                desc = L["Show Key Press Flash desc"],
-                order = 7.7,
-                width = "full",
-                get = function() return addon.db.profile.defensives.showFlash ~= false end,
-                set = function(_, val)
-                    addon.db.profile.defensives.showFlash = val
                 end,
                 disabled = function() return not addon.db.profile.defensives.enabled end,
             },
@@ -223,25 +213,23 @@ function Defensives.CreateTabArgs(addon)
                         or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
                 end,
             },
-            -- RESET (19.8+)
+            -- RESET (990+)
             resetHeader = {
                 type = "header",
                 name = "",
-                order = 19.8,
+                order = 990,
             },
             resetDefaults = {
                 type = "execute",
                 name = L["Reset to Defaults"],
                 desc = L["Reset Defensives desc"],
-                order = 19.9,
+                order = 991,
                 width = "normal",
                 func = function()
                     local def = addon.db.profile.defensives
                     -- Synced with JustAC.lua profile defaults
                     def.enabled          = true
                     def.showProcs        = true
-                    def.glowMode         = "all"
-                    def.showFlash        = true
                     def.position         = "SIDE1"
                     def.showHealthBar    = true
                     def.showPetHealthBar = true
@@ -253,6 +241,7 @@ function Defensives.CreateTabArgs(addon)
                     def.allowItems        = true
                     def.autoInsertPotions = true
                     def.displayMode       = "always"
+                    def.glowMode          = "all"
                     -- Clear legacy migration keys
                     def.showOnlyInCombat    = nil
                     def.alwaysShowDefensive = nil

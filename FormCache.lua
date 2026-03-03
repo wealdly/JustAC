@@ -261,28 +261,6 @@ function FormCache.GetActiveFormName()
     return cachedFormData.currentFormName
 end
 
-function FormCache.GetFormInfo(formID)
-    UpdateFormCache()
-    if formID == nil then
-        return {
-            id = cachedFormData.currentStanceIndex,
-            name = cachedFormData.currentFormName,
-            current = true
-        }
-    end
-    return cachedFormData.availableForms[formID]
-end
-
-function FormCache.GetAvailableForms()
-    UpdateFormCache()
-    local forms = {}
-    for formID, formData in pairs(cachedFormData.availableForms) do
-        forms[#forms + 1] = formData
-    end
-    table.sort(forms, function(a, b) return a.id < b.id end)
-    return forms
-end
-
 function FormCache.InvalidateCache()
     cachedFormData.valid = false
     cachedFormData.lastUpdate = 0
@@ -291,11 +269,6 @@ end
 function FormCache.InvalidateSpellMapping()
     cachedFormData.lastFullScan = 0
     wipe(cachedFormData.spellToFormMap)
-end
-
-function FormCache.OnFormChanged()
-    FormCache.InvalidateCache()
-    UpdateFormCache()
 end
 
 function FormCache.OnPlayerLogin()
@@ -310,10 +283,6 @@ function FormCache.OnPlayerLogin()
     else
         UpdateFormCache()
     end
-end
-
-function FormCache.OnSpellsChanged()
-    FormCache.InvalidateSpellMapping()
 end
 
 function FormCache.GetFormIDBySpellID(spellID)
@@ -366,37 +335,3 @@ function FormCache.GetFormIDBySpellID(spellID)
     return mapping[spellID]
 end
 
-function FormCache.ShowFormDebugInfo()
-    UpdateFormCache()
-    local playerClass = select(2, UnitClass("player")) or "UNKNOWN"
-    
-    print("|JAC| === Form Debug Information ===")
-    print("|JAC| Player Class: " .. playerClass)
-    print("|JAC| Current Form: " .. cachedFormData.currentFormName .. " (Stance Index: " .. cachedFormData.currentStanceIndex .. ")")
-    print("|JAC| Stance index corresponds to [form:X] macro conditional")
-    print("|JAC| Available Forms:")
-    
-    local availableForms = FormCache.GetAvailableForms()
-    for _, formData in ipairs(availableForms) do
-        local status = formData.current and " (CURRENT)" or ""
-        local available = formData.available and "✓" or "✗"
-        local spellInfo = formData.spellID and (" spellID:" .. formData.spellID) or " (no spell)"
-        print("|JAC|   [" .. available .. "] " .. formData.name .. " (Index: " .. formData.id .. ")" .. spellInfo .. status)
-    end
-    
-    print("|JAC| Spell-to-Form Mapping:")
-    local mapping = cachedFormData.spellToFormMap
-    local count = 0
-    for spellID, formIndex in pairs(mapping) do
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or "Unknown"
-        print("|JAC|   " .. spellName .. " (" .. spellID .. ") -> stance index " .. formIndex)
-        count = count + 1
-    end
-    
-    if count == 0 then
-        print("|JAC|   (No mapped spells)")
-    end
-    
-    print("|JAC| ===========================")
-end

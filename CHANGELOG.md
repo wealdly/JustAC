@@ -1,6 +1,34 @@
 
 # Changelog
 
+## [4.5.1] - 2026-03-02
+
+### Fixed
+- Keybind not showing on primary icon when a spell procs (e.g. Infernal Bolt, Ruination for Demo Lock) — empty hotkey cache was never retried due to Lua truthiness of empty string
+- Gap-closer glow on nameplate overlay defaulted to ON instead of matching main panel (OFF by default)
+- DefensiveEngine `showProcs` override precedence (Lua and/or short-circuit with false values)
+
+### Changed
+- **Centralized shared settings across Standard Queue and Nameplate Overlay:**
+  - **Interrupt Mode** — now a single setting in the Offensive tab, applied to both surfaces
+  - **Key Press Flash** — now a single toggle in the Offensive tab, applied to both surfaces
+  - **Highlight Mode** — offensive and defensive queues now share one `glowMode` (overlay keeps its own)
+  - **Icon Labels** — show toggle is shared; font scale, color, and anchor are independently configurable per surface via mirrored sub-groups within each label type
+  - **Health Bars** — removed confusing fallback toggles from the General tab; the Defensives tab is now the sole owner
+- Reduced update pipeline latency for faster rotation display after casting (debounce timers halved across SpellQueue, UIRenderer, UINameplateOverlay, and OnUpdate)
+- Shortened interrupt mode dropdown labels across all locales
+- Defensive health thresholds in combat (12.0 secret health adaptation):
+  - Self-heal tier now always active in combat (configurable threshold undetectable when UnitHealth is secret)
+  - Cooldown tier triggers at LowHealthFrame "low" signal (~35%) instead of waiting for "critical" (~20%)
+  - Out-of-combat thresholds unchanged
+
+### Added
+- Defensive queue usability visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate when on cooldown (mirrors offensive queue behavior)
+- Defensive queue usability-aware sorting: unusable spells deprioritized to the bottom so castable abilities appear first
+
+### Improved
+- DefensiveEngine single-pass iteration and pooled table sorting (reduces GC pressure)
+
 ## [4.5.0] - 2026-03-02
 
 ### Added

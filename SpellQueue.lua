@@ -209,12 +209,6 @@ function SpellQueue.GetCurrentSpellQueue()
         return lastSpellIDs or {}
     end
     
-    if profile.hideQueueForHealers and BlizzardAPI.IsCurrentSpecHealer and BlizzardAPI.IsCurrentSpecHealer() then
-        lastShouldShowQueue = false
-        lastQueueUpdate = now
-        return lastSpellIDs or {}
-    end
-    
     if profile.hideQueueWhenMounted then
         local isMounted = IsMounted()
         if not isMounted then
@@ -524,43 +518,3 @@ function SpellQueue.InvalidateRotationCache()
     end
 end
 
--- Debug function for testing
-function SpellQueue.ShowAssistedCombatRaw()
-    print("|JAC| === Raw Assisted Combat Data ===")
-    
-    local primarySpell = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
-    local rotationSpells = BlizzardAPI and BlizzardAPI.GetRotationSpells and BlizzardAPI.GetRotationSpells()
-    
-    print("|JAC| Primary Spell: " .. tostring(primarySpell))
-    if primarySpell and primarySpell > 0 then
-        local spellInfo = SpellQueue.GetCachedSpellInfo(primarySpell)
-        if spellInfo then
-            print("|JAC|   Name: " .. spellInfo.name)
-        end
-    end
-    
-    print("|JAC| Rotation Spells:")
-    if rotationSpells and #rotationSpells > 0 then
-        for i, spellID in ipairs(rotationSpells) do
-            local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
-            local name = spellInfo and spellInfo.name or "Unknown"
-            print("|JAC|   " .. i .. ": " .. name .. " (" .. spellID .. ")")
-        end
-    else
-        print("|JAC|   None")
-    end
-    
-    local currentQueue = SpellQueue.GetCurrentSpellQueue()
-    print("|JAC| Current Queue:")
-    if currentQueue and #currentQueue > 0 then
-        for i, spellID in ipairs(currentQueue) do
-            local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
-            local name = spellInfo and spellInfo.name or "Unknown"
-            print("|JAC|   " .. i .. ": " .. name .. " (" .. spellID .. ")")
-        end
-    else
-        print("|JAC|   Empty")
-    end
-    
-    print("|JAC| ================================")
-end

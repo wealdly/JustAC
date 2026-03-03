@@ -287,11 +287,6 @@ function UIHealthBar.Hide()
     end
 end
 
--- Get the health bar frame (for external positioning/debugging)
-function UIHealthBar.GetFrame()
-    return healthBarFrame
-end
-
 -- Update health bar size to match current queue dimensions
 -- Recreate on orientation change to ensure layout and tick correctness
 function UIHealthBar.UpdateSize(addon)
@@ -407,29 +402,6 @@ end
 -- UnitHealth("pet") is secret in combat but StatusBar:SetValue() accepts secrets
 -- UnitExists/UnitIsDead are NOT secret — used for visibility/dead state
 --------------------------------------------------------------------------------
-
--- Calculate bar dimensions based on the defensive icon cluster (shared by both bars)
-local function CalculateBarDimensions(profile)
-    local orientation  = profile.queueOrientation or "LEFT"
-    local iconSize     = profile.iconSize or 42
-    local iconSpacing  = profile.iconSpacing or 1
-    local defIconScale = profile.defensives and profile.defensives.iconScale or 1.0
-    local defIconSize  = iconSize * defIconScale
-    local maxDefIcons  = math.min(profile.defensives and profile.defensives.maxIcons or 1, 7)
-    local defPosition  = profile.defensives and profile.defensives.position or "SIDE1"
-
-    local queueDimension
-    if maxDefIcons == 1 then
-        queueDimension = defIconSize
-    else
-        queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-    end
-
-    local defSpacing = math.max(iconSpacing, BAR_SPACING)
-    local barDist    = defSpacing + defIconSize + BAR_SPACING
-
-    return orientation, queueDimension, defIconSize, maxDefIcons, defPosition, barDist
-end
 
 -- Create the pet health bar frame
 -- Two modes (mirrors CreateHealthBar):
@@ -729,20 +701,10 @@ function UIHealthBar.UpdatePetVisibility(addon)
     end
 end
 
-function UIHealthBar.ShowPet()
-    if petHealthBarFrame and UnitExists("pet") then
-        petHealthBarFrame:Show()
-    end
-end
-
 function UIHealthBar.HidePet()
     if petHealthBarFrame then
         petHealthBarFrame:Hide()
     end
-end
-
-function UIHealthBar.GetPetFrame()
-    return petHealthBarFrame
 end
 
 --- Dynamically resize the pet health bar to match the number of visible defensive icons.

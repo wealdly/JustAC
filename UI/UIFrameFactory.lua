@@ -48,7 +48,7 @@ local CHARGE_ANCHOR_PRESETS = {
 
 -- Apply text overlay settings to a button.
 -- overlaysBlock: the textOverlays sub-table (e.g. profile.textOverlays or
--- profile.nameplateOverlay.textOverlays). Callers extract the correct block.
+-- a merged block from MergeOverlayTextOverlays). Callers extract the correct block.
 -- Handles font size (scale × base), color, and anchor for hotkey, cooldown, and charge text.
 function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
     local overlays = overlaysBlock
@@ -96,6 +96,31 @@ function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
         button.chargeText:SetPoint(anchor, button.hotkeyFrame, anchor, preset.ox, preset.oy)
         button.chargeText:SetJustifyH(preset.jh)
     end
+end
+
+--- Build a merged textOverlays block for the nameplate overlay.
+--- Central show from profile.textOverlays; overlay-specific fontScale, color,
+--- and anchor from nameplateOverlay.textOverlays with central fallback.
+function UIFrameFactory.MergeOverlayTextOverlays(profile)
+    if not profile then return nil end
+    local central = profile.textOverlays
+    if not central then return nil end
+    local npoOv = profile.nameplateOverlay and profile.nameplateOverlay.textOverlays
+    -- Build a shallow merged table for each sub-key
+    local merged = {}
+    for _, key in ipairs({"hotkey", "cooldown", "charges"}) do
+        local c = central[key]
+        local n = npoOv and npoOv[key]
+        if c then
+            merged[key] = {
+                show      = c.show,
+                fontScale = (n and n.fontScale) or (c and c.fontScale) or 1.0,
+                color     = (n and n.color) or c.color,
+                anchor    = (n and n.anchor) or c.anchor,
+            }
+        end
+    end
+    return merged
 end
 
 -- Panel interaction helpers

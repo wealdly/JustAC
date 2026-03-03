@@ -189,7 +189,7 @@ function GapClosers.CreateTabArgs(addon)
                         type = "execute",
                         name = L["Clear Override"],
                         order = 3.2,
-                        width = "half",
+                        width = 0.8,
                         func = function()
                             local profile = addon:GetProfile()
                             if not profile or not profile.gapClosers then return end
@@ -212,17 +212,17 @@ function GapClosers.CreateTabArgs(addon)
                     },
                 },
             },
-            -- RESET (9+)
+            -- RESET (990+)
             resetHeader = {
                 type = "header",
                 name = "",
-                order = 9,
+                order = 990,
             },
             resetDefaults = {
                 type = "execute",
                 name = L["Reset to Defaults"],
                 desc = L["Reset Gap-Closers desc"],
-                order = 9.1,
+                order = 991,
                 width = "normal",
                 func = function()
                     local profile = addon:GetProfile()

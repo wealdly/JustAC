@@ -30,12 +30,11 @@ local defaults = {
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
         hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
-        hideQueueForHealers = false,   -- Hide the entire queue when in a healer spec
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
-        showHealthBar = false,         -- Standalone health bar (only shown when defensives disabled)
-        showPetHealthBar = false,      -- Standalone pet health bar (only shown when defensives disabled)
+        showHealthBar = false,         -- Legacy (migrated to defensives.showHealthBar; cleared on load)
+        showPetHealthBar = false,      -- Legacy (migrated to defensives.showPetHealthBar; cleared on load)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         blacklistPosition1 = false,    -- Apply blacklist to position 1 (Blizzard's primary suggestion)
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
@@ -79,40 +78,22 @@ local defaults = {
             showGlow          = true,
             glowMode          = "all",
             showHotkey        = true, -- Legacy; migrated to textOverlays.hotkey.show on load
-            showFlash         = true, -- key-press flash feedback
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-5
             defensiveDisplayMode = "always", -- "combatOnly", "always"
             showHealthBar        = true,
-            interruptMode        = "ccPrefer",  -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
-            -- Text overlay settings for nameplate overlay icons (independent from main queue)
+            -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
-                hotkey = {
-                    show      = true,
-                    fontScale = 1.0,
-                    color     = {r = 1, g = 1, b = 1, a = 1},
-                    anchor    = "TOPRIGHT",
-                },
-                cooldown = {
-                    show      = true,
-                    fontScale = 1.0,
-                    color     = {r = 1, g = 1, b = 1, a = 0.5},
-                },
-                charges = {
-                    show      = true,
-                    fontScale = 1.0,
-                    color     = {r = 1, g = 1, b = 1, a = 1},
-                    anchor    = "BOTTOMRIGHT",
-                },
+                hotkey   = { fontScale = 1.0 },
+                cooldown = { fontScale = 1.0 },
+                charges  = { fontScale = 1.0 },
             },
         },
         -- Defensives feature (two tiers: self-heals and major cooldowns)
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
-            glowMode = "all",          -- "all", "primaryOnly", "procOnly", "none"
-            showFlash = true,         -- Flash icon on matching key press
-            showHotkeys = true,       -- Show hotkey text on defensive icons
+            showHotkeys = true,       -- Legacy (migrated; cleared on load)
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = true,    -- Display compact health bar above main queue
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
@@ -128,6 +109,7 @@ local defaults = {
             autoInsertPotions = true,  -- Auto-insert health potions at critical health
             classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
+            glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
@@ -243,6 +225,52 @@ function JustAC:NormalizeSavedData()
                 npo.interruptMode = "ccPrefer"
             end
         end
+        -- Centralization migration: per-surface settings → single central setting
+        -- interruptMode: overlay had its own copy → use profile-level only
+        if npo and npo.interruptMode ~= nil then
+            -- If user customized the overlay's interrupt mode, adopt it as the central value
+            -- (only if the main queue is still at default, otherwise main queue wins)
+            if profile.interruptMode == "ccPrefer" and npo.interruptMode ~= "ccPrefer" then
+                profile.interruptMode = npo.interruptMode
+            end
+            npo.interruptMode = nil
+        end
+        -- showFlash: overlay + defensives had their own copies → use profile-level only
+        if npo and npo.showFlash ~= nil then npo.showFlash = nil end
+        if profile.defensives and profile.defensives.showFlash ~= nil then
+            -- If user disabled defensive flash, adopt that as the central value
+            if profile.showFlash ~= false and profile.defensives.showFlash == false then
+                profile.showFlash = false
+            end
+            profile.defensives.showFlash = nil
+        end
+        -- glowMode: defensives had its own copy → use profile-level only
+        if profile.defensives and profile.defensives.glowMode ~= nil then
+            profile.defensives.glowMode = nil
+        end
+        -- textOverlays: overlay had full parallel copy → central show/color/anchor, keep overlay fontScale
+        if npo and npo.textOverlays then
+            local npoOv = npo.textOverlays
+            -- Strip centralized fields from overlay (show, color, anchor are now central)
+            for _, key in ipairs({"hotkey", "cooldown", "charges"}) do
+                if npoOv[key] then
+                    npoOv[key].show = nil
+                    npoOv[key].color = nil
+                    npoOv[key].anchor = nil
+                    -- Keep fontScale if it exists; remove entry entirely if only fontScale remains at default
+                end
+            end
+        end
+        -- showHealthBar/showPetHealthBar: General tab fallbacks → defensives owns these
+        if profile.showHealthBar == true and profile.defensives and not profile.defensives.enabled then
+            -- User had standalone health bar enabled with defensives off — move to defensives setting
+            profile.defensives.showHealthBar = true
+        end
+        if profile.showPetHealthBar == true and profile.defensives and not profile.defensives.enabled then
+            profile.defensives.showPetHealthBar = true
+        end
+        profile.showHealthBar = nil
+        profile.showPetHealthBar = nil
         -- Nil legacy keys so they don't persist in saved data after migration
         profile.showOffensiveHotkeys = nil
         profile.showInterrupt = nil
@@ -579,11 +607,6 @@ function JustAC:OnProfileDeleted(event, db, deletedName)
         local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     end
-end
-
-function JustAC:ShowWelcomeMessage()
-    if not self.db or not self.db.profile or not self.db.profile.debugMode then return end
-    self:Print("Debug mode active")
 end
 
 -- Defensive Engine wrapper methods (delegated to DefensiveEngine module)
@@ -1088,9 +1111,6 @@ function JustAC:IsStandardTargetFrame()
     if TargetFrameAnchor then return TargetFrameAnchor.IsStandardTargetFrame(self) end
     return false
 end
-function JustAC:InvalidateTargetFrameCache()
-    if TargetFrameAnchor then TargetFrameAnchor.InvalidateCache() end
-end
 function JustAC:UpdateTargetFrameAnchor()
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
 end
@@ -1155,11 +1175,6 @@ function JustAC:ForceUpdateAll()
     if SpellQueue and SpellQueue.ForceUpdate then SpellQueue.ForceUpdate() end
     self:UpdateSpellQueue()
     self:OnHealthChanged(nil, "player")
-end
-
-function JustAC:ScheduleUpdate()
-    if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    self.cooldownTimer = self:ScheduleTimer("ForceUpdate", 0.04)
 end
 
 function JustAC:ForceUpdate()

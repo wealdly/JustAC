@@ -82,7 +82,7 @@ local DEFENSIVE_SPELLS = {
     -- MOVED: Ring of Peace (116844) - displacement CC, classified as crowd control
     
     -- Paladin
-    [498] = true,     -- Divine Protection
+    [403876] = true,  -- Divine Protection
     [642] = true,     -- Divine Shield
     [1022] = true,    -- Blessing of Protection
     [6940] = true,    -- Blessing of Sacrifice
@@ -589,31 +589,6 @@ function SpellDB.IsOffensiveSpell(spellID)
     return true
 end
 
--- Combined check: Is this a non-offensive spell? (defensive OR heal OR CC OR utility)
-function SpellDB.IsNonOffensiveSpell(spellID)
-    return not SpellDB.IsOffensiveSpell(spellID)
-end
-
--- Debug: Get classification string for a spell
-function SpellDB.GetSpellClassification(spellID)
-    if not spellID then return "unknown" end
-    if DEFENSIVE_SPELLS[spellID] then return "defensive" end
-    if HEALING_SPELLS[spellID] then return "healing" end
-    if CROWD_CONTROL_SPELLS[spellID] then return "cc" end
-    if UTILITY_SPELLS[spellID] then return "utility" end
-    return "offensive"
-end
-
--- Get table sizes for debug info
-function SpellDB.GetTableStats()
-    local defCount, healCount, ccCount, utilCount = 0, 0, 0, 0
-    for _ in pairs(DEFENSIVE_SPELLS) do defCount = defCount + 1 end
-    for _ in pairs(HEALING_SPELLS) do healCount = healCount + 1 end
-    for _ in pairs(CROWD_CONTROL_SPELLS) do ccCount = ccCount + 1 end
-    for _ in pairs(UTILITY_SPELLS) do utilCount = utilCount + 1 end
-    return defCount, healCount, ccCount, utilCount
-end
-
 --------------------------------------------------------------------------------
 -- CLASS DEFAULTS: Per-class spell lists for defensive queue feature
 -- These are user-configurable starting points, stored in saved variables
@@ -643,7 +618,7 @@ SpellDB.CLASS_SELFHEAL_DEFAULTS = {
     MONK = {322101},                                 -- Expel Harm
     
     -- Paladin: Word of Glory (free with Holy Power), Divine Protection (instant)
-    PALADIN = {85673, 498},                          -- Word of Glory, Divine Protection
+    PALADIN = {85673, 403876},                       -- Word of Glory, Divine Protection
     
     -- Priest: Desperate Prayer (instant, strong), Power Word: Shield (instant absorb)
     PRIEST = {19236, 17},                            -- Desperate Prayer, PW:Shield

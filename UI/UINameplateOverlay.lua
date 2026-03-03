@@ -240,10 +240,10 @@ local function CreateOverlayIcon(iconSize, profile)
     button:SetAlpha(0)
     button:Hide()
 
-    -- Apply nameplate-specific text overlay settings (independent from main queue settings)
+    -- Apply central text overlay settings with overlay-specific fontScale
     if UIFrameFactory and UIFrameFactory.ApplyTextOverlaySettings then
-        local npoOverlays = profile and profile.nameplateOverlay and profile.nameplateOverlay.textOverlays
-        UIFrameFactory.ApplyTextOverlaySettings(button, iconSize, npoOverlays)
+        local mergedOverlays = UIFrameFactory.MergeOverlayTextOverlays(profile)
+        UIFrameFactory.ApplyTextOverlaySettings(button, iconSize, mergedOverlays)
     end
 
     return button
@@ -659,8 +659,9 @@ function UINameplateOverlay.Create(addon)
     for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
 
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)
-    local interruptMode = npo.interruptMode or "important"
-    if interruptMode ~= "off" then
+    -- interruptMode is centralized in profile (no longer per-surface)
+    local interruptMode = profile.interruptMode or "ccPrefer"
+    if interruptMode ~= "disabled" and interruptMode ~= "off" then
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
 
@@ -858,8 +859,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoGlowMode  = npo.glowMode or "all"
     local npoShowProcGlow = (npoGlowMode == "all" or npoGlowMode == "procOnly")
     local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
-    local npoOverlays  = npo.textOverlays
-    local showHotkey   = not npoOverlays or not npoOverlays.hotkey or npoOverlays.hotkey.show ~= false
+    local centralOverlays = profile.textOverlays
+    local showHotkey   = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
     local opacity      = npo.opacity or 1.0
     local now        = GetTime()
     local shouldUpdateCooldowns = (now - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -878,9 +879,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
     -- Detect interruptible cast via the nameplate's cast bar frame state.
     -- Uses Icon:IsShown() for 12.0-safe interruptibility detection.
-    -- interruptMode: "disabled" | "kickOnly" | "ccPrefer"
+    -- interruptMode: centralized in profile (no longer per-surface)
+    -- "disabled" | "kickOnly" | "ccPrefer"
     -- ("importantOnly" reserved for future — all important-cast signals are SECRET in 12.0)
-    local npoInterruptMode = npo.interruptMode or "ccPrefer"
+    local npoInterruptMode = profile.interruptMode or "ccPrefer"
     -- Fallback: if saved data contains retired "importantOnly", treat as "kickOnly"
     if npoInterruptMode == "importantOnly" then npoInterruptMode = "kickOnly" end
     if interruptIcon and resolvedInterrupts and npoInterruptMode ~= "disabled" then
@@ -1145,19 +1147,22 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     if #defIcons == 0 then return end
 
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
+    local profile      = addon:GetProfile() or {}
     local npoGlowMode   = npo.glowMode or "all"
     local opacity       = npo.opacity or 1.0
     local iconSpacing   = npo.iconSpacing or ICON_SPACING
-    -- Read hotkey visibility from textOverlays (Labels tab), not legacy npo.showHotkey
-    local npoOverlaysDef = npo.textOverlays
-    local npoShowHotkey  = not npoOverlaysDef or not npoOverlaysDef.hotkey or npoOverlaysDef.hotkey.show ~= false
+    -- Read hotkey visibility from central textOverlays (Labels tab)
+    local centralOverlays = profile.textOverlays
+    local npoShowHotkey  = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
+    -- showFlash is centralized in profile (no longer per-surface)
+    local showFlash      = profile.showFlash ~= false
 
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
         local entry = defensiveQueue and defensiveQueue[i]
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, npo.showFlash ~= false)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
             -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
             if icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
                 icon:SetAlpha(opacity)

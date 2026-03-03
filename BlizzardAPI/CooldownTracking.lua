@@ -325,30 +325,4 @@ function BlizzardAPI.GetCachedMaxCharges(spellID)
     return cachedMaxCharges[spellID]
 end
 
---- Debug: dump local cooldown tracking state for a specific spell
---- Call with colon or dot: BlizzardAPI:DebugCooldownTracking(19574)
-function BlizzardAPI.DebugCooldownTracking(selfOrID, maybeID)
-    local spellID = maybeID or selfOrID
-    if type(spellID) ~= "number" then
-        print("|cffff0000[JustAC CD Debug] Usage: :DebugCooldownTracking(spellID)|r")
-        return
-    end
-    print("|cff00ff00[JustAC CD Debug]|r spellID:", spellID)
-    print("  trackedRotation:", trackedRotationSpells[spellID] and "YES" or "no")
-    print("  trackedDefensive:", trackedDefensiveSpells[spellID] and "YES" or "no")
-    local cd = localCooldowns[spellID]
-    if cd then
-        local remaining = cd.endTime - GetTime()
-        print("  localCD: endTime=" .. string.format("%.1f", cd.endTime) .. " dur=" .. cd.duration .. " remaining=" .. string.format("%.1f", remaining))
-    else
-        print("  localCD: NONE")
-    end
-    local cached = cachedDurations[spellID]
-    print("  cachedDuration:", cached or "nil")
-    print("  isOnLocalCD:", IsLocalCooldownActive(spellID) and "YES" or "no")
-    local ttOk, ttCD = pcall(ParseTooltipCooldown, spellID)
-    print("  tooltipCD:", ttOk and (ttCD or "nil") or ("ERROR: " .. tostring(ttCD)))
-    local baseCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    print("  baseCDms:", baseCdMs or "nil")
-    print("  eventFrame:", cooldownEventFrame and "EXISTS" or "nil")
-end
+

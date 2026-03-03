@@ -36,10 +36,6 @@ local DEBUG_THROTTLE_INTERVAL = 5
 -- Verbose debug mode (for /jac find, /jac macrotest)
 local verboseDebugMode = false
 
-function MacroParser.SetVerboseDebug(enabled)
-    verboseDebugMode = enabled
-end
-
 local function GetLowercase(str)
     return str and string_lower(str) or ""
 end

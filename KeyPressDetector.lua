@@ -129,9 +129,9 @@ function KPD.Create(addon)
             end
         end
 
-        -- Check defensive icons (if flash enabled)
-        local defFlash = not profile or not profile.defensives or profile.defensives.showFlash ~= false
-        if defFlash then
+        -- Check defensive icons (flash uses central profile.showFlash)
+        local showFlash = not profile or profile.showFlash ~= false
+        if showFlash then
             local defIcons = addon.defensiveIcons
             if defIcons then
                 for _, defIcon in ipairs(defIcons) do
@@ -154,10 +154,9 @@ function KPD.Create(addon)
             iconsToFlash[#iconsToFlash + 1] = intIcon
         end
 
-        -- Check nameplate DPS overlay icons (same flash logic as main queue)
+        -- Check nameplate DPS overlay icons (flash uses central profile.showFlash)
         local npIcons = addon.nameplateIcons
-        local npo = profile and profile.nameplateOverlay
-        if npIcons and (not npo or npo.showFlash ~= false) then
+        if npIcons and showFlash then
             for _, npIcon in ipairs(npIcons) do
                 if npIcon and npIcon:IsShown() and npIcon.normalizedHotkey == normalizedKey then
                     iconsToFlash[#iconsToFlash + 1] = npIcon
@@ -166,8 +165,7 @@ function KPD.Create(addon)
         end
 
         -- Check nameplate defensive overlay icons
-        local npDefFlash = not npo or npo.showFlash ~= false
-        if npDefFlash then
+        if showFlash then
             local npDefIcons = addon.nameplateDefIcons
             if npDefIcons then
                 for _, npDefIcon in ipairs(npDefIcons) do
