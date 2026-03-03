@@ -99,15 +99,14 @@ local defaults = {
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
-            -- NOTE: In 12.0 combat, UnitHealth() is secret. These thresholds only
-            -- apply out of combat. In combat, we fall back to Blizzard's LowHealthFrame
-            -- overlay which provides two binary states: "low" (~35%) and "critical" (~20%).
-            selfHealThreshold = 80,   -- Out-of-combat only: show self-heals below this %
-            cooldownThreshold = 60,   -- Out-of-combat only: show major cooldowns below this %
+            -- NOTE: In 12.0 combat, UnitHealth() is secret. This threshold only
+            -- applies out of combat. In combat, all defensives are shown since we
+            -- cannot detect exact health percentages.
+            selfHealThreshold = 80,   -- Out-of-combat only: show defensives below this %
             petHealThreshold = 50,    -- Out-of-combat only: show pet heals below this pet %
             allowItems = true,        -- Allow manual item insertion in defensive spell lists
-            autoInsertPotions = true,  -- Auto-insert health potions at critical health
-            classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {selfHealSpells={...}, cooldownSpells={...}, petHealSpells={}}
+            autoInsertPotions = true,  -- Auto-insert health potions at low health
+            classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {defensiveSpells={...}, petHealSpells={...}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
         },
@@ -294,6 +293,7 @@ function JustAC:OnInitialize()
     if SpellDB then
         JustAC.CLASS_SELFHEAL_DEFAULTS = SpellDB.CLASS_SELFHEAL_DEFAULTS
         JustAC.CLASS_COOLDOWN_DEFAULTS = SpellDB.CLASS_COOLDOWN_DEFAULTS
+        JustAC.CLASS_DEFENSIVE_DEFAULTS = SpellDB.CLASS_DEFENSIVE_DEFAULTS
         JustAC.CLASS_PETHEAL_DEFAULTS = SpellDB.CLASS_PETHEAL_DEFAULTS
         JustAC.CLASS_PET_REZ_DEFAULTS = SpellDB.CLASS_PET_REZ_DEFAULTS
         JustAC.CLASS_INTERRUPT_DEFAULTS = SpellDB.CLASS_INTERRUPT_DEFAULTS
@@ -1298,7 +1298,13 @@ function JustAC:StartUpdates()
 
         -- Only update defensive cooldowns if dirty or periodic check
         if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
-            self:UpdateDefensiveCooldowns()
+            if defensiveQueueDirty then
+                -- Full queue rebuild: nil event bypasses DefensiveEngine throttle
+                self:OnHealthChanged(nil, "player")
+            else
+                -- Periodic refresh: just update cooldown displays on visible icons
+                self:UpdateDefensiveCooldowns()
+            end
             defensiveQueueDirty = false
             lastFullUpdate = now
         end

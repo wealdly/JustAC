@@ -1,6 +1,18 @@
 
 # Changelog
 
+## [4.5.2] - 2026-03-02
+
+### Changed
+- **Merged defensive spell lists:** Self-heals and major cooldowns are now a single "Defensive Priority List" instead of two separate lists. Self-heals appear first by default (natural priority). Existing per-class customizations are automatically migrated (old keys preserved for safe downgrade).
+- Auto-insert potions now triggers at the unified low-health threshold instead of requiring a separate "critical" health level.
+- Removed `cooldownThreshold` setting and "Ignore Health Priority" toggle (unified list makes both obsolete).
+
+### Fixed
+- Defensive spells on cooldown (e.g. Crimson Vial) now deprioritized to end of queue instead of showing at full priority.
+- Charge-based spells (e.g. Crimson Vial with 2 charges) excluded from local cooldown tracking — `IsSpellUsable` handles charge depletion correctly.
+- `UpdateButtonCooldowns` wrapped in pcall; charge display no longer flickers off when `GetSpellCharges` returns nil in combat.
+
 ## [4.5.1] - 2026-03-02
 
 ### Fixed

@@ -85,10 +85,9 @@ local ResolveHealthState
 -- Spell list type configuration — maps restoreKey (used by Options) to
 -- the profile listKey and SpellDB defaults table name.
 local SPELL_LIST_CONFIG = {
-    { listKey = "selfHealSpells", restoreKey = "selfheal", defaultsKey = "CLASS_SELFHEAL_DEFAULTS" },
-    { listKey = "cooldownSpells", restoreKey = "cooldown", defaultsKey = "CLASS_COOLDOWN_DEFAULTS" },
-    { listKey = "petHealSpells",  restoreKey = "petheal",  defaultsKey = "CLASS_PETHEAL_DEFAULTS" },
-    { listKey = "petRezSpells",   restoreKey = "petrez",   defaultsKey = "CLASS_PET_REZ_DEFAULTS" },
+    { listKey = "defensiveSpells", restoreKey = "defensive", defaultsKey = "CLASS_DEFENSIVE_DEFAULTS" },
+    { listKey = "petHealSpells",   restoreKey = "petheal",   defaultsKey = "CLASS_PETHEAL_DEFAULTS" },
+    { listKey = "petRezSpells",    restoreKey = "petrez",    defaultsKey = "CLASS_PET_REZ_DEFAULTS" },
 }
 
 -- Copy a source spell list into dest[listKey], used by init/migrate/restore.
@@ -147,14 +146,12 @@ local function IsItemOnCooldown(itemID)
     return start > 0 and duration > 1.5
 end
 
--- Resolve player health into isLow/isCritical booleans.
+-- Resolve player health into isLow boolean.
 -- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states.
--- Because the configurable thresholds (80%/60%) are undetectable when health is secret,
--- we promote both tiers:
---   No LowHealthFrame signal (>35%): isLow=true (self-heals always shown in combat)
---   "low"  signal (~35% health):     isCritical=true (cooldowns + potions activated)
---   "critical" signal (~20% health): isCritical=true (same, cooldowns sort first via queue)
--- Out of combat (exact health available): original configurable thresholds apply.
+-- With the unified defensive list, we only need a single "is health low" signal.
+-- In combat (secret health): always true — all defensives are available since we
+-- cannot detect fine-grained thresholds.
+-- Out of combat: checks selfHealThreshold (default 80%).
 ResolveHealthState = function(profile)
     local healthPercent, isEstimated = nil, false
     if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
@@ -162,21 +159,14 @@ ResolveHealthState = function(profile)
     end
 
     if isEstimated then
-        -- Secret health: promote tiers since configurable thresholds are undetectable.
-        local lowState, critState = false, false
-        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
-            lowState, critState = BlizzardAPI.GetLowHealthState()
-        end
-        -- Self-heals always available in combat (can't detect 80% threshold).
-        -- Cooldowns trigger at "low" (~35%) — first detectable signal replaces 60% threshold.
-        return true, lowState or critState
+        -- Secret health in combat: show all defensives (can't detect exact threshold).
+        return true
     elseif healthPercent then
         local def = profile and profile.defensives
         local selfHealThreshold = def and def.selfHealThreshold or 80
-        local cooldownThreshold = def and def.cooldownThreshold or 60
-        return healthPercent <= selfHealThreshold, healthPercent <= cooldownThreshold
+        return healthPercent <= selfHealThreshold
     end
-    return false, false
+    return false
 end
 
 -- Healing potion cache
@@ -189,7 +179,7 @@ local potionCacheValid = false
 -- Spell list access
 --------------------------------------------------------------------------------
 
--- Returns the spell list for a given type ("selfHealSpells", "cooldownSpells", "petHealSpells")
+-- Returns the spell list for a given type ("defensiveSpells", "petHealSpells", "petRezSpells")
 -- for the current player class from the per-class nested structure.
 function DefensiveEngine.GetClassSpellList(addon, listKey)
     local profile = addon:GetProfile()
@@ -218,27 +208,81 @@ function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
         or (def.cooldownSpells and #def.cooldownSpells > 0)
         or (def.petHealSpells and #def.petHealSpells > 0)
 
-    if not hasFlatData then return end
+    if hasFlatData then
+        -- Ensure classSpells table exists
+        if not def.classSpells then def.classSpells = {} end
+        if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
+        local cs = def.classSpells[playerClass]
 
-    -- Ensure classSpells table exists
-    if not def.classSpells then def.classSpells = {} end
-    if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
+        -- Move flat lists into per-class structure (don't overwrite existing)
+        -- Note: uses legacy keys selfHealSpells/cooldownSpells for this migration path
+        local legacyKeys = { "selfHealSpells", "cooldownSpells", "petHealSpells" }
+        for _, listKey in ipairs(legacyKeys) do
+            local flatList = def[listKey]
+            if flatList and #flatList > 0 and (not cs[listKey] or #cs[listKey] == 0) then
+                CopySpellList(cs, listKey, flatList)
+            end
+        end
+
+        -- Clear flat keys so migration won't re-trigger
+        def.selfHealSpells = nil
+        def.cooldownSpells = nil
+        def.petHealSpells = nil
+
+        addon:DebugPrint("Migrated flat defensive spells to classSpells[" .. playerClass .. "]")
+    end
+
+    -- Merge selfHealSpells + cooldownSpells → defensiveSpells (unified list migration).
+    -- Runs after flat→classSpells migration so both paths feed into the merge.
+    DefensiveEngine.MergeLegacyDefensiveLists(addon)
+end
+
+-- Merge legacy per-class selfHealSpells + cooldownSpells into the unified defensiveSpells
+-- list.  Self-heals come first (natural priority), then cooldowns.  Deduplicates.
+-- Idempotent: skips if defensiveSpells already exists.  Old keys are preserved for
+-- safe downgrade to older addon versions.
+function DefensiveEngine.MergeLegacyDefensiveLists(addon)
+    local profile = addon:GetProfile()
+    if not profile or not profile.defensives then return end
+
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return end
+
+    local def = profile.defensives
+    if not def.classSpells or not def.classSpells[playerClass] then return end
     local cs = def.classSpells[playerClass]
 
-    -- Move flat lists into per-class structure (don't overwrite existing)
-    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
-        local flatList = def[cfg.listKey]
-        if flatList and #flatList > 0 and (not cs[cfg.listKey] or #cs[cfg.listKey] == 0) then
-            CopySpellList(cs, cfg.listKey, flatList)
+    -- Already merged — skip
+    if cs.defensiveSpells and #cs.defensiveSpells > 0 then return end
+
+    local selfHeals  = cs.selfHealSpells
+    local cooldowns  = cs.cooldownSpells
+    if (not selfHeals or #selfHeals == 0) and (not cooldowns or #cooldowns == 0) then return end
+
+    -- Concatenate: self-heals first, then cooldowns, deduplicating
+    local merged = {}
+    local seen = {}
+    if selfHeals then
+        for _, id in ipairs(selfHeals) do
+            if not seen[id] then
+                merged[#merged + 1] = id
+                seen[id] = true
+            end
+        end
+    end
+    if cooldowns then
+        for _, id in ipairs(cooldowns) do
+            if not seen[id] then
+                merged[#merged + 1] = id
+                seen[id] = true
+            end
         end
     end
 
-    -- Clear flat keys so migration won't re-trigger
-    def.selfHealSpells = nil
-    def.cooldownSpells = nil
-    def.petHealSpells = nil
+    cs.defensiveSpells = merged
+    -- Keep selfHealSpells/cooldownSpells for safe downgrade — do NOT wipe them.
 
-    addon:DebugPrint("Migrated flat defensive spells to classSpells[" .. playerClass .. "]")
+    addon:DebugPrint("Merged selfHealSpells+cooldownSpells → defensiveSpells[" .. playerClass .. "] (" .. #merged .. " spells)")
 end
 
 --------------------------------------------------------------------------------
@@ -286,7 +330,7 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
     end
 
     -- Table-driven iteration: register all defensive spell lists
-    local spellListTypes = { "selfHealSpells", "cooldownSpells", "petHealSpells", "petRezSpells" }
+    local spellListTypes = { "defensiveSpells", "petHealSpells", "petRezSpells" }
     for _, listType in ipairs(spellListTypes) do
         local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
         if spellList then
@@ -376,7 +420,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
 
     -- Health state — computed once, shared by main panel and overlay paths
     local inCombat = UnitAffectingCombat("player")
-    local isLow, isCritical = ResolveHealthState(profile)
+    local isLow = ResolveHealthState(profile)
 
     -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
     -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
@@ -400,7 +444,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
 
     -- Main panel defensive queue (gated by defensives.enabled)
     if def and def.enabled then
-        local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions)
+        local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 1
 
         -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
@@ -427,7 +471,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
         local npoMaxIcons    = npo.maxDefensiveIcons or 1
-        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, isCritical, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=true})
+        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=true})
         ApplyOverlayQueue(addon, npoQueue)
     end
 end
@@ -472,15 +516,29 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                         -- Procced: top priority (instant/free cast)
                         proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                     else
-                        -- Non-procced: check if actually castable for priority ordering.
-                        -- IsSpellUsable is NeverSecret (falls back to C_ActionBar.IsUsableAction).
-                        -- Returns false for both cooldown-blocked AND resource-blocked spells.
-                        local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
-                        if castable then
-                            castableBuffer[#castableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
+                        -- Check local cooldown tracking (works in combat via 12.0 CooldownTracking).
+                        -- Skip for charge-based spells: local CD fires on every cast but charges
+                        -- mean the spell may still be usable. IsSpellUsable handles this correctly.
+                        local cachedMaxCharges = BlizzardAPI.GetCachedMaxCharges and BlizzardAPI.GetCachedMaxCharges(resolvedID)
+                        local isChargeSpell = cachedMaxCharges and cachedMaxCharges > 1
+                        local isOnLocalCD = not isChargeSpell
+                            and BlizzardAPI.IsSpellOnLocalCooldown
+                            and BlizzardAPI.IsSpellOnLocalCooldown(resolvedID)
+                        if isOnLocalCD then
+                            -- On cooldown: deprioritize but keep in queue for visual feedback.
+                            resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = false}
                         else
-                            -- Unusable: deprioritize but keep in queue for visual feedback.
-                            resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = notEnoughResources}
+                            -- Not on local CD (or charge spell): check if actually castable.
+                            -- IsSpellUsable is NeverSecret (falls back to C_ActionBar.IsUsableAction).
+                            -- Returns false for both cooldown-blocked AND resource-blocked spells.
+                            -- For charge spells, returns false only when ALL charges are depleted.
+                            local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
+                            if castable then
+                                castableBuffer[#castableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
+                            else
+                                -- Unusable: deprioritize but keep in queue for visual feedback.
+                                resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = notEnoughResources}
+                            end
                         end
                     end
                     usableAddedHere[resolvedID] = true
@@ -531,10 +589,10 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     end
 end
 
--- Display order: instant procs first, then by health threshold (higher priority first)
+-- Display order: instant procs first, then unified defensive list in user priority order.
 -- overrides (optional table): displayMode, maxIcons, showProcs — override profile defaults for
 -- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
-function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCritical, passedInCombat, passedExclusions, overrides)
+function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
 
@@ -556,14 +614,13 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
         end
     end
 
-    local isLow, isCritical, inCombat
+    local isLow, inCombat
     if passedIsLow ~= nil then
         isLow = passedIsLow
-        isCritical = passedIsCritical or false
         inCombat = passedInCombat or UnitAffectingCombat("player")
     else
         -- Safety net: resolve health state from scratch if caller didn't pass it
-        isLow, isCritical = ResolveHealthState(profile)
+        isLow = ResolveHealthState(profile)
         inCombat = UnitAffectingCombat("player")
     end
 
@@ -606,13 +663,11 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
     -- Early exit: proc injection already filled the queue
     if #results >= maxIcons then return results end
 
-    -- Resolve per-class spell lists once for this update cycle
-    local selfHealSpells = DefensiveEngine.GetClassSpellList(addon, "selfHealSpells")
-    local cooldownSpells = DefensiveEngine.GetClassSpellList(addon, "cooldownSpells")
+    -- Unified defensive spell list (user-ordered priority)
+    local defensiveSpells = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
 
-    -- Procced spells from configured lists (any health level)
-    AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded, true)
-    AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded, true)
+    -- Procced spells from configured list (any health level)
+    AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, true)
 
     -- Early exit: proc passes filled the queue
     if #results >= maxIcons then return results end
@@ -623,27 +678,16 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedIsCrit
     end
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
-    if showAllAvailable and not isLow and not isCritical then
-        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
-        AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
-        SortUnusableToEnd(results)
-        return results
-    end
-
-    if isCritical then
-        AppendUsableSpells(addon, results, cooldownSpells, maxIcons, alreadyAdded)
-        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
-        if #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
+    if showAllAvailable or isLow then
+        AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded)
+        -- Auto-insert potions when health is low (unified: no separate "critical" tier)
+        if isLow and #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
             local potionID = DefensiveEngine.FindHealingPotionOnActionBar(addon)
             if potionID and not alreadyAdded[potionID] then
                 results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
                 alreadyAdded[potionID] = true
             end
         end
-    elseif isLow then
-        -- Self-heals only at this tier. Major cooldowns require isCritical
-        -- (configurable threshold out of combat; ~35% LowHealthFrame in combat).
-        AppendUsableSpells(addon, results, selfHealSpells, maxIcons, alreadyAdded)
     end
 
     SortUnusableToEnd(results)

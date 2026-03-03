@@ -260,8 +260,14 @@ local function UpdateButtonCooldowns(button)
     else
         -- Cached cooldownID avoids redundant override lookup.
         local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
-        cooldownInfo = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(cooldownID)
-        chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(cooldownID)
+        if C_Spell.GetSpellCooldown then
+            local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
+            if ok then cooldownInfo = result end
+        end
+        if C_Spell.GetSpellCharges then
+            local ok, result = pcall(C_Spell.GetSpellCharges, cooldownID)
+            if ok then chargeInfo = result end
+        end
     end
 
     if button.cooldown and cooldownInfo then
@@ -291,36 +297,38 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- All GetSpellCharges fields are SECRET in combat; use cached maxCharges to decide display.
+    -- When chargeInfo is nil in combat (GetSpellCharges can return nil for charge spells
+    -- in some combat states), fall back to cached maxCharges to keep the charge UI stable.
+    local effectiveMaxCharges = 0
+    if chargeInfo then
+        local maxCharges = chargeInfo.maxCharges
+        if maxCharges and not BlizzardAPI.IsSecretValue(maxCharges) then
+            effectiveMaxCharges = maxCharges
+        else
+            effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
+        end
+    else
+        -- chargeInfo is nil: check cached maxCharges to determine if this is a charge spell.
+        -- If cached says multi-charge, preserve the charge display even without fresh data.
+        effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
+    end
+    local isMultiCharge = effectiveMaxCharges > 1
+
     if button.chargeCooldown then
-        local maxCharges = chargeInfo and chargeInfo.maxCharges
-        local currentCharges = chargeInfo and chargeInfo.currentCharges
-        
-        if maxCharges and currentCharges then
-            local effectiveMaxCharges
-            if not BlizzardAPI.IsSecretValue(maxCharges) then
-                effectiveMaxCharges = maxCharges
-            else
-                effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
+        if isMultiCharge and chargeInfo then
+            if not button._chargeCooldownShown then
+                button.chargeCooldown:Show()
+                button._chargeCooldownShown = true
             end
-            local isMultiCharge = effectiveMaxCharges > 1
-            
-            if isMultiCharge then
-                if not button._chargeCooldownShown then
-                    button.chargeCooldown:Show()
-                    button._chargeCooldownShown = true
-                end
-                button.chargeCooldown:SetCooldown(
-                    chargeInfo.cooldownStartTime or 0,
-                    chargeInfo.cooldownDuration or 0,
-                    chargeInfo.chargeModRate or 1
-                )
-            else
-                if button._chargeCooldownShown then
-                    button.chargeCooldown:Clear()
-                    button.chargeCooldown:Hide()
-                    button._chargeCooldownShown = false
-                end
-            end
+            button.chargeCooldown:SetCooldown(
+                chargeInfo.cooldownStartTime or 0,
+                chargeInfo.cooldownDuration or 0,
+                chargeInfo.chargeModRate or 1
+            )
+        elseif isMultiCharge and not chargeInfo then
+            -- Known charge spell but no chargeInfo (secreted nil or API error).
+            -- Keep charge cooldown visible if already shown; don't flicker it off.
+            -- The main cooldown swipe still runs via cooldownInfo above.
         else
             if button._chargeCooldownShown then
                 button.chargeCooldown:Clear()
@@ -331,28 +339,18 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- currentCharges may be secret; SetText() displays secret values correctly.
-    if button.chargeText and chargeInfo then
-        local maxCharges = chargeInfo.maxCharges
-        local currentCharges = chargeInfo.currentCharges
-
-        if maxCharges and currentCharges then
-            local showCharges = false
-            if not BlizzardAPI.IsSecretValue(maxCharges) then
-                showCharges = maxCharges > 1
-            else
-                local cached = BlizzardAPI.GetCachedMaxCharges(id)
-                if cached then showCharges = cached > 1 end
-            end
-
-            if showCharges then
-                local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
-                local chOverlays = chProfile and chProfile.textOverlays
-                local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
-                if showChargesCfg then
-                    button.chargeText:SetText(currentCharges)
+    if button.chargeText then
+        if isMultiCharge then
+            local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
+            local chOverlays = chProfile and chProfile.textOverlays
+            local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
+            if showChargesCfg then
+                if chargeInfo and chargeInfo.currentCharges then
+                    button.chargeText:SetText(chargeInfo.currentCharges)
                     button.chargeText:Show()
-                else
-                    button.chargeText:Hide()
+                elseif not button.chargeText:IsShown() then
+                    -- No chargeInfo but known multi-charge: keep current text if visible,
+                    -- otherwise show nothing (avoid flicker).
                 end
             else
                 button.chargeText:Hide()
@@ -360,8 +358,6 @@ local function UpdateButtonCooldowns(button)
         else
             button.chargeText:Hide()
         end
-    elseif button.chargeText then
-        button.chargeText:Hide()
     end
 end
 
