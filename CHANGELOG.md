@@ -1,6 +1,11 @@
 
 # Changelog
 
+## [4.5.3] - 2026-03-02
+
+### Fixed
+- "When Health Low" defensive display mode now works correctly in combat — was showing defensives at all health levels because secret-health fallback bypassed the threshold check. LowHealthFrame (~35%) is NeverSecret and properly gates the queue.
+
 ## [4.5.2] - 2026-03-02
 
 ### Changed
