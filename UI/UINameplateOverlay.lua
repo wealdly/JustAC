@@ -1148,7 +1148,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
 
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local profile      = addon:GetProfile() or {}
-    local npoGlowMode   = npo.glowMode or "all"
+    local npoGlowMode   = npo.defensiveGlowMode or npo.glowMode or "all"
     local opacity       = npo.opacity or 1.0
     local iconSpacing   = npo.iconSpacing or ICON_SPACING
     -- Read hotkey visibility from central textOverlays (Labels tab)
