@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 16)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 17)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -238,6 +238,11 @@ local function NormalizeHotkey(hotkey)
     return n
 end
 
+-- 12.0+ DurationObject pipeline: Blizzard's opaque cooldown display bypasses secret values.
+-- Detects API availability once at load time; falls back to legacy SetCooldown on pre-12.0.
+local HAS_DURATION_OBJECT_API = C_Spell and C_Spell.GetSpellCooldownDuration
+    and type(C_Spell.GetSpellCooldownDuration) == "function"
+
 -- Cooldown widgets accept secret values internally — never compare or do arithmetic on them.
 local function UpdateButtonCooldowns(button)
     if not button then return end
@@ -253,6 +258,8 @@ local function UpdateButtonCooldowns(button)
     end
 
     local cooldownInfo, chargeInfo
+    local usedDurationObject = false  -- Track whether opaque pipeline was used for main CD
+    local usedChargeDurationObject = false  -- Track for charge CD
 
     if isItem then
         local start, duration = GetItemCooldown(id)
@@ -260,39 +267,65 @@ local function UpdateButtonCooldowns(button)
     else
         -- Cached cooldownID avoids redundant override lookup.
         local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
-        if C_Spell.GetSpellCooldown then
-            local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
-            if ok then cooldownInfo = result end
+
+        -- 12.0+ opaque pipeline: SetCooldownFromDurationObject bypasses secret values.
+        -- LuaDurationObject is fully opaque — we cannot read or branch on its values,
+        -- but the Cooldown widget renders the sweep animation correctly.
+        if HAS_DURATION_OBJECT_API and button.cooldown and button.cooldown.SetCooldownFromDurationObject then
+            local ok, dur = pcall(C_Spell.GetSpellCooldownDuration, cooldownID)
+            if ok and dur then
+                if not button._cooldownShown then
+                    button.cooldown:SetDrawSwipe(true)
+                    button.cooldown:Show()
+                    button._cooldownShown = true
+                end
+                button.cooldown:SetCooldownFromDurationObject(dur)
+                usedDurationObject = true
+            end
         end
-        if C_Spell.GetSpellCharges then
-            local ok, result = pcall(C_Spell.GetSpellCharges, cooldownID)
-            if ok then chargeInfo = result end
+
+        -- Legacy cooldown info (still needed for the non-DurationObject fallback
+        -- and also for charge spell detection below which needs chargeInfo).
+        if not usedDurationObject or C_Spell.GetSpellCharges then
+            if C_Spell.GetSpellCooldown and not usedDurationObject then
+                local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
+                if ok then cooldownInfo = result end
+            end
+            if C_Spell.GetSpellCharges then
+                local ok, result = pcall(C_Spell.GetSpellCharges, cooldownID)
+                if ok then chargeInfo = result end
+            end
         end
     end
 
-    if button.cooldown and cooldownInfo then
-        local startTime = cooldownInfo.startTime or 0
-        local duration = cooldownInfo.duration or 0
-        local modRate = cooldownInfo.modRate or 1
+    -- Main cooldown: only use legacy path if DurationObject wasn't applied above.
+    if not usedDurationObject then
+        if button.cooldown and cooldownInfo then
+            local startTime = cooldownInfo.startTime or 0
+            local duration = cooldownInfo.duration or 0
+            local modRate = cooldownInfo.modRate or 1
 
-        if not button._cooldownShown then
-            button.cooldown:SetDrawSwipe(true)
-            button.cooldown:Show()
-            button._cooldownShown = true
-        end
-        button.cooldown:SetCooldown(startTime, duration, modRate)
-        -- SetCooldown may re-show countdown text; hide again if user disabled it.
-        if button.cooldownText then
-            local cdProfile = BlizzardAPI and BlizzardAPI.GetProfile()
-            local cdOverlays = cdProfile and cdProfile.textOverlays
-            if cdOverlays and cdOverlays.cooldown and cdOverlays.cooldown.show == false then
-                button.cooldownText:Hide()
+            if not button._cooldownShown then
+                button.cooldown:SetDrawSwipe(true)
+                button.cooldown:Show()
+                button._cooldownShown = true
+            end
+            button.cooldown:SetCooldown(startTime, duration, modRate)
+        elseif button.cooldown then
+            if button._cooldownShown then
+                button.cooldown:Clear()
+                button._cooldownShown = false
             end
         end
-    elseif button.cooldown then
-        if button._cooldownShown then
-            button.cooldown:Clear()
-            button._cooldownShown = false
+    end
+
+    -- SetCooldown / SetCooldownFromDurationObject may re-show countdown text;
+    -- hide again if user disabled it.
+    if button.cooldown and button._cooldownShown and button.cooldownText then
+        local cdProfile = BlizzardAPI and BlizzardAPI.GetProfile()
+        local cdOverlays = cdProfile and cdProfile.textOverlays
+        if cdOverlays and cdOverlays.cooldown and cdOverlays.cooldown.show == false then
+            button.cooldownText:Hide()
         end
     end
 
@@ -320,11 +353,27 @@ local function UpdateButtonCooldowns(button)
                 button.chargeCooldown:Show()
                 button._chargeCooldownShown = true
             end
-            button.chargeCooldown:SetCooldown(
-                chargeInfo.cooldownStartTime or 0,
-                chargeInfo.cooldownDuration or 0,
-                chargeInfo.chargeModRate or 1
-            )
+            -- 12.0+ opaque pipeline for charge cooldown.
+            if HAS_DURATION_OBJECT_API and button.chargeCooldown.SetCooldownFromDurationObject
+                and C_ActionBar and C_ActionBar.GetActionChargeDuration then
+                -- GetActionChargeDuration requires an action bar slot; look up from spellID.
+                local slot = ActionBarScanner and ActionBarScanner.GetSlotForSpell
+                    and ActionBarScanner.GetSlotForSpell(BlizzardAPI.GetDisplaySpellID(id))
+                if slot then
+                    local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, slot)
+                    if ok and dur then
+                        button.chargeCooldown:SetCooldownFromDurationObject(dur)
+                        usedChargeDurationObject = true
+                    end
+                end
+            end
+            if not usedChargeDurationObject then
+                button.chargeCooldown:SetCooldown(
+                    chargeInfo.cooldownStartTime or 0,
+                    chargeInfo.cooldownDuration or 0,
+                    chargeInfo.chargeModRate or 1
+                )
+            end
         elseif isMultiCharge and not chargeInfo then
             -- Known charge spell but no chargeInfo (secreted nil or API error).
             -- Keep charge cooldown visible if already shown; don't flicker it off.
