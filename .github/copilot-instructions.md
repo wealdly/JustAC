@@ -35,9 +35,9 @@ end
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 4.2.2
-- Hotfixes: 4.1.2, 4.1.3, etc. (bug fixes only)
-- Features: 4.2.0, 4.3.0, etc. (new functionality)
+- Current: 4.5.4
+- Hotfixes: 4.5.5, 4.5.6, etc. (bug fixes only)
+- Features: 4.6.0, 4.7.0, etc. (new functionality)
 - Breaking: 5.0.0, 6.0.0, etc. (major rewrites)
 
 Update in three places: `JustAC.toc`, `CHANGELOG.md`, `UNRELEASED.md`
@@ -283,22 +283,28 @@ end
 
 ## Build & Release
 
-PowerShell script `build.ps1` creates distributable package:
-- Extracts version from `JustAC.toc` (currently 4.1.1)
-- Packages core `.lua` files + `Libs/` folder
-- Removes duplicate nested lib folders (common packaging error)
-- Creates `dist/JustAC-<version>.zip` ready for CurseForge/GitHub
+**Local build** — `build.ps1` creates `dist/JustAC-<version>.zip` for local testing.
+
+**CI/CD** — GitHub Actions (`.github/workflows/release.yml`) auto-deploys to CurseForge via BigWigs Packager.
+- Triggered by git tag push (`v*` pattern)
+- Packages per `.pkgmeta`, creates GitHub Release, uploads to CurseForge (project ID: 1289544)
+- Requires `CF_API_KEY` secret in GitHub repo settings
 
 **Workflow:**
 1. Make changes and commit them
 2. Update `UNRELEASED.md` with change notes
-3. When user requests version bump:
+3. `git push` to keep remote in sync (does NOT trigger CurseForge deploy)
+4. When user requests version bump:
    - Move UNRELEASED changes to CHANGELOG.md
-   - Increment version in JustAC.toc (use semantic versioning: 3.21.0 → 3.21.1 or 3.22.0)
+   - Increment version in JustAC.toc
    - Update library versions if breaking changes
    - Clear UNRELEASED.md
    - Commit version bump
-4. User runs `.\build.ps1` when ready to test
-5. User runs `git push` when ready to deploy
+5. User runs `.\build.ps1` when ready to test locally
+6. When user explicitly requests deploy/release to CurseForge:
+   - `git tag v<version>` + `git push --tags`
+   - This triggers CI → CurseForge upload
+
+**DO NOT auto-tag or auto-deploy to CurseForge** — Only tag and push tags when the user explicitly requests a release/deploy.
 
 **Before release:** Test with `/jac modules` + in-game rotation to verify all modules loaded.
