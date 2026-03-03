@@ -12,9 +12,9 @@ ignore:
     - .pkgmeta
     - README.md
     - CHANGELOG.md
+    - UNRELEASED.md
     - Documentation
     - "*.code-workspace"
-    - "*.md"
 
 # Externals: fetch libraries from their official sources (optional - remove if bundling manually)
 # externals:
