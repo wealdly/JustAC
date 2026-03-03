@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 38)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 39)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -91,6 +91,79 @@ local UNIQUE_AURA_SPELLS = {
 for spellID in pairs(RAID_BUFF_SPELLS) do
     UNIQUE_AURA_SPELLS[spellID] = true
 end
+
+--------------------------------------------------------------------------------
+-- NeverSecret Aura Whitelist (12.0+)
+-- Source: Meorawr (Blizzard) hotfix + NoSelph/ShadowedUnitFrames research.
+-- These spells return non-secret AuraData (spellId, name, icon, duration, etc.)
+-- even in combat on player/party/raid units. When the aura API reports a field
+-- as "secret" for one of these spells, we can safely pcall-access it — the data
+-- is guaranteed readable and the pcall verifies that guarantee holds.
+-- This allows resolution of NEW auras gained during combat (no instance-map entry)
+-- without waiting for the next out-of-combat refresh.
+--------------------------------------------------------------------------------
+local NEVER_SECRET_AURA_SPELLS = {
+    -- Raid Buffs (already in RAID_BUFF_SPELLS, but listed explicitly for whitelist)
+    [1126]   = true,  -- Mark of the Wild
+    [1459]   = true,  -- Arcane Intellect
+    [6673]   = true,  -- Battle Shout
+    [21562]  = true,  -- Power Word: Fortitude
+    [369459] = true,  -- Source of Magic (Evoker)
+    [462854] = true,  -- Skyfury
+    [381732] = true,  -- Blessing of the Bronze
+    [381741] = true,  -- Blessing of the Bronze (DH)
+    [381746] = true,  -- Blessing of the Bronze (DK)
+    [381748] = true,  -- Blessing of the Bronze (Druid)
+    [381750] = true,  -- Blessing of the Bronze (Hunter)
+    [381751] = true,  -- Blessing of the Bronze (Mage)
+    [381752] = true,  -- Blessing of the Bronze (Monk)
+    [381753] = true,  -- Blessing of the Bronze (Paladin)
+    [381754] = true,  -- Blessing of the Bronze (Priest)
+    [381756] = true,  -- Blessing of the Bronze (Rogue)
+    [381757] = true,  -- Blessing of the Bronze (Shaman)
+    [381758] = true,  -- Blessing of the Bronze (Warlock)
+    [474754] = true,  -- Symbiotic Relationship
+    -- Rogue Poisons (aura buff IDs)
+    [2823]   = true,  -- Deadly Poison
+    [8679]   = true,  -- Wound Poison
+    [3408]   = true,  -- Crippling Poison
+    [5761]   = true,  -- Numbing Poison
+    [315584] = true,  -- Instant Poison
+    [381637] = true,  -- Atrophic Poison
+    [381664] = true,  -- Amplifying Poison
+    -- Shaman Imbuements
+    [319773] = true,  -- Windfury Weapon (aura)
+    [319778] = true,  -- Flametongue Weapon (aura)
+    [382021] = true,  -- Earthliving Weapon (aura, cast)
+    [382022] = true,  -- Earthliving Weapon (buff)
+    [457496] = true,  -- Tidecaller Guard (aura)
+    [457481] = true,  -- Tidecaller Guard (buff)
+    [462757] = true,  -- Thunderstrike Ward (aura)
+    [462742] = true,  -- Thunderstrike Ward (buff)
+    -- Resources / Class Mechanics
+    [205473] = true,  -- Icicles (Mage)
+    [260286] = true,  -- Tip of the Spear (Hunter)
+    -- Rites (Self Buffs)
+    [433568] = true,  -- Rite of Sanctification
+    [433583] = true,  -- Rite of Adjuration
+    -- Cooldowns
+    [8690]   = true,  -- Hearthstone
+    [20608]  = true,  -- Reincarnation
+    -- Debuffs / Exhaustion
+    [57723]  = true,  -- Exhaustion (Heroism)
+    [390435] = true,  -- Exhaustion (alternate)
+    [57724]  = true,  -- Sated (Bloodlust)
+    [80354]  = true,  -- Temporal Displacement (Time Warp)
+    [95809]  = true,  -- Insanity (Ancient Hysteria)
+    [160455] = true,  -- Fatigued
+    [264689] = true,  -- Fatigued (alternate)
+    [26013]  = true,  -- Deserter
+    [71041]  = true,  -- Dungeon Deserter
+    -- Skyriding
+    [427490] = true,  -- Ride Along Available
+    [447959] = true,  -- Ride Along Active
+    [447960] = true,  -- Ride Along Inactive
+}
 
 -- Personal Aura Spells: Self-only buffs (subset that we recognize)
 -- Used for determining if a spell applies a personal buff
@@ -496,8 +569,11 @@ RefreshAuraCache = function()
     -- Modern API (11.0+)
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 40 do
-            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-            if not auraData then break end
+            -- pcall protection: GetAuraDataByIndex may throw on compound unit tokens
+            -- or unexpected 12.0.x hotfix changes. On failure, break the loop and use
+            -- whatever auras we've already resolved + trustedOutOfCombatCache as fallback.
+            local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+            if not ok or not auraData then break end
             
             -- auraInstanceID is NeverSecret in 12.0 — always readable
             local instanceID = auraData.auraInstanceID
@@ -505,6 +581,48 @@ RefreshAuraCache = function()
             local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
             
             if spellIdIsSecret or nameIsSecret then
+                -- 12.0 NeverSecret whitelist: Some auras are guaranteed non-secret
+                -- even in combat. For these, pcall-access the fields directly —
+                -- if readable, skip the instance-map resolution path entirely.
+                -- This handles auras gained during combat that have no instance map entry.
+                local whitelistResolved = false
+                if spellIdIsSecret then
+                    local ok, realSpellId = pcall(function() return auraData.spellId + 0 end)
+                    if ok and realSpellId and NEVER_SECRET_AURA_SPELLS[realSpellId] then
+                        -- spellId was readable (NeverSecret) despite IsSecretValue returning true.
+                        -- Process as a normal non-secret aura.
+                        cachedAuras.byID[realSpellId] = true
+                        local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
+                        local halfwayThreshold = nil
+                        if dur and dur > 0 and exp and exp > 0 then
+                            halfwayThreshold = exp - (dur * 0.2)
+                        end
+                        local timingInfo = {
+                            duration = dur or 0,
+                            expirationTime = exp or 0,
+                            count = auraData.applications or 1,
+                            halfwayThreshold = halfwayThreshold,
+                        }
+                        cachedAuras.auraInfo[realSpellId] = timingInfo
+                        if instanceID then
+                            instanceToSpellMap[instanceID] = realSpellId
+                            instanceToTimingMap[instanceID] = timingInfo
+                        end
+                        -- Try reading name/icon too (also NeverSecret for whitelisted)
+                        local nameOk, realName = pcall(function() return auraData.name .. "" end)
+                        if nameOk and realName then
+                            cachedAuras.byName[realName] = realSpellId
+                            if instanceID then instanceToNameMap[instanceID] = realName end
+                        end
+                        if auraData.icon then
+                            cachedAuras.byIcon[auraData.icon] = realName or true
+                            if instanceID then instanceToIconMap[instanceID] = auraData.icon end
+                        end
+                        whitelistResolved = true
+                    end
+                end
+
+                if not whitelistResolved then
                 -- 12.0 Instance Map Resolution: Use instanceID to look up known spellID
                 local mappedSpellID = instanceID and instanceToSpellMap[instanceID]
                 local mappedName = instanceID and instanceToNameMap[instanceID]
@@ -527,6 +645,7 @@ RefreshAuraCache = function()
                     -- Instance ID not in our map (new aura gained during combat)
                     unresolvedSecrets = unresolvedSecrets + 1
                 end
+                end  -- not whitelistResolved
             else
                 -- Not secret — process normally and update instance maps
                 if auraData.spellId then

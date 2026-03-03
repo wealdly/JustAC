@@ -1,6 +1,14 @@
 
 # Changelog
 
+## [4.5.4] - 2026-03-03
+
+### Changed
+- **UIRenderer v17**: Cooldown display now uses `SetCooldownFromDurationObject` (12.0+ opaque pipeline) when available. Bypasses secret value handling entirely for cooldown sweep animations. Falls back to legacy `SetCooldown` on pre-12.0 clients. Charge cooldowns also use `GetActionChargeDuration` → `SetCooldownFromDurationObject` when an action bar slot is resolved.
+- **RedundancyFilter v39**: Added NeverSecret aura whitelist (Meorawr/Blizzard hotfix data, ~50 spells). Auras gained during combat that are on the whitelist can be resolved directly via pcall without instance-map lookup — covers raid buffs, rogue poisons, shaman imbues, exhaustion debuffs, and more.
+- **RedundancyFilter v39**: Wrapped `GetAuraDataByIndex` loop in pcall for crash resilience. If the API throws (compound token issues, hotfix changes), the loop breaks gracefully and falls back to the trusted out-of-combat cache.
+- **GapCloserEngine v2**: Uses `C_ActionBar.EnableActionRangeCheck(slot, true)` to opt the melee reference slot into push-based `ACTION_RANGE_CHECK_UPDATE` events. Properly disables range check on old slots when the reference changes or the cache is invalidated.
+
 ## [4.5.3] - 2026-03-02
 
 ### Fixed
