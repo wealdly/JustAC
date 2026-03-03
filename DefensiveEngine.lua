@@ -475,7 +475,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
         local npoMaxIcons    = npo.maxDefensiveIcons or 1
-        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=true})
+        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
         ApplyOverlayQueue(addon, npoQueue)
     end
 end

@@ -15,7 +15,7 @@ function Overlay.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Nameplate Overlay"],
-        order = 2,
+        order = 3,
         args = {
             info = {
                 type = "description",
@@ -206,10 +206,11 @@ function Overlay.CreateTabArgs(addon)
                 order = 22,
                 width = "normal",
                 values = {
-                    combatOnly = L["In Combat Only"],
-                    always     = L["Always"],
+                    healthBased = L["When Health Low"],
+                    combatOnly  = L["In Combat Only"],
+                    always      = L["Always"],
                 },
-                sorting = { "combatOnly", "always" },
+                sorting = { "healthBased", "combatOnly", "always" },
                 get = function() return addon.db.profile.nameplateOverlay.defensiveDisplayMode or "combatOnly" end,
                 set = function(_, val)
                     addon.db.profile.nameplateOverlay.defensiveDisplayMode = val

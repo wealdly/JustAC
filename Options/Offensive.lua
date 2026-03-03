@@ -14,26 +14,20 @@ function Offensive.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Offensive"],
-        order = 3,
+        order = 4,
         childGroups = "tab",
         args = {
-            -- Sub-tab 1: Queue Settings
+            -- Sub-tab 1: Queue Content
             settings = {
                 type = "group",
-                name = L["Queue Settings"],
+                name = L["Queue Content"],
                 order = 1,
                 args = {
-                    -- QUEUE CONTENT (10-19)
-                    contentHeader = {
-                        type = "header",
-                        name = L["Queue Content"],
-                        order = 10,
-                    },
                     includeHiddenAbilities = {
                         type = "toggle",
                         name = L["Include All Available Abilities"],
                         desc = L["Include All Available Abilities desc"],
-                        order = 11,
+                        order = 1,
                         width = "full",
                         get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
                         set = function(_, val)
@@ -48,7 +42,7 @@ function Offensive.CreateTabArgs(addon)
                         type = "toggle",
                         name = L["Insert Procced Abilities"],
                         desc = L["Insert Procced Abilities desc"],
-                        order = 12,
+                        order = 2,
                         width = "full",
                         get = function() return addon.db.profile.showSpellbookProcs or false end,
                         set = function(_, val)
@@ -63,7 +57,7 @@ function Offensive.CreateTabArgs(addon)
                         type = "toggle",
                         name = L["Allow Item Abilities"],
                         desc = L["Allow Item Abilities desc"],
-                        order = 13,
+                        order = 3,
                         width = "full",
                         get = function() return not addon.db.profile.hideItemAbilities end,
                         set = function(_, val)
@@ -72,69 +66,6 @@ function Offensive.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             return (addon.db.profile.displayMode or "queue") == "disabled"
-                        end,
-                    },
-                    -- DISPLAY (15-19)
-                    displayHeader = {
-                        type = "header",
-                        name = L["Display"],
-                        order = 15,
-                    },
-                    maxIcons = {
-                        type = "range",
-                        name = L["Max Icons"],
-                        desc = L["Max Icons desc"],
-                        min = 1, max = 7, step = 1,
-                        order = 15.5,
-                        width = "normal",
-                        get = function() return addon.db.profile.maxIcons or 4 end,
-                        set = function(_, val)
-                            addon.db.profile.maxIcons = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
-                        end,
-                    },
-                    firstIconScale = {
-                        type = "range",
-                        name = L["Primary Spell Scale"],
-                        desc = L["Primary Spell Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
-                        order = 16,
-                        width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.0 end,
-                        set = function(_, val)
-                            addon.db.profile.firstIconScale = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
-                        end,
-                    },
-                    glowMode = {
-                        type = "select",
-                        name = L["Highlight Mode"],
-                        desc = L["Highlight Mode desc"],
-                        order = 18,
-                        width = "normal",
-                        values = {
-                            all = L["All Glows"],
-                            primaryOnly = L["Primary Only"],
-                            procOnly = L["Proc Only"],
-                            none = L["No Glows"],
-                        },
-                        sorting = {"all", "primaryOnly", "procOnly", "none"},
-                        get = function() return addon.db.profile.glowMode or "all" end,
-                        set = function(_, val)
-                            addon.db.profile.glowMode = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
                         end,
                     },
                     -- RESET (990+)
@@ -151,14 +82,10 @@ function Offensive.CreateTabArgs(addon)
                         width = "normal",
                         func = function()
                             local p = addon.db.profile
-                            p.maxIcons               = 4
-                            p.firstIconScale         = 1.0
-                            p.glowMode               = "all"
                             p.includeHiddenAbilities = true
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
                             p.blacklistPosition1     = false
-                            addon:UpdateFrameSize()
                             addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,

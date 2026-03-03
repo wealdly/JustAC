@@ -13,38 +13,20 @@ function Defensives.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Defensives"],
-        order = 4,
+        order = 5,
         childGroups = "tab",
         args = {
-            -- ── SUB-TAB 1: QUEUE SETTINGS ───────────────────────────────────
+            -- ── SUB-TAB 1: QUEUE CONTENT ─────────────────────────────────
             settings = {
                 type = "group",
-                name = L["Queue Settings"],
+                name = L["Queue Content"],
                 order = 1,
                 args = {
-            -- QUEUE CONTENT (2-4)
-            header = {
-                type = "header",
-                name = L["Queue Content"],
-                order = 2,
-            },
-            enabled = {
-                type = "toggle",
-                name = L["Enable Defensive Suggestions"],
-                desc = L["Enable Defensive Suggestions desc"],
-                order = 3,
-                width = "full",
-                get = function() return addon.db.profile.defensives.enabled end,
-                set = function(_, val)
-                    addon.db.profile.defensives.enabled = val
-                    addon:UpdateFrameSize()
-                end
-            },
             showProcs = {
                 type = "toggle",
                 name = L["Insert Procced Defensives"],
                 desc = L["Insert Procced Defensives desc"],
-                order = 4,
+                order = 1,
                 width = "full",
                 get = function() return addon.db.profile.defensives.showProcs ~= false end,
                 set = function(_, val)
@@ -60,17 +42,17 @@ function Defensives.CreateTabArgs(addon)
                     return not standardEnabled and not overlayEnabled
                 end,
             },
-            -- ITEMS (4.3-4.9)
+            -- ITEMS (3-5)
             itemsHeader = {
                 type = "header",
                 name = L["Items"],
-                order = 4.3,
+                order = 3,
             },
             allowItems = {
                 type = "toggle",
                 name = L["Allow Items in Spell Lists"],
                 desc = L["Allow Items in Spell Lists desc"],
-                order = 4.5,
+                order = 4,
                 width = "full",
                 get = function() return addon.db.profile.defensives.allowItems == true end,
                 set = function(_, val)
@@ -90,7 +72,7 @@ function Defensives.CreateTabArgs(addon)
                 type = "toggle",
                 name = L["Auto-Insert Health Potions"],
                 desc = L["Auto-Insert Health Potions desc"],
-                order = 4.6,
+                order = 5,
                 width = "full",
                 get = function() return addon.db.profile.defensives.autoInsertPotions ~= false end,
                 set = function(_, val)
@@ -104,130 +86,6 @@ function Defensives.CreateTabArgs(addon)
                     local npo = addon.db.profile.nameplateOverlay
                     local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
                     return not standardEnabled and not overlayEnabled
-                end,
-            },
-            -- DISPLAY (5-9)
-            displayHeader = {
-                type = "header",
-                name = L["Display"],
-                order = 5,
-            },
-            glowMode = {
-                type = "select",
-                name = L["Highlight Mode"],
-                desc = L["Highlight Mode desc"],
-                order = 7,
-                width = "normal",
-                values = {
-                    all         = L["All Glows"],
-                    primaryOnly = L["Primary Only"],
-                    procOnly    = L["Proc Only"],
-                    none        = L["No Glows"],
-                },
-                sorting = {"all", "primaryOnly", "procOnly", "none"},
-                get = function()
-                    return addon.db.profile.defensives.glowMode or "all"
-                end,
-                set = function(_, val)
-                    addon.db.profile.defensives.glowMode = val
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            maxIcons = {
-                type = "range",
-                name = L["Defensive Max Icons"],
-                desc = L["Defensive Max Icons desc"],
-                min = 1, max = 7, step = 1,
-                order = 6,
-                width = "normal",
-                get = function() return addon.db.profile.defensives.maxIcons or 3 end,
-                set = function(_, val)
-                    addon.db.profile.defensives.maxIcons = val
-                    addon:UpdateFrameSize()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            iconScale = {
-                type = "range",
-                name = L["Defensive Icon Scale"],
-                desc = L["Defensive Icon Scale desc"],
-                min = 0.5, max = 2.0, step = 0.1,
-                order = 6.5,
-                width = "normal",
-                get = function() return addon.db.profile.defensives.iconScale or 1.0 end,
-                set = function(_, val)
-                    addon.db.profile.defensives.iconScale = val
-                    addon:UpdateFrameSize()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            displayMode = {
-                type = "select",
-                name = L["Defensive Display Mode"],
-                desc = L["Defensive Display Mode desc"],
-                order = 8,
-                width = "double",
-                values = {
-                    healthBased = L["When Health Low"],
-                    combatOnly = L["In Combat Only"],
-                    always = L["Always"],
-                },
-                sorting = {"healthBased", "combatOnly", "always"},
-                get = function()
-                    -- Migration from old settings
-                    if addon.db.profile.defensives.displayMode then
-                        return addon.db.profile.defensives.displayMode
-                    end
-                    -- Convert old toggles to new mode
-                    local showOnlyInCombat = addon.db.profile.defensives.showOnlyInCombat
-                    local alwaysShow = addon.db.profile.defensives.alwaysShowDefensive
-                    if alwaysShow and showOnlyInCombat then
-                        return "combatOnly"
-                    elseif alwaysShow then
-                        return "always"
-                    else
-                        return "healthBased"
-                    end
-                end,
-                set = function(_, val)
-                    addon.db.profile.defensives.displayMode = val
-                    addon.db.profile.defensives.showOnlyInCombat = nil
-                    addon.db.profile.defensives.alwaysShowDefensive = nil
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function() return not addon.db.profile.defensives.enabled end,
-            },
-            showHealthBar = {
-                type = "toggle",
-                name = L["Show Health Bar"],
-                desc = L["Show Health Bar desc"],
-                order = 9,
-                width = "full",
-                get = function() return addon.db.profile.defensives.showHealthBar end,
-                set = function(_, val)
-                    addon.db.profile.defensives.showHealthBar = val
-                    addon:UpdateFrameSize()
-                end,
-                -- Health bar works independently of defensive queue
-            },
-            showPetHealthBar = {
-                type = "toggle",
-                name = L["Show Pet Health Bar"],
-                desc = L["Show Pet Health Bar desc"],
-                order = 9.5,
-                width = "full",
-                get = function() return addon.db.profile.defensives.showPetHealthBar end,
-                set = function(_, val)
-                    addon.db.profile.defensives.showPetHealthBar = val
-                    addon:UpdateFrameSize()
-                end,
-                hidden = function()
-                    local _, pc = UnitClass("player")
-                    local SDB = LibStub("JustAC-SpellDB", true)
-                    if not SDB or not pc then return true end
-                    return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
                 end,
             },
             -- RESET (990+)
@@ -244,27 +102,10 @@ function Defensives.CreateTabArgs(addon)
                 width = "normal",
                 func = function()
                     local def = addon.db.profile.defensives
-                    -- Synced with JustAC.lua profile defaults
-                    def.enabled          = true
                     def.showProcs        = true
-                    def.position         = "SIDE1"
-                    def.showHealthBar    = true
-                    def.showPetHealthBar = true
-                    def.iconScale        = 1.0
-                    def.maxIcons         = 4
-                    def.selfHealThreshold = 80
-                    def.petHealThreshold  = 50
-                    def.allowItems        = true
+                    def.allowItems       = true
                     def.autoInsertPotions = true
-                    def.displayMode       = "always"
-                    def.glowMode          = "all"
-                    -- Clear legacy migration keys
-                    def.showOnlyInCombat    = nil
-                    def.alwaysShowDefensive = nil
-                    def.showHotkeys         = nil
-                    def.ignoreHealthPriority = nil
-                    def.cooldownThreshold   = nil
-                    addon:UpdateFrameSize()
+                    addon:ForceUpdateAll()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },

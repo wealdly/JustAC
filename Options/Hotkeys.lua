@@ -13,7 +13,7 @@ function Hotkeys.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Hotkey Overrides"],
-        order = 5,
+        order = 7,
         args = {
             info = {
                 type = "description",
