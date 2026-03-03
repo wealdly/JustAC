@@ -158,11 +158,13 @@ ResolveHealthState = function(profile)
         healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
     end
 
-    if isEstimated then
-        -- Secret health in combat: show all defensives (can't detect exact threshold).
-        return true
-    elseif healthPercent then
+    if healthPercent then
         local def = profile and profile.defensives
+        -- When health is estimated (secret in combat), GetPlayerHealthPercentSafe
+        -- returns 100 when LowHealthFrame is hidden, ≤35 when shown.
+        -- The ~35% LowHealthFrame threshold is NeverSecret and reliable in combat.
+        -- Use selfHealThreshold for exact health, but in-combat estimates only
+        -- resolve to "low" via LowHealthFrame (~35%).
         local selfHealThreshold = def and def.selfHealThreshold or 80
         return healthPercent <= selfHealThreshold
     end
