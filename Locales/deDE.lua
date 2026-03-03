@@ -69,7 +69,9 @@ L["Up"] = "Hoch"
 L["Dn"] = "Runter"
 
 -- Descriptions
-L["General description"] = "Aussehen und Verhalten der Zauber-Warteschlange konfigurieren."
+L["General description"] = "Einstellungen, die für beide Oberflächen gelten."
+L["Standard Queue description"] = "Aussehen und Verhalten der Standard-Warteschlange konfigurieren."
+L["Shared Behavior"] = "Gemeinsames Verhalten"
 L["Icon Layout"] = "Symbol-Layout"
 L["Visibility"] = "Sichtbarkeit"
 L["Queue Content"] = "Warteschlangen-Inhalt"
@@ -239,6 +241,7 @@ L["Nameplate Show Health Bars desc"] = "Kompakte Spieler- und Begleiter-Lebensle
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Auf Standard zurücksetzen"
 L["Reset General desc"] = "Alle allgemeinen Einstellungen auf Standardwerte zurücksetzen."
+L["Reset Standard Queue desc"] = "Alle Einstellungen der Standard-Warteschlange auf Standardwerte zurücksetzen."
 L["Reset Offensive desc"] = "Offensiv-Einstellungen auf Standard zurücksetzen. Die Sperrliste wird nicht beeinflusst."
 L["Reset Overlay desc"] = "Alle Overlay-Einstellungen auf Standardwerte zurücksetzen."
 L["Reset Defensives desc"] = "Defensiv-Einstellungen auf Standard zurücksetzen. Zauberlisten werden nicht beeinflusst."

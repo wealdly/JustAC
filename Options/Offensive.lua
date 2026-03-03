@@ -41,8 +41,7 @@ function Offensive.CreateTabArgs(addon)
                             addon:ForceUpdate()
                         end,
                         disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            return (addon.db.profile.displayMode or "queue") == "disabled"
                         end,
                     },
                     showSpellbookProcs = {
@@ -57,8 +56,7 @@ function Offensive.CreateTabArgs(addon)
                             addon:ForceUpdate()
                         end,
                         disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            return (addon.db.profile.displayMode or "queue") == "disabled"
                         end,
                     },
                     hideItemAbilities = {
@@ -71,32 +69,6 @@ function Offensive.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.hideItemAbilities = not val
                             addon:ForceUpdate()
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
-                        end,
-                    },
-                    interruptMode = {
-                        type = "select",
-                        name = L["Interrupt Mode"],
-                        desc = L["Interrupt Mode desc"],
-                        order = 14,
-                        width = "double",
-                        values = {
-                            disabled      = L["Interrupt Mode Disabled"],
-                            kickOnly      = L["Interrupt Mode Kick Only"],
-                            ccShielded    = L["Interrupt Mode CC Shielded"],
-                            ccPrefer      = L["Interrupt Mode CC Prefer"],
-                        },
-                        sorting = { "disabled", "kickOnly", "ccShielded", "ccPrefer" },
-                        get = function() return addon.db.profile.interruptMode or "ccPrefer" end,
-                        set = function(_, val)
-                            addon.db.profile.interruptMode = val
-                            addon:UpdateFrameSize()
-                            -- Recreate overlay to add/remove interrupt icon
-                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
                         disabled = function()
                             return (addon.db.profile.displayMode or "queue") == "disabled"
@@ -162,21 +134,7 @@ function Offensive.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled"
-                        end,
-                    },
-                    showFlash = {
-                        type = "toggle",
-                        name = L["Show Key Press Flash"],
-                        desc = L["Show Key Press Flash desc"],
-                        order = 19,
-                        width = "full",
-                        get = function() return addon.db.profile.showFlash ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.showFlash = val
-                        end,
-                        disabled = function()
-                            return (addon.db.profile.displayMode or "queue") == "disabled"
+                            return dm == "disabled" or dm == "overlay"
                         end,
                     },
                     -- RESET (990+)
@@ -196,16 +154,12 @@ function Offensive.CreateTabArgs(addon)
                             p.maxIcons               = 4
                             p.firstIconScale         = 1.0
                             p.glowMode               = "all"
-                            p.showFlash              = true
                             p.includeHiddenAbilities = true
                             p.showSpellbookProcs     = true
                             p.hideItemAbilities      = false
                             p.blacklistPosition1     = false
-                            p.interruptMode          = "ccPrefer"
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
-                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                     },

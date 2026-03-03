@@ -69,7 +69,9 @@ L["Up"] = "Arriba"
 L["Dn"] = "Abajo"
 
 -- Descriptions
-L["General description"] = "Configurar la apariencia y el comportamiento de la cola de hechizos."
+L["General description"] = "Ajustes compartidos entre la cola estándar y la superposición."
+L["Standard Queue description"] = "Configurar la apariencia y el comportamiento de la cola de hechizos."
+L["Shared Behavior"] = "Comportamiento compartido"
 L["Icon Layout"] = "Diseño de iconos"
 L["Visibility"] = "Visibilidad"
 L["Queue Content"] = "Contenido de cola"
@@ -239,6 +241,7 @@ L["Nameplate Show Health Bars desc"] = "Mostrar barras de salud compactas del ju
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Restablecer valores"
 L["Reset General desc"] = "Restablecer todos los ajustes generales a sus valores predeterminados."
+L["Reset Standard Queue desc"] = "Restablecer todos los ajustes de la cola estándar a sus valores predeterminados."
 L["Reset Offensive desc"] = "Restablecer ajustes ofensivos. La lista negra no se ve afectada."
 L["Reset Overlay desc"] = "Restablecer todos los ajustes del Overlay a sus valores predeterminados."
 L["Reset Defensives desc"] = "Restablecer ajustes defensivos. Las listas de hechizos no se ven afectadas."
