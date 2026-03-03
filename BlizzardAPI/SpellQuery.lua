@@ -82,13 +82,6 @@ function BlizzardAPI.RefreshDebugMode()
     lastDebugModeCheck = 0
 end
 
-function BlizzardAPI.IsCurrentSpecHealer()
-    local spec = GetSpecialization()
-    if not spec then return false end
-    local _, _, _, _, role = GetSpecializationInfo(spec)
-    return role == "HEALER"
-end
-
 local function GetDebugMode()
     return BlizzardAPI.GetDebugMode()
 end
@@ -221,92 +214,6 @@ function BlizzardAPI.ValidateAssistedCombatSetup()
     return #issues == 0, issues
 end
 
--- Enhanced debug function that matches Blizzard's approach
-function BlizzardAPI.TestAssistedCombatAPI()
-    print("|JAC| === Assisted Combat API Test (Blizzard-Style) ===")
-
-    -- Check basic availability
-    local isAvailable, failureReason = BlizzardAPI.IsAssistedCombatAvailable()
-    print("|JAC| IsAvailable: " .. tostring(isAvailable) .. " (" .. (failureReason or "no reason") .. ")")
-
-    -- Check player state
-    local inCombat = UnitAffectingCombat("player")
-    local spec = GetSpecialization()
-    local level = UnitLevel("player")
-    local class = select(2, UnitClass("player"))
-
-    print("|JAC| Player State:")
-    print("|JAC|   Class: " .. tostring(class))
-    print("|JAC|   Level: " .. tostring(level))
-    print("|JAC|   Spec: " .. tostring(spec))
-    print("|JAC|   In Combat: " .. tostring(inCombat))
-
-    -- Check CVars (critical for system to work)
-    local assistedMode = GetCVarBool("assistedMode")
-    local assistedHighlight = GetCVarBool("assistedCombatHighlight")
-    local updateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0
-
-    print("|JAC| CVars:")
-    print("|JAC|   assistedMode: " .. tostring(assistedMode))
-    print("|JAC|   assistedCombatHighlight: " .. tostring(assistedHighlight))
-    print("|JAC|   assistedCombatIconUpdateRate: " .. tostring(updateRate))
-
-    -- Check action button system
-    local hasActionButtons = BlizzardAPI.HasAssistedCombatActionButtons()
-    print("|JAC| HasAssistedCombatActionButtons: " .. tostring(hasActionButtons))
-
-    -- Test rotation spells
-    local rotationSpells = BlizzardAPI.GetRotationSpells()
-    if rotationSpells and #rotationSpells > 0 then
-        print("|JAC| Current rotation spells: " .. #rotationSpells .. " entries")
-        for i = 1, math_min(#rotationSpells, 5) do
-            local spellInfo = BlizzardAPI.GetSpellInfo(rotationSpells[i])
-            local name = spellInfo and spellInfo.name or "Unknown"
-            print("|JAC|   " .. i .. ": " .. name .. " (" .. tostring(rotationSpells[i]) .. ")")
-        end
-        if #rotationSpells > 5 then
-            print("|JAC|   ... and " .. (#rotationSpells - 5) .. " more")
-        end
-    else
-        print("|JAC| No rotation spells returned")
-    end
-
-    -- Test next cast spell (using correct parameter)
-    local nextCastSpell = BlizzardAPI.GetNextCastSpell()
-    if nextCastSpell then
-        local spellInfo = BlizzardAPI.GetSpellInfo(nextCastSpell)
-        local name = spellInfo and spellInfo.name or "Unknown"
-        print("|JAC| GetNextCastSpell(true): " .. name .. " (" .. tostring(nextCastSpell) .. ")")
-    else
-        print("|JAC| GetNextCastSpell(true): No spell")
-    end
-
-    -- Validation summary
-    local isValid, issues = BlizzardAPI.ValidateAssistedCombatSetup()
-    print("|JAC| System Status: " .. (isValid and "READY" or "NEEDS SETUP"))
-
-    if not isValid then
-        print("|JAC| Setup Issues:")
-        for i, issue in ipairs(issues) do
-            print("|JAC|   " .. i .. ". " .. issue)
-        end
-    end
-
-    -- Secrecy API quick test: surface results for the sample spell (primary or first rotation)
-    local sample = nextCastSpell or (rotationSpells and rotationSpells[1])
-    if sample then
-        local cdLevel = BlizzardAPI.GetSpellCooldownSecrecy and BlizzardAPI.GetSpellCooldownSecrecy(sample)
-        local auraLevel = BlizzardAPI.GetSpellAuraSecrecy and BlizzardAPI.GetSpellAuraSecrecy(sample)
-        local castLevel = BlizzardAPI.GetSpellCastSecrecy and BlizzardAPI.GetSpellCastSecrecy(sample)
-        local start, dur = BlizzardAPI.GetSafeSpellCooldown(sample)
-        print("|JAC| Secrecy for sample spell (" .. tostring(sample) .. "):")
-        print("|JAC|   cooldown secrecy: " .. tostring(cdLevel) .. ", aura secrecy: " .. tostring(auraLevel) .. ", cast secrecy: " .. tostring(castLevel))
-        print("|JAC|   safe cooldown read: start=" .. tostring(start) .. ", duration=" .. tostring(dur))
-    end
-
-    print("|JAC| =====================================")
-end
-
 -- Raw values (may be secret); Cooldown widget handles them
 function BlizzardAPI.GetSpellCooldown(spellID)
     if not C_Spell_GetSpellCooldown then return 0, 0 end
@@ -397,76 +304,6 @@ function BlizzardAPI.IsSpellOnGCD(spellID)
     end
 
     return spellCD.startTime == gcdStart and spellDuration == gcdDuration
-end
-
--- 12.0 fallbacks: local cooldown tracking, action bar usability
-function BlizzardAPI.IsSpellOnRealCooldown(spellID)
-    if not spellID then return false end
-
-    local start, duration, onRealCD = BlizzardAPI.GetSpellCooldownValues(spellID)
-
-    -- If values were secret with definitive answer from tracking
-    if onRealCD == true then return true end
-
-    if start and start > 0 and duration and duration > 0 then
-        if BlizzardAPI.IsSpellOnGCD(spellID) then
-            return false
-        end
-        return true
-    end
-
-    -- Charge-based spell check
-    if C_Spell_GetSpellCharges then
-        local success, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
-        if success and chargeInfo then
-            local currentCharges = chargeInfo.currentCharges
-            if currentCharges then
-                if IsSecretValue(currentCharges) then
-                    -- Secret value: fail-open (assume usable) to prevent hiding spells
-                    -- that may have charges available
-                    return false
-                end
-                if currentCharges == 0 then
-                    return true
-                else
-                    return false
-                end
-            end
-        end
-    end
-
-    -- Local cooldown tracking
-    if BlizzardAPI.IsSpellOnLocalCooldown(spellID) then
-        return true
-    end
-
-    -- Action bar usability
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
-        local slot = ActionBarScanner.GetSlotForSpell(spellID)
-        if slot and C_ActionBar and C_ActionBar.IsUsableAction then
-            local actionUsable, notEnoughMana = C_ActionBar.IsUsableAction(slot)
-            -- Check for secrets before comparing - fail-open (assume usable = show)
-            if IsSecretValue(actionUsable) or IsSecretValue(notEnoughMana) then
-                return false  -- Fail-open: assume NOT on cooldown (show)
-            end
-            if actionUsable == false and not notEnoughMana then
-                return true
-            end
-            if actionUsable == true then
-                return false
-            end
-        end
-    end
-
-    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-    if not isUsable and not notEnoughResources then
-        if not BlizzardAPI.IsSpellOnGCD(spellID) then
-            return true
-        end
-    end
-
-    return false
 end
 
 -- 12.0: Falls back to action bar state when secret.
@@ -613,18 +450,6 @@ function BlizzardAPI.IsDefensiveSpell(spellID)
     return SpellDB.IsDefensiveSpell(spellID) or SpellDB.IsHealingSpell(spellID)
 end
 
-function BlizzardAPI.IsCrowdControlSpell(spellID)
-    if not spellID then return false end
-    if not SpellDB then return false end
-    return SpellDB.IsCrowdControlSpell(spellID)
-end
-
-function BlizzardAPI.IsUtilitySpell(spellID)
-    if not spellID then return false end
-    if not SpellDB then return false end
-    return SpellDB.IsUtilitySpell(spellID)
-end
-
 --------------------------------------------------------------------------------
 -- Item Spell Detection
 --------------------------------------------------------------------------------
@@ -676,12 +501,6 @@ end
 
 function BlizzardAPI.RefreshItemSpellCache()
     itemSpellCacheTime = 0
-end
-
-function BlizzardAPI.GetSpellClassification(spellID)
-    if not spellID then return "unknown" end
-    if not SpellDB then return "unknown" end
-    return SpellDB.GetSpellClassification(spellID)
 end
 
 local spellAvailabilityCache = {}

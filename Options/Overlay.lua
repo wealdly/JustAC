@@ -23,6 +23,12 @@ function Overlay.CreateTabArgs(addon)
                 order = 1,
                 fontSize = "medium",
             },
+            -- DISPLAY (2-9)
+            displayHeader = {
+                type = "header",
+                name = L["Display"],
+                order = 1.5,
+            },
             reverseAnchor = {
                 type = "toggle",
                 name = L["Reverse Anchor"],
@@ -68,7 +74,7 @@ function Overlay.CreateTabArgs(addon)
                 type = "select",
                 name = L["Offensive Slots"],
                 desc = L["Max Icons desc"],
-                order = 12,
+                order = 11,
                 width = "normal",
                 values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
                 sorting = { 1, 2, 3, 4, 5 },
@@ -165,49 +171,10 @@ function Overlay.CreateTabArgs(addon)
                     return dm ~= "overlay" and dm ~= "both"
                 end,
             },
-            showFlash = {
-                type = "toggle",
-                name = L["Show Key Press Flash"],
-                desc = L["Show Key Press Flash desc"],
-                order = 10,
-                width = "normal",
-                get = function() return addon.db.profile.nameplateOverlay.showFlash ~= false end,
-                set = function(_, val)
-                    addon.db.profile.nameplateOverlay.showFlash = val
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm ~= "overlay" and dm ~= "both"
-                end,
-            },
             offensiveSectionHeader = {
                 type = "header",
                 name = L["Offensive Queue"],
-                order = 11,
-            },
-            interruptMode = {
-                type = "select",
-                name = L["Interrupt Mode"],
-                desc = L["Interrupt Mode desc"],
-                order = 13,
-                width = "double",
-                values = {
-                    disabled      = L["Interrupt Mode Disabled"],
-                    kickOnly      = L["Interrupt Mode Kick Only"],
-                    ccShielded    = L["Interrupt Mode CC Shielded"],
-                    ccPrefer      = L["Interrupt Mode CC Prefer"],
-                },
-                sorting = { "disabled", "kickOnly", "ccShielded", "ccPrefer" },
-                get = function() return addon.db.profile.nameplateOverlay.interruptMode or "ccPrefer" end,
-                set = function(_, val)
-                    addon.db.profile.nameplateOverlay.interruptMode = val
-                    local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm ~= "overlay" and dm ~= "both"
-                end,
+                order = 10,
             },
             defensiveSectionHeader = {
                 type = "header",
@@ -313,27 +280,21 @@ function Overlay.CreateTabArgs(addon)
                     npo.iconSize             = 32
                     npo.iconSpacing          = 2
                     npo.opacity              = 1.0
-                    npo.showGlow             = true
+                    npo.showGlow             = nil   -- clear legacy boolean key
                     npo.glowMode             = "all"
-                    npo.showFlash            = true
                     npo.showDefensives       = true
                     npo.maxDefensiveIcons    = 3
                     npo.defensiveDisplayMode = "always"
                     npo.showHealthBar        = true
-                    npo.interruptMode        = "ccPrefer"
-                    -- Restore textOverlays (wipe destroyed them; Labels tab depends on this)
+                    -- Restore overlay-specific fontScale (wipe destroyed them)
                     npo.textOverlays = {
-                        hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT" },
-                        cooldown = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=0.5} },
-                        charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
+                        hotkey   = { fontScale = 1.0 },
+                        cooldown = { fontScale = 1.0 },
+                        charges  = { fontScale = 1.0 },
                     }
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm ~= "overlay" and dm ~= "both"
                 end,
             },
         },

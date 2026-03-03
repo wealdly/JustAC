@@ -470,7 +470,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     if showFlashOverride ~= nil then
         showFlash = showFlashOverride
     else
-        showFlash = addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.showFlash ~= false
+        showFlash = addon.db and addon.db.profile and addon.db.profile.showFlash ~= false
     end
     local hotkey = ""
     if showHotkeys or showFlash then
@@ -724,7 +724,7 @@ end
 local GLOW_NONE       = 0   -- no glow
 local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
 local GLOW_PROC       = 2   -- gold burst (spell is procced / critically available)
-local GLOW_GAP_CLOSER = 3   -- red crawl (gap-closer, target out of melee range)
+local GLOW_GAP_CLOSER = 3   -- gold crawl (gap-closer, target out of melee range)
 
 --- Priority: gap-closer > proc > assisted > none.
 --- No WoW API calls — all inputs pre-computed by caller.
@@ -1009,9 +1009,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Re-query only when action bars or bindings change.
+                -- Empty results ("") are retried so the scanner's 0.25s refresh
+                -- can resolve proc overrides (Infernal Bolt, Ruination, etc.)
+                -- that miss on the first frame before GetOverrideSpell propagates.
                 local hotkey
                 local hotkeyChanged = false
-                if hotkeysDirty or spellChanged or not icon.cachedHotkey then
+                if hotkeysDirty or spellChanged or not icon.cachedHotkey or icon.cachedHotkey == "" then
                     hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
                     if icon.cachedHotkey ~= hotkey then
                         hotkeyChanged = true

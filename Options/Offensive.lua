@@ -94,10 +94,12 @@ function Offensive.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.interruptMode = val
                             addon:UpdateFrameSize()
+                            -- Recreate overlay to add/remove interrupt icon
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
                         disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            return (addon.db.profile.displayMode or "queue") == "disabled"
                         end,
                     },
                     -- DISPLAY (15-19)
@@ -160,7 +162,7 @@ function Offensive.CreateTabArgs(addon)
                         end,
                         disabled = function()
                             local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            return dm == "disabled"
                         end,
                     },
                     showFlash = {
@@ -174,21 +176,20 @@ function Offensive.CreateTabArgs(addon)
                             addon.db.profile.showFlash = val
                         end,
                         disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
+                            return (addon.db.profile.displayMode or "queue") == "disabled"
                         end,
                     },
-                    -- RESET (19.8+)
+                    -- RESET (990+)
                     resetHeader = {
                         type = "header",
                         name = "",
-                        order = 19.8,
+                        order = 990,
                     },
                     resetDefaults = {
                         type = "execute",
                         name = L["Reset to Defaults"],
                         desc = L["Reset Offensive desc"],
-                        order = 19.9,
+                        order = 991,
                         width = "normal",
                         func = function()
                             local p = addon.db.profile
@@ -203,11 +204,9 @@ function Offensive.CreateTabArgs(addon)
                             p.interruptMode          = "ccPrefer"
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                        end,
-                        disabled = function()
-                            local dm = addon.db.profile.displayMode or "queue"
-                            return dm == "disabled" or dm == "overlay"
                         end,
                     },
                 },
