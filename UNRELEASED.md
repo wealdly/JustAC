@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+### Added
+- **Instance-level CC immunity cache**: Mobs identified as CC-immune (bosses, certain elites) are now remembered by NPC ID for the duration of the instance. Repeat pulls of the same mob no longer re-learn CC immunity from scratch. The cache resets on zone change (`PLAYER_ENTERING_WORLD`). NPC IDs are extracted from `UnitGUID` out of combat and backfilled at combat end.
+
 ### Changed
 - **Options restructured**: Split the "General" tab into two tabs:
   - **General** (new) — Shared settings that affect both surfaces: Display Mode, Interrupt Mode, Key Press Flash, Gamepad Icon Style, Interrupt Alert Sound.

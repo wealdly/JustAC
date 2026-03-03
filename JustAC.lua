@@ -801,7 +801,12 @@ function JustAC:PLAYER_ENTERING_WORLD()
     self:UpdateAlternateControlState()
 
     -- Refresh creature type cache in case there is a pre-existing target on world enter.
-    if BlizzardAPI then BlizzardAPI.RefreshTargetCreatureType() end
+    if BlizzardAPI then
+        -- Clear instance CC immunity cache on zone/instance change so stale data
+        -- from the previous instance doesn't suppress valid CC targets.
+        if BlizzardAPI.ResetInstanceCCCache then BlizzardAPI.ResetInstanceCCCache() end
+        BlizzardAPI.RefreshTargetCreatureType()
+    end
 
     -- Apply spec-based profile/disabled state on world entry (not just on spec change events)
     self:OnSpecChange()
@@ -870,11 +875,19 @@ function JustAC:OnCombatEvent(event)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
+        -- Backfill instance CC cache: if a CC failed on a target whose NPC ID
+        -- wasn't known during combat (tab-targeted mid-fight), BackfillCCImmunity
+        -- reads the GUID now that combat ended and persists the mob type.
+        -- Must run BEFORE RefreshTargetCreatureType clears per-target state.
+        if BlizzardAPI and BlizzardAPI.BackfillCCImmunity then
+            BlizzardAPI.BackfillCCImmunity()
+        end
         -- UnitCreatureType() is readable again out of combat; refresh for next pull
         if BlizzardAPI and BlizzardAPI.RefreshTargetCreatureType then
             BlizzardAPI.RefreshTargetCreatureType()
         end
-        -- Reset CC-failure learning for the next combat session
+        -- Reset per-target CC-failure learning for the next combat session
+        -- (instance-level NPC ID cache is intentionally preserved across pulls)
         if BlizzardAPI and BlizzardAPI.ResetCCFailureLearning then
             BlizzardAPI.ResetCCFailureLearning()
         end
