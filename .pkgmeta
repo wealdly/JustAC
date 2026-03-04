@@ -3,7 +3,6 @@ package-as: JustAC
 manual-changelog:
   filename: CHANGELOG.md
   markup-type: markdown
-  top-entries: 1
 
 ignore:
     - .git
