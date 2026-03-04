@@ -1,6 +1,11 @@
 
 # Changelog
 
+## [4.5.7] - 2026-03-03
+
+### Removed
+- **Single-Button Assistant warning**: Removed the startup warning requiring the Single-Button Assistant to be placed on an action bar. `C_AssistedCombat.GetRotationSpells()` and `GetNextCastSpell()` work regardless of button placement; the warning was unnecessary.
+
 ## [4.5.6] - 2026-03-03
 
 ### Changed
