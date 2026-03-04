@@ -18,6 +18,7 @@ local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local FindBaseSpellByID = FindBaseSpellByID
 local FindSpellOverrideByID = FindSpellOverrideByID
+local C_GamePad = C_GamePad
 local pairs = pairs
 local ipairs = ipairs
 local wipe = wipe
@@ -171,6 +172,44 @@ end
 -- PERFORMANCE: Cache the binding hash value - only recompute when bindings actually change
 local cachedBindingHash = 0
 
+-- Select the appropriate binding key based on input preference (auto/keyboard/gamepad).
+-- GetBindingKey() returns multiple values: key1, key2, ... (keyboard + controller).
+-- This function picks the one matching the user's inputPreference setting.
+local function IsPadKey(key)
+    if not key then return false end
+    local pos = string_find(key, "PAD")
+    if not pos then return false end
+    -- Exclude NUMPAD keys
+    return not (pos >= 4 and key:sub(pos - 3, pos - 1) == "NUM")
+end
+
+local function SelectBinding(...)
+    local n = select("#", ...)
+    if n == 0 then return nil end
+    if n == 1 then return ... end  -- Single binding, no choice to make
+
+    local addon = GetCachedAddon()
+    local pref = (addon and addon.db and addon.db.profile.inputPreference) or "auto"
+    local wantPad
+    if pref == "keyboard" then
+        wantPad = false
+    elseif pref == "gamepad" then
+        wantPad = true
+    else -- "auto"
+        wantPad = C_GamePad and C_GamePad.IsEnabled and C_GamePad.IsEnabled() or false
+    end
+
+    -- First pass: find preferred binding type
+    local fallback = select(1, ...)
+    for i = 1, n do
+        local key = select(i, ...)
+        if key and IsPadKey(key) == wantPad then
+            return key
+        end
+    end
+    return fallback
+end
+
 local function RebuildBindingCache()
     wipe(bindingKeyCache)
     local patterns = {
@@ -182,7 +221,7 @@ local function RebuildBindingCache()
     for i, pattern in ipairs(patterns) do
         for j = 1, NUM_ACTIONBAR_BUTTONS do
             local bindingKey = pattern .. j
-            bindingKeyCache[bindingKey] = GetBindingKey(bindingKey) or ""
+            bindingKeyCache[bindingKey] = SelectBinding(GetBindingKey(bindingKey)) or ""
         end
     end
     
@@ -848,6 +887,12 @@ end
 
 function ActionBarScanner.FindSpellInActions(spellID, spellName)
     return FindSpellInActions(spellID, spellName)
+end
+
+-- Exported helper: apply input preference to a GetBindingKey() call.
+-- Used by UIRenderer for defensive item hotkeys that bypass the scanner cache.
+function ActionBarScanner.SelectBindingKey(bindingName)
+    return SelectBinding(GetBindingKey(bindingName)) or ""
 end
 
 function ActionBarScanner.InvalidateKeybindCache()

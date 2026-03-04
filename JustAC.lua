@@ -21,6 +21,7 @@ local defaults = {
         iconSpacing = 1,
         showOffensiveHotkeys = true, -- Legacy; migrated to textOverlays.hotkey.show on load
         gamepadIconStyle = "xbox",    -- Gamepad button icons: "generic", "xbox", "playstation"
+        inputPreference = "auto",       -- Keybind input: "auto", "keyboard", "gamepad"
         debugMode = false,
         isManualMode = false,
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
@@ -378,6 +379,8 @@ function JustAC:OnEnable()
     self:RegisterEvent("UNIT_AURA", "OnUnitAura")
     
     self:RegisterEvent("UPDATE_BINDINGS", "OnBindingsUpdated")
+    self:RegisterEvent("GAME_PAD_CONNECTED", "OnGamePadChanged")
+    self:RegisterEvent("GAME_PAD_DISCONNECTED", "OnGamePadChanged")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "OnCooldownUpdate")
     self:RegisterEvent("CVAR_UPDATE", "OnCVarUpdate")
     self:RegisterEvent("ASSISTED_COMBAT_ACTION_SPELL_CAST", "ForceUpdate")
@@ -1015,6 +1018,14 @@ function JustAC:OnPossessBarChanged()
 end
 
 function JustAC:OnBindingsUpdated()
+    if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
+        ActionBarScanner.OnKeybindsChanged()
+        self:ForceUpdate()
+    end
+end
+
+function JustAC:OnGamePadChanged()
+    -- Input device changed — re-select preferred bindings (auto mode)
     if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
         ActionBarScanner.OnKeybindsChanged()
         self:ForceUpdate()

@@ -523,11 +523,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
             for slot = 1, 180 do
                 local actionType, actionID = GetActionInfo(slot)
                 if actionType == "item" and actionID == id then
-                    hotkey = GetBindingKey("ACTIONBUTTON" .. slot) or ""
+                    hotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. slot) or ""
                     if hotkey == "" then
                         local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
                         local buttonIndex = ((slot - 1) % 12) + 1
-                        hotkey = GetBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
+                        hotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
                     end
                     break
                 end
