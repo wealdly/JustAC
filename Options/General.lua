@@ -115,6 +115,34 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            inputPreference = {
+                type = "select",
+                name = L["Input Preference"],
+                desc = L["Input Preference desc"],
+                order = 14,
+                width = "normal",
+                values = {
+                    auto = L["Auto-Detect"],
+                    keyboard = L["Keyboard"],
+                    gamepad = L["Gamepad"],
+                },
+                sorting = { "auto", "keyboard", "gamepad" },
+                get = function() return addon.db.profile.inputPreference or "auto" end,
+                set = function(_, val)
+                    addon.db.profile.inputPreference = val
+                    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+                    if ActionBarScanner and ActionBarScanner.ClearAllCaches then
+                        ActionBarScanner.ClearAllCaches()
+                    end
+                    local UIRenderer = LibStub("JustAC-UIRenderer", true)
+                    if UIRenderer and UIRenderer.InvalidateHotkeyCache then
+                        UIRenderer.InvalidateHotkeyCache()
+                    end
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             -- SOUNDS (20-29)
             soundsHeader = {
                 type = "header",
@@ -178,6 +206,7 @@ function General.CreateTabArgs(addon)
                     p.interruptMode       = "ccPrefer"
                     p.showFlash           = true
                     p.gamepadIconStyle    = "xbox"
+                    p.inputPreference     = "auto"
                     p.interruptAlertSound = "none"
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"

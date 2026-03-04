@@ -1,6 +1,14 @@
 
 # Changelog
 
+## [4.5.8] - 2026-03-04
+
+### Added
+- **Input Preference setting** — New "Input Preference" dropdown (Auto-Detect / Keyboard / Gamepad) in General options. When both keyboard and controller bindings exist for the same action, the addon now selects the appropriate one based on this setting. "Auto-Detect" (default) uses controller glyphs when a gamepad is connected and keyboard text when disconnected. Handles `GAME_PAD_CONNECTED` / `GAME_PAD_DISCONNECTED` events for live hot-plug switching.
+
+### Fixed
+- Fixed keybind display always showing keyboard bindings even when a controller was connected, because `GetBindingKey()` returns multiple values but only the first was captured.
+
 ## [4.5.7] - 2026-03-03
 
 ### Removed
