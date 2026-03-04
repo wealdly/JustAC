@@ -821,23 +821,6 @@ function JustAC:PLAYER_ENTERING_WORLD()
 
     -- API may not return spells immediately after PLAYER_ENTERING_WORLD
     C_Timer.After(1.0, function() self:ForceUpdateAll() end)
-
-    -- Single-Button Assistant required for stable API behavior
-    -- Skip warning if the current spec is disabled (user doesn't need the button for specs they won't use)
-    C_Timer.After(2, function()
-        if self.isDisabledMode then return end
-        if C_ActionBar and C_ActionBar.HasAssistedCombatActionButtons then
-            local hasButton = C_ActionBar.HasAssistedCombatActionButtons()
-            if not hasButton then
-                local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat", true)
-                if L and L["Single-Button Assistant Warning"] then
-                    self:Print("|cffff8800" .. L["Single-Button Assistant Warning"] .. "|r")
-                else
-                    self:Print("|cffff8800Warning: Place the Single-Button Assistant on any action bar for JustAC to work properly.|r")
-                end
-            end
-        end
-    end)
 end
 
 --- Re-resolve interrupt spell list from SpellDB.
