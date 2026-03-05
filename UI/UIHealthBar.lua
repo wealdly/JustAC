@@ -491,7 +491,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
         -- Span the defensive icon cluster
         local defIconScale = profile.defensives.iconScale or 1.0
         local defIconSize  = iconSize * defIconScale
-        local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
+        local maxDefIcons  = math.min(profile.defensives.maxIcons or 4, 7)
         local defPosition  = profile.defensives.position or "SIDE1"
 
         if maxDefIcons == 1 then

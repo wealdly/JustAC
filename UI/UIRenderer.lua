@@ -812,7 +812,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
     
     local maxIcons = profile.maxIcons
-    local glowMode = profile.glowMode or (profile.focusEmphasis == false and "procOnly") or "all"
+    local glowMode = profile.glowMode or "all"
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true

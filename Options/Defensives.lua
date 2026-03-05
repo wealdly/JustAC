@@ -123,7 +123,13 @@ function Defensives.CreateTabArgs(addon)
                 name = function()
                     local className, playerClass = UnitClass("player")
                     local colorCode = (playerClass and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r Defensive Spells"
+                    local specIndex = GetSpecializationInfo and GetSpecialization and GetSpecialization()
+                    local specName
+                    if specIndex then
+                        local _, name = GetSpecializationInfo(specIndex)
+                        specName = name
+                    end
+                    return "|c" .. colorCode .. (className or "Unknown") .. "|r Defensive Spells" .. (specName and (" (" .. specName .. ")") or "")
                 end,
                 order = 20,
                 args = {
@@ -266,9 +272,25 @@ function Defensives.UpdateDefensivesOptions(addon)
     local defensives = addon.db.profile.defensives
     if not defensives then return end
 
-    local _, playerClass = UnitClass("player")
+    local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+    local specKey, playerClass
+    if DefensiveEngine and DefensiveEngine.GetDefensiveSpecKey then
+        specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    else
+        local _
+        _, playerClass = UnitClass("player")
+    end
+
+    -- Resolve spell lists using spec→class fallback
     local defensiveSpells, petRezSpells, petHealSpells
-    if playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
+    local targetKey = specKey  -- prefer spec key
+    if targetKey and defensives.classSpells and defensives.classSpells[targetKey] then
+        defensiveSpells = defensives.classSpells[targetKey].defensiveSpells
+        petRezSpells = defensives.classSpells[targetKey].petRezSpells
+        petHealSpells = defensives.classSpells[targetKey].petHealSpells
+    elseif playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
+        -- Class-level fallback (legacy data not yet migrated to per-spec)
+        targetKey = playerClass
         defensiveSpells = defensives.classSpells[playerClass].defensiveSpells
         petRezSpells = defensives.classSpells[playerClass].petRezSpells
         petHealSpells = defensives.classSpells[playerClass].petHealSpells
