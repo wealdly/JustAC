@@ -1,6 +1,11 @@
 
 # Changelog
 
+## [4.6.1] - 2026-03-05
+
+### Changed
+- **Quest indicator replacement is now always active** when the nameplate overlay is enabled. Previously it was a separate toggle, but disabling it caused visual overlap between Blizzard's engine-rendered quest circles and the icon queue. The option has been removed; the replacement activates automatically with the overlay and restores the original CVar on disable.
+
 ## [4.6.0] - 2026-03-05
 
 ### Changed
