@@ -725,8 +725,8 @@ function UINameplateOverlay.Create(addon)
 
     -- Quest indicator replacement: suppress engine-rendered quest circles and
     -- render our own "!" icon on the nameplate.  Our version is positioned so
-    -- it cannot overlap the icon queue.
-    if npo.replaceQuestIndicator ~= false then
+    -- it cannot overlap the icon queue.  Always active when overlay is enabled.
+    do
         if savedShowQuestUnitCircles == nil then
             savedShowQuestUnitCircles = GetCVar("ShowQuestUnitCircles")
         end
