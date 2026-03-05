@@ -268,8 +268,6 @@ L["Interrupt Mode CC Shielded"] = "Kick + CC — Also stun/fear uninterruptible 
 L["Interrupt Mode CC Prefer"] = "Prefer CC — Stuns over kicks; kick on bosses"
 L["Nameplate Show Health Bars"] = "Show Health Bars"
 L["Nameplate Show Health Bars desc"] = "Show compact player and pet health bars above the defensive icon cluster. Pet bar auto-hides when no pet is active. Hides automatically when no defensives are visible."
-L["Replace Quest Indicator"] = "Replace Quest Indicator"
-L["Replace Quest Indicator desc"] = "Hide the engine-rendered quest exclamation mark on nameplates and show our own version above the nameplate, so it doesn't overlap with the icon queue."
 
 -- Reset buttons
 L["Reset to Defaults"] = "Reset to Defaults"

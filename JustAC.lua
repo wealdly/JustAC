@@ -85,7 +85,6 @@ local defaults = {
             defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
             defensiveGlowMode    = "all",
             showHealthBar        = true,
-            replaceQuestIndicator = true,  -- suppress engine "!" on nameplates; show our own
             -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
                 hotkey   = { fontScale = 1.0 },
@@ -330,6 +329,8 @@ function JustAC:NormalizeSavedData()
         end
         npo.interruptMode = nil
     end
+    -- replaceQuestIndicator: removed as option (always active when overlay enabled)
+    if npo and npo.replaceQuestIndicator ~= nil then npo.replaceQuestIndicator = nil end
     -- showFlash: overlay + defensives had their own copies → use profile-level only
     if npo and npo.showFlash ~= nil then npo.showFlash = nil end
     if profile.defensives and profile.defensives.showFlash ~= nil then
