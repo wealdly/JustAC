@@ -69,38 +69,53 @@ function SpellQueue.ClearAvailabilityCache()
     end
 end
 
+-- Helper: resolve the blacklist table for the current spec from profile.
+-- Returns the per-spec blacklist table (or nil), plus the spec key.
+local function GetBlacklistTable()
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
+    if not profile then return nil, nil end
+    if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return nil, nil end
+    return profile.blacklistedSpells[specKey], specKey
+end
+
 function SpellQueue.IsSpellBlacklisted(spellID)
-    local charData = BlizzardAPI.GetCharData()
-    if not spellID or not charData or not charData.blacklistedSpells then
-        return false
-    end
-    -- Simplified format: blacklistedSpells[spellID] = true
-    -- Also handle legacy format: { fixedQueue = true }
-    local value = charData.blacklistedSpells[spellID]
+    if not spellID then return false end
+    local blacklist = GetBlacklistTable()
+    if not blacklist then return false end
+    local value = blacklist[spellID]
     return value == true or (type(value) == "table" and value.fixedQueue == true)
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
     if not spellID or spellID == 0 then return end
-    local charData = BlizzardAPI.GetCharData()
-    if not charData then return end
-    
-    if not charData.blacklistedSpells then
-        charData.blacklistedSpells = {}
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
+    if not profile then return end
+    if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
+
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return end
+
+    if not profile.blacklistedSpells[specKey] then
+        profile.blacklistedSpells[specKey] = {}
     end
+    local blacklist = profile.blacklistedSpells[specKey]
 
     local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
     local spellName = spellInfo and spellInfo.name or "Unknown"
 
     local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-    if charData.blacklistedSpells[spellID] then
-        charData.blacklistedSpells[spellID] = nil
+    if blacklist[spellID] then
+        blacklist[spellID] = nil
         if addon and addon.DebugPrint then addon:DebugPrint("Unblacklisted: " .. spellName) end
     else
-        charData.blacklistedSpells[spellID] = true  -- Simplified format
+        blacklist[spellID] = true
         if addon and addon.DebugPrint then addon:DebugPrint("Blacklisted: " .. spellName) end
     end
-    
+
     local Options = LibStub("JustAC-Options", true)
     if Options and Options.UpdateBlacklistOptions and addon then
         Options.UpdateBlacklistOptions(addon)
@@ -108,11 +123,11 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
 end
 
 function SpellQueue.GetBlacklistedSpells()
-    local charData = BlizzardAPI.GetCharData()
-    if not charData then return {} end
-    
+    local blacklist = GetBlacklistTable()
+    if not blacklist then return {} end
+
     local spells = {}
-    for spellID, _ in pairs(charData.blacklistedSpells or {}) do
+    for spellID, _ in pairs(blacklist) do
         local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
         if spellInfo and spellInfo.name then
             spells[#spells + 1] = {
@@ -122,7 +137,7 @@ function SpellQueue.GetBlacklistedSpells()
             }
         end
     end
-    
+
     table.sort(spells, function(a, b) return a.name < b.name end)
     return spells
 end
@@ -194,9 +209,9 @@ function SpellQueue.GetCurrentSpellQueue()
 
     local now = GetTime()
     -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
-    -- 0.05s in combat = 20 updates/sec; 0.12s out of combat when timing is less critical.
+    -- 0.05s in combat = 20 updates/sec; 0.08s out of combat for snappy target-switch response.
     local inCombat = UnitAffectingCombat("player")
-    local throttleInterval = inCombat and 0.05 or 0.12
+    local throttleInterval = inCombat and 0.05 or 0.08
 
     if now - lastQueueUpdate < throttleInterval then
         return lastSpellIDs or {}
@@ -253,7 +268,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(addedSpellIDs)
     wipe(syntheticProcs)
     wipe(cooldownSpells)
-    local maxIcons = profile.maxIcons or 10
+    local maxIcons = profile.maxIcons or 4
     local spellCount = 0
     
     local hideItems = profile.hideItemAbilities

@@ -387,7 +387,7 @@ function StandardQueue.CreateTabArgs(addon)
                         min = 1, max = 7, step = 1,
                         order = 3,
                         width = "normal",
-                        get = function() return addon.db.profile.defensives.maxIcons or 3 end,
+                        get = function() return addon.db.profile.defensives.maxIcons or 4 end,
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
                             addon:UpdateFrameSize()

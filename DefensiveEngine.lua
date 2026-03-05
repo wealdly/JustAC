@@ -7,25 +7,14 @@ local MAJOR, MINOR = "JustAC-DefensiveEngine", 1
 local DefensiveEngine = LibStub:NewLibrary(MAJOR, MINOR)
 if not DefensiveEngine then return end
 
--- Hot path cache
+-- Cached globals
 local GetTime = GetTime
-local UnitClass = UnitClass
 local UnitAffectingCombat = UnitAffectingCombat
-local UnitExists = UnitExists
-local UnitIsDead = UnitIsDead
-local GetSpecialization = GetSpecialization
-local GetActionInfo = GetActionInfo
 local GetItemCount = GetItemCount
 local GetItemCooldown = GetItemCooldown
-local GetItemInfo = GetItemInfo
-local GetItemSpell = GetItemSpell
-local GetSpellDescription = GetSpellDescription
-local C_Spell = C_Spell
 local wipe = wipe
 local ipairs = ipairs
 local pairs = pairs
-local tostring = tostring
-local string_format = string.format
 local math_min = math.min
 
 -- Module references (resolved at load time — DefensiveEngine loads after all deps in TOC)
@@ -52,17 +41,12 @@ local proccedBuffer = {}          -- procced spells (highest priority)
 local castableBuffer = {}         -- castable non-procced spells (mid priority)
 local resourceBlockedBuffer = {}  -- known/non-redundant but currently unusable (lowest priority)
 
--- Module-level buffers for SortUnusableToEnd (avoid per-call GC pressure)
-local sortCastable = {}
-local sortBlocked = {}
-
 -- Stable in-place sort: move unusable entries to the end of the queue
 -- while preserving relative order within each group (castable vs blocked).
--- Uses module-level pooled tables to avoid per-call allocations.
 local function SortUnusableToEnd(results)
     if #results <= 1 then return end
-    wipe(sortCastable)
-    wipe(sortBlocked)
+    local sortCastable = {}
+    local sortBlocked = {}
     local hasBlocked = false
     for _, entry in ipairs(results) do
         if entry.unusable then
@@ -148,25 +132,15 @@ end
 
 -- Resolve player health into isLow boolean.
 -- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states.
--- With the unified defensive list, we only need a single "is health low" signal.
--- In combat (secret health): always true — all defensives are available since we
--- cannot detect fine-grained thresholds.
--- Out of combat: checks selfHealThreshold (default 80%).
+-- In combat (secret): GetPlayerHealthPercentSafe returns 100 (not low) or ≤35
+-- (LowHealthFrame shown, ~35% threshold, NeverSecret). Configurable thresholds
+-- are impossible since we only have a binary signal.
+-- Out of combat: real health available, uses fixed 80% threshold.
 ResolveHealthState = function(profile)
-    local healthPercent, isEstimated = nil, false
-    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
-        healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
-    end
-
+    local healthPercent = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe
+        and BlizzardAPI.GetPlayerHealthPercentSafe()
     if healthPercent then
-        local def = profile and profile.defensives
-        -- When health is estimated (secret in combat), GetPlayerHealthPercentSafe
-        -- returns 100 when LowHealthFrame is hidden, ≤35 when shown.
-        -- The ~35% LowHealthFrame threshold is NeverSecret and reliable in combat.
-        -- Use selfHealThreshold for exact health, but in-combat estimates only
-        -- resolve to "low" via LowHealthFrame (~35%).
-        local selfHealThreshold = def and def.selfHealThreshold or 80
-        return healthPercent <= selfHealThreshold
+        return healthPercent <= 80
     end
     return false
 end
@@ -182,28 +156,60 @@ local potionCacheValid = false
 --------------------------------------------------------------------------------
 
 -- Returns the spell list for a given type ("defensiveSpells", "petHealSpells", "petRezSpells")
--- for the current player class from the per-class nested structure.
+-- for the current player class+spec from the per-spec nested structure.
+-- Resolution order: specKey ("CLASS_N") → class fallback ("CLASS").
 function DefensiveEngine.GetClassSpellList(addon, listKey)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return nil end
 
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass
+    if SpellDB and SpellDB.GetSpecKey then
+        specKey, playerClass = SpellDB.GetSpecKey()
+    else
+        local _
+        _, playerClass = UnitClass("player")
+        local spec = GetSpecialization and GetSpecialization()
+        if playerClass and spec then specKey = playerClass .. "_" .. spec end
+    end
     if not playerClass then return nil end
 
     local classSpells = profile.defensives.classSpells
-    if not classSpells or not classSpells[playerClass] then return nil end
+    if not classSpells then return nil end
 
-    return classSpells[playerClass][listKey]
+    -- Try spec-specific first, then class fallback (legacy data)
+    if specKey and classSpells[specKey] and classSpells[specKey][listKey] then
+        return classSpells[specKey][listKey]
+    end
+    if classSpells[playerClass] and classSpells[playerClass][listKey] then
+        return classSpells[playerClass][listKey]
+    end
+    return nil
+end
+
+--- Returns the spec key used for defensive spell storage.
+--- Exposed so Options/Defensives can display the correct spec context.
+function DefensiveEngine.GetDefensiveSpecKey()
+    if SpellDB and SpellDB.GetSpecKey then
+        return SpellDB.GetSpecKey()
+    end
+    local _, playerClass = UnitClass("player")
+    local spec = GetSpecialization and GetSpecialization()
+    if playerClass and spec then
+        return playerClass .. "_" .. spec, playerClass
+    end
+    return nil, playerClass
 end
 
 -- Migrate pre-3.25 flat spell lists (selfHealSpells/cooldownSpells/petHealSpells)
--- into the new per-class classSpells structure. Safe to call multiple times.
+-- into the new per-spec classSpells structure. Safe to call multiple times.
 function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
     if not playerClass then return end
+    -- Need spec key for per-spec storage; fall back to class key if spec unavailable
+    local targetKey = specKey or playerClass
 
     local def = profile.defensives
     local hasFlatData = (def.selfHealSpells and #def.selfHealSpells > 0)
@@ -213,10 +219,10 @@ function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
     if hasFlatData then
         -- Ensure classSpells table exists
         if not def.classSpells then def.classSpells = {} end
-        if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
-        local cs = def.classSpells[playerClass]
+        if not def.classSpells[targetKey] then def.classSpells[targetKey] = {} end
+        local cs = def.classSpells[targetKey]
 
-        -- Move flat lists into per-class structure (don't overwrite existing)
+        -- Move flat lists into per-spec structure (don't overwrite existing)
         -- Note: uses legacy keys selfHealSpells/cooldownSpells for this migration path
         local legacyKeys = { "selfHealSpells", "cooldownSpells", "petHealSpells" }
         for _, listKey in ipairs(legacyKeys) do
@@ -231,7 +237,7 @@ function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
         def.cooldownSpells = nil
         def.petHealSpells = nil
 
-        addon:DebugPrint("Migrated flat defensive spells to classSpells[" .. playerClass .. "]")
+        addon:DebugPrint("Migrated flat defensive spells to classSpells[" .. targetKey .. "]")
     end
 
     -- Merge selfHealSpells + cooldownSpells → defensiveSpells (unified list migration).
@@ -239,7 +245,7 @@ function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
     DefensiveEngine.MergeLegacyDefensiveLists(addon)
 end
 
--- Merge legacy per-class selfHealSpells + cooldownSpells into the unified defensiveSpells
+-- Merge legacy per-spec selfHealSpells + cooldownSpells into the unified defensiveSpells
 -- list.  Self-heals come first (natural priority), then cooldowns.  Deduplicates.
 -- Idempotent: skips if defensiveSpells already exists.  Old keys are preserved for
 -- safe downgrade to older addon versions.
@@ -247,12 +253,13 @@ function DefensiveEngine.MergeLegacyDefensiveLists(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
     if not playerClass then return end
+    local targetKey = specKey or playerClass
 
     local def = profile.defensives
-    if not def.classSpells or not def.classSpells[playerClass] then return end
-    local cs = def.classSpells[playerClass]
+    if not def.classSpells or not def.classSpells[targetKey] then return end
+    local cs = def.classSpells[targetKey]
 
     -- Already merged — skip
     if cs.defensiveSpells and #cs.defensiveSpells > 0 then return end
@@ -284,7 +291,7 @@ function DefensiveEngine.MergeLegacyDefensiveLists(addon)
     cs.defensiveSpells = merged
     -- Keep selfHealSpells/cooldownSpells for safe downgrade — do NOT wipe them.
 
-    addon:DebugPrint("Merged selfHealSpells+cooldownSpells → defensiveSpells[" .. playerClass .. "] (" .. #merged .. " spells)")
+    addon:DebugPrint("Merged selfHealSpells+cooldownSpells → defensiveSpells[" .. targetKey .. "] (" .. #merged .. " spells)")
 end
 
 --------------------------------------------------------------------------------
@@ -295,22 +302,26 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
     if not playerClass then return end
 
     -- Migrate legacy flat lists on first load
     DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
 
+    -- Determine target key: prefer spec key, fall back to class key for pre-spec data
+    local targetKey = specKey or playerClass
+
     -- Ensure classSpells table structure exists
     local def = profile.defensives
     if not def.classSpells then def.classSpells = {} end
-    if not def.classSpells[playerClass] then def.classSpells[playerClass] = {} end
-    local cs = def.classSpells[playerClass]
+    if not def.classSpells[targetKey] then def.classSpells[targetKey] = {} end
+    local cs = def.classSpells[targetKey]
 
-    -- Populate empty spell lists from SpellDB defaults
+    -- Populate empty spell lists from SpellDB defaults (spec→class fallback)
     for _, cfg in ipairs(SPELL_LIST_CONFIG) do
         if not cs[cfg.listKey] or #cs[cfg.listKey] == 0 then
-            local defaults = SpellDB and SpellDB[cfg.defaultsKey] and SpellDB[cfg.defaultsKey][playerClass]
+            local defaults = SpellDB and SpellDB[cfg.defaultsKey]
+                and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
                 CopySpellList(cs, cfg.listKey, defaults)
             end
@@ -350,17 +361,19 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
     if not playerClass then return end
+    local targetKey = specKey or playerClass
 
     -- Ensure classSpells structure exists
     if not profile.defensives.classSpells then profile.defensives.classSpells = {} end
-    if not profile.defensives.classSpells[playerClass] then profile.defensives.classSpells[playerClass] = {} end
-    local cs = profile.defensives.classSpells[playerClass]
+    if not profile.defensives.classSpells[targetKey] then profile.defensives.classSpells[targetKey] = {} end
+    local cs = profile.defensives.classSpells[targetKey]
 
     for _, cfg in ipairs(SPELL_LIST_CONFIG) do
         if cfg.restoreKey == listType then
-            local defaults = SpellDB and SpellDB[cfg.defaultsKey] and SpellDB[cfg.defaultsKey][playerClass]
+            local defaults = SpellDB and SpellDB[cfg.defaultsKey]
+                and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
                 CopySpellList(cs, cfg.listKey, defaults)
             end
@@ -429,8 +442,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
     -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
-    local petHealThreshold = def and def.petHealThreshold or 50
-    local petNeedsHeal = petHealthPercent and petHealthPercent <= petHealThreshold
+    local petNeedsHeal = petHealthPercent and petHealthPercent <= 50
 
     -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat
     local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
@@ -449,7 +461,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- Main panel defensive queue (gated by defensives.enabled, or overlay fallback)
     if def and (def.enabled or overlayFallback) then
         local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
-        local maxIcons = def.maxIcons or 1
+        local maxIcons = def.maxIcons or 4
 
         -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
         -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
@@ -473,8 +485,8 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- Uses its own display mode and icon count settings. GetDefensiveSpellQueue wipes
     -- defensiveAlreadyAdded at the start of each call, so no bleed from the main panel path.
     if overlayActive and npo.showDefensives then
-        local npoDisplayMode = npo.defensiveDisplayMode or "combatOnly"
-        local npoMaxIcons    = npo.maxDefensiveIcons or 1
+        local npoDisplayMode = npo.defensiveDisplayMode or "always"
+        local npoMaxIcons    = npo.maxDefensiveIcons or 3
         local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
         ApplyOverlayQueue(addon, npoQueue)
     end
@@ -600,7 +612,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
 
-    local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 1
+    local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 4
     local showProcs
     if overrides and overrides.showProcs ~= nil then
         showProcs = overrides.showProcs

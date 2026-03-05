@@ -169,8 +169,8 @@ local function GetCachedStateHash()
     return cachedStateData.hash
 end
 
--- PERFORMANCE: Cache the binding hash value - only recompute when bindings actually change
-local cachedBindingHash = 0
+-- Binding version counter — incremented on each RebuildBindingCache to detect changes
+local bindingVersion = 0
 
 -- Select the appropriate binding key based on input preference (auto/keyboard/gamepad).
 -- GetBindingKey() returns multiple values: key1, key2, ... (keyboard + controller).
@@ -225,19 +225,7 @@ local function RebuildBindingCache()
         end
     end
     
-    -- PERFORMANCE: Compute hash once when rebuilding cache, not on every validation check
-    local hash = 0
-    for bindingKey, key in pairs(bindingKeyCache) do
-        if key and key ~= "" then
-            for k = 1, #key do
-                local byte = string.byte(key, k)
-                if byte then
-                    hash = (hash * 31 + byte) % 2147483647
-                end
-            end
-        end
-    end
-    cachedBindingHash = hash
+    bindingVersion = bindingVersion + 1
     
     bindingCacheValid = true
 end
@@ -249,12 +237,12 @@ local function GetCachedBindingKey(bindingKey)
     return bindingKeyCache[bindingKey] or ""
 end
 
--- PERFORMANCE: Return cached hash instead of recomputing every call
+-- Return current binding version (incremented on each rebuild)
 local function CalculateKeybindHash()
     if not bindingCacheValid then
         RebuildBindingCache()
     end
-    return cachedBindingHash
+    return bindingVersion
 end
 
 local function CalculateActionSlot(buttonID, barType)

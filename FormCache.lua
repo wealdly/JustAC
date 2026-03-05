@@ -19,7 +19,6 @@ local cachedFormData = {
     spellToFormMap = {},
     lastUpdate = 0,
     lastFullScan = 0,
-    valid = false,
 }
 
 local function GetDebugMode()
@@ -178,7 +177,7 @@ end
 local function UpdateFormCache()
     local currentTime = GetTime()
     
-    if cachedFormData.valid and (currentTime - cachedFormData.lastUpdate) < 0.1 then
+    if (currentTime - cachedFormData.lastUpdate) < 0.1 then
         return
     end
     
@@ -244,7 +243,6 @@ local function UpdateFormCache()
     cachedFormData.currentFormName = formName
     cachedFormData.availableForms = availableForms
     cachedFormData.lastUpdate = currentTime
-    cachedFormData.valid = true
     
     if formChanged or (currentTime - cachedFormData.lastFullScan) > 30 then
         BuildSpellToFormMapping()
@@ -262,7 +260,6 @@ function FormCache.GetActiveFormName()
 end
 
 function FormCache.InvalidateCache()
-    cachedFormData.valid = false
     cachedFormData.lastUpdate = 0
 end
 
