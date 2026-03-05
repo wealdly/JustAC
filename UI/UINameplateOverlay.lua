@@ -442,7 +442,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     --     parentScale = iconSize / (AURA_ITEM_HEIGHT * auraItemScale)
     --   LossOfControlFrame is a simple 30×30 container, scale = iconSize / 30.
     -- Position: center-aligned with queue icons rather than edge-aligned.
-    iconSize = iconSize or 26
+    iconSize = iconSize or 32
     local auraItemScale = af.auraItemScale or 1
     local ccScale  = iconSize / (BLIZZARD_AURA_HEIGHT * auraItemScale)
     local locScale = iconSize / BLIZZARD_LOC_SIZE
@@ -669,9 +669,9 @@ function UINameplateOverlay.Create(addon)
         SetCVar("nameplateShowEnemies", "1")
     end
 
-    local iconSize = npo.iconSize or 26
-    local maxDPS   = math_min(npo.maxIcons or 1, 5)
-    local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 1, 5) or 0
+    local iconSize = npo.iconSize or 32
+    local maxDPS   = math_min(npo.maxIcons or 3, 5)
+    local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 3, 5) or 0
 
     for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize, profile) end
     for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
@@ -847,7 +847,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
     if nameplate then
         currentNameplate = nameplate
         local anchor       = npo.reverseAnchor and "LEFT" or "RIGHT"
-        local iconSize     = npo.iconSize or 26
+        local iconSize     = npo.iconSize or 32
         -- Health bar is tied to the defensive queue: only show when defensives are enabled
         local showDefensives = npo.showDefensives
         local showHealthBar  = npo.showHealthBar and showDefensives
@@ -1257,7 +1257,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     if healthBar then
         if visibleCount > 0 then
             if npo and npo.showHealthBar then
-                local iconSize          = npo.iconSize or 26
+                local iconSize          = npo.iconSize or 32
                 local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
                 local expansion = npo.expansion or "out"
                 local isLeft    = (anchor == "LEFT")

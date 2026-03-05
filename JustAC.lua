@@ -44,6 +44,7 @@ local defaults = {
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
+        blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "ccPrefer",        -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
         interruptAlertSound = "none",      -- Alert sound when interrupt icon first appears; see INTERRUPT_ALERT_SOUNDS in UIRenderer.lua
@@ -102,14 +103,9 @@ local defaults = {
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
-            -- NOTE: In 12.0 combat, UnitHealth() is secret. This threshold only
-            -- applies out of combat. In combat, all defensives are shown since we
-            -- cannot detect exact health percentages.
-            selfHealThreshold = 80,   -- Out-of-combat only: show defensives below this %
-            petHealThreshold = 50,    -- Out-of-combat only: show pet heals below this pet %
             allowItems = true,        -- Allow manual item insertion in defensive spell lists
             autoInsertPotions = true,  -- Auto-insert health potions at low health
-            classSpells = {},         -- Per-class spell lists: classSpells["WARRIOR"] = {defensiveSpells={...}, petHealSpells={...}}
+            classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
         },
@@ -123,7 +119,7 @@ local defaults = {
     char = {
         lastKnownSpec = nil,
         firstRun = true,
-        blacklistedSpells = {},   -- Character-specific spell blacklist
+        blacklistedSpells = {},   -- Legacy: migrated to profile on load; kept as schema for migration detection
         hotkeyOverrides = {},     -- Legacy: migrated to profile on load; kept as schema for migration detection
         specProfilesEnabled = true,   -- Auto-switch profiles by spec (enabled by default)
         specProfiles = {},        -- [specIndex] = "profileName" | "DISABLED" | nil
@@ -141,141 +137,237 @@ end
 function JustAC:NormalizeSavedData()
     local charData = self.db and self.db.char
     if not charData then return end
-    
-    if charData.blacklistedSpells then
-        local normalized = {}
-        for key, value in pairs(charData.blacklistedSpells) do
-            local spellID = tonumber(key)
-            if spellID and spellID > 0 and value then
-                normalized[spellID] = true  -- Simplified format
-            end
-        end
-        charData.blacklistedSpells = normalized
-    end
-    
+
     local profile = self.db and self.db.profile
-    if profile then
-        if profile.blacklistedSpells and next(profile.blacklistedSpells) then
-            for spellID, value in pairs(profile.blacklistedSpells) do
-                if not charData.blacklistedSpells[spellID] then
-                    charData.blacklistedSpells[tonumber(spellID) or spellID] = value
-                end
+    if not profile then return end
+
+    -- ── Blacklist migration: db.char → db.profile (per-spec keyed) ──────
+    -- Old storage: charData.blacklistedSpells = {[spellID] = true, ...}
+    -- New storage: profile.blacklistedSpells = {["CLASS_N"] = {[spellID] = true}, ...}
+    -- Migrate char data into the current spec's list (same pattern as hotkeyOverrides migration).
+    if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
+
+    if charData.blacklistedSpells and next(charData.blacklistedSpells) then
+        local SpellDB = LibStub("JustAC-SpellDB", true)
+        local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+        if specKey then
+            if not profile.blacklistedSpells[specKey] then
+                profile.blacklistedSpells[specKey] = {}
             end
-            profile.blacklistedSpells = nil  -- Clear old data
-        end
-        -- Normalize profile.hotkeyOverrides (SavedVariables serialise numeric keys as strings)
-        if profile.hotkeyOverrides then
-            local normalized = {}
-            for key, value in pairs(profile.hotkeyOverrides) do
+            for key, value in pairs(charData.blacklistedSpells) do
                 local spellID = tonumber(key)
-                if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
-                    normalized[spellID] = value
+                if spellID and spellID > 0 and value and not profile.blacklistedSpells[specKey][spellID] then
+                    profile.blacklistedSpells[specKey][spellID] = true
                 end
             end
-            profile.hotkeyOverrides = normalized
+            charData.blacklistedSpells = {}  -- Clear after migration
         end
-        -- One-time migration: char.hotkeyOverrides → profile.hotkeyOverrides
-        -- (hotkey overrides moved to profile level so they are included in profile copies)
-        if charData.hotkeyOverrides and next(charData.hotkeyOverrides) then
-            if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
-            for key, value in pairs(charData.hotkeyOverrides) do
-                local spellID = tonumber(key)
-                if spellID and spellID > 0 and type(value) == "string" and value ~= "" and not profile.hotkeyOverrides[spellID] then
-                    profile.hotkeyOverrides[spellID] = value
-                end
-            end
-            charData.hotkeyOverrides = {}  -- Clear after migration
-        end
-        -- Migrate panelLocked boolean → panelInteraction string
-        if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
-            profile.panelInteraction = "locked"
-        end
-        -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
-        -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
-        -- NOTE: defensives.showHotkeys is NOT migrated here — it was a separate
-        -- per-category toggle that no longer exists. Merging it into the unified
-        -- toggle would hide ALL hotkeys (offensive + defensive) for users who only
-        -- intended to hide defensive hotkeys. Fail-open: show hotkeys by default.
-        if profile.textOverlays and profile.textOverlays.hotkey then
-            if profile.showOffensiveHotkeys == false then
-                profile.textOverlays.hotkey.show = false
-            end
-        end
-        -- Nameplate overlay: nameplateOverlay.showHotkey → nameplateOverlay.textOverlays.hotkey.show
-        local npo = profile.nameplateOverlay
-        if npo and npo.textOverlays and npo.textOverlays.hotkey then
-            if npo.showHotkey == false then
-                npo.textOverlays.hotkey.show = false
-            end
-        end
-        -- Migrate showInterrupt + ccRegularMobs → interruptMode (one-time)
-        if profile.showInterrupt ~= nil or profile.ccRegularMobs ~= nil then
-            if profile.showInterrupt == false then
-                profile.interruptMode = "disabled"
-            elseif profile.ccRegularMobs == false then
-                profile.interruptMode = "kickOnly"
-            else
-                profile.interruptMode = "ccPrefer"
-            end
-        end
-        if npo and (npo.showInterrupt ~= nil or npo.ccRegularMobs ~= nil) then
-            if npo.showInterrupt == false then
-                npo.interruptMode = "disabled"
-            elseif npo.ccRegularMobs == false then
-                npo.interruptMode = "kickOnly"
-            else
-                npo.interruptMode = "ccPrefer"
-            end
-        end
-        -- Centralization migration: per-surface settings → single central setting
-        -- interruptMode: overlay had its own copy → use profile-level only
-        if npo and npo.interruptMode ~= nil then
-            -- If user customized the overlay's interrupt mode, adopt it as the central value
-            -- (only if the main queue is still at default, otherwise main queue wins)
-            if profile.interruptMode == "ccPrefer" and npo.interruptMode ~= "ccPrefer" then
-                profile.interruptMode = npo.interruptMode
-            end
-            npo.interruptMode = nil
-        end
-        -- showFlash: overlay + defensives had their own copies → use profile-level only
-        if npo and npo.showFlash ~= nil then npo.showFlash = nil end
-        if profile.defensives and profile.defensives.showFlash ~= nil then
-            -- If user disabled defensive flash, adopt that as the central value
-            if profile.showFlash ~= false and profile.defensives.showFlash == false then
-                profile.showFlash = false
-            end
-            profile.defensives.showFlash = nil
-        end
-        -- textOverlays: overlay had full parallel copy → central show/color/anchor, keep overlay fontScale
-        if npo and npo.textOverlays then
-            local npoOv = npo.textOverlays
-            -- Strip centralized fields from overlay (show, color, anchor are now central)
-            for _, key in ipairs({"hotkey", "cooldown", "charges"}) do
-                if npoOv[key] then
-                    npoOv[key].show = nil
-                    npoOv[key].color = nil
-                    npoOv[key].anchor = nil
-                    -- Keep fontScale if it exists; remove entry entirely if only fontScale remains at default
-                end
-            end
-        end
-        -- showHealthBar/showPetHealthBar: General tab fallbacks → defensives owns these
-        if profile.showHealthBar == true and profile.defensives and not profile.defensives.enabled then
-            -- User had standalone health bar enabled with defensives off — move to defensives setting
-            profile.defensives.showHealthBar = true
-        end
-        if profile.showPetHealthBar == true and profile.defensives and not profile.defensives.enabled then
-            profile.defensives.showPetHealthBar = true
-        end
-        profile.showHealthBar = nil
-        profile.showPetHealthBar = nil
-        -- Nil legacy keys so they don't persist in saved data after migration
-        profile.showOffensiveHotkeys = nil
-        profile.showInterrupt = nil
-        profile.ccRegularMobs = nil
-        if profile.defensives then profile.defensives.showHotkeys = nil end
-        if npo then npo.showInterrupt = nil; npo.ccRegularMobs = nil; npo.showHotkey = nil end
     end
+
+    -- Handle ancient flat profile.blacklistedSpells format (pre-4.x: flat {[spellID]=true})
+    -- Detect by checking if any key is numeric (spec-keyed tables have string keys like "WARRIOR_1")
+    local hasNumericKey = false
+    for key, _ in pairs(profile.blacklistedSpells) do
+        if type(key) == "number" or (type(key) == "string" and tonumber(key)) then
+            hasNumericKey = true
+            break
+        end
+    end
+    if hasNumericKey then
+        local SpellDB = LibStub("JustAC-SpellDB", true)
+        local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+        if specKey then
+            local oldFlat = {}
+            local newStructured = {}
+            for key, value in pairs(profile.blacklistedSpells) do
+                local spellID = tonumber(key)
+                if spellID and spellID > 0 and value then
+                    oldFlat[spellID] = true
+                elseif type(key) == "string" and type(value) == "table" then
+                    newStructured[key] = value  -- Preserve any already-migrated spec entries
+                end
+            end
+            profile.blacklistedSpells = newStructured
+            if not profile.blacklistedSpells[specKey] then
+                profile.blacklistedSpells[specKey] = {}
+            end
+            for spellID, _ in pairs(oldFlat) do
+                if not profile.blacklistedSpells[specKey][spellID] then
+                    profile.blacklistedSpells[specKey][spellID] = true
+                end
+            end
+        end
+    end
+
+    -- Normalize per-spec blacklist tables (string keys → numeric keys)
+    for specKey, spellTable in pairs(profile.blacklistedSpells) do
+        if type(spellTable) == "table" then
+            local normalized = {}
+            for key, value in pairs(spellTable) do
+                local spellID = tonumber(key)
+                if spellID and spellID > 0 and value then
+                    normalized[spellID] = true
+                end
+            end
+            profile.blacklistedSpells[specKey] = normalized
+        end
+    end
+
+    -- ── Defensive classSpells migration: per-class → per-spec keying ────
+    -- Old storage: classSpells["WARRIOR"] = {defensiveSpells={...}, ...}
+    -- New storage: classSpells["WARRIOR_1"] = {defensiveSpells={...}, ...}
+    -- One-time: copy class-level data to all specs of that class, then remove
+    -- the class-level key.
+    if profile.defensives and profile.defensives.classSpells then
+        local _, playerClass = UnitClass("player")
+        if playerClass then
+            local cs = profile.defensives.classSpells
+            local classData = cs[playerClass]
+            if classData and type(classData) == "table" then
+                -- Check if any list has data (defensiveSpells, petHealSpells, petRezSpells)
+                local hasData = false
+                for _, v in pairs(classData) do
+                    if type(v) == "table" and #v > 0 then hasData = true; break end
+                end
+                if hasData then
+                    -- Copy to all specs (max 4) that don't already have data
+                    local numSpecs = GetNumSpecializations and GetNumSpecializations() or 4
+                    for i = 1, numSpecs do
+                        local specKey = playerClass .. "_" .. i
+                        if not cs[specKey] or not next(cs[specKey]) then
+                            cs[specKey] = {}
+                            for listKey, spellList in pairs(classData) do
+                                if type(spellList) == "table" then
+                                    cs[specKey][listKey] = {}
+                                    for idx, spellID in ipairs(spellList) do
+                                        cs[specKey][listKey][idx] = spellID
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                -- Remove class-level key to prevent re-migration
+                cs[playerClass] = nil
+            end
+        end
+    end
+
+    -- ── Hotkey overrides normalization ───────────────────────────────────
+    -- Normalize profile.hotkeyOverrides (SavedVariables serialise numeric keys as strings)
+    if profile.hotkeyOverrides then
+        local normalized = {}
+        for key, value in pairs(profile.hotkeyOverrides) do
+            local spellID = tonumber(key)
+            if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
+                normalized[spellID] = value
+            end
+        end
+        profile.hotkeyOverrides = normalized
+    end
+    -- One-time migration: char.hotkeyOverrides → profile.hotkeyOverrides
+    -- (hotkey overrides moved to profile level so they are included in profile copies)
+    if charData.hotkeyOverrides and next(charData.hotkeyOverrides) then
+        if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
+        for key, value in pairs(charData.hotkeyOverrides) do
+            local spellID = tonumber(key)
+            if spellID and spellID > 0 and type(value) == "string" and value ~= "" and not profile.hotkeyOverrides[spellID] then
+                profile.hotkeyOverrides[spellID] = value
+            end
+        end
+        charData.hotkeyOverrides = {}  -- Clear after migration
+    end
+
+    -- ── Legacy setting migrations ───────────────────────────────────────
+    -- Migrate panelLocked boolean → panelInteraction string
+    if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
+        profile.panelInteraction = "locked"
+    end
+    -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
+    -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
+    -- NOTE: defensives.showHotkeys is NOT migrated here — it was a separate
+    -- per-category toggle that no longer exists. Merging it into the unified
+    -- toggle would hide ALL hotkeys (offensive + defensive) for users who only
+    -- intended to hide defensive hotkeys. Fail-open: show hotkeys by default.
+    if profile.textOverlays and profile.textOverlays.hotkey then
+        if profile.showOffensiveHotkeys == false then
+            profile.textOverlays.hotkey.show = false
+        end
+    end
+    -- Nameplate overlay: nameplateOverlay.showHotkey → nameplateOverlay.textOverlays.hotkey.show
+    local npo = profile.nameplateOverlay
+    if npo and npo.textOverlays and npo.textOverlays.hotkey then
+        if npo.showHotkey == false then
+            npo.textOverlays.hotkey.show = false
+        end
+    end
+    -- Migrate showInterrupt + ccRegularMobs → interruptMode (one-time)
+    if profile.showInterrupt ~= nil or profile.ccRegularMobs ~= nil then
+        if profile.showInterrupt == false then
+            profile.interruptMode = "disabled"
+        elseif profile.ccRegularMobs == false then
+            profile.interruptMode = "kickOnly"
+        else
+            profile.interruptMode = "ccPrefer"
+        end
+    end
+    if npo and (npo.showInterrupt ~= nil or npo.ccRegularMobs ~= nil) then
+        if npo.showInterrupt == false then
+            npo.interruptMode = "disabled"
+        elseif npo.ccRegularMobs == false then
+            npo.interruptMode = "kickOnly"
+        else
+            npo.interruptMode = "ccPrefer"
+        end
+    end
+    -- Centralization migration: per-surface settings → single central setting
+    -- interruptMode: overlay had its own copy → use profile-level only
+    if npo and npo.interruptMode ~= nil then
+        -- If user customized the overlay's interrupt mode, adopt it as the central value
+        -- (only if the main queue is still at default, otherwise main queue wins)
+        if profile.interruptMode == "ccPrefer" and npo.interruptMode ~= "ccPrefer" then
+            profile.interruptMode = npo.interruptMode
+        end
+        npo.interruptMode = nil
+    end
+    -- showFlash: overlay + defensives had their own copies → use profile-level only
+    if npo and npo.showFlash ~= nil then npo.showFlash = nil end
+    if profile.defensives and profile.defensives.showFlash ~= nil then
+        -- If user disabled defensive flash, adopt that as the central value
+        if profile.showFlash ~= false and profile.defensives.showFlash == false then
+            profile.showFlash = false
+        end
+        profile.defensives.showFlash = nil
+    end
+    -- textOverlays: overlay had full parallel copy → central show/color/anchor, keep overlay fontScale
+    if npo and npo.textOverlays then
+        local npoOv = npo.textOverlays
+        -- Strip centralized fields from overlay (show, color, anchor are now central)
+        for _, key in ipairs({"hotkey", "cooldown", "charges"}) do
+            if npoOv[key] then
+                npoOv[key].show = nil
+                npoOv[key].color = nil
+                npoOv[key].anchor = nil
+                -- Keep fontScale if it exists; remove entry entirely if only fontScale remains at default
+            end
+        end
+    end
+    -- showHealthBar/showPetHealthBar: General tab fallbacks → defensives owns these
+    if profile.showHealthBar == true and profile.defensives and not profile.defensives.enabled then
+        -- User had standalone health bar enabled with defensives off — move to defensives setting
+        profile.defensives.showHealthBar = true
+    end
+    if profile.showPetHealthBar == true and profile.defensives and not profile.defensives.enabled then
+        profile.defensives.showPetHealthBar = true
+    end
+    profile.showHealthBar = nil
+    profile.showPetHealthBar = nil
+    -- Nil legacy keys so they don't persist in saved data after migration
+    profile.showOffensiveHotkeys = nil
+    profile.showInterrupt = nil
+    profile.ccRegularMobs = nil
+    if profile.defensives then profile.defensives.showHotkeys = nil end
+    if npo then npo.showInterrupt = nil; npo.ccRegularMobs = nil; npo.showHotkey = nil end
 end
 
 function JustAC:OnInitialize()
@@ -1172,7 +1264,7 @@ end
 
 function JustAC:OnCooldownUpdate()
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.04)
+    self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.02)
 end
 
 function JustAC:ForceUpdateAll()
@@ -1286,18 +1378,22 @@ function JustAC:StartUpdates()
         if inCombat then
             updateRate = math_max(cachedUpdateRate, 0.03)
         else
-            -- Out of combat: use longer interval unless dirty
+            -- Out of combat: idle when clean, near-combat rate when dirty
             if not spellQueueDirty and not defensiveQueueDirty then
                 updateRate = IDLE_CHECK_INTERVAL
             else
-                updateRate = math_max(cachedUpdateRate * 2.0, 0.10)
+                updateRate = math_max(cachedUpdateRate, 0.05)
             end
         end
 
         self.updateTimeLeft = updateRate
 
         -- Always update spell queue (Blizzard doesn't provide events for rotation changes)
-        -- But SpellQueue.GetCurrentSpellQueue has internal 0.1s throttle
+        -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
+        -- get the same low-latency path as explicit ForceUpdate() calls.
+        if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
+            SpellQueue.ForceUpdate()
+        end
         self:UpdateSpellQueue()
         spellQueueDirty = false
 
