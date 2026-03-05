@@ -74,7 +74,7 @@ function Overlay.CreateTabArgs(addon)
                         order = 3,
                         width = "normal",
                         min = 16, max = 48, step = 2,
-                        get = function() return addon.db.profile.nameplateOverlay.iconSize or 26 end,
+                        get = function() return addon.db.profile.nameplateOverlay.iconSize or 32 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.iconSize = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
@@ -168,7 +168,7 @@ function Overlay.CreateTabArgs(addon)
                         width = "normal",
                         values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
                         sorting = { 1, 2, 3, 4, 5 },
-                        get = function() return addon.db.profile.nameplateOverlay.maxIcons or 1 end,
+                        get = function() return addon.db.profile.nameplateOverlay.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxIcons = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
@@ -262,7 +262,7 @@ function Overlay.CreateTabArgs(addon)
                             always      = L["Always"],
                         },
                         sorting = { "healthBased", "combatOnly", "always" },
-                        get = function() return addon.db.profile.nameplateOverlay.defensiveDisplayMode or "combatOnly" end,
+                        get = function() return addon.db.profile.nameplateOverlay.defensiveDisplayMode or "always" end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.defensiveDisplayMode = val
                             addon:ForceUpdateAll()
@@ -280,7 +280,7 @@ function Overlay.CreateTabArgs(addon)
                         width = "normal",
                         values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
                         sorting = { 1, 2, 3, 4, 5 },
-                        get = function() return addon.db.profile.nameplateOverlay.maxDefensiveIcons or 1 end,
+                        get = function() return addon.db.profile.nameplateOverlay.maxDefensiveIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxDefensiveIcons = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)

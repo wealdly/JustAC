@@ -97,7 +97,15 @@ function Offensive.CreateTabArgs(addon)
             -- Sub-tab 3: Blacklist
             blacklist = {
                 type = "group",
-                name = L["Blacklist"],
+                name = function()
+                    local specIndex = GetSpecialization and GetSpecialization()
+                    local specName
+                    if specIndex then
+                        local _, name = GetSpecializationInfo(specIndex)
+                        specName = name
+                    end
+                    return L["Blacklist"] .. (specName and (" (" .. specName .. ")") or "")
+                end,
                 order = 3,
                 args = {
                     info = {
@@ -152,10 +160,16 @@ function Offensive.UpdateBlacklistOptions(addon)
         blacklistArgs[key] = nil
     end
 
-    if not addon.db.char.blacklistedSpells then
-        addon.db.char.blacklistedSpells = {}
+    if not addon.db.profile.blacklistedSpells then
+        addon.db.profile.blacklistedSpells = {}
     end
-    local blacklistedSpells = addon.db.char.blacklistedSpells
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return end
+    if not addon.db.profile.blacklistedSpells[specKey] then
+        addon.db.profile.blacklistedSpells[specKey] = {}
+    end
+    local blacklistedSpells = addon.db.profile.blacklistedSpells[specKey]
     
     SpellSearch.BuildSpellbookCache()
     SpellSearch.filterState.blacklist = SpellSearch.filterState.blacklist or ""

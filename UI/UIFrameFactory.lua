@@ -11,9 +11,7 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 
--- Hot path cache
-local GetTime = GetTime
-local pcall = pcall
+-- Cached globals
 local wipe = wipe
 local math_max = math.max
 local math_floor = math.floor
@@ -583,7 +581,7 @@ local function CreateDefensiveIcons(addon, profile)
     local spacing = profile.iconSpacing
     
     -- Don't reuse module-level table to avoid stale reference issues.
-    local maxIcons = profile.defensives.maxIcons or 1
+    local maxIcons = profile.defensives.maxIcons or 4
     maxIcons = math.min(maxIcons, 7)  -- Cap at 7 (same as offensive queue)
 
     local newIcons = {}
@@ -920,7 +918,7 @@ local function CreateInterruptIcon(addon, profile)
     addon.interruptIcon = nil
     addon.resolvedInterrupts = nil
 
-    if (profile.interruptMode or "important") == "off" then return end
+    if (profile.interruptMode or "ccPrefer") == "disabled" then return end
 
     local firstIconScale = profile.firstIconScale or 1.0
     local actualIconSize = profile.iconSize * firstIconScale

@@ -590,51 +590,126 @@ function SpellDB.IsOffensiveSpell(spellID)
 end
 
 --------------------------------------------------------------------------------
+-- DEFAULT RESOLUTION HELPERS
+-- Shared spec→class fallback logic for all per-spec default tables.
+--------------------------------------------------------------------------------
+
+--- Build the spec key ("CLASS_N") for the current player and spec.
+--- Returns specKey, playerClass or nil, nil if unavailable.
+function SpellDB.GetSpecKey()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil, nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil, playerClass end
+    return playerClass .. "_" .. spec, playerClass
+end
+
+--- Resolve defaults from a table that supports both spec-level and class-level keys.
+--- Tries "CLASS_N" first, then falls back to "CLASS".
+--- @param defaultsTable table — e.g. SpellDB.CLASS_DEFENSIVE_DEFAULTS
+--- @param specKey string|nil — e.g. "WARRIOR_3" (optional; computed if nil)
+--- @param playerClass string|nil — e.g. "WARRIOR" (optional; computed if nil)
+--- @return table|nil — the default spell list, or nil
+function SpellDB.ResolveDefaults(defaultsTable, specKey, playerClass)
+    if not defaultsTable then return nil end
+    if not specKey or not playerClass then
+        specKey, playerClass = SpellDB.GetSpecKey()
+    end
+    if specKey and defaultsTable[specKey] then
+        return defaultsTable[specKey]
+    end
+    if playerClass and defaultsTable[playerClass] then
+        return defaultsTable[playerClass]
+    end
+    return nil
+end
+
+--------------------------------------------------------------------------------
 -- CLASS DEFAULTS: Per-class spell lists for defensive queue feature
 -- These are user-configurable starting points, stored in saved variables
 --------------------------------------------------------------------------------
 
 -- Unified defensive spells (self-heals first, then major cooldowns).
 -- Fast heals / short-CD abilities ranked higher to preserve natural priority.
+--
+-- Keying convention (matches gap-closers):
+--   "CLASS"        = class-level fallback (used when no spec-specific entry exists)
+--   "CLASS_N"      = spec-specific override (N = GetSpecialization() index)
+-- Resolution order: spec key → class key.  Spec entries are only added where the
+-- defaults diverge meaningfully from the class fallback (primarily tank specs and
+-- specs with unique defensive tools).  All other specs use the class fallback.
 SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
-    -- Death Knight: Death Strike first (quick heal), then IBF + AMS (big CDs)
-    DEATHKNIGHT = {49998, 48792, 48707},             -- Death Strike, Icebound Fortitude, Anti-Magic Shell
+    -- ── Death Knight ────────────────────────────────────────────────────────
+    -- Class fallback (Frost/Unholy DPS): quick heal then big CDs
+    DEATHKNIGHT   = {49998, 48792, 48707},                     -- Death Strike, Icebound Fortitude, Anti-Magic Shell
+    -- Blood (tank): active mitigation first, Death Strike for heal, then big CDs
+    DEATHKNIGHT_1 = {49998, 55233, 194679, 48792, 48707},     -- Death Strike, Vampiric Blood, Rune Tap, IBF, AMS
 
-    -- Demon Hunter: Blur (instant), Soul Cleave (Veng), then Netherwalk, Darkness
-    DEMONHUNTER = {198589, 228477, 196555, 196718},  -- Blur, Soul Cleave, Netherwalk, Darkness
+    -- ── Demon Hunter ────────────────────────────────────────────────────────
+    -- Class fallback (Havoc DPS): Blur, then Netherwalk, Darkness
+    DEMONHUNTER   = {198589, 196555, 196718},                  -- Blur, Netherwalk, Darkness
+    -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, then Blur
+    DEMONHUNTER_2 = {228477, 203720, 204021, 198589, 263648},  -- Soul Cleave, Demon Spikes, Fiery Brand, Blur, Soul Barrier
 
-    -- Druid: Regrowth, Frenzied Regen, Renewal, Barkskin, then Survival Instincts
-    DRUID = {8936, 22842, 108238, 22812, 61336},     -- Regrowth, Frenzied Regen, Renewal, Barkskin, Survival Instincts
+    -- ── Druid ───────────────────────────────────────────────────────────────
+    -- Class fallback (Balance/Resto): Regrowth, Barkskin, Renewal
+    DRUID         = {8936, 108238, 22812},                     -- Regrowth, Renewal, Barkskin
+    -- Feral: Regrowth, Survival Instincts, Barkskin, Renewal
+    DRUID_2       = {8936, 61336, 22812, 108238},              -- Regrowth, Survival Instincts, Barkskin, Renewal
+    -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
+    DRUID_3       = {22842, 192081, 22812, 61336, 106922},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
 
-    -- Evoker: Obsidian Scales, Verdant Embrace, then Renewing Blaze
-    EVOKER = {363916, 360995, 374348},               -- Obsidian Scales, Verdant Embrace, Renewing Blaze
+    -- ── Evoker ──────────────────────────────────────────────────────────────
+    -- Class fallback (all specs share similar defensives)
+    EVOKER        = {363916, 360995, 374348},                  -- Obsidian Scales, Verdant Embrace, Renewing Blaze
 
-    -- Hunter: Exhilaration, then Turtle, Fortitude of the Bear
-    HUNTER = {109304, 186265, 388035},               -- Exhilaration, Aspect of the Turtle, Fortitude of the Bear
+    -- ── Hunter ──────────────────────────────────────────────────────────────
+    -- Class fallback (all specs)
+    HUNTER        = {109304, 186265, 388035},                  -- Exhilaration, Aspect of the Turtle, Fortitude of the Bear
 
-    -- Mage: Barriers first, then Ice Block, Greater Invisibility
-    MAGE = {11426, 235313, 235450, 45438, 110959},   -- Ice/Blazing/Prismatic Barrier, Ice Block, Greater Invis
+    -- ── Mage ────────────────────────────────────────────────────────────────
+    -- Class fallback (spec-appropriate barrier is auto-learned; list all three so
+    -- the one the player actually knows will be shown)
+    MAGE          = {11426, 235313, 235450, 45438, 110959},    -- Ice/Blazing/Prismatic Barrier, Ice Block, Greater Invis
 
-    -- Monk: Expel Harm, then Fortifying Brew, Touch of Karma, Diffuse Magic
-    MONK = {322101, 115203, 122470, 122783},         -- Expel Harm, Fortifying Brew, Touch of Karma, Diffuse Magic
+    -- ── Monk ────────────────────────────────────────────────────────────────
+    -- Class fallback (Windwalker/Mistweaver): Expel Harm, Fortifying Brew, Diffuse Magic
+    MONK          = {322101, 115203, 122783},                  -- Expel Harm, Fortifying Brew, Diffuse Magic
+    -- Brewmaster (tank): Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm
+    MONK_1        = {322507, 322101, 120954, 122278},          -- Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm
+    -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
+    MONK_3        = {322101, 122470, 201318, 122783},          -- Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
 
-    -- Paladin: Word of Glory, Divine Protection, then Divine Shield, Lay on Hands
-    PALADIN = {85673, 403876, 642, 633},             -- Word of Glory, Divine Protection, Divine Shield, Lay on Hands
+    -- ── Paladin ─────────────────────────────────────────────────────────────
+    -- Class fallback (Holy/Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
+    PALADIN       = {85673, 403876, 642, 633},                 -- Word of Glory, Divine Protection, Divine Shield, Lay on Hands
+    -- Protection (tank): Shield of the Righteous (rotational but defensive), Ardent Defender,
+    -- Guardian of Ancient Kings, Word of Glory, Divine Shield, Lay on Hands
+    PALADIN_2     = {85673, 31850, 86659, 642, 633},           -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Divine Shield, Lay on Hands
 
-    -- Priest: Desperate Prayer, PW:Shield, then Dispersion, Fade
-    PRIEST = {19236, 17, 47585, 586},                -- Desperate Prayer, PW:Shield, Dispersion, Fade
+    -- ── Priest ──────────────────────────────────────────────────────────────
+    -- Class fallback (Holy/Disc): Desperate Prayer, PW:Shield, Fade
+    PRIEST        = {19236, 17, 586},                          -- Desperate Prayer, PW:Shield, Fade
+    -- Shadow: Desperate Prayer, PW:Shield, Dispersion, Fade
+    PRIEST_3      = {19236, 17, 47585, 586},                   -- Desperate Prayer, PW:Shield, Dispersion, Fade
 
-    -- Rogue: Crimson Vial, Feint, then Cloak of Shadows, Evasion
-    ROGUE = {185311, 1966, 31224, 5277},             -- Crimson Vial, Feint, Cloak of Shadows, Evasion
+    -- ── Rogue ───────────────────────────────────────────────────────────────
+    -- Class fallback (all specs share the same toolkit)
+    ROGUE         = {185311, 1966, 31224, 5277},               -- Crimson Vial, Feint, Cloak of Shadows, Evasion
 
-    -- Shaman: Astral Shift, Healing Surge, then Earth Elemental
-    SHAMAN = {108271, 8004, 198103},                 -- Astral Shift, Healing Surge, Earth Elemental
+    -- ── Shaman ──────────────────────────────────────────────────────────────
+    -- Class fallback (all specs)
+    SHAMAN        = {108271, 8004, 198103},                    -- Astral Shift, Healing Surge, Earth Elemental
 
-    -- Warlock: Dark Pact, Drain Life, then Unending Resolve
-    WARLOCK = {108416, 234153, 104773},              -- Dark Pact, Drain Life, Unending Resolve
+    -- ── Warlock ─────────────────────────────────────────────────────────────
+    -- Class fallback (all specs share dark pact / drain / UR)
+    WARLOCK       = {108416, 234153, 104773},                  -- Dark Pact, Drain Life, Unending Resolve
 
-    -- Warrior: Victory Rush, Impending Victory, Ignore Pain, then Shield Wall, Die by the Sword, Rallying Cry
-    WARRIOR = {34428, 202168, 190456, 871, 118038, 97462},
+    -- ── Warrior ─────────────────────────────────────────────────────────────
+    -- Class fallback (Arms/Fury DPS): Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
+    WARRIOR       = {34428, 202168, 190456, 118038, 97462},    -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
+    -- Protection (tank): Ignore Pain, Shield Wall, Last Stand, Shield Block (via SotR), Rallying Cry, Spell Reflection
+    WARRIOR_3     = {190456, 871, 12975, 97462, 23920},        -- Ignore Pain, Shield Wall, Last Stand, Rallying Cry, Spell Reflection
 }
 
 -- Legacy tables (kept for migration from older versions)

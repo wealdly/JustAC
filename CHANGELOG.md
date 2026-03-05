@@ -1,6 +1,15 @@
 
 # Changelog
 
+## [4.6.0] - 2026-03-05
+
+### Changed
+- **Blacklist is now per-profile, per-spec.** Previously stored per-character (`db.char`), so switching profiles/specs kept the same blacklist. Now stored in `db.profile.blacklistedSpells["CLASS_N"]`, matching how defensive spell lists, gap-closers, and hotkey overrides work. Existing character blacklists are automatically migrated into the current spec's profile on first load.
+- **Defensive spell lists are now per-spec.** Previously keyed per-class (`classSpells["WARRIOR"]`), so all specs shared one defensive list. Now keyed per-spec (`classSpells["WARRIOR_3"]`), allowing tank specs to have different defensive priorities than DPS specs. Existing per-class lists are automatically copied to all specs of that class on migration.
+- **Spec-specific defensive defaults** for tanks and notable spec outliers: Blood DK, Vengeance DH, Guardian Druid, Feral Druid, Brewmaster Monk, Windwalker Monk, Protection Paladin, Shadow Priest, Protection Warrior. All other specs continue to use class-level fallback defaults.
+- Blacklist tab and defensive spell list headers now show the active spec name for clarity.
+- All spell lists (blacklist, defensives, gap-closers, hotkey overrides) now consistently live in `db.profile` and travel with profile switches/copies/resets.
+
 ## [4.5.8] - 2026-03-04
 
 ### Added
