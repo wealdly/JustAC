@@ -1,10 +1,11 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 10)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 11)
 if not UIAnimations then return end
 
 local GetTime = GetTime
+local UnitChannelInfo = UnitChannelInfo
 
 -- Flash animation constants
 local FLASH_DURATION = 0.2
@@ -450,6 +451,131 @@ local function ResumeAllGlows(addon)
     end
 end
 
+--------------------------------------------------------------------------------
+-- Channel Fill Animation (mirrors Blizzard's ActionButtonCastingAnimFrame)
+--------------------------------------------------------------------------------
+-- Lightweight clone of Blizzard's channel-fill overlay using the same atlas
+-- textures (UI-HUD-ActionBar-Channel-Fill, UI-HUD-ActionBar-Channel-InnerGlow).
+-- A Translation animation slides the fill texture across the icon over the
+-- channel duration.  The frame is parented inside the icon's cooldownContainer
+-- so SetClipsChildren keeps it within bounds, and the icon's IconMask clips it
+-- to the rounded icon shape.
+--
+-- Lifecycle:
+--   StartChannelFill(icon) — creates (once) / shows / plays for current channel
+--   StopChannelFill(icon)  — stops anim, hides frame
+--
+-- Identification of the channeled icon uses UnitChannelInfo spellID +
+-- C_Spell.GetOverrideSpell matching at the call site, not inside these helpers.
+
+local function CreateChannelFillFrame(icon)
+    -- Parent to cooldownContainer (SetClipsChildren=true clips rendering to icon bounds).
+    -- Frame level: above cooldown swipe but below border (L+3) and glows (L+4+).
+    local parent = icon.cooldownContainer or icon
+
+    -- Match Blizzard's ActionButtonCastingAnimFrameTemplate: 128x128 centered on the icon.
+    -- The atlas textures and translation offsets (+45, −43) are tuned for this size.
+    -- cooldownContainer's SetClipsChildren clips the rendered output to ~45x45 icon bounds.
+    local frame = CreateFrame("Frame", nil, parent)
+    frame:SetSize(128, 128)
+    frame:SetPoint("CENTER", icon, "CENTER")
+    frame:SetFrameLevel(icon:GetFrameLevel() + 2)
+
+    -- Inner glow (soft light behind the fill bar)
+    local innerGlow = frame:CreateTexture(nil, "ARTWORK", nil, 1)
+    innerGlow:SetAtlas("UI-HUD-ActionBar-Channel-InnerGlow", true)
+    innerGlow:SetPoint("CENTER")
+    frame.InnerGlowTexture = innerGlow
+
+    -- Fill bar (slides from right to left for channels)
+    local castFill = frame:CreateTexture(nil, "ARTWORK", nil, 2)
+    castFill:SetAtlas("UI-HUD-ActionBar-Channel-Fill", true)
+    castFill:SetBlendMode("ADD")
+    frame.CastFill = castFill
+
+    -- Mask to icon shape (reuse the icon's existing mask if available)
+    if icon.IconMask then
+        castFill:AddMaskTexture(icon.IconMask)
+        innerGlow:AddMaskTexture(icon.IconMask)
+    end
+
+    -- Animation group: translate the fill bar across the icon
+    local animGroup = castFill:CreateAnimationGroup()
+    frame.CastingAnim = animGroup
+
+    local translation = animGroup:CreateAnimation("Translation")
+    translation:SetOrder(1)
+    frame.CastFillTranslation = translation
+
+    -- Fade out the fill texture at the end of the channel
+    local fadeOut = animGroup:CreateAnimation("Alpha")
+    fadeOut:SetDuration(0.15)
+    fadeOut:SetOrder(2)
+    fadeOut:SetSmoothing("OUT")
+    fadeOut:SetFromAlpha(1)
+    fadeOut:SetToAlpha(0)
+
+    -- On finish: hide the frame cleanly
+    animGroup:SetScript("OnFinished", function()
+        frame:Hide()
+    end)
+
+    frame:Hide()
+    icon.ChannelFillFrame = frame
+    return frame
+end
+
+local function StartChannelFill(icon)
+    if not icon then return end
+
+    -- Get channel timing from UnitChannelInfo (all NeverSecret, verified 2026-03-05)
+    local _, _, _, startMS, endMS = UnitChannelInfo("player")
+    if not startMS or not endMS then return end
+
+    local totalDuration = (endMS - startMS) / 1000
+    if totalDuration <= 0 then return end
+
+    -- Elapsed time since channel started
+    local elapsed = GetTime() - (startMS / 1000)
+    local remaining = totalDuration - elapsed
+    if remaining <= 0 then return end
+
+    local frame = icon.ChannelFillFrame or CreateChannelFillFrame(icon)
+
+    -- Position fill bar: start at right side (CENTER +45), translate left (-43)
+    -- Blizzard's channel fill slides right→left (draining)
+    frame.CastFill:ClearAllPoints()
+    frame.CastFill:SetPoint("CENTER", 45, 0)
+    frame.CastFillTranslation:SetOffset(-43, 0)
+    frame.CastFillTranslation:SetDuration(totalDuration)
+
+    -- If channel is already partway through, set start offset proportionally.
+    -- The Translation animation supports SetStartDelay but not mid-seek, so we
+    -- reposition the fill bar to where it would be and shorten the duration.
+    if elapsed > 0.05 then
+        local progress = elapsed / totalDuration  -- 0..1
+        local startX = 45 - (43 * progress)       -- lerp from 45 to 2
+        frame.CastFill:ClearAllPoints()
+        frame.CastFill:SetPoint("CENTER", startX, 0)
+        frame.CastFillTranslation:SetOffset(-(43 * (1 - progress)), 0)
+        frame.CastFillTranslation:SetDuration(remaining)
+    end
+
+    frame.CastingAnim:Stop()
+    frame:Show()
+    frame.CastFill:SetAlpha(1)
+    frame.InnerGlowTexture:SetAlpha(1)
+    frame.CastingAnim:Play()
+    icon._hasChannelFill = true
+end
+
+local function StopChannelFill(icon)
+    if not icon or not icon.ChannelFillFrame then return end
+    icon.ChannelFillFrame.CastingAnim:Stop()
+    icon.ChannelFillFrame:Hide()
+    icon._hasChannelFill = false
+end
+
 -- Exports
 UIAnimations.StartAssistedGlow = StartAssistedGlow
 UIAnimations.StopAssistedGlow = StopAssistedGlow
@@ -467,3 +593,5 @@ UIAnimations.UpdateFlash = UpdateFlash
 UIAnimations.HideAllGlows = HideAllGlows
 UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows
+UIAnimations.StartChannelFill = StartChannelFill
+UIAnimations.StopChannelFill = StopChannelFill

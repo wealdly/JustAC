@@ -11,7 +11,7 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 
--- Cached globals
+-- Hot path cache
 local wipe = wipe
 local math_max = math.max
 local math_floor = math.floor
@@ -452,18 +452,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
-        local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
-        -- Migration: handle old settings
-        if not tooltipMode and addon.db and addon.db.profile then
-            if addon.db.profile.showTooltips == false then
-                tooltipMode = "never"
-            elseif addon.db.profile.tooltipsInCombat then
-                tooltipMode = "always"
-            else
-                tooltipMode = "outOfCombat"
-            end
-        end
-        tooltipMode = tooltipMode or "outOfCombat"
+        local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
 
         local inCombat = UnitAffectingCombat("player")
         local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
@@ -960,17 +949,7 @@ local function CreateInterruptIcon(addon, profile)
     button:SetScript("OnEnter", function(self)
         if not self.spellID then return end
 
-        local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
-        if not tooltipMode and addon.db and addon.db.profile then
-            if addon.db.profile.showTooltips == false then
-                tooltipMode = "never"
-            elseif addon.db.profile.tooltipsInCombat then
-                tooltipMode = "always"
-            else
-                tooltipMode = "outOfCombat"
-            end
-        end
-        tooltipMode = tooltipMode or "outOfCombat"
+        local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
 
         local inCombat = UnitAffectingCombat("player")
         local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
@@ -1079,7 +1058,8 @@ local function CreateInterruptIcon(addon, profile)
 end
 
 function UIFrameFactory.CreateSpellIcons(addon)
-    if not addon.db or not addon.db.profile or not addon.mainFrame then return end
+    local profile = addon:GetProfile()
+    if not profile or not addon.mainFrame then return end
     
     -- Remove old buttons from Masque before cleanup
     local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
@@ -1097,7 +1077,6 @@ function UIFrameFactory.CreateSpellIcons(addon)
     end
     wipe(spellIcons)
     
-    local profile = addon.db.profile
     local orientation = profile.queueOrientation or "LEFT"
     
     -- For RIGHT/UP, reserve space at the icon-start edge so the grab tab
@@ -1179,17 +1158,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
     button:SetScript("OnEnter", function(self)
         if self.spellID then
-            local tooltipMode = addon.db and addon.db.profile and addon.db.profile.tooltipMode
-            if not tooltipMode and addon.db and addon.db.profile then
-                if addon.db.profile.showTooltips == false then
-                    tooltipMode = "never"
-                elseif addon.db.profile.tooltipsInCombat then
-                    tooltipMode = "always"
-                else
-                    tooltipMode = "outOfCombat"
-                end
-            end
-            tooltipMode = tooltipMode or "outOfCombat"
+            local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
 
             local inCombat = UnitAffectingCombat("player")
             local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)

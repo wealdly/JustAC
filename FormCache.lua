@@ -21,10 +21,6 @@ local cachedFormData = {
     lastFullScan = 0,
 }
 
-local function GetDebugMode()
-    return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
-end
-
 local function GetModernSpellTabInfo(tabIndex)
     if C_SpellBook and C_SpellBook.GetSpellBookSkillLineInfo then
         local skillLineInfo = C_SpellBook.GetSpellBookSkillLineInfo(tabIndex)

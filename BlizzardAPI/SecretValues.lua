@@ -13,14 +13,11 @@ local pcall      = pcall
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
-local C_Spell_GetSpellCharges  = C_Spell and C_Spell.GetSpellCharges
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local Unsecret      = BlizzardAPI.Unsecret
 
 -- Version constants set by BlizzardAPI.lua (root) before this file loads.
 local IS_MIDNIGHT_OR_LATER = BlizzardAPI.IS_MIDNIGHT_OR_LATER
-local _interfaceVersion    = BlizzardAPI._interfaceVersion
 
 --------------------------------------------------------------------------------
 -- Feature Availability (12.0+ secret value graceful degradation)
@@ -101,7 +98,7 @@ local function RefreshFeatureAvailability()
 
     local debugMode = BlizzardAPI.GetDebugMode()
     if debugMode then
-        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        local addon = BlizzardAPI.GetAddon and BlizzardAPI.GetAddon()
         if addon and addon.Print then
             if oldHealthAccess ~= featureAvailability.healthAccess then
                 addon:Print("Health API access: " .. (featureAvailability.healthAccess and "AVAILABLE" or "BLOCKED (secrets)"))
@@ -146,76 +143,6 @@ end
 --------------------------------------------------------------------------------
 -- API-Specific Secret-Aware Helpers
 --------------------------------------------------------------------------------
-
--- Check if a spell is ready (not on a real cooldown).
--- 12.0 combat: duration/startTime are blanket-secreted.
--- isOnGCD is NeverSecret with three observable states:
---   true  → GCD only (spell is ready, just on GCD)
---   false → real cooldown running (only for spells Blizzard flags internally;
---           typically short-CD rotation spells like Judgment, Blade of Justice)
---   nil   → absent (spell off CD OR unflagged spell on CD — ambiguous)
--- When isOnGCD is nil in combat, fall back to local cooldown tracking
--- and action bar usability to detect real cooldowns.
-function BlizzardAPI.IsSpellReady(spellID)
-    if not spellID or not C_Spell_GetSpellCooldown then return true end
-    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return true end
-
-    -- isOnGCD == true → on GCD only, spell is effectively ready
-    if cd.isOnGCD == true then return true end
-
-    -- isOnGCD == false → real cooldown running (definitive for flagged spells)
-    if cd.isOnGCD == false then return false end
-
-    -- Out of combat: duration/startTime are readable
-    local duration = Unsecret(cd.duration)
-    if duration then
-        return cd.startTime == 0 or (cd.startTime + duration) <= GetTime()
-    end
-
-    -- In combat with secreted values and isOnGCD == nil:
-    -- Spell is either off cooldown OR on CD but unflagged (major CDs like
-    -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
-
-    -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
-    if BlizzardAPI.IsSpellOnLocalCooldown(spellID) then return false end
-
-    -- Charge-based: if we have charges, spell is usable
-    if C_Spell_GetSpellCharges then
-        local csOk, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
-        if csOk and chargeInfo and chargeInfo.currentCharges then
-            local currentCharges = Unsecret(chargeInfo.currentCharges)
-            if currentCharges then
-                return currentCharges > 0
-            end
-            -- currentCharges is SECRET — use cached maxCharges to know if this
-            -- is even a charge spell (if not, skip to action bar fallback)
-            local cached = BlizzardAPI.GetCachedMaxCharges(spellID)
-            if cached and cached > 1 then
-                -- Multi-charge spell but charges are secret — fail-open (assume usable)
-                return true
-            end
-        end
-    end
-
-    -- Action bar usability (visual state, NeverSecret)
-    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-    if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
-        local slot = ActionBarScanner.GetSlotForSpell(spellID)
-        if slot and C_ActionBar and C_ActionBar.IsUsableAction then
-            local actionUsable, notEnoughMana = C_ActionBar.IsUsableAction(slot)
-            if not IsSecretValue(actionUsable) and not IsSecretValue(notEnoughMana) then
-                -- Not usable AND not a mana issue → likely on cooldown
-                if actionUsable == false and not notEnoughMana then return false end
-                -- Usable → spell is ready
-                if actionUsable == true then return true end
-            end
-        end
-    end
-
-    -- Fail-open: assume ready when we can't determine state
-    return true
-end
 
 function BlizzardAPI.GetAuraTiming(unit, index, filter)
     if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end

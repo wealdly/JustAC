@@ -35,7 +35,7 @@ end
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 4.5.6
+- Current: 4.7.0
 - Hotfixes: 4.5.5, 4.5.6, etc. (bug fixes only)
 - Features: 4.6.0, 4.7.0, etc. (new functionality)
 - Breaking: 5.0.0, 6.0.0, etc. (major rewrites)
@@ -54,35 +54,41 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 
 | Module | Role | Key Exports | Current Version |
 |--------|------|-------------|-----------------|
-| `Locale.lua` | AceLocale-3.0 localization (6 languages) | `L` global | N/A (not LibStub) |
-| `BlizzardAPI.lua` | `C_AssistedCombat` wrappers, profile access | `GetProfile()`, `GetSpellInfo()` | v21 |
-| `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v5 |
-| `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v19 |
-| `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v32 |
-| `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | N/A |
-| `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v24 |
-| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()` | N/A |
+| `Locale.lua` | AceLocale-3.0 localization (9 languages) | `L` global | N/A (not LibStub) |
+| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v8 |
+| `BlizzardAPI.lua` | Root: secret value primitives, version detection | `IsSecretValue()`, `Unsecret()`, `GetActionBarUsability()` | v33 |
+| `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `IsSpellOnLocalCooldown()`, `RegisterRotationSpell()` | v2 |
+| `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `IsMidnightOrLater()` | v1 |
+| `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v1 |
+| `BlizzardAPI/StateHelpers.lua` | Defensive state, health, CC immunity, target analysis | `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v4 |
+| `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v11 |
+| `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v21 |
+| `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v35 |
+| `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v40 |
+| `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v37 |
 | **UI/** | **UI rendering subsystem (5 files)** | | |
-| `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v5 |
-| `UI/UIAnimations.lua` | Animation helpers (glow, flash) | `ApplyGlow()`, `ApplyFlash()` | v4 |
+| `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v7 |
+| `UI/UIAnimations.lua` | Animation helpers (glow, flash) | `ApplyGlow()`, `ApplyFlash()` | v10 |
 | `UI/UIFrameFactory.lua` | Icon frame pool | `AcquireFrame()`, `ReleaseFrame()` | v12 |
-| `UI/UIRenderer.lua` | Icon rendering + Masque integration | `RenderSpellQueue()`, frame management | v14 |
-| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v1 |
+| `UI/UIRenderer.lua` | Icon rendering + Masque integration | `RenderSpellQueue()`, frame management | v17 |
+| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v6 |
 | `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v1 |
-| `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()` | v1 |
-| `DebugCommands.lua` | In-game diagnostics | `/jac test`, `/jac modules` | v1 |
-| **Options/** | **Modular options panel (9 files)** | | |
+| `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()` | v2 |
+| `DebugCommands.lua` | In-game diagnostics | `/jac test`, `/jac modules` | v15 |
+| **Options/** | **Modular options panel (11 files)** | | |
 | `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()` | v1 |
-| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v1 |
+| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v2 |
+| `Options/StandardQueue.lua` | Standard Queue tab (icon size, spacing, layout) | `CreateTabArgs()` | v2 |
 | `Options/Offensive.lua` | Offensive tab + blacklist management | `CreateTabArgs()`, `UpdateBlacklistOptions()` | v1 |
-| `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v1 |
+| `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v2 |
 | `Options/Defensives.lua` | Defensives tab + spell list management | `CreateTabArgs()`, `UpdateDefensivesOptions()` | v1 |
-| `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v1 |
+| `Options/GapClosers.lua` | Gap Closers tab (sub-tab of Offensive) | `CreateTabArgs()`, `UpdateGapCloserOptions()` | v1 |
+| `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v4 |
 | `Options/Hotkeys.lua` | Hotkey Overrides tab | `CreateTabArgs()`, `UpdateHotkeyOverrideOptions()` | v1 |
 | `Options/Profiles.lua` | Per-spec profile switching (injected into profiles) | `AddSpecProfileOptions()` | v1 |
-| `Options/Core.lua` | Options assembly, slash commands, initialization | `Initialize()`, `UpdateX()` forwards | v31 |
+| `Options/Core.lua` | Options assembly, slash commands, initialization | `Initialize()`, `UpdateX()` forwards | v32 |
 | `TargetFrameAnchor.lua` | Anchor main frame to Blizzard TargetFrame | `UpdateTargetFrameAnchor()`, `ClampFrameToScreen()` | v1 |
-| `KeyPressDetector.lua` | Flash feedback on matching key press | `Create()` | v1 |
+| `KeyPressDetector.lua` | Flash feedback on matching key press | `Create()` | v2 |
 | `JustAC.lua` | Core addon, events, defensive cooldowns | `OnInitialize()`, `OnUpdate()` | N/A (main addon) |
 
 ## Required Patterns

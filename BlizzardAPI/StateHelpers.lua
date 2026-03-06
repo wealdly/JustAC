@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 3
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 4
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -18,6 +18,11 @@ local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undef
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
 local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
 local UnitIsCrowdControlled = UnitIsCrowdControlled ---@diagnostic disable-line: undefined-global
+local pcall          = pcall
+local UnitHealth     = UnitHealth
+local UnitHealthMax  = UnitHealthMax
+local UnitExists     = UnitExists
+local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local Unsecret      = BlizzardAPI.Unsecret
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
@@ -43,17 +48,17 @@ local function GetRedundancyFilter()
 end
 
 -- Check defensive spell usability in one call (avoids repeated API lookups)
--- Returns: isUsable, isKnown, isRedundant, onCooldown, isProcced
--- isUsable = isKnown AND NOT isRedundant AND NOT onCooldown
+-- Returns: isUsable, isRedundant, isProcced
+-- isUsable = spell is known AND NOT redundant (buff already active).
+-- Cooldown gating is handled by the caller via IsSpellOnLocalCooldown / IsSpellUsable.
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
-        return false, false, false, false, false
+        return false, false, false
     end
 
     -- Check if spell is known/available
-    local isKnown = BlizzardAPI.IsSpellAvailable(spellID)
-    if not isKnown then
-        return false, false, false, false, false
+    if not BlizzardAPI.IsSpellAvailable(spellID) then
+        return false, false, false
     end
 
     -- Check if procced (instant/free cast available)
@@ -63,14 +68,10 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     local RedundancyFilter = GetRedundancyFilter()
     local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
     if isRedundant then
-        return false, true, true, false, isProcced
+        return false, true, isProcced
     end
 
-    -- NOTE: Cooldown-based deprioritization is handled by the caller
-    -- (DefensiveEngine.GetUsableDefensiveSpells) via BlizzardAPI.IsSpellOnLocalCooldown()
-    -- and BlizzardAPI.IsSpellUsable(). This function only gates on known + non-redundant.
-    -- Spells on CD are deprioritized (sorted to end) but never hidden from the queue.
-    return true, true, false, false, isProcced
+    return true, false, isProcced
 end
 
 --------------------------------------------------------------------------------
@@ -335,6 +336,66 @@ function BlizzardAPI.IsTargetInterruptWorthy()
     -- UnitCreatureType() Mechanical/Totem check — but works IN combat.
     if UnitIsMinion and UnitIsMinion("target") then return false end
     return true
+end
+
+--------------------------------------------------------------------------------
+-- Player & Pet Health (moved from SpellQuery — consolidated with health helpers)
+--------------------------------------------------------------------------------
+
+-- UnitHealth/UnitHealthMax don't return secrets for player units
+function BlizzardAPI.GetPlayerHealthPercent()
+    if not UnitExists("player") then return nil end
+
+    local health = UnitHealth("player")
+    local maxHealth = UnitHealthMax("player")
+
+    if IsSecretValue(health) or IsSecretValue(maxHealth) then
+        return nil
+    end
+    if not maxHealth or maxHealth == 0 then return 100 end
+    return (health / maxHealth) * 100
+end
+
+-- Pet health IS secret in 12.0 combat (PvE and PvP). Returns nil when secret.
+-- This means pet heals only trigger out of combat. Pet rez/summon uses
+-- GetPetStatus() instead, which relies on UnitIsDead/UnitExists (not secret).
+function BlizzardAPI.GetPetHealthPercent()
+    if not UnitExists("pet") then return nil end
+
+    local ok, isDead = pcall(UnitIsDead, "pet")
+    if ok then
+        if IsSecretValue(isDead) then
+            -- Can't determine dead status
+        elseif isDead then
+            return 0
+        end
+    end
+
+    local health = UnitHealth("pet")
+    local maxHealth = UnitHealthMax("pet")
+
+    if IsSecretValue(health) or IsSecretValue(maxHealth) then
+        return nil
+    end
+    if not maxHealth or maxHealth == 0 then return 100 end
+    return (health / maxHealth) * 100
+end
+
+-- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
+-- UnitExists and UnitIsDead are NOT secret — reliable in combat
+-- Pet health IS secret in combat — use GetPetHealthPercent() for best-effort health
+function BlizzardAPI.GetPetStatus()
+    local ok, exists = pcall(UnitExists, "pet")
+    if not ok or not exists then
+        return "missing"
+    end
+
+    local ok2, isDead = pcall(UnitIsDead, "pet")
+    if ok2 and isDead and not IsSecretValue(isDead) then
+        return "dead"
+    end
+
+    return "alive"
 end
 
 -- Falls back to LowHealthFrame when UnitHealth() returns secrets

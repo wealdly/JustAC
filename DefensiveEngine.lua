@@ -3,11 +3,10 @@
 -- DefensiveEngine.lua — Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
-local MAJOR, MINOR = "JustAC-DefensiveEngine", 1
-local DefensiveEngine = LibStub:NewLibrary(MAJOR, MINOR)
+local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 1)
 if not DefensiveEngine then return end
 
--- Cached globals
+-- Hot path cache
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
 local GetItemCount = GetItemCount
@@ -165,11 +164,6 @@ function DefensiveEngine.GetClassSpellList(addon, listKey)
     local specKey, playerClass
     if SpellDB and SpellDB.GetSpecKey then
         specKey, playerClass = SpellDB.GetSpecKey()
-    else
-        local _
-        _, playerClass = UnitClass("player")
-        local spec = GetSpecialization and GetSpecialization()
-        if playerClass and spec then specKey = playerClass .. "_" .. spec end
     end
     if not playerClass then return nil end
 
@@ -192,12 +186,7 @@ function DefensiveEngine.GetDefensiveSpecKey()
     if SpellDB and SpellDB.GetSpecKey then
         return SpellDB.GetSpecKey()
     end
-    local _, playerClass = UnitClass("player")
-    local spec = GetSpecialization and GetSpecialization()
-    if playerClass and spec then
-        return playerClass .. "_" .. spec, playerClass
-    end
-    return nil, playerClass
+    return nil, nil
 end
 
 -- Migrate pre-3.25 flat spell lists (selfHealSpells/cooldownSpells/petHealSpells)
@@ -526,7 +515,7 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
             local resolvedID = BlizzardAPI.ResolveSpellID(entry)
             -- Check both the original and resolved IDs to handle proc injection cross-dedup
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
-                local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+                local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
                     if isProcced then
                         -- Procced: top priority (instant/free cast)
@@ -664,7 +653,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                     -- (e.g. Victory Rush proc 34428 → Impending Victory 202168)
                     local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
                     if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
-                        local isUsable, _, _, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+                        local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
                             results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                             alreadyAdded[resolvedID] = true
