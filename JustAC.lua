@@ -4,10 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector
-
--- Class default tables are stored in SpellDB.lua for consistency
--- Access via JustAC.CLASS_*_DEFAULTS (set in OnInitialize after SpellDB loads)
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB
 
 local defaults = {
     profile = {
@@ -111,7 +108,7 @@ local defaults = {
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
             enabled = true,
-            -- showGlow defaults to nil → getter treats as false (glow off by default)
+            showGlow = true,          -- Glow on gap-closer icons (on by default)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {100, 6544}
         },
     },
@@ -363,7 +360,19 @@ function JustAC:NormalizeSavedData()
     end
     profile.showHealthBar = nil
     profile.showPetHealthBar = nil
+    -- Migrate legacy tooltip settings → tooltipMode (one-time)
+    if profile.tooltipMode == nil then
+        if profile.showTooltips == false then
+            profile.tooltipMode = "never"
+        elseif profile.tooltipsInCombat then
+            profile.tooltipMode = "always"
+        else
+            profile.tooltipMode = "outOfCombat"
+        end
+    end
     -- Nil legacy keys so they don't persist in saved data after migration
+    profile.showTooltips = nil
+    profile.tooltipsInCombat = nil
     profile.showOffensiveHotkeys = nil
     profile.showInterrupt = nil
     profile.ccRegularMobs = nil
@@ -378,18 +387,6 @@ function JustAC:OnInitialize()
     if not _G.BINDING_NAME_JUSTAC_CAST_FIRST then
         _G.BINDING_NAME_JUSTAC_CAST_FIRST = "JustAC: Cast First Spell"
         _G.BINDING_HEADER_JUSTAC = "JustAssistedCombat"
-    end
-    
-    -- Set CLASS_*_DEFAULTS references from SpellDB
-    local SpellDB = LibStub("JustAC-SpellDB", true)
-    if SpellDB then
-        JustAC.CLASS_SELFHEAL_DEFAULTS = SpellDB.CLASS_SELFHEAL_DEFAULTS
-        JustAC.CLASS_COOLDOWN_DEFAULTS = SpellDB.CLASS_COOLDOWN_DEFAULTS
-        JustAC.CLASS_DEFENSIVE_DEFAULTS = SpellDB.CLASS_DEFENSIVE_DEFAULTS
-        JustAC.CLASS_PETHEAL_DEFAULTS = SpellDB.CLASS_PETHEAL_DEFAULTS
-        JustAC.CLASS_PET_REZ_DEFAULTS = SpellDB.CLASS_PET_REZ_DEFAULTS
-        JustAC.CLASS_INTERRUPT_DEFAULTS = SpellDB.CLASS_INTERRUPT_DEFAULTS
-        JustAC.CLASS_GAPCLOSER_DEFAULTS = SpellDB.CLASS_GAPCLOSER_DEFAULTS
     end
     
     self:NormalizeSavedData()
@@ -548,6 +545,18 @@ function JustAC:InitializeCaches()
     if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
         BlizzardAPI.RefreshFeatureAvailability()
     end
+
+    -- Seed debug mode from profile (event-only cache, no timer)
+    if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+        BlizzardAPI.RefreshDebugMode()
+    end
+
+    -- Rebuild item-spell cache after short delay to cover cold item data on login
+    self:ScheduleTimer(function()
+        if BlizzardAPI and BlizzardAPI.RefreshItemSpellCache then
+            BlizzardAPI.RefreshItemSpellCache()
+        end
+    end, 3)
 end
 
 function JustAC:DelayedValidation()
@@ -600,9 +609,6 @@ function JustAC:EnterDisabledMode()
         for _, icon in ipairs(self.defensiveIcons) do
             if icon then icon:Hide() end
         end
-    end
-    if self.defensiveIcon then
-        self.defensiveIcon:Hide()
     end
 
     -- Hide health bar
@@ -667,8 +673,12 @@ function JustAC:RefreshConfig()
         UINameplateOverlay.Create(self)
     end
 
+    -- Refresh debug mode cache (profile may have different debugMode value)
+    if BlizzardAPI and BlizzardAPI.RefreshDebugMode then
+        BlizzardAPI.RefreshDebugMode()
+    end
+
     -- Refresh options panel dynamic entries if it's been initialized
-    local Options = LibStub("JustAC-Options", true)
     if Options then
         if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
         if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
@@ -751,6 +761,7 @@ function JustAC:LoadModules()
     Options = LibStub("JustAC-Options", true)
     MacroParser = LibStub("JustAC-MacroParser", true)
     RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    SpellDB = LibStub("JustAC-SpellDB", true)
     
     if not UIRenderer then self:Print("Error: UIRenderer module not found"); self:Disable(); return end
     if not UIFrameFactory then self:Print("Error: UIFrameFactory module not found"); self:Disable(); return end
@@ -794,11 +805,6 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         self:DebugPrint("Hotkey removed: " .. spellName)
     end
 
-    if self.defensiveIcon and self.defensiveIcon:IsShown() and self.defensiveIcon.spellID == spellID then
-        UIRenderer.ShowDefensiveIcon(self, spellID, false, self.defensiveIcon)
-    end
-
-    local Options = LibStub("JustAC-Options", true)
     if Options and Options.UpdateHotkeyOverrideOptions then
         Options.UpdateHotkeyOverrideOptions(self)
     end
@@ -820,11 +826,6 @@ function JustAC:OpenHotkeyOverrideDialog(spellID)
 end
 
 function JustAC:GetProfile() return self.db and self.db.profile end
-function JustAC:IsSpellBlacklisted(spellID)
-    if not SpellQueue or not SpellQueue.IsSpellBlacklisted then return false end
-    return SpellQueue.IsSpellBlacklisted(spellID)
-end
-function JustAC:GetBlacklistedSpells() return SpellQueue and SpellQueue.GetBlacklistedSpells and SpellQueue.GetBlacklistedSpells() or {} end
 
 -- Centralized cache invalidation with flags
 function JustAC:InvalidateCaches(flags)
@@ -887,10 +888,6 @@ end
 function JustAC:PLAYER_ENTERING_WORLD()
     self:InitializeCaches()
 
-    if FormCache and FormCache.OnPlayerLogin then
-        FormCache.OnPlayerLogin()
-    end
-
     -- Re-evaluate vehicle/possess state after loading screens (may enter a phased vehicle zone).
     self:UpdateAlternateControlState()
 
@@ -932,7 +929,6 @@ function JustAC:RefreshInterruptSpells()
     if newList then
         self.resolvedInterrupts = newList
     end
-    local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
     if UINameplateOverlay and UINameplateOverlay.RefreshInterruptSpells then
         UINameplateOverlay.RefreshInterruptSpells()
     end
@@ -948,7 +944,7 @@ function JustAC:OnCombatEvent(event)
             UIAnimations.ResumeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
-        local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
@@ -991,7 +987,7 @@ function JustAC:OnCombatEvent(event)
             if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
             self:ForceUpdateAll()
         end
-        local AceConfigRegistry = LibStub and LibStub("AceConfigRegistry-3.0", true)
+        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     end
 end
@@ -1224,7 +1220,6 @@ function JustAC:OnPetChanged(event, unit)
 end
 
 function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI and BlizzardAPI.RefreshItemSpellCache then
         BlizzardAPI.RefreshItemSpellCache()
     end
@@ -1246,7 +1241,6 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
     -- spellID from UNIT_SPELLCAST_SUCCEEDED is NeverSecret (player's own cast).
     do
-        local SpellDB = LibStub("JustAC-SpellDB", true)
         if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
             -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
             -- so one call covers both renderers (debounce state is now shared in UIRenderer).
@@ -1268,21 +1262,18 @@ function JustAC:OnCooldownUpdate()
     self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.02)
 end
 
-function JustAC:ForceUpdateAll()
+function JustAC:ForceUpdate(includeDefensives)
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
     if SpellQueue and SpellQueue.ForceUpdate then SpellQueue.ForceUpdate() end
     self:UpdateSpellQueue()
-    self:OnHealthChanged(nil, "player")
+    if includeDefensives then self:OnHealthChanged(nil, "player") end
 end
 
-function JustAC:ForceUpdate()
-    if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    if SpellQueue and SpellQueue.ForceUpdate then SpellQueue.ForceUpdate() end
-    self:UpdateSpellQueue()
+function JustAC:ForceUpdateAll()
+    self:ForceUpdate(true)
 end
 
 function JustAC:OpenOptionsPanel()
-    local Options = LibStub("JustAC-Options", true)
     if Options then
         if self.InitializeDefensiveSpells then
             self:InitializeDefensiveSpells()
@@ -1293,7 +1284,6 @@ function JustAC:OpenOptionsPanel()
         if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
     end
 
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI and BlizzardAPI.IsMidnightOrLater() then
         local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)
         if AceConfigDialog then
@@ -1360,7 +1350,7 @@ function JustAC:StartUpdates()
         local defIcons = self.defensiveIcons
         local defHidden = not defIcons or #defIcons == 0
         local npHidden = not self.nameplateIcons or #self.nameplateIcons == 0
-        if mainHidden and defHidden and not self.defensiveIcon and npHidden
+        if mainHidden and defHidden and npHidden
                 and not spellQueueDirty then
             self.updateTimeLeft = IDLE_CHECK_INTERVAL
             return

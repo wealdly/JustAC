@@ -14,10 +14,6 @@ local type       = type
 local wipe       = wipe
 local ipairs     = ipairs
 local math_min   = math.min
-local UnitHealth    = UnitHealth
-local UnitHealthMax = UnitHealthMax
-local UnitExists    = UnitExists
-local UnitIsDead    = UnitIsDead ---@diagnostic disable-line: undefined-global
 local IsSpellKnown  = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 local C_SpellBook_IsSpellInSpellBook    = C_SpellBook and C_SpellBook.IsSpellInSpellBook
@@ -58,28 +54,17 @@ function BlizzardAPI.GetProfile()
     return addon.db.profile
 end
 
-function BlizzardAPI.GetCharData()
-    local addon = GetAddon()
-    if not addon or not addon.db then return nil end
-    return addon.db.char
-end
-
 local cachedDebugMode = false
-local lastDebugModeCheck = 0
-local DEBUG_MODE_CACHE_DURATION = 1.0
 
 function BlizzardAPI.GetDebugMode()
-    local now = GetTime()
-    if now - lastDebugModeCheck > DEBUG_MODE_CACHE_DURATION then
-        local profile = BlizzardAPI.GetProfile()
-        cachedDebugMode = profile and profile.debugMode or false
-        lastDebugModeCheck = now
-    end
     return cachedDebugMode
 end
 
+-- Event-only invalidation: called from Options/Core.lua on toggle,
+-- RefreshConfig() on profile change, and InitializeCaches() on login.
 function BlizzardAPI.RefreshDebugMode()
-    lastDebugModeCheck = 0
+    local profile = BlizzardAPI.GetProfile()
+    cachedDebugMode = profile and profile.debugMode or false
 end
 
 local function GetDebugMode()
@@ -224,31 +209,6 @@ function BlizzardAPI.GetSpellCooldown(spellID)
     return 0, 0
 end
 
--- Sanitized values for comparison.
--- Returns start, duration, isOnRealCooldown (three returns).
--- When secreted: returns 0, 0 but uses isOnGCD + local tracking to infer cooldown state.
--- Third return: true = definitely on real CD, false = definitely not, nil = unknown
-function BlizzardAPI.GetSpellCooldownValues(spellID)
-    if not C_Spell_GetSpellCooldown then return 0, 0, false end
-    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return 0, 0, false end
-    local startTime = cd.startTime
-    local duration = cd.duration
-    if IsSecretValue(startTime) or IsSecretValue(duration) then
-        -- Values are secret in combat.
-        -- isOnGCD == true → GCD only, not on real CD
-        if cd.isOnGCD == true then return 0, 0, false end
-        -- isOnGCD == false → real cooldown running (flagged spells)
-        if cd.isOnGCD == false then return 0, 0, true end
-        -- isOnGCD == nil → ambiguous (off CD or unflagged spell on CD)
-        -- Use local cooldown tracking as tiebreaker
-        if BlizzardAPI.IsSpellOnLocalCooldown(spellID) then return 0, 0, true end
-        -- No local tracking data → unknown, report nil
-        return 0, 0, nil
-    end
-    return startTime or 0, duration or 0, false
-end
-
 -- Blizzard's dummy GCD spell always returns current GCD state
 local GCD_SPELL_ID = 61304
 
@@ -267,45 +227,6 @@ function BlizzardAPI.GetGCDInfo()
     return 0, 0
 end
 
--- Check if a spell is only on GCD (not a real cooldown).
--- 12.0 combat: isOnGCD == true is the only reliable in-combat signal.
--- isOnGCD is absent (nil) for both "off CD" and "real CD" — cannot distinguish.
-function BlizzardAPI.IsSpellOnGCD(spellID)
-    if not spellID or not C_Spell_GetSpellCooldown then return false end
-
-    local ok, spellCD = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not spellCD then return false end
-
-    -- isOnGCD is NeverSecret — true means "only GCD, no real CD"
-    if spellCD.isOnGCD == true then return true end
-
-    -- isOnGCD is nil → either no cooldown or real cooldown (indistinguishable in combat)
-    -- Fall back to comparing start/duration when values are readable (out of combat)
-    if IsSecretValue(spellCD.startTime) or IsSecretValue(spellCD.duration) then
-        return false
-    end
-
-    local spellDuration = spellCD.duration
-    if not spellDuration or spellDuration == 0 then
-        return false
-    end
-
-    local gcdCD = C_Spell_GetSpellCooldown(GCD_SPELL_ID)
-    if not gcdCD then return false end
-
-    local gcdStart = gcdCD.startTime
-    local gcdDuration = gcdCD.duration
-    if IsSecretValue(gcdStart) or IsSecretValue(gcdDuration) then
-        return false
-    end
-
-    if not gcdDuration or gcdDuration == 0 then
-        return false
-    end
-
-    return spellCD.startTime == gcdStart and spellDuration == gcdDuration
-end
-
 -- 12.0: Falls back to action bar state when secret.
 -- failOpen (default true): return true when usability can't be determined.
 -- Pass false for gap closers where suggesting an unusable spell is worse than skipping.
@@ -317,15 +238,9 @@ function BlizzardAPI.IsSpellUsable(spellID, failOpen)
         local success, isUsable, notEnoughResources = pcall(C_Spell_IsSpellUsable, spellID)
         if success then
             if IsSecretValue(isUsable) or IsSecretValue(notEnoughResources) then
-                local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-                if ActionBarScanner and ActionBarScanner.GetSlotForSpell and C_ActionBar and C_ActionBar.IsUsableAction then
-                    local slot = ActionBarScanner.GetSlotForSpell(spellID)
-                    if slot then
-                        local actionUsable, actionNotEnoughMana = C_ActionBar.IsUsableAction(slot)
-                        if not IsSecretValue(actionUsable) and not IsSecretValue(actionNotEnoughMana) then
-                            return actionUsable or false, actionNotEnoughMana or false
-                        end
-                    end
+                local actionUsable, actionNotEnoughMana = BlizzardAPI.GetActionBarUsability(spellID)
+                if actionUsable ~= nil then
+                    return actionUsable or false, actionNotEnoughMana or false
                 end
                 return failOpen, false
             end
@@ -463,8 +378,7 @@ local ITEM_USE_SLOTS = {
 }
 
 local itemSpellCache = {}
-local itemSpellCacheTime = 0
-local ITEM_SPELL_CACHE_DURATION = 10.0
+local itemSpellCacheBuilt = false
 
 local C_Item_GetItemSpell = C_Item and C_Item.GetItemSpell
 
@@ -485,14 +399,15 @@ local function RebuildItemSpellCache()
             end
         end
     end
-    itemSpellCacheTime = GetTime()
+    itemSpellCacheBuilt = true
 end
 
+-- Event-only invalidation: rebuilt on PLAYER_EQUIPMENT_CHANGED and
+-- once at login (delayed by InitializeCaches to cover cold item cache).
 function BlizzardAPI.IsItemSpell(spellID)
     if not spellID or spellID == 0 then return false end
 
-    local now = GetTime()
-    if now - itemSpellCacheTime > ITEM_SPELL_CACHE_DURATION then
+    if not itemSpellCacheBuilt then
         RebuildItemSpellCache()
     end
 
@@ -500,30 +415,24 @@ function BlizzardAPI.IsItemSpell(spellID)
 end
 
 function BlizzardAPI.RefreshItemSpellCache()
-    itemSpellCacheTime = 0
+    RebuildItemSpellCache()
 end
 
 local spellAvailabilityCache = {}
-local spellAvailabilityCacheTime = 0
-local AVAILABILITY_CACHE_DURATION = 2.0
 
 function BlizzardAPI.ClearAvailabilityCache()
     wipe(spellAvailabilityCache)
-    spellAvailabilityCacheTime = 0
 end
 
+-- Event-only invalidation: cleared by SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
+-- and RotationSpellsUpdated via ClearAvailabilityCache(). No timer needed — spell
+-- availability only changes on talent/spec/spell-grant events.
 function BlizzardAPI.IsSpellAvailable(spellID)
     if not spellID or spellID == 0 then return false end
 
-    local now = GetTime()
-    if now - spellAvailabilityCacheTime < AVAILABILITY_CACHE_DURATION then
-        local cached = spellAvailabilityCache[spellID]
-        if cached ~= nil then
-            return cached
-        end
-    else
-        wipe(spellAvailabilityCache)
-        spellAvailabilityCacheTime = now
+    local cached = spellAvailabilityCache[spellID]
+    if cached ~= nil then
+        return cached
     end
 
     if C_SpellBook_IsSpellInSpellBook then
@@ -567,60 +476,4 @@ function BlizzardAPI.IsSpellAvailable(spellID)
 
     spellAvailabilityCache[spellID] = false
     return false
-end
-
--- UnitHealth/UnitHealthMax don't return secrets for player units
-function BlizzardAPI.GetPlayerHealthPercent()
-    if not UnitExists("player") then return nil end
-
-    local health = UnitHealth("player")
-    local maxHealth = UnitHealthMax("player")
-
-    if BlizzardAPI.IsSecretValue(health) or BlizzardAPI.IsSecretValue(maxHealth) then
-        return nil
-    end
-    if not maxHealth or maxHealth == 0 then return 100 end
-    return (health / maxHealth) * 100
-end
-
--- Pet health IS secret in 12.0 combat (PvE and PvP). Returns nil when secret.
--- This means pet heals only trigger out of combat. Pet rez/summon uses
--- GetPetStatus() instead, which relies on UnitIsDead/UnitExists (not secret).
-function BlizzardAPI.GetPetHealthPercent()
-    if not UnitExists("pet") then return nil end
-
-    local ok, isDead = pcall(UnitIsDead, "pet")
-    if ok then
-        if IsSecretValue(isDead) then
-            -- Can't determine dead status
-        elseif isDead then
-            return 0
-        end
-    end
-
-    local health = UnitHealth("pet")
-    local maxHealth = UnitHealthMax("pet")
-
-    if IsSecretValue(health) or IsSecretValue(maxHealth) then
-        return nil
-    end
-    if not maxHealth or maxHealth == 0 then return 100 end
-    return (health / maxHealth) * 100
-end
-
--- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
--- UnitExists and UnitIsDead are NOT secret — reliable in combat
--- Pet health IS secret in combat — use GetPetHealthPercent() for best-effort health
-function BlizzardAPI.GetPetStatus()
-    local ok, exists = pcall(UnitExists, "pet")
-    if not ok or not exists then
-        return "missing"
-    end
-
-    local ok2, isDead = pcall(UnitIsDead, "pet")
-    if ok2 and isDead and not IsSecretValue(isDead) then
-        return "dead"
-    end
-
-    return "alive"
 end

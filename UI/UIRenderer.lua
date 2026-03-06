@@ -72,6 +72,7 @@ local C_NamePlate = C_NamePlate
 local UnitIsCrowdControlled = UnitIsCrowdControlled
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
+local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Cast bar discovery: Blizzard → Plater → ElvUI.
@@ -426,6 +427,9 @@ local function GetQueueDesaturation()
 end
 
 local isInCombat = false
+local isChanneling = false
+local channelSpellID = nil  -- Override spellID from UnitChannelInfo (for fill animation matching)
+local CHANNEL_EARLY_UNGREY = 0.2  -- Stop greying out 200ms before channel ends
 local hotkeysDirty = true
 local lastPanelLocked = nil
 local lastFrameState = {
@@ -449,6 +453,107 @@ function UIRenderer.InvalidateHotkeyCache()
                 icon.cachedHotkey = nil
             end
         end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Defensive Visual State (shared by ShowDefensiveIcon + per-frame update)
+--------------------------------------------------------------------------------
+-- Evaluates channeling + usability and applies the correct texture state.
+-- Called per-frame from RenderSpellQueue (same cadence as offensive queue icons)
+-- so defensives respond instantly to channeling transitions and resource changes.
+--
+-- States: 1=channeling (full desat), 2=no resources (blue tint),
+--         4=on cooldown (grey desat), 3=normal (full color)
+--
+-- @param forceCheck  Force usability re-check (e.g. spell/item changed)
+function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
+    if not defensiveIcon or not defensiveIcon.iconTexture then return end
+
+    local id = defensiveIcon.currentID
+    if not id then return end
+
+    -- Check if THIS defensive icon is the channeled spell
+    local isDefChanneledSpell = false
+    if isChanneling and channelSpellID and not defensiveIcon.isItem and defensiveIcon.currentID then
+        local defID = defensiveIcon.currentID
+        if defID == channelSpellID then
+            isDefChanneledSpell = true
+        elseif C_Spell_GetOverrideSpell then
+            local overrideID = C_Spell_GetOverrideSpell(defID)
+            if overrideID and overrideID == channelSpellID then
+                isDefChanneledSpell = true
+            end
+        end
+    end
+
+    -- Channeling takes highest priority (unless THIS icon is the channeled spell)
+    local defVisualState = (isChanneling and not isDefChanneledSpell) and 1 or 3
+    if isDefChanneledSpell then defVisualState = 5 end  -- channeling THIS spell
+
+    -- Usability check (throttled to ~80ms unless forced)
+    local now = GetTime()
+    if forceCheck or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
+        defensiveIcon.lastDefUsableCheck = now
+        if defensiveIcon.isItem then
+            local itemUsable = true
+            local itemNoResource = false
+            for slot = 1, 180 do
+                local actionType, actionID = GetActionInfo(slot)
+                if actionType == "item" and actionID == id then
+                    local slotUsable, slotNoMana = C_ActionBar.IsUsableAction(slot)
+                    if not BlizzardAPI.IsSecretValue(slotUsable) and not BlizzardAPI.IsSecretValue(slotNoMana) then
+                        itemUsable = slotUsable or false
+                        itemNoResource = slotNoMana or false
+                    end
+                    break
+                end
+            end
+            defensiveIcon.cachedDefUsable = itemUsable
+            defensiveIcon.cachedDefNoResource = itemNoResource
+        else
+            defensiveIcon.cachedDefUsable, defensiveIcon.cachedDefNoResource = BlizzardAPI.IsSpellUsable(id)
+        end
+    end
+
+    -- Apply usability state (only when not channeling)
+    if defVisualState ~= 1 and not defensiveIcon.cachedDefUsable then
+        if defensiveIcon.cachedDefNoResource then
+            defVisualState = 2  -- no resources → blue tint
+        else
+            defVisualState = 4  -- on cooldown → desaturated
+        end
+    end
+
+    -- Apply texture changes only on state transition
+    if defensiveIcon.lastDefVisualState ~= defVisualState then
+        if defVisualState == 5 then
+            -- Channeling THIS spell: full color
+            defensiveIcon.iconTexture:SetDesaturation(0)
+            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
+        elseif defVisualState == 1 then
+            defensiveIcon.iconTexture:SetDesaturation(1.0)
+            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
+        elseif defVisualState == 2 then
+            defensiveIcon.iconTexture:SetDesaturation(0)
+            defensiveIcon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
+        elseif defVisualState == 4 then
+            defensiveIcon.iconTexture:SetDesaturation(0.8)
+            defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
+        else
+            defensiveIcon.iconTexture:SetDesaturation(0)
+            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
+        end
+        defensiveIcon.lastDefVisualState = defVisualState
+    end
+
+    -- Channel fill animation on the channeled defensive icon
+    if isDefChanneledSpell then
+        if not defensiveIcon._hasChannelFill and UIAnimations then
+            UIAnimations.StartChannelFill(defensiveIcon)
+        end
+    elseif defensiveIcon._hasChannelFill and UIAnimations then
+        UIAnimations.StopChannelFill(defensiveIcon)
     end
 end
 
@@ -556,63 +661,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     end
 
     -- ── Usability visual state ──────────────────────────────────────────────
-    -- Blue tint when out of resources; desaturated when on cooldown.
-    -- No channeling grey-out: defensives are emergency buttons — player may
-    -- want to cancel a channel to pop a defensive at low health.
-    -- Uses BlizzardAPI.IsSpellUsable / C_ActionBar.IsUsableAction (NeverSecret).
-    -- States: 2=no resources (blue tint), 4=on cooldown (desaturated), 3=normal
-    local now = GetTime()
-    local defVisualState = 3  -- default: normal
-    do
-        -- Throttle usability checks to COOLDOWN_UPDATE_INTERVAL (~80ms)
-        if idChanged or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
-            defensiveIcon.lastDefUsableCheck = now
-            if isItem then
-                -- Item usability: scan for action bar slot then use C_ActionBar.IsUsableAction
-                local itemUsable = true
-                local itemNoResource = false
-                for slot = 1, 180 do
-                    local actionType, actionID = GetActionInfo(slot)
-                    if actionType == "item" and actionID == id then
-                        local slotUsable, slotNoMana = C_ActionBar.IsUsableAction(slot)
-                        if not BlizzardAPI.IsSecretValue(slotUsable) and not BlizzardAPI.IsSecretValue(slotNoMana) then
-                            itemUsable = slotUsable or false
-                            itemNoResource = slotNoMana or false
-                        end
-                        break
-                    end
-                end
-                defensiveIcon.cachedDefUsable = itemUsable
-                defensiveIcon.cachedDefNoResource = itemNoResource
-            else
-                defensiveIcon.cachedDefUsable, defensiveIcon.cachedDefNoResource = BlizzardAPI.IsSpellUsable(id)
-            end
-        end
-        if not defensiveIcon.cachedDefUsable then
-            if defensiveIcon.cachedDefNoResource then
-                defVisualState = 2  -- no resources → blue tint
-            else
-                defVisualState = 4  -- on cooldown → desaturated
-            end
-        end
-    end
-
-    if defensiveIcon.lastDefVisualState ~= defVisualState then
-        if defVisualState == 2 then
-            -- No resources: blue tint
-            defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
-        elseif defVisualState == 4 then
-            -- On cooldown: desaturated (greyed out)
-            defensiveIcon.iconTexture:SetDesaturation(0.8)
-            defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
-        else
-            -- Normal: full color
-            defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        end
-        defensiveIcon.lastDefVisualState = defVisualState
-    end
+    -- Handled per-frame by UpdateDefensiveVisualState() in RenderSpellQueue for
+    -- instant responsiveness (same cadence as offensive queue icons).
+    -- ShowDefensiveIcon only does a one-shot update on icon setup/spell change.
+    UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
 
     -- Module-level isInCombat avoids per-icon UnitAffectingCombat calls.
 
@@ -818,16 +870,40 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
     local queueDesaturation = GetQueueDesaturation()
     
-    -- Grey out queue while channeling to emphasize "don't interrupt".
-    -- PlayerChannelBarFrame is NeverSecret, avoids pcall.
-    local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
+    -- Grey out all icons while channeling to emphasize "don't interrupt".
+    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
+    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
+    -- Early ungrey: stop desaturating 200ms before channel ends so the player can
+    -- see what ability to press next as the channel finishes.
+    isChanneling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true or false
+    channelSpellID = nil
+    if isChanneling then
+        -- Get the channeled spellID for fill animation matching.
+        -- UnitChannelInfo returns the override spellID (e.g. 234153 for Drain Life base 689).
+        local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
+        channelSpellID = chID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
+            isChanneling = false
+        end
+    end
+
+    -- Update defensive icon visual states every frame (channeling + usability),
+    -- giving them the same responsiveness as offensive queue icons.
+    if addon.defensiveIcons then
+        for _, defIcon in ipairs(addon.defensiveIcons) do
+            if defIcon:IsShown() then
+                UIRenderer.UpdateDefensiveVisualState(defIcon)
+            end
+        end
+    end
     
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local overlays = profile.textOverlays
     local showHotkeys = not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
     local showFlash = profile.showFlash ~= false
     local GetSpellHotkey = (showHotkeys or showFlash) and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
-    local GetCachedSpellInfo = SpellQueue.GetCachedSpellInfo
+    local GetCachedSpellInfo = BlizzardAPI.GetCachedSpellInfo
     
     local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
     if shouldUpdateCooldowns then
@@ -925,16 +1001,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
 
-            -- Desaturate while channeling (player can't interrupt).
-            local intVisualState = isChanneling and 1 or 3
-            if intIcon.lastVisualState ~= intVisualState then
-                if intVisualState == 1 then
-                    intIcon.iconTexture:SetDesaturation(1.0)
-                else
-                    intIcon.iconTexture:SetDesaturation(0)
-                end
-                intIcon.lastVisualState = intVisualState
-            end
+            -- No channeling grey-out for interrupts: they are urgent actions the
+            -- player may want to cancel a channel to use.
 
             if not intIcon.hasInterruptGlow then
                 UIAnimations.StartInterruptGlow(intIcon, isInCombat)
@@ -1120,10 +1188,25 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastOutOfRange = isOutOfRange
                 end
                 
-                -- 1 = channeling (grey), 2 = no resources (blue tint), 3 = normal
+                -- 1 = channeling (grey), 2 = no resources (blue tint), 3 = normal,
+                -- 4 = channeling THIS spell (fill animation, full color)
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
+                -- Match via UnitChannelInfo spellID + GetOverrideSpell (IsCurrentSpell
+                -- returns false for channels). UnitChannelInfo returns the override
+                -- spellID (e.g. 234153) while the queue has the base (e.g. 689).
+                local isChanneledSpell = false
+                if isChanneling and channelSpellID then
+                    if spellID == channelSpellID then
+                        isChanneledSpell = true
+                    elseif C_Spell_GetOverrideSpell then
+                        local overrideID = C_Spell_GetOverrideSpell(spellID)
+                        isChanneledSpell = (overrideID and overrideID == channelSpellID)
+                    end
+                end
                 local visualState
-                if isChanneling then
+                if isChanneledSpell then
+                    visualState = 4
+                elseif isChanneling then
                     visualState = 1
                 elseif isInCombat then
                     if spellChanged or shouldUpdateCooldowns then
@@ -1139,7 +1222,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 if icon.lastVisualState ~= visualState or icon.lastBaseDesaturation ~= baseDesaturation then
-                    if visualState == 1 then
+                    if visualState == 4 then
+                        -- Channeling THIS spell: full color + cooldown sweep showing channel progress
+                        iconTexture:SetDesaturation(baseDesaturation)
+                        iconTexture:SetVertexColor(1, 1, 1)
+                    elseif visualState == 1 then
                         iconTexture:SetDesaturation(1.0)
                         iconTexture:SetVertexColor(1, 1, 1)
                     elseif visualState == 2 then
@@ -1151,6 +1238,17 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     end
                     icon.lastVisualState = visualState
                     icon.lastBaseDesaturation = baseDesaturation
+                end
+
+                -- Channel fill animation: Blizzard-style sliding fill on the channeled icon.
+                -- Uses the same atlas textures as the action bar (UI-HUD-ActionBar-Channel-Fill).
+                -- StartChannelFill reads UnitChannelInfo timing (NeverSecret) internally.
+                if isChanneledSpell then
+                    if not icon._hasChannelFill then
+                        UIAnimations.StartChannelFill(icon)
+                    end
+                elseif icon._hasChannelFill then
+                    UIAnimations.StopChannelFill(icon)
                 end
 
                 if not icon:IsShown() then
@@ -1310,7 +1408,7 @@ end
 function UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
     if not addon or not spellID then return end
     
-    local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+    local spellInfo = BlizzardAPI.GetCachedSpellInfo(spellID)
     if not spellInfo then return end
     
     StaticPopupDialogs["JUSTAC_HOTKEY_OVERRIDE"] = {

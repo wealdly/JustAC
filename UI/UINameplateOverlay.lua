@@ -17,6 +17,7 @@ local SpellDB          = LibStub("JustAC-SpellDB",         true)
 
 if not BlizzardAPI or not UIAnimations or not UIRenderer then return end
 
+-- Hot path cache
 local GetTime            = GetTime
 local pcall              = pcall
 local wipe               = wipe
@@ -26,6 +27,8 @@ local UnitHealth         = UnitHealth
 local UnitHealthMax      = UnitHealthMax
 local UnitExists         = UnitExists
 local UnitIsDead         = UnitIsDead
+local UnitChannelInfo    = UnitChannelInfo
+local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local math_max           = math.max
 local math_min           = math.min
 local math_floor         = math.floor
@@ -37,8 +40,8 @@ local SetCVar            = SetCVar
 -- Layout constants
 local ICON_SPACING   = 2   -- px between successive icons in the cluster
 local NAMEPLATE_GAP  = 2   -- px between nameplate edge and nearest element
-local BAR_HEIGHT     = 5   -- player health bar height (half of NamePlateConstants.SMALL_HEALTH_BAR_HEIGHT)
-local BAR_SPACING    = 2   -- px between health bar and first DPS icon (matches Blizzard's 2px castBar→healthBar gap)
+local BAR_HEIGHT     = 5   -- overlay health bar (thinner than UIHealthBar.BAR_HEIGHT=6)
+local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPACING=3)
 
 -- Cooldown update throttle (matches UIRenderer)
 local lastCooldownUpdate       = 0
@@ -944,14 +947,36 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if shouldUpdateCooldowns then lastCooldownUpdate = now end
     local inCombat = UnitAffectingCombat("player")
 
-    local GetCachedSpellInfo = SpellQueue  and SpellQueue.GetCachedSpellInfo
+    local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo
     local IsSyntheticProc    = SpellQueue  and SpellQueue.IsSyntheticProc
     local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
-    -- Check if player is channeling (grey out icons to emphasize not interrupting)
-    -- PlayerChannelBarFrame is a visual frame — NeverSecret, avoids pcall for UnitChannelInfo
-    local isChanneling = PlayerChannelBarFrame and PlayerChannelBarFrame:IsShown() or false
+    -- Check if player is channeling (grey out all icons to emphasize not interrupting)
+    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
+    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
+    -- Early ungrey: stop desaturating 200ms before channel ends so the player can
+    -- see what ability to press next as the channel finishes.
+    local isChanneling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true or false
+    local channelSpellID = nil
+    if isChanneling then
+        local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
+        channelSpellID = chID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.2 then
+            isChanneling = false
+        end
+    end
+
+    -- Update overlay defensive icon visual states every frame (channeling + usability),
+    -- giving them the same responsiveness as overlay queue icons.
+    if UIRenderer and UIRenderer.UpdateDefensiveVisualState then
+        for _, defIcon in ipairs(defIcons) do
+            if defIcon:IsShown() then
+                UIRenderer.UpdateDefensiveVisualState(defIcon)
+            end
+        end
+    end
 
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
     -- Detect interruptible cast via the nameplate's cast bar frame state.
@@ -1033,16 +1058,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Channeling grey-out: desaturate when player is channeling (can't interrupt)
-            local intVisualState = isChanneling and 1 or 3
-            if interruptIcon.lastVisualState ~= intVisualState then
-                if intVisualState == 1 then
-                    interruptIcon.iconTexture:SetDesaturation(1.0)
-                else
-                    interruptIcon.iconTexture:SetDesaturation(0)
-                end
-                interruptIcon.lastVisualState = intVisualState
-            end
+            -- No channeling grey-out for interrupts: they are urgent actions the
+            -- player may want to cancel a channel to use.
 
             -- Glow: red-tinted proc glow for interrupt urgency
             if not interruptIcon.hasInterruptGlow and UIAnimations then
@@ -1182,15 +1199,58 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Channeling grey-out: desaturate when player is channeling
-            local visualState = isChanneling and 1 or 3
+            -- 1 = channeling (grey), 2 = no resources (blue tint), 3 = normal,
+            -- 4 = channeling THIS spell (fill animation, full color)
+            local isChanneledSpell = false
+            if isChanneling and channelSpellID then
+                if spellID == channelSpellID then
+                    isChanneledSpell = true
+                elseif C_Spell_GetOverrideSpell then
+                    local overrideID = C_Spell_GetOverrideSpell(spellID)
+                    isChanneledSpell = (overrideID and overrideID == channelSpellID)
+                end
+            end
+            local visualState
+            if isChanneledSpell then
+                visualState = 4
+            elseif isChanneling then
+                visualState = 1
+            elseif inCombat then
+                if spellChanged or shouldUpdateCooldowns then
+                    icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+                end
+                if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
+                    visualState = 2
+                else
+                    visualState = 3
+                end
+            else
+                visualState = 3
+            end
             if icon.lastVisualState ~= visualState then
-                if visualState == 1 then
+                if visualState == 4 then
+                    icon.iconTexture:SetDesaturation(0)
+                    icon.iconTexture:SetVertexColor(1, 1, 1)
+                elseif visualState == 1 then
                     icon.iconTexture:SetDesaturation(1.0)
+                    icon.iconTexture:SetVertexColor(1, 1, 1)
+                elseif visualState == 2 then
+                    icon.iconTexture:SetDesaturation(0)
+                    icon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
                 else
                     icon.iconTexture:SetDesaturation(0)
+                    icon.iconTexture:SetVertexColor(1, 1, 1)
                 end
                 icon.lastVisualState = visualState
+            end
+
+            -- Channel fill animation: Blizzard-style sliding fill on the channeled icon.
+            if isChanneledSpell then
+                if not icon._hasChannelFill and UIAnimations then
+                    UIAnimations.StartChannelFill(icon)
+                end
+            elseif icon._hasChannelFill and UIAnimations then
+                UIAnimations.StopChannelFill(icon)
             end
 
             if not icon:IsShown() then icon:Show() end

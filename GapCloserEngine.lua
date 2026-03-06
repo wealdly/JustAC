@@ -4,8 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local MAJOR, MINOR = "JustAC-GapCloserEngine", 2
-local GapCloserEngine = LibStub:NewLibrary(MAJOR, MINOR)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 2)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -126,11 +125,11 @@ end
 --- First spell found on the action bar wins.  Caches result until spec change
 --- or InvalidateGapCloserCache().
 local function ResolveMeleeReference(addon)
-    local _, playerClass = UnitClass("player")
+    local specKey, playerClass
+    if SpellDB and SpellDB.GetSpecKey then
+        specKey, playerClass = SpellDB.GetSpecKey()
+    end
     if not playerClass then return nil, nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil, nil end
-    local specKey = playerClass .. "_" .. spec
 
     -- Return cache if still valid
     if cachedMeleeRefSpecKey == specKey and cachedMeleeRefSlot then
@@ -194,11 +193,8 @@ end
 --- Reads from profile (user-configured) with SpellDB defaults as fallback.
 --- Returns an array of spell IDs, or nil if no gap-closers for this spec.
 local function ResolveGapCloserSpells(addon)
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil end
-    local specKey = playerClass .. "_" .. spec
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return nil end
 
     -- Return cache if still valid
     if cachedGapCloserSpells and cachedGapCloserSpecKey == specKey then
@@ -235,11 +231,10 @@ end
 
 --- Get the gap-closer spell list key for the current spec
 function GapCloserEngine.GetGapCloserSpecKey()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil end
-    return playerClass .. "_" .. spec
+    if SpellDB and SpellDB.GetSpecKey then
+        return SpellDB.GetSpecKey()
+    end
+    return nil
 end
 
 --- Initialize gap-closer defaults for the current spec if not yet populated

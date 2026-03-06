@@ -231,7 +231,7 @@ function GapClosers.CreateTabArgs(addon)
                         profile.gapClosers = { enabled = true, classSpells = {} }
                     end
                     profile.gapClosers.enabled = true
-                    profile.gapClosers.showGlow = nil  -- default: nil (treated as false)
+                    profile.gapClosers.showGlow = true  -- default: true (glow on by default)
                     profile.gapClosers.meleeRangeSpell = nil  -- default: nil (auto-detect)
                     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                     if GCE and GCE.InvalidateGapCloserCache then

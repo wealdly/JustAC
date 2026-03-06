@@ -122,16 +122,13 @@ local spellSlotCache = {}
 
 -- PERFORMANCE: Cache abbreviated keybinds (50+ gsub calls per abbreviation is expensive)
 -- Key: raw binding string, Value: abbreviated string
+-- Self-limits to the number of unique keybinds (~30-60 typical). Cleared by ClearAllCaches().
 local abbreviatedKeyCache = {}
-local abbreviatedKeyCacheSize = 0
-local MAX_ABBREVIATED_CACHE_SIZE = 100
 
 -- PERFORMANCE: Rate-limit full hotkey lookups (FindSpellInActions is VERY expensive)
 -- When cache is invalid, we return stale value immediately and only refresh periodically
 local lastHotkeyRefreshTime = 0
 local HOTKEY_REFRESH_INTERVAL = 0.25  -- Refresh stale entries max 4x/sec (enough for responsiveness)
-
-local verboseDebugMode = false
 
 -- Track page, form, and override state to detect when keybinds need refresh
 local cachedStateData = {
@@ -564,10 +561,10 @@ local function FindSpellInActions(spellID, spellName)
         end
     end
 
-    local foundSlot, slotInfo = SearchSlots(currentBarSlots, 1, spellID, spellName, verboseDebugMode)
+    local foundSlot, slotInfo = SearchSlots(currentBarSlots, 1, spellID, spellName, false)
 
     if not foundSlot and next(fallbackSlots) then
-        foundSlot, slotInfo = SearchSlots(fallbackSlots, 2, spellID, spellName, verboseDebugMode)
+        foundSlot, slotInfo = SearchSlots(fallbackSlots, 2, spellID, spellName, false)
     end
     
     if foundSlot then
@@ -724,10 +721,7 @@ local function AbbreviateKeybind(key)
     result = string_gsub(result, "SLASH", "/")
 
     -- PERFORMANCE: Cache the result (50+ gsub calls avoided on subsequent lookups)
-    if abbreviatedKeyCacheSize < MAX_ABBREVIATED_CACHE_SIZE then
-        abbreviatedKeyCache[key] = result
-        abbreviatedKeyCacheSize = abbreviatedKeyCacheSize + 1
-    end
+    abbreviatedKeyCache[key] = result
 
     return result
 end
@@ -778,7 +772,7 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     -- FAST PATH: Valid cache hit - return immediately
     -- Skip fast path for empty results so dynamic transforms (Templar Strike → Slash)
     -- self-correct via the stale-refresh logic below instead of returning "" forever
-    if not verboseDebugMode and spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil and spellHotkeyCache[spellID] ~= "" then
+    if spellHotkeyCacheValid and spellHotkeyCache[spellID] ~= nil and spellHotkeyCache[spellID] ~= "" then
         return spellHotkeyCache[spellID]
     end
 
@@ -797,17 +791,10 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         lastHotkeyRefreshTime = now
     end
 
-    if verboseDebugMode then
-        print("|JAC| GetSpellHotkey(" .. spellID .. "): cache bypass, doing fresh lookup")
-    end
-
     local spellInfo = C_Spell.GetSpellInfo(spellID)
     if not spellInfo or not spellInfo.name or spellInfo.name == "" then
         -- Cache empty result too
         spellHotkeyCache[spellID] = ""
-        if verboseDebugMode then
-            print("|JAC| GetSpellHotkey(" .. spellID .. "): no spell info, returning empty")
-        end
         return previousValue or ""
     end
 
@@ -1031,7 +1018,6 @@ function ActionBarScanner.ClearAllCaches()
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
     wipe(abbreviatedKeyCache)
-    abbreviatedKeyCacheSize = 0
     spellHotkeyCacheValid = false
 end
 

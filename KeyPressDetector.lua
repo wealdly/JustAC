@@ -6,7 +6,7 @@ if not KPD then return end
 
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 
--- Hot path cached globals
+-- Hot path cache
 local IsShiftKeyDown = IsShiftKeyDown
 local IsControlKeyDown = IsControlKeyDown
 local IsAltKeyDown = IsAltKeyDown
