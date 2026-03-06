@@ -57,6 +57,7 @@ $coreFiles = @(
     "DebugCommands.lua",
     "Options\SpellSearch.lua",
     "Options\General.lua",
+    "Options\StandardQueue.lua",
     "Options\Offensive.lua",
     "Options\Overlay.lua",
     "Options\Defensives.lua",

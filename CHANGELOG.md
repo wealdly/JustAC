@@ -1,6 +1,58 @@
 
 # Changelog
 
+## [4.7.1] - 2026-03-05
+
+### Fixed
+- **Channeling detection fixed for 12.0** — `PlayerChannelBarFrame` was removed in the Dragonflight UI rework; replaced with `PlayerCastingBarFrame.channeling` (plain Lua boolean on CastingBarMixin). Icons now properly grey out during channeling.
+- **Defensive icon visual parity with offensive queue** — Extracted `UIRenderer.UpdateDefensiveVisualState()` — a shared function handling channeling + usability states (channeling/no-resources/on-cooldown/normal). Called per-frame from both `RenderSpellQueue` and `UINameplateOverlay.Render`, giving defensives the same instant responsiveness as offensive queue icons. Previously defensives updated on a 0.5s timer, causing visible lag.
+- **Overlay queue icons show no-resource blue tint** — Nameplate overlay queue icons now show the blue tint for insufficient resources (matching the standard queue), in addition to channeling grey-out.
+- **Interrupt icon stays fully colored during channeling** — Interrupts are urgent actions the player may want to cancel a channel to use. Removed channeling desaturation from interrupt icons on both standard queue and overlay.
+- **Early ungrey 200ms before channel ends** — Icons ungrey ~200ms before a channel finishes, letting the player see their next ability before the GCD unlocks. Uses `PlayerCastingBarFrame.value` (NeverSecret countdown timer) with secret-value safety guard.
+- **Channeling fill animation on active spell** — When the player is channeling, the queue icon matching the channeled spell shows Blizzard's channel-fill animation (sliding atlas texture, same as action bar buttons) instead of desaturation. Identified via `UnitChannelInfo` spellID + `C_Spell.GetOverrideSpell` matching (resolves base→override spellID chain, e.g. Drain Life 689→234153). Works on both offensive and defensive queue icons. Other icons still grey out.
+
+## [4.7.0] - 2026-03-05
+
+### Fixed
+- **Defensive defaults restore fixed** — "Restore Class Defaults" in the defensives panel did nothing and defensive spell lists were empty after profile reset. Root cause: Lua's `and` operator truncates multiple return values, so `return SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()` dropped the second return value (`playerClass`), making it always `nil`. Every function that needed `playerClass` (RestoreDefensiveDefaults, InitializeDefensiveSpells, MigrateDefensiveSpellsToClassSpells, GetClassSpellList) bailed out early. Fixed `DefensiveEngine.GetDefensiveSpecKey()` and `GapCloserEngine.ResolveMeleeReference()` to use `if/then/return` pattern that preserves both return values.
+
+### Changed
+- **Gap-closer glow now on by default** — New profiles and "Reset Gap-Closer Settings" now enable the glow overlay on gap-closer icons, so users can immediately see when the addon recommends a movement ability.
+
+### Code Cleanup & Consolidation
+
+#### Dead Code Removal
+- **Remove 7 dead `CLASS_*_DEFAULTS` assignments** — `CLASS_SELFHEAL_DEFAULTS` and `CLASS_COOLDOWN_DEFAULTS` tables were populated but never read after SpellDB took over spell list management. Removed assignments and stale header comment from `JustAC.lua`.
+- **Remove 3 unused BlizzardAPI functions** — `GetCharData()`, `GetSpellCooldownValues()`, and `IsSpellOnGCD()` in `SpellQuery.lua` had zero callers. Removed ~63 lines.
+- **Remove 2 dead addon wrappers** — `JustAC:IsSpellBlacklisted()` and `JustAC:GetBlacklistedSpells()` forwarded to SpellQueue but were never called. Removed from `JustAC.lua`.
+- **Remove `verboseDebugMode` dead flag** — `MacroParser.lua` and `ActionBarScanner.lua` each had a `local verboseDebugMode = false` that was never set to `true`. Removed the variables and all guarded debug-print blocks (~20 lines in ActionBarScanner).
+- **Remove unused `_interfaceVersion` local** — `SecretValues.lua` cached `BlizzardAPI._interfaceVersion` but never used it. Removed.
+- **Remove `PERSONAL_AURA_SPELLS` table** — `RedundancyFilter.lua` maintained a 12-entry spell ID table that was only consumed by the third return value of `IsAuraSpell()`. No caller used the third value. Removed the table and simplified `IsAuraSpell()` to return 2 values `(isAura, isUniqueAura)`.
+- **Remove unused `GetDebugMode` wrapper** — `FormCache.lua` defined a `GetDebugMode()` function that was never called. Removed.
+- **Remove redundant `defensiveIcon` (singular) checks** — `self.defensiveIcon` was a backward-compat alias for `self.defensiveIcons[1]` (set/cleared together in UIFrameFactory). Three uses in `JustAC.lua` were redundant with the plural array loop or already covered by `defHidden` logic. Removed.
+
+#### Wrapper Consolidation
+- **Consolidate spec key computation** — `GapCloserEngine.GetGapCloserSpecKey()` and `DefensiveEngine.GetDefensiveSpecKey()` each reimplemented `UnitClass + GetSpecialization + concat`. Both now delegate to `SpellDB.GetSpecKey()`. Inline computations in `ResolveMeleeReference()` and `ResolveGapCloserSpells()` also replaced.
+- **Consolidate `GetCachedSpellInfo` access** — `SpellQueue.GetCachedSpellInfo()` and `RedundancyFilter.GetCachedSpellInfo()` were thin wrappers around `BlizzardAPI.GetCachedSpellInfo()`. Removed both; all callers (SpellQueue, UIRenderer, UINameplateOverlay) now reference `BlizzardAPI.GetCachedSpellInfo` directly.
+- **Fix `GetDebugMode` in MacroParser** — Was returning a dead `false` local instead of delegating to `BlizzardAPI.GetDebugMode()`. Now correctly returns the live debug mode state.
+- **Extract shared `GetActionBarUsability` helper** — `SpellQuery.IsSpellUsable()` and `SecretValues.IsSpellReady()` both had identical 6-line inline patterns for action bar usability fallback. Extracted to `BlizzardAPI.GetActionBarUsability(spellID)` in `BlizzardAPI.lua`; both callers now delegate.
+- **Consolidate tooltipMode migration** — Three `OnEnter` handlers in `UIFrameFactory.lua` each had an 8-line inline migration block converting legacy `showTooltips`/`tooltipsInCombat` to `tooltipMode`. Migration now runs once in `NormalizeSavedData()`; handlers read `profile.tooltipMode` directly.
+
+#### Simplification
+- **Simplify `CheckDefensiveSpellState` return values** — Was returning 5 values `(isUsable, isKnown, isRedundant, onCooldown, isProcced)` where `isKnown` was only used to gate `isUsable` (already encoded) and `onCooldown` was always `false`. Now returns 3 values `(isUsable, isRedundant, isProcced)`. Both callers in `DefensiveEngine.lua` updated.
+- **Cache LibStub module references** — `JustAC.lua` had 11 inline `LibStub("JustAC-*")` re-fetches for modules already cached as upvalues in `LoadModules()`. Added `SpellDB` to upvalue list and `LoadModules()`; replaced all re-fetches with upvalue references. Also removed 2 unnecessary `LibStub and LibStub(...)` guards (LibStub is always available).
+- **Remove duplicate `FormCache.OnPlayerLogin()` call** — `PLAYER_ENTERING_WORLD` called `FormCache.OnPlayerLogin()` immediately after `InitializeCaches()`, which already calls it. Removed the duplicate.
+
+#### Module Separation & Consistency
+- **Move `IsSpellReady()` from SecretValues → CooldownTracking** — Core cooldown readiness evaluator (46 lines) was in the wrong submodule. Now lives alongside the local cooldown tracking state it depends on (`IsLocalCooldownActive`, `cachedMaxCharges`), eliminating a backward dependency. Uses local references instead of `BlizzardAPI.*` for same-module state.
+- **Move health/pet functions from SpellQuery → StateHelpers** — `GetPlayerHealthPercent()`, `GetPetHealthPercent()`, and `GetPetStatus()` moved to consolidate all health-related queries with `GetPlayerHealthPercentSafe()` and `GetLowHealthState()`.
+- **Fix duplicate `GetAddon` in SecretValues** — `RefreshFeatureAvailability()` was calling `LibStub("AceAddon-3.0"):GetAddon(...)` directly instead of the cached `BlizzardAPI.GetAddon()`.
+- **Standardize LibStub declaration style** — Convert 4 files using `MAJOR/MINOR` variable pattern to inline style (`LibStub:NewLibrary("name", N)`), matching the 22 other files: DefensiveEngine, GapCloserEngine, Options/Overlay, Options/Labels.
+- **Standardize hot path cache labels** — All modules now use `-- Hot path cache` consistently. Changed from `-- Cached globals` (UIFrameFactory, DefensiveEngine, TargetFrameAnchor), `-- Hot path cached globals` (KeyPressDetector), and unlabeled (UINameplateOverlay).
+- **Fix UIFrameFactory mixed profile access** — 5 occurrences of `addon.db.profile` converted to `addon:GetProfile()`, matching the file's other 13 uses. Eliminates mixed access pattern within the same file.
+- **Consolidate `ForceUpdate`/`ForceUpdateAll`** — `ForceUpdate(includeDefensives)` is now the single implementation; `ForceUpdateAll()` delegates to `ForceUpdate(true)`. Eliminates 3 duplicate lines.
+- **Clarify UINameplateOverlay bar constants** — Comment `BAR_HEIGHT` and `BAR_SPACING` to document they intentionally differ from `UIHealthBar` equivalents (5 vs 6, 2 vs 3).
+
 ## [4.6.1] - 2026-03-05
 
 ### Changed

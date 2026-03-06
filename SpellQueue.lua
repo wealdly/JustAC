@@ -19,8 +19,6 @@ local wipe = wipe
 local type = type
 local ipairs = ipairs
 
--- NOTE: Local spell info cache was removed — now delegates to BlizzardAPI.GetCachedSpellInfo()
-
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
 -- Cached visibility verdict from GetCurrentSpellQueue(); read by UIRenderer via ShouldShowQueue().
@@ -52,10 +50,6 @@ local rotationFilterCache = {}
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
 -- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
 local cachedRotationList = nil
-
-function SpellQueue.GetCachedSpellInfo(spellID)
-    return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
-end
 
 function SpellQueue.ClearSpellCache()
     if BlizzardAPI and BlizzardAPI.ClearSpellCache then
@@ -104,7 +98,7 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
     end
     local blacklist = profile.blacklistedSpells[specKey]
 
-    local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+    local spellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(spellID)
     local spellName = spellInfo and spellInfo.name or "Unknown"
 
     local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
@@ -128,7 +122,7 @@ function SpellQueue.GetBlacklistedSpells()
 
     local spells = {}
     for spellID, _ in pairs(blacklist) do
-        local spellInfo = SpellQueue.GetCachedSpellInfo(spellID)
+        local spellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(spellID)
         if spellInfo and spellInfo.name then
             spells[#spells + 1] = {
                 id = spellID,

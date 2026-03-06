@@ -42,3 +42,20 @@ function BlizzardAPI.Unsecret(value, fallback)
     if issecretvalue ~= nil and issecretvalue(value) then return fallback end
     return value
 end
+
+--------------------------------------------------------------------------------
+-- Action Bar Usability Helper (shared by IsSpellReady + IsSpellUsable)
+--------------------------------------------------------------------------------
+--- Returns the action bar usability state for a spell, or nil if unavailable.
+--- NeverSecret API — safe in combat. Uses ActionBarScanner to find the slot.
+--- @param spellID number
+--- @return boolean|nil usable, boolean|nil notEnoughMana
+function BlizzardAPI.GetActionBarUsability(spellID)
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    if not ABS or not ABS.GetSlotForSpell then return nil, nil end
+    local slot = ABS.GetSlotForSpell(spellID)
+    if not slot or not C_ActionBar or not C_ActionBar.IsUsableAction then return nil, nil end
+    local usable, noMana = C_ActionBar.IsUsableAction(slot)
+    if BlizzardAPI.IsSecretValue(usable) or BlizzardAPI.IsSecretValue(noMana) then return nil, nil end
+    return usable, noMana
+end

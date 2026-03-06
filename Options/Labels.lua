@@ -2,8 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options/Labels - Icon label settings (hotkey text, cooldown text, charge count)
 
-local MAJOR, MINOR = "JustAC-OptionsLabels", 4
-local Labels = LibStub:NewLibrary(MAJOR, MINOR)
+local Labels = LibStub:NewLibrary("JustAC-OptionsLabels", 4)
 if not Labels then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 1
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 2
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -329,6 +329,74 @@ end
 --- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25).
 function BlizzardAPI.GetCachedMaxCharges(spellID)
     return cachedMaxCharges[spellID]
+end
+
+--------------------------------------------------------------------------------
+-- Spell Readiness (moved from SecretValues — depends on local CD tracking state)
+--------------------------------------------------------------------------------
+
+--- Check if a spell is ready (not on a real cooldown).
+--- 12.0 combat: duration/startTime are blanket-secreted.
+--- isOnGCD is NeverSecret with three observable states:
+---   true  → GCD only (spell is ready, just on GCD)
+---   false → real cooldown running (only for spells Blizzard flags internally;
+---           typically short-CD rotation spells like Judgment, Blade of Justice)
+---   nil   → absent (spell off CD OR unflagged spell on CD — ambiguous)
+--- When isOnGCD is nil in combat, fall back to local cooldown tracking
+--- and action bar usability to detect real cooldowns.
+function BlizzardAPI.IsSpellReady(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return true end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return true end
+
+    -- isOnGCD == true → on GCD only, spell is effectively ready
+    if cd.isOnGCD == true then return true end
+
+    -- isOnGCD == false → real cooldown running (definitive for flagged spells)
+    if cd.isOnGCD == false then return false end
+
+    -- Out of combat: duration/startTime are readable
+    local duration = Unsecret(cd.duration)
+    if duration then
+        return cd.startTime == 0 or (cd.startTime + duration) <= GetTime()
+    end
+
+    -- In combat with secreted values and isOnGCD == nil:
+    -- Spell is either off cooldown OR on CD but unflagged (major CDs like
+    -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
+
+    -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
+    if IsLocalCooldownActive(spellID) then return false end
+
+    -- Charge-based: if we have charges, spell is usable
+    if C_Spell_GetSpellCharges then
+        local csOk, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+        if csOk and chargeInfo and chargeInfo.currentCharges then
+            local currentCharges = Unsecret(chargeInfo.currentCharges)
+            if currentCharges then
+                return currentCharges > 0
+            end
+            -- currentCharges is SECRET — use cached maxCharges to know if this
+            -- is even a charge spell (if not, skip to action bar fallback)
+            local cached = cachedMaxCharges[spellID]
+            if cached and cached > 1 then
+                -- Multi-charge spell but charges are secret — fail-open (assume usable)
+                return true
+            end
+        end
+    end
+
+    -- Action bar usability (visual state, NeverSecret)
+    local actionUsable, notEnoughMana = BlizzardAPI.GetActionBarUsability(spellID)
+    if actionUsable ~= nil then
+        -- Not usable AND not a mana issue → likely on cooldown
+        if actionUsable == false and not notEnoughMana then return false end
+        -- Usable → spell is ready
+        if actionUsable == true then return true end
+    end
+
+    -- Fail-open: assume ready when we can't determine state
+    return true
 end
 
 

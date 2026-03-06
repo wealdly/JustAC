@@ -2,8 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options/Overlay - Nameplate overlay settings tab
 
-local MAJOR, MINOR = "JustAC-OptionsOverlay", 2
-local Overlay = LibStub:NewLibrary(MAJOR, MINOR)
+local Overlay = LibStub:NewLibrary("JustAC-OptionsOverlay", 2)
 if not Overlay then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
