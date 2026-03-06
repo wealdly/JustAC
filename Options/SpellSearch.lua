@@ -290,7 +290,7 @@ function SpellSearch.AddSpellToList(addon, spellList, id)
 
     -- Positive ID: spell entry (original behavior)
     -- Validate spell exists
-    local spellInfo = SpellQueue.GetCachedSpellInfo(id)
+    local spellInfo = BlizzardAPI.GetCachedSpellInfo(id)
     if not spellInfo or not spellInfo.name then
         addon:Print("Invalid spell ID: " .. id .. " (spell not found)")
         return false
@@ -328,7 +328,7 @@ function SpellSearch.CreateSpellListEntries(addon, defensivesArgs, spellList, li
             cooldownInfo = ""
         else
             -- Positive entry = spell ID
-            local spellInfo = SpellQueue.GetCachedSpellInfo(entry)
+            local spellInfo = BlizzardAPI.GetCachedSpellInfo(entry)
             displayName = spellInfo and spellInfo.name or ("Spell " .. entry)
             displayIcon = spellInfo and spellInfo.iconID or 134400
             cooldownInfo = ""

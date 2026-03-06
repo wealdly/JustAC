@@ -28,20 +28,15 @@ local IsPlayerSpell = IsPlayerSpell
 
 local parsedMacroCache = {}
 local spellOverrideCache = {}
-local lastCacheFlush = 0
-local CACHE_FLUSH_INTERVAL = 30
 local lastPrintTime = {}
 local DEBUG_THROTTLE_INTERVAL = 5
-
--- Verbose debug mode (for /jac find, /jac macrotest)
-local verboseDebugMode = false
 
 local function GetLowercase(str)
     return str and string_lower(str) or ""
 end
 
 local function GetDebugMode()
-    return verboseDebugMode
+    return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
 
 local function SafeGetOverrideSpell(spellID)
@@ -112,17 +107,12 @@ end
 function MacroParser.InvalidateMacroCache()
     wipe(parsedMacroCache)
     wipe(spellOverrideCache)
-    lastCacheFlush = GetTime()
 end
 
+-- Event-only invalidation: spellOverrideCache is cleared by InvalidateMacroCache()
+-- which fires on UPDATE_SHAPESHIFT_FORM, SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
+-- ACTIONBAR_SLOT_CHANGED, and vehicle/possess events. No timer needed.
 local function GetSpellAndOverride(spellID, spellName)
-    local currentTime = GetTime()
-
-    if currentTime - lastCacheFlush > CACHE_FLUSH_INTERVAL then
-        wipe(spellOverrideCache)
-        lastCacheFlush = currentTime
-    end
-    
     if spellOverrideCache[spellID] then
         return spellOverrideCache[spellID]
     end

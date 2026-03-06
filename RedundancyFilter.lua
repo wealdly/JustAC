@@ -165,18 +165,6 @@ local NEVER_SECRET_AURA_SPELLS = {
     [447960] = true,  -- Ride Along Inactive
 }
 
--- Personal Aura Spells: Self-only buffs (subset that we recognize)
--- Used for determining if a spell applies a personal buff
-local PERSONAL_AURA_SPELLS = {
-    -- These are spells that apply personal buffs
-    -- Form spells are implicitly personal
-    [768] = true, [5487] = true, [783] = true, [24858] = true,
-    -- Stealth
-    [1784] = true, [115191] = true,
-    -- Aspects
-    [5118] = true, [186257] = true, [186265] = true, [186289] = true,
-}
-
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
@@ -247,9 +235,8 @@ local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
 
-local function GetCachedSpellInfo(spellID)
-    return BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(spellID) or nil
-end
+-- Hot-path alias for BlizzardAPI.GetCachedSpellInfo (avoids repeated nil guards)
+local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo or function() return nil end
 
 -- Invalidate aura cache on UNIT_AURA; keep inCombatActivations until combat ends
 -- Preserve trusted out-of-combat snapshot while in combat to avoid gaps caused by secret values
@@ -895,19 +882,13 @@ end
 --------------------------------------------------------------------------------
 
 -- Check if spell applies an aura (using native tables + name pattern fallback)
--- Returns: isAura, isPersonalAura, isUniqueAura
+-- Returns: isAura, isUniqueAura
 local function IsAuraSpell(spellID)
-    if not spellID then return false, false, false end
+    if not spellID then return false, false end
     
     -- Check our known unique aura table first (fast path)
     if UNIQUE_AURA_SPELLS[spellID] then
-        local isPersonal = PERSONAL_AURA_SPELLS[spellID] or false
-        return true, isPersonal, true
-    end
-    
-    -- Check personal auras
-    if PERSONAL_AURA_SPELLS[spellID] then
-        return true, true, false
+        return true, true
     end
     
     -- Fallback: Name-based detection for unknown spells
@@ -917,11 +898,11 @@ local function IsAuraSpell(spellID)
         local name = spellInfo.name
         if name:match("Form$") or name:match("Stance$") or 
            name:match("Presence$") or name:match("Aspect of") then
-            return true, true, true  -- Treat as unique personal aura
+            return true, true  -- Treat as unique personal aura
         end
     end
     
-    return false, false, false
+    return false, false
 end
 
 -- Check if spell is a pet-related ability (native table + name pattern)
@@ -1303,7 +1284,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellInfo or not spellInfo.name then return false end
     
     local spellName = spellInfo.name
-    local isKnownAuraSpell, isPersonalAura, isUniqueAura = IsAuraSpell(spellID)
+    local isKnownAuraSpell, isUniqueAura = IsAuraSpell(spellID)
     
     -- Removed noisy "Checking redundancy" debug logs to reduce spam
     -- Use /jac test or /jac find for diagnostics instead

@@ -4,7 +4,7 @@
 local TFA = LibStub:NewLibrary("JustAC-TargetFrameAnchor", 1)
 if not TFA then return end
 
--- Cached globals
+-- Hot path cache
 local GetScreenWidth = GetScreenWidth
 local GetScreenHeight = GetScreenHeight
 local InCombatLockdown = InCombatLockdown

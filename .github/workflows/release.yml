@@ -27,4 +27,4 @@ jobs:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: -g retail -l "JustAC ${{ steps.version.outputs.version }}"
+          args: -g retail -n ":{package-name} {project-version}"
