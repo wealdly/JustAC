@@ -429,7 +429,9 @@ end
 local isInCombat = false
 local isChanneling = false
 local channelSpellID = nil  -- Override spellID from UnitChannelInfo (for fill animation matching)
-local CHANNEL_EARLY_UNGREY = 0.2  -- Stop greying out 200ms before channel ends
+local isCasting = false
+local castSpellID = nil  -- Override spellID from UnitCastingInfo (for cast-fill matching)
+local CHANNEL_EARLY_UNGREY = 0.1  -- Stop greying out 100ms before channel/cast ends
 local hotkeysDirty = true
 local lastPanelLocked = nil
 local lastFrameState = {
@@ -473,23 +475,32 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     local id = defensiveIcon.currentID
     if not id then return end
 
-    -- Check if THIS defensive icon is the channeled spell
-    local isDefChanneledSpell = false
-    if isChanneling and channelSpellID and not defensiveIcon.isItem and defensiveIcon.currentID then
+    -- Check if THIS defensive icon is the channeled/casted spell
+    local isDefActiveSpell = false
+    if not defensiveIcon.isItem and defensiveIcon.currentID then
         local defID = defensiveIcon.currentID
-        if defID == channelSpellID then
-            isDefChanneledSpell = true
-        elseif C_Spell_GetOverrideSpell then
-            local overrideID = C_Spell_GetOverrideSpell(defID)
-            if overrideID and overrideID == channelSpellID then
-                isDefChanneledSpell = true
+        if isChanneling and channelSpellID then
+            if defID == channelSpellID then
+                isDefActiveSpell = true
+            elseif C_Spell_GetOverrideSpell then
+                local overrideID = C_Spell_GetOverrideSpell(defID)
+                if overrideID and overrideID == channelSpellID then isDefActiveSpell = true end
+            end
+        end
+        if not isDefActiveSpell and isCasting and castSpellID then
+            if defID == castSpellID then
+                isDefActiveSpell = true
+            elseif C_Spell_GetOverrideSpell then
+                local overrideID = C_Spell_GetOverrideSpell(defID)
+                if overrideID and overrideID == castSpellID then isDefActiveSpell = true end
             end
         end
     end
 
-    -- Channeling takes highest priority (unless THIS icon is the channeled spell)
-    local defVisualState = (isChanneling and not isDefChanneledSpell) and 1 or 3
-    if isDefChanneledSpell then defVisualState = 5 end  -- channeling THIS spell
+    -- Channeling/casting takes highest priority (unless THIS icon is the active spell)
+    local isGreyingOut = (isChanneling or isCasting) and not isDefActiveSpell
+    local defVisualState = isGreyingOut and 1 or 3
+    if isDefActiveSpell then defVisualState = 5 end  -- channeling/casting THIS spell
 
     -- Usability check (throttled to ~80ms unless forced)
     local now = GetTime()
@@ -525,8 +536,10 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         end
     end
 
-    -- Apply texture changes only on state transition
-    if defensiveIcon.lastDefVisualState ~= defVisualState then
+    -- Force-apply every frame during channeling/casting so all icons
+    -- grey/ungrey on the exact same frame (no per-icon desync).
+    if defensiveIcon.lastDefVisualState ~= defVisualState
+       or isChanneling or isCasting then
         if defVisualState == 5 then
             -- Channeling THIS spell: full color
             defensiveIcon.iconTexture:SetDesaturation(0)
@@ -547,8 +560,8 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         defensiveIcon.lastDefVisualState = defVisualState
     end
 
-    -- Channel fill animation on the channeled defensive icon
-    if isDefChanneledSpell then
+    -- Channel fill animation on the channeled defensive icon (not for hardcasts)
+    if isDefActiveSpell and isChanneling then
         if not defensiveIcon._hasChannelFill and UIAnimations then
             UIAnimations.StartChannelFill(defensiveIcon)
         end
@@ -597,10 +610,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.iconTexture:Show()
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
-        -- Reset cooldown cache so new spell/item's cooldown is properly applied
-        defensiveIcon.lastCooldownStart = nil
-        defensiveIcon.lastCooldownDuration = nil
-        defensiveIcon.lastCooldownWasSecret = false
         -- Reset usability visual state so new spell gets a fresh check
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
@@ -727,9 +736,6 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         -- Flags must be reset so UpdateButtonCooldowns re-shows widgets on reuse.
         defensiveIcon._cooldownShown = nil
         defensiveIcon._chargeCooldownShown = nil
-        defensiveIcon._lastCooldownStart = nil
-        defensiveIcon._lastCooldownDuration = nil
-        defensiveIcon._cooldownIsSecret = nil
         defensiveIcon.normalizedHotkey = nil
         defensiveIcon.previousNormalizedHotkey = nil
         defensiveIcon.hotkeyText:SetText("")
@@ -870,14 +876,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
     local queueDesaturation = GetQueueDesaturation()
     
-    -- Grey out all icons while channeling to emphasize "don't interrupt".
+    -- Grey out all icons while channeling (optional, gated by profile toggle).
     -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
     -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
-    -- Early ungrey: stop desaturating 200ms before channel ends so the player can
+    -- Early ungrey: stop greying out 100ms before channel ends so the player can
     -- see what ability to press next as the channel finishes.
-    isChanneling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true or false
+    isChanneling = false
     channelSpellID = nil
-    if isChanneling then
+    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
+        isChanneling = true
         -- Get the channeled spellID for fill animation matching.
         -- UnitChannelInfo returns the override spellID (e.g. 234153 for Drain Life base 689).
         local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
@@ -885,6 +892,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
             isChanneling = false
+        end
+    end
+
+    -- Grey out during hardcasts (optional, gated by profile toggle).
+    isCasting = false
+    castSpellID = nil
+    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
+        isCasting = true
+        local _, _, _, _, _, _, _, _, csID = UnitCastingInfo("player")
+        castSpellID = csID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
+            isCasting = false
         end
     end
 
@@ -1064,9 +1084,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                             icon.previousNormalizedHotkey = icon.normalizedHotkey
                         end
                     end
-                    icon.lastCooldownStart = nil
-                    icon.lastCooldownDuration = nil
-                    icon.lastCooldownWasSecret = false  -- Reset secret flag for new spell
                 end
                 
                 icon.spellID = spellID
@@ -1212,10 +1229,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         isChanneledSpell = (overrideID and overrideID == channelSpellID)
                     end
                 end
+                local isCastedSpell = false
+                if isCasting and castSpellID then
+                    if spellID == castSpellID then
+                        isCastedSpell = true
+                    elseif C_Spell_GetOverrideSpell then
+                        local overrideID = C_Spell_GetOverrideSpell(spellID)
+                        isCastedSpell = (overrideID and overrideID == castSpellID)
+                    end
+                end
                 local visualState
-                if isChanneledSpell then
+                if isChanneledSpell or isCastedSpell then
                     visualState = 4
-                elseif isChanneling then
+                elseif isChanneling or isCasting then
                     visualState = 1
                 elseif isInCombat then
                     if spellChanged or shouldUpdateCooldowns then
@@ -1230,7 +1256,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     visualState = 3
                 end
                 
-                if icon.lastVisualState ~= visualState or icon.lastBaseDesaturation ~= baseDesaturation then
+                -- Force-apply every frame during channeling/casting so all icons
+                -- grey/ungrey on the exact same frame (no per-icon desync).
+                if icon.lastVisualState ~= visualState or icon.lastBaseDesaturation ~= baseDesaturation
+                   or isChanneling or isCasting then
                     if visualState == 4 then
                         -- Channeling THIS spell: full color + cooldown sweep showing channel progress
                         iconTexture:SetDesaturation(baseDesaturation)
@@ -1249,9 +1278,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastBaseDesaturation = baseDesaturation
                 end
 
-                -- Channel fill animation: Blizzard-style sliding fill on the channeled icon.
+                -- Channel/cast fill animation: Blizzard-style sliding fill on the active icon.
                 -- Uses the same atlas textures as the action bar (UI-HUD-ActionBar-Channel-Fill).
                 -- StartChannelFill reads UnitChannelInfo timing (NeverSecret) internally.
+                -- Only shown for channels (not hardcasts) — casts just grey out.
                 if isChanneledSpell then
                     if not icon._hasChannelFill then
                         UIAnimations.StartChannelFill(icon)
@@ -1272,9 +1302,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if icon.chargeText then icon.chargeText:Hide() end
                     icon._cooldownShown = nil
                     icon._chargeCooldownShown = nil
-                    icon._lastCooldownStart = nil
-                    icon._lastCooldownDuration = nil
-                    icon._cooldownIsSecret = nil
                     icon.cachedHotkey = nil
                     icon.cachedIsUsable = nil
                     icon.cachedNotEnoughResources = nil

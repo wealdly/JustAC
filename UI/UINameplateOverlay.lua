@@ -28,6 +28,7 @@ local UnitHealthMax      = UnitHealthMax
 local UnitExists         = UnitExists
 local UnitIsDead         = UnitIsDead
 local UnitChannelInfo    = UnitChannelInfo
+local UnitCastingInfo    = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local math_max           = math.max
 local math_min           = math.min
@@ -951,19 +952,32 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
-    -- Check if player is channeling (grey out all icons to emphasize not interrupting)
+    -- Grey out all icons while channeling (optional, gated by profile toggle).
     -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
     -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
-    -- Early ungrey: stop desaturating 200ms before channel ends so the player can
-    -- see what ability to press next as the channel finishes.
-    local isChanneling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true or false
+    -- Early ungrey: stop greying out 100ms before channel ends.
+    local isChanneling = false
     local channelSpellID = nil
-    if isChanneling then
+    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
+        isChanneling = true
         local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
         channelSpellID = chID
         local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.2 then
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
             isChanneling = false
+        end
+    end
+
+    -- Check if player is hardcasting (optional grey-out, gated by profile toggle)
+    local isCasting = false
+    local castSpellID = nil
+    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
+        isCasting = true
+        local _, _, _, _, _, _, _, _, csID = UnitCastingInfo("player")
+        castSpellID = csID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
+            isCasting = false
         end
     end
 
@@ -1204,8 +1218,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- 1 = channeling (grey), 2 = no resources (blue tint), 3 = normal,
-            -- 4 = channeling THIS spell (fill animation, full color)
+            -- 1 = channeling/casting (grey), 2 = no resources (blue tint), 3 = normal,
+            -- 4 = channeling/casting THIS spell (fill animation, full color)
             local isChanneledSpell = false
             if isChanneling and channelSpellID then
                 if spellID == channelSpellID then
@@ -1215,10 +1229,19 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     isChanneledSpell = (overrideID and overrideID == channelSpellID)
                 end
             end
+            local isCastedSpell = false
+            if isCasting and castSpellID then
+                if spellID == castSpellID then
+                    isCastedSpell = true
+                elseif C_Spell_GetOverrideSpell then
+                    local overrideID = C_Spell_GetOverrideSpell(spellID)
+                    isCastedSpell = (overrideID and overrideID == castSpellID)
+                end
+            end
             local visualState
-            if isChanneledSpell then
+            if isChanneledSpell or isCastedSpell then
                 visualState = 4
-            elseif isChanneling then
+            elseif isChanneling or isCasting then
                 visualState = 1
             elseif inCombat then
                 if spellChanged or shouldUpdateCooldowns then
@@ -1232,7 +1255,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
             else
                 visualState = 3
             end
-            if icon.lastVisualState ~= visualState then
+            -- Force-apply every frame during channeling/casting so all icons
+            -- grey/ungrey on the exact same frame (no per-icon desync).
+            if icon.lastVisualState ~= visualState
+               or isChanneling or isCasting then
                 if visualState == 4 then
                     icon.iconTexture:SetDesaturation(0)
                     icon.iconTexture:SetVertexColor(1, 1, 1)
@@ -1249,7 +1275,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.lastVisualState = visualState
             end
 
-            -- Channel fill animation: Blizzard-style sliding fill on the channeled icon.
+            -- Channel fill animation: Blizzard-style sliding fill (channels only, not hardcasts).
             if isChanneledSpell then
                 if not icon._hasChannelFill and UIAnimations then
                     UIAnimations.StartChannelFill(icon)

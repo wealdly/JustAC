@@ -91,11 +91,39 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            greyOutWhileCasting = {
+                type = "toggle",
+                name = L["Grey Out While Casting"],
+                desc = L["Grey Out While Casting desc"],
+                order = 13,
+                width = "full",
+                get = function() return addon.db.profile.greyOutWhileCasting ~= false end,
+                set = function(_, val)
+                    addon.db.profile.greyOutWhileCasting = val
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            greyOutWhileChanneling = {
+                type = "toggle",
+                name = L["Grey Out While Channeling"],
+                desc = L["Grey Out While Channeling desc"],
+                order = 14,
+                width = "full",
+                get = function() return addon.db.profile.greyOutWhileChanneling ~= false end,
+                set = function(_, val)
+                    addon.db.profile.greyOutWhileChanneling = val
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             gamepadIconStyle = {
                 type = "select",
                 name = L["Gamepad Icon Style"],
                 desc = L["Gamepad Icon Style desc"],
-                order = 13,
+                order = 15,
                 width = "normal",
                 values = {
                     generic = L["Generic"],
@@ -119,7 +147,7 @@ function General.CreateTabArgs(addon)
                 type = "select",
                 name = L["Input Preference"],
                 desc = L["Input Preference desc"],
-                order = 14,
+                order = 16,
                 width = "normal",
                 values = {
                     auto = L["Auto-Detect"],
@@ -205,6 +233,8 @@ function General.CreateTabArgs(addon)
                     p.displayMode         = "queue"
                     p.interruptMode       = "ccPrefer"
                     p.showFlash           = true
+                    p.greyOutWhileCasting = true
+                    p.greyOutWhileChanneling = true
                     p.gamepadIconStyle    = "xbox"
                     p.inputPreference     = "auto"
                     p.interruptAlertSound = "none"

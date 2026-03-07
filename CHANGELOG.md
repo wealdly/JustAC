@@ -1,6 +1,15 @@
 
 # Changelog
 
+## [4.7.4] - 2026-03-07
+
+### Added
+- **Grey Out While Casting** option (General tab, on by default) — queue icons desaturate during hardcasts. The spell being cast stays full color. Applies to both standard queue and nameplate overlay.
+- **Grey Out While Channeling** option (General tab, on by default) — the previously hardcoded channeling grey-out is now toggleable. The channeled spell stays full color with a fill animation.
+
+### Changed
+- Early ungrey threshold reduced from 200ms to 100ms — icons regain color closer to the end of a cast/channel for tighter timing.
+
 ## [4.7.3] - 2026-03-07
 
 ### Fixed
