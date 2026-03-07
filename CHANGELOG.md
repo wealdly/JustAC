@@ -1,6 +1,36 @@
 
 # Changelog
 
+## [4.7.3] - 2026-03-07
+
+### Fixed
+- Interrupt reminder now works correctly when third-party nameplate/target frame addons (Platynator, etc.) hide or replace the Blizzard cast bar. Previously, non-interruptible casts could incorrectly show the interrupt icon because the interruptibility check depended on visually inspecting the Blizzard cast bar's shield widget. The event tracker now reads `notInterruptible` directly from the API at cast start, making it self-sufficient.
+- Cast aura icon on interrupt reminder now falls back to UnitCastingInfo/UnitChannelInfo when the Blizzard cast bar is hidden by third-party addons (both standard queue and overlay).
+- Overlay interrupt icon in horizontal mode no longer overlaps the nameplate — now pops out above the first DPS icon instead of inline.
+- Overlay defensive queue now rebuilds on periodic checks (every 0.5s) instead of only updating cooldown swipes. Icons for "always" and "combatOnly" display modes now appear promptly when cooldowns expire.
+- Overlay defensive queue now includes pet rez/summon and pet heal spells (parity with main panel).
+- Overlay hotkey caches now invalidate on binding changes (parity with main panel).
+- Overlay defensive icons in "always" mode now appear and disappear instantly (no fade animation), matching DPS icon behavior. State-driven modes ("combatOnly", "healthBased") retain the fade-in/out for smooth transitions.
+- Overlay health bar no longer re-anchors every tick — only repositions when the visible defensive icon count changes, eliminating visual flicker in vertical orientations.
+- Overlay health bar in vertical expansion modes no longer starts at the wrong position (above icons) and jumps to the correct side position — it now always appears at the correct expansion-aware position immediately.
+- Overlay health bar now shows immediately with correct health values when a nameplate appears — no longer requires a subsequent update tick to fill in.
+- Overlay defensive icons in "always" mode no longer appear ~500ms later than DPS icons when targeting a mob out of combat for the first time.
+- Overlay defensive icons no longer lag behind DPS icons by 1+ frames — defensive overlay now refreshes on the same update tick as the offensive overlay.
+
+### Added
+- Nameplate Overlay **Offensive Display** tab now includes a **Queue Visibility** dropdown ("Always", "In Combat Only", "Require Hostile Target") and a **Hide When Mounted** toggle. These settings are independent from the Standard Queue visibility options.
+
+### Changed
+- Unified update cycle architecture: all rendering now flows through a single OnUpdate loop. `ForceUpdate()`/`ForceUpdateAll()` set dirty flags instead of rendering synchronously, eliminating redundant mid-event renders.
+- Removed redundant dual-path rendering in `OnProcGlowChange`, `OnTargetChanged`, `OnSpellcastSucceeded`, and `OnCooldownUpdate` — each now uses a single `ForceUpdateAll()` call.
+- SpellQueue internal throttle aligned with main loop minimums (combat: 0.03s, OOC: 0.05s) so it never bottlenecks CVar-driven update rates.
+- CVar `assistedCombatIconUpdateRate` changes now take effect immediately (invalidate cached rate on CVAR_UPDATE).
+
+## [4.7.2] - 2026-03-06
+
+### Fixed
+- **Defensive queue hidden on first load after update** — Defensive icons were invisible until the user toggled the setting off/on. Two causes: (1) `SPELLS_CHANGED` didn't mark the defensive queue dirty, so even after spell APIs became available the defensive queue was never rebuilt; (2) the delayed 1-second `ForceUpdateAll` on `PLAYER_ENTERING_WORLD` reused stale spell availability cache entries (spells cached as unavailable during initial load when APIs weren't ready yet). Now `OnSpellsChanged` marks the defensive queue dirty, and the delayed timer clears the availability cache before rebuilding.
+
 ## [4.7.1] - 2026-03-05
 
 ### Fixed
