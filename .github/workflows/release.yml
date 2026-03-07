@@ -27,4 +27,4 @@ jobs:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: -g retail -n ":{package-name} {project-version}"
+          args: -g retail -n "{package-name} {project-version}"

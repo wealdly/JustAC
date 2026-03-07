@@ -149,7 +149,7 @@ function Overlay.CreateTabArgs(addon)
                         type = "select",
                         name = L["Offensive Slots"],
                         desc = L["Max Icons desc"],
-                        order = 1,
+                        order = 10,
                         width = "normal",
                         values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
                         sorting = { 1, 2, 3, 4, 5 },
@@ -165,7 +165,7 @@ function Overlay.CreateTabArgs(addon)
                         type = "select",
                         name = L["Highlight Mode"],
                         desc = L["Highlight Mode desc"],
-                        order = 2,
+                        order = 11,
                         width = "normal",
                         values = {
                             all         = L["All Glows"],
@@ -187,6 +187,44 @@ function Overlay.CreateTabArgs(addon)
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
+                    -- VISIBILITY (1-9)
+                    visibilityHeader = {
+                        type = "header",
+                        name = L["Visibility"],
+                        order = 1,
+                    },
+                    queueVisibility = {
+                        type = "select",
+                        name = L["Nameplate Queue Visibility"],
+                        desc = L["Nameplate Queue Visibility desc"],
+                        order = 2,
+                        width = "double",
+                        values = {
+                            always         = L["Always"],
+                            combatOnly     = L["In Combat Only"],
+                            requireHostile = L["Require Hostile Target"],
+                        },
+                        sorting = { "always", "combatOnly", "requireHostile" },
+                        get = function() return addon.db.profile.nameplateOverlay.queueVisibility or "always" end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.queueVisibility = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return overlayDisabled(addon) end,
+                    },
+                    hideWhenMounted = {
+                        type = "toggle",
+                        name = L["Hide When Mounted"],
+                        desc = L["Hide When Mounted desc"],
+                        order = 3,
+                        width = "full",
+                        disabled = function() return overlayDisabled(addon) end,
+                        get = function() return addon.db.profile.nameplateOverlay.hideWhenMounted end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.hideWhenMounted = val
+                            addon:ForceUpdateAll()
+                        end,
+                    },
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -201,9 +239,11 @@ function Overlay.CreateTabArgs(addon)
                         width = "normal",
                         func = function()
                             local npo = addon.db.profile.nameplateOverlay
-                            npo.maxIcons = 3
-                            npo.glowMode = "all"
-                            npo.showGlow = nil  -- clear legacy key
+                            npo.maxIcons        = 3
+                            npo.glowMode        = "all"
+                            npo.showGlow        = nil  -- clear legacy key
+                            npo.queueVisibility = "always"
+                            npo.hideWhenMounted = false
                             addon:ForceUpdateAll()
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
@@ -346,6 +386,7 @@ function Overlay.CreateTabArgs(addon)
                     },
                 },
             },
+
         },
     }
 end

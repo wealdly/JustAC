@@ -477,6 +477,15 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local npoDisplayMode = npo.defensiveDisplayMode or "always"
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
         local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
+
+        -- Pet rez/heal: parity with main panel (same priority order)
+        if petNeedsRez and #npoQueue < npoMaxIcons then
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), npoMaxIcons, defensiveAlreadyAdded)
+        end
+        if petNeedsHeal and not petNeedsRez and #npoQueue < npoMaxIcons then
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), npoMaxIcons, defensiveAlreadyAdded)
+        end
+
         ApplyOverlayQueue(addon, npoQueue)
     end
 end
@@ -807,8 +816,8 @@ function DefensiveEngine.UpdateDefensiveCooldowns(addon)
     end
 
     -- Update cooldowns on nameplate overlay defensive icons.
-    -- These are only rendered on UNIT_HEALTH events (which are suppressed in combat when
-    -- health is a secret value), so their cooldowns would freeze without this explicit poll.
+    -- The main OnUpdate loop now does full queue rebuilds periodically, but this
+    -- explicit poll keeps cooldown swipes smooth between rebuilds.
     if addon.nameplateDefIcons and #addon.nameplateDefIcons > 0 then
         for _, icon in ipairs(addon.nameplateDefIcons) do
             if icon and icon:IsShown() then

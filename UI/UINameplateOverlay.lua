@@ -66,6 +66,14 @@ local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-
 -- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
 local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainRelPt, chainOffX, chainOffY, iconSpacing }
 
+-- Health bar layout cache: skip re-anchor when nothing changed
+local lastDefVisibleCount = 0
+
+-- Cached defensive queue: allows RefreshDefensives to re-render on the same
+-- tick as the offensive overlay, eliminating the visual delay caused by
+-- defensive evaluation running on a slower cadence.
+local cachedDefensiveQueue = nil
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Icon button factory
 -- Produces a button compatible with:
@@ -507,7 +515,7 @@ end
 -- When the nameplate moves, the entire cluster follows automatically.
 -- Health bar (when shown) floats above the nameplate for all anchor directions.
 -- ─────────────────────────────────────────────────────────────────────────────
-local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, iconSpacing)
+local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, iconSpacing)
     -- anchor:            "LEFT" or "RIGHT" — which side of the nameplate
     -- expansion:         "out" (horizontal, current), "up" (vertical upward), "down" (vertical downward)
     -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
@@ -557,20 +565,18 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
     end
 
-    -- Interrupt icon: inline "position 0" — sits between icon 1 and the
-    -- nameplate edge (the leading direction, opposite queue growth).  Icon 1
-    -- anchors directly to the nameplate so it never shifts when the interrupt
-    -- appears/hides.  Mirrors the standard queue's CreateInterruptIcon pattern
-    -- where the interrupt "overhangs outside mainFrame".
-    --   "out"       → inline toward nameplate (between icon 1 and nameplate edge)
+    -- Interrupt icon: "position 0" — sits outside the queue so it never
+    -- displaces dpsIcons[1].  Icon 1 anchors directly to the nameplate and
+    -- never shifts when the interrupt appears/hides.
+    --   "out"       → above icon 1 (perpendicular, away from nameplate)
     --   "up"/"down" → inline toward nameplate (below icon 1 for "up", above for "down")
     if interruptIcon then
         interruptIcon:ClearAllPoints()
         interruptIcon:SetSize(iconSize, iconSize)
         if #dpsIcons > 0 then
             if expansion == "out" then
-                -- Horizontal queue → interrupt inline, between icon 1 and nameplate
-                interruptIcon:SetPoint(dpsEdge, dpsIcons[1], dpsPt, -dpsChainX, 0)
+                -- Horizontal queue → interrupt above icon 1 (perpendicular pop-out)
+                interruptIcon:SetPoint("BOTTOM", dpsIcons[1], "TOP", 0, iconSpacing)
             else
                 -- Vertical queue → interrupt inline before icon 1 in chain direction
                 -- (below icon 1 for "up", above icon 1 for "down")
@@ -580,10 +586,11 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
             -- Fallback: no DPS icons, anchor to nameplate directly
             interruptIcon:SetPoint(dpsPt, nameplate, dpsEdge, dpsGapX, 0)
         end
-        -- Re-anchor cast aura based on expansion: the aura sits on the side
-        -- of the interrupt facing away from the queue (perpendicular pop-out).
-        --   "out"/"down" → above interrupt
-        --   "up"         → below interrupt (away from upward-growing queue)
+        -- Re-anchor cast aura: sits on the opposite side of the interrupt
+        -- from the queue (perpendicular pop-out).
+        --   "out"       → above interrupt (further from nameplate)
+        --   "down"      → above interrupt
+        --   "up"        → below interrupt (away from upward-growing queue)
         if interruptIcon.castAura then
             interruptIcon.castAura:ClearAllPoints()
             if expansion == "up" then
@@ -611,39 +618,11 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, sho
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
     end
 
-    -- Health bar placeholder anchor. RenderDefensives re-anchors with correct
-    -- size, inset, and position once visibleCount is known.
-    if healthBar then
-        healthBar:ClearAllPoints()
-        if showHealthBar and showDefensives and #defIcons > 0 then
-            if isLeft then
-                healthBar:SetPoint("BOTTOMLEFT", defIcons[1], "TOPLEFT", 0, BAR_SPACING)
-            else
-                healthBar:SetPoint("BOTTOMRIGHT", defIcons[1], "TOPRIGHT", 0, BAR_SPACING)
-            end
-            healthBar:SetSize(iconSize, BAR_HEIGHT)
-        else
-            healthBar:Hide()
-        end
-    end
-
-    -- Pet health bar placeholder anchor. RenderDefensives re-anchors properly.
-    if petHealthBar then
-        petHealthBar:ClearAllPoints()
-        if showHealthBar and showDefensives and #defIcons > 0 then
-            -- Stack beyond the player health bar
-            local petAnchor = healthBar or defIcons[1]
-            local petSpacing = healthBar and BAR_SPACING or BAR_SPACING
-            if isLeft then
-                petHealthBar:SetPoint("BOTTOMLEFT", petAnchor, "TOPLEFT", 0, petSpacing)
-            else
-                petHealthBar:SetPoint("BOTTOMRIGHT", petAnchor, "TOPRIGHT", 0, petSpacing)
-            end
-            petHealthBar:SetSize(iconSize, BAR_HEIGHT)
-        else
-            petHealthBar:Hide()
-        end
-    end
+    -- Hide health bars so RenderDefensives can show them at the correct
+    -- expansion-aware position. lastDefVisibleCount=0 (set on new nameplate)
+    -- ensures RenderDefensives always re-anchors on its first call.
+    if healthBar    then healthBar:ClearAllPoints();    healthBar:Hide()    end
+    if petHealthBar then petHealthBar:ClearAllPoints(); petHealthBar:Hide() end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -780,6 +759,8 @@ function UINameplateOverlay.Destroy(addon)
     end
     interruptShown = false
     resolvedInterrupts = nil
+    lastDefVisibleCount = 0
+    cachedDefensiveQueue = nil
     wipe(anchorState)
 
     if healthBar then
@@ -849,6 +830,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
     local nameplate = UnitCanAttack("player", "target") and C_NamePlate.GetNamePlateForUnit("target", false) or nil
     if nameplate then
         currentNameplate = nameplate
+        lastDefVisibleCount = 0  -- force health bar re-anchor on new nameplate
         local anchor       = npo.reverseAnchor and "LEFT" or "RIGHT"
         local iconSize     = npo.iconSize or 32
         -- Health bar is tied to the defensive queue: only show when defensives are enabled
@@ -856,7 +838,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
         local showHealthBar  = npo.showHealthBar and showDefensives
 
         local expansion         = npo.expansion or "out"
-        AnchorToNameplate(nameplate, anchor, iconSize, showHealthBar, showDefensives, expansion, npo.iconSpacing or ICON_SPACING)
+        AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, npo.iconSpacing or ICON_SPACING)
         -- Displace Blizzard CC frames so they don't overlap our icon cluster
         DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, showHealthBar, iconSize)
         -- Individual icons become visible when Render() / RenderDefensives() fills them
@@ -934,6 +916,23 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local displayMode = profile.displayMode or "queue"
     if displayMode ~= "overlay" and displayMode ~= "both" then return end
     if #dpsIcons == 0 then return end
+
+    -- Overlay-specific visibility (independent from the standard queue settings).
+    local queueVis = npo.queueVisibility or "always"
+    local shouldHide = false
+    if queueVis == "combatOnly" and not UnitAffectingCombat("player") then
+        shouldHide = true
+    elseif queueVis == "requireHostile" and not UnitCanAttack("player", "target") then
+        shouldHide = true
+    end
+    if not shouldHide and npo.hideWhenMounted and IsMounted() then
+        shouldHide = true
+    end
+    if shouldHide then
+        for _, icon in ipairs(dpsIcons) do icon:Hide() end
+        if interruptIcon then interruptIcon:Hide() end
+        return
+    end
 
     local hasSpells   = spellIDs and #spellIDs > 0
     local npoGlowMode  = npo.glowMode or "all"
@@ -1072,8 +1071,16 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- to SetTexture without any comparison; Blizzard handles secrets in UI)
             if interruptIcon.castAura then
                 local castIcon = castBar and castBar.Icon
-                if castIcon and castIcon.GetTexture then
-                    interruptIcon.castAura.iconTexture:SetTexture(castIcon:GetTexture())
+                local castTexture = castIcon and castIcon.GetTexture and castIcon:GetTexture()
+                -- API fallback: when third-party addons hide the Blizzard cast bar,
+                -- retrieve the cast icon directly from UnitCastingInfo / UnitChannelInfo.
+                if not castTexture then
+                    local _, _, tex = UnitCastingInfo("target")
+                    if not tex then _, _, tex = UnitChannelInfo("target") end
+                    castTexture = tex
+                end
+                if castTexture then
+                    interruptIcon.castAura.iconTexture:SetTexture(castTexture)
                     if not interruptIcon.castAura:IsShown() then interruptIcon.castAura:Show() end
                     interruptIcon.castAura:SetAlpha(opacity)
                 else
@@ -1125,8 +1132,15 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 UIRenderer.UpdateButtonCooldowns(icon)
             end
 
-            -- Glows
-            if i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly") then
+            -- Glows: priority gap-closer > proc > assisted (mirrors UIRenderer priority)
+            local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
+            local isGapCloser = isSyntheticProc
+                or (SpellQueue and SpellQueue.IsGapCloserSpell and SpellQueue.IsGapCloserSpell(spellID))
+            local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
+            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
+            local wantProcGlow = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+
+            if i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly") and not wantGapCloserGlow and not wantProcGlow then
                 UIAnimations.StartAssistedGlow(icon, inCombat)
                 icon.hasAssistedGlow = true
             elseif icon.hasAssistedGlow then
@@ -1134,22 +1148,13 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.hasAssistedGlow = false
             end
 
-            local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
-            local isGapCloser = isSyntheticProc
-                or (SpellQueue and SpellQueue.IsGapCloserSpell and SpellQueue.IsGapCloserSpell(spellID))
-            local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
-
-            -- Gap-closer glow takes priority over standard proc glow
-            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
-            local wantProcGlow = isRealProc and npoShowProcGlow and not wantGapCloserGlow
-
             if wantProcGlow then
                 if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon); icon.hasProcGlow = true end
             elseif icon.hasProcGlow then
                 UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false
             end
 
-            if isGapCloser and showGapCloserGlow then
+            if wantGapCloserGlow then
                 if not icon.hasGapCloserGlow then UIAnimations.StartGapCloserGlow(icon); icon.hasGapCloserGlow = true end
             elseif icon.hasGapCloserGlow then
                 UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false
@@ -1283,6 +1288,9 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     if not currentNameplate then return end
     if #defIcons == 0 then return end
 
+    -- Cache for RefreshDefensives (same-tick re-render from UpdateSpellQueue)
+    cachedDefensiveQueue = defensiveQueue
+
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local profile      = addon:GetProfile() or {}
     local npoGlowMode   = npo.defensiveGlowMode or npo.glowMode or "all"
@@ -1294,148 +1302,166 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     -- showFlash is centralized in profile (no longer per-surface)
     local showFlash      = profile.showFlash ~= false
 
+    -- "always" mode: icons are permanently visible, so instant show/hide
+    -- feels snappier (parity with DPS icons). State-driven modes ("combatOnly",
+    -- "healthBased") trigger on transitions where the fade-in is warranted.
+    local npoDisplayMode = npo.defensiveDisplayMode or "always"
+    local instantShow = (npoDisplayMode == "always")
+
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
         local entry = defensiveQueue and defensiveQueue[i]
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
-            -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
-            if icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
+            if instantShow then
+                -- "always" mode: no fade-in. Stop unconditionally — IsPlaying() may not
+                -- return true synchronously after Play(), so the IsPlaying guard is unreliable.
+                if icon.fadeIn then icon.fadeIn:Stop() end
+                icon:SetAlpha(opacity)
+            elseif icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
+                -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
                 icon:SetAlpha(opacity)
             end
             visibleCount = visibleCount + 1
         else
-            UIRenderer.HideDefensiveIcon(icon)
+            if instantShow then
+                -- Skip fade-out: hide immediately for "always" mode
+                if icon:IsShown() or icon.currentID then
+                    if icon.fadeIn and icon.fadeIn:IsPlaying() then icon.fadeIn:Stop() end
+                    if icon.fadeOut and icon.fadeOut:IsPlaying() then icon.fadeOut:Stop() end
+                    UIRenderer.HideDefensiveIcon(icon)
+                    icon:Hide()
+                    icon:SetAlpha(0)
+                end
+            else
+                UIRenderer.HideDefensiveIcon(icon)
+            end
         end
     end
 
     -- Sync health bar size and position with the visible defensive slot count.
-    -- Mirrors UIHealthBar.lua's inset logic:
-    --   1 icon  → full iconSize, no inset
-    --   2+ icons → inset 25% of iconSize from each outer edge, bar spans inner 50%+middle
+    -- Only re-anchor when visibleCount changes to avoid per-tick repositioning flicker.
     if healthBar then
         if visibleCount > 0 then
             if npo and npo.showHealthBar then
-                local iconSize          = npo.iconSize or 32
-                local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
-                local expansion = npo.expansion or "out"
-                local isLeft    = (anchor == "LEFT")
+                if visibleCount ~= lastDefVisibleCount then
+                    lastDefVisibleCount = visibleCount
+                    local iconSize          = npo.iconSize or 32
+                    local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
+                    local expansion = npo.expansion or "out"
+                    local isLeft    = (anchor == "LEFT")
 
-                healthBar:ClearAllPoints()
+                    healthBar:ClearAllPoints()
 
-                -- Compute bar dimensions once for both player and pet bars
-                local barWidth, barHeight
-                if expansion == "out" then
-                    -- Horizontal cluster: symmetric 10% inset on both outer edges.
-                    -- clusterWidth = n*size + (n-1)*spacing; barWidth = clusterWidth - 2*inset.
-                    local clusterWidth = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
-                    local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
-                    barWidth = math_floor(clusterWidth - 2 * inset)
-                    healthBar:SetOrientation("HORIZONTAL")
-                    healthBar:SetSize(barWidth, BAR_HEIGHT)
-                    -- Show horizontal bevel strips; hide vertical ones
-                    if healthBar.hBevelStrips then
-                        for _, s in ipairs(healthBar.hBevelStrips) do s:Show() end
-                    end
-                    if healthBar.bevelStrips then
-                        for _, s in ipairs(healthBar.bevelStrips) do s:Hide() end
-                    end
-                    if isLeft then
-                        -- defIcons[1] is innermost (leftmost); cluster grows rightward.
-                        healthBar:SetPoint("BOTTOMLEFT", defIcons[1], "TOPLEFT", inset, BAR_SPACING)
+                    -- Compute bar dimensions once for both player and pet bars
+                    local barWidth, barHeight
+                    if expansion == "out" then
+                        -- Horizontal cluster: symmetric 10% inset on both outer edges.
+                        -- clusterWidth = n*size + (n-1)*spacing; barWidth = clusterWidth - 2*inset.
+                        local clusterWidth = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
+                        local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
+                        barWidth = math_floor(clusterWidth - 2 * inset)
+                        healthBar:SetOrientation("HORIZONTAL")
+                        healthBar:SetSize(barWidth, BAR_HEIGHT)
+                        -- Show horizontal bevel strips; hide vertical ones
+                        if healthBar.hBevelStrips then
+                            for _, s in ipairs(healthBar.hBevelStrips) do s:Show() end
+                        end
+                        if healthBar.bevelStrips then
+                            for _, s in ipairs(healthBar.bevelStrips) do s:Hide() end
+                        end
+                        if isLeft then
+                            healthBar:SetPoint("BOTTOMLEFT", defIcons[1], "TOPLEFT", inset, BAR_SPACING)
+                        else
+                            healthBar:SetPoint("BOTTOMRIGHT", defIcons[1], "TOPRIGHT", -inset, BAR_SPACING)
+                        end
                     else
-                        -- defIcons[1] is innermost (rightmost); cluster grows leftward.
-                        healthBar:SetPoint("BOTTOMRIGHT", defIcons[1], "TOPRIGHT", -inset, BAR_SPACING)
+                        -- Vertical cluster: VERTICAL bar spans beside the column on the outer side.
+                        local clusterHeight = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
+                        local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
+                        barHeight = math_floor(clusterHeight - 2 * inset)
+                        healthBar:SetOrientation("VERTICAL")
+                        if healthBar.bevelStrips then
+                            for _, s in ipairs(healthBar.bevelStrips) do s:Show() end
+                        end
+                        if healthBar.hBevelStrips then
+                            for _, s in ipairs(healthBar.hBevelStrips) do s:Hide() end
+                        end
+                        healthBar:SetSize(BAR_HEIGHT, barHeight)
+                        if expansion == "up" then
+                            if isLeft then
+                                healthBar:SetPoint("BOTTOMLEFT",  defIcons[1], "BOTTOMRIGHT",  BAR_SPACING,  inset)
+                            else
+                                healthBar:SetPoint("BOTTOMRIGHT", defIcons[1], "BOTTOMLEFT",  -BAR_SPACING,  inset)
+                            end
+                        else  -- "down"
+                            if isLeft then
+                                healthBar:SetPoint("TOPLEFT",  defIcons[1], "TOPRIGHT",  BAR_SPACING, -inset)
+                            else
+                                healthBar:SetPoint("TOPRIGHT", defIcons[1], "TOPLEFT",  -BAR_SPACING, -inset)
+                            end
+                        end
+                    end
+
+                    healthBar:SetAlpha(opacity)
+                    if not healthBar:IsShown() then healthBar:Show() end
+
+                    -- Pet health bar: same size/orientation as player bar, stacked one bar further out.
+                    if petHealthBar then
+                        if UnitExists("pet") then
+                            petHealthBar:ClearAllPoints()
+                            if expansion == "out" then
+                                petHealthBar:SetOrientation("HORIZONTAL")
+                                petHealthBar:SetSize(barWidth, BAR_HEIGHT)
+                                if petHealthBar.hBevelStrips then
+                                    for _, s in ipairs(petHealthBar.hBevelStrips) do s:Show() end
+                                end
+                                if petHealthBar.bevelStrips then
+                                    for _, s in ipairs(petHealthBar.bevelStrips) do s:Hide() end
+                                end
+                                if isLeft then
+                                    petHealthBar:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, BAR_SPACING)
+                                else
+                                    petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "TOPRIGHT", 0, BAR_SPACING)
+                                end
+                            else
+                                petHealthBar:SetOrientation("VERTICAL")
+                                petHealthBar:SetSize(BAR_HEIGHT, barHeight)
+                                if petHealthBar.bevelStrips then
+                                    for _, s in ipairs(petHealthBar.bevelStrips) do s:Show() end
+                                end
+                                if petHealthBar.hBevelStrips then
+                                    for _, s in ipairs(petHealthBar.hBevelStrips) do s:Hide() end
+                                end
+                                if expansion == "up" then
+                                    if isLeft then
+                                        petHealthBar:SetPoint("BOTTOMLEFT",  healthBar, "BOTTOMRIGHT",  BAR_SPACING, 0)
+                                    else
+                                        petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMLEFT",  -BAR_SPACING, 0)
+                                    end
+                                else  -- "down"
+                                    if isLeft then
+                                        petHealthBar:SetPoint("TOPLEFT",  healthBar, "TOPRIGHT",  BAR_SPACING, 0)
+                                    else
+                                        petHealthBar:SetPoint("TOPRIGHT", healthBar, "TOPLEFT",  -BAR_SPACING, 0)
+                                    end
+                                end
+                            end
+                            petHealthBar:SetAlpha(opacity)
+                            if not petHealthBar:IsShown() then petHealthBar:Show() end
+                        else
+                            petHealthBar:Hide()
+                        end
                     end
                 else
-                    -- Vertical cluster: VERTICAL bar spans beside the column on the outer side.
-                    -- Same inset rule as horizontal: 10% of iconSize per edge for 2+ icons.
-                    local clusterHeight = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
-                    local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
-                    barHeight = math_floor(clusterHeight - 2 * inset)
-                    healthBar:SetOrientation("VERTICAL")  -- fills bottom→top
-                    -- Show vertical bevel strips; hide horizontal ones
-                    if healthBar.bevelStrips then
-                        for _, s in ipairs(healthBar.bevelStrips) do s:Show() end
-                    end
-                    if healthBar.hBevelStrips then
-                        for _, s in ipairs(healthBar.hBevelStrips) do s:Hide() end
-                    end
-                    healthBar:SetSize(BAR_HEIGHT, barHeight)
-                    if expansion == "up" then
-                        -- defIcons[1] is at the bottom of the column; chain grows upward.
-                        -- Bar anchors by its bottom corner to defIcons[1]'s bottom outer corner.
-                        if isLeft then
-                            -- DEF cluster is RIGHT of nameplate; outer side is further right.
-                            healthBar:SetPoint("BOTTOMLEFT",  defIcons[1], "BOTTOMRIGHT",  BAR_SPACING,  inset)
-                        else
-                            healthBar:SetPoint("BOTTOMRIGHT", defIcons[1], "BOTTOMLEFT",  -BAR_SPACING,  inset)
-                        end
-                    else  -- "down"
-                        -- defIcons[1] is at the top of the column; chain grows downward.
-                        -- Bar anchors by its top corner to defIcons[1]'s top outer corner.
-                        if isLeft then
-                            healthBar:SetPoint("TOPLEFT",  defIcons[1], "TOPRIGHT",  BAR_SPACING, -inset)
-                        else
-                            healthBar:SetPoint("TOPRIGHT", defIcons[1], "TOPLEFT",  -BAR_SPACING, -inset)
-                        end
-                    end
-                end
-
-                healthBar:SetAlpha(opacity)
-                if not healthBar:IsShown() then healthBar:Show() end
-
-                -- Pet health bar: same size/orientation as player bar, stacked one bar further out.
-                -- Auto-hides when no pet exists.
-                if petHealthBar then
-                    if UnitExists("pet") then
-                        petHealthBar:ClearAllPoints()
-                        if expansion == "out" then
-                            petHealthBar:SetOrientation("HORIZONTAL")
-                            petHealthBar:SetSize(barWidth, BAR_HEIGHT)
-                            if petHealthBar.hBevelStrips then
-                                for _, s in ipairs(petHealthBar.hBevelStrips) do s:Show() end
-                            end
-                            if petHealthBar.bevelStrips then
-                                for _, s in ipairs(petHealthBar.bevelStrips) do s:Hide() end
-                            end
-                            if isLeft then
-                                petHealthBar:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, BAR_SPACING)
-                            else
-                                petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "TOPRIGHT", 0, BAR_SPACING)
-                            end
-                        else
-                            petHealthBar:SetOrientation("VERTICAL")
-                            petHealthBar:SetSize(BAR_HEIGHT, barHeight)
-                            if petHealthBar.bevelStrips then
-                                for _, s in ipairs(petHealthBar.bevelStrips) do s:Show() end
-                            end
-                            if petHealthBar.hBevelStrips then
-                                for _, s in ipairs(petHealthBar.hBevelStrips) do s:Hide() end
-                            end
-                            if expansion == "up" then
-                                if isLeft then
-                                    petHealthBar:SetPoint("BOTTOMLEFT",  healthBar, "BOTTOMRIGHT",  BAR_SPACING, 0)
-                                else
-                                    petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMLEFT",  -BAR_SPACING, 0)
-                                end
-                            else  -- "down"
-                                if isLeft then
-                                    petHealthBar:SetPoint("TOPLEFT",  healthBar, "TOPRIGHT",  BAR_SPACING, 0)
-                                else
-                                    petHealthBar:SetPoint("TOPRIGHT", healthBar, "TOPLEFT",  -BAR_SPACING, 0)
-                                end
-                            end
-                        end
-                        petHealthBar:SetAlpha(opacity)
-                        if not petHealthBar:IsShown() then petHealthBar:Show() end
-                    else
-                        petHealthBar:Hide()
-                    end
+                    -- visibleCount unchanged: just update opacity
+                    healthBar:SetAlpha(opacity)
+                    if petHealthBar and petHealthBar:IsShown() then petHealthBar:SetAlpha(opacity) end
                 end
             end
         else
+            lastDefVisibleCount = 0
             healthBar:Hide()
             if petHealthBar then petHealthBar:Hide() end
         end
@@ -1444,11 +1470,22 @@ end
 
 --- Hide all defensive overlay icons (called when defensive queue is empty).
 function UINameplateOverlay.HideDefensiveIcons()
+    cachedDefensiveQueue = nil
     for _, icon in ipairs(defIcons) do
         UIRenderer.HideDefensiveIcon(icon)
     end
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
+end
+
+--- Re-render defensive icons using the last cached queue.
+--- Called from UpdateSpellQueue so defensive overlay refreshes on the same
+--- tick as the offensive overlay (eliminates visual delay from the slower
+--- defensive evaluation cadence).
+function UINameplateOverlay.RefreshDefensives(addon)
+    if cachedDefensiveQueue then
+        UINameplateOverlay.RenderDefensives(addon, cachedDefensiveQueue)
+    end
 end
 
 --- Return the base RGB for the overlay health bar, mirroring the user's
@@ -1459,7 +1496,7 @@ end
 --- Colour: fixed bright green base, tinted orange/red at low health using
 --- GetPlayerHealthPercentSafe() so it works even when values are secret (12.0+).
 function UINameplateOverlay.UpdateHealthBar()
-    if not healthBar or not healthBar:IsShown() then return end
+    if not healthBar then return end
 
     -- Drive fill from raw UnitHealth — secret-safe, tracks continuously.
     local health    = UnitHealth("player")
@@ -1539,6 +1576,20 @@ end
 --- Used by UIRenderer/DefensiveEngine to decide whether to fall back to the main panel.
 function UINameplateOverlay.IsAnchored()
     return currentNameplate ~= nil
+end
+
+--- Clear cached hotkeys on all overlay icons so they re-query on the next
+--- cooldown throttle tick. Called from JustAC's binding-change invalidation.
+function UINameplateOverlay.InvalidateHotkeyCache()
+    for _, icon in ipairs(dpsIcons) do
+        icon.cachedHotkey = nil
+    end
+    for _, icon in ipairs(defIcons) do
+        icon.cachedHotkey = nil
+    end
+    if interruptIcon then
+        interruptIcon.cachedHotkey = nil
+    end
 end
 
 --- Hide every overlay element (called from EnterDisabledMode).
