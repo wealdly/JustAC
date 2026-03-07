@@ -203,21 +203,45 @@ function SpellQueue.GetCurrentSpellQueue()
 
     local now = GetTime()
     -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
-    -- 0.05s in combat = 20 updates/sec; 0.08s out of combat for snappy target-switch response.
+    -- Internal safety throttle — main loop in JustAC.lua is the primary rate limiter
+    -- (CVar-driven, min 0.03s).  These match the main loop's minimum intervals so
+    -- SpellQueue never bottlenecks the caller.
     local inCombat = UnitAffectingCombat("player")
-    local throttleInterval = inCombat and 0.05 or 0.08
+    local throttleInterval = inCombat and 0.03 or 0.05
 
     if now - lastQueueUpdate < throttleInterval then
         return lastSpellIDs or {}
     end
     
-    -- Check if queue should be hidden based on settings
-    if profile.hideQueueOutOfCombat and not inCombat then
+    -- Check if queue should be hidden based on settings.
+    -- queueVisibility: "always" | "combatOnly" | "requireHostile"
+    -- Migrates from legacy boolean keys (hideQueueOutOfCombat, requireHostileTarget).
+    local queueVis = profile.queueVisibility
+    if not queueVis then
+        if profile.hideQueueOutOfCombat then
+            queueVis = "combatOnly"
+        elseif profile.requireHostileTarget then
+            queueVis = "requireHostile"
+        else
+            queueVis = "always"
+        end
+    end
+
+    if queueVis == "combatOnly" and not inCombat then
         lastShouldShowQueue = false
         lastQueueUpdate = now
         return lastSpellIDs or {}
     end
-    
+
+    if queueVis == "requireHostile" and not inCombat then
+        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
+        if not hasHostileTarget then
+            lastShouldShowQueue = false
+            lastQueueUpdate = now
+            return lastSpellIDs or {}
+        end
+    end
+
     if profile.hideQueueWhenMounted then
         local isMounted = IsMounted()
         if not isMounted then
@@ -227,15 +251,6 @@ function SpellQueue.GetCurrentSpellQueue()
             end
         end
         if isMounted then
-            lastShouldShowQueue = false
-            lastQueueUpdate = now
-            return lastSpellIDs or {}
-        end
-    end
-    
-    if profile.requireHostileTarget and not inCombat then
-        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
-        if not hasHostileTarget then
             lastShouldShowQueue = false
             lastQueueUpdate = now
             return lastSpellIDs or {}

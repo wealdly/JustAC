@@ -566,6 +566,10 @@ end
 function JustAC:OnCVarUpdate(event, cvarName, value)
     if cvarName == "assistedMode" or cvarName == "assistedCombatHighlight" or cvarName == "assistedCombatIconUpdateRate" then
         self:ValidateAssistedCombatSetup()
+        -- Invalidate cached update rate so OnUpdate picks up the new CVar value immediately
+        if cvarName == "assistedCombatIconUpdateRate" then
+            cachedUpdateRate = nil
+        end
     end
 end
 
@@ -843,6 +847,7 @@ function JustAC:InvalidateCaches(flags)
     if flags.hotkeys or flags.all then
         if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then ActionBarScanner.InvalidateHotkeyCache() end
         if UIRenderer and UIRenderer.InvalidateHotkeyCache then UIRenderer.InvalidateHotkeyCache() end
+        if UINameplateOverlay and UINameplateOverlay.InvalidateHotkeyCache then UINameplateOverlay.InvalidateHotkeyCache() end
     end
     
     if flags.forms or flags.all then
@@ -882,7 +887,14 @@ function JustAC:UpdateSpellQueue()
     if UIRenderer and UIRenderer.RenderSpellQueue then
         UIRenderer.RenderSpellQueue(self, currentSpells)
     end
-    if UINameplateOverlay then UINameplateOverlay.Render(self, currentSpells) end
+    if UINameplateOverlay then
+        UINameplateOverlay.Render(self, currentSpells)
+        -- Re-render cached defensive icons on the same tick so both queues
+        -- appear simultaneously (defensive evaluation runs on a slower cadence).
+        if UINameplateOverlay.RefreshDefensives then
+            UINameplateOverlay.RefreshDefensives(self)
+        end
+    end
 end
 
 function JustAC:PLAYER_ENTERING_WORLD()
@@ -912,8 +924,13 @@ function JustAC:PLAYER_ENTERING_WORLD()
 
     self:ForceUpdateAll()
 
-    -- API may not return spells immediately after PLAYER_ENTERING_WORLD
-    C_Timer.After(1.0, function() self:ForceUpdateAll() end)
+    -- API may not return spells immediately after PLAYER_ENTERING_WORLD.
+    -- Clear availability cache so stale false entries from the initial query
+    -- (when spell APIs weren't ready yet) don't suppress the defensive queue.
+    C_Timer.After(1.0, function()
+        self:InvalidateCaches({spells = true})
+        self:ForceUpdateAll()
+    end)
 end
 
 --- Re-resolve interrupt spell list from SpellDB.
@@ -1033,7 +1050,7 @@ function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
-    self:ForceUpdate()
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnSpellIconChanged()
@@ -1134,22 +1151,18 @@ function JustAC:OnProcGlowChange(event, spellID)
         end
     end
 
-    -- Mark both queues dirty - procs affect rotation and defensive priorities
-    self:MarkQueueDirty()
-    self:MarkDefensiveDirty()
-    self:ForceUpdate()
-    self:OnHealthChanged(nil, "player")
+    -- Procs affect rotation and defensive priorities — ForceUpdateAll marks both
+    -- queues dirty; OnUpdate loop handles rendering + defensive re-evaluation.
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnTargetChanged()
-    self:MarkQueueDirty()
     -- Clear gap-closer range state on target switch.  The melee reference
     -- spell's slot is re-resolved lazily on the next GetGapCloserSpell call
     -- (via IsActionInRange), so no seeding pass is needed.
     if GapCloserEngine then
         GapCloserEngine.ClearRangeState()
     end
-    if SpellQueue then SpellQueue.ForceUpdate() end
     -- Refresh per-target creature type cache for CC immunity detection.
     -- UnitCreatureType is secreted in combat; RefreshTargetCreatureType clears the
     -- cache on every target switch and only populates it when the value is readable.
@@ -1159,9 +1172,7 @@ function JustAC:OnTargetChanged()
     end
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
-    -- ForceUpdateAll so the defensive overlay re-renders immediately on target switch
-    -- rather than waiting for the next UNIT_HEALTH event (which may not fire in combat
-    -- when health is a secret value).
+    -- ForceUpdateAll marks both queues dirty; OnUpdate renders on next tick.
     self:ForceUpdateAll()
 end
 
@@ -1229,10 +1240,6 @@ end
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
 
-    -- Cast completed - mark both queues dirty for immediate update
-    self:MarkQueueDirty()
-    self:MarkDefensiveDirty()
-
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
     end
@@ -1240,33 +1247,40 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
     -- spellID from UNIT_SPELLCAST_SUCCEEDED is NeverSecret (player's own cast).
-    do
-        if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
-            -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
-            -- so one call covers both renderers (debounce state is now shared in UIRenderer).
-            if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
-            -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
-            -- will check if UnitIsCrowdControlled("target") became true.
-            if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget then
-                BlizzardAPI.NotifyCCCastOnTarget()
-            end
+    if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
+        -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
+        -- so one call covers both renderers (debounce state is now shared in UIRenderer).
+        if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
+        -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
+        -- will check if UnitIsCrowdControlled("target") became true.
+        if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget then
+            BlizzardAPI.NotifyCCCastOnTarget()
         end
     end
 
-    if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer) end
-    self.castSuccessTimer = self:ScheduleTimer("ForceUpdate", 0.02)
+    -- Cast completed — dirty flags ensure next OnUpdate tick rebuilds both queues.
+    -- No deferred timer needed; the natural OnUpdate cadence provides sufficient
+    -- settle time (~30-50ms) for game state to update after the cast.
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnCooldownUpdate()
-    if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    self.cooldownTimer = self:ScheduleTimer("ForceUpdateAll", 0.02)
+    -- SPELL_UPDATE_COOLDOWN fires ~10x per cast (GCD cascade). ForceUpdateAll
+    -- is idempotent — repeated calls just set dirty flags that are already set.
+    self:ForceUpdateAll()
 end
 
+--- Marks queues dirty and ensures the next OnUpdate tick processes immediately.
+--- All rendering goes through the unified OnUpdate loop (no synchronous renders).
+--- Multiple calls per frame are idempotent — setting dirty flags is a no-op when already set.
 function JustAC:ForceUpdate(includeDefensives)
+    -- Cancel any pending deferred timers (superseded by dirty flags)
     if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    if SpellQueue and SpellQueue.ForceUpdate then SpellQueue.ForceUpdate() end
-    self:UpdateSpellQueue()
-    if includeDefensives then self:OnHealthChanged(nil, "player") end
+    if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer); self.castSuccessTimer = nil end
+    spellQueueDirty = true
+    if includeDefensives then defensiveQueueDirty = true end
+    -- Process on very next OnUpdate tick (~7-16ms at typical framerates)
+    if self.updateTimeLeft then self.updateTimeLeft = 0 end
 end
 
 function JustAC:ForceUpdateAll()
@@ -1295,6 +1309,21 @@ function JustAC:OpenOptionsPanel()
         end
     end
 end
+
+--------------------------------------------------------------------------------
+-- Update Cycle Architecture
+--
+-- All rendering is driven by a single OnUpdate loop. No synchronous rendering
+-- occurs in event handlers — they only set dirty flags and reset the timer.
+--
+-- Tier 1 (spell queue):    CVar rate, min 0.03s  (~20-33Hz) — rotation + render
+-- Tier 2 (cooldown swipes): 0.08s fixed           (~12Hz)   — CD widget params
+-- Tier 3 (defensives):      2× CVar rate           (~10Hz)  — health evaluation
+-- Tier 4 (idle/OOC):       0.5s                    (2Hz)    — nothing happening
+--
+-- ForceUpdate() / ForceUpdateAll() set dirty flags + updateTimeLeft = 0
+-- so the next frame processes. Multiple calls per frame are idempotent.
+--------------------------------------------------------------------------------
 
 -- Dirty flags for event-driven optimization
 -- When set, next OnUpdate will process; cleared after processing
@@ -1390,13 +1419,10 @@ function JustAC:StartUpdates()
 
         -- Only update defensive cooldowns if dirty or periodic check
         if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
-            if defensiveQueueDirty then
-                -- Full queue rebuild: nil event bypasses DefensiveEngine throttle
-                self:OnHealthChanged(nil, "player")
-            else
-                -- Periodic refresh: just update cooldown displays on visible icons
-                self:UpdateDefensiveCooldowns()
-            end
+            -- Full queue rebuild: nil event bypasses DefensiveEngine throttle.
+            -- Always rebuild (not just cooldown swipes) so "always" and "combatOnly"
+            -- modes surface new icons promptly when cooldowns expire.
+            self:OnHealthChanged(nil, "player")
             defensiveQueueDirty = false
             lastFullUpdate = now
         end

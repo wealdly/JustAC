@@ -1012,8 +1012,17 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             -- Cast bar textures can be secret in 12.0 — pass through unconditionally.
             if intIcon.castAura then
                 local castIcon = castBar and castBar.Icon
-                if castIcon and castIcon.GetTexture then
-                    intIcon.castAura.iconTexture:SetTexture(castIcon:GetTexture())
+                local castTexture = castIcon and castIcon.GetTexture and castIcon:GetTexture()
+                -- API fallback: when third-party addons hide the Blizzard cast bar,
+                -- retrieve the cast icon directly from UnitCastingInfo / UnitChannelInfo.
+                if not castTexture then
+                    local _, _, tex = UnitCastingInfo("target")
+                    if not tex then _, _, tex = UnitChannelInfo("target") end
+                    -- In 12.0 combat, texture may be secret — still pass through.
+                    castTexture = tex
+                end
+                if castTexture then
+                    intIcon.castAura.iconTexture:SetTexture(castTexture)
                     if not intIcon.castAura:IsShown() then intIcon.castAura:Show() end
                 else
                     if intIcon.castAura:IsShown() then intIcon.castAura:Hide() end
