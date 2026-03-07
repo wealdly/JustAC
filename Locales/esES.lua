@@ -66,7 +66,7 @@ L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Introducir el texto d
 L["Custom Hotkeys"] = "Atajos personalizados"
 
 -- Defensives
-L["Enable Defensive Suggestions"] = "Activar sugerencias defensivas"
+L["Show Defensive Icons"] = "Mostrar iconos defensivos"
 L["Add to %s"] = "Agregar a %s"
 
 -- Orientation values
@@ -146,7 +146,7 @@ L["disabled when Defensive Queue is enabled"] = "desactivado cuando la cola defe
 L["Defensive Icon Scale"] = "Escala de icono defensivo"
 L["Defensive Icon Scale desc"] = "Escala de iconos defensivos"
 L["Defensive Max Icons"] = "Iconos máximos"
-L["Defensive Max Icons desc"] = "Iconos defensivos a mostrar (1-3)"
+L["Defensive Max Icons desc"] = "Iconos defensivos a mostrar"
 L["Profiles"] = "Perfiles"
 L["Profiles desc"] = "Gestión de perfiles"
 -- Per-spec profile switching
@@ -218,17 +218,12 @@ L["Show Pet Health Bar desc"] = "Barra de salud compacta de mascota (solo clases
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Adjuntar iconos directamente a la placa de nombre del objetivo. Independiente del panel principal — ambos pueden activarse por separado."
-L["Offensive Slots"] = "Iconos máx"
 L["Offensive Queue"] = "Cola ofensiva"
+L["Defensive Queue"] = "Cola defensiva"
 L["Defensive Suggestions"] = "Sugerencias defensivas"
 L["Reverse Anchor"] = "Invertir anclaje"
 L["Reverse Anchor desc"] = "Por defecto los iconos DPS aparecen a la derecha de la placa. Activar para colocarlos a la izquierda. Los iconos defensivos siempre aparecen en el lado opuesto."
-L["Nameplate Icon Size"] = "Tamaño de icono"
-L["Nameplate Show Defensives"] = "Mostrar iconos defensivos"
 L["Nameplate Show Defensives desc"] = "Mostrar iconos defensivos en el lado opuesto de la placa."
-L["Nameplate Defensive Display Mode"] = "Visibilidad defensiva"
-L["Nameplate Defensive Display Mode desc"] = "Al perder salud: solo cuando la salud baja del umbral.\nSolo en combate: iconos defensivos solo en combate.\nSiempre: mostrar en todo momento."
-L["Nameplate Defensive Count"] = "Iconos máx"
 L["Interrupt Mode"] = "Recordatorio de interrupción"
 L["Interrupt Mode desc"] = "Controla cuándo aparece el icono de recordatorio de interrupción y qué habilidad sugiere."
 L["Sounds"] = "Sonidos"
@@ -239,7 +234,6 @@ L["Interrupt Mode Disabled"] = "Desactivado — Sin iconos de interrupción"
 L["Interrupt Mode Kick Only"] = "Solo Kick — Sugerir kick en lanzamientos interrumpibles"
 L["Interrupt Mode CC Shielded"] = "Kick + CC — También aturdir/temer lanzamientos protegidos"
 L["Interrupt Mode CC Prefer"] = "Preferir CC — Aturdimientos sobre kicks; kick en jefes"
-L["Nameplate Show Health Bars"] = "Mostrar barras de salud"
 L["Nameplate Show Health Bars desc"] = "Mostrar barras de salud compactas del jugador y mascota sobre los iconos defensivos. La barra de mascota se oculta sin mascota activa. Se oculta automáticamente sin defensivos visibles."
 
 

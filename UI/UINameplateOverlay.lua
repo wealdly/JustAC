@@ -522,9 +522,9 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, iconSpacing)
     -- anchor:            "LEFT" or "RIGHT" — which side of the nameplate
-    -- expansion:         "out" (horizontal, current), "up" (vertical upward), "down" (vertical downward)
+    -- expansion:         "out" (horizontal), "up" (vertical upward), "down" (vertical downward)
     -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
-    expansion         = expansion or "out"
+    expansion         = expansion or "down"
     iconSpacing       = iconSpacing or ICON_SPACING
 
     local isLeft    = (anchor == "LEFT")
@@ -657,8 +657,8 @@ function UINameplateOverlay.Create(addon)
     end
 
     local iconSize = npo.iconSize or 32
-    local maxDPS   = math_min(npo.maxIcons or 3, 5)
-    local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 3, 5) or 0
+    local maxDPS   = math_min(npo.maxIcons or 3, 7)
+    local maxDef   = npo.showDefensives and math_min(npo.maxDefensiveIcons or 3, 7) or 0
 
     for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize, profile) end
     for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
@@ -705,9 +705,11 @@ function UINameplateOverlay.Create(addon)
 
     if npo.showHealthBar then
         healthBar = CreateOverlayHealthBar(iconSize * 2)
-        -- Pet health bar: warm yellow, only visible when pet exists
-        petHealthBar = CreateOverlayHealthBar(iconSize * 2)
-        petHealthBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
+        -- Pet health bar: warm yellow, only visible when pet exists + setting enabled
+        if npo.showPetHealthBar ~= false then
+            petHealthBar = CreateOverlayHealthBar(iconSize * 2)
+            petHealthBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
+        end
     end
 
     -- Quest indicator replacement: suppress engine-rendered quest circles and
@@ -842,7 +844,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
         local showDefensives = npo.showDefensives
         local showHealthBar  = npo.showHealthBar and showDefensives
 
-        local expansion         = npo.expansion or "out"
+        local expansion         = npo.expansion or "down"
         AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, npo.iconSpacing or ICON_SPACING)
         -- Displace Blizzard CC frames so they don't overlap our icon cluster
         DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, showHealthBar, iconSize)
@@ -943,6 +945,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoGlowMode  = npo.glowMode or "all"
     local npoShowProcGlow = (npoGlowMode == "all" or npoGlowMode == "procOnly")
     local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
+    local npoDesaturation = npo.queueIconDesaturation or 0
+    local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
     local showHotkey   = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
     local opacity      = npo.opacity or 1.0
@@ -1068,7 +1072,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     if isOutOfRange then
                         interruptIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
                     else
-                        local hkc = npoOverlays and npoOverlays.hotkey and npoOverlays.hotkey.color
+                        local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
                         interruptIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
                     end
                     interruptIcon.lastOutOfRange = isOutOfRange
@@ -1276,7 +1280,12 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
                 local isOutOfRange = icon.cachedOutOfRange or false
                 if icon.lastOutOfRange ~= isOutOfRange then
-                    icon.hotkeyText:SetTextColor(isOutOfRange and 1 or 1, isOutOfRange and 0 or 1, isOutOfRange and 0 or 1, 1)
+                    if isOutOfRange then
+                        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
+                    else
+                        local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+                        icon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
+                    end
                     icon.lastOutOfRange = isOutOfRange
                 end
             end
@@ -1331,10 +1340,16 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     icon.iconTexture:SetDesaturation(0)
                     icon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
                 else
-                    icon.iconTexture:SetDesaturation(0)
+                    icon.iconTexture:SetDesaturation(i == 1 and 0 or npoDesaturation)
                     icon.iconTexture:SetVertexColor(1, 1, 1)
                 end
                 icon.lastVisualState = visualState
+            end
+
+            -- First icon scale (parity with standard queue firstIconScale)
+            local targetScale = (i == 1) and npoFirstIconScale or 1.0
+            if icon:GetScale() ~= targetScale then
+                icon:SetScale(targetScale)
             end
 
             -- Channel fill animation: Blizzard-style sliding fill (channels only, not hardcasts).
@@ -1386,6 +1401,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local profile      = addon:GetProfile() or {}
     local npoGlowMode   = npo.defensiveGlowMode or npo.glowMode or "all"
+    local npoDefScale   = npo.defensiveIconScale or 1.0
     local opacity       = npo.opacity or 1.0
     local iconSpacing   = npo.iconSpacing or ICON_SPACING
     -- Read hotkey visibility from central textOverlays (Labels tab)
@@ -1405,6 +1421,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
         local entry = defensiveQueue and defensiveQueue[i]
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
+            if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
             if instantShow then
                 -- "always" mode: no fade-in. Stop unconditionally — IsPlaying() may not
@@ -1441,7 +1458,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     lastDefVisibleCount = visibleCount
                     local iconSize          = npo.iconSize or 32
                     local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
-                    local expansion = npo.expansion or "out"
+                    local expansion = npo.expansion or "down"
                     local isLeft    = (anchor == "LEFT")
 
                     healthBar:ClearAllPoints()

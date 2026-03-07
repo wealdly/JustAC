@@ -1,6 +1,29 @@
 
 # Changelog
 
+## [4.8.0] - 2026-03-07
+
+### Added
+- Nameplate Overlay: First Icon Scale setting (scale the primary icon independently)
+- Nameplate Overlay: Queue Icon Desaturation setting (desaturate non-primary icons)
+- Nameplate Overlay: Show Pet Health Bar toggle (parity with Standard Queue)
+- General tab: Offensive Queue section (Include Macro-Hidden Abilities, Insert Procced Abilities, Allow Item Abilities)
+- General tab: Defensive Queue section (Insert Procced Defensives, Allow Items in Spell Lists, Auto-Insert Health Potions)
+
+### Changed
+- Nameplate Overlay: Max offensive/defensive icons increased from 5 to 7 (slider instead of dropdown)
+- Options: Moved 6 cross-queue content toggles from Offensive/Defensives tabs to General tab
+- Options: Removed Queue Content sub-tabs from Offensive and Defensives tabs
+- Options: Defensives tab no longer uses sub-tab layout (flattened to single page)
+- Options: Unified setting names across Standard Queue and Overlay (Icon Size, Max Icons, Queue Visibility, etc.)
+- Options: "Enable Defensive Suggestions" renamed to "Show Defensive Icons" for consistency
+- Options: Moved Icon Labels and Hotkey Overrides into General as sub-tabs (Settings, Icon Labels, Hotkeys)
+- Options: Top-level tab count reduced from 7 to 5 (General, Standard Queue, Overlay, Offensive, Defensives)
+- Locales: Cleaned up 10 orphaned locale keys, added Show Defensive Icons and Defensive Queue translations
+
+### Removed
+- Overlay-only fallback: standard queue no longer force-shows when overlay can't find a nameplate (was causing standard queue to persist permanently in overlay-only mode)
+
 ## [4.7.5] - 2026-03-07
 
 ### Fixed

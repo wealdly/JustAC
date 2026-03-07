@@ -57,7 +57,7 @@ function Overlay.CreateTabArgs(addon)
                             down = L["Vertical - Down"],
                         },
                         sorting = { "out", "up", "down" },
-                        get = function() return addon.db.profile.nameplateOverlay.expansion or "out" end,
+                        get = function() return addon.db.profile.nameplateOverlay.expansion or "down" end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.expansion = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
@@ -68,7 +68,7 @@ function Overlay.CreateTabArgs(addon)
                     },
                     iconSize = {
                         type = "range",
-                        name = L["Nameplate Icon Size"],
+                        name = L["Icon Size"],
                         desc = L["Icon Size desc"],
                         order = 3,
                         width = "normal",
@@ -146,16 +146,30 @@ function Overlay.CreateTabArgs(addon)
                 order = 2,
                 args = {
                     maxIcons = {
-                        type = "select",
-                        name = L["Offensive Slots"],
+                        type = "range",
+                        name = L["Max Icons"],
                         desc = L["Max Icons desc"],
+                        min = 1, max = 7, step = 1,
                         order = 10,
                         width = "normal",
-                        values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
-                        sorting = { 1, 2, 3, 4, 5 },
                         get = function() return addon.db.profile.nameplateOverlay.maxIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxIcons = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function() return overlayDisabled(addon) end,
+                    },
+                    firstIconScale = {
+                        type = "range",
+                        name = L["Primary Spell Scale"],
+                        desc = L["Primary Spell Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 11,
+                        width = "normal",
+                        get = function() return addon.db.profile.nameplateOverlay.firstIconScale or 1.0 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.firstIconScale = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
@@ -165,7 +179,7 @@ function Overlay.CreateTabArgs(addon)
                         type = "select",
                         name = L["Highlight Mode"],
                         desc = L["Highlight Mode desc"],
-                        order = 11,
+                        order = 12,
                         width = "normal",
                         values = {
                             all         = L["All Glows"],
@@ -187,17 +201,31 @@ function Overlay.CreateTabArgs(addon)
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
-                    -- VISIBILITY (1-9)
+                    queueDesaturation = {
+                        type = "range",
+                        name = L["Queue Icon Fade"],
+                        desc = L["Queue Icon Fade desc"],
+                        min = 0, max = 1.0, step = 0.05,
+                        order = 13,
+                        width = "normal",
+                        get = function() return addon.db.profile.nameplateOverlay.queueIconDesaturation or 0 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.queueIconDesaturation = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return overlayDisabled(addon) end,
+                    },
+                    -- VISIBILITY (20-29)
                     visibilityHeader = {
                         type = "header",
                         name = L["Visibility"],
-                        order = 1,
+                        order = 20,
                     },
                     queueVisibility = {
                         type = "select",
-                        name = L["Nameplate Queue Visibility"],
-                        desc = L["Nameplate Queue Visibility desc"],
-                        order = 2,
+                        name = L["Queue Visibility"],
+                        desc = L["Queue Visibility desc"],
+                        order = 21,
                         width = "double",
                         values = {
                             always         = L["Always"],
@@ -216,7 +244,7 @@ function Overlay.CreateTabArgs(addon)
                         type = "toggle",
                         name = L["Hide When Mounted"],
                         desc = L["Hide When Mounted desc"],
-                        order = 3,
+                        order = 22,
                         width = "full",
                         disabled = function() return overlayDisabled(addon) end,
                         get = function() return addon.db.profile.nameplateOverlay.hideWhenMounted end,
@@ -239,11 +267,13 @@ function Overlay.CreateTabArgs(addon)
                         width = "normal",
                         func = function()
                             local npo = addon.db.profile.nameplateOverlay
-                            npo.maxIcons        = 3
-                            npo.glowMode        = "all"
-                            npo.showGlow        = nil  -- clear legacy key
-                            npo.queueVisibility = "always"
-                            npo.hideWhenMounted = false
+                            npo.maxIcons              = 3
+                            npo.firstIconScale        = 1.0
+                            npo.glowMode              = "all"
+                            npo.showGlow              = nil  -- clear legacy key
+                            npo.queueIconDesaturation = 0
+                            npo.queueVisibility       = "always"
+                            npo.hideWhenMounted       = false
                             addon:ForceUpdateAll()
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
@@ -262,7 +292,7 @@ function Overlay.CreateTabArgs(addon)
                 args = {
                     showDefensives = {
                         type = "toggle",
-                        name = L["Nameplate Show Defensives"],
+                        name = L["Show Defensive Icons"],
                         desc = L["Nameplate Show Defensives desc"],
                         order = 1,
                         width = "full",
@@ -277,10 +307,10 @@ function Overlay.CreateTabArgs(addon)
                     },
                     defensiveDisplayMode = {
                         type = "select",
-                        name = L["Nameplate Defensive Display Mode"],
-                        desc = L["Nameplate Defensive Display Mode desc"],
+                        name = L["Defensive Display Mode"],
+                        desc = L["Defensive Display Mode desc"],
                         order = 2,
-                        width = "normal",
+                        width = "double",
                         values = {
                             healthBased = L["When Health Low"],
                             combatOnly  = L["In Combat Only"],
@@ -298,16 +328,33 @@ function Overlay.CreateTabArgs(addon)
                         end,
                     },
                     maxDefensiveIcons = {
-                        type = "select",
-                        name = L["Nameplate Defensive Count"],
+                        type = "range",
+                        name = L["Defensive Max Icons"],
                         desc = L["Defensive Max Icons desc"],
+                        min = 1, max = 7, step = 1,
                         order = 3,
                         width = "normal",
-                        values = { [1] = "1", [2] = "2", [3] = "3", [4] = "4", [5] = "5" },
-                        sorting = { 1, 2, 3, 4, 5 },
                         get = function() return addon.db.profile.nameplateOverlay.maxDefensiveIcons or 3 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.maxDefensiveIcons = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            return overlayDisabled(addon)
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    defensiveIconScale = {
+                        type = "range",
+                        name = L["Defensive Icon Scale"],
+                        desc = L["Defensive Icon Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1,
+                        order = 3.5,
+                        width = "normal",
+                        get = function() return addon.db.profile.nameplateOverlay.defensiveIconScale or 1.0 end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.defensiveIconScale = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                         end,
@@ -344,7 +391,7 @@ function Overlay.CreateTabArgs(addon)
                     },
                     showHealthBar = {
                         type = "toggle",
-                        name = L["Nameplate Show Health Bars"],
+                        name = L["Show Health Bars"],
                         desc = L["Nameplate Show Health Bars desc"],
                         order = 5,
                         width = "full",
@@ -357,6 +404,30 @@ function Overlay.CreateTabArgs(addon)
                         disabled = function()
                             return overlayDisabled(addon)
                                 or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                    },
+                    showPetHealthBar = {
+                        type = "toggle",
+                        name = L["Show Pet Health Bar"],
+                        desc = L["Show Pet Health Bar desc"],
+                        order = 6,
+                        width = "full",
+                        get = function() return addon.db.profile.nameplateOverlay.showPetHealthBar end,
+                        set = function(_, val)
+                            addon.db.profile.nameplateOverlay.showPetHealthBar = val
+                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+                            if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                        end,
+                        disabled = function()
+                            return overlayDisabled(addon)
+                                or not addon.db.profile.nameplateOverlay.showDefensives
+                        end,
+                        hidden = function()
+                            local _, pc = UnitClass("player")
+                            local SDB = LibStub("JustAC-SpellDB", true)
+                            if not SDB or not pc then return true end
+                            return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
+                                or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
                         end,
                     },
                     -- RESET
@@ -376,8 +447,10 @@ function Overlay.CreateTabArgs(addon)
                             npo.showDefensives       = true
                             npo.defensiveDisplayMode  = "always"
                             npo.maxDefensiveIcons     = 3
+                            npo.defensiveIconScale    = 1.0
                             npo.defensiveGlowMode     = "all"
                             npo.showHealthBar         = true
+                            npo.showPetHealthBar      = true
                             addon:ForceUpdateAll()
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end

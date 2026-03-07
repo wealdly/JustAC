@@ -482,7 +482,7 @@ function StandardQueue.CreateTabArgs(addon)
                 args = {
                     enabled = {
                         type = "toggle",
-                        name = L["Enable Defensive Suggestions"],
+                        name = L["Show Defensive Icons"],
                         desc = L["Enable Defensive Suggestions desc"],
                         order = 1,
                         width = "full",

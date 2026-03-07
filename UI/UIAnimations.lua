@@ -268,7 +268,7 @@ end
 -- Gap-closers always animate (even OOC) to draw attention to the injected spell.
 -- Interrupts are combat-only anyway so they always animate too.
 
--- Gap-closer emphasis glow (gold marching ants, always animated)
+-- Gap-closer emphasis glow (gold marching ants, same animation as interrupt)
 local function StartGapCloserGlow(icon)
     if not icon then return end
 
