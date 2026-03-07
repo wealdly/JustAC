@@ -46,6 +46,10 @@ L["Proc Only"] = "Proc Only"
 L["No Glows"] = "No Glows"
 L["Show Key Press Flash"] = "Show Key Press Flash"
 L["Show Key Press Flash desc"] = "Flash the icon when you press its matching keybind."
+L["Grey Out While Casting"] = "Grey Out While Casting"
+L["Grey Out While Casting desc"] = "Desaturate queue icons while you are hardcasting a spell. The spell being cast stays full color."
+L["Grey Out While Channeling"] = "Grey Out While Channeling"
+L["Grey Out While Channeling desc"] = "Desaturate queue icons while you are channeling a spell. The channeled spell stays full color with a fill animation."
 
 -- Blacklist
 L["Remove"] = "Remove"
