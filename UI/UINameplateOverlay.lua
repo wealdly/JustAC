@@ -48,6 +48,10 @@ local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPAC
 local lastCooldownUpdate       = 0
 local COOLDOWN_UPDATE_INTERVAL = 0.08
 
+-- Position stabilization / glow hysteresis (matches UIRenderer)
+local POSITION_HOLD_TIME = 0.15  -- 150ms before positions 2+ can swap spells
+local GLOW_HOLD_TIME     = 0.10  -- 100ms before glow animation switches
+
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
 local defIcons         = {}   -- [1..N] defensive icon buttons
@@ -1049,9 +1053,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Out-of-range: red hotkey text when target is beyond interrupt range
+            -- Out-of-range: per-frame (IsSpellInRange is cheap NeverSecret).
             if showHotkey and interruptIcon.cachedHotkey and interruptIcon.cachedHotkey ~= "" then
-                if spellChanged or shouldUpdateCooldowns then
+                do
                     local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
                     if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
                         interruptIcon.cachedOutOfRange = (inRange == false)
@@ -1121,6 +1125,30 @@ function UINameplateOverlay.Render(addon, spellIDs)
         local spellID  = hasSpells and spellIDs[i] or nil
         local spellInfo = spellID and GetCachedSpellInfo and GetCachedSpellInfo(spellID) or nil
 
+        -- Position stabilization (positions 2+): hold the current spell for
+        -- POSITION_HOLD_TIME before replacing. Prevents rapid position shuffling
+        -- from proc/CD re-categorization. Position 1 always passes through.
+        if i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+            local holdElapsed = now - (icon.lastSpellSetTime or 0)
+            if holdElapsed < POSITION_HOLD_TIME then
+                local oldStillQueued = false
+                local nSpells = spellIDs and #spellIDs or 0
+                for j = 1, nSpells do
+                    if spellIDs[j] == icon.spellID then
+                        oldStillQueued = true
+                        break
+                    end
+                end
+                if oldStillQueued then
+                    local oldInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
+                    if oldInfo then
+                        spellID = icon.spellID
+                        spellInfo = oldInfo
+                    end
+                end
+            end
+        end
+
         if spellID and spellInfo then
             local spellChanged = (icon.spellID ~= spellID)
 
@@ -1132,6 +1160,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     icon.previousNormalizedHotkey = icon.normalizedHotkey
                 end
                 icon.spellID = spellID
+                icon.lastSpellSetTime = now
                 icon.iconTexture:SetTexture(spellInfo.iconID)
                 icon.iconTexture:Show()
                 -- Reset cooldown state for new spell
@@ -1153,8 +1182,42 @@ function UINameplateOverlay.Render(addon, spellIDs)
             local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
             local wantGapCloserGlow = isGapCloser and showGapCloserGlow
             local wantProcGlow = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+            local wantAssistedGlow = i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
+                and not wantGapCloserGlow and not wantProcGlow
 
-            if i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly") and not wantGapCloserGlow and not wantProcGlow then
+            -- Glow hysteresis (positions 2+): require desired glow state to be
+            -- stable for GLOW_HOLD_TIME before switching animations. Prevents
+            -- jarring animation restarts from transient proc toggles.
+            -- Position 1 always reflects current state immediately.
+            -- Encode glow intent as a simple tag for comparison.
+            local desiredGlow = wantGapCloserGlow and "gc" or wantProcGlow and "proc"
+                or wantAssistedGlow and "assisted" or "none"
+            if i > 1 then
+                if spellChanged then
+                    icon.lastRenderedGlow = desiredGlow
+                    icon.pendingGlowState = nil
+                elseif icon.lastRenderedGlow and desiredGlow ~= icon.lastRenderedGlow then
+                    if icon.pendingGlowState == desiredGlow then
+                        if now - (icon.pendingGlowTime or 0) >= GLOW_HOLD_TIME then
+                            icon.lastRenderedGlow = desiredGlow
+                            icon.pendingGlowState = nil
+                        end
+                    else
+                        icon.pendingGlowState = desiredGlow
+                        icon.pendingGlowTime = now
+                    end
+                    -- Keep previous glow state during hold period
+                    desiredGlow = icon.lastRenderedGlow
+                    wantGapCloserGlow = (desiredGlow == "gc")
+                    wantProcGlow = (desiredGlow == "proc")
+                    wantAssistedGlow = (desiredGlow == "assisted")
+                else
+                    icon.lastRenderedGlow = desiredGlow
+                    icon.pendingGlowState = nil
+                end
+            end
+
+            if wantAssistedGlow then
                 UIAnimations.StartAssistedGlow(icon, inCombat)
                 icon.hasAssistedGlow = true
             elseif icon.hasAssistedGlow then
@@ -1201,9 +1264,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Out-of-range indicator: red hotkey text if out of range, white otherwise
+            -- Out-of-range indicator: per-frame (IsSpellInRange is cheap NeverSecret).
             if showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= "" and C_Spell_IsSpellInRange then
-                if spellChanged or shouldUpdateCooldowns then
+                do
                     local inRange = C_Spell_IsSpellInRange(spellID)
                     if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
                         icon.cachedOutOfRange = (inRange == false)
@@ -1244,9 +1307,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
             elseif isChanneling or isCasting then
                 visualState = 1
             elseif inCombat then
-                if spellChanged or shouldUpdateCooldowns then
-                    icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-                end
+                -- Per-frame usability (NeverSecret, lightweight) so resource tint responds instantly.
+                icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
                 if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
                     visualState = 2
                 else
@@ -1296,6 +1358,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon._chargeCooldownShown = false
                 icon.normalizedHotkey     = nil
                 icon.cachedHotkey         = nil
+                icon.lastSpellSetTime     = nil
+                icon.lastRenderedGlow     = nil
+                icon.pendingGlowState     = nil
+                icon.pendingGlowTime      = nil
                 if UIAnimations then
                     if icon.hasAssistedGlow then UIAnimations.StopAssistedGlow(icon); icon.hasAssistedGlow = false end
                     if icon.hasProcGlow     then UIAnimations.HideProcGlow(icon);     icon.hasProcGlow     = false end
