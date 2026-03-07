@@ -25,6 +25,16 @@ local ipairs = ipairs
 local math_max = math.max
 local math_floor = math.floor
 
+-- Position stabilization: minimum display time before a spell at positions 2+
+-- can be replaced. Prevents visual flicker from rapid proc/CD re-categorization
+-- in SpellQueue. Position 1 always passes through Blizzard's suggestion.
+local POSITION_HOLD_TIME = 0.15  -- 150ms
+
+-- Glow hysteresis: require desired glow state to be stable for this duration
+-- before switching animations. Prevents jarring animation restarts when proc
+-- state toggles transiently (e.g. during GCD processing).
+local GLOW_HOLD_TIME = 0.10  -- 100ms
+
 -- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE = 1.0
 local lastInterruptUsedTime = 0
@@ -568,6 +578,54 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     elseif defensiveIcon._hasChannelFill and UIAnimations then
         UIAnimations.StopChannelFill(defensiveIcon)
     end
+
+    -- ── Per-frame proc glow re-evaluation ───────────────────────────────────
+    -- ShowDefensiveIcon does a one-shot glow setup but proc state can change
+    -- mid-combat while the icon is still displayed. Re-evaluate every frame
+    -- so glow appears/disappears within one render pass (IsSpellProcced is a
+    -- cache lookup, not an API call — effectively free).
+    -- Glow hysteresis: require desired state to be stable for GLOW_HOLD_TIME
+    -- before switching animations, preventing flicker from transient proc toggles.
+    if not defensiveIcon.isItem and UIAnimations then
+        local isProc = IsSpellProcced(id)
+        local glowMode = defensiveIcon.defGlowMode or "all"
+        local wantProcGlow = isProc and (glowMode == "all" or glowMode == "procOnly")
+        local hasProcGlow = defensiveIcon.ProcGlowFrame and defensiveIcon.ProcGlowFrame:IsShown()
+
+        -- Apply hysteresis: don't toggle glow until desired state has been
+        -- stable for GLOW_HOLD_TIME (prevents animation restart on transient
+        -- proc state changes).
+        local now = GetTime()
+        local applyChange = false
+        if wantProcGlow ~= hasProcGlow then
+            if defensiveIcon.pendingDefGlow == wantProcGlow then
+                if now - (defensiveIcon.pendingDefGlowTime or 0) >= GLOW_HOLD_TIME then
+                    applyChange = true
+                    defensiveIcon.pendingDefGlow = nil
+                end
+            else
+                defensiveIcon.pendingDefGlow = wantProcGlow
+                defensiveIcon.pendingDefGlowTime = now
+            end
+        else
+            defensiveIcon.pendingDefGlow = nil
+        end
+
+        if applyChange then
+            if wantProcGlow and not hasProcGlow then
+                UIAnimations.StopDefensiveGlow(defensiveIcon)
+                UIAnimations.ShowProcGlow(defensiveIcon)
+            elseif not wantProcGlow and hasProcGlow then
+                UIAnimations.HideProcGlow(defensiveIcon)
+                -- Restore marching ants if this is position 1
+                local showMarching = defensiveIcon.defShowGlow
+                    and (glowMode == "all" or glowMode == "primaryOnly")
+                if showMarching then
+                    UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
+                end
+            end
+        end
+    end
 end
 
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
@@ -680,6 +738,11 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local defGlowMode = glowModeOverride
         or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
         or "all"
+
+    -- Store glow context so per-frame re-evaluation in UpdateDefensiveVisualState
+    -- can toggle proc glow and restore marching ants without access to caller params.
+    defensiveIcon.defGlowMode = defGlowMode
+    defensiveIcon.defShowGlow = showGlow
 
     local isProc = not isItem and IsSpellProcced(id)
     local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
@@ -908,12 +971,65 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
     end
 
-    -- Update defensive icon visual states every frame (channeling + usability),
-    -- giving them the same responsiveness as offensive queue icons.
+    -- Cooldown throttle: shared by defensive and offensive icon updates below.
+    local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
+    if shouldUpdateCooldowns then
+        lastCooldownUpdate = currentTime
+    end
+
+    -- Update defensive icon visual states every frame (channeling + usability +
+    -- proc glow), giving them the same responsiveness as offensive queue icons.
+    -- Also refresh hotkeys when bindings change and poll cooldown widgets so CD
+    -- resets (talent procs) are reflected promptly.
     if addon.defensiveIcons then
         for _, defIcon in ipairs(addon.defensiveIcons) do
             if defIcon:IsShown() then
                 UIRenderer.UpdateDefensiveVisualState(defIcon)
+                -- Hotkey refresh: re-lookup when bindings changed or cached value
+                -- is empty (proc override may not have propagated on first frame).
+                if hotkeysDirty or not defIcon.cachedHotkey or defIcon.cachedHotkey == "" then
+                    local defID = defIcon.currentID
+                    if defID then
+                        local defHotkey
+                        if defIcon.isItem then
+                            defHotkey = ""
+                            for slot = 1, 180 do
+                                local actionType, actionID = GetActionInfo(slot)
+                                if actionType == "item" and actionID == defID then
+                                    defHotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. slot) or ""
+                                    if defHotkey == "" then
+                                        local buttonIndex = ((slot - 1) % 12) + 1
+                                        defHotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
+                                    end
+                                    break
+                                end
+                            end
+                        else
+                            defHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(defID) or ""
+                        end
+                        if defIcon.cachedHotkey ~= defHotkey then
+                            defIcon.cachedHotkey = defHotkey
+                            local defOverlays = profile.textOverlays
+                            local defShowHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
+                            local displayDefHotkey = defShowHotkeys and defHotkey or ""
+                            defIcon.hotkeyText:SetText(displayDefHotkey)
+                            if defHotkey ~= "" then
+                                local normalized = NormalizeHotkey(defHotkey)
+                                if defIcon.normalizedHotkey and defIcon.normalizedHotkey ~= normalized then
+                                    defIcon.previousNormalizedHotkey = defIcon.normalizedHotkey
+                                    defIcon.hotkeyChangeTime = currentTime
+                                end
+                                defIcon.normalizedHotkey = normalized
+                            end
+                        end
+                    end
+                end
+                -- Cooldown widget refresh on the same 0.08s throttle as offensive icons
+                -- so CD resets are reflected promptly (swipe self-animates but won't
+                -- clear on a reset without an explicit UpdateButtonCooldowns call).
+                if shouldUpdateCooldowns then
+                    UpdateButtonCooldowns(defIcon)
+                end
             end
         end
     end
@@ -924,11 +1040,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showFlash = profile.showFlash ~= false
     local GetSpellHotkey = (showHotkeys or showFlash) and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
     local GetCachedSpellInfo = BlizzardAPI.GetCachedSpellInfo
-    
-    local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
-    if shouldUpdateCooldowns then
-        lastCooldownUpdate = currentTime
-    end
     
     -- Glow frames at incorrect scale appear when hidden with active glows.
     if not shouldShowFrame then
@@ -999,9 +1110,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
 
-            -- Red text = out of interrupt range.
+            -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
             if intShowHotkeys and intIcon.cachedHotkey and intIcon.cachedHotkey ~= "" then
-                if spellChanged or shouldUpdateCooldowns then
+                do
                     local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
                     if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
                         intIcon.cachedOutOfRange = (inRange == false)
@@ -1071,6 +1182,32 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             local spellID = hasSpells and spellIDs[i] or nil
             local spellInfo = spellID and GetCachedSpellInfo(spellID)
 
+            -- Position stabilization (positions 2+): hold the current spell for
+            -- POSITION_HOLD_TIME before replacing it. Prevents rapid position
+            -- shuffling when SpellQueue re-categorizes spells (proc gained/lost,
+            -- CD expired). If the old spell is no longer anywhere in the queue
+            -- (consumed/cast), allow immediate replacement.
+            -- Position 1 always passes through the Blizzard assistant suggestion.
+            if i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+                local holdElapsed = currentTime - (icon.lastSpellSetTime or 0)
+                if holdElapsed < POSITION_HOLD_TIME then
+                    local oldStillQueued = false
+                    for j = 1, spellCount do
+                        if spellIDs[j] == icon.spellID then
+                            oldStillQueued = true
+                            break
+                        end
+                    end
+                    if oldStillQueued then
+                        local oldInfo = GetCachedSpellInfo(icon.spellID)
+                        if oldInfo then
+                            spellID = icon.spellID
+                            spellInfo = oldInfo
+                        end
+                    end
+                end
+            end
+
             if spellID and spellInfo then
                 local spellChanged = (icon.spellID ~= spellID)
                 
@@ -1084,6 +1221,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                             icon.previousNormalizedHotkey = icon.normalizedHotkey
                         end
                     end
+                    icon.lastSpellSetTime = currentTime
                 end
                 
                 icon.spellID = spellID
@@ -1126,6 +1264,32 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 -- Proc glow replaces all other glows to avoid confusing layered animations.
                 local glowState = ResolveGlowState(i, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
+
+                -- Glow hysteresis (positions 2+): require desired glow state to be
+                -- stable for GLOW_HOLD_TIME before switching animations. Prevents
+                -- jarring animation restarts from transient proc toggles.
+                -- Position 1 always reflects current state immediately.
+                if i > 1 then
+                    if spellChanged then
+                        -- Spell changed: reset hysteresis, apply immediately
+                        icon.lastRenderedGlow = glowState
+                        icon.pendingGlowState = nil
+                    elseif icon.lastRenderedGlow and glowState ~= icon.lastRenderedGlow then
+                        if icon.pendingGlowState == glowState then
+                            if currentTime - (icon.pendingGlowTime or 0) >= GLOW_HOLD_TIME then
+                                icon.lastRenderedGlow = glowState
+                                icon.pendingGlowState = nil
+                            end
+                        else
+                            icon.pendingGlowState = glowState
+                            icon.pendingGlowTime = currentTime
+                        end
+                        glowState = icon.lastRenderedGlow
+                    else
+                        icon.lastRenderedGlow = glowState
+                        icon.pendingGlowState = nil
+                    end
+                end
 
                 if glowState == GLOW_ASSISTED then
                     UIAnimations.StartAssistedGlow(icon, isInCombat)
@@ -1191,16 +1355,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 -- Blizzard's flash is button-bound, not spell-bound — can't mirror it.
                 
-                -- IsSpellInRange may return secret values; fail-safe to white text.
+                -- IsSpellInRange: per-frame check (cheap NeverSecret API, no throttle).
                 local isOutOfRange = false
                 if displayHotkey ~= "" and C_Spell_IsSpellInRange then
-                    if spellChanged or shouldUpdateCooldowns then
-                        local inRange = C_Spell_IsSpellInRange(spellID)
-                        if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                            icon.cachedOutOfRange = (inRange == false)
-                        else
-                            icon.cachedOutOfRange = false
-                        end
+                    local inRange = C_Spell_IsSpellInRange(spellID)
+                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+                        icon.cachedOutOfRange = (inRange == false)
+                    else
+                        icon.cachedOutOfRange = false
                     end
                     isOutOfRange = icon.cachedOutOfRange or false
                 end
@@ -1244,9 +1406,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 elseif isChanneling or isCasting then
                     visualState = 1
                 elseif isInCombat then
-                    if spellChanged or shouldUpdateCooldowns then
-                        icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
-                    end
+                    -- Per-frame usability check (IsSpellUsable is NeverSecret and
+                    -- lightweight) so resource-based tinting responds instantly.
+                    icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
                     if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
                         visualState = 2
                     else
@@ -1314,6 +1476,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastBaseDesaturation = nil
                     icon.cachedOutOfRange = nil
                     icon.normalizedHotkey = nil  -- Stale value causes wrong previousNormalizedHotkey on refill.
+                    icon.lastSpellSetTime = nil
+                    icon.lastRenderedGlow = nil
+                    icon.pendingGlowState = nil
+                    icon.pendingGlowTime = nil
                     UIAnimations.StopAssistedGlow(icon)
                     UIAnimations.HideProcGlow(icon)
                     UIAnimations.StopGapCloserGlow(icon)
@@ -1330,7 +1496,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     hotkeysDirty = false
     
-    -- Defensive cooldowns are updated by UpdateDefensiveCooldowns() — not here.
+    -- Defensive cooldowns + hotkeys + glow are now updated per-frame in the
+    -- defensive icon loop above (alongside UpdateDefensiveVisualState).
     
     -- fadeOut's OnFinished can hide the frame after shouldShow flipped back to true
     -- (e.g. spells briefly cleared during Fel Rush), so also check for desync.
