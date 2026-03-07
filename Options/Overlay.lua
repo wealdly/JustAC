@@ -126,7 +126,7 @@ function Overlay.CreateTabArgs(addon)
                         func = function()
                             local npo = addon.db.profile.nameplateOverlay
                             npo.reverseAnchor = false
-                            npo.expansion     = "out"
+                            npo.expansion     = "down"
                             npo.iconSize      = 32
                             npo.iconSpacing   = 2
                             npo.opacity       = 1.0
