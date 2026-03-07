@@ -1,18 +1,35 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options/General - Shared settings that apply to both display surfaces
-local General = LibStub:NewLibrary("JustAC-OptionsGeneral", 2)
+local General = LibStub:NewLibrary("JustAC-OptionsGeneral", 4)
 if not General then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function General.CreateTabArgs(addon)
+    local Labels  = LibStub("JustAC-OptionsLabels", true)
+    local Hotkeys = LibStub("JustAC-OptionsHotkeys", true)
+
+    -- Build sub-tab args for Icon Labels and Hotkey Overrides
+    local labelsTab  = Labels  and Labels.CreateTabArgs  and Labels.CreateTabArgs(addon)  or nil
+    local hotkeysTab = Hotkeys and Hotkeys.CreateTabArgs and Hotkeys.CreateTabArgs(addon) or nil
+    -- Re-order sub-tabs: Settings=1, Icon Labels=2, Hotkey Overrides=3
+    if labelsTab  then labelsTab.order  = 2 end
+    if hotkeysTab then hotkeysTab.order = 3 end
+
     return {
         type = "group",
         name = L["General"],
         order = 1,
+        childGroups = "tab",
         args = {
+            -- ── SUB-TAB 1: SETTINGS ─────────────────────────────────
+            settings = {
+                type = "group",
+                name = L["Settings"],
+                order = 1,
+                args = {
             info = {
                 type = "description",
                 name = L["General description"],
@@ -216,6 +233,124 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            -- OFFENSIVE QUEUE CONTENT (30-39)
+            offensiveQueueHeader = {
+                type = "header",
+                name = L["Offensive Queue"],
+                order = 30,
+            },
+            includeHiddenAbilities = {
+                type = "toggle",
+                name = L["Include All Available Abilities"],
+                desc = L["Include All Available Abilities desc"],
+                order = 31,
+                width = "full",
+                get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
+                set = function(_, val)
+                    addon.db.profile.includeHiddenAbilities = val
+                    addon:ForceUpdate()
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            showSpellbookProcs = {
+                type = "toggle",
+                name = L["Insert Procced Abilities"],
+                desc = L["Insert Procced Abilities desc"],
+                order = 32,
+                width = "full",
+                get = function() return addon.db.profile.showSpellbookProcs or false end,
+                set = function(_, val)
+                    addon.db.profile.showSpellbookProcs = val
+                    addon:ForceUpdate()
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            hideItemAbilities = {
+                type = "toggle",
+                name = L["Allow Item Abilities"],
+                desc = L["Allow Item Abilities desc"],
+                order = 33,
+                width = "full",
+                get = function() return not addon.db.profile.hideItemAbilities end,
+                set = function(_, val)
+                    addon.db.profile.hideItemAbilities = not val
+                    addon:ForceUpdate()
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            -- DEFENSIVE QUEUE CONTENT (40-49)
+            defensiveQueueHeader = {
+                type = "header",
+                name = L["Defensive Queue"],
+                order = 40,
+            },
+            showDefensiveProcs = {
+                type = "toggle",
+                name = L["Insert Procced Defensives"],
+                desc = L["Insert Procced Defensives desc"],
+                order = 41,
+                width = "full",
+                get = function() return addon.db.profile.defensives.showProcs ~= false end,
+                set = function(_, val)
+                    addon.db.profile.defensives.showProcs = val
+                    addon:ForceUpdateAll()
+                end,
+                disabled = function()
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
+                end,
+            },
+            allowDefensiveItems = {
+                type = "toggle",
+                name = L["Allow Items in Spell Lists"],
+                desc = L["Allow Items in Spell Lists desc"],
+                order = 42,
+                width = "full",
+                get = function() return addon.db.profile.defensives.allowItems == true end,
+                set = function(_, val)
+                    addon.db.profile.defensives.allowItems = val
+                    local Defensives = LibStub("JustAC-OptionsDefensives", true)
+                    if Defensives then Defensives.UpdateDefensivesOptions(addon) end
+                end,
+                disabled = function()
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
+                end,
+            },
+            autoInsertPotions = {
+                type = "toggle",
+                name = L["Auto-Insert Health Potions"],
+                desc = L["Auto-Insert Health Potions desc"],
+                order = 43,
+                width = "full",
+                get = function() return addon.db.profile.defensives.autoInsertPotions ~= false end,
+                set = function(_, val)
+                    addon.db.profile.defensives.autoInsertPotions = val
+                    addon:ForceUpdateAll()
+                end,
+                disabled = function()
+                    local dm = addon.db.profile.displayMode or "queue"
+                    if dm == "disabled" then return true end
+                    local standardEnabled = addon.db.profile.defensives.enabled
+                    local npo = addon.db.profile.nameplateOverlay
+                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                    return not standardEnabled and not overlayEnabled
+                end,
+            },
             -- RESET (990+)
             resetHeader = {
                 type = "header",
@@ -238,12 +373,27 @@ function General.CreateTabArgs(addon)
                     p.gamepadIconStyle    = "xbox"
                     p.inputPreference     = "auto"
                     p.interruptAlertSound = "none"
+                    -- Offensive queue content
+                    p.includeHiddenAbilities = true
+                    p.showSpellbookProcs     = true
+                    p.hideItemAbilities      = false
+                    -- Defensive queue content
+                    p.defensives.showProcs        = true
+                    p.defensives.allowItems       = true
+                    p.defensives.autoInsertPotions = true
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
                     addon:UpdateFrameSize()
+                    addon:ForceUpdateAll()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },
-        }
+                },
+            },
+            -- ── SUB-TAB 2: ICON LABELS ──────────────────────────────
+            iconLabels = labelsTab,
+            -- ── SUB-TAB 3: HOTKEY OVERRIDES ─────────────────────────
+            hotkeyOverrides = hotkeysTab,
+        },
     }
 end

@@ -66,7 +66,7 @@ L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Entrer le texte du ra
 L["Custom Hotkeys"] = "Raccourcis personnalisés"
 
 -- Defensives
-L["Enable Defensive Suggestions"] = "Activer les suggestions défensives"
+L["Show Defensive Icons"] = "Afficher les icônes défensives"
 L["Add to %s"] = "Ajouter à %s"
 
 -- Orientation values
@@ -148,7 +148,7 @@ L["disabled when Defensive Queue is enabled"] = "désactivé quand la file défe
 L["Defensive Icon Scale"] = "Échelle de l'icône défensive"
 L["Defensive Icon Scale desc"] = "Multiplicateur d'échelle pour les icônes défensives"
 L["Defensive Max Icons"] = "Icônes maximum"
-L["Defensive Max Icons desc"] = "Sorts défensifs à afficher (1-3)"
+L["Defensive Max Icons desc"] = "Sorts défensifs à afficher"
 L["Profiles"] = "Profils"
 L["Profiles desc"] = "Gestion des profils de personnage et de spécialisation"
 -- Per-spec profile switching
@@ -220,17 +220,12 @@ L["Show Pet Health Bar desc"] = "Barre de santé compacte du familier (classes a
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Attacher les icônes directement à la plaque de nom de la cible. Indépendant du panneau principal — l'un ou les deux peuvent être activés."
-L["Offensive Slots"] = "Icônes max"
 L["Offensive Queue"] = "File offensive"
+L["Defensive Queue"] = "File défensive"
 L["Defensive Suggestions"] = "Suggestions défensives"
 L["Reverse Anchor"] = "Inverser l'ancrage"
 L["Reverse Anchor desc"] = "Par défaut les icônes DPS apparaissent à droite de la plaque. Activer pour les placer à gauche. Les icônes défensives sont toujours du côté opposé."
-L["Nameplate Icon Size"] = "Taille des icônes"
-L["Nameplate Show Defensives"] = "Afficher les icônes défensives"
 L["Nameplate Show Defensives desc"] = "Afficher les icônes défensives du côté opposé de la plaque."
-L["Nameplate Defensive Display Mode"] = "Visibilité défensive"
-L["Nameplate Defensive Display Mode desc"] = "Si vie basse : afficher seulement quand la vie descend sous les seuils.\nEn combat uniquement : icônes défensives seulement en combat.\nToujours : afficher en permanence."
-L["Nameplate Defensive Count"] = "Icônes max"
 L["Interrupt Mode"] = "Rappel d'interruption"
 L["Interrupt Mode desc"] = "Contrôle quand l'icône de rappel d'interruption apparaît et quelle capacité suggérer."
 L["Sounds"] = "Sons"
@@ -241,7 +236,6 @@ L["Interrupt Mode Disabled"] = "Désactivé — Aucune icône d'interruption"
 L["Interrupt Mode Kick Only"] = "Kick uniquement — Suggérer le kick sur sorts interruptibles"
 L["Interrupt Mode CC Shielded"] = "Kick + CC — Aussi étourdir/effrayer les sorts protégés"
 L["Interrupt Mode CC Prefer"] = "Préférer CC — Étourdissements plutôt que kicks ; kick sur boss"
-L["Nameplate Show Health Bars"] = "Afficher les barres de santé"
 L["Nameplate Show Health Bars desc"] = "Afficher des barres de santé compactes du joueur et du familier au-dessus des icônes défensives. La barre du familier se masque sans familier actif. Se masque automatiquement sans défensifs visibles."
 
 

@@ -188,6 +188,12 @@ Two-tier health thresholds in `JustAC.lua`:
 - `UnitPower("player")` — SECRET (default=primary resource: energy, mana, rage, focus)
 - Target health/power — `UnitHealth/UnitHealthMax/UnitPower/UnitPowerMax("target")` — ALL SECRET
 
+**Always secret (verified 2026-03-07):**
+- `UnitHealthPercent(unit)` — SECRET even OUT OF COMBAT. Unusable for any logic. Do NOT use.
+- `UnitHealthMissing(unit)` — SECRET (verified 2026-03-07). Same as UnitHealthPercent.
+- `UnitPowerPercent(unit)` — SECRET (verified 2026-03-07). Do NOT use.
+- `UnitPowerMissing(unit)` — SECRET (verified 2026-03-07). Do NOT use.
+
 **NeverSecret Target APIs (verified 2026-02-24):**
 - `UnitClassification("target")` — `"normal"`, `"elite"`, `"worldboss"`, `"rare"`, `"rareelite"`, `"minus"`
 - `UnitIsUnit("target", "boss1-5")` — Boss slot detection
