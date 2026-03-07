@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 4
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 5
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -440,16 +440,21 @@ end
 --------------------------------------------------------------------------------
 -- Target cast interruptibility tracking (event-driven, NeverSecret)
 --------------------------------------------------------------------------------
--- UNIT_SPELLCAST_INTERRUPTIBLE / UNIT_SPELLCAST_NOT_INTERRUPTIBLE fire with
--- real (non-secret) payloads. By tracking these events we get a definitive
--- boolean for the target's cast interruptibility, even when UnitCastingInfo's
--- notInterruptible field is secret in combat.
+-- Three sources, combined for maximum compatibility with third-party addons
+-- (Platynator, Plater, ElvUI, etc.) that may hide/replace Blizzard cast bars:
 --
--- On the INITIAL cast start, UnitCastingInfo's notInterruptible is secret.
--- We set targetCastInterruptKnown = false until one of the INTERRUPTIBLE /
--- NOT_INTERRUPTIBLE events fires (which happens within the same frame for
--- most casts). Callers should fall back to issecretvalue() + fail-open
--- when targetCastInterruptKnown is false.
+--  1. UNIT_SPELLCAST_INTERRUPTIBLE / UNIT_SPELLCAST_NOT_INTERRUPTIBLE events
+--     fire for mid-cast transitions (e.g. boss becoming immune). Event name
+--     IS the data — real (non-secret) boolean.
+--
+--  2. UnitCastingInfo() / UnitChannelInfo() notInterruptible field, read
+--     immediately in the UNIT_SPELLCAST_START handler. This catches casts
+--     that START as non-interruptible (grey bar), which do NOT fire the
+--     transition events. In 11.x this is a plain boolean; in 12.0 combat
+--     it may be secret (fail-open in that case).
+--
+--  3. Cast bar visual inspection in UIRenderer (BorderShield / .Shield) as
+--     a final fallback when the above are inconclusive.
 --
 -- Pattern learned from:
 --   oUF (ElvUI): derives notInterruptible from event name string
@@ -463,6 +468,8 @@ local targetCastInterruptible = true   -- fail-open default
 local targetCastInterruptKnown = false -- true once event provides definitive state
 local targetCastActive = false         -- true when a cast/channel is in progress
 
+local UnitCastingInfo  = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
+local UnitChannelInfo  = UnitChannelInfo  ---@diagnostic disable-line: undefined-global
 local castEventFrame = nil
 
 local function InitTargetCastTracking()
@@ -490,10 +497,25 @@ local function InitTargetCastTracking()
             targetCastInterruptible = false
             targetCastInterruptKnown = true
         elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
-            -- New cast started; interruptibility unknown until next event
+            -- New cast started. INTERRUPTIBLE/NOT_INTERRUPTIBLE events only
+            -- fire for mid-cast transitions, NOT for initially non-interruptible
+            -- casts. Read notInterruptible from the API immediately so we don't
+            -- depend on a visible cast bar (which third-party addons may hide).
             targetCastActive = true
             targetCastInterruptKnown = false
-            targetCastInterruptible = true  -- fail-open until event clarifies
+            targetCastInterruptible = true  -- fail-open until determined
+
+            local notInt
+            if event == "UNIT_SPELLCAST_START" then
+                _, _, _, _, _, _, _, notInt = UnitCastingInfo("target")
+            else
+                _, _, _, _, _, _, notInt = UnitChannelInfo("target")
+            end
+            -- In 11.x: real boolean. In 12.0 combat: may be secret.
+            if notInt ~= nil and not IsSecretValue(notInt) then
+                targetCastInterruptible = not notInt
+                targetCastInterruptKnown = true
+            end
         elseif event == "UNIT_SPELLCAST_STOP"
             or event == "UNIT_SPELLCAST_CHANNEL_STOP"
             or event == "UNIT_SPELLCAST_FAILED"
