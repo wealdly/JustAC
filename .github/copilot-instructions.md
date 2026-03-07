@@ -231,6 +231,18 @@ Two-tier health thresholds in `JustAC.lua`:
 
 **See:** `Documentation/12.0_COMPATIBILITY.md` → "Combat-Safe Signal Reference" for full matrix
 
+**C_Secrets Pre-Flight Guards (verified 2026-03-07):**
+Fast boolean checks — avoid per-value `issecretvalue()` overhead:
+- `C_Secrets.HasSecretRestrictions()` — `true` in combat, `false` out of combat
+- `C_Secrets.ShouldAurasBeSecret()` — `true` in combat. Fast early-exit for aura scans.
+- `C_Secrets.ShouldCooldownsBeSecret()` — `true` in combat. Blanket, no args.
+- `C_Secrets.ShouldSpellCooldownBeSecret(spellID)` — per-spell, requires spellID arg
+- `C_Secrets.ShouldUnitHealthMaxBeSecret(unit)` — `false` in combat (UnitHealthMax is NeverSecret)
+- `C_Secrets.ShouldUnitPowerBeSecret(unit[, powerType])` — no-arg=`true` (conservative); per-type is granular (Holy Power=`false`)
+- `C_Secrets.ShouldUnitThreatStateBeSecret(unit)` — `false` in combat (NeverSecret)
+- `C_RestrictedActions.IsAddOnRestrictionActive()` — addon restriction state
+- See `Documentation/MIDNIGHT_POST_LAUNCH_RESEARCH.md` for full function list (25+ functions)
+
 **Secret Values (WoW 12.0+):**
 - Blizzard hides certain combat data to prevent automation
 - **Detection:** `BlizzardAPI.IsSecretValue(value)` returns `true` for secret data

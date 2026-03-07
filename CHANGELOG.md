@@ -1,6 +1,14 @@
 
 # Changelog
 
+## [4.8.1] - 2026-03-07
+
+### Fixed
+- Overlay Reset to Defaults now correctly resets expansion direction to "down" (was incorrectly set to "out")
+- Locales: Removed 30 dead/orphaned keys from all 8 non-English locale files
+- Locales: Added 7–12 missing translation keys per locale (Grey Out While Casting/Channeling, Queue Visibility, Settings, Reset desc keys)
+- Locales: All 9 locale files now have exactly 230 keys with 0 dead and 0 missing
+
 ## [4.8.0] - 2026-03-07
 
 ### Added
