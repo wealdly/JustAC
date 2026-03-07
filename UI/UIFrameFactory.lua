@@ -356,8 +356,6 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     button.fadeOut = fadeOut
 
     -- State tracking fields
-    button.lastCooldownStart = 0
-    button.lastCooldownDuration = 0
     button.spellID = nil
     button.itemID = nil
     button.itemCastSpellID = nil
