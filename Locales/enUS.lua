@@ -8,6 +8,7 @@ if not L then return end
 -- General UI
 L["JustAssistedCombat"] = "JustAssistedCombat"
 L["General"] = "General"
+L["Settings"] = "Settings"
 L["System"] = "System"
 L["Offensive"] = "Offensives"
 L["Queue Settings"] = "Queue Settings"
@@ -70,7 +71,7 @@ L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Enter the hotkey text
 L["Custom Hotkeys"] = "Custom Hotkeys"
 
 -- Defensives
-L["Enable Defensive Suggestions"] = "Enable Defensive Suggestions"
+L["Show Defensive Icons"] = "Show Defensive Icons"
 L["Add to %s"] = "Add to %s"
 
 -- Orientation values
@@ -175,7 +176,7 @@ L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only
 L["Defensive Icon Scale"] = "Icon Scale"
 L["Defensive Icon Scale desc"] = "Scale multiplier for defensive spell icons"
 L["Defensive Max Icons"] = "Max Icons"
-L["Defensive Max Icons desc"] = "Maximum defensive icons to display (1-3)"
+L["Defensive Max Icons desc"] = "Maximum defensive icons to display"
 L["Profiles"] = "Profiles"
 L["Profiles desc"] = "Character and spec profile management"
 -- Per-spec profile switching
@@ -251,19 +252,12 @@ L["None"] = "None"
 -- Nameplate Overlay
 L["Nameplate Overlay"] = "Overlay Queue"
 L["Nameplate Overlay desc"] = "Attach queue icons directly to the target's nameplate. Fully independent of the main panel — either or both can be enabled."
-L["Offensive Slots"] = "Max Icons"
 L["Offensive Queue"] = "Offensive Queue"
+L["Defensive Queue"] = "Defensive Queue"
 L["Defensive Suggestions"] = "Defensive Suggestions"
 L["Reverse Anchor"] = "Reverse Anchor"
 L["Reverse Anchor desc"] = "By default DPS icons appear on the right side of the nameplate. Enable to place them on the left instead. Defensive icons always appear on the opposite side."
-L["Nameplate Icon Size"] = "Icon Size"
-L["Nameplate Show Defensives"] = "Show Defensive Icons"
 L["Nameplate Show Defensives desc"] = "Show defensive queue icons on the opposite side of the nameplate."
-L["Nameplate Queue Visibility"] = "Queue Visibility"
-L["Nameplate Queue Visibility desc"] = "Always: show at all times.\nIn Combat Only: hide while out of combat.\nRequire Hostile Target: only show when targeting an attackable enemy."
-L["Nameplate Defensive Display Mode"] = "Defensive Visibility"
-L["Nameplate Defensive Display Mode desc"] = "When Health Low: show only when health drops below thresholds.\nIn Combat Only: show defensive icons only while in combat.\nAlways: show at all times."
-L["Nameplate Defensive Count"] = "Max Icons"
 L["Interrupt Mode"] = "Interrupt Reminder"
 L["Interrupt Mode desc"] = "Controls when the interrupt reminder icon appears and which ability it suggests."
 L["Sounds"] = "Sounds"
@@ -274,7 +268,6 @@ L["Interrupt Mode Disabled"] = "Disabled — No interrupt icons"
 L["Interrupt Mode Kick Only"] = "Kick Only — Suggest kick on interruptible casts"
 L["Interrupt Mode CC Shielded"] = "Kick + CC — Also stun/fear uninterruptible casts"
 L["Interrupt Mode CC Prefer"] = "Prefer CC — Stuns over kicks; kick on bosses"
-L["Nameplate Show Health Bars"] = "Show Health Bars"
 L["Nameplate Show Health Bars desc"] = "Show compact player and pet health bars above the defensive icon cluster. Pet bar auto-hides when no pet is active. Hides automatically when no defensives are visible."
 
 -- Reset buttons

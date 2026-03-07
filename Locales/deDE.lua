@@ -66,7 +66,7 @@ L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Anzuzeigenden Hotkey-
 L["Custom Hotkeys"] = "Benutzerdefinierte Hotkeys"
 
 -- Defensives
-L["Enable Defensive Suggestions"] = "Verteidigungsvorschläge aktivieren"
+L["Show Defensive Icons"] = "Defensiv-Symbole anzeigen"
 L["Add to %s"] = "Zu %s hinzufügen"
 
 -- Orientation values
@@ -148,7 +148,7 @@ L["disabled when Defensive Queue is enabled"] = "deaktiviert wenn Defensiv-Warte
 L["Defensive Icon Scale"] = "Defensiv-Symbol-Skalierung"
 L["Defensive Icon Scale desc"] = "Skalierungsmultiplikator für Defensiv-Symbole"
 L["Defensive Max Icons"] = "Maximale Symbole"
-L["Defensive Max Icons desc"] = "Anzahl Defensiv-Zauber gleichzeitig (1-3)"
+L["Defensive Max Icons desc"] = "Anzahl Defensiv-Zauber gleichzeitig"
 L["Profiles"] = "Profile"
 L["Profiles desc"] = "Charakter- und Spezialisierungsprofilverwaltung"
 -- Per-spec profile switching
@@ -220,17 +220,12 @@ L["Show Pet Health Bar desc"] = "Kompakte Begleiter-Lebensleiste (nur Begleiterk
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
 L["Nameplate Overlay desc"] = "Warteschlangen-Symbole direkt an die Namensplakette des Ziels heften. Vollständig unabhängig vom Hauptpanel — beides kann separat aktiviert werden."
-L["Offensive Slots"] = "Max. Symbole"
 L["Offensive Queue"] = "Offensiv-Warteschlange"
+L["Defensive Queue"] = "Defensiv-Warteschlange"
 L["Defensive Suggestions"] = "Defensiv-Vorschläge"
 L["Reverse Anchor"] = "Anker umkehren"
 L["Reverse Anchor desc"] = "Standardmäßig erscheinen DPS-Symbole rechts der Namensplakette. Aktivieren um sie links zu platzieren. Defensiv-Symbole erscheinen immer auf der gegenüberliegenden Seite."
-L["Nameplate Icon Size"] = "Symbolgröße"
-L["Nameplate Show Defensives"] = "Defensiv-Symbole anzeigen"
 L["Nameplate Show Defensives desc"] = "Defensiv-Symbole auf der gegenüberliegenden Seite der Namensplakette anzeigen."
-L["Nameplate Defensive Display Mode"] = "Defensiv-Sichtbarkeit"
-L["Nameplate Defensive Display Mode desc"] = "Nur bei niedrigem Leben: Defensiv-Symbole nur unter Gesundheitsschwelle anzeigen.\nNur im Kampf: Defensiv-Symbole nur im Kampf anzeigen.\nImmer: Jederzeit anzeigen."
-L["Nameplate Defensive Count"] = "Max. Symbole"
 L["Interrupt Mode"] = "Unterbrechungserinnerung"
 L["Interrupt Mode desc"] = "Steuert wann das Unterbrechungserinnerungssymbol erscheint und welche Fähigkeit vorgeschlagen wird."
 L["Sounds"] = "Töne"
@@ -241,7 +236,6 @@ L["Interrupt Mode Disabled"] = "Deaktiviert — Keine Unterbrechungssymbole"
 L["Interrupt Mode Kick Only"] = "Nur Kick — Kick bei unterbrechbaren Zaubern"
 L["Interrupt Mode CC Shielded"] = "Kick + CC — Auch Betäubung/Furcht bei geschützten Zaubern"
 L["Interrupt Mode CC Prefer"] = "CC bevorzugen — Betäubung statt Kick; Kick bei Bossen"
-L["Nameplate Show Health Bars"] = "Lebensleisten anzeigen"
 L["Nameplate Show Health Bars desc"] = "Kompakte Spieler- und Begleiter-Lebensleisten über den Defensiv-Symbolen anzeigen. Begleiter-Leiste wird ohne aktiven Begleiter ausgeblendet. Automatisch ausgeblendet wenn keine Defensiven sichtbar."
 
 

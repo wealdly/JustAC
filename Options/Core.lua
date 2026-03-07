@@ -63,15 +63,13 @@ local function CreateOptionsTable(addon)
     if Overlay       then args.nameplateOverlay = Overlay.CreateTabArgs(addon)        end
     if Offensive then args.offensive        = Offensive.CreateTabArgs(addon) end
     if Defensives then args.defensives      = Defensives.CreateTabArgs(addon) end
-    if Labels    then args.iconLabels       = Labels.CreateTabArgs(addon)    end
-    if Hotkeys   then args.hotkeyOverrides  = Hotkeys.CreateTabArgs(addon)   end
 
     -- Profiles placeholder (replaced with AceDBOptions in Initialize)
     args.profiles = {
         type = "group",
         name = L["Profiles"],
         desc = L["Profiles desc"],
-        order = 8,
+        order = 6,
         args = {},
     }
 
@@ -222,7 +220,7 @@ function Options.Initialize(addon)
 
     if AceDBOptions then
         addon.optionsTable.args.profiles = AceDBOptions:GetOptionsTable(addon.db)
-        addon.optionsTable.args.profiles.order = 8
+        addon.optionsTable.args.profiles.order = 6
 
         -- Remove verbose AceDBOptions descriptions to save vertical space
         local profileArgs = addon.optionsTable.args.profiles.args
