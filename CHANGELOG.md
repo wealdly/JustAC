@@ -1,6 +1,18 @@
 
 # Changelog
 
+## [4.7.5] - 2026-03-07
+
+### Fixed
+- Defensive icon proc glow now re-evaluated every frame (was only set on queue rebuild, causing 0.1–0.5s stagnation)
+- Defensive icon hotkeys now refresh when bindings change and retry empty results for proc override propagation (was only set once on queue rebuild)
+- Defensive icon cooldown swipes now polled at the same 0.08s cadence as offensive icons, so CD resets from talent procs clear promptly
+- Removed dead `UpdateDefensiveCooldowns()` comment that claimed it was called externally (it was never called)
+- Range check (out-of-range red text) now updates per-frame instead of every 0.08s across all queues (main panel offensive, interrupt, and nameplate overlay)
+- Usability/resource tinting (blue desaturated state) now updates per-frame instead of every 0.08s across all queues (main panel offensive, interrupt, and nameplate overlay)
+- Position stabilization: offensive queue positions 2+ now hold their spell for 150ms before allowing replacement, preventing rapid icon cycling from proc/CD re-categorization (position 1 always passes through the Blizzard assistant suggestion immediately)
+- Glow hysteresis: glow animations on positions 2+ require 100ms of stable desired state before switching, preventing jarring animation restarts from transient proc toggles (main panel, nameplate overlay, and defensive icons)
+
 ## [4.7.4] - 2026-03-07
 
 ### Added
