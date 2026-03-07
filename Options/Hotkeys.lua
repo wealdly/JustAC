@@ -32,7 +32,9 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable then return end
 
-    local hotkeyArgs = optionsTable.args.hotkeyOverrides.args
+    local generalArgs = optionsTable.args.general and optionsTable.args.general.args
+    if not generalArgs or not generalArgs.hotkeyOverrides then return end
+    local hotkeyArgs = generalArgs.hotkeyOverrides.args
 
     local keysToClear = {}
     for key, _ in pairs(hotkeyArgs) do

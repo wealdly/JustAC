@@ -917,16 +917,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Visibility conditions (OOC, healer, mounted, hostile target) are owned by
     -- SpellQueue; UIRenderer only checks display mode and whether spells exist.
     local displayMode = profile.displayMode or "queue"
-    -- Overlay-only fallback: when the overlay can't find a nameplate for the
-    -- hostile target (too far, culled, nameplate addon hiding it), fall back to
-    -- showing the main panel so users never lose their combat queue entirely.
-    local npoModule = LibStub("JustAC-UINameplateOverlay", true)
-    local overlayFallback = displayMode == "overlay"
-        and npoModule
-        and not npoModule.IsAnchored()
     local shouldShowFrame = hasSpells
         and displayMode ~= "disabled"
-        and (displayMode ~= "overlay" or overlayFallback)
+        and displayMode ~= "overlay"
         and SpellQueue.ShouldShowQueue()
 
     local frameStateChanged = (lastFrameState.shouldShow ~= shouldShowFrame)

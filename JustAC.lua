@@ -70,18 +70,22 @@ local defaults = {
         nameplateOverlay = {
             maxIcons          = 3,       -- 1-5 DPS queue slots
             reverseAnchor     = false,   -- false = RIGHT (default), true = LEFT
-            expansion         = "out",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
+            expansion         = "down",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
             iconSize          = 32,
             iconSpacing       = 2,   -- px between successive icons in the cluster
             opacity           = 1.0, -- icon opacity (0.1–1.0)
             showGlow          = true,
             glowMode          = "all",
+            firstIconScale    = 1.0,
+            queueIconDesaturation = 0,
             showHotkey        = true, -- Legacy; migrated to textOverlays.hotkey.show on load
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-5
             defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
             defensiveGlowMode    = "all",
+            defensiveIconScale   = 1.0,
             showHealthBar        = true,
+            showPetHealthBar     = true,
             -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
                 hotkey   = { fontScale = 1.0 },
@@ -1274,9 +1278,6 @@ end
 --- All rendering goes through the unified OnUpdate loop (no synchronous renders).
 --- Multiple calls per frame are idempotent — setting dirty flags is a no-op when already set.
 function JustAC:ForceUpdate(includeDefensives)
-    -- Cancel any pending deferred timers (superseded by dirty flags)
-    if self.cooldownTimer then self:CancelTimer(self.cooldownTimer); self.cooldownTimer = nil end
-    if self.castSuccessTimer then self:CancelTimer(self.castSuccessTimer); self.castSuccessTimer = nil end
     spellQueueDirty = true
     if includeDefensives then defensiveQueueDirty = true end
     -- Process on very next OnUpdate tick (~7-16ms at typical framerates)

@@ -14,109 +14,7 @@ function Defensives.CreateTabArgs(addon)
         type = "group",
         name = L["Defensives"],
         order = 5,
-        childGroups = "tab",
         args = {
-            -- ── SUB-TAB 1: QUEUE CONTENT ─────────────────────────────────
-            settings = {
-                type = "group",
-                name = L["Queue Content"],
-                order = 1,
-                args = {
-            showProcs = {
-                type = "toggle",
-                name = L["Insert Procced Defensives"],
-                desc = L["Insert Procced Defensives desc"],
-                order = 1,
-                width = "full",
-                get = function() return addon.db.profile.defensives.showProcs ~= false end,
-                set = function(_, val)
-                    addon.db.profile.defensives.showProcs = val
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm == "disabled" then return true end
-                    local standardEnabled = addon.db.profile.defensives.enabled
-                    local npo = addon.db.profile.nameplateOverlay
-                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                    return not standardEnabled and not overlayEnabled
-                end,
-            },
-            -- ITEMS (3-5)
-            itemsHeader = {
-                type = "header",
-                name = L["Items"],
-                order = 3,
-            },
-            allowItems = {
-                type = "toggle",
-                name = L["Allow Items in Spell Lists"],
-                desc = L["Allow Items in Spell Lists desc"],
-                order = 4,
-                width = "full",
-                get = function() return addon.db.profile.defensives.allowItems == true end,
-                set = function(_, val)
-                    addon.db.profile.defensives.allowItems = val
-                    Defensives.UpdateDefensivesOptions(addon)
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm == "disabled" then return true end
-                    local standardEnabled = addon.db.profile.defensives.enabled
-                    local npo = addon.db.profile.nameplateOverlay
-                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                    return not standardEnabled and not overlayEnabled
-                end,
-            },
-            autoInsertPotions = {
-                type = "toggle",
-                name = L["Auto-Insert Health Potions"],
-                desc = L["Auto-Insert Health Potions desc"],
-                order = 5,
-                width = "full",
-                get = function() return addon.db.profile.defensives.autoInsertPotions ~= false end,
-                set = function(_, val)
-                    addon.db.profile.defensives.autoInsertPotions = val
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm == "disabled" then return true end
-                    local standardEnabled = addon.db.profile.defensives.enabled
-                    local npo = addon.db.profile.nameplateOverlay
-                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                    return not standardEnabled and not overlayEnabled
-                end,
-            },
-            -- RESET (990+)
-            resetHeader = {
-                type = "header",
-                name = "",
-                order = 990,
-            },
-            resetDefaults = {
-                type = "execute",
-                name = L["Reset to Defaults"],
-                desc = L["Reset Defensives desc"],
-                order = 991,
-                width = "normal",
-                func = function()
-                    local def = addon.db.profile.defensives
-                    def.showProcs        = true
-                    def.allowItems       = true
-                    def.autoInsertPotions = true
-                    addon:ForceUpdateAll()
-                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                end,
-            },
-                },
-            },
-            -- ── SUB-TAB 2: PRIORITY LISTS ────────────────────────────────────
-            priorityLists = {
-                type = "group",
-                name = L["Priority Lists"],
-                order = 2,
-                args = {
             spellListGroup = {
                 type = "group",
                 inline = true,
@@ -236,8 +134,6 @@ function Defensives.CreateTabArgs(addon)
                     -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
                 },
             },
-                },
-            },
         },
     }
 end
@@ -246,9 +142,7 @@ function Defensives.UpdateDefensivesOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable or not SpellQueue then return end
 
-    local priorityTab = optionsTable.args.defensives.args.priorityLists
-    if not priorityTab then return end
-    local spellListGroup = priorityTab.args.spellListGroup
+    local spellListGroup = optionsTable.args.defensives.args.spellListGroup
     if not spellListGroup then return end
     local spellListArgs = spellListGroup.args
 

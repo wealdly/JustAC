@@ -17,84 +17,9 @@ function Offensive.CreateTabArgs(addon)
         order = 4,
         childGroups = "tab",
         args = {
-            -- Sub-tab 1: Queue Content
-            settings = {
-                type = "group",
-                name = L["Queue Content"],
-                order = 1,
-                args = {
-                    includeHiddenAbilities = {
-                        type = "toggle",
-                        name = L["Include All Available Abilities"],
-                        desc = L["Include All Available Abilities desc"],
-                        order = 1,
-                        width = "full",
-                        get = function() return addon.db.profile.includeHiddenAbilities ~= false end,
-                        set = function(_, val)
-                            addon.db.profile.includeHiddenAbilities = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function()
-                            return (addon.db.profile.displayMode or "queue") == "disabled"
-                        end,
-                    },
-                    showSpellbookProcs = {
-                        type = "toggle",
-                        name = L["Insert Procced Abilities"],
-                        desc = L["Insert Procced Abilities desc"],
-                        order = 2,
-                        width = "full",
-                        get = function() return addon.db.profile.showSpellbookProcs or false end,
-                        set = function(_, val)
-                            addon.db.profile.showSpellbookProcs = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function()
-                            return (addon.db.profile.displayMode or "queue") == "disabled"
-                        end,
-                    },
-                    hideItemAbilities = {
-                        type = "toggle",
-                        name = L["Allow Item Abilities"],
-                        desc = L["Allow Item Abilities desc"],
-                        order = 3,
-                        width = "full",
-                        get = function() return not addon.db.profile.hideItemAbilities end,
-                        set = function(_, val)
-                            addon.db.profile.hideItemAbilities = not val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function()
-                            return (addon.db.profile.displayMode or "queue") == "disabled"
-                        end,
-                    },
-                    -- RESET (990+)
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Offensive desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local p = addon.db.profile
-                            p.includeHiddenAbilities = true
-                            p.showSpellbookProcs     = true
-                            p.hideItemAbilities      = false
-                            p.blacklistPosition1     = false
-                            addon:ForceUpdate()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                        end,
-                    },
-                },
-            },
-            -- Sub-tab 2: Gap-Closers
+            -- Sub-tab 1: Gap-Closers
             gapClosers = (GapClosers and GapClosers.CreateTabArgs) and GapClosers.CreateTabArgs(addon) or nil,
-            -- Sub-tab 3: Blacklist
+            -- Sub-tab 2: Blacklist
             blacklist = {
                 type = "group",
                 name = function()
