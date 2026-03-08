@@ -254,6 +254,22 @@ end
 local HAS_DURATION_OBJECT_API = C_Spell and C_Spell.GetSpellCooldownDuration
     and type(C_Spell.GetSpellCooldownDuration) == "function"
 
+-- Returns true when a LuaDurationObject represents a finished/inactive cooldown.
+-- Only callable out of combat (HasSecretValues() must be false first).
+-- Handles two cases:
+--   1. Zero-span cooldown (never started or 0s duration): IsZero() == true
+--   2. Expired cooldown (e.g. charge recharge completed): remaining <= 0
+local function IsDurationFinished(dur)
+    if dur.IsZero and dur:IsZero() then return true end
+    if dur.GetRemainingDuration then
+        local ok, remaining = pcall(dur.GetRemainingDuration, dur)
+        if ok and remaining and type(remaining) == "number" and remaining <= 0 then
+            return true
+        end
+    end
+    return false
+end
+
 -- Cooldown widgets accept secret values internally — never compare or do arithmetic on them.
 local function UpdateButtonCooldowns(button)
     if not button then return end
@@ -265,7 +281,21 @@ local function UpdateButtonCooldowns(button)
         if button.cooldown then button.cooldown:Clear() end
         if button.chargeCooldown then button.chargeCooldown:Clear() end
         if button.chargeText then button.chargeText:Hide() end
+        button._cooldownShown = false
+        button._chargeCooldownShown = false
+        button._lastCooldownID = nil
         return
+    end
+
+    -- When the spell on this button changes, clear stale cooldown state before
+    -- applying the new spell's cooldown.  Prevents sweep animations from a
+    -- previous spell bleeding through during queue re-ordering (e.g. combat exit).
+    if id ~= button._lastCooldownID then
+        if button.cooldown then button.cooldown:Clear() end
+        if button.chargeCooldown then button.chargeCooldown:Clear(); button.chargeCooldown:Hide() end
+        button._cooldownShown = false
+        button._chargeCooldownShown = false
+        button._lastCooldownID = id
     end
 
     local cooldownInfo, chargeInfo
@@ -285,12 +315,25 @@ local function UpdateButtonCooldowns(button)
         if HAS_DURATION_OBJECT_API and button.cooldown and button.cooldown.SetCooldownFromDurationObject then
             local ok, dur = pcall(C_Spell.GetSpellCooldownDuration, cooldownID)
             if ok and dur then
-                if not button._cooldownShown then
-                    button.cooldown:SetDrawSwipe(true)
-                    button.cooldown:Show()
-                    button._cooldownShown = true
+                -- HasSecretValues() is NeverSecret — safe to branch on in combat.
+                -- When no secrets: IsDurationFinished() checks both zero-span and expired CDs.
+                -- Clear() prevents the sweep from sticking at 12 o'clock.
+                -- When secrets present (combat): skip the check, pass through to
+                -- SetCooldownFromDurationObject which handles opaque durations correctly.
+                local hasSecrets = dur.HasSecretValues and dur:HasSecretValues()
+                if not hasSecrets and IsDurationFinished(dur) then
+                    if button._cooldownShown then
+                        button.cooldown:Clear()
+                        button._cooldownShown = false
+                    end
+                else
+                    if not button._cooldownShown then
+                        button.cooldown:SetDrawSwipe(true)
+                        button.cooldown:Show()
+                        button._cooldownShown = true
+                    end
+                    button.cooldown:SetCooldownFromDurationObject(dur)
                 end
-                button.cooldown:SetCooldownFromDurationObject(dur)
                 usedDurationObject = true
             end
         end
@@ -310,18 +353,22 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- Main cooldown: only use legacy path if DurationObject wasn't applied above.
-    -- Guard: duration == 0 means no active cooldown; SetCooldown(0,0) would leave
-    -- the sweep parked at 12 o'clock (yellow sweep artifact) — use Clear() instead.
-    -- Secret-value guard: duration may be opaque in 12.0 combat; never compare it
-    -- directly. If secret, pass through to SetCooldown (widget handles it internally).
+    -- Guard: SetCooldown(startTime, duration) where duration==0 OR the cooldown has
+    -- already expired (startTime+duration <= now) both park the sweep at 12 o'clock.
+    -- Secret-value guard: if either field is opaque in 12.0 combat, pass through to
+    -- SetCooldown — the widget handles secret values internally; we cannot read them.
     if not usedDurationObject then
         if button.cooldown and cooldownInfo then
             local startTime = cooldownInfo.startTime or 0
             local duration = cooldownInfo.duration or 0
             local modRate = cooldownInfo.modRate or 1
-
             local durationIsSecret = BlizzardAPI.IsSecretValue(duration)
-            if durationIsSecret or duration > 0 then
+            local startTimeIsSecret = BlizzardAPI.IsSecretValue(startTime)
+            -- Cooldown is genuinely active when: values are secret (can't read), OR
+            -- duration>0 AND the deadline hasn't passed yet.
+            local cooldownActive = durationIsSecret or startTimeIsSecret
+                or (duration > 0 and (startTime <= 0 or (startTime + duration) > GetTime()))
+            if cooldownActive then
                 if not button._cooldownShown then
                     button.cooldown:SetDrawSwipe(true)
                     button.cooldown:Show()
@@ -372,12 +419,15 @@ local function UpdateButtonCooldowns(button)
 
     if button.chargeCooldown then
         if isMultiCharge and chargeInfo then
+            local chargeStart    = chargeInfo.cooldownStartTime or 0
             local chargeDuration = chargeInfo.cooldownDuration or 0
-            -- Guard: SetCooldown(0,0) parks sweep at 12 o'clock when charges are full.
-            -- Only set cooldown if a charge is actually recharging.
-            -- Secret-value guard: chargeDuration may be opaque in 12.0 combat.
+            -- Guard: SetCooldown with duration==0 OR an already-expired recharge parks
+            -- the sweep at 12 o'clock. Secret-value guard: pass through if opaque.
             local chargeDurationIsSecret = BlizzardAPI.IsSecretValue(chargeDuration)
-            if chargeDurationIsSecret or chargeDuration > 0 then
+            local chargeStartIsSecret    = BlizzardAPI.IsSecretValue(chargeStart)
+            local chargeCDActive = chargeDurationIsSecret or chargeStartIsSecret
+                or (chargeDuration > 0 and (chargeStart <= 0 or (chargeStart + chargeDuration) > GetTime()))
+            if chargeCDActive then
                 if not button._chargeCooldownShown then
                     button.chargeCooldown:Show()
                     button._chargeCooldownShown = true
@@ -391,14 +441,23 @@ local function UpdateButtonCooldowns(button)
                     if slot then
                         local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, slot)
                         if ok and dur then
-                            button.chargeCooldown:SetCooldownFromDurationObject(dur)
+                            local hasSecrets = dur.HasSecretValues and dur:HasSecretValues()
+                            if not hasSecrets and IsDurationFinished(dur) then
+                                if button._chargeCooldownShown then
+                                    button.chargeCooldown:Clear()
+                                    button.chargeCooldown:Hide()
+                                    button._chargeCooldownShown = false
+                                end
+                            else
+                                button.chargeCooldown:SetCooldownFromDurationObject(dur)
+                            end
                             usedChargeDurationObject = true
                         end
                     end
                 end
                 if not usedChargeDurationObject then
                     button.chargeCooldown:SetCooldown(
-                        chargeInfo.cooldownStartTime or 0,
+                        chargeStart,
                         chargeDuration,
                         chargeInfo.chargeModRate or 1
                     )
