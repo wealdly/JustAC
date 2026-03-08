@@ -1,6 +1,15 @@
 
 # Changelog
 
+## [Unreleased]
+
+## [4.8.4] - 2026-03-08
+
+### Fixed
+- Charge-based abilities (e.g. Holy Shock, Charge) no longer show a persistent yellow cooldown sweep when at full charges — `SetCooldown(0,0)` was parking the sweep widget at 12 o'clock; now calls `Clear()` instead
+- Same fix applied to the charge-recharge ring: no longer shown when `cooldownDuration == 0` (all charges full)
+- Both fixes guard against 12.0 secret values: if `duration`/`cooldownDuration` is opaque in combat, the value is passed through to `SetCooldown` (which handles it internally) rather than being compared
+
 ## [4.8.3] - 2026-03-08
 
 ### Added
