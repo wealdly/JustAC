@@ -123,66 +123,34 @@ function GapClosers.CreateTabArgs(addon)
                         order = 2,
                         fontSize = "medium",
                     },
-                    meleeRange_search = {
-                        type = "input",
-                        name = L["Search Spell"],
-                        desc = L["Melee Range Spell Override desc"],
+                    meleeRange_set = {
+                        type  = "execute",
+                        name  = L["Set Override..."],
+                        desc  = L["Melee Range Spell Override desc"],
                         order = 3,
-                        width = "double",
-                        get = function()
+                        width = "normal",
+                        func  = function()
+                            local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+                            if not LiveSearchPopup then return end
                             if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            return (SpellSearch and SpellSearch.filterState.meleerange) or ""
-                        end,
-                        set = function(_, val)
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            if SpellSearch then SpellSearch.filterState.meleerange = val or "" end
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                        end,
-                    },
-                    meleeRange_dropdown = {
-                        type = "select",
-                        name = "",
-                        desc = L["Select spell to add"],
-                        order = 3.1,
-                        width = "double",
-                        values = function()
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            if not SpellSearch then return {} end
-                            local filter = SpellSearch.filterState.meleerange or ""
-                            local results = SpellSearch.GetFilteredSpellbookSpells(filter, nil)
-                            if next(results) == nil and #filter:trim() >= 2 then
-                                SpellSearch.previewState.meleerange = nil
-                                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
-                            end
-                            SpellSearch.previewState.meleerange = next(results)
-                            return results
-                        end,
-                        get = function()
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            return SpellSearch and SpellSearch.previewState.meleerange
-                        end,
-                        set = function(_, spellID)
-                            if not spellID or spellID == 0 then return end
-                            local profile = addon:GetProfile()
-                            if not profile then return end
-                            if not profile.gapClosers then
-                                profile.gapClosers = { enabled = true, classSpells = {} }
-                            end
-                            profile.gapClosers.meleeRangeSpell = spellID
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            if SpellSearch then
-                                SpellSearch.filterState.meleerange  = ""
-                                SpellSearch.previewState.meleerange = nil
-                            end
-                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                            if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
-                            addon:ForceUpdateAll()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                        end,
-                        disabled = function()
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            local filter = SpellSearch and SpellSearch.filterState.meleerange or ""
-                            return #filter:trim() < 2
+                            SpellSearch.BuildSpellbookCache()
+                            LiveSearchPopup.Open({
+                                title      = L["Melee Range Reference"],
+                                searchFunc = SpellSearch.GetFilteredSpellbookSpells,
+                                onSelect   = function(spellID, _)
+                                    if not spellID or spellID == 0 then return end
+                                    local profile = addon:GetProfile()
+                                    if not profile then return end
+                                    if not profile.gapClosers then
+                                        profile.gapClosers = { enabled = true, classSpells = {} }
+                                    end
+                                    profile.gapClosers.meleeRangeSpell = spellID
+                                    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+                                    if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
+                                    addon:ForceUpdateAll()
+                                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                                end,
+                            })
                         end,
                     },
                     meleeRange_clear = {
@@ -194,11 +162,6 @@ function GapClosers.CreateTabArgs(addon)
                             local profile = addon:GetProfile()
                             if not profile or not profile.gapClosers then return end
                             profile.gapClosers.meleeRangeSpell = nil
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            if SpellSearch then
-                                SpellSearch.filterState.meleerange  = ""
-                                SpellSearch.previewState.meleerange = nil
-                            end
                             local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                             if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
                             addon:ForceUpdateAll()
@@ -345,7 +308,7 @@ function GapClosers.UpdateGapCloserOptions(addon)
     end
 
     -- Ensure spell list table exists (mirrors defensive initialization pattern)
-    -- so CreateAddSpellInput receives a valid reference for add/remove closures
+    -- so CreateAddSpellButton closures receive a valid reference for add/remove
     if not profile.gapClosers.classSpells[specKey] then
         profile.gapClosers.classSpells[specKey] = {}
     end
@@ -368,16 +331,16 @@ function GapClosers.UpdateGapCloserOptions(addon)
 
     local updateFunc = function()
         -- Invalidate engine cache so ResolveGapCloserSpells picks up changes
-        local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-        if GCE and GCE.InvalidateGapCloserCache then
-            GCE.InvalidateGapCloserCache()
+        local engine = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+        if engine and engine.InvalidateGapCloserCache then
+            engine.InvalidateGapCloserCache()
         end
         GapClosers.UpdateGapCloserOptions(addon)
     end
 
     -- Gap-closer spells (order 12.0-29.9, allowing 180 entries)
     SpellSearch.CreateSpellListEntries(addon, spellListArgs, spellList, "gapcloser", 12, updateFunc)
-    SpellSearch.CreateAddSpellInput(addon, spellListArgs, spellList, "gapcloser", 30, "Gap-Closers", updateFunc)
+    SpellSearch.CreateAddSpellButton(addon, spellListArgs, spellList, "gapcloser", 30, "Gap-Closers", updateFunc, true)
 
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")

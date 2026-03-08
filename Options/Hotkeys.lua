@@ -9,7 +9,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
-function Hotkeys.CreateTabArgs(addon)
+function Hotkeys.CreateTabArgs()
     return {
         type = "group",
         name = L["Hotkey Overrides"],
@@ -49,64 +49,54 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
     local hotkeyOverrides = addon.db.profile.hotkeyOverrides or {}
 
     SpellSearch.BuildSpellbookCache()
-    SpellSearch.filterState.hotkey = SpellSearch.filterState.hotkey or ""
 
     hotkeyArgs.addHeader = {
         type = "header",
         name = L["Add Hotkey Override"],
         order = 2,
     }
-    hotkeyArgs.searchInput = {
-        type = "input",
-        name = L["Search spell name or ID"],
-        desc = L["Search spell desc"],
+    hotkeyArgs.selectSpellButton = {
+        type  = "execute",
+        name  = L["Select Spell..."],
         order = 2.1,
-        width = "double",
-        get = function() return SpellSearch.filterState.hotkey or "" end,
-        set = function(_, val)
-            SpellSearch.filterState.hotkey = val or ""
-            if AceConfigRegistry then
-                AceConfigRegistry:NotifyChange("JustAssistedCombat")
-            end
-        end
-    }
-    hotkeyArgs.searchDropdown = {
-        type = "select",
-        name = "",
-        desc = L["Select spell for hotkey"],
-        order = 2.2,
-        width = "double",
-        values = function()
+        width = "normal",
+        func  = function()
+            local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+            if not LiveSearchPopup then return end
+            SpellSearch.BuildSpellbookCache()
+
+            -- Exclude spells that already have overrides
             local excludeList = {}
             for spellID, _ in pairs(hotkeyOverrides) do
-                table.insert(excludeList, spellID)
+                excludeList[#excludeList + 1] = spellID
             end
-            local results = SpellSearch.GetFilteredSpellbookSpells(SpellSearch.filterState.hotkey, excludeList)
-            local filter = (SpellSearch.filterState.hotkey or ""):trim()
-            if next(results) == nil and #filter >= 2 then
-                SpellSearch.previewState.hotkey = nil
-                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
+
+            LiveSearchPopup.Open({
+                title      = L["Add Hotkey Override"],
+                searchFunc = SpellSearch.GetFilteredSpellbookSpells,
+                excludeList = excludeList,
+                onSelect   = function(spellID, _)
+                    SpellSearch.previewState.hotkey = spellID
+                    if AceConfigRegistry then
+                        AceConfigRegistry:NotifyChange("JustAssistedCombat")
+                    end
+                end,
+            })
+        end,
+    }
+    hotkeyArgs.selectedSpellDesc = {
+        type = "description",
+        name = function()
+            local spellID = SpellSearch.previewState.hotkey
+            if not spellID then return "|cff888888" .. L["No spell selected"] .. "|r" end
+            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if info and info.name then
+                return "|cffFFD100" .. info.name .. "|r (ID: " .. spellID .. ")"
             end
-            SpellSearch.previewState.hotkey = next(results)
-            return results
+            return "|cff888888" .. L["No spell selected"] .. "|r"
         end,
-        get = function() return SpellSearch.previewState.hotkey end,
-        set = function(_, spellID)
-            if spellID == 0 then return end
-            -- When spell selected from dropdown, put it in search field for Add button
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.name then
-                SpellSearch.filterState.hotkey = tostring(spellID)
-                SpellSearch.previewState.hotkey = spellID  -- Update preview to match selection
-                if AceConfigRegistry then
-                    AceConfigRegistry:NotifyChange("JustAssistedCombat")
-                end
-            end
-        end,
-        disabled = function()
-            local filter = (SpellSearch.filterState.hotkey or ""):trim()
-            return #filter < 2
-        end,
+        order = 2.2,
+        fontSize = "medium",
     }
     hotkeyArgs.addHotkeyInput = {
         type = "input",
@@ -124,29 +114,13 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         order = 2.4,
         width = "half",
         func = function()
-            local val = (SpellSearch.filterState.hotkey or ""):trim()
-            if val == "" then
+            local spellID = SpellSearch.previewState.hotkey
+            if not spellID then
                 addon:Print(L["Please search and select a spell first"])
                 return
             end
             if not SpellSearch.addHotkeyValueInput or SpellSearch.addHotkeyValueInput:trim() == "" then
                 addon:Print(L["Please enter a hotkey value"])
-                return
-            end
-
-            local spellID = tonumber(val)
-            if not spellID then
-                spellID = SpellSearch.LookupSpellByName(val)
-                if not spellID and C_Spell and C_Spell.GetSpellInfo then
-                    local info = C_Spell.GetSpellInfo(val)
-                    if info and info.spellID then
-                        spellID = info.spellID
-                    end
-                end
-            end
-
-            if not spellID then
-                addon:Print("Spell not found: " .. val)
                 return
             end
 
@@ -158,14 +132,13 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
 
             hotkeyOverrides[spellID] = SpellSearch.addHotkeyValueInput:trim()
             addon:Print("Hotkey set: " .. spellInfo.name .. " = '" .. SpellSearch.addHotkeyValueInput:trim() .. "'")
-            SpellSearch.filterState.hotkey = ""
+            SpellSearch.previewState.hotkey = nil
             SpellSearch.addHotkeyValueInput = ""
             addon:ForceUpdate()
             Hotkeys.UpdateHotkeyOverrideOptions(addon)
         end,
         disabled = function()
-            local filter = (SpellSearch.filterState.hotkey or ""):trim()
-            return #filter < 1
+            return not SpellSearch.previewState.hotkey
         end,
     }
     hotkeyArgs.listHeader = {
@@ -173,7 +146,7 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         name = L["Custom Hotkeys"],
         order = 2.5,
     }
-    
+
     local overrideList = {}
     for spellID, hotkeyValue in pairs(hotkeyOverrides) do
         if type(spellID) == "number" and spellID > 0 and type(hotkeyValue) == "string" then
@@ -213,7 +186,7 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
             local spellIcon = spellInfo and spellInfo.iconID or 134400
-            
+
             hotkeyArgs[tostring(spellID)] = {
                 type = "group",
                 name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
@@ -253,7 +226,7 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
             }
         end
     end
-    
+
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

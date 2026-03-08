@@ -190,11 +190,6 @@ L["Both"] = "兩者都"
 L["Queue Visibility"] = "佇列可見性"
 L["Queue Visibility desc"] = "始終：隨時顯示。\n僅戰鬥中：脫戰時隱藏。\n需要敵對目標：僅在選定可攻擊的敵人時顯示。"
 
--- Item Features
-L["Allow Items in Spell Lists"] = "允許法術清單中的物品"
-L["Allow Items in Spell Lists desc"] = "允許將消耗品（藥水、治療石）新增到防禦法術清單中。啟用後搜尋也會掃描背包和動作條。"
-L["Auto-Insert Health Potions"] = "自動插入治療藥水"
-L["Auto-Insert Health Potions desc"] = "生命值極低時自動推薦動作條上的治療藥水，即使未手動新增。"
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "寵物復活/召喚優先清單"

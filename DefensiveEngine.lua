@@ -9,8 +9,6 @@ if not DefensiveEngine then return end
 -- Hot path cache
 local GetTime = GetTime
 local UnitAffectingCombat = UnitAffectingCombat
-local GetItemCount = GetItemCount
-local GetItemCooldown = GetItemCooldown
 local wipe = wipe
 local ipairs = ipairs
 local pairs = pairs
@@ -120,15 +118,6 @@ local function ApplyOverlayQueue(addon, npoQueue)
     end
 end
 
--- Secret-safe item cooldown check. Returns true when the item is on a real cooldown
--- (duration > 1.5s, excluding GCD). Fail-open: returns false when values are secret.
-local function IsItemOnCooldown(itemID)
-    local start, duration = GetItemCooldown(itemID)
-    if not start or not duration then return false end
-    if BlizzardAPI.IsSecretValue(start) or BlizzardAPI.IsSecretValue(duration) then return false end
-    return start > 0 and duration > 1.5
-end
-
 -- Resolve player health into isLow boolean.
 -- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states.
 -- In combat (secret): GetPlayerHealthPercentSafe returns 100 (not low) or ≤35
@@ -144,11 +133,6 @@ ResolveHealthState = function(profile)
     return false
 end
 
--- Healing potion cache
-local HEALTHSTONE_ITEM_ID = 5512
-local cachedPotionID = nil
-local cachedPotionSlot = nil
-local potionCacheValid = false
 
 --------------------------------------------------------------------------------
 -- Spell list access
@@ -514,7 +498,6 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     wipe(resourceBlockedBuffer)
 
     -- Single pass: categorize spells and items into priority tiers
-    local itemsEnabled = profile.defensives and profile.defensives.allowItems
     for _, entry in ipairs(spellList) do
         if entry and entry > 0 then
             local resolvedID = BlizzardAPI.ResolveSpellID(entry)
@@ -555,14 +538,13 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                     usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
                 end
             end
-        elseif itemsEnabled and entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
+        elseif entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
             -- Negative entry = item (stored as -itemID)
             local itemID = -entry
             local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
             if isUsable then
                 castableBuffer[#castableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
                 usableAddedHere[entry] = true
-                -- Also mark the positive itemID to prevent FindHealingPotionOnActionBar duplicates
                 usableAddedHere[itemID] = true
             end
         end
@@ -690,14 +672,6 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
     if showAllAvailable or isLow then
         AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded)
-        -- Auto-insert potions when health is low (unified: no separate "critical" tier)
-        if isLow and #results < maxIcons and profile.defensives.autoInsertPotions ~= false then
-            local potionID = DefensiveEngine.FindHealingPotionOnActionBar(addon)
-            if potionID and not alreadyAdded[potionID] then
-                results[#results + 1] = {spellID = potionID, isItem = true, isProcced = false}
-                alreadyAdded[potionID] = true
-            end
-        end
     end
 
     SortUnusableToEnd(results)
@@ -705,88 +679,12 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
 end
 
 --------------------------------------------------------------------------------
--- Healing potion subsystem
+-- (Healing potion subsystem removed — users add health items manually via the
+--  defensive spell list, which searches spellbook + inventory by keyword.)
 --------------------------------------------------------------------------------
 
+-- Placeholder kept so external callers that haven't updated yet don't hard-error.
 function DefensiveEngine.InvalidatePotionCache()
-    potionCacheValid = false
-end
-
-local function IsHealingConsumable(itemID)
-    if not itemID then return false end
-    if itemID == HEALTHSTONE_ITEM_ID then return true end
-
-    local _, _, _, _, _, _, classID, subclassID = GetItemInfo(itemID)
-    if not classID or classID ~= 0 or subclassID ~= 1 then
-        return false
-    end
-
-    local spellName, spellID = GetItemSpell(itemID)
-    if not spellName then return false end
-
-    local lowerName = spellName:lower()
-    if lowerName:find("heal") or lowerName:find("restore") or lowerName:find("life") then
-        return true
-    end
-
-    if spellID then
-        local desc = GetSpellDescription(spellID)
-        if desc then
-            local lowerDesc = desc:lower()
-            if lowerDesc:find("restore") and lowerDesc:find("health") then
-                return true
-            end
-            if lowerDesc:find("heal") then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
--- Returns itemID, actionSlot for first usable healing consumable (Healthstone prioritized)
--- Uses cached result from last action bar scan; call InvalidatePotionCache() on bar/bag changes
-function DefensiveEngine.FindHealingPotionOnActionBar(addon)
-    if potionCacheValid then
-        -- Still check cooldown/count on cached result (these change in combat)
-        if cachedPotionID then
-            local count = GetItemCount(cachedPotionID) or 0
-            if count > 0 and not IsItemOnCooldown(cachedPotionID) then
-                return cachedPotionID, cachedPotionSlot
-            end
-        end
-        return nil, nil
-    end
-
-    -- Full 180-slot scan (expensive, only on cache miss)
-    local bestPotion = nil
-    local bestSlot = nil
-
-    for slot = 1, 180 do
-        local actionType, id = GetActionInfo(slot)
-        if actionType == "item" and id then
-            local count = GetItemCount(id) or 0
-            if count > 0 and not IsItemOnCooldown(id) then
-                if id == HEALTHSTONE_ITEM_ID then
-                    cachedPotionID = id
-                    cachedPotionSlot = slot
-                    potionCacheValid = true
-                    return id, slot
-                end
-
-                if not bestPotion and IsHealingConsumable(id) then
-                    bestPotion = id
-                    bestSlot = slot
-                end
-            end
-        end
-    end
-
-    cachedPotionID = bestPotion
-    cachedPotionSlot = bestSlot
-    potionCacheValid = true
-    return bestPotion, bestSlot
 end
 
 --------------------------------------------------------------------------------

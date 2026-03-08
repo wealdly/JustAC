@@ -190,11 +190,6 @@ L["Both"] = "Оба режима"
 L["Queue Visibility"] = "Видимость очереди"
 L["Queue Visibility desc"] = "Всегда: показывать постоянно.\nТолько в бою: скрывать вне боя.\nВраждебная цель: показывать только при выборе атакуемого врага."
 
--- Item Features
-L["Allow Items in Spell Lists"] = "Разрешить предметы в списках заклинаний"
-L["Allow Items in Spell Lists desc"] = "Разрешить добавление расходников (зелья, камни здоровья) в защитные списки. Поиск также проверит сумки и панели действий."
-L["Auto-Insert Health Potions"] = "Авто-вставка зелий здоровья"
-L["Auto-Insert Health Potions desc"] = "Автоматически предлагать зелье исцеления при критически низком здоровье, даже без ручного добавления."
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "Воскрешение/Призыв питомца (приоритет)"

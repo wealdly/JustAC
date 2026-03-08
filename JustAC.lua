@@ -103,8 +103,6 @@ local defaults = {
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
-            allowItems = true,        -- Allow manual item insertion in defensive spell lists
-            autoInsertPotions = true,  -- Auto-insert health potions at low health
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
@@ -968,7 +966,6 @@ function JustAC:OnCombatEvent(event)
         local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     elseif event == "PLAYER_REGEN_ENABLED" then
-        if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
         -- Backfill instance CC cache: if a CC failed on a target whose NPC ID
         -- wasn't known during combat (tab-targeted mid-fight), BackfillCCImmunity
         -- reads the GUID now that combat ended and persists the mob type.
@@ -1045,6 +1042,11 @@ function JustAC:OnSpecChange()
     if GapCloserEngine and GapCloserEngine.InitializeGapClosers then
         GapCloserEngine.InitializeGapClosers(self)
     end
+    -- Invalidate options spellbook cache so it rebuilds for the new spec
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+    if SpellSearch and SpellSearch.InvalidateSpellbookCache then
+        SpellSearch.InvalidateSpellbookCache()
+    end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
     self:ForceUpdate()
@@ -1052,6 +1054,11 @@ end
 
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
+    -- Invalidate options spellbook cache so new/removed spells appear in search
+    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+    if SpellSearch and SpellSearch.InvalidateSpellbookCache then
+        SpellSearch.InvalidateSpellbookCache()
+    end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
     self:ForceUpdateAll()
@@ -1102,7 +1109,6 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
 end
 
 function JustAC:OnActionBarChanged()
-    if DefensiveEngine then DefensiveEngine.InvalidatePotionCache() end
     self:InvalidateCaches({hotkeys = true, macros = true})
     self:ForceUpdate()
 end
