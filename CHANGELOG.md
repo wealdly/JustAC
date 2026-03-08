@@ -1,6 +1,11 @@
 
 # Changelog
 
+## [4.8.2] - 2026-03-07
+
+### Added
+- Sound Test button next to the Interrupt Alert sound dropdown — preview the selected sound without leaving the options panel
+
 ## [4.8.1] - 2026-03-07
 
 ### Fixed
