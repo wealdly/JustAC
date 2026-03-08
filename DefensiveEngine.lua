@@ -34,30 +34,10 @@ local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
 local usableResults = {}
 local usableAddedHere = {}
-local proccedBuffer = {}          -- procced spells (highest priority)
-local castableBuffer = {}         -- castable non-procced spells (mid priority)
-local resourceBlockedBuffer = {}  -- known/non-redundant but currently unusable (lowest priority)
+local proccedBuffer = {}    -- procced spells (highest priority)
+local nonProccedBuffer = {} -- castable non-procced spells in user list order
+local unusableBuffer = {}   -- on-CD or resource-starved spells (de-prioritized to end)
 
--- Stable in-place sort: move unusable entries to the end of the queue
--- while preserving relative order within each group (castable vs blocked).
-local function SortUnusableToEnd(results)
-    if #results <= 1 then return end
-    local sortCastable = {}
-    local sortBlocked = {}
-    local hasBlocked = false
-    for _, entry in ipairs(results) do
-        if entry.unusable then
-            sortBlocked[#sortBlocked + 1] = entry
-            hasBlocked = true
-        else
-            sortCastable[#sortCastable + 1] = entry
-        end
-    end
-    if not hasBlocked then return end  -- nothing to reorder
-    local idx = 0
-    for _, e in ipairs(sortCastable) do idx = idx + 1; results[idx] = e end
-    for _, e in ipairs(sortBlocked)  do idx = idx + 1; results[idx] = e end
-end
 
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
@@ -481,9 +461,9 @@ end
 --
 -- Single-pass design: iterates spellList once, categorizing into three priority tiers:
 --   1. Procced spells (instant/free cast available — highest priority)
---   2. Castable non-procced spells + usable items (mid priority)
---   3. Unusable spells (known + non-redundant but on CD or lacking resources — lowest priority)
--- Each spell is checked by CheckDefensiveSpellState exactly once.
+--   2. Castable non-procced spells + usable items (mid priority, user list order)
+--   3. Unusable spells (on CD or lacking resources — de-prioritized to end)
+-- Ready-to-use defensives always appear before on-cooldown ones.
 function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     wipe(usableResults)
     if not spellList or maxCount <= 0 then return usableResults end
@@ -494,10 +474,13 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     alreadyAdded = alreadyAdded or {}
     wipe(usableAddedHere)
     wipe(proccedBuffer)
-    wipe(castableBuffer)
-    wipe(resourceBlockedBuffer)
+    wipe(nonProccedBuffer)
+    wipe(unusableBuffer)
 
-    -- Single pass: categorize spells and items into priority tiers
+    -- Single pass: categorize spells into three priority tiers:
+    --   1. Procced (instant/free cast — highest priority)
+    --   2. Castable non-procced (usable, off CD — mid priority, user list order)
+    --   3. Unusable (on CD or lacking resources — de-prioritized to end)
     for _, entry in ipairs(spellList) do
         if entry and entry > 0 then
             local resolvedID = BlizzardAPI.ResolveSpellID(entry)
@@ -517,21 +500,19 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                         local isOnLocalCD = not isChargeSpell
                             and BlizzardAPI.IsSpellOnLocalCooldown
                             and BlizzardAPI.IsSpellOnLocalCooldown(resolvedID)
+                        local unusable, noResources
                         if isOnLocalCD then
-                            -- On cooldown: deprioritize but keep in queue for visual feedback.
-                            resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = false}
+                            unusable, noResources = true, false
                         else
-                            -- Not on local CD (or charge spell): check if actually castable.
-                            -- IsSpellUsable is NeverSecret (falls back to C_ActionBar.IsUsableAction).
-                            -- Returns false for both cooldown-blocked AND resource-blocked spells.
-                            -- For charge spells, returns false only when ALL charges are depleted.
                             local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
-                            if castable then
-                                castableBuffer[#castableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
-                            else
-                                -- Unusable: deprioritize but keep in queue for visual feedback.
-                                resourceBlockedBuffer[#resourceBlockedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = notEnoughResources}
+                            if not castable then
+                                unusable, noResources = true, notEnoughResources
                             end
+                        end
+                        if unusable then
+                            unusableBuffer[#unusableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = noResources}
+                        else
+                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
                         end
                     end
                     usableAddedHere[resolvedID] = true
@@ -543,23 +524,23 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
             local itemID = -entry
             local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
             if isUsable then
-                castableBuffer[#castableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
+                nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
                 usableAddedHere[entry] = true
                 usableAddedHere[itemID] = true
             end
         end
     end
 
-    -- Merge in priority order: procced → castable (spells + items) → blocked
+    -- Merge in priority order: procced → castable → on-CD/unusable.
     for _, e in ipairs(proccedBuffer) do
         if #usableResults >= maxCount then break end
         usableResults[#usableResults + 1] = e
     end
-    for _, e in ipairs(castableBuffer) do
+    for _, e in ipairs(nonProccedBuffer) do
         if #usableResults >= maxCount then break end
         usableResults[#usableResults + 1] = e
     end
-    for _, e in ipairs(resourceBlockedBuffer) do
+    for _, e in ipairs(unusableBuffer) do
         if #usableResults >= maxCount then break end
         usableResults[#usableResults + 1] = e
     end
@@ -665,7 +646,6 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     if #results >= maxIcons then return results end
 
     if displayMode == "combatOnly" and not inCombat then
-        SortUnusableToEnd(results)
         return results
     end
 
@@ -674,7 +654,6 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded)
     end
 
-    SortUnusableToEnd(results)
     return results
 end
 

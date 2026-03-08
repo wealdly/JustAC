@@ -1179,13 +1179,16 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 UIRenderer.UpdateButtonCooldowns(icon)
             end
 
-            -- Glows: priority gap-closer > proc > assisted (mirrors UIRenderer priority)
+            -- Glows: priority proc > gap-closer > assisted (matches UIRenderer priority).
+            -- Gap-closer glow only applies when the spell was synthetically injected
+            -- by our gap-closer system (IsSyntheticProc). When Blizzard independently
+            -- recommends the same gap-closer at position 1, it gets the blue assisted
+            -- crawl instead — matching standard queue behavior.
             local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
             local isGapCloser = isSyntheticProc
-                or (SpellQueue and SpellQueue.IsGapCloserSpell and SpellQueue.IsGapCloserSpell(spellID))
             local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
-            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
-            local wantProcGlow = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+            local wantProcGlow = isRealProc and npoShowProcGlow
+            local wantGapCloserGlow = isGapCloser and showGapCloserGlow and not wantProcGlow
             local wantAssistedGlow = i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
                 and not wantGapCloserGlow and not wantProcGlow
 

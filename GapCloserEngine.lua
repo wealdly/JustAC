@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 2)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 3)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -76,8 +76,14 @@ local function FindSlotForSpell(spellID)
 end
 
 --- Evaluate a single gap-closer candidate: resolve → dedup → available →
---- usable(failClosed) → action bar slot → ready.  Returns resolvedID, baseID
---- on success, or nil if the spell doesn't pass all gates.
+--- known → ready → (optional range).  Returns resolvedID, baseID on success,
+--- or nil if the spell doesn't pass all gates.
+--- The gap-closer list is curated (user-configured or SpellDB defaults), so
+--- the only availability gate is "does the player know this spell" — filtering
+--- out default entries the player hasn't talented into.  No usability check
+--- (fail-closed rejects valid spells in combat due to secret values; fail-open
+--- adds no value for a curated list).  Cooldown check remains to avoid
+--- suggesting spells that are on CD.
 --- @param spellID      number       Base spell ID from the gap-closer list
 --- @param addedSpellIDs table|nil   Set of already-queued spell IDs to skip
 --- @param checkRange    boolean|nil  If true, also verify the spell's own slot is in range
@@ -90,20 +96,19 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
         return nil
     end
 
+    -- Known check: filter out spells the player doesn't have (untalented defaults)
     if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
 
-    -- Fail closed: if we can't confirm usability (secret values), skip
-    if not BlizzardAPI.IsSpellUsable(resolvedID, false) then return nil end
-
-    -- FindSlotForSpell resolves overrides internally, so passing the base
-    -- spellID checks both the resolved form and the original.
-    local slot = FindSlotForSpell(spellID)
-    if not slot then return nil end
-
-    -- Optional own-range check (stealth gap closers with extended range)
-    if checkRange and IsActionInRange(slot) == false then return nil end
-
+    -- Cooldown check: don't suggest spells on CD
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
+
+    -- Range check: only when caller requests it AND we can find the slot.
+    -- Self-targeted spells (Sprint) return nil from IsActionInRange, passing
+    -- the == false gate.  No slot → skip range check (spell is still valid).
+    if checkRange then
+        local slot = FindSlotForSpell(spellID)
+        if slot and IsActionInRange(slot) == false then return nil end
+    end
 
     return resolvedID, spellID
 end
@@ -416,7 +421,7 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
             local isStealth = SpellDB.GAP_CLOSER_REQUIRES_STEALTH
                 and (SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] or SpellDB.GAP_CLOSER_REQUIRES_STEALTH[resolvedID])
             if not isStealth then
-                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs)
+                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs, true)
                 if resolved then return resolved, base end
             end
         end
