@@ -233,6 +233,22 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            testInterruptSound = {
+                type = "execute",
+                name = "|TInterface\\Common\\VoiceChat-Speaker:0|t Test",
+                order = 22,
+                width = "half",
+                func = function()
+                    local UIRenderer = LibStub("JustAC-UIRenderer", true)
+                    if UIRenderer and UIRenderer.PlayInterruptAlertSound then
+                        UIRenderer.PlayInterruptAlertSound(addon.db.profile)
+                    end
+                end,
+                disabled = function()
+                    local s = addon.db.profile.interruptAlertSound
+                    return not s or s == "none" or (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             -- OFFENSIVE QUEUE CONTENT (30-39)
             offensiveQueueHeader = {
                 type = "header",
