@@ -18,6 +18,7 @@ local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 local ipairs = ipairs
+local IsActionInRange = IsActionInRange
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
@@ -326,28 +327,47 @@ function SpellQueue.GetCurrentSpellQueue()
             end
 
             if not pos1IsGapCloser then
-                local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
-                if gcSpell then
-                    local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
-                    if spellCount >= 1 then
-                        -- Promote gap closer to position 1: the primary spell is
-                        -- out of range so you can't cast it — the gap closer is
-                        -- always the correct first action.
-                        for i = spellCount, 1, -1 do
-                            recommendedSpells[i + 1] = recommendedSpells[i]
+                -- If Blizzard's #1 spell is in range (or has no range check,
+                -- e.g. AoE), trust Blizzard — don't inject a gap closer.
+                -- Only inject when the primary spell is genuinely out of range.
+                local pos1InRange = false
+                if primarySpellID and primarySpellID > 0 and ActionBarScanner then
+                    local pos1Slot = ActionBarScanner.GetSlotForSpell(primarySpellID)
+                    if pos1Slot then
+                        local rangeResult = IsActionInRange(pos1Slot)
+                        -- true = in range, nil = no range check → both mean castable
+                        if rangeResult ~= false then
+                            pos1InRange = true
                         end
-                        recommendedSpells[1] = gcSpell
-                    else
-                        recommendedSpells[1] = gcSpell
                     end
-                    spellCount = spellCount + 1
-                    addedSpellIDs[gcSpell] = true
-                    addedSpellIDs[gcDisplay] = true
-                    if gcBase and gcBase ~= gcSpell then
-                        addedSpellIDs[gcBase] = true
+                end
+
+                if pos1InRange then
+                    -- Primary spell is castable — no gap closer needed
+                else
+                    local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
+                    if gcSpell then
+                        local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
+                        if spellCount >= 1 then
+                            -- Promote gap closer to position 1: the primary spell is
+                            -- out of range so you can't cast it — the gap closer is
+                            -- always the correct first action.
+                            for i = spellCount, 1, -1 do
+                                recommendedSpells[i + 1] = recommendedSpells[i]
+                            end
+                            recommendedSpells[1] = gcSpell
+                        else
+                            recommendedSpells[1] = gcSpell
+                        end
+                        spellCount = spellCount + 1
+                        addedSpellIDs[gcSpell] = true
+                        addedSpellIDs[gcDisplay] = true
+                        if gcBase and gcBase ~= gcSpell then
+                            addedSpellIDs[gcBase] = true
+                        end
+                        syntheticProcs[gcSpell] = true
+                        syntheticProcs[gcDisplay] = true
                     end
-                    syntheticProcs[gcSpell] = true
-                    syntheticProcs[gcDisplay] = true
                 end
             end
 

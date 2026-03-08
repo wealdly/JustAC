@@ -6,9 +6,16 @@
 ## [4.8.4] - 2026-03-08
 
 ### Fixed
-- Charge-based abilities (e.g. Holy Shock, Charge) no longer show a persistent yellow cooldown sweep when at full charges — `SetCooldown(0,0)` was parking the sweep widget at 12 o'clock; now calls `Clear()` instead
-- Same fix applied to the charge-recharge ring: no longer shown when `cooldownDuration == 0` (all charges full)
-- Both fixes guard against 12.0 secret values: if `duration`/`cooldownDuration` is opaque in combat, the value is passed through to `SetCooldown` (which handles it internally) rather than being compared
+- Charge-based abilities no longer show a stationary yellow cooldown sweep — `SetCooldown` with `duration==0` or an already-expired cooldown (stale `startTime+duration` from the last GCD/recharge) parks the sweep at 12 o'clock; both cases now call `Clear()` instead
+- Same expiry check applied to the charge-recharge ring (`chargeCooldown` widget)
+- Both fixes guard against 12.0 secret values: opaque `startTime`/`duration` are passed through to `SetCooldown` (which handles them internally) rather than being compared
+- Fixed cooldown sweep (yellow) getting stuck at 12 o'clock when spell comes off cooldown out of combat — now uses `dur:IsZero()` to detect finished cooldowns and calls `Clear()` instead of `SetCooldownFromDurationObject` with a zero-duration object (applies to both main and charge cooldown paths)
+- Fixed `IsZero()` crash in combat — `IsZero()` is secret in combat; gate with `HasSecretValues()` (NeverSecret) to only call `IsZero()` when duration object has no secrets
+- Fixed cooldown sweeps bleeding onto wrong icons during queue re-ordering (e.g. combat exit) — proactively `Clear()` stale cooldown widget when the spell identity on a button changes
+- Fixed nameplate overlay showing yellow gap-closer crawl instead of blue assisted crawl when Blizzard recommends a gap-closer spell at position 1 — overlay now matches standard queue behavior (only synthetically injected spells get gap-closer glow)
+- Fixed gap-closer priority not iterating to lower-tier spells when a higher-tier gap closer is out of range — all gap-closer candidates now validate range so out-of-range spells fall through (e.g. Shadowstep out of 25yd range → Sprint)
+- Fixed gap-closer spells in macros (e.g. Sprint in `/use [mod]Item;Sprint`) never being suggested — simplified TryGapCloserCandidate to known + cooldown + range only; removed action-bar-slot gate and fail-closed usability check that rejected valid spells (especially in combat with secret values)
+- Fixed gap-closer injection overriding Blizzard's #1 recommendation when the primary spell is already in range (e.g. AoE abilities with no range check) — now checks IsActionInRange on the primary spell's slot before injecting
 
 ## [4.8.3] - 2026-03-08
 
