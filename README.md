@@ -80,17 +80,15 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 
 ## Configuration
 
-Options are organized into 8 tabs:
+Options are organized into 6 tabs:
 
 | Tab | Purpose |
-|-----|---------|
-| **General** | Display mode, visibility rules, mounting/combat/target toggles |
+|-----|--------|
+| **General** | Display mode, visibility rules, queue content toggles (3 sub-tabs: Settings, Icon Labels, Hotkeys) |
 | **Standard Queue** | Layout, offensive display, defensive display, appearance (4 sub-tabs) |
 | **Overlay** | Nameplate overlay layout, offensive display, defensive display (3 sub-tabs) |
-| **Offensive** | Queue content settings, blacklist, gap-closers, interrupt mode |
-| **Defensives** | Queue content settings, spell priority list, health thresholds |
-| **Labels** | Icon text overlays (keybinds, spell names) per surface |
-| **Hotkeys** | Custom keybind overrides per spell |
+| **Offensive** | Blacklist, gap-closers, interrupt mode |
+| **Defensives** | Spell priority list, health thresholds |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
 - **Localization** — English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Simplified/Traditional Chinese
@@ -143,19 +141,24 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 - **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
 - **No External Spell Databases** — Native spell classification (SpellDB) replaces LibPlayerSpells
-- **Modular Architecture** — 30 Lua files across 4 subdirectories (BlizzardAPI, UI, Options, Locales) with clear dependency order
+- **Modular Architecture** — 34 Lua files across 3 subdirectories (BlizzardAPI, UI, Options) plus 9 locale files with clear dependency order
 - **Event-Driven** — Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
 - **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)
 
 ## Commands
 
 ```text
-/jac            - Open options panel
-/jac test       - Run API diagnostics
-/jac modules    - Check module health
-/jac formcheck  - Debug form detection
-/jac find Name  - Locate a spell on action bars
-/jac defensive  - Diagnose defensive icon system
+/jac              - Open options panel
+/jac toggle       - Pause/resume display
+/jac debug        - Toggle debug mode
+/jac reset        - Reset frame position
+/jac profile      - Switch or list profiles
+/jac modules      - Check module health
+/jac find <spell> - Locate a spell on action bars
+/jac testcd       - Test cooldown APIs for a spell
+/jac defensive    - Diagnose defensive icon system
+/jac poisons      - Diagnose rogue poison detection
+/jac help         - Show all commands in-game
 ```
 
 ## License
