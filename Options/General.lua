@@ -326,47 +326,6 @@ function General.CreateTabArgs(addon)
                     return not standardEnabled and not overlayEnabled
                 end,
             },
-            allowDefensiveItems = {
-                type = "toggle",
-                name = L["Allow Items in Spell Lists"],
-                desc = L["Allow Items in Spell Lists desc"],
-                order = 42,
-                width = "full",
-                get = function() return addon.db.profile.defensives.allowItems == true end,
-                set = function(_, val)
-                    addon.db.profile.defensives.allowItems = val
-                    local Defensives = LibStub("JustAC-OptionsDefensives", true)
-                    if Defensives then Defensives.UpdateDefensivesOptions(addon) end
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm == "disabled" then return true end
-                    local standardEnabled = addon.db.profile.defensives.enabled
-                    local npo = addon.db.profile.nameplateOverlay
-                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                    return not standardEnabled and not overlayEnabled
-                end,
-            },
-            autoInsertPotions = {
-                type = "toggle",
-                name = L["Auto-Insert Health Potions"],
-                desc = L["Auto-Insert Health Potions desc"],
-                order = 43,
-                width = "full",
-                get = function() return addon.db.profile.defensives.autoInsertPotions ~= false end,
-                set = function(_, val)
-                    addon.db.profile.defensives.autoInsertPotions = val
-                    addon:ForceUpdateAll()
-                end,
-                disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    if dm == "disabled" then return true end
-                    local standardEnabled = addon.db.profile.defensives.enabled
-                    local npo = addon.db.profile.nameplateOverlay
-                    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                    return not standardEnabled and not overlayEnabled
-                end,
-            },
             -- RESET (990+)
             resetHeader = {
                 type = "header",
@@ -395,8 +354,6 @@ function General.CreateTabArgs(addon)
                     p.hideItemAbilities      = false
                     -- Defensive queue content
                     p.defensives.showProcs        = true
-                    p.defensives.allowItems       = true
-                    p.defensives.autoInsertPotions = true
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
                     addon:UpdateFrameSize()

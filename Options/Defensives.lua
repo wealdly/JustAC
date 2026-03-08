@@ -201,18 +201,18 @@ function Defensives.UpdateDefensivesOptions(addon)
 
     -- Unified defensive spells (order 22.0-39.9, allowing 180 entries)
     SpellSearch.CreateSpellListEntries(addon, spellListArgs, defensiveSpells, "defensive", 22, updateFunc)
-    SpellSearch.CreateAddSpellInput(addon, spellListArgs, defensiveSpells, "defensive", 40, "Defensives", updateFunc)
+    SpellSearch.CreateAddSpellButton(addon, spellListArgs, defensiveSpells, "defensive", 40, "Defensives", updateFunc, false)
 
     -- Pet Rez/Summon spells (order 82.0-99.9, pet classes only)
     if isPetClass and petRezSpells then
         SpellSearch.CreateSpellListEntries(addon, spellListArgs, petRezSpells, "petrez", 82, updateFunc)
-        SpellSearch.CreateAddSpellInput(addon, spellListArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon", updateFunc)
+        SpellSearch.CreateAddSpellButton(addon, spellListArgs, petRezSpells, "petrez", 100, "Pet Rez/Summon", updateFunc, true)
     end
 
     -- Pet Heal spells (order 112.0-129.9, pet classes only)
     if isPetClass and petHealSpells then
         SpellSearch.CreateSpellListEntries(addon, spellListArgs, petHealSpells, "petheal", 112, updateFunc)
-        SpellSearch.CreateAddSpellInput(addon, spellListArgs, petHealSpells, "petheal", 130, "Pet Heals", updateFunc)
+        SpellSearch.CreateAddSpellButton(addon, spellListArgs, petHealSpells, "petheal", 130, "Pet Heals", updateFunc, false)
     end
 
     if AceConfigRegistry then

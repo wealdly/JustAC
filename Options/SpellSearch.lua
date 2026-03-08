@@ -4,19 +4,16 @@
 local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 1)
 if not SpellSearch then return end
 
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
-local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
--- Hot path cache
-local GetTime = GetTime
-local pcall = pcall
+-- Hot path locals
 local wipe = wipe
-local type = type
 local tonumber = tonumber
 local pairs = pairs
 local ipairs = ipairs
+local GetInventoryItemID = GetInventoryItemID
+local C_Container = C_Container
 
 -------------------------------------------------------------------------------
 -- Spellbook cache for autocomplete (populated on first options open)
@@ -24,31 +21,8 @@ local ipairs = ipairs
 local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
 local spellbookCacheBuilt = false
 
--- Filter state for spell search (all panels)
-SpellSearch.filterState = {
-    defensive  = "",
-    selfheal   = "",
-    cooldown   = "",
-    blacklist  = "",
-    hotkey     = "",
-    petrez     = "",
-    petheal    = "",
-    gapcloser  = "",
-    meleerange = "",
-}
-
--- Preview state: first result shown in dropdown (not yet added)
-SpellSearch.previewState = {
-    defensive  = nil,
-    selfheal   = nil,
-    cooldown   = nil,
-    blacklist  = nil,
-    hotkey     = nil,
-    petrez     = nil,
-    petheal    = nil,
-    gapcloser  = nil,
-    meleerange = nil,
-}
+-- Preview state for hotkey panel (selected spell pending confirmation)
+SpellSearch.previewState = { hotkey = nil }
 
 -- Storage for hotkey value input (not spell search)
 SpellSearch.addHotkeyValueInput = ""
@@ -80,101 +54,135 @@ function SpellSearch.BuildSpellbookCache()
         return
     end
 
-    -- Scan player spellbook
-    for i = 1, 500 do
-        local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
-        if not spellInfo then break end
-
-        -- Only cache actual spells (not flyouts, petactions, etc.)
-        if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
-            -- Skip passive spells
-            local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
-            if not isPassive then
-                local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
-                if fullInfo and fullInfo.name then
-                    spellbookCache[spellInfo.spellID] = {
-                        name = fullInfo.name,
-                        icon = fullInfo.iconID,
-                    }
+    local function CacheSpellBank(bank, limit)
+        for i = 1, limit do
+            local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, bank)
+            if not spellInfo then break end
+            if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
+                local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
+                if not isPassive then
+                    local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
+                    if fullInfo and fullInfo.name then
+                        -- Pre-compute search strings to avoid per-keystroke allocations
+                        spellbookCache[spellInfo.spellID] = {
+                            name      = fullInfo.name,
+                            nameLower = fullInfo.name:lower(),
+                            idStr     = tostring(spellInfo.spellID),
+                            icon      = fullInfo.iconID,
+                        }
+                    end
                 end
             end
         end
     end
 
+    CacheSpellBank(Enum.SpellBookSpellBank.Player, 500)
+    if Enum.SpellBookSpellBank.Pet then
+        CacheSpellBank(Enum.SpellBookSpellBank.Pet, 200)
+    end
+
     spellbookCacheBuilt = true
 end
 
+-- Invalidate the spellbook cache (call on spec change or SPELLS_CHANGED)
+function SpellSearch.InvalidateSpellbookCache()
+    wipe(spellbookCache)
+    spellbookCacheBuilt = false
+end
+
 -------------------------------------------------------------------------------
--- Get filtered items from action bars and bags for dropdown
--- Returns {[-itemID] = "ItemName [Item]"} — negative keys for AddSpellToList convention
+-- Private: fill `results` with matching spellbook entries.
+-- Returns true if an exact numeric ID was matched (caller should return early).
 -------------------------------------------------------------------------------
-function SpellSearch.GetFilteredActionBarItems(filterText, excludeList)
+local function SearchSpells(filter, filterLower, excluded, results)
+    local filterAsID = tonumber(filter)
+    if filterAsID and filterAsID > 0 and not excluded[filterAsID] then
+        local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(filterAsID)
+        if spellInfo and spellInfo.name then
+            results[filterAsID] = spellInfo.name .. " (ID: " .. filterAsID .. ")"
+            return true
+        end
+    end
+    local count = 0
+    for spellID, info in pairs(spellbookCache) do
+        if not excluded[spellID] then
+            if info.nameLower:find(filterLower, 1, true) or info.idStr:find(filter, 1, true) then
+                results[spellID] = info.name .. " (" .. info.idStr .. ")"
+                count = count + 1
+                if count >= 15 then break end
+            end
+        end
+    end
+    return false
+end
+
+-------------------------------------------------------------------------------
+-- Get filtered results: spells from spellbook + items from equipped slots,
+-- action bars, and bags. Returns combined table:
+--   positive key = spellID, negative key = -itemID
+-- Used by panels that accept both spells and items (defensive lists, blacklist).
+-------------------------------------------------------------------------------
+function SpellSearch.GetFilteredResults(filterText, excludeList)
     local results = {}
     local filter = (filterText or ""):trim()
     local filterLower = filter:lower()
 
     if filter == "" or #filter < 2 then return results end
 
-    -- Strip item: prefix for filtering (user might type "item:5512" or just "health")
-    local itemPrefixID = filter:match("^[iI]tem:(%d+)$")
-
-    -- Build exclusion set (list stores negative values for items)
     local excluded = {}
     if excludeList then
-        for _, entry in ipairs(excludeList) do
-            excluded[entry] = true
-        end
+        for _, entry in ipairs(excludeList) do excluded[entry] = true end
     end
 
-    local seen = {}  -- deduplicate items across sources
-    local count = 0
+    if SearchSpells(filter, filterLower, excluded, results) then return results end
+
+    -- ── Items ─────────────────────────────────────────────────────────────────
+
+    local itemPrefixID = filter:match("^[iI]tem:(%d+)$")
+    local seen = {}
+    local itemCount = 0
     local MAX_ITEMS = 10
 
     local function TryAddItem(itemID)
-        if count >= MAX_ITEMS then return end
-        if seen[itemID] then return end
-        if excluded[-itemID] then return end  -- stored as -itemID in list
-
-        local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
+        if itemCount >= MAX_ITEMS or seen[itemID] or excluded[-itemID] then return end
+        local itemName = GetItemInfo(itemID)
         if not itemName then return end
-
-        -- Match by name, item ID string, or exact item: prefix
-        local matched = false
+        local matched
         if itemPrefixID then
-            matched = (tostring(itemID) == itemPrefixID)
+            matched = tostring(itemID) == itemPrefixID
         else
-            local nameLower = itemName:lower()
-            local idString = tostring(itemID)
-            matched = nameLower:find(filterLower, 1, true) or idString:find(filter, 1, true)
+            matched = itemName:lower():find(filterLower, 1, true) or tostring(itemID):find(filter, 1, true)
         end
-
         if matched then
             seen[itemID] = true
             results[-itemID] = "|cff00ccff" .. itemName .. "|r (item:" .. itemID .. ")"
-            count = count + 1
+            itemCount = itemCount + 1
         end
     end
 
-    -- Source 1: Action bar slots (items placed on bars)
+    -- Source 1: Equipped gear slots (trinkets, on-use items, etc.)
+    for slot = 1, 19 do
+        if itemCount >= MAX_ITEMS then break end
+        local itemID = GetInventoryItemID("player", slot)
+        if itemID then TryAddItem(itemID) end
+    end
+
+    -- Source 2: Action bar slots
     for slot = 1, 180 do
-        if count >= MAX_ITEMS then break end
+        if itemCount >= MAX_ITEMS then break end
         local actionType, id = GetActionInfo(slot)
-        if actionType == "item" and id then
-            TryAddItem(id)
-        end
+        if actionType == "item" and id then TryAddItem(id) end
     end
 
-    -- Source 2: Bag items (backpack + 4 bags)
+    -- Source 3: Bags (backpack + 4 bags)
     if C_Container and C_Container.GetContainerNumSlots then
         for bag = 0, 4 do
-            if count >= MAX_ITEMS then break end
+            if itemCount >= MAX_ITEMS then break end
             local numSlots = C_Container.GetContainerNumSlots(bag) or 0
             for slot = 1, numSlots do
-                if count >= MAX_ITEMS then break end
+                if itemCount >= MAX_ITEMS then break end
                 local containerInfo = C_Container.GetContainerItemInfo(bag, slot)
-                if containerInfo and containerInfo.itemID then
-                    TryAddItem(containerInfo.itemID)
-                end
+                if containerInfo and containerInfo.itemID then TryAddItem(containerInfo.itemID) end
             end
         end
     end
@@ -183,79 +191,23 @@ function SpellSearch.GetFilteredActionBarItems(filterText, excludeList)
 end
 
 -------------------------------------------------------------------------------
--- Get filtered spells for dropdown based on search text
+-- Spells-only search — for panels where items are not applicable
+-- (gap-closers, hotkeys, melee range override).
 -------------------------------------------------------------------------------
 function SpellSearch.GetFilteredSpellbookSpells(filterText, excludeList)
     local results = {}
     local filter = (filterText or ""):trim()
     local filterLower = filter:lower()
 
-    -- Build exclusion set
+    if filter == "" or #filter < 2 then return results end
+
     local excluded = {}
     if excludeList then
-        for _, spellID in ipairs(excludeList) do
-            excluded[spellID] = true
-        end
+        for _, spellID in ipairs(excludeList) do excluded[spellID] = true end
     end
 
-    -- If filter is too short, return empty (avoid huge dropdown)
-    if filter == "" or #filter < 2 then
-        return results
-    end
-
-    -- Check if filter is a spell ID (numeric)
-    local filterAsID = tonumber(filter)
-    if filterAsID and filterAsID > 0 and not excluded[filterAsID] then
-        -- Try to get spell info for this ID
-        local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(filterAsID)
-        if spellInfo and spellInfo.name then
-            results[filterAsID] = spellInfo.name .. " (ID: " .. filterAsID .. ")"
-            return results  -- Exact ID match, return just this
-        end
-    end
-
-    -- Search cache by name (and partial ID match)
-    local count = 0
-    for spellID, info in pairs(spellbookCache) do
-        if not excluded[spellID] then
-            local nameLower = info.name:lower()
-            local idString = tostring(spellID)
-            -- Match by name OR by spell ID prefix
-            if nameLower:find(filterLower, 1, true) or idString:find(filter, 1, true) then
-                results[spellID] = info.name .. " (" .. spellID .. ")"
-                count = count + 1
-                if count >= 15 then break end  -- Limit dropdown size
-            end
-        end
-    end
-
+    SearchSpells(filter, filterLower, excluded, results)
     return results
-end
-
--------------------------------------------------------------------------------
--- Helper to look up spell ID from name
--------------------------------------------------------------------------------
-function SpellSearch.LookupSpellByName(spellName)
-    if not spellName or spellName == "" then return nil end
-
-    local nameLower = spellName:lower():trim()
-
-    -- Search spellbook cache first
-    for spellID, info in pairs(spellbookCache) do
-        if info.name:lower() == nameLower then
-            return spellID
-        end
-    end
-
-    -- Try C_Spell.GetSpellInfo with the name directly (might work for some spells)
-    if C_Spell and C_Spell.GetSpellInfo then
-        local info = C_Spell.GetSpellInfo(spellName)
-        if info and info.spellID then
-            return info.spellID
-        end
-    end
-
-    return nil
 end
 
 -------------------------------------------------------------------------------
@@ -312,7 +264,7 @@ end
 -------------------------------------------------------------------------------
 -- Helper to create spell list entries for a given list (defensives/etc.)
 -------------------------------------------------------------------------------
-function SpellSearch.CreateSpellListEntries(addon, defensivesArgs, spellList, listType, baseOrder, updateFunc)
+function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, listType, baseOrder, updateFunc)
     if not spellList then return end
 
     for i, entry in ipairs(spellList) do
@@ -392,150 +344,42 @@ function SpellSearch.CreateSpellListEntries(addon, defensivesArgs, spellList, li
 end
 
 -------------------------------------------------------------------------------
--- Helper to create add spell input with autocomplete dropdown
+-- Helper to create a single "Add..." button that opens the live-search popup.
+-- spellsOnly = true  → spellbook only (gap-closers, hotkeys, melee range override)
+-- spellsOnly = false → spellbook + inventory items (defensives, blacklist)
 -------------------------------------------------------------------------------
-function SpellSearch.CreateAddSpellInput(addon, defensivesArgs, spellList, listType, order, listName, updateFunc)
+function SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, listType, order, listName, updateFunc, spellsOnly)
     SpellSearch.BuildSpellbookCache()
-    SpellSearch.filterState[listType] = SpellSearch.filterState[listType] or ""
 
-    -- Search input field (type to filter by name or ID, or -itemID/item:ID for items)
-    local allowItems = addon.db and addon.db.profile
-        and addon.db.profile.defensives and addon.db.profile.defensives.allowItems == true
-    local searchDesc = L["Search spell desc"]
-    if allowItems then
-        searchDesc = searchDesc .. "\nFor items: use -itemID or item:ID (e.g., -5512 or item:5512)"
-    end
-    defensivesArgs["search_input_" .. listType] = {
-        type = "input",
-        name = L["Add to %s"]:format(listName),
-        desc = searchDesc,
+    argsTable["add_popup_" .. listType] = {
+        type  = "execute",
+        name  = L["Add"] .. " " .. listName .. "...",
+        desc  = L["Search spell desc"],
         order = order,
-        width = "double",
-        get = function() return SpellSearch.filterState[listType] or "" end,
-        set = function(_, val)
-            SpellSearch.filterState[listType] = val or ""
-            -- Refresh options to update dropdown
-            if AceConfigRegistry then
-                AceConfigRegistry:NotifyChange("JustAssistedCombat")
-            end
-        end
-    }
+        width = "normal",
+        func  = function()
+            local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+            if not LiveSearchPopup then return end
 
-    defensivesArgs["search_dropdown_" .. listType] = {
-        type = "select",
-        name = "",
-        desc = L["Select spell to add"],
-        order = order + 0.1,
-        width = "double",
-        values = function()
-            local results = SpellSearch.GetFilteredSpellbookSpells(SpellSearch.filterState[listType], spellList)
-            if addon.db and addon.db.profile
-                and addon.db.profile.defensives and addon.db.profile.defensives.allowItems == true then
-                local itemResults = SpellSearch.GetFilteredActionBarItems(SpellSearch.filterState[listType], spellList)
-                for k, v in pairs(itemResults) do
-                    results[k] = v
-                end
+            -- Snapshot the current list as exclusion set for the popup session
+            local excludeList = {}
+            for _, entry in ipairs(spellList) do
+                excludeList[#excludeList + 1] = entry
             end
-            -- If no results and filter looks like valid input, show helper text
-            local filter = (SpellSearch.filterState[listType] or ""):trim()
-            if next(results) == nil and #filter >= 2 then
-                SpellSearch.previewState[listType] = nil
-                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
-            end
-            SpellSearch.previewState[listType] = next(results)
-            return results
-        end,
-        get = function() return SpellSearch.previewState[listType] end,  -- Show first result as preview
-        set = function(_, spellID)
-            if spellID == 0 then return end  -- Ignore "no matches" placeholder
-            if SpellSearch.AddSpellToList(addon, spellList, spellID) then
-                SpellSearch.filterState[listType] = ""  -- Clear search
-                SpellSearch.previewState[listType] = nil  -- Clear preview
-                updateFunc()
-            end
-        end,
-        disabled = function()
-            local filter = (SpellSearch.filterState[listType] or ""):trim()
-            return #filter < 2
-        end,
-    }
 
-    -- Add button for manual entry (spell ID, item:ID, -itemID, or exact name)
-    local addDesc = L["Add spell dropdown desc"]
-    if allowItems then
-        addDesc = addDesc .. "\nFor items: use -itemID (e.g., -5512) or item:ID (e.g., item:5512)"
-    end
-    defensivesArgs["add_button_" .. listType] = {
-        type = "execute",
-        name = L["Add"],
-        desc = addDesc,
-        order = order + 0.2,
-        width = "half",
-        func = function()
-            local val = (SpellSearch.filterState[listType] or ""):trim()
-            if val == "" then return end
+            local searchFunc = spellsOnly and SpellSearch.GetFilteredSpellbookSpells
+                                          or  SpellSearch.GetFilteredResults
 
-            local itemsEnabled = addon.db and addon.db.profile
-                and addon.db.profile.defensives and addon.db.profile.defensives.allowItems == true
-
-            -- Check for "item:ID" syntax (user-friendly alternative to negative numbers)
-            local itemPrefix = val:match("^[iI]tem:(%d+)$")
-            if itemPrefix then
-                if not itemsEnabled then
-                    addon:Print("Enable 'Allow Items in Spell Lists' to add items")
-                    return
-                end
-                local itemID = tonumber(itemPrefix)
-                if itemID and itemID > 0 then
-                    if SpellSearch.AddSpellToList(addon, spellList, -itemID) then
-                        SpellSearch.filterState[listType] = ""
+            LiveSearchPopup.Open({
+                title       = L["Add"] .. " " .. listName,
+                searchFunc  = searchFunc,
+                excludeList = excludeList,
+                onSelect    = function(id, _)
+                    if SpellSearch.AddSpellToList(addon, spellList, id) then
                         updateFunc()
                     end
-                    return
-                end
-            end
-
-            local numVal = tonumber(val)
-
-            if numVal and numVal < 0 then
-                if not itemsEnabled then
-                    addon:Print("Enable 'Allow Items in Spell Lists' to add items")
-                    return
-                end
-                if SpellSearch.AddSpellToList(addon, spellList, numVal) then
-                    SpellSearch.filterState[listType] = ""
-                    updateFunc()
-                end
-                return
-            end
-
-            local spellID = numVal
-
-            if not spellID then
-                spellID = SpellSearch.LookupSpellByName(val)
-                if not spellID then
-                    -- Try C_Spell directly for spells not in cache
-                    if C_Spell and C_Spell.GetSpellInfo then
-                        local info = C_Spell.GetSpellInfo(val)
-                        if info and info.spellID then
-                            spellID = info.spellID
-                        end
-                    end
-                end
-                if not spellID then
-                    addon:Print("Spell/item not found: " .. val .. " (for items, use -itemID or item:ID)")
-                    return
-                end
-            end
-
-            if SpellSearch.AddSpellToList(addon, spellList, spellID) then
-                SpellSearch.filterState[listType] = ""  -- Clear input
-                updateFunc()
-            end
-        end,
-        disabled = function()
-            local filter = (SpellSearch.filterState[listType] or ""):trim()
-            return #filter < 1
+                end,
+            })
         end,
     }
 end
