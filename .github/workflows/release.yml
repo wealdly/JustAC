@@ -19,7 +19,8 @@ jobs:
 
       - name: Trim changelog to latest entry
         run: |
-          awk '/^## \[/{if(n++)exit}1' CHANGELOG.md > CHANGELOG_TRIMMED.md
+          awk '/^## \[/{if(n++)exit}1' CHANGELOG.md \
+            | sed '/^# /d; s/^## \[/### [/' > CHANGELOG_TRIMMED.md
           mv CHANGELOG_TRIMMED.md CHANGELOG.md
 
       - uses: BigWigsMods/packager@v2
