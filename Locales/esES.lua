@@ -190,11 +190,6 @@ L["Both"] = "Ambos"
 L["Queue Visibility"] = "Visibilidad de la cola"
 L["Queue Visibility desc"] = "Siempre: Mostrar en todo momento.\nSolo en combate: Ocultar fuera de combate.\nRequiere objetivo hostil: Mostrar solo con un enemigo atacable seleccionado."
 
--- Item Features
-L["Allow Items in Spell Lists"] = "Permitir objetos en listas de hechizos"
-L["Allow Items in Spell Lists desc"] = "Permitir agregar consumibles (pociones, piedras de salud) a las listas defensivas. La búsqueda también escaneará bolsas y barras de acción."
-L["Auto-Insert Health Potions"] = "Insertar pociones de salud automáticamente"
-L["Auto-Insert Health Potions desc"] = "Sugerir automáticamente una poción de sanación cuando la salud es crítica, incluso sin agregarla manualmente."
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "Resurrección/Invocación de mascota (prioridad)"

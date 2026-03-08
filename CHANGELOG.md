@@ -1,6 +1,19 @@
 
 # Changelog
 
+## [4.8.3] - 2026-03-08
+
+### Added
+- Live-search popup (persistent floating frame) for all spell/item selection panels — replaces the broken AceConfig `input+select` pattern that lost EditBox focus on every keystroke
+- Items (trinkets, on-use gear, bag items) now searchable in the Offensive blacklist, consistent with defensive spell lists
+- Spellbook cache invalidated automatically on specialization change and `SPELLS_CHANGED`
+
+### Changed
+- Spellbook cache pre-computes `nameLower` and `idStr` at build time — eliminates per-keystroke string allocations during search
+- Search popup uses `TOOLTIP` frame strata to always render above the WoW Settings panel
+- Shared spell-search logic extracted into a private helper — `GetFilteredResults` and `GetFilteredSpellbookSpells` no longer duplicate the scan loop
+- Removed dead options code: `filterState` table, unused `previewState` entries, `LookupSpellByName`, `CreateAddSpellInput`, orphaned `AceConfigRegistry` reference in SpellSearch
+
 ## [4.8.2] - 2026-03-07
 
 ### Added

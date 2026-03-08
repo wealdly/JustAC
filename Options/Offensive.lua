@@ -95,112 +95,53 @@ function Offensive.UpdateBlacklistOptions(addon)
         addon.db.profile.blacklistedSpells[specKey] = {}
     end
     local blacklistedSpells = addon.db.profile.blacklistedSpells[specKey]
-    
+
     SpellSearch.BuildSpellbookCache()
-    SpellSearch.filterState.blacklist = SpellSearch.filterState.blacklist or ""
 
     blacklistArgs.addHeader = {
         type = "header",
         name = L["Add Spell to Blacklist"],
         order = 22,
     }
-    blacklistArgs.searchInput = {
-        type = "input",
-        name = L["Search spell name or ID"],
-        desc = L["Search spell desc"],
+    blacklistArgs.addSpellButton = {
+        type  = "execute",
+        name  = L["Add"] .. " " .. L["Blacklist"] .. "...",
+        desc  = L["Search spell desc"],
         order = 22.1,
-        width = "double",
-        get = function() return SpellSearch.filterState.blacklist or "" end,
-        set = function(_, val)
-            SpellSearch.filterState.blacklist = val or ""
-            if AceConfigRegistry then
-                AceConfigRegistry:NotifyChange("JustAssistedCombat")
-            end
-        end
-    }
-    blacklistArgs.searchDropdown = {
-        type = "select",
-        name = "",
-        desc = L["Select spell to blacklist"],
-        order = 22.2,
-        width = "double",
-        values = function()
+        width = "normal",
+        func  = function()
+            local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+            if not LiveSearchPopup then return end
+
+            -- Snapshot current blacklist as exclusion set
             local excludeList = {}
             for spellID, _ in pairs(blacklistedSpells) do
-                table.insert(excludeList, spellID)
+                excludeList[#excludeList + 1] = spellID
             end
-            local results = SpellSearch.GetFilteredSpellbookSpells(SpellSearch.filterState.blacklist, excludeList)
-            local filter = (SpellSearch.filterState.blacklist or ""):trim()
-            if next(results) == nil and #filter >= 2 then
-                SpellSearch.previewState.blacklist = nil
-                return {[0] = "|cff888888" .. L["No matches"] .. "|r"}
-            end
-            SpellSearch.previewState.blacklist = next(results)
-            return results
-        end,
-        get = function() return SpellSearch.previewState.blacklist end,
-        set = function(_, spellID)
-            if spellID == 0 then return end
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.name then
-                blacklistedSpells[spellID] = true
-                addon:Print("Blacklisted: " .. spellInfo.name)
-                SpellSearch.filterState.blacklist = ""
-                addon:ForceUpdate()
-                Offensive.UpdateBlacklistOptions(addon)
-            end
-        end,
-        disabled = function()
-            local filter = (SpellSearch.filterState.blacklist or ""):trim()
-            return #filter < 2
-        end,
-    }
-    blacklistArgs.addButton = {
-        type = "execute",
-        name = L["Add"],
-        desc = L["Add spell manual desc"],
-        order = 22.3,
-        width = "half",
-        func = function()
-            local val = (SpellSearch.filterState.blacklist or ""):trim()
-            if val == "" then return end
 
-            local spellID = tonumber(val)
-            if not spellID then
-                spellID = SpellSearch.LookupSpellByName(val)
-                if not spellID and C_Spell and C_Spell.GetSpellInfo then
-                    local info = C_Spell.GetSpellInfo(val)
-                    if info and info.spellID then
-                        spellID = info.spellID
+            LiveSearchPopup.Open({
+                title      = L["Add Spell to Blacklist"],
+                searchFunc = SpellSearch.GetFilteredResults,
+                excludeList = excludeList,
+                onSelect   = function(id, _)
+                    if not id or id == 0 then return end
+                    if blacklistedSpells[id] then return end
+                    local displayName
+                    if id > 0 then
+                        local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+                        if not spellInfo or not spellInfo.name then return end
+                        displayName = spellInfo.name
+                    else
+                        local itemName = GetItemInfo(-id)
+                        if not itemName then return end
+                        displayName = itemName .. " |cff00ccff[Item]|r"
                     end
-                end
-            end
-
-            if not spellID then
-                addon:Print("Spell not found: " .. val)
-                return
-            end
-
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if not spellInfo or not spellInfo.name then
-                addon:Print("Invalid spell ID: " .. spellID)
-                return
-            end
-
-            if blacklistedSpells[spellID] then
-                addon:Print("Spell already blacklisted: " .. spellInfo.name)
-                return
-            end
-
-            blacklistedSpells[spellID] = true
-            addon:Print("Blacklisted: " .. spellInfo.name)
-            SpellSearch.filterState.blacklist = ""
-            addon:ForceUpdate()
-            Offensive.UpdateBlacklistOptions(addon)
-        end,
-        disabled = function()
-            local filter = (SpellSearch.filterState.blacklist or ""):trim()
-            return #filter < 1
+                    blacklistedSpells[id] = true
+                    addon:Print("Blacklisted: " .. displayName)
+                    addon:ForceUpdate()
+                    Offensive.UpdateBlacklistOptions(addon)
+                end,
+            })
         end,
     }
     blacklistArgs.listHeader = {
@@ -208,23 +149,32 @@ function Offensive.UpdateBlacklistOptions(addon)
         name = L["Blacklisted Spells"],
         order = 22.5,
     }
-    
-    local spellList = {}
-    for spellID, _ in pairs(blacklistedSpells) do
-        if type(spellID) == "number" and spellID > 0 then
-            table.insert(spellList, spellID)
+
+    -- Collect all blacklisted entries (spells: positive IDs, items: negative IDs)
+    local entryList = {}
+    for id, _ in pairs(blacklistedSpells) do
+        if type(id) == "number" and id ~= 0 then
+            local displayName, displayIcon
+            if id > 0 then
+                local info = BlizzardAPI and BlizzardAPI.GetSpellInfo(id) or (C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id))
+                displayName = info and info.name or ("Spell #" .. id)
+                displayIcon = info and info.iconID or 134400
+            else
+                local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(-id)
+                displayName = (itemName or ("Item #" .. (-id))) .. " |cff00ccff[Item]|r"
+                displayIcon = itemTexture or 134400
+            end
+            entryList[#entryList + 1] = { id = id, name = displayName, icon = displayIcon }
         end
     end
 
-    table.sort(spellList, function(a, b)
-        local infoA = BlizzardAPI and BlizzardAPI.GetSpellInfo(a) or C_Spell.GetSpellInfo(a)
-        local infoB = BlizzardAPI and BlizzardAPI.GetSpellInfo(b) or C_Spell.GetSpellInfo(b)
-        local nameA = infoA and infoA.name or ""
-        local nameB = infoB and infoB.name or ""
-        return nameA < nameB
+    table.sort(entryList, function(a, b)
+        local na = a.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        local nb = b.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        return na < nb
     end)
 
-    if #spellList == 0 then
+    if #entryList == 0 then
         blacklistArgs.noSpells = {
             type = "description",
             name = L["No spells currently blacklisted"],
@@ -244,20 +194,21 @@ function Offensive.UpdateBlacklistOptions(addon)
                 Offensive.UpdateBlacklistOptions(addon)
             end,
         }
-        for i, spellID in ipairs(spellList) do
-            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
-            local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
-            local spellIcon = spellInfo and spellInfo.iconID or 134400
+        for i, entry in ipairs(entryList) do
+            local idKey = "bl_" .. tostring(entry.id)
+            local idStr = entry.id > 0
+                and ("|cff888888ID: " .. entry.id .. "|r")
+                or  ("|cff888888item:" .. (-entry.id) .. "|r")
 
-            blacklistArgs[tostring(spellID)] = {
+            blacklistArgs[idKey] = {
                 type = "group",
-                name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
+                name = "|T" .. entry.icon .. ":16:16:0:0|t " .. entry.name,
                 inline = true,
                 order = i + 23,
                 args = {
-                    spellInfo = {
+                    entryInfo = {
                         type = "description",
-                        name = "|cff888888ID: " .. spellID .. "|r",
+                        name = idStr,
                         order = 1,
                         width = "double",
                     },
@@ -266,7 +217,7 @@ function Offensive.UpdateBlacklistOptions(addon)
                         name = L["Remove"],
                         order = 2,
                         func = function()
-                            blacklistedSpells[spellID] = nil
+                            blacklistedSpells[entry.id] = nil
                             addon:ForceUpdate()
                             Offensive.UpdateBlacklistOptions(addon)
                         end
@@ -275,7 +226,7 @@ function Offensive.UpdateBlacklistOptions(addon)
             }
         end
     end
-    
+
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

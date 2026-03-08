@@ -190,11 +190,6 @@ L["Both"] = "Les deux"
 L["Queue Visibility"] = "Visibilité de la file"
 L["Queue Visibility desc"] = "Toujours : afficher en permanence.\nEn combat uniquement : masquer hors combat.\nCible hostile requise : afficher uniquement en ciblant un ennemi attaquable."
 
--- Item Features
-L["Allow Items in Spell Lists"] = "Autoriser les objets dans les listes de sorts"
-L["Allow Items in Spell Lists desc"] = "Ajouter des consommables (potions, pierres de soins) aux listes défensives. La recherche inclura aussi les sacs et barres d'action."
-L["Auto-Insert Health Potions"] = "Insertion auto des potions de soin"
-L["Auto-Insert Health Potions desc"] = "Suggérer automatiquement une potion de soin quand la santé est critique, même sans ajout manuel."
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "Résurrection/Invocation du familier (priorité)"

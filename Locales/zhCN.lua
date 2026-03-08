@@ -190,11 +190,6 @@ L["Both"] = "两者都"
 L["Queue Visibility"] = "队列可见性"
 L["Queue Visibility desc"] = "始终：随时显示。\n仅战斗中：脱战时隐藏。\n需要敌对目标：仅在选定可攻击的敌人时显示。"
 
--- Item Features
-L["Allow Items in Spell Lists"] = "允许法术列表中的物品"
-L["Allow Items in Spell Lists desc"] = "允许将消耗品（药水、治疗石）添加到防御法术列表中。启用后搜索也会扫描背包和动作条。"
-L["Auto-Insert Health Potions"] = "自动插入治疗药水"
-L["Auto-Insert Health Potions desc"] = "生命值极低时自动推荐动作条上的治疗药水，即使未手动添加。"
 
 -- Pet Rez/Summon and Pet Heal lists (pet classes only)
 L["Pet Rez/Summon Priority List"] = "宠物复活/召唤优先列表"
