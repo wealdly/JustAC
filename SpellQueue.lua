@@ -18,7 +18,6 @@ local UnitCanAttack = UnitCanAttack
 local wipe = wipe
 local type = type
 local ipairs = ipairs
-local IsActionInRange = IsActionInRange
 
 local lastSpellIDs = {}
 local lastQueueUpdate = 0
@@ -33,6 +32,11 @@ local cachedAddon = nil
 -- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
 -- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
 local syntheticProcs = {}
+
+-- Spells displaced from position 1 to position 2 by a gap-closer injection.
+-- These were Blizzard's primary recommendation; they keep the blue assisted glow
+-- at their new position so the player knows they're still the next cast after closing.
+local displacedPrimary = {}
 
 -- Reusable pooled tables (wiped at start of each queue build to avoid GC pressure)
 local proccedSpells = {}
@@ -277,6 +281,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(recommendedSpells)
     wipe(addedSpellIDs)
     wipe(syntheticProcs)
+    wipe(displacedPrimary)
     wipe(cooldownSpells)
     local maxIcons = profile.maxIcons or 4
     local spellCount = 0
@@ -327,47 +332,36 @@ function SpellQueue.GetCurrentSpellQueue()
             end
 
             if not pos1IsGapCloser then
-                -- If Blizzard's #1 spell is in range (or has no range check,
-                -- e.g. AoE), trust Blizzard — don't inject a gap closer.
-                -- Only inject when the primary spell is genuinely out of range.
-                local pos1InRange = false
-                if primarySpellID and primarySpellID > 0 and ActionBarScanner then
-                    local pos1Slot = ActionBarScanner.GetSlotForSpell(primarySpellID)
-                    if pos1Slot then
-                        local rangeResult = IsActionInRange(pos1Slot)
-                        -- true = in range, nil = no range check → both mean castable
-                        if rangeResult ~= false then
-                            pos1InRange = true
+                -- GapCloserEngine decides solely via its melee range reference
+                -- (IsActionInRange on the melee ref slot). pos1InRange is NOT
+                -- used here: ranged fillers like Shuriken Toss appear castable
+                -- at 11 yards but should not suppress a Shadowstep injection.
+                local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
+                if gcSpell then
+                    local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
+                    if spellCount >= 1 then
+                        -- Promote gap closer to position 1: push all existing
+                        -- spells down so the gap closer is always first.
+                        -- Track the displaced pos1 spell so it keeps its blue glow.
+                        if pos1Display then displacedPrimary[pos1Display] = true end
+                        if primarySpellID and primarySpellID ~= pos1Display then
+                            displacedPrimary[primarySpellID] = true
                         end
+                        for i = spellCount, 1, -1 do
+                            recommendedSpells[i + 1] = recommendedSpells[i]
+                        end
+                        recommendedSpells[1] = gcSpell
+                    else
+                        recommendedSpells[1] = gcSpell
                     end
-                end
-
-                if pos1InRange then
-                    -- Primary spell is castable — no gap closer needed
-                else
-                    local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
-                    if gcSpell then
-                        local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
-                        if spellCount >= 1 then
-                            -- Promote gap closer to position 1: the primary spell is
-                            -- out of range so you can't cast it — the gap closer is
-                            -- always the correct first action.
-                            for i = spellCount, 1, -1 do
-                                recommendedSpells[i + 1] = recommendedSpells[i]
-                            end
-                            recommendedSpells[1] = gcSpell
-                        else
-                            recommendedSpells[1] = gcSpell
-                        end
-                        spellCount = spellCount + 1
-                        addedSpellIDs[gcSpell] = true
-                        addedSpellIDs[gcDisplay] = true
-                        if gcBase and gcBase ~= gcSpell then
-                            addedSpellIDs[gcBase] = true
-                        end
-                        syntheticProcs[gcSpell] = true
-                        syntheticProcs[gcDisplay] = true
+                    spellCount = spellCount + 1
+                    addedSpellIDs[gcSpell] = true
+                    addedSpellIDs[gcDisplay] = true
+                    if gcBase and gcBase ~= gcSpell then
+                        addedSpellIDs[gcBase] = true
                     end
+                    syntheticProcs[gcSpell] = true
+                    syntheticProcs[gcDisplay] = true
                 end
             end
 
@@ -521,6 +515,13 @@ end
 --- by the most recent GetCurrentSpellQueue() call.
 function SpellQueue.IsSyntheticProc(spellID)
     return syntheticProcs[spellID] == true
+end
+
+--- Returns true if spellID was displaced from position 1 to position 2 by a
+--- gap-closer injection in the most recent GetCurrentSpellQueue() call.
+--- UIRenderer uses this to keep the blue assisted glow on the displaced spell.
+function SpellQueue.IsDisplacedPrimary(spellID)
+    return displacedPrimary[spellID] == true
 end
 
 --- Returns true if spellID is ANY known gap-closer for the current spec
