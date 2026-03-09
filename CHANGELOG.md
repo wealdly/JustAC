@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+## [4.8.7] - 2026-03-09
+
+### Fixed
+- Gap-closer (e.g. Shadowstep) now recommended consistently at all distances outside melee range — removed `pos1InRange` gate in SpellQueue that incorrectly suppressed gap-closer injection when Blizzard's primary recommendation was a ranged filler (Shuriken Toss, etc.) castable at range
+- Overlay queue: gap-closer glow now respects the glow mode setting — was bypassing `glowMode` entirely and could show the gold crawl even with glows disabled
+- Overlay queue: gap-closer glow now takes priority over proc glow, matching standard queue behaviour
+- Overlay queue: spell displaced from position 1 to position 2 by a gap-closer injection now shows the blue assisted glow (standard queue already did this)
+- Overlay queue: queue icon desaturation slider now applies immediately when changed — was only re-applying on visual-state transitions, not on slider moves
+
 ## [4.8.6] - 2026-03-09
 
 ### Fixed
