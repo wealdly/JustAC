@@ -799,16 +799,21 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
         profile.hotkeyOverrides = {}
     end
 
+    local displayName
+    if spellID < 0 then
+        local itemName = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-spellID)
+        displayName = itemName or ("Item #" .. (-spellID))
+    else
+        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
+        displayName = spellInfo and spellInfo.name or "Unknown"
+    end
+
     if hotkeyText and hotkeyText:trim() ~= "" then
         profile.hotkeyOverrides[spellID] = hotkeyText:trim()
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or "Unknown"
-        self:DebugPrint("Hotkey: " .. spellName .. " = '" .. hotkeyText:trim() .. "'")
+        self:DebugPrint("Hotkey: " .. displayName .. " = '" .. hotkeyText:trim() .. "'")
     else
         profile.hotkeyOverrides[spellID] = nil
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
-        local spellName = spellInfo and spellInfo.name or "Unknown"
-        self:DebugPrint("Hotkey removed: " .. spellName)
+        self:DebugPrint("Hotkey removed: " .. displayName)
     end
 
     if Options and Options.UpdateHotkeyOverrideOptions then

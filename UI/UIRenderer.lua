@@ -348,6 +348,17 @@ local function UpdateButtonCooldowns(button)
                     button.cooldown:SetCooldownFromDurationObject(dur)
                 end
                 usedDurationObject = true
+            elseif ok then
+                -- API succeeded but returned nil → no active cooldown (not on CD,
+                -- not on GCD).  Prevents fallthrough to legacy SetCooldown where
+                -- blanket-secreted zeros would park the sweep at 12 o'clock.
+                -- (Blizzard's own action bars avoid this via CreateSecureDelegate
+                -- which can evaluate secret comparisons; tainted addon code cannot.)
+                if button._cooldownShown then
+                    button.cooldown:Clear()
+                    button._cooldownShown = false
+                end
+                usedDurationObject = true
             end
         end
 
@@ -377,10 +388,17 @@ local function UpdateButtonCooldowns(button)
             local modRate = cooldownInfo.modRate or 1
             local durationIsSecret = BlizzardAPI.IsSecretValue(duration)
             local startTimeIsSecret = BlizzardAPI.IsSecretValue(startTime)
-            -- Cooldown is genuinely active when: values are secret (can't read), OR
-            -- duration>0 AND the deadline hasn't passed yet.
-            local cooldownActive = durationIsSecret or startTimeIsSecret
-                or (duration > 0 and (startTime <= 0 or (startTime + duration) > GetTime()))
+            -- Cooldown is genuinely active when: duration>0 AND the deadline
+            -- hasn't passed yet.  When values are secret (12.0 combat), addon code
+            -- cannot compare them — blanket-secreted zeros look "active" but are not.
+            -- Use NeverSecret IsSpellReady() fallback chain (isOnGCD + local tracking
+            -- + action bar usability) to determine true state.
+            local cooldownActive
+            if durationIsSecret or startTimeIsSecret then
+                cooldownActive = BlizzardAPI.IsSpellReady and not BlizzardAPI.IsSpellReady(id)
+            else
+                cooldownActive = duration > 0 and (startTime <= 0 or (startTime + duration) > GetTime())
+            end
             if cooldownActive then
                 if not button._cooldownShown then
                     button.cooldown:SetDrawSwipe(true)
@@ -465,6 +483,15 @@ local function UpdateButtonCooldowns(button)
                                 button.chargeCooldown:SetCooldownFromDurationObject(dur)
                             end
                             usedChargeDurationObject = true
+                        elseif ok then
+                            -- API returned nil → no charge recharging.  Same pattern
+                            -- as the main cooldown nil-DurationObject fix above.
+                            if button._chargeCooldownShown then
+                                button.chargeCooldown:Clear()
+                                button.chargeCooldown:Hide()
+                                button._chargeCooldownShown = false
+                            end
+                            usedChargeDurationObject = true
                         end
                     end
                 end
@@ -497,10 +524,20 @@ local function UpdateButtonCooldowns(button)
 
     -- currentCharges may be secret; SetText() displays secret values correctly.
     if button.chargeText then
-        if isMultiCharge then
-            local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
-            local chOverlays = chProfile and chProfile.textOverlays
-            local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
+        local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
+        local chOverlays = chProfile and chProfile.textOverlays
+        local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
+
+        if isItem and showChargesCfg then
+            -- Item stack quantity (e.g. healing potions, food)
+            local count = GetItemCount(id)
+            if count and count > 1 then
+                button.chargeText:SetText(count)
+                button.chargeText:Show()
+            else
+                button.chargeText:Hide()
+            end
+        elseif isMultiCharge then
             if showChargesCfg then
                 if chargeInfo and chargeInfo.currentCharges then
                     button.chargeText:SetText(chargeInfo.currentCharges)
@@ -733,12 +770,19 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
     
     if isItem then
-        local itemInfo = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(id)
-        if itemInfo then
-            iconTexture = itemInfo.iconFileID
-            name = itemInfo.itemName
-        else
+        -- C_Item.GetItemIconByID is lightweight and always-cached (no async needed)
+        if C_Item and C_Item.GetItemIconByID then
+            iconTexture = C_Item.GetItemIconByID(id)
+        end
+        -- C_Item.GetItemInfo returns a 17-value tuple (same as legacy GetItemInfo)
+        if C_Item and C_Item.GetItemInfo then
+            name, _, _, _, _, _, _, _, _, iconTexture = C_Item.GetItemInfo(id)
+        elseif GetItemInfo then
             name, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
+        end
+        -- GetItemIconByID may have resolved even if name/GetItemInfo hasn't cached yet
+        if not iconTexture then
+            iconTexture = GetItemIcon and GetItemIcon(id)
         end
         if not iconTexture then return end
     else
@@ -789,18 +833,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local hotkey = ""
     if showHotkeys or showFlash then
         if isItem then
-            for slot = 1, 180 do
-                local actionType, actionID = GetActionInfo(slot)
-                if actionType == "item" and actionID == id then
-                    hotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. slot) or ""
-                    if hotkey == "" then
-                        local barOffset = slot > 12 and math.floor((slot - 1) / 12) or 0
-                        local buttonIndex = ((slot - 1) % 12) + 1
-                        hotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
-                    end
-                    break
-                end
-            end
+            hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(id, defensiveIcon.itemCastSpellID) or ""
         else
             hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
         end
@@ -1086,18 +1119,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if defID then
                         local defHotkey
                         if defIcon.isItem then
-                            defHotkey = ""
-                            for slot = 1, 180 do
-                                local actionType, actionID = GetActionInfo(slot)
-                                if actionType == "item" and actionID == defID then
-                                    defHotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. slot) or ""
-                                    if defHotkey == "" then
-                                        local buttonIndex = ((slot - 1) % 12) + 1
-                                        defHotkey = ActionBarScanner and ActionBarScanner.SelectBindingKey and ActionBarScanner.SelectBindingKey("ACTIONBUTTON" .. buttonIndex) or ""
-                                    end
-                                    break
-                                end
-                            end
+                            defHotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(defID, defIcon.itemCastSpellID) or ""
                         else
                             defHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(defID) or ""
                         end
@@ -1348,11 +1370,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     end
                 end
                 
-                if i > 1 then
-                    iconTexture:SetVertexColor(QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_BRIGHTNESS, QUEUE_ICON_OPACITY)
-                else
-                    iconTexture:SetVertexColor(1, 1, 1, 1)
-                end
+                -- Position-based vertex color is applied inside the visual
+                -- state machine below to avoid overwriting the resource tint
+                -- (blue/purple) on every frame.
 
                 -- Swipe animates smoothly once set; only refresh on change or throttle tick.
                 if spellChanged or shouldUpdateCooldowns then
@@ -1517,25 +1537,36 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 
                 -- Force-apply every frame during channeling/casting so all icons
                 -- grey/ungrey on the exact same frame (no per-icon desync).
-                if icon.lastVisualState ~= visualState or icon.lastBaseDesaturation ~= baseDesaturation
-                   or isChanneling or isCasting then
-                    if visualState == 4 then
-                        -- Channeling THIS spell: full color + cooldown sweep showing channel progress
+                -- Apply every frame so the resource tint persists and
+                -- position-based brightness is always correct.  The
+                -- desaturation shortcut only fires on state transitions to
+                -- avoid redundant SetDesaturation calls.
+                local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
+                local qa = (i > 1) and QUEUE_ICON_OPACITY or 1
+                if visualState == 4 then
+                    -- Channeling THIS spell: full color + cooldown sweep showing channel progress
+                    if icon.lastVisualState ~= 4 or icon.lastBaseDesaturation ~= baseDesaturation then
                         iconTexture:SetDesaturation(baseDesaturation)
-                        iconTexture:SetVertexColor(1, 1, 1)
-                    elseif visualState == 1 then
-                        iconTexture:SetDesaturation(1.0)
-                        iconTexture:SetVertexColor(1, 1, 1)
-                    elseif visualState == 2 then
-                        iconTexture:SetDesaturation(0)
-                        iconTexture:SetVertexColor(0.3, 0.3, 0.8)
-                    else
-                        iconTexture:SetDesaturation(baseDesaturation)
-                        iconTexture:SetVertexColor(1, 1, 1)
                     end
-                    icon.lastVisualState = visualState
-                    icon.lastBaseDesaturation = baseDesaturation
+                    iconTexture:SetVertexColor(1, 1, 1)
+                elseif visualState == 1 then
+                    if icon.lastVisualState ~= 1 then
+                        iconTexture:SetDesaturation(1.0)
+                    end
+                    iconTexture:SetVertexColor(1, 1, 1)
+                elseif visualState == 2 then
+                    if icon.lastVisualState ~= 2 then
+                        iconTexture:SetDesaturation(0)
+                    end
+                    iconTexture:SetVertexColor(0.3, 0.3, 0.8)
+                else
+                    if icon.lastVisualState ~= 3 or icon.lastBaseDesaturation ~= baseDesaturation then
+                        iconTexture:SetDesaturation(baseDesaturation)
+                    end
+                    iconTexture:SetVertexColor(qb, qb, qb, qa)
                 end
+                icon.lastVisualState = visualState
+                icon.lastBaseDesaturation = baseDesaturation
 
                 -- Channel/cast fill animation: Blizzard-style sliding fill on the active icon.
                 -- Uses the same atlas textures as the action bar (UI-HUD-ActionBar-Channel-Fill).
@@ -1705,35 +1736,47 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     lastFrameState.lastUpdate = currentTime
 end
 
-function UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
-    if not addon or not spellID then return end
-    
-    local spellInfo = BlizzardAPI.GetCachedSpellInfo(spellID)
-    if not spellInfo then return end
-    
+function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
+    if not addon or not id then return end
+
+    local isItem = id < 0
+    local displayName, displayIcon
+
+    if isItem then
+        local itemID = -id
+        local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
+        displayName = itemName or ("Item #" .. itemID)
+        displayIcon = itemIcon or (C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID)) or 134400
+    else
+        local spellInfo = BlizzardAPI.GetCachedSpellInfo(id)
+        if not spellInfo then return end
+        displayName = spellInfo.name
+        displayIcon = spellInfo.iconID or 0
+    end
+
     StaticPopupDialogs["JUSTAC_HOTKEY_OVERRIDE"] = {
-        text = "Set custom hotkey display for:\n|T" .. (spellInfo.iconID or 0) .. ":16:16:0:0|t " .. spellInfo.name,
+        text = "Set custom hotkey display for:\n|T" .. displayIcon .. ":16:16:0:0|t " .. displayName,
         button1 = "Set",
         button2 = "Remove", 
         button3 = "Cancel",
         hasEditBox = true,
         editBoxWidth = 200,
         OnShow = function(self)
-            local currentHotkey = addon:GetHotkeyOverride(self.data.spellID) or ""
+            local currentHotkey = addon:GetHotkeyOverride(self.data.id) or ""
             self.EditBox:SetText(currentHotkey)
             self.EditBox:HighlightText()
             self.EditBox:SetFocus()
         end,
         OnAccept = function(self)
             local newHotkey = self.EditBox:GetText()
-            addon:SetHotkeyOverride(self.data.spellID, newHotkey)
+            addon:SetHotkeyOverride(self.data.id, newHotkey)
         end,
         OnAlt = function(self)
-            addon:SetHotkeyOverride(self.data.spellID, nil)
+            addon:SetHotkeyOverride(self.data.id, nil)
         end,
         EditBoxOnEnterPressed = function(self)
             local newHotkey = self:GetText()
-            addon:SetHotkeyOverride(self:GetParent().data.spellID, newHotkey)
+            addon:SetHotkeyOverride(self:GetParent().data.id, newHotkey)
             self:GetParent():Hide()
         end,
         timeout = 0,
@@ -1741,7 +1784,7 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, spellID)
         hideOnEscape = true,
     }
     
-    StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, {spellID = spellID})
+    StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, {id = id})
 end
 
 --- Cached per-frame (≤0.015 s); both renderers share the same answer and debounce timer.

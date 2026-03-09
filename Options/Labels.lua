@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- JustAC: Options/Labels - Icon label settings (hotkey text, cooldown text, charge count)
+-- JustAC: Options/Labels - Icon label settings (hotkey text, cooldown text, charge count / item qty)
 
 local Labels = LibStub:NewLibrary("JustAC-OptionsLabels", 4)
 if not Labels then return end

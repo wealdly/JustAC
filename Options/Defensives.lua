@@ -197,7 +197,10 @@ function Defensives.UpdateDefensivesOptions(addon)
         or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
     )
 
-    local updateFunc = function() Defensives.UpdateDefensivesOptions(addon) end
+    local updateFunc = function()
+        Defensives.UpdateDefensivesOptions(addon)
+        addon:ForceUpdateAll()
+    end
 
     -- Unified defensive spells (order 22.0-39.9, allowing 180 entries)
     SpellSearch.CreateSpellListEntries(addon, spellListArgs, defensiveSpells, "defensive", 22, updateFunc)

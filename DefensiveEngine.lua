@@ -522,9 +522,14 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
         elseif entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
             -- Negative entry = item (stored as -itemID)
             local itemID = -entry
-            local isUsable = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
-            if isUsable then
-                nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
+            local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+            if hasItem then
+                if isUsable then
+                    nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
+                else
+                    -- Item on cooldown — show greyed out (parity with spell behavior)
+                    unusableBuffer[#unusableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false, unusable = true, noResources = false}
+                end
                 usableAddedHere[entry] = true
                 usableAddedHere[itemID] = true
             end

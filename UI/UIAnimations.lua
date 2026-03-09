@@ -140,11 +140,14 @@ end
 local function StartAssistedGlow(icon, isInCombat)
     if not icon then return end
 
-    local highlightFrame = icon.AssistedCombatHighlightFrame
+    -- Key intentionally NOT "AssistedCombatHighlightFrame": Masque's SkinButton
+    -- auto-detects that key and overrides the flipbook texture/size, which causes
+    -- the glow inset to differ when Masque is enabled vs disabled.
+    local highlightFrame = icon.JustACAssistedGlow
     local needsInit = not highlightFrame
 
     if needsInit then
-        highlightFrame = CreateMarchingAntsFrame(icon, "AssistedCombatHighlightFrame")
+        highlightFrame = CreateMarchingAntsFrame(icon, "JustACAssistedGlow")
     end
 
     -- Only do setup work if frame was just created or not yet shown
@@ -186,10 +189,10 @@ end
 StopAssistedGlow = function(icon)
     if not icon then return end
     
-    if icon.AssistedCombatHighlightFrame then
-        icon.AssistedCombatHighlightFrame:Hide()
-        if icon.AssistedCombatHighlightFrame.Flipbook and icon.AssistedCombatHighlightFrame.Flipbook.Anim then
-            icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+    if icon.JustACAssistedGlow then
+        icon.JustACAssistedGlow:Hide()
+        if icon.JustACAssistedGlow.Flipbook and icon.JustACAssistedGlow.Flipbook.Anim then
+            icon.JustACAssistedGlow.Flipbook.Anim:Stop()
         end
     end
     
@@ -418,11 +421,11 @@ local function PauseAllGlows(addon)
     for i = 1, #addon.spellIcons do
         local icon = addon.spellIcons[i]
         if icon then
-            if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
-                if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
-                    icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
+            if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
+                if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
+                    icon.JustACAssistedGlow.Flipbook.Anim:Play()
                 end
-                icon.AssistedCombatHighlightFrame.Flipbook.Anim:Stop()
+                icon.JustACAssistedGlow.Flipbook.Anim:Stop()
             end
             if icon.ProcGlowFrame then
                 icon.ProcGlowFrame:Hide()
@@ -442,9 +445,9 @@ local function ResumeAllGlows(addon)
     for i = 1, #addon.spellIcons do
         local icon = addon.spellIcons[i]
         if icon then
-            if icon.AssistedCombatHighlightFrame and icon.AssistedCombatHighlightFrame:IsShown() then
-                if not icon.AssistedCombatHighlightFrame.Flipbook.Anim:IsPlaying() then
-                    icon.AssistedCombatHighlightFrame.Flipbook.Anim:Play()
+            if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
+                if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
+                    icon.JustACAssistedGlow.Flipbook.Anim:Play()
                 end
             end
         end
