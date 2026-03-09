@@ -1,632 +1,199 @@
-# Implementation Plan: Detached Defensive Frame
+# Plan: Detached Defensive Frame (v3)
+
 **Feature:** Independent positioning of the defensive queue panel
-**Status:** Ready to implement
-**Verified against codebase:** 2026-03-07
+**Status:** Ready to implement (reviewed 2026-03-08)
+**Supersedes:** v1 plan (2026-03-07)
 
 ---
 
 ## Goal
 
-Add a `profile.defensives.detached` toggle that, when enabled, gives the defensive icon cluster its own independent draggable frame (`addon.defensiveFrame`), separate from `addon.mainFrame`. When disabled, the existing SIDE1/SIDE2 attached behavior is fully preserved.
+Add a `defensives.detached` toggle that gives the defensive icon cluster its own independent, draggable frame separate from `mainFrame`. When enabled, defensives render regardless of `displayMode` — enabling mix/match like "offensives on overlay, floating defensives." Health bars follow the defensive frame. Overlay defensives remain independent. The toggle lives in the General tab alongside `displayMode`.
 
 ---
 
-## Verified Architecture Facts
+## Steps
 
-### Current attachment model
-- `addon.mainFrame` — the offensive queue's draggable `UIParent` child. Created in `UIFrameFactory.CreateMainFrame()`. Position saved via `profile.framePosition = {point, x, y}`.
-- `addon.grabTab` — a `Button` parented to `addon.mainFrame`. Its `OnDragStart`/`OnDragStop` scripts call `addon.mainFrame:StartMoving(true)` and `UIFrameFactory.SavePosition(addon)`.
-- **Defensive icons are children of `addon.mainFrame`** — confirmed at UIFrameFactory.lua:395: `CreateBaseIcon(addon.mainFrame, ...)`. This means they move with mainFrame and must be reparented to detach them.
-- Defensive icons are then positioned with `SetPoint(..., addon.mainFrame, ...)` based on SIDE1/SIDE2 and queueOrientation (UIFrameFactory.lua:417–448).
-- `healthBarFrame` is parented to `addon.mainFrame` (UIHealthBar.lua:59) and anchored to its edges.
-- `petHealthBarFrame` — same pattern.
+### Phase 1: Schema & Profile Defaults
+1. Add `defensives.detached` (bool, default false) and `defensives.detachedPosition` ({point, x, y}) to defaults in JustAC.lua (~line 97)
+2. Add `defensives.detachedOrientation` (string, default "LEFT") to defaults — controls icon growth direction of the detached frame
 
-### Key functions
-| Function | File | What it does |
-|---|---|---|
-| `CreateDefensiveIcons(addon, profile)` | UIFrameFactory.lua:528 | Tears down and rebuilds all defensive icon buttons |
-| `CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)` | UIFrameFactory.lua:393 | Creates one defensive button, parents to `addon.mainFrame`, positions relative to it |
-| `UIFrameFactory.CreateGrabTab(addon)` | UIFrameFactory.lua:679 | Creates the grab tab, drag callbacks, `SavePosition` call |
-| `UIFrameFactory.SavePosition(addon)` | UIFrameFactory.lua:1278 | Reads `mainFrame:GetPoint()`, writes to `profile.framePosition` |
-| `UIFrameFactory.UpdateFrameSize(addon)` | UIFrameFactory.lua:1226 | Sets `mainFrame:SetSize()` based on icon count; calls `CreateDefensiveIcons` at end |
-| `UIHealthBar.CreateHealthBar(addon)` | UIHealthBar.lua:37 | Creates health bar, parents to `addon.mainFrame`, anchors to its edges using SIDE1/SIDE2 |
-| `JustAC:UpdateFrameSize()` | JustAC.lua:1440 | Delegates to `UIFrameFactory.UpdateFrameSize`, then `UIHealthBar.UpdateSize`, then re-applies target frame anchor |
+### Phase 2: UIFrameFactory — Detached Frame Infrastructure
+3. Increment UIFrameFactory LibStub version 12 → 13
+4. Add `CreateDetachedDefensiveFrame(addon)` — creates `addon.defensiveFrame` as a `UIParent` child with movable/clamped behavior, fade animations (mirror `CreateMainFrame` pattern)
+5. Add `CreateDefensiveGrabTab(addon)` — creates `addon.defensiveGrabTab`, a drag handle for `defensiveFrame`. Position based on `detachedOrientation` (same logic as main grab tab: right edge for LEFT, left for RIGHT, bottom for UP, top for DOWN). Full pattern at UIFrameFactory.lua lines 679-850.
+6. Add `UIFrameFactory.SaveDefensivePosition(addon)` — reads `defensiveFrame:GetPoint()`, writes to `profile.defensives.detachedPosition`
+7. Add `UIFrameFactory.UpdateDefensiveFrameSize(addon)` — sets `defensiveFrame:SetSize()` based on icon count, orientation, and grab tab space
+8. Modify `CreateSingleDefensiveButton` — when `profile.defensives.detached`, parent icons to `addon.defensiveFrame` and lay out based on `detachedOrientation` instead of SIDE1/SIDE2 relative to `mainFrame`
+9. **CRITICAL — Decouple `CreateDefensiveIcons` from `CreateSpellIcons`:**
+   - Currently `CreateDefensiveIcons` is called at the END of `CreateSpellIcons` (UIFrameFactory.lua line 1107), which guards on `addon.mainFrame`. This couples defensive creation to offensive creation.
+   - Fix: Remove the `CreateDefensiveIcons(addon, profile)` call from `CreateSpellIcons`.
+   - Instead, call `CreateDefensiveIcons` from `UIFrameFactory.UpdateFrameSize` AFTER `CreateSpellIcons` returns. This way both calls happen in the same place but defensives are no longer gated by `CreateSpellIcons`'s `mainFrame` guard.
+   - When detached, `CreateDefensiveIcons` calls `CreateDetachedDefensiveFrame` before icon creation, then `UpdateDefensiveFrameSize` after. When attached, it parents to `mainFrame` as before.
+   - Unconditionally destroy `addon.defensiveFrame` at cleanup in `CreateDefensiveIcons` (a new frame is created if needed). (*depends on 4, 5, 7, 8*)
 
-### Module versions (must increment on breaking changes per style guide)
-- `UIFrameFactory` current version: **12** → increment to **13**
-- `UIHealthBar` current version: **5** → increment to **6**
-- `Options` current version: **30** → increment to **31**
+### Phase 3: UIHealthBar — Reparent When Detached
+10. Increment UIHealthBar LibStub version 7 → 8
+11. Modify `CreateHealthBar` — when `detached`, parent to `addon.defensiveFrame` instead of `addon.mainFrame`. Anchor above `defensiveFrame` using `detachedOrientation` for positioning. Keep `addon.mainFrame` guard as fallback for attached mode.
+12. Modify `CreatePetHealthBar` — same pattern as step 11. Currently guards on `addon.mainFrame` at line 458 and parents at line 476.
+13. Modify `ResizeToCount` — when `detached`:
+    - For `visibleCount > 0`: size and anchor based on `defensiveFrame` width and `detachedOrientation`
+    - For `visibleCount == 0`: **hide the health bar** (no fallback to offensive dims — on the detached frame there's no offensive context to fall back to). This is simpler than the current attached behavior where it falls back to offensive queue dims at UIHealthBar.lua lines 340-370.
 
----
+### Phase 4: UIRenderer — Independent Defensive Rendering
+14. **CRITICAL — Decouple defensive per-frame updates from offensive guards:**
+    - Currently `RenderSpellQueue` (UIRenderer.lua) has this flow:
+      ```
+      line 992: if not spellIconsRef then return end  ← early exit
+      line 1027-1052: compute isChanneling/isCasting/channelSpellID (module-level vars)
+      line 1056: compute shouldUpdateCooldowns
+      line 1064-1113: defensive icon loop (visual state, hotkeys, cooldowns)
+      line 1255+: if shouldShowFrame then ... offensive icon rendering
+      ```
+    - The defensive icon loop at line 1064 reads module-level `isChanneling`/`channelSpellID` (set at line 1027) for grey-out during channels. It also reads `shouldUpdateCooldowns` (set at line 1056).
+    - Fix: Restructure `RenderSpellQueue` so that the channeling state computation AND the defensive icon loop run BEFORE the `spellIconsRef` guard. New flow:
+      ```
+      1. profile + time setup (no dependency on spellIcons)
+      2. Compute isChanneling/isCasting/channelSpellID
+      3. Compute shouldUpdateCooldowns
+      4. Run defensive icon loop (uses addon.defensiveIcons, no spellIcons dependency)
+      5. if not spellIconsRef then return end  ← offensive-only guard moves here
+      6. Offensive icon rendering (unchanged)
+      ```
+    - This ensures defensive visual updates run even if `spellIcons` were ever nil.
+15. Modify `ShowDefensiveIcons` — when `addon.defensiveFrame` exists, show/hide the frame container with fade animations (show when any icon visible, hide when all hidden)
+16. Modify `HideDefensiveIcons` — also hide `addon.defensiveFrame` with fade-out. This covers vehicle mode (UpdateDefensiveCooldowns calls HideDefensiveIcons at JustAC.lua line 756) so the empty container doesn't linger.
+17. Fix pre-existing opacity bug: apply `frameOpacity` to `addon.defensiveFrame` (when detached) or to ALL `defensiveIcons` (not just `defensiveIcon[1]`). Current code at UIRenderer.lua line 1676 only applies to `addon.defensiveIcon` (legacy single-icon reference).
+18. Add click-through / locked state propagation for `addon.defensiveFrame` and `addon.defensiveGrabTab` in the panel interaction block (~line 1620)
 
-## Profile Schema Changes
+### Phase 5: JustAC.lua — Lifecycle Integration
+19. Modify `UpdateFrameSize` — after existing calls, also call `UIFrameFactory.UpdateDefensiveFrameSize(self)` if `self.defensiveFrame` exists
+20. Modify the early-exit guard in `OnUpdate` (~line 1388) — `defHidden` should also consider `self.defensiveFrame:IsShown()` so the update loop doesn't idle when only the detached frame is visible:
+    ```lua
+    local defHidden = (not defIcons or #defIcons == 0)
+        and (not self.defensiveFrame or not self.defensiveFrame:IsShown())
+    ```
+21. Ensure `OnEnable` flow works: `UpdateFrameSize` → `CreateSpellIcons` + `CreateDefensiveIcons` (now separate calls) → `CreateDetachedDefensiveFrame` (if detached) — no explicit call needed
+22. Add comment to `UpdateSpellQueue`'s `mainFrame` guard (line 873) clarifying it doesn't gate defensives because mainFrame always exists (created unconditionally in `OnEnable`)
+23. **Modify `EnterDisabledMode` (line 604):** Also hide `self.defensiveFrame` if it exists (currently only hides `mainFrame` and iterates `defensiveIcons`). Without this, the detached frame container stays visible when entering healer-spec auto-disable.
+24. **Modify `ExitDisabledMode` (line 635):** Also restore `self.defensiveFrame` visibility. Currently only shows `mainFrame` and restores health bars. The detached frame would remain hidden after re-enabling without this.
+25. **Modify `RefreshConfig` (line 662):** After restoring `mainFrame` position from `profile.framePosition`, also restore `defensiveFrame` position from `profile.defensives.detachedPosition`. Current code (line 672-675) only handles mainFrame. On profile change/copy, the detached frame would keep the old profile's position without this fix.
 
-In `JustAC.lua` defaults (the `defensives = { ... }` table, around line 97):
-
-```lua
-defensives = {
-    enabled = true,
-    showProcs = true,
-    showHotkeys = true,
-    position = "SIDE1",        -- Only used when detached = false
-    detached = false,          -- NEW: true = independent frame, false = attached to mainFrame
-    detachedPosition = {       -- NEW: saved position for the independent defensive frame
-        point = "CENTER",
-        x = 100,
-        y = -150,
-    },
-    showHealthBar = true,
-    showPetHealthBar = true,
-    iconScale = 1.0,
-    maxIcons = 4,
-    allowItems = true,
-    autoInsertPotions = true,
-    classSpells = {},
-    displayMode = "always",
-    glowMode = "all",
-},
-```
-
----
-
-## Implementation: UIFrameFactory.lua
-
-Increment version to **13**.
-
-### 1. New `CreateDefensiveGrabTab(addon)` function
-
-Mirror of `CreateGrabTab(addon)` but for `addon.defensiveFrame`. Key differences:
-- Parented to `addon.defensiveFrame`
-- Drag callbacks call `addon.defensiveFrame:StartMoving(true)` and `UIFrameFactory.SaveDefensivePosition(addon)`
-- No target-frame-anchor logic (defensive frame is never target-frame-anchored)
-- Tab is always positioned at the right or bottom edge of `addon.defensiveFrame` depending on the defensive icon layout direction (icons always expand right or down from the frame's origin — see layout notes below)
-- Store as `addon.defensiveGrabTab`
-
-```lua
-local function CreateDefensiveGrabTab(addon)
-    if not addon.defensiveFrame then return end
-    local profile = addon:GetProfile()
-    local maxIcons = profile and profile.defensives and profile.defensives.maxIcons or 4
-    local iconScale = profile and profile.defensives and profile.defensives.iconScale or 1.0
-    local iconSize = (profile and profile.iconSize or 42) * iconScale
-    local spacing = profile and profile.iconSpacing or 1
-
-    -- Defensive frame is always horizontal (icons expand right), so tab goes on the right.
-    local GRAB_TAB_WIDTH = 12
-    local GRAB_TAB_HEIGHT = 20
-
-    local tab = CreateFrame("Button", nil, addon.defensiveFrame, "BackdropTemplate")
-    if not tab then return end
-    tab:SetSize(GRAB_TAB_WIDTH, GRAB_TAB_HEIGHT)
-    tab:SetHitRectInsets(-6, -6, -6, -6)
-    tab:SetPoint("RIGHT", addon.defensiveFrame, "RIGHT", 0, 0)
-
-    -- Backdrop, dots: copy exactly from CreateGrabTab (vertical dot arrangement)
-    tab:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 8, edgeSize = 4,
-        insets = { left = 1, right = 1, top = 1, bottom = 1 },
-    })
-    tab:SetBackdropColor(0.3, 0.3, 0.3, 0.8)
-    tab:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
-
-    local dot1 = tab:CreateTexture(nil, "OVERLAY")
-    dot1:SetSize(2, 2) ; dot1:SetColorTexture(0.8, 0.8, 0.8, 1)
-    dot1:SetPoint("CENTER", tab, "CENTER", 0, 4)
-    local dot2 = tab:CreateTexture(nil, "OVERLAY")
-    dot2:SetSize(2, 2) ; dot2:SetColorTexture(0.8, 0.8, 0.8, 1)
-    dot2:SetPoint("CENTER", tab, "CENTER", 0, 0)
-    local dot3 = tab:CreateTexture(nil, "OVERLAY")
-    dot3:SetSize(2, 2) ; dot3:SetColorTexture(0.8, 0.8, 0.8, 1)
-    dot3:SetPoint("CENTER", tab, "CENTER", 0, -4)
-
-    -- Fade in/out on hover (copy the logic from CreateGrabTab)
-    -- ... (identical fade animation setup)
-
-    tab:EnableMouse(true)
-    tab:RegisterForDrag("LeftButton")
-    tab:RegisterForClicks("RightButtonUp")
-
-    tab:SetScript("OnDragStart", function(self)
-        local p = addon:GetProfile()
-        if not p then return end
-        if p.panelInteraction == "locked" or p.panelInteraction == "clickthrough" then return end
-        self.isDragging = true
-        addon.isDragging = true
-        tab:SetAlpha(1)
-        addon.defensiveFrame:StartMoving(true)
-    end)
-
-    tab:SetScript("OnDragStop", function(self)
-        addon.defensiveFrame:StopMovingOrSizing()
-        UIFrameFactory.SaveDefensivePosition(addon)
-        self.isDragging = false
-        addon.isDragging = false
-        -- Trigger icons dirty so they refresh at new position
-        if addon.spellsDirty ~= nil then addon.spellsDirty = true end
-    end)
-
-    -- Right-click → open options (same as mainFrame right-click)
-    tab:SetScript("OnClick", function(self, btn)
-        if btn == "RightButton" and Options and Options.OpenOptions then
-            Options.OpenOptions()
+### Phase 6: Options — General Tab + Standard Queue Adjustments
+26. In `Options/General.lua` Settings subtab, add `defensives.detached` toggle (order 25, in the available gap) with description: "Give defensive icons their own independent draggable frame"
+27. In `Options/General.lua`, add `defensives.detachedOrientation` dropdown (order 26, hidden when `detached = false`) with values LEFT/RIGHT/UP/DOWN
+28. In `Options/General.lua`, add "Reset Defensive Position" execute button (order 27, hidden when `detached = false`)
+29. Fix `panelDisabled()` in `Options/StandardQueue.lua` — the Defensive Display subtab should NOT be disabled when `detached = true`, even if `displayMode = "overlay"` or `"disabled"`. Add a new `defensiveDisabled()` helper:
+    ```lua
+    local function defensiveDisabled(addon)
+        local profile = addon.db.profile
+        if profile.defensives and profile.defensives.detached then
+            return false  -- detached defensives are always configurable
         end
-    end)
-
-    addon.defensiveGrabTab = tab
-end
-```
-
-### 2. New `UIFrameFactory.SaveDefensivePosition(addon)` function
-
-```lua
-function UIFrameFactory.SaveDefensivePosition(addon)
-    if not addon.defensiveFrame then return end
-    local profile = addon:GetProfile()
-    if not profile or not profile.defensives then return end
-
-    local point, _, _, x, y = addon.defensiveFrame:GetPoint()
-    if not point then return end
-    profile.defensives.detachedPosition = {
-        point = point,
-        x = x or 0,
-        y = y or -150,
-    }
-end
-```
-
-### 3. New `CreateDetachedDefensiveFrame(addon)` function
-
-```lua
-local function CreateDetachedDefensiveFrame(addon)
-    local profile = addon:GetProfile()
-    if not profile then return end
-
-    -- Destroy previous detached frame if it exists
-    if addon.defensiveFrame then
-        addon.defensiveFrame:Hide()
-        addon.defensiveFrame:SetParent(nil)
-        addon.defensiveFrame = nil
-        addon.defensiveGrabTab = nil
+        return panelDisabled(addon)
     end
+    ```
+30. In `Options/StandardQueue.lua` Layout subtab, hide the defensive-side portion of the combined orientation dropdown when `detached = true`
+31. In `Options/StandardQueue.lua` Layout reset button, skip `defensives.position` reset when detached
+32. Increment Options/StandardQueue LibStub version 2 → 3
 
-    local frame = CreateFrame("Frame", "JustACDefensiveFrame", UIParent)
-    if not frame then return end
-    addon.defensiveFrame = frame
-
-    -- Size will be set by UpdateDefensiveFrameSize after icons are created
-    frame:SetSize(42, 42)  -- Placeholder
-    frame:EnableMouse(true)
-    frame:SetMovable(true)
-    frame:SetClampedToScreen(true)
-
-    local pos = profile.defensives.detachedPosition
-        or { point = "CENTER", x = 100, y = -150 }
-    frame:SetPoint(pos.point, pos.x, pos.y)
-
-    -- Right-click for options (consistent with mainFrame behavior)
-    frame:SetScript("OnMouseDown", function(self, btn)
-        if btn == "RightButton" and Options and Options.OpenOptions then
-            Options.OpenOptions()
-        end
-    end)
-
-    -- Fade animations (copy mainFrame pattern exactly)
-    frame:SetAlpha(0)
-    frame:Hide()
-    local fadeIn = frame:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("IN")
-    fadeIn:SetScript("OnFinished", function()
-        local p = addon:GetProfile()
-        local opacity = p and p.frameOpacity or 1.0
-        frame:SetAlpha(opacity)
-    end)
-    frame.fadeIn = fadeIn
-
-    local fadeOut = frame:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
-        frame:Hide()
-        frame:SetAlpha(0)
-    end)
-    frame.fadeOut = fadeOut
-
-    CreateDefensiveGrabTab(addon)
-end
-```
-
-### 4. Modify `CreateSingleDefensiveButton` to support detached mode
-
-Currently at line 393. The function signature stays the same; add a parameter or read from profile.
-
-**Key change:** when `profile.defensives.detached` is true, parent icons to `addon.defensiveFrame` and lay them out horizontally from the frame's LEFT edge (index 0 = leftmost, index 1 = second from left, etc.), like how offensive icons are positioned within `mainFrame`.
-
-```lua
-local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)
-    local isDetached = profile.defensives and profile.defensives.detached
-    local parentFrame = isDetached and addon.defensiveFrame or addon.mainFrame
-    if not parentFrame then return nil end
-
-    local button = CreateBaseIcon(parentFrame, actualIconSize, true, true, profile)
-    if not button then return nil end
-
-    button.iconIndex = index
-
-    if isDetached then
-        -- Horizontal layout within defensiveFrame: icons expand rightward.
-        -- index 0 = first icon (leftmost), index 1 = second, etc.
-        -- The frame's LEFT edge is the origin. Grab tab is at the RIGHT edge.
-        local iconOffset = index * (actualIconSize + spacing)
-        button:SetPoint("LEFT", parentFrame, "LEFT", iconOffset, 0)
-    else
-        -- Existing SIDE1/SIDE2/LEADING positioning relative to mainFrame
-        -- ... (existing code unchanged, lines 402–448)
-    end
-
-    return button
-end
-```
-
-### 5. New `UIFrameFactory.UpdateDefensiveFrameSize(addon)` function
-
-Sets `addon.defensiveFrame:SetSize()` based on icon count, similar to how `UpdateFrameSize` sizes `mainFrame`.
-
-```lua
-function UIFrameFactory.UpdateDefensiveFrameSize(addon)
-    if not addon.defensiveFrame then return end
-    local profile = addon:GetProfile()
-    if not profile or not profile.defensives then return end
-
-    local iconScale = profile.defensives.iconScale or 1.0
-    local iconSize = profile.iconSize * iconScale
-    local maxIcons = profile.defensives.maxIcons or 4
-    local spacing = profile.iconSpacing or 1
-    local GRAB_TAB_LENGTH = 12
-    local GRAB_TAB_SPACING = spacing
-
-    -- Width: icons + spacings + grab tab
-    local totalWidth = maxIcons * iconSize + (maxIcons - 1) * spacing + GRAB_TAB_SPACING + GRAB_TAB_LENGTH
-    local totalHeight = iconSize
-
-    addon.defensiveFrame:SetSize(totalWidth, totalHeight)
-end
-```
-
-### 6. Modify `CreateDefensiveIcons(addon, profile)` to call new setup
-
-At the start of `CreateDefensiveIcons`, before creating new icons:
-
-```lua
-local function CreateDefensiveIcons(addon, profile)
-    -- ... (existing cleanup of old defensiveIcons — unchanged)
-
-    if not profile.defensives or not profile.defensives.enabled then return end
-
-    local isDetached = profile.defensives.detached
-
-    -- If detached mode: ensure defensiveFrame exists
-    if isDetached then
-        if not addon.defensiveFrame then
-            CreateDetachedDefensiveFrame(addon)
-        end
-        if not addon.defensiveFrame then return end
-    end
-
-    -- ... (rest of icon creation loop — unchanged except CreateSingleDefensiveButton now handles routing)
-
-    addon.defensiveIcons = newIcons  -- existing line
-    addon.defensiveIcon = newIcons[1] -- existing line
-
-    -- If detached, size the frame to fit the icons
-    if isDetached then
-        UIFrameFactory.UpdateDefensiveFrameSize(addon)
-    end
-end
-```
-
-### 7. Teardown: when switching from detached → attached, destroy `defensiveFrame`
-
-In the existing cleanup block at the top of `CreateDefensiveIcons`, add:
-
-```lua
--- Destroy detached frame if switching to attached mode (or rebuilding)
-if addon.defensiveFrame then
-    addon.defensiveFrame:Hide()
-    addon.defensiveFrame:SetParent(nil)
-    addon.defensiveFrame = nil
-    addon.defensiveGrabTab = nil
-end
-```
-
-This runs unconditionally each time `CreateDefensiveIcons` is called. A new frame will be recreated if `isDetached` is true.
+### Phase 7: Localization
+33. Add new strings to locale files: "Independent Positioning", description text, "Reset Defensive Frame Position", "Detached Orientation" (and desc), orientation values if different from existing
 
 ---
 
-## Implementation: UIHealthBar.lua
+## Relevant Files
 
-Increment version to **6**.
-
-In `UIHealthBar.CreateHealthBar(addon)` and `UIHealthBar.CreatePetHealthBar(addon)`:
-
-When `profile.defensives.detached` is true, the health bar should:
-- Be parented to `addon.defensiveFrame` instead of `addon.mainFrame`
-- Be anchored above `addon.defensiveFrame` (positioned at the frame's TOP edge)
-- Use `addon.defensiveFrame`'s width (which already accounts for icon count)
-
-```lua
-function UIHealthBar.CreateHealthBar(addon)
-    -- ... (existing nil/cleanup logic unchanged)
-
-    local profile = addon:GetProfile()
-    local isDetached = profile.defensives and profile.defensives.detached
-
-    if isDetached then
-        if not addon.defensiveFrame then return nil end
-        local frame = CreateFrame("Frame", nil, addon.defensiveFrame)
-        -- ... width/height based on defensiveFrame width
-        frame:SetPoint("BOTTOMLEFT", addon.defensiveFrame, "TOPLEFT", 0, BAR_SPACING)
-        -- ... rest of health bar setup
-        healthBarFrame = frame
-        return frame
-    else
-        -- existing logic anchored to addon.mainFrame (unchanged)
-    end
-end
-```
-
-Apply the same pattern to `CreatePetHealthBar`.
+- `JustAC.lua` — Schema defaults (line ~97 defensives block), `UpdateSpellQueue` (line 873, mainFrame guard), `UpdateFrameSize` (line 1449), OnUpdate early-exit guard (line 1388), `EnterDisabledMode` (line 604), `ExitDisabledMode` (line 635), `RefreshConfig` (line 662)
+- `UI/UIFrameFactory.lua` — `CreateSingleDefensiveButton` (line 403), `CreateDefensiveIcons` (line 546), `CreateSpellIcons` (line 1058, calls CreateDefensiveIcons at line 1107), `CreateMainFrame` (line 610) as template, `CreateGrabTab` (lines 679-850) as template, `UpdateFrameSize` (line 1226, needs to call CreateDefensiveIcons separately)
+- `UI/UIHealthBar.lua` — `CreateHealthBar` (line 37, guards mainFrame at line 47, parents at line 63), `CreatePetHealthBar` (guards at line 458, parents at line 476), `ResizeToCount` (line 315, zero-count fallback at lines 340-370)
+- `UI/UIRenderer.lua` — `RenderSpellQueue` (line 989, spellIconsRef guard at 992, channeling state at 1027, defensive loop at 1064, shouldShowFrame block at 1255), `ShowDefensiveIcons` (line 932), `HideDefensiveIcons` (line 944), opacity block (line 1676, only applies to defensiveIcon not defensiveIcons[]), panel interaction block (line 1620)
+- `Options/General.lua` — Settings subtab, order 25 available for detached toggle
+- `Options/StandardQueue.lua` — `panelDisabled()` (line 13), combined orientation dropdown (line 96), Defensive Display subtab (line 475)
+- `KeyPressDetector.lua` — References `addon.defensiveIcons` (line 135) and `addon.defensiveIcon` (line 145), no mainFrame dependency. SAFE.
+- Locale files (enUS.lua and others)
 
 ---
 
-## Implementation: UIRenderer.lua
+## Verification
 
-### Show/hide `defensiveFrame` in `RenderSpellQueue`
-
-The existing code shows/hides `addon.defensiveIcons[i]` individually. The `defensiveFrame` itself needs to be shown/hidden when the defensive cluster as a whole appears/disappears.
-
-In `UIRenderer.ShowDefensiveIcons(addon, queue)` — after the icon loop, if `addon.defensiveFrame` exists:
-
-```lua
-function UIRenderer.ShowDefensiveIcons(addon, queue)
-    if not addon or not addon.defensiveIcons then return end
-    local icons = addon.defensiveIcons
-    local anyShown = false
-    for i, icon in ipairs(icons) do
-        local entry = queue[i]
-        if entry and entry.spellID then
-            local showGlow = (i == 1)
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow)
-            anyShown = true
-        else
-            UIRenderer.HideDefensiveIcon(icon)
-        end
-    end
-    -- Show/hide the detached frame container
-    if addon.defensiveFrame then
-        if anyShown then
-            if not addon.defensiveFrame:IsShown() then
-                -- Fade in (mirror mainFrame fade-in pattern)
-                if addon.defensiveFrame.fadeIn then
-                    addon.defensiveFrame:Show()
-                    addon.defensiveFrame:SetAlpha(0)
-                    addon.defensiveFrame.fadeIn:Play()
-                else
-                    addon.defensiveFrame:Show()
-                end
-            end
-        else
-            if addon.defensiveFrame:IsShown() then
-                if addon.defensiveFrame.fadeOut then
-                    addon.defensiveFrame.fadeOut:Play()
-                else
-                    addon.defensiveFrame:Hide()
-                end
-            end
-        end
-    end
-end
-```
-
-Apply the reverse for `UIRenderer.HideDefensiveIcons(addon)` — also hide `addon.defensiveFrame`.
-
-### Opacity
-
-In the existing `RenderSpellQueue` section that applies `frameOpacity` to `addon.defensiveIcon` (UIRenderer.lua:1591), also apply to `addon.defensiveFrame`:
-
-```lua
-if addon.defensiveFrame then
-    local isFading = (addon.defensiveFrame.fadeIn and addon.defensiveFrame.fadeIn:IsPlaying())
-        or (addon.defensiveFrame.fadeOut and addon.defensiveFrame.fadeOut:IsPlaying())
-    if not isFading then
-        addon.defensiveFrame:SetAlpha(frameOpacity)
-    end
-end
-```
-
-### Click-through / locked state
-
-In `UIRenderer.RenderSpellQueue`'s panel interaction block (around line 1564 where `defensiveIcons` are iterated for `EnableMouse`), also apply to `addon.defensiveFrame` and `addon.defensiveGrabTab`:
-
-```lua
-if addon.defensiveFrame then
-    addon.defensiveFrame:EnableMouse(not isClickThrough)
-end
-if addon.defensiveGrabTab then
-    addon.defensiveGrabTab:EnableMouse(not isClickThrough)
-    if isLocked then
-        addon.defensiveGrabTab:RegisterForClicks()
-    else
-        addon.defensiveGrabTab:RegisterForClicks("RightButtonUp")
-    end
-end
-```
+1. `/jac modules` — All modules load with incremented versions (UIFrameFactory v13, UIHealthBar v8, StandardQueue v3)
+2. Toggle detached ON → defensive icons appear in a separate draggable frame with grab tab
+3. Toggle detached OFF → defensives reattach to mainFrame at SIDE1/SIDE2 position as before
+4. Set `displayMode = "overlay"` + `detached = true` → offensive queue hidden on standard panel, defensive frame visible and draggable, overlay shows offensives
+5. Set `displayMode = "overlay"` + `detached = true` → General tab detached toggle is accessible and NOT greyed out
+6. Set `displayMode = "overlay"` + `detached = true` → Standard Queue → Defensive Display settings (icon count, scale, glow) are accessible and NOT greyed out
+7. Set `displayMode = "disabled"` + `detached = true` → defensive frame still visible (detached defensives are independent of displayMode)
+8. Drag the detached frame → `/reload` → frame restores saved position
+9. Switch profiles → detached frame moves to new profile's saved position
+10. Verify health bar parents to detached frame and resizes correctly
+11. Health bar hides when visibleCount == 0 on detached frame (no fallback to offensive dims)
+12. Panel interaction modes (locked, click-through) apply to detached frame and grab tab
+13. `frameOpacity` slider affects detached frame and ALL defensive icons (not just first)
+14. Detached orientation dropdown: test all 4 directions, verify grab tab repositions correctly
+15. Overlay defensives work independently — `nameplateOverlay.showDefensives` unaffected by detached toggle
+16. Defensive visual states update during channeling (grey-out) when `displayMode = "overlay"` + `detached = true`
+17. Defensive cooldown swipes animate correctly when offensives are hidden
+18. Enter healer spec (disabled mode) → detached frame hides along with everything else
+19. Switch back to DPS spec (exit disabled mode) → detached frame reappears
+20. Vehicle/possess mode → detached frame hides (HideDefensiveIcons hides container)
+21. Key press flash works on detached defensive icons (KeyPressDetector scans addon.defensiveIcons)
 
 ---
 
-## Implementation: Options/StandardQueue.lua
+## Decisions
 
-Increment version to **31**.
-
-### In the Defensive Display sub-tab (tab 3)
-
-**Replace** the combined SIDE1/SIDE2 orientation dropdown (which is currently embedded in the Layout tab as a combined offensive+defensive orientation widget) with two controls:
-
-1. **Detached toggle** (new, order 0):
-```lua
-detached = {
-    type = "toggle",
-    name = L["Independent Positioning"],
-    desc = L["Move defensive icons independently from the offensive queue. Drag the defensive panel's handle to reposition it."],
-    order = 0,
-    width = "full",
-    get = function() return addon.db.profile.defensives.detached end,
-    set = function(_, val)
-        addon.db.profile.defensives.detached = val
-        addon:UpdateFrameSize()
-    end,
-    disabled = function() return panelDisabled(addon) or not addon.db.profile.defensives.enabled end,
-},
-```
-
-2. **Defensive position** (existing SIDE1/SIDE2 dropdown) — wrap in `hidden` so it only shows when not detached:
-```lua
-hidden = function()
-    return addon.db.profile.defensives.detached
-end,
-```
-
-3. **Reset position button** (new, only visible when detached):
-```lua
-resetDefPosition = {
-    type = "execute",
-    name = L["Reset Defensive Frame Position"],
-    order = 2,
-    width = "normal",
-    func = function()
-        local def = addon.db.profile.defensives
-        def.detachedPosition = { point = "CENTER", x = 100, y = -150 }
-        if addon.defensiveFrame then
-            addon.defensiveFrame:ClearAllPoints()
-            addon.defensiveFrame:SetPoint("CENTER", 100, -150)
-        end
-    end,
-    hidden = function()
-        return not addon.db.profile.defensives.detached
-    end,
-    disabled = function() return panelDisabled(addon) or not addon.db.profile.defensives.enabled end,
-},
-```
+- **Option C for options placement:** Detached toggle + orientation + reset in General tab (order 25-27); defensive appearance settings stay in Standard Queue → Defensive Display
+- Detached frame gets its own orientation dropdown (not hardcoded horizontal)
+- Health bars move to detached frame (not duplicated on both surfaces)
+- Health bar hides when visibleCount == 0 on detached frame (no offensive-queue fallback)
+- Overlay defensives remain completely independent — `detached` only affects the main-panel defensive cluster
+- Pre-existing opacity bug (only applied to first defensive icon) fixed as part of this work
+- `panelDisabled()` gets a carve-out via `defensiveDisabled()` so Defensive Display subtab is reachable when detached + any displayMode
+- `CreateDefensiveIcons` decoupled from `CreateSpellIcons` — called separately from `UpdateFrameSize`
+- Defensive per-frame loop in `RenderSpellQueue` moved before `spellIconsRef` guard
+- **`displayMode = "disabled"` + `detached = true` → defensives still render.** Detached defensives are fully independent of displayMode. Only `EnterDisabledMode` (healer spec auto-disable) hides everything.
 
 ---
 
-## Implementation: JustAC.lua
+## Dependency Analysis: "Defensives Shown, Offensives Hidden"
 
-### On `OnEnable` — position restore
-
-After `UIFrameFactory.CreateMainFrame(self)`, if detached is already enabled from a saved profile, the `defensiveFrame` is created inside `CreateDefensiveIcons` (called from `UpdateFrameSize`). No explicit call needed here — the flow is:
-
-`OnEnable` → `UpdateFrameSize` → `UIFrameFactory.UpdateFrameSize` → `CreateDefensiveIcons` → `CreateDetachedDefensiveFrame` (if detached)
-
-### On `UpdateFrameSize` — defensive frame resizing
-
-`JustAC:UpdateFrameSize()` (line 1440) already delegates to `UIFrameFactory.UpdateFrameSize`. That function calls `CreateDefensiveIcons` at its end. After that call completes, also call:
-
-```lua
-function JustAC:UpdateFrameSize()
-    if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
-    if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
-    if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
-    -- NEW: resize the detached defensive frame if it exists
-    if UIFrameFactory and UIFrameFactory.UpdateDefensiveFrameSize and self.defensiveFrame then
-        UIFrameFactory.UpdateDefensiveFrameSize(self)
-    end
-    -- ... (existing target frame anchor re-apply)
-end
-```
-
-### Early-exit guard in `UpdateSpellQueue`
-
-The early-exit check at JustAC.lua:1380 currently tests `defHidden` by checking `#defIcons == 0`. When detached, `defensiveFrame` also needs to be considered:
-
-```lua
-local defHidden = (not defIcons or #defIcons == 0)
-    and (not self.defensiveFrame or not self.defensiveFrame:IsShown())
-```
+| Path | Status | Detail |
+|------|--------|--------|
+| `UpdateSpellQueue` mainFrame guard (line 873) | SAFE | mainFrame always exists (created in OnEnable). Comment added (step 22). |
+| `RenderSpellQueue` spellIconsRef guard (line 992) | FIXED | Defensive loop moved before guard (step 14) |
+| `CreateDefensiveIcons` in `CreateSpellIcons` (line 1107) | FIXED | Extracted to separate call (step 9) |
+| `isChanneling`/`channelSpellID` module-level vars | FIXED | Computed before defensive loop (step 14) |
+| `DefensiveEngine.OnHealthChanged` | SAFE | No mainFrame dependency |
+| `ApplyMainPanelQueue` / `HideDefensiveIconFrames` | SAFE | No mainFrame dependency |
+| `ForceUpdate` / `ForceUpdateAll` | SAFE | No guards, just sets dirty flags |
+| OnUpdate early-exit guard | FIXED | Includes defensiveFrame visibility (step 20) |
+| `EnterDisabledMode` | FIXED | Now hides defensiveFrame (step 23) |
+| `ExitDisabledMode` | FIXED | Now shows defensiveFrame (step 24) |
+| `RefreshConfig` profile restore | FIXED | Now restores defensiveFrame position (step 25) |
+| `UpdateDefensiveCooldowns` vehicle check | FIXED | HideDefensiveIcons hides container (step 16) |
+| `ResizeToCount` zero-count fallback | FIXED | Hides bar instead of offensive fallback (step 13) |
+| `KeyPressDetector` | SAFE | Scans addon.defensiveIcons array, no mainFrame ref |
+| `TargetFrameAnchor` | SAFE | Geometry-based, no defensive dependency |
+| Masque integration | SAFE | Frame-agnostic (RemoveButton/AddButton) |
 
 ---
 
-## Localization (Locale files)
+## What is NOT Changing
 
-Add two new strings:
-
-```lua
-L["Independent Positioning"] = "Independent Positioning"
-L["Move defensive icons independently from the offensive queue. Drag the defensive panel's handle to reposition it."] = "..."
-L["Reset Defensive Frame Position"] = "Reset Defensive Frame Position"
-```
-
----
-
-## What is NOT changing
-
-- `DefensiveEngine.lua` — zero changes (engine is already independent)
+- `DefensiveEngine.lua` — zero changes (engine is independent)
 - `SpellQueue.lua` — zero changes
-- `UINameplateOverlay.lua` — zero changes (overlay has its own separate cluster)
+- `UINameplateOverlay.lua` — zero changes (overlay has its own defensive pipeline)
 - `UIAnimations.lua` — zero changes
-- All defensive icon rendering logic inside `UIRenderer.ShowDefensiveIcon` / `UpdateDefensiveVisualState` — zero changes (they operate on the icon button objects, not on their parent frame)
+- `Options/Overlay.lua` — zero changes (overlay defensive settings are independent)
+- `Options/Defensives.lua` — zero changes (spell list management unaffected)
+- `KeyPressDetector.lua` — zero changes (already scans defensiveIcons array, no mainFrame ref)
+- `TargetFrameAnchor.lua` — zero changes (geometry-based, no defensive dependency)
 
 ---
 
-## Behavioral contract
+## Further Considerations
 
-| Setting | Behavior |
-|---|---|
-| `detached = false` (default) | Exactly current behavior. SIDE1/SIDE2 controls which edge of mainFrame defensives attach to. No `defensiveFrame` exists. |
-| `detached = true` | `addon.defensiveFrame` is an independent `UIParent` child. Defensives parent and anchor to it. Health bars anchor to it. `defensiveGrabTab` is the drag handle. Position saved in `profile.defensives.detachedPosition`. The SIDE1/SIDE2 option is hidden in the options panel. |
-
----
-
-## Implementation order (to minimize breakage)
-
-1. `JustAC.lua` — add `detached` and `detachedPosition` to schema defaults
-2. `UIFrameFactory.lua` — add `CreateDetachedDefensiveFrame`, `CreateDefensiveGrabTab`, `SaveDefensivePosition`, `UpdateDefensiveFrameSize`; modify `CreateSingleDefensiveButton` and `CreateDefensiveIcons`
-3. `UIHealthBar.lua` — branch on `detached` in `CreateHealthBar` and `CreatePetHealthBar`
-4. `UIRenderer.lua` — update `ShowDefensiveIcons` / `HideDefensiveIcons` to manage `defensiveFrame` visibility; add opacity and interaction propagation
-5. `JustAC.lua` — update `UpdateFrameSize` to call `UpdateDefensiveFrameSize`; update early-exit guard
-6. `Options/StandardQueue.lua` — add detached toggle, hide SIDE1/SIDE2 when detached, add reset button
-7. Locale files — add new strings
-
----
-
-## Style guide compliance notes
-
-- All new variables: `camelCase` (e.g., `isDetached`, `defPos`)
-- All new constants: `UPPER_SNAKE_CASE` (e.g., `GRAB_TAB_LENGTH`)
-- All new public functions: `UIFrameFactory.FunctionName()`
-- All new private functions: `local function functionName()`
-- Increment module LibStub version numbers: UIFrameFactory → 13, UIHealthBar → 6, Options → 31
-- Max 3 nesting levels; use early returns
-- All WoW API calls that can fail: wrap in `pcall`
-- All module retrievals: check with `true` parameter and validate before use
-
----
-
-## File manifest
-
-| File | Change type |
-|---|---|
-| `JustAC.lua` | Schema defaults + UpdateFrameSize + early-exit guard |
-| `UI/UIFrameFactory.lua` | Core frame/tab/position functions + icon routing |
-| `UI/UIHealthBar.lua` | Branch on detached for health bar anchoring |
-| `UI/UIRenderer.lua` | DefensiveFrame show/hide + opacity + interaction |
-| `Options/StandardQueue.lua` | New toggle + reset button + hide SIDE1/SIDE2 when detached |
-| Locale `enUS.lua` (or equivalent) | 3 new strings |
+1. **Target frame anchor + detached:** Independent. Offensives can anchor to target frame while defensives float.
+2. **Profile switching:** Detached position is per-profile. Switching profiles restores position (step 25).
+3. **Future:** Per-surface queue type selection already supported via existing toggles. Detached fills the last gap.

@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [4.8.5] - 2026-03-08
+
+### Fixed
+- RedundancyFilter: Poisons with <10 min remaining were still being filtered out of combat (FALLBACK 2 by-name check bypassed the expiry threshold)
+- RedundancyFilter: Maintenance buffs (poisons, imbues, raid buffs, rites) now always filtered in combat — DPS takes priority
+
+### Performance
+- RedundancyFilter: Skip full aura scan in combat using `C_Secrets.ShouldAurasBeSecret()` pre-check (avoids 40 pcall iterations when all fields are known secret)
+- SecretValues: Short-circuit `TestAuraAccess()` with `C_Secrets.ShouldAurasBeSecret()` (skip 5-aura probe loop in combat)
+- StateHelpers: Skip per-value `IsSecretValue()` calls in `GetPlayerHealthPercent()` when `C_Secrets.HasSecretRestrictions()` is false (out-of-combat fast path)
+
 ## [4.8.4] - 2026-03-08
 
 ### Fixed

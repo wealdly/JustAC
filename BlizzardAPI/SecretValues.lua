@@ -40,6 +40,12 @@ end
 
 -- Aura CONTENTS may be secret in 12.0, but VECTORS are not
 local function TestAuraAccess()
+    -- 12.0+ fast pre-check: C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean.
+    -- When true, all aura fields will be secret — skip the per-aura loop entirely.
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return false
+    end
+
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         local accessibleCount = 0
         local secretCount = 0

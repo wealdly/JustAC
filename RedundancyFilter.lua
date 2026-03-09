@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 40)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 41)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -15,6 +15,7 @@ local pairs = pairs
 local ipairs = ipairs
 local UnitAffectingCombat = UnitAffectingCombat
 local table_remove = table.remove
+local C_Secrets = C_Secrets
 
 
 -- Spell classification tables (manual, covers essential spells)
@@ -553,8 +554,29 @@ RefreshAuraCache = function()
     
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
     
+    -- 12.0+ fast pre-check: skip the full aura scan when all fields are known secret.
+    -- C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean — safe to branch on.
+    -- When true (combat), the loop below would just hit secret values on every aura,
+    -- so we skip it entirely and rely on trustedOutOfCombatCache + instance maps.
+    local aurasAreSecret = C_Secrets and C_Secrets.ShouldAurasBeSecret
+        and C_Secrets.ShouldAurasBeSecret()
+    
+    if aurasAreSecret then
+        -- Populate from instance maps maintained by OnUnitAuraUpdate (addedAuras/removedAuraInstanceIDs).
+        -- This avoids 40 pcall(GetAuraDataByIndex) calls that would all return secret fields.
+        for instanceID, spellID in pairs(instanceToSpellMap) do
+            cachedAuras.byID[spellID] = true
+            local timing = instanceToTimingMap[instanceID]
+            if timing then cachedAuras.auraInfo[spellID] = timing end
+            local name = instanceToNameMap[instanceID]
+            if name then cachedAuras.byName[name] = spellID end
+            local icon = instanceToIconMap[instanceID]
+            if icon then cachedAuras.byIcon[icon] = name or true end
+        end
+        -- Flag for trusted cache merge (covers auras not in instance maps)
+        cachedAuras.hasSecrets = true
     -- Modern API (11.0+)
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+    elseif C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
         for i = 1, 40 do
             -- pcall protection: GetAuraDataByIndex may throw on compound unit tokens
             -- or unexpected 12.0.x hotfix changes. On failure, break the loop and use
@@ -1118,6 +1140,12 @@ local function CountActivePoisonBuffs()
                         count = count + 1
                         foundNames[name] = true
                     end
+                else
+                    -- Still record the name so FALLBACK 2 doesn't re-count this expiring poison
+                    local spellInfo = GetCachedSpellInfo(spellID)
+                    if spellInfo and spellInfo.name then
+                        foundNames[spellInfo.name] = true
+                    end
                 end
             end
         end
@@ -1226,6 +1254,16 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
     
+    -- 2. MAINTENANCE BUFF COMBAT SUPPRESSION
+    -- Long-duration maintenance buffs (poisons, imbues, raid buffs, rites) should never
+    -- take priority over DPS mid-combat. Filter them out — they can wait until combat ends.
+    -- Covers aura IDs (NEVER_SECRET_AURA_SPELLS) and cast IDs (poison/imbue cast tables).
+    if UnitAffectingCombat("player") then
+        if NEVER_SECRET_AURA_SPELLS[spellID] or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) then
+            return true
+        end
+    end
+
     -- NOTE: Cooldown filtering moved to SpellQueue.IsSpellUsable() which uses a 2s threshold
     -- Position 1 doesn't get usability filtering (shows what Blizzard recommends)
     -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
@@ -1370,20 +1408,19 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     end
     
     -- 7. ROGUE POISON REDUNDANCY
-    -- Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
+    -- Out of combat: Rogues can have max 2 poisons active (1 lethal + 1 non-lethal)
     -- If both slots are filled, all poison suggestions are redundant
+    -- (In-combat suppression handled by step 2 above)
     if IsRoguePoisonSpell(spellID) then
         local activePoisons = CountActivePoisonBuffs()
         if activePoisons >= 2 then
-            -- Throttle debug output - only print once per interval
-            -- (This check runs every frame, would spam without throttle)
             return true
         end
     end
     
     -- 8. WEAPON ENCHANT REDUNDANCY (Shaman Imbues)
-    -- If this is a Shaman imbue spell and weapon already has active enchant, skip it
-    -- Only check if enchants have sufficient time remaining (>10s)
+    -- Out of combat: if weapon already has active enchant with sufficient time, skip it
+    -- (In-combat suppression handled by step 2 above)
     if IsWeaponEnchantSpell(spellID) then
         if HasActiveWeaponEnchant() then
             if debugMode then
