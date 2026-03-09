@@ -3,6 +3,30 @@
 
 ## [Unreleased]
 
+## [4.8.9] - 2026-03-09
+
+### Added
+- Item stack quantity display on defensive queue icons (e.g. healing potions show count via the charge text widget); controlled by the existing Count label toggle
+- Hotkey override support for items: right-click defensive item icons to set custom hotkey, items searchable in Hotkey Overrides panel
+- Hotkey Overrides search now includes items from equipped gear, action bars, and bags (was spells-only)
+
+### Fixed
+- Fixed cooldown sweep stuck at 12 o'clock when spell comes off cooldown in combat — `GetSpellCooldownDuration()` returns nil (no active CD) but the legacy `SetCooldown` fallback receives blanket-secreted zeros that addon code cannot evaluate; now handles nil DurationObject explicitly by clearing the sweep
+- Same nil-DurationObject fix applied to charge cooldown ring (`GetActionChargeDuration` returning nil)
+- Legacy `SetCooldown` path now uses NeverSecret `IsSpellReady()` fallback chain when startTime/duration are secret, instead of assuming the cooldown is active
+- Fixed resource darkening (blue/purple tint) on standard queue icons only showing for one frame — vertex color now managed entirely by the visual state machine
+- Fixed defensive priority list add/remove/reorder not updating the queue until reload — `updateFunc` now calls `ForceUpdateAll()`
+- Fixed gap-closer list add/remove/reorder not updating until next combat event — `updateFunc` now calls `ForceUpdate()` after invalidating engine cache
+- Fixed items on cooldown in defensive queue being dropped entirely instead of shown greyed out — `CheckDefensiveItemState` now returns all 3 values and on-CD items route to `unusableBuffer`
+- Fixed defensive item icons showing blank/duplicate — `C_Item.GetItemInfo` was treated as returning a table; now uses proper tuple unpacking + `C_Item.GetItemIconByID`
+- Fixed item hotkey text showing raw binding (e.g. "3") instead of formatted key (e.g. "+3") — new `GetItemHotkey()` in ActionBarScanner uses proper `GetOptimizedKeybind` + `AbbreviateKeybind` pipeline with macro modifier support
+- Fixed item hotkey lookup using wrong binding names for multi-bar slots (`ACTIONBUTTON73` doesn't exist) — now uses cached slot mapping
+- Fixed defensive item icon tooltip showing hotkey from wrong pipeline (spell-based `GetSpellHotkey` on cast spell ID) — now uses `GetItemHotkey` with override detection
+
+### Changed
+- "Charge Count" label renamed to "Count (Charges / Qty)" to reflect dual purpose
+- Hotkey Overrides UI terminology updated: "Select Spell..." → "Select Spell/Item...", descriptions now mention items
+
 ## [4.8.8] - 2026-03-09
 
 ### Added

@@ -65,18 +65,18 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
             if not LiveSearchPopup then return end
             SpellSearch.BuildSpellbookCache()
 
-            -- Exclude spells that already have overrides
+            -- Exclude spells/items that already have overrides
             local excludeList = {}
-            for spellID, _ in pairs(hotkeyOverrides) do
-                excludeList[#excludeList + 1] = spellID
+            for id, _ in pairs(hotkeyOverrides) do
+                excludeList[#excludeList + 1] = id
             end
 
             LiveSearchPopup.Open({
                 title      = L["Add Hotkey Override"],
-                searchFunc = SpellSearch.GetFilteredSpellbookSpells,
+                searchFunc = SpellSearch.GetFilteredResults,
                 excludeList = excludeList,
-                onSelect   = function(spellID, _)
-                    SpellSearch.previewState.hotkey = spellID
+                onSelect   = function(id, _)
+                    SpellSearch.previewState.hotkey = id
                     if AceConfigRegistry then
                         AceConfigRegistry:NotifyChange("JustAssistedCombat")
                     end
@@ -87,11 +87,18 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
     hotkeyArgs.selectedSpellDesc = {
         type = "description",
         name = function()
-            local spellID = SpellSearch.previewState.hotkey
-            if not spellID then return "|cff888888" .. L["No spell selected"] .. "|r" end
-            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if info and info.name then
-                return "|cffFFD100" .. info.name .. "|r (ID: " .. spellID .. ")"
+            local id = SpellSearch.previewState.hotkey
+            if not id then return "|cff888888" .. L["No spell selected"] .. "|r" end
+            if id < 0 then
+                local itemName = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-id)
+                if itemName then
+                    return "|cff00ccff" .. itemName .. "|r (item:" .. (-id) .. ")"
+                end
+            else
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+                if info and info.name then
+                    return "|cffFFD100" .. info.name .. "|r (ID: " .. id .. ")"
+                end
             end
             return "|cff888888" .. L["No spell selected"] .. "|r"
         end,
@@ -114,8 +121,8 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         order = 2.4,
         width = "half",
         func = function()
-            local spellID = SpellSearch.previewState.hotkey
-            if not spellID then
+            local id = SpellSearch.previewState.hotkey
+            if not id then
                 addon:Print(L["Please search and select a spell first"])
                 return
             end
@@ -124,14 +131,24 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
                 return
             end
 
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if not spellInfo or not spellInfo.name then
-                addon:Print("Invalid spell ID: " .. spellID)
-                return
+            local displayName
+            if id < 0 then
+                displayName = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-id)
+                if not displayName then
+                    addon:Print("Invalid item ID: " .. (-id))
+                    return
+                end
+            else
+                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+                if not spellInfo or not spellInfo.name then
+                    addon:Print("Invalid spell ID: " .. id)
+                    return
+                end
+                displayName = spellInfo.name
             end
 
-            hotkeyOverrides[spellID] = SpellSearch.addHotkeyValueInput:trim()
-            addon:Print("Hotkey set: " .. spellInfo.name .. " = '" .. SpellSearch.addHotkeyValueInput:trim() .. "'")
+            hotkeyOverrides[id] = SpellSearch.addHotkeyValueInput:trim()
+            addon:Print("Hotkey set: " .. displayName .. " = '" .. SpellSearch.addHotkeyValueInput:trim() .. "'")
             SpellSearch.previewState.hotkey = nil
             SpellSearch.addHotkeyValueInput = ""
             addon:ForceUpdate()
@@ -149,16 +166,25 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
 
     local overrideList = {}
     for spellID, hotkeyValue in pairs(hotkeyOverrides) do
-        if type(spellID) == "number" and spellID > 0 and type(hotkeyValue) == "string" then
+        if type(spellID) == "number" and spellID ~= 0 and type(hotkeyValue) == "string" then
             table.insert(overrideList, spellID)
         end
     end
 
     table.sort(overrideList, function(a, b)
-        local infoA = BlizzardAPI and BlizzardAPI.GetSpellInfo(a) or C_Spell.GetSpellInfo(a)
-        local infoB = BlizzardAPI and BlizzardAPI.GetSpellInfo(b) or C_Spell.GetSpellInfo(b)
-        local nameA = infoA and infoA.name or ""
-        local nameB = infoB and infoB.name or ""
+        local nameA, nameB
+        if a < 0 then
+            nameA = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-a) or ""
+        else
+            local infoA = BlizzardAPI and BlizzardAPI.GetSpellInfo(a) or C_Spell.GetSpellInfo(a)
+            nameA = infoA and infoA.name or ""
+        end
+        if b < 0 then
+            nameB = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-b) or ""
+        else
+            local infoB = BlizzardAPI and BlizzardAPI.GetSpellInfo(b) or C_Spell.GetSpellInfo(b)
+            nameB = infoB and infoB.name or ""
+        end
         return nameA < nameB
     end)
 
@@ -183,13 +209,21 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
             end,
         }
         for i, spellID in ipairs(overrideList) do
-            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
-            local spellName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
-            local spellIcon = spellInfo and spellInfo.iconID or 134400
+            local entryName, entryIcon
+            if spellID < 0 then
+                local itemID = -spellID
+                local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
+                entryName = itemName or ("Item #" .. itemID)
+                entryIcon = itemIcon or (C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID)) or 134400
+            else
+                local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
+                entryName = spellInfo and spellInfo.name or ("Spell #" .. spellID)
+                entryIcon = spellInfo and spellInfo.iconID or 134400
+            end
 
             hotkeyArgs[tostring(spellID)] = {
                 type = "group",
-                name = "|T" .. spellIcon .. ":16:16:0:0|t " .. spellName,
+                name = "|T" .. entryIcon .. ":16:16:0:0|t " .. entryName,
                 inline = true,
                 order = i + 3,
                 args = {

@@ -336,6 +336,7 @@ function GapClosers.UpdateGapCloserOptions(addon)
             engine.InvalidateGapCloserCache()
         end
         GapClosers.UpdateGapCloserOptions(addon)
+        addon:ForceUpdate()
     end
 
     -- Gap-closer spells (order 12.0-29.9, allowing 180 entries)

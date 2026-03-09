@@ -154,6 +154,47 @@ if Masque then
     
     GetMasqueGroup = function() return MasqueGroup end
     GetMasqueDefensiveGroup = function() return MasqueDefensiveGroup end
+
+    -- Re-apply text overlay settings after Masque re-skins (user changes skin).
+    -- Masque's Skin_Text repositions HotKey; our ApplyTextOverlaySettings must
+    -- override afterwards to restore user-configured anchors.
+    local function OnSpellQueueSkinChanged(Group, Option)
+        if Option ~= "SkinID" and Option ~= "Reset" and Option ~= "Disabled" then return end
+        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        if not addon or not addon.db then return end
+        local profile = addon:GetProfile()
+        if not profile then return end
+        local overlays = profile.textOverlays
+        local firstIconScale = profile.firstIconScale or 1.0
+        for i, icon in ipairs(spellIcons) do
+            if icon then
+                local sz = (i == 1) and (profile.iconSize * firstIconScale) or profile.iconSize
+                UIFrameFactory.ApplyTextOverlaySettings(icon, sz, overlays)
+            end
+        end
+        if stdInterruptIcon then
+            UIFrameFactory.ApplyTextOverlaySettings(stdInterruptIcon, profile.iconSize * firstIconScale, overlays)
+        end
+    end
+
+    local function OnDefensiveSkinChanged(Group, Option)
+        if Option ~= "SkinID" and Option ~= "Reset" and Option ~= "Disabled" then return end
+        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        if not addon or not addon.db then return end
+        local profile = addon:GetProfile()
+        if not profile then return end
+        local overlays = profile.textOverlays
+        local defScale = profile.defensives and profile.defensives.iconScale or 1.0
+        local sz = profile.iconSize * defScale
+        for _, icon in ipairs(defensiveIcons) do
+            if icon then
+                UIFrameFactory.ApplyTextOverlaySettings(icon, sz, overlays)
+            end
+        end
+    end
+
+    MasqueGroup:RegisterCallback(OnSpellQueueSkinChanged)
+    MasqueDefensiveGroup:RegisterCallback(OnDefensiveSkinChanged)
 else
     GetMasqueGroup = function() return nil end
     GetMasqueDefensiveGroup = function() return nil end
@@ -464,10 +505,16 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
                     GameTooltip:SetSpellByID(self.spellID)
                 end
                 
-                if self.spellID or (self.isItem and self.itemCastSpellID) then
-                    local lookupID = self.spellID or self.itemCastSpellID
-                    local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(lookupID) or ""
-                    local isOverride = self.spellID and addon:GetHotkeyOverride(self.spellID) ~= nil
+                if self.spellID or self.isItem then
+                    local hotkey
+                    local isOverride = false
+                    if self.isItem and self.itemID then
+                        hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(self.itemID, self.itemCastSpellID) or ""
+                        isOverride = addon:GetHotkeyOverride(-self.itemID) ~= nil
+                    else
+                        hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
+                        isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
+                    end
                     
                     if hotkey and hotkey ~= "" then
                         GameTooltip:AddLine(" ")
@@ -482,7 +529,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
                         GameTooltip:AddLine("|cffff6666No hotkey found|r")
                     end
                     
-                    if not inCombat and self.spellID and not self.isItem then
+                    if not inCombat then
                         GameTooltip:AddLine(" ")
                         GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
                     end
@@ -505,6 +552,8 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
 
             if self.spellID and not self.isItem then
                 addon:OpenHotkeyOverrideDialog(self.spellID)
+            elseif self.isItem and self.itemID then
+                addon:OpenHotkeyOverrideDialog(-self.itemID)
             end
         end
     end)
@@ -514,8 +563,12 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         MasqueDefensiveGroup:AddButton(button, {
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
+            ChargeCooldown = button.chargeCooldown,
             HotKey = button.hotkeyText,
+            Count = button.chargeText,
             Normal = button.NormalTexture,
+            Pushed = button.PushedTexture,
+            Highlight = button.HighlightTexture,
         })
     end
 
@@ -1003,8 +1056,12 @@ local function CreateInterruptIcon(addon, profile)
         MasqueGroup:AddButton(button, {
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
+            ChargeCooldown = button.chargeCooldown,
             HotKey = button.hotkeyText,
+            Count = button.chargeText,
             Normal = button.NormalTexture,
+            Pushed = button.PushedTexture,
+            Highlight = button.HighlightTexture,
         })
     end
 
@@ -1209,11 +1266,12 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
         MasqueGroup:AddButton(button, {
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
+            ChargeCooldown = button.chargeCooldown,
             HotKey = button.hotkeyText,
+            Count = button.chargeText,
             Normal = button.NormalTexture,
             Pushed = button.PushedTexture,
             Highlight = button.HighlightTexture,
-            -- Flash = button.Flash,  -- Removed: Masque skins override Flash color (causing red)
         })
     end
 
