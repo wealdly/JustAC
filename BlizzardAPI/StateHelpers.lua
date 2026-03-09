@@ -25,6 +25,7 @@ local UnitExists     = UnitExists
 local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local Unsecret      = BlizzardAPI.Unsecret
+local C_Secrets     = C_Secrets
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
 local strsplit      = strsplit       ---@diagnostic disable-line: undefined-global
 local wipe          = wipe
@@ -349,8 +350,12 @@ function BlizzardAPI.GetPlayerHealthPercent()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
 
-    if IsSecretValue(health) or IsSecretValue(maxHealth) then
-        return nil
+    -- 12.0+ fast path: skip per-value IsSecretValue() when no restrictions are active.
+    -- C_Secrets.HasSecretRestrictions() is false out of combat (the common case).
+    if C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions() then
+        if IsSecretValue(health) or IsSecretValue(maxHealth) then
+            return nil
+        end
     end
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
