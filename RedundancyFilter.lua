@@ -403,6 +403,33 @@ local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
 local function SafeIsMounted() return SafeCall(IsMounted, false) end
 local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
 
+-- Spell ID sets used by multiple functions below -- defined here so all
+-- dependent functions can reference them regardless of declaration order.
+-- Uses spell IDs instead of English name patterns for locale safety.
+
+local PET_REVIVE_SPELL_IDS = {
+    [982]   = true,  -- Revive Pet
+    [55709] = true,  -- Heart of the Phoenix
+}
+local function IsPetReviveSpell(spellID)
+    return PET_REVIVE_SPELL_IDS[spellID] ~= nil
+end
+
+local STEALTH_SPELL_IDS = {
+    [1784]  = true,  -- Stealth (Rogue)
+    [1856]  = true,  -- Vanish (Rogue)
+    [5215]  = true,  -- Prowl (Druid)
+    [58984] = true,  -- Shadowmeld (Night Elf)
+}
+local function IsStealthSpell(spellID)
+    return STEALTH_SPELL_IDS[spellID] ~= nil
+end
+
+local function IsMountSpell(spellID)
+    return C_MountJournal and C_MountJournal.GetMountFromSpell
+        and C_MountJournal.GetMountFromSpell(spellID) ~= nil
+end
+
 -- Prune expired activations only when aura API is reliable; otherwise retain activations conservatively
 -- Also checks non-aura detection methods (forms, stealth, pets) which work in combat
 function RedundancyFilter.PruneExpiredActivations()
@@ -425,31 +452,22 @@ function RedundancyFilter.PruneExpiredActivations()
         
         -- Method 2: Stealth detection (always works - not secret)
         if not shouldKeep then
-            local spellInfo = GetCachedSpellInfo(spellID)
-            if spellInfo and spellInfo.name then
-                local name = spellInfo.name
-                if name:match("Stealth") or name:match("Vanish") then
-                    if SafeIsStealthed() then
-                        shouldKeep = true  -- Still stealthed
-                    end
-                end
+            if IsStealthSpell(spellID) and SafeIsStealthed() then
+                shouldKeep = true  -- Still stealthed
             end
         end
-        
+
         -- Method 3: Pet detection (always works - not secret)
         if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
             if SafeHasPetUI() then
                 shouldKeep = true  -- Pet still exists
             end
         end
-        
+
         -- Method 4: Mount detection (always works - not secret)
         if not shouldKeep then
-            local spellInfo = GetCachedSpellInfo(spellID)
-            if spellInfo and spellInfo.name and spellInfo.name:find("Mount") then
-                if SafeIsMounted() then
-                    shouldKeep = true  -- Still mounted
-                end
+            if IsMountSpell(spellID) and SafeIsMounted() then
+                shouldKeep = true  -- Still mounted
             end
         end
         
@@ -913,17 +931,13 @@ local function IsAuraSpell(spellID)
         return true, true
     end
     
-    -- Fallback: Name-based detection for unknown spells
-    -- Forms, Stances, Presences, Aspects are typically unique self-auras
-    local spellInfo = GetCachedSpellInfo(spellID)
-    if spellInfo and spellInfo.name then
-        local name = spellInfo.name
-        if name:match("Form$") or name:match("Stance$") or 
-           name:match("Presence$") or name:match("Aspect of") then
-            return true, true  -- Treat as unique personal aura
-        end
+    -- Fallback: FormCache ID-based detection for unknown spells
+    -- GetFormIDBySpellID returns non-nil for any known shapeshift form spell
+    if FormCache and FormCache.GetFormIDBySpellID
+            and FormCache.GetFormIDBySpellID(spellID) ~= nil then
+        return true, true  -- Treat as unique personal aura
     end
-    
+
     return false, false
 end
 
@@ -936,7 +950,7 @@ local function IsPetSpell(spellID)
         return true
     end
     
-    -- Name pattern fallback handled by IsPetSummonSpell below
+    -- Name pattern fallback removed; unknown pet summon spells fail-open
     return false
 end
 
@@ -961,27 +975,17 @@ local function IsDPSRelevant(spellID)
         return false
     end
     
-    -- Get spell info for name-based filtering
-    local spellInfo = GetCachedSpellInfo(spellID)
-    if not spellInfo or not spellInfo.name then
-        return true  -- Unknown spell, fail-open
+    -- Form/stance spells not already in UNIQUE_AURA_SPELLS: check FormCache
+    if FormCache and FormCache.GetFormIDBySpellID
+            and FormCache.GetFormIDBySpellID(spellID) ~= nil then
+        return false
     end
-    
-    local name = spellInfo.name
-    
-    -- Filter out known utility spell patterns when aura API blocked
-    if name:match("Form$") or name:match("Stance$") or name:match("Presence$") then
-        return false  -- Forms/stances should not show
+
+    -- Pet revive (ID-based)
+    if IsPetReviveSpell(spellID) then
+        return false
     end
-    
-    if name:match("^Summon") or name:match("^Call Pet") then
-        return false  -- Pet summons
-    end
-    
-    if name:match("Revive") and name:match("Pet") then
-        return false  -- Pet revive
-    end
-    
+
     -- Default: Include in queue (fail-open for combat relevance)
     return true
 end
@@ -1013,41 +1017,6 @@ end
 --------------------------------------------------------------------------------
 -- Spell Category Detection (dynamic, no hardcoded spell lists)
 --------------------------------------------------------------------------------
-
--- Detect if spell is a pet summon based on name patterns
-local function IsPetSummonSpell(spellName)
-    if not spellName then return false end
-    
-    -- Common pet summon patterns
-    local patterns = {
-        "^Call Pet",
-        "^Summon",
-        "Raise Dead",
-        "Army of the Dead",
-        "Dire Beast",
-        "Feral Spirit",
-    }
-    
-    for _, pattern in ipairs(patterns) do
-        if spellName:find(pattern) then
-            return true
-        end
-    end
-
-    return false
-end
-
--- Detect if spell is a pet revive/resurrection spell
-local function IsPetReviveSpell(spellName)
-    if not spellName then return false end
-    return spellName:find("Revive Pet") or spellName:find("Heart of the Phoenix")
-end
-
--- Detect if spell is a stealth ability
-local function IsStealthSpell(spellName)
-    if not spellName then return false end
-    return spellName:find("Stealth") or spellName:find("Prowl") or spellName:find("Shadowmeld")
-end
 
 --------------------------------------------------------------------------------
 -- Rogue Poison Detection (cast-based inference)
@@ -1232,23 +1201,21 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                 return true
             end
         else
-            -- Fallback: check by name patterns (Form, Stance, Presence, etc.)
+            -- Fallback: spell not in FormCache mapping - compare localized spell name
+            -- directly against the active form name (both strings are from the game,
+            -- so this comparison is locale-safe regardless of client language).
             local spellInfo = GetCachedSpellInfo(spellID)
             if spellInfo and spellInfo.name then
                 local name = spellInfo.name
-                if name:match("Form$") or name:match("Stance$") or name:match("Presence$") then
-                    -- It's a form spell but not in our mapping - check if name matches current form
-                    local currentFormName = FormCache.GetActiveFormName()
-                    if currentFormName and currentFormName == name then
-                        -- Throttle debug output
-                        local now = GetTime()
-                        local throttleKey = "form_name_" .. name
-                        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                            lastPrintTime[throttleKey] = now
-                            print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
-                        end
-                        return true
+                local currentFormName = FormCache.GetActiveFormName()
+                if currentFormName and currentFormName == name then
+                    local now = GetTime()
+                    local throttleKey = "form_name_" .. name
+                    if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
+                        lastPrintTime[throttleKey] = now
+                        print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
                     end
+                    return true
                 end
             end
         end
@@ -1363,7 +1330,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- 4. PET SPELL REDUNDANCY
     -- Revive Pet: redundant if pet is ALIVE (can't revive alive pet)
     -- Summon Pet: redundant if pet EXISTS (alive or dead - already have a pet)
-    if IsPetReviveSpell(spellName) then
+    if IsPetReviveSpell(spellID) then
         -- Revive is redundant only if pet is alive
         if IsPetAlive() then
             if debugMode then
@@ -1373,11 +1340,9 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     else
         -- Pet summon spells: redundant if any pet exists
-        local isPetSpellByTable = IsPetSpell(spellID)
-        if (isPetSpellByTable or IsPetSummonSpell(spellName)) and SafeHasPetUI() then
+        if IsPetSpell(spellID) and SafeHasPetUI() then
             if debugMode then
-                local source = isPetSpellByTable and "native table" or "name pattern"
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon (" .. source .. ") but pet already exists")
+                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon but pet already exists")
             end
             return true
         end
@@ -1385,7 +1350,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     
     -- 5. STEALTH REDUNDANCY
     -- Use IsStealthed() API - more reliable than buff checking
-    if IsStealthSpell(spellName) then
+    if IsStealthSpell(spellID) then
         if SafeIsStealthed() then
             if debugMode then
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
@@ -1398,8 +1363,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- Use IsMounted() API
     if SafeIsMounted() then
         -- Check if this is a mount spell (avoid false positives)
-        if spellInfo.name:find("Mount") or 
-           (C_MountJournal and C_MountJournal.GetMountFromSpell and C_MountJournal.GetMountFromSpell(spellID)) then
+        if IsMountSpell(spellID) then
             if debugMode then
                 print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
             end

@@ -461,14 +461,6 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         end
     end
 
-    if C_Spell and C_Spell.GetSpellSubtext then
-        local subtext = C_Spell.GetSpellSubtext(spellID)
-        if subtext and subtext:lower():find("passive") then
-            spellAvailabilityCache[spellID] = false
-            return false
-        end
-    end
-
     if IsPlayerSpell and IsPlayerSpell(spellID) then
         spellAvailabilityCache[spellID] = true
         return true

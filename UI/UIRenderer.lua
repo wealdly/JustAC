@@ -15,6 +15,19 @@ if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations
     return
 end
 
+-- Localized label shown on the overlay when Assisted Combat is waiting for resources.
+local WAIT_LABEL = ({
+    enUS = "WAIT", enGB = "WAIT",
+    deDE = "WART",
+    frFR = "ATT.",
+    esES = "ESPE", esMX = "ESPE",
+    ptBR = "AGRD",
+    ruRU = "ЖДЁМ",
+    koKR = "대기",
+    zhCN = "等待", zhTW = "等待",
+    itIT = "ASPT",
+})[GetLocale()] or "WAIT"
+
 -- Hot path cache
 local GetTime = GetTime
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -1315,13 +1328,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 -- "Waiting for..." = Assisted Combat's resource-wait indicator.
+                -- Detected by iconID 134377, the shared timer icon Blizzard uses for
+                -- all "Waiting for [resource]" placeholder spells. File IDs are the
+                -- same across all locales, so this check is locale-safe.
                 if spellChanged then
-                    icon.isWaitingSpell = spellInfo.name ~= nil and spellInfo.name:find("^Waiting for") ~= nil
+                    icon.isWaitingSpell = spellInfo.iconID == 134377
                 end
                 local centerText = icon.centerText
                 if centerText then
                     if icon.isWaitingSpell then
-                        centerText:SetText("WAIT")
+                        centerText:SetText(WAIT_LABEL)
                         centerText:Show()
                     else
                         centerText:Hide()
