@@ -144,6 +144,10 @@ L["Spec-Based Switching"] = "Spezialisierungsbasiertes Wechseln"
 L["Auto-switch profile by spec"] = "Profil automatisch nach Spezialisierung wechseln"
 L["(No change)"] = "(Keine Änderung)"
 L["(Disabled)"] = "(Deaktiviert)"
+-- New character default profile
+L["New Character Defaults"] = "Standardeinstellungen für neue Charaktere"
+L["Use Default profile for new characters"] = "Standardprofil für neue Charaktere verwenden"
+L["Use Default profile for new characters desc"] = "Wenn aktiviert, starten neue Charaktere mit dem gemeinsamen Standardprofil anstatt ein eigenes zu erhalten. Betrifft nur Charaktere, die JustAC noch nie geladen haben."
 -- Compound layout labels (queue direction + sidebar placement)
 L["Left, Sidebar Above"] = "Links, Seitenleiste oben"
 L["Left, Sidebar Below"] = "Links, Seitenleiste unten"

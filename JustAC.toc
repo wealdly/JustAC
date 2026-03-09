@@ -2,10 +2,10 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.8.7
+## Version: 4.8.8
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
-## SavedVariables: JustACDB
+## SavedVariables: JustACDB JustACGlobal
 ## OptionalDeps: Ace3, Masque
 
 ## X-Category: Combat

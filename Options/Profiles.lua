@@ -61,6 +61,28 @@ function Profiles.AddSpecProfileOptions(addon)
         return specIndex <= numSpecs
     end
 
+    -- Add inline group for new-character default profile
+    profilesArgs.newCharDefaults = {
+        type = "group",
+        name = L["New Character Defaults"],
+        inline = true,
+        order = 90,
+        args = {
+            useDefaultProfile = {
+                type = "toggle",
+                name = L["Use Default profile for new characters"],
+                desc = L["Use Default profile for new characters desc"],
+                order = 1,
+                width = "full",
+                get = function() return JustACGlobal and JustACGlobal.useDefaultProfile or false end,
+                set = function(_, val)
+                    if not JustACGlobal then JustACGlobal = {} end
+                    JustACGlobal.useDefaultProfile = val or nil
+                end,
+            },
+        },
+    }
+
     -- Add inline group for spec-based switching
     profilesArgs.specSwitching = {
         type = "group",

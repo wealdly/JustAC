@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.8.8] - 2026-03-09
+
+### Added
+- Profiles: new option to use the shared Default profile for new characters instead of auto-creating a character-named profile (stored as a global setting so it applies before per-character data is loaded)
+
 ## [4.8.7] - 2026-03-09
 
 ### Fixed

@@ -156,6 +156,10 @@ L["Profiles desc"] = "Character and spec profile management"
 -- Per-spec profile switching
 L["Spec-Based Switching"] = "Spec-Based Switching"
 L["Auto-switch profile by spec"] = "Auto-switch profile by spec"
+-- New character default profile
+L["New Character Defaults"] = "New Character Defaults"
+L["Use Default profile for new characters"] = "Use Default profile for new characters"
+L["Use Default profile for new characters desc"] = "When enabled, new characters start on the shared Default profile instead of getting their own. Only affects characters that have never loaded JustAC before."
 L["(No change)"] = "(No change)"
 L["(Disabled)"] = "(Disabled)"
 -- Compound layout labels (queue direction + sidebar placement)
