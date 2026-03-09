@@ -383,7 +383,7 @@ function JustAC:NormalizeSavedData()
 end
 
 function JustAC:OnInitialize()
-    self.db = AceDB:New("JustACDB", defaults)
+    self.db = AceDB:New("JustACDB", defaults, JustACGlobal and JustACGlobal.useDefaultProfile or nil)
 
     -- Initialize binding globals before combat (prevents taint)
     if not _G.BINDING_NAME_JUSTAC_CAST_FIRST then

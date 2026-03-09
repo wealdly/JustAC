@@ -144,6 +144,10 @@ L["Spec-Based Switching"] = "Troca por especialização"
 L["Auto-switch profile by spec"] = "Trocar perfil automaticamente por especialização"
 L["(No change)"] = "(Sem mudança)"
 L["(Disabled)"] = "(Desativado)"
+-- New character default profile
+L["New Character Defaults"] = "Padrões para novos personagens"
+L["Use Default profile for new characters"] = "Usar perfil padrão para novos personagens"
+L["Use Default profile for new characters desc"] = "Quando ativado, novos personagens começam no perfil padrão compartilhado em vez de receber o próprio. Afeta apenas personagens que nunca carregaram o JustAC antes."
 -- Compound layout labels (queue direction + sidebar placement)
 L["Left, Sidebar Above"] = "Esquerda, barra lateral acima"
 L["Left, Sidebar Below"] = "Esquerda, barra lateral abaixo"

@@ -144,6 +144,10 @@ L["Spec-Based Switching"] = "按專精切換"
 L["Auto-switch profile by spec"] = "按專精自動切換設定"
 L["(No change)"] = "（不變）"
 L["(Disabled)"] = "（已停用）"
+-- New character default profile
+L["New Character Defaults"] = "新角色預設設定"
+L["Use Default profile for new characters"] = "為新角色使用預設設定"
+L["Use Default profile for new characters desc"] = "啟用後，新角色將使用共享的預設設定，而非建立專屬設定。僅影響從未載入 JustAC 的角色。"
 -- Compound layout labels (queue direction + sidebar placement)
 L["Left, Sidebar Above"] = "向左，側欄在上"
 L["Left, Sidebar Below"] = "向左，側欄在下"
