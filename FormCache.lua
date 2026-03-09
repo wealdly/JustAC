@@ -9,7 +9,6 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 -- Hot path cache
 local GetTime = GetTime
 local pairs = pairs
-local ipairs = ipairs
 
 local cachedFormData = {
     -- Stance bar position (1-N) matching macro [form:X] conditionals (0 = caster/no form)
@@ -65,71 +64,46 @@ end
 
 local function ScanSpellbookForFormSpells()
     local formSpells = {}
-    
+
+    -- Build a set of form spell IDs first (O(numForms)), avoiding O(numSpells×numForms) inner loop
+    local formSpellSet = {}
+    local numForms = BlizzardAPI.GetNumShapeshiftForms()
+    for i = 1, numForms do
+        local _, _, _, formSpellID = BlizzardAPI.GetShapeshiftFormInfo(i)
+        if formSpellID then
+            formSpellSet[formSpellID] = true
+        end
+    end
+
+    if not next(formSpellSet) then return formSpells end
+
     local numTabs = GetModernNumSpellTabs()
     for tabIndex = 1, numTabs do
-        local name, texture, offset, numSpells = GetModernSpellTabInfo(tabIndex)
-        
+        local name, _, offset, numSpells = GetModernSpellTabInfo(tabIndex)
+
         if name and offset and numSpells then
             for spellIndex = offset + 1, offset + numSpells do
                 local spellType, spellID = GetModernSpellBookItemInfo(spellIndex)
-                
-                if (spellType == "SPELL" or spellType == 1) and spellID then
+
+                if (spellType == "SPELL" or spellType == 1) and spellID and formSpellSet[spellID] then
                     local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
                     if spellInfo and spellInfo.name then
-                        local spellName = spellInfo.name
-                        
-                        local formPatterns = {
-                            "Form$", "Stance$", "Presence$", "Aspect$", "Aura$"
-                        }
-                        
-                        local isFormSpell = false
-                        for _, pattern in ipairs(formPatterns) do
-                            if spellName:match(pattern) then
-                                isFormSpell = true
-                                break
-                            end
-                        end
-                        
-                        if not isFormSpell then
-                            local numForms = BlizzardAPI.GetNumShapeshiftForms()
-                            for i = 1, numForms do
-                                local icon, active, castable, formSpellID = BlizzardAPI.GetShapeshiftFormInfo(i)
-                                if formSpellID and formSpellID == spellID then
-                                    isFormSpell = true
-                                    break
-                                end
-                            end
-                        end
-                        
-                        if isFormSpell then
-                            formSpells[spellID] = spellName
-                        end
+                        formSpells[spellID] = spellInfo.name
                     end
                 end
             end
         end
     end
-    
+
     return formSpells
 end
 
-local function DetermineSpellFormTarget(spellID, spellName)
+local function DetermineSpellFormTarget(spellID)
     local numForms = BlizzardAPI.GetNumShapeshiftForms()
     for i = 1, numForms do
         local icon, active, castable, formSpellID = BlizzardAPI.GetShapeshiftFormInfo(i)
         if formSpellID and formSpellID == spellID then
             return i
-        end
-    end
-    
-    local cancelPatterns = {
-        "Cancel", "Normal Form", "Caster Form", "Humanoid Form"
-    }
-    
-    for _, pattern in ipairs(cancelPatterns) do
-        if spellName:find(pattern) then
-            return 0
         end
     end
     
@@ -146,8 +120,8 @@ local function BuildSpellToFormMapping()
     local mapping = {}
     local formSpells = ScanSpellbookForFormSpells()
     
-    for spellID, spellName in pairs(formSpells) do
-        local targetForm = DetermineSpellFormTarget(spellID, spellName)
+    for spellID in pairs(formSpells) do
+        local targetForm = DetermineSpellFormTarget(spellID)
         if targetForm then
             mapping[spellID] = targetForm
         end
@@ -280,13 +254,13 @@ end
 
 function FormCache.GetFormIDBySpellID(spellID)
     if not spellID then return nil end
-    
+
     UpdateFormCache()
-    
+
     local mapping = cachedFormData.spellToFormMap
-    if mapping[spellID] then
-        return mapping[spellID]
-    end
+    local cached = mapping[spellID]
+    if cached then return cached end
+    if cached == false then return nil end  -- negative cache hit
     
     for formID, formData in pairs(cachedFormData.availableForms) do
         if formData.spellID and formData.spellID == spellID then
@@ -325,6 +299,10 @@ function FormCache.GetFormIDBySpellID(spellID)
     
     BuildSpellToFormMapping()
     mapping = cachedFormData.spellToFormMap
-    return mapping[spellID]
+    local result = mapping[spellID]
+    if not result then
+        mapping[spellID] = false  -- negative cache: not a form spell
+    end
+    return result
 end
 

@@ -3,6 +3,29 @@
 
 ## [Unreleased]
 
+## [4.8.6] - 2026-03-09
+
+### Fixed
+- RedundancyFilter, FormCache, UIRenderer, SpellQuery: Replace all hardcoded English spell/aura name matches with locale-safe equivalents — addon now works correctly on non-English clients
+  - `IsPetReviveSpell`: name pattern → spell ID lookup (`{982, 55709}`)
+  - `IsStealthSpell`: name pattern → spell ID lookup (`{1784, 1856, 5215, 58984}`); Vanish added
+  - `IsPetSummonSpell`: removed; call sites use `IsPetSpell(spellID)` table lookup
+  - `IsUniqueAuraSpell` fallback: Form/Stance/Presence/Aspect name patterns → `FormCache.GetFormIDBySpellID`
+  - `IsDPSRelevant` fallback: name patterns replaced with `FormCache.GetFormIDBySpellID` + `IsPetReviveSpell`
+  - `PruneExpiredActivations` stealth detection: `name:match("Stealth/Vanish")` → `IsStealthSpell(spellID)`
+  - `PruneExpiredActivations` mount detection: `name:find("Mount")` → `C_MountJournal.GetMountFromSpell`
+  - Mount redundancy check: extracted to `IsMountSpell()` helper (DRY)
+  - Form redundancy fallback: English suffix guard removed; kept locale-safe `currentFormName == name` equality check
+  - `IsSpellAvailable`: removed `subtext:lower():find("passive")` fallback (redundant; `C_Spell.IsSpellPassive` handles it)
+  - `ScanSpellbookForFormSpells`: name pattern pre-filter removed; detection uses only `GetShapeshiftFormInfo`
+  - `DetermineSpellFormTarget`: cancel-form name patterns removed; unmapped spells return nil and fail-open
+  - "Waiting for resource" overlay: `name:find("^Waiting for")` → `spellInfo.iconID == 134377` (file IDs are locale-invariant)
+- UIRenderer: "Waiting for resource" overlay label localised — displays `WAIT/WART/ATT./ESPE/AGRD/ЖДЁМ/대기/等待/ASPT` per client locale instead of hardcoded English `WAIT`
+
+### Performance
+- FormCache: `ScanSpellbookForFormSpells` reduced from O(numSpells × numForms) to O(numForms + numSpells) — build form-set once, then do O(1) membership checks per spellbook entry
+- FormCache: `GetFormIDBySpellID` now stores a negative cache sentinel for non-form spells, short-circuiting the full fallback chain on repeated calls
+
 ## [4.8.5] - 2026-03-08
 
 ### Fixed
