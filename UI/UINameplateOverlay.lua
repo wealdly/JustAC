@@ -942,9 +942,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
     end
 
     local hasSpells   = spellIDs and #spellIDs > 0
-    local npoGlowMode  = npo.glowMode or "all"
-    local npoShowProcGlow = (npoGlowMode == "all" or npoGlowMode == "procOnly")
-    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
+    local npoGlowMode       = npo.glowMode or "all"
+    local npoShowPrimaryGlow = (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
+    local npoShowProcGlow    = (npoGlowMode == "all" or npoGlowMode == "procOnly")
+    local showGapCloserGlow  = npoShowPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
     local npoDesaturation = npo.queueIconDesaturation or 0
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
@@ -957,6 +958,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
     local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo
     local IsSyntheticProc    = SpellQueue  and SpellQueue.IsSyntheticProc
+    local IsDisplacedPrimary = SpellQueue  and SpellQueue.IsDisplacedPrimary
     local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
@@ -1185,11 +1187,13 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- recommends the same gap-closer at position 1, it gets the blue assisted
             -- crawl instead — matching standard queue behavior.
             local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
-            local isGapCloser = isSyntheticProc
-            local isRealProc = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
-            local wantProcGlow = isRealProc and npoShowProcGlow
-            local wantGapCloserGlow = isGapCloser and showGapCloserGlow and not wantProcGlow
-            local wantAssistedGlow = i == 1 and (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
+            local isDisplaced     = IsDisplacedPrimary and IsDisplacedPrimary(spellID)
+            local isGapCloser     = isSyntheticProc
+            local isRealProc      = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
+            -- Priority: gap-closer > proc > assisted (matches UIRenderer.ResolveGlowState)
+            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
+            local wantProcGlow      = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+            local wantAssistedGlow  = (i == 1 or isDisplaced) and npoShowPrimaryGlow
                 and not wantGapCloserGlow and not wantProcGlow
 
             -- Glow hysteresis (positions 2+): require desired glow state to be
@@ -1331,7 +1335,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
             -- Force-apply every frame during channeling/casting so all icons
             -- grey/ungrey on the exact same frame (no per-icon desync).
+            -- Also re-apply when npoDesaturation changes (slider moved).
+            local baseDesaturation = (i == 1) and 0 or npoDesaturation
             if icon.lastVisualState ~= visualState
+               or icon.lastBaseDesaturation ~= baseDesaturation
                or isChanneling or isCasting then
                 if visualState == 4 then
                     icon.iconTexture:SetDesaturation(0)
@@ -1343,10 +1350,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     icon.iconTexture:SetDesaturation(0)
                     icon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
                 else
-                    icon.iconTexture:SetDesaturation(i == 1 and 0 or npoDesaturation)
+                    icon.iconTexture:SetDesaturation(baseDesaturation)
                     icon.iconTexture:SetVertexColor(1, 1, 1)
                 end
                 icon.lastVisualState = visualState
+                icon.lastBaseDesaturation = baseDesaturation
             end
 
             -- First icon scale (parity with standard queue firstIconScale)
@@ -1377,6 +1385,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.normalizedHotkey     = nil
                 icon.cachedHotkey         = nil
                 icon.lastSpellSetTime     = nil
+                icon.lastVisualState      = nil
+                icon.lastBaseDesaturation = nil
                 icon.lastRenderedGlow     = nil
                 icon.pendingGlowState     = nil
                 icon.pendingGlowTime      = nil

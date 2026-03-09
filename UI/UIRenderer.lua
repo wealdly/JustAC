@@ -996,6 +996,10 @@ local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
     if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
+    -- Spell displaced to position 2 by a gap-closer injection keeps its blue glow
+    -- so the player knows it is still Blizzard's next recommended cast.
+    local isDisplaced = SpellQueue.IsDisplacedPrimary and SpellQueue.IsDisplacedPrimary(spellID)
+    if isDisplaced and showPrimaryGlow then return GLOW_ASSISTED end
     return GLOW_NONE
 end
 
@@ -1026,7 +1030,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local glowMode = profile.glowMode or "all"
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
-    local showGapCloserGlow = profile.gapClosers and profile.gapClosers.showGlow == true
+    local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
     local queueDesaturation = GetQueueDesaturation()
     
     -- Grey out all icons while channeling (optional, gated by profile toggle).
