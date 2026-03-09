@@ -864,8 +864,42 @@ function ActionBarScanner.FindSpellInActions(spellID, spellName)
     return FindSpellInActions(spellID, spellName)
 end
 
+-- Item hotkey lookup: override → direct bar scan → cast-spell fallback.
+-- Uses GetOptimizedKeybind + AbbreviateKeybind for consistent formatting.
+function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
+    if not itemID or itemID == 0 then return "" end
+
+    -- User override takes priority (stored as negative item ID)
+    local addon = GetCachedAddon()
+    if addon and addon.GetHotkeyOverride then
+        local override = addon:GetHotkeyOverride(-itemID)
+        if override and override ~= "" then return override end
+    end
+
+    -- Scan action bars for direct item placement
+    local slotMapping = GetCachedSlotMapping()
+    for slot in pairs(slotMapping) do
+        if HasAction(slot) then
+            local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
+            if actionType == "item" and actionID == itemID then
+                local baseKey = GetOptimizedKeybind(slot)
+                if baseKey and baseKey ~= "" then
+                    return AbbreviateKeybind(baseKey)
+                end
+            end
+        end
+    end
+
+    -- Fall back to cast spell lookup (handles macros with the item's "use" spell)
+    if castSpellID and castSpellID > 0 then
+        local result = ActionBarScanner.GetSpellHotkey(castSpellID)
+        if result and result ~= "" then return result end
+    end
+
+    return ""
+end
+
 -- Exported helper: apply input preference to a GetBindingKey() call.
--- Used by UIRenderer for defensive item hotkeys that bypass the scanner cache.
 function ActionBarScanner.SelectBindingKey(bindingName)
     return SelectBinding(GetBindingKey(bindingName)) or ""
 end
