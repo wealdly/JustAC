@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 4)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 5)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -293,7 +293,7 @@ end
 function GapCloserEngine.ClearRangeState()
     lastOutOfRangeTime = 0
     local currentGUID = UnitGUID("target")
-    if currentGUID then
+    if currentGUID and not (BlizzardAPI and BlizzardAPI.IsSecretValue(currentGUID)) then
         if currentGUID == previousTargetGUID then
             -- Same unit retargeted — cancel the cooldown, range hasn't changed
             lastTargetSwitchTime = 0
