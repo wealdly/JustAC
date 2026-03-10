@@ -484,9 +484,11 @@ function JustAC:OnEnable()
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
-    self:RegisterEvent("UNIT_ENTERED_VEHICLE",  "OnVehicleChanged")
-    self:RegisterEvent("UNIT_EXITED_VEHICLE",   "OnVehicleChanged")
-    self:RegisterEvent("UPDATE_POSSESS_BAR",    "OnPossessBarChanged")
+    self:RegisterEvent("UNIT_ENTERED_VEHICLE",      "OnVehicleChanged")
+    self:RegisterEvent("UNIT_EXITED_VEHICLE",       "OnVehicleChanged")
+    self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR",  "OnVehicleChanged")
+    self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR", "OnOverrideBarChanged")
+    self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
 
     if EventRegistry then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
@@ -739,10 +741,13 @@ function JustAC:GetClassSpellList(listKey)
 end
 
 function JustAC:UpdateAlternateControlState()
-    -- Detect when the player is controlling a vehicle (replaces action bars) or
-    -- possessing an NPC via Mind Control / similar effects. In either case our
-    -- normal rotation spells are completely wrong, so suppress all rendering.
+    -- Detect when the player is controlling a vehicle (replaces action bars),
+    -- possessing an NPC via Mind Control / similar effects, or using an
+    -- override action bar (quest vehicles, NPC control). In any of these cases
+    -- our normal rotation spells are completely wrong, so suppress all rendering.
     self.playerInAlternateControl = (UnitHasVehicleUI and UnitHasVehicleUI("player") or false)
+        or (HasVehicleActionBar and HasVehicleActionBar() or false)
+        or (HasOverrideActionBar and HasOverrideActionBar() or false)
         or (IsPossessBarVisible and IsPossessBarVisible() or false)
 end
 
@@ -1126,6 +1131,13 @@ end
 function JustAC:OnVehicleChanged(event, unit)
     if unit ~= "player" then return end
 
+    self:UpdateAlternateControlState()
+    self:InvalidateCaches({macros = true, hotkeys = true})
+    self:ForceUpdate()
+end
+
+function JustAC:OnOverrideBarChanged()
+    -- Fires when an override action bar appears or disappears (quest vehicles, NPC control).
     self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
     self:ForceUpdate()
