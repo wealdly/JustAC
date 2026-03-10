@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 11)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 12)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -27,6 +27,7 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     highlightFrame:SetPoint("CENTER")
     highlightFrame:SetSize(45, 45)
     highlightFrame:SetFrameLevel(parent:GetFrameLevel() + 4)
+    if parent.isOverlayIcon then highlightFrame:SetFrameStrata("BACKGROUND") end
     
     local flipbook = highlightFrame:CreateTexture(nil, "OVERLAY")
     highlightFrame.Flipbook = flipbook
@@ -57,6 +58,7 @@ local function CreateProcGlowFrame(parent, frameKey)
     procFrame:SetPoint("CENTER")
     procFrame:SetSize(45 * 1.4, 45 * 1.4)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
+    if parent.isOverlayIcon then procFrame:SetFrameStrata("BACKGROUND") end
     procFrame:Hide()
     
     local procLoop = procFrame:CreateTexture(nil, "OVERLAY")
@@ -137,213 +139,169 @@ local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
     end
 end
 
-local function StartAssistedGlow(icon, isInCombat)
+-- ── Consolidated Marching Ants Glow Engine ─────────────────────────────────
+-- All glow types (assisted, defensive, gap-closer, interrupt) share the same
+-- marching-ants flipbook animation with different parameters:
+--
+-- | Type        | Frame Key                  | Color (R,G,B) | Desat | Scale  | Pause OOC | Flag Field        | Clears Proc |
+-- |-------------|----------------------------|---------------|-------|--------|-----------|-------------------|-------------|
+-- | Assisted    | JustACAssistedGlow         | 1, 1, 1       | no    | ×1.02  | yes       | hasAssistedGlow   | yes         |
+-- | Defensive   | DefensiveHighlightFrame    | 0.3, 1.0, 0.3 | no    | ×1.0   | yes       | hasDefensiveGlow  | yes         |
+-- | Gap-closer  | GapCloserHighlightFrame    | 1.0, 0.95, 0.4| yes   | ×1.0   | no        | hasGapCloserGlow  | no          |
+-- | Interrupt   | InterruptHighlightFrame    | 1.0, 0.95, 0.4| yes   | ×1.0   | no        | hasInterruptGlow  | yes         |
+
+-- Per-type configuration tables (avoid allocations on hot path)
+local GLOW_CONFIG = {
+    ASSISTED = {
+        frameKey    = "JustACAssistedGlow",  -- NOT "AssistedCombatHighlightFrame" — Masque auto-detects that key
+        r = 1, g = 1, b = 1,                -- White/no tint (appears blue in-game from atlas)
+        desaturate  = false,
+        scaleMul    = 1.02,
+        pauseOOC    = true,                  -- Pause animation out of combat
+        flagField   = "hasAssistedGlow",
+        pauseField  = "assistedAnimPaused",
+        clearsProc  = true,
+    },
+    DEFENSIVE = {
+        frameKey    = "DefensiveHighlightFrame",
+        r = 0.3, g = 1.0, b = 0.3,          -- Green for defensive queue
+        desaturate  = false,
+        scaleMul    = 1.0,
+        pauseOOC    = true,
+        flagField   = "hasDefensiveGlow",
+        pauseField  = "defensiveAnimPaused",
+        clearsProc  = true,
+    },
+    GAP_CLOSER = {
+        frameKey    = "GapCloserHighlightFrame",
+        r = 1.0, g = 0.95, b = 0.4,         -- Bright gold (desaturated atlas → grey → gold tint)
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- Always animate to draw attention
+        flagField   = "hasGapCloserGlow",
+        pauseField  = nil,                   -- No pause tracking needed
+        clearsProc  = false,
+    },
+    INTERRUPT = {
+        frameKey    = "InterruptHighlightFrame",
+        r = 1.0, g = 0.95, b = 0.4,         -- Same gold as gap-closer
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- Combat-only anyway, always animate
+        flagField   = "hasInterruptGlow",
+        pauseField  = nil,
+        clearsProc  = true,
+    },
+}
+
+-- Core start function — all glow types funnel through here
+local function StartMarchingAntsGlow(icon, config, isInCombat)
     if not icon then return end
 
-    -- Key intentionally NOT "AssistedCombatHighlightFrame": Masque's SkinButton
-    -- auto-detects that key and overrides the flipbook texture/size, which causes
-    -- the glow inset to differ when Masque is enabled vs disabled.
-    local highlightFrame = icon.JustACAssistedGlow
+    local frameKey = config.frameKey
+    local highlightFrame = icon[frameKey]
     local needsInit = not highlightFrame
 
     if needsInit then
-        highlightFrame = CreateMarchingAntsFrame(icon, "JustACAssistedGlow")
+        highlightFrame = CreateMarchingAntsFrame(icon, frameKey)
     end
 
     -- Only do setup work if frame was just created or not yet shown
     if needsInit or not highlightFrame:IsShown() then
         local width = icon:GetWidth()
-        highlightFrame:SetScale((width / 45) * 1.02)
-
-        -- White tint for assisted combat (RGB: 1, 1, 1 = white/no tint, appears blue in-game)
-        TintMarchingAnts(highlightFrame, 1, 1, 1)
-        highlightFrame.Flipbook:SetAlpha(1)
+        highlightFrame:SetScale((width / 45) * config.scaleMul)
+        TintMarchingAnts(highlightFrame, config.r, config.g, config.b, config.desaturate)
+        if config.scaleMul ~= 1.0 then
+            highlightFrame.Flipbook:SetAlpha(1)
+        end
         highlightFrame:Show()
-
-        icon.activeGlowStyle = "ASSISTED"
+        icon[config.flagField] = true
     end
 
-    -- Animation state based on combat status
-    -- FAST PATH: If already in correct state, exit early
-    if isInCombat then
-        -- In combat: ensure animation is playing
-        if icon.assistedAnimPaused or not highlightFrame.Flipbook.Anim:IsPlaying() then
-            highlightFrame.Flipbook.Anim:Play()
-            icon.assistedAnimPaused = false
+    -- Animation state management
+    local pauseField = config.pauseField
+    if config.pauseOOC then
+        -- Assisted/Defensive: pause animation out of combat for subtle feedback
+        if isInCombat then
+            if (pauseField and icon[pauseField]) or not highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Play()
+                if pauseField then icon[pauseField] = false end
+            end
+        elseif pauseField and not icon[pauseField] then
+            icon[pauseField] = true
+            if not highlightFrame.Flipbook.Anim:IsPlaying() then
+                highlightFrame.Flipbook.Anim:Play()
+            end
+            C_Timer.After(0.05, function()
+                if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
+                    highlightFrame.Flipbook.Anim:Pause()
+                end
+            end)
         end
-    elseif not icon.assistedAnimPaused then
-        -- Out of combat: set flag before scheduling to prevent duplicate timers per frame
-        icon.assistedAnimPaused = true
+    else
+        -- Gap-closer/Interrupt: always animate
         if not highlightFrame.Flipbook.Anim:IsPlaying() then
             highlightFrame.Flipbook.Anim:Play()
         end
-        C_Timer.After(0.05, function()
-            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
-                highlightFrame.Flipbook.Anim:Pause()
-            end
-        end)
+    end
+end
+
+-- Core stop function — all glow types funnel through here
+local function StopMarchingAntsGlow(icon, config)
+    if not icon then return end
+
+    local frame = icon[config.frameKey]
+    if frame then
+        frame:Hide()
+        if frame.Flipbook and frame.Flipbook.Anim then
+            frame.Flipbook.Anim:Stop()
+        end
     end
 
+    if config.clearsProc then
+        HideProcGlow(icon)
+    end
+
+    icon[config.flagField] = false
+    if config.pauseField then
+        icon[config.pauseField] = false
+    end
+end
+
+-- ── Public wrappers (preserve existing API) ────────────────────────────────
+
+local function StartAssistedGlow(icon, isInCombat)
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.ASSISTED, isInCombat)
 end
 
 StopAssistedGlow = function(icon)
-    if not icon then return end
-    
-    if icon.JustACAssistedGlow then
-        icon.JustACAssistedGlow:Hide()
-        if icon.JustACAssistedGlow.Flipbook and icon.JustACAssistedGlow.Flipbook.Anim then
-            icon.JustACAssistedGlow.Flipbook.Anim:Stop()
-        end
-    end
-    
-    -- Hide native proc glow if present
-    HideProcGlow(icon)
-
-    icon.activeGlowStyle = nil
-    icon.assistedAnimPaused = false
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.ASSISTED)
+    -- Legacy field: some callers check activeGlowStyle
+    if icon then icon.activeGlowStyle = nil end
 end
 
 local function StartDefensiveGlow(icon, isInCombat)
-    if not icon then return end
-
-    local highlightFrame = icon.DefensiveHighlightFrame
-    local needsInit = not highlightFrame
-
-    if needsInit then
-        highlightFrame = CreateMarchingAntsFrame(icon, "DefensiveHighlightFrame")
-    end
-
-    -- Only do setup work if frame was just created or not yet shown
-    if needsInit or not highlightFrame:IsShown() then
-        local width = icon:GetWidth()
-        highlightFrame:SetScale(width / 45)
-
-        -- Green tint for defensive queue (RGB: 0.3, 1.0, 0.3)
-        TintMarchingAnts(highlightFrame, 0.3, 1.0, 0.3)
-
-        highlightFrame:Show()
-        icon.hasDefensiveGlow = true
-    end
-
-    -- Animation state based on combat status
-    -- FAST PATH: If already in correct state, exit early
-    if isInCombat then
-        -- In combat: ensure animation is playing
-        if icon.defensiveAnimPaused or not highlightFrame.Flipbook.Anim:IsPlaying() then
-            highlightFrame.Flipbook.Anim:Play()
-            icon.defensiveAnimPaused = false
-        end
-    elseif not icon.defensiveAnimPaused then
-        -- Out of combat: set flag before scheduling to prevent duplicate timers per frame
-        icon.defensiveAnimPaused = true
-        if not highlightFrame.Flipbook.Anim:IsPlaying() then
-            highlightFrame.Flipbook.Anim:Play()
-        end
-        C_Timer.After(0.05, function()
-            if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
-                highlightFrame.Flipbook.Anim:Pause()
-            end
-        end)
-    end
-
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.DEFENSIVE, isInCombat)
 end
 
 StopDefensiveGlow = function(icon)
-    if not icon then return end
-    
-    if icon.DefensiveHighlightFrame then
-        icon.DefensiveHighlightFrame:Hide()
-        if icon.DefensiveHighlightFrame.Flipbook and icon.DefensiveHighlightFrame.Flipbook.Anim then
-            icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
-        end
-    end
-    
-    -- Also hide proc glow since defensive is being stopped
-    HideProcGlow(icon)
-    
-    icon.hasDefensiveGlow = false
-    icon.defensiveAnimPaused = false
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.DEFENSIVE)
 end
 
--- ── Gold marching ants (interrupt + gap-closer) ────────────────────────────
--- Uses the same marching-ants flipbook as assisted/defensive but tinted gold.
--- Color scheme: blue/white = DPS queue, green = defensive, gold = interrupt/gap-closer.
--- Gap-closers always animate (even OOC) to draw attention to the injected spell.
--- Interrupts are combat-only anyway so they always animate too.
-
--- Gap-closer emphasis glow (gold marching ants, same animation as interrupt)
 local function StartGapCloserGlow(icon)
-    if not icon then return end
-
-    local highlightFrame = icon.GapCloserHighlightFrame
-    local needsInit = not highlightFrame
-
-    if needsInit then
-        highlightFrame = CreateMarchingAntsFrame(icon, "GapCloserHighlightFrame")
-    end
-
-    if needsInit or not highlightFrame:IsShown() then
-        local width = icon:GetWidth()
-        highlightFrame:SetScale(width / 45)
-        -- Bright gold tint for gap-closer — desaturate atlas first (blue→grey) then tint
-        TintMarchingAnts(highlightFrame, 1.0, 0.95, 0.4, true)
-        highlightFrame:Show()
-    end
-
-    -- Always animate gap-closers (even OOC) to emphasise the injected spell
-    if not highlightFrame.Flipbook.Anim:IsPlaying() then
-        highlightFrame.Flipbook.Anim:Play()
-    end
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.GAP_CLOSER)
 end
 
 StopGapCloserGlow = function(icon)
-    if not icon then return end
-    if icon.GapCloserHighlightFrame then
-        icon.GapCloserHighlightFrame:Hide()
-        if icon.GapCloserHighlightFrame.Flipbook and icon.GapCloserHighlightFrame.Flipbook.Anim then
-            icon.GapCloserHighlightFrame.Flipbook.Anim:Stop()
-        end
-    end
-    icon.hasGapCloserGlow = false
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.GAP_CLOSER)
 end
 
--- Interrupt emphasis glow (gold marching ants, always animated — interrupts are combat-only)
 local function StartInterruptGlow(icon, isInCombat)
-    if not icon then return end
-
-    local highlightFrame = icon.InterruptHighlightFrame
-    local needsInit = not highlightFrame
-
-    if needsInit then
-        highlightFrame = CreateMarchingAntsFrame(icon, "InterruptHighlightFrame")
-    end
-
-    if needsInit or not highlightFrame:IsShown() then
-        local width = icon:GetWidth()
-        highlightFrame:SetScale(width / 45)
-        -- Bright gold tint for interrupt — desaturate atlas first (blue→grey) then tint
-        TintMarchingAnts(highlightFrame, 1.0, 0.95, 0.4, true)
-        highlightFrame:Show()
-    end
-
-    -- Always animate (interrupts only show in combat)
-    if not highlightFrame.Flipbook.Anim:IsPlaying() then
-        highlightFrame.Flipbook.Anim:Play()
-    end
-
-    icon.hasInterruptGlow = true
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.INTERRUPT, isInCombat)
 end
 
 local function StopInterruptGlow(icon)
-    if not icon then return end
-    if icon.InterruptHighlightFrame then
-        icon.InterruptHighlightFrame:Hide()
-        if icon.InterruptHighlightFrame.Flipbook and icon.InterruptHighlightFrame.Flipbook.Anim then
-            icon.InterruptHighlightFrame.Flipbook.Anim:Stop()
-        end
-    end
-    HideProcGlow(icon)  -- clear any normal proc glow shown alongside interrupt
-    icon.hasInterruptGlow = false
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.INTERRUPT)
 end
 
 local function StartFlash(button)
@@ -411,6 +369,10 @@ local function HideAllGlows(addon)
         local icon = addon.spellIcons[i]
         if icon then
             StopAssistedGlow(icon)
+            StopDefensiveGlow(icon)
+            StopGapCloserGlow(icon)
+            StopInterruptGlow(icon)
+            HideProcGlow(icon)
         end
     end
 end
@@ -421,20 +383,29 @@ local function PauseAllGlows(addon)
     for i = 1, #addon.spellIcons do
         local icon = addon.spellIcons[i]
         if icon then
+            -- Assisted glow: stop animation (keeps frame visible but frozen)
             if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
                 if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
                     icon.JustACAssistedGlow.Flipbook.Anim:Play()
                 end
                 icon.JustACAssistedGlow.Flipbook.Anim:Stop()
             end
+            -- Defensive glow: stop animation
+            if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
+                if not icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
+                    icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
+                end
+                icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
+            end
+            -- Proc glow: hide entirely
             if icon.ProcGlowFrame then
                 icon.ProcGlowFrame:Hide()
-                if icon.ProcGlowFrame.Anim then
-                    icon.ProcGlowFrame.Anim:Stop()
+                if icon.ProcGlowFrame.ProcLoop then
+                    icon.ProcGlowFrame.ProcLoop:Stop()
                 end
             end
-            -- Gap-closer glow deliberately excluded: it always animates
-            -- (even OOC) and ResumeAllGlows has no matching restore code.
+            -- Gap-closer/Interrupt glows deliberately excluded:
+            -- they always animate (even OOC) for emphasis.
         end
     end
 end
@@ -445,10 +416,21 @@ local function ResumeAllGlows(addon)
     for i = 1, #addon.spellIcons do
         local icon = addon.spellIcons[i]
         if icon then
+            -- Assisted glow: resume animation
             if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
                 if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
                     icon.JustACAssistedGlow.Flipbook.Anim:Play()
                 end
+            end
+            -- Defensive glow: resume animation
+            if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
+                if not icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
+                    icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
+                end
+            end
+            -- Proc glow: restore if icon still has proc state
+            if icon.ProcGlowFrame and icon.hasProcGlow then
+                ShowProcGlow(icon)
             end
         end
     end
@@ -483,6 +465,7 @@ local function CreateChannelFillFrame(icon)
     frame:SetSize(128, 128)
     frame:SetPoint("CENTER", icon, "CENTER")
     frame:SetFrameLevel(icon:GetFrameLevel() + 2)
+    if icon.isOverlayIcon then frame:SetFrameStrata("BACKGROUND") end
 
     -- Inner glow (soft light behind the fill bar)
     local innerGlow = frame:CreateTexture(nil, "ARTWORK", nil, 1)

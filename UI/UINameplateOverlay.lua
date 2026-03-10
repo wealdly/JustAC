@@ -89,6 +89,7 @@ local cachedDefensiveQueue = nil
 -- ─────────────────────────────────────────────────────────────────────────────
 local function CreateOverlayIcon(iconSize, profile)
     local button = CreateFrame("Button", nil, UIParent)
+    button:SetFrameStrata("BACKGROUND")
     button:SetSize(iconSize, iconSize)
     button:EnableMouse(false)   -- always click-through; no tooltip, no drag
 
@@ -115,6 +116,7 @@ local function CreateOverlayIcon(iconSize, profile)
 
     -- Flash overlay for key-press feedback (used by UIAnimations.StartFlash)
     local flashFrame = CreateFrame("Frame", nil, button)
+    flashFrame:SetFrameStrata("BACKGROUND")
     flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
     flashFrame:SetSize(iconSize + 2, iconSize + 2)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
@@ -131,11 +133,13 @@ local function CreateOverlayIcon(iconSize, profile)
 
     -- Cooldown container (clips swipe to button bounds)
     local cooldownContainer = CreateFrame("Frame", nil, button)
+    cooldownContainer:SetFrameStrata("BACKGROUND")
     cooldownContainer:SetAllPoints(button)
     cooldownContainer:SetClipsChildren(true)
 
     -- Main cooldown (spell CD / GCD)
     local cooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
+    cooldown:SetFrameStrata("BACKGROUND")
     cooldown:ClearAllPoints()   -- CooldownFrameTemplate uses setAllPoints="true"; clear before insetting
     cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
     cooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
@@ -153,6 +157,7 @@ local function CreateOverlayIcon(iconSize, profile)
 
     -- Charge cooldown (multi-charge recharge)
     local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
+    chargeCooldown:SetFrameStrata("BACKGROUND")
     chargeCooldown:ClearAllPoints()
     chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
     chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
@@ -170,6 +175,7 @@ local function CreateOverlayIcon(iconSize, profile)
     -- Border frame: sits above cooldowns (L+3) so its opaque edges cover swipe corner overflow.
     -- Mirrors the same fix applied to CreateBaseIcon in UIFrameFactory.
     local borderFrame = CreateFrame("Frame", nil, button)
+    borderFrame:SetFrameStrata("BACKGROUND")
     borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
     borderFrame:SetAllPoints(button)
     local normalTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
@@ -181,6 +187,7 @@ local function CreateOverlayIcon(iconSize, profile)
 
     -- Hotkey text (top-right corner; display controlled by showHotkey setting)
     local hotkeyFrame = CreateFrame("Frame", nil, button)
+    hotkeyFrame:SetFrameStrata("BACKGROUND")
     hotkeyFrame:SetAllPoints(button)
     hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
     local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
@@ -256,6 +263,9 @@ local function CreateOverlayIcon(iconSize, profile)
     button.hasGapCloserGlow   = false
     button.hasDefensiveGlow   = false
 
+    -- Tag for UIAnimations: use lower glow frame levels to stay behind addon UI
+    button.isOverlayIcon = true
+
     button:SetAlpha(0)
     button:Hide()
 
@@ -274,6 +284,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 local function CreateOverlayHealthBar(initialWidth)
     local bar = CreateFrame("StatusBar", nil, UIParent)
+    bar:SetFrameStrata("BACKGROUND")
     bar:SetSize(initialWidth, BAR_HEIGHT)
     bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
     bar:SetStatusBarColor(0.0, 0.80, 0.0, 0.9)
@@ -675,6 +686,7 @@ function UINameplateOverlay.Create(addon)
         -- depending on expansion direction (same direction the interrupt pops).
         local auraSize = math_floor(iconSize * 0.7)
         local castAura = CreateFrame("Frame", nil, interruptIcon)
+        castAura:SetFrameStrata("BACKGROUND")
         castAura:SetSize(auraSize, auraSize)
         castAura:SetFrameLevel(interruptIcon:GetFrameLevel() + 2)
         castAura:EnableMouse(false)

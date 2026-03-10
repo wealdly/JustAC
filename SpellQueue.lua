@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 37)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 39)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -80,12 +80,18 @@ local function GetBlacklistTable()
     return profile.blacklistedSpells[specKey], specKey
 end
 
-function SpellQueue.IsSpellBlacklisted(spellID)
-    if not spellID then return false end
-    local blacklist = GetBlacklistTable()
-    if not blacklist then return false end
-    local value = blacklist[spellID]
+local function IsBlacklistedEntry(value)
     return value == true or (type(value) == "table" and value.fixedQueue == true)
+end
+
+-- Checks both base ID and its display/override ID against the blacklist.
+function SpellQueue.IsSpellBlacklisted(spellID, blacklist)
+    if not spellID then return false end
+    if not blacklist then blacklist = GetBlacklistTable() end
+    if not blacklist then return false end
+    if IsBlacklistedEntry(blacklist[spellID]) then return true end
+    local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+    return displayID ~= spellID and IsBlacklistedEntry(blacklist[displayID])
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
@@ -141,63 +147,163 @@ function SpellQueue.GetBlacklistedSpells()
     return spells
 end
 
--- Wrapper to BlizzardAPI.IsSpellAvailable
-local function IsSpellAvailable(spellID)
-    return BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID) or false
-end
-
--- Wrapper to BlizzardAPI.IsSpellUsable - checks if spell can be cast (resources, cooldown, etc.)
--- Fail-open: return true if API is unavailable to show max helpful spells
--- PERFORMANCE: Removed expensive cooldown filtering - the cooldown swipe already shows this visually
-local function IsSpellUsable(spellID)
-    if not BlizzardAPI or not BlizzardAPI.IsSpellUsable then
-        return true  -- Fail-open if API unavailable
-    end
-    -- Just check basic usability, skip expensive cooldown checks
-    -- The renderer's cooldown swipe already shows if a spell is on cooldown
-    local isUsable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-    return isUsable
-end
-
--- Helper: Check if spell passes common filters (availability, usability, redundancy)
--- Used for position 1 and spell-book proc spells — includes usability (resources, CD) check.
--- Uses per-update cache to avoid re-checking the same spell multiple times.
+-- Position 1 / spellbook proc filter: availability + usability + redundancy.
+-- Usability (C_Spell.IsSpellUsable) is NeverSecret; includes resource + CD check.
 local function PassesSpellFilters(spellID, profile)
-    -- Check cache first (valid for this update cycle only)
     local cached = filterResultCache[spellID]
-    if cached ~= nil then
-        return cached
-    end
-
-    -- Compute result
-    local result = IsSpellAvailable(spellID)
-       and IsSpellUsable(spellID)
+    if cached ~= nil then return cached end
+    local isUsable = BlizzardAPI.IsSpellUsable(spellID)
+    local result = BlizzardAPI.IsSpellAvailable(spellID)
+       and isUsable
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
-
     filterResultCache[spellID] = result
     return result
 end
 
--- Lighter filter for rotation list positions 2+ and defensive queue spells.
--- Does NOT check IsSpellUsable or IsSpellReady: most cooldown info is secreted
--- in 12.0 combat (GetSpellCooldown duration/startTime are secret). isOnGCD has
--- three NeverSecret states: true=GCD only (ready), false=real CD (flagged spells
--- like Judgment/BoJ/Wake only), nil=ambiguous (off CD OR unflagged on CD).
--- Since isOnGCD==false only covers Blizzard-flagged rotation builders, not major
--- CDs, filtering here would be partial. Local cooldown tracking
--- (via UNIT_SPELLCAST_SUCCEEDED) is handled separately in the categorization
--- pass to de-prioritize (not filter) on-CD spells.
+-- Rotation filter: availability + redundancy only.
+-- Skips usability so on-CD spells reach the categorization pass for
+-- de-prioritization instead of being filtered out entirely.
 local function PassesRotationFilters(spellID, profile)
     local cached = rotationFilterCache[spellID]
-    if cached ~= nil then
-        return cached
-    end
-
-    local result = IsSpellAvailable(spellID)
+    if cached ~= nil then return cached end
+    local result = BlizzardAPI.IsSpellAvailable(spellID)
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
-
     rotationFilterCache[spellID] = result
     return result
+end
+
+-- Resolve display ID, check dedup, mark both IDs as claimed.
+-- Returns displayID on success, nil if already claimed.
+local function ClaimSpellID(spellID, addedSpellIDs)
+    if addedSpellIDs[spellID] then return nil end
+    local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+    if addedSpellIDs[displayID] then return nil end
+    addedSpellIDs[spellID] = true
+    addedSpellIDs[displayID] = true
+    return displayID
+end
+
+--- Evaluate whether the spell queue should be visible based on profile settings.
+--- Returns true if queue should be shown, false to hide it.
+local function EvaluateQueueVisibility(profile, inCombat)
+    local queueVis = profile.queueVisibility
+    if not queueVis then
+        if profile.hideQueueOutOfCombat then
+            queueVis = "combatOnly"
+        elseif profile.requireHostileTarget then
+            queueVis = "requireHostile"
+        else
+            queueVis = "always"
+        end
+    end
+
+    if queueVis == "combatOnly" and not inCombat then
+        return false
+    end
+
+    if queueVis == "requireHostile" and not inCombat then
+        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
+        if not hasHostileTarget then
+            return false
+        end
+    end
+
+    if profile.hideQueueWhenMounted then
+        local isMounted = IsMounted()
+        if not isMounted then
+            local formID = GetShapeshiftFormID()
+            if formID == 3 or formID == 27 then
+                isMounted = true
+            end
+        end
+        if isMounted then
+            return false
+        end
+    end
+
+    return true
+end
+
+--- Inject procced spellbook spells (e.g. Fel Blade) after position 1.
+local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
+    local spellbookProcs = ActionBarScanner and ActionBarScanner.GetSpellbookProccedSpells and ActionBarScanner.GetSpellbookProccedSpells()
+    if not spellbookProcs then return spellCount end
+
+    for _, procSpellID in ipairs(spellbookProcs) do
+        if spellCount >= maxIcons then break end
+        if procSpellID and not addedSpellIDs[procSpellID] then
+            local displayID = ClaimSpellID(procSpellID, addedSpellIDs)
+            if displayID
+               and BlizzardAPI.IsOffensiveSpell(procSpellID)
+               and ActionBarScanner.HasKeybind(procSpellID)
+               and not SpellQueue.IsSpellBlacklisted(procSpellID, blacklist)
+               and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
+               and PassesSpellFilters(procSpellID, profile) then
+                spellCount = spellCount + 1
+                recommendedSpells[spellCount] = procSpellID
+            else
+                -- Undo claim if filters rejected the spell
+                if displayID then
+                    addedSpellIDs[procSpellID] = nil
+                    addedSpellIDs[displayID] = nil
+                end
+            end
+        end
+    end
+    return spellCount
+end
+
+--- Categorize rotation spells into procced/normal/cooldown buckets and assemble
+--- in priority order: proc > normal > on-cooldown.
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs)
+    wipe(proccedSpells)
+    wipe(normalSpells)
+    local proccedCount, normalCount, cooldownCount = 0, 0, 0
+
+    for i = 1, #rotationList do
+        local spellID = rotationList[i]
+        if spellID and not addedSpellIDs[spellID]
+           and not SpellQueue.IsSpellBlacklisted(spellID, blacklist) then
+            local displayID = ClaimSpellID(spellID, addedSpellIDs)
+            if displayID
+               and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
+               and PassesRotationFilters(displayID, profile) then
+                if BlizzardAPI.IsSpellOnLocalCooldown(displayID) then
+                    cooldownCount = cooldownCount + 1
+                    cooldownSpells[cooldownCount] = displayID
+                elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
+                    proccedCount = proccedCount + 1
+                    proccedSpells[proccedCount] = displayID
+                else
+                    normalCount = normalCount + 1
+                    normalSpells[normalCount] = displayID
+                end
+            else
+                -- Undo claim if filters rejected
+                if displayID then
+                    addedSpellIDs[spellID] = nil
+                    addedSpellIDs[displayID] = nil
+                end
+            end
+        end
+    end
+
+    for i = 1, proccedCount do
+        if spellCount >= maxIcons then break end
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = proccedSpells[i]
+    end
+    for i = 1, normalCount do
+        if spellCount >= maxIcons then break end
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = normalSpells[i]
+    end
+    for i = 1, cooldownCount do
+        if spellCount >= maxIcons then break end
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = cooldownSpells[i]
+    end
+    return spellCount
 end
 
 function SpellQueue.GetCurrentSpellQueue()
@@ -218,66 +324,24 @@ function SpellQueue.GetCurrentSpellQueue()
         return lastSpellIDs or {}
     end
     
-    -- Check if queue should be hidden based on settings.
-    -- queueVisibility: "always" | "combatOnly" | "requireHostile"
-    -- Migrates from legacy boolean keys (hideQueueOutOfCombat, requireHostileTarget).
-    local queueVis = profile.queueVisibility
-    if not queueVis then
-        if profile.hideQueueOutOfCombat then
-            queueVis = "combatOnly"
-        elseif profile.requireHostileTarget then
-            queueVis = "requireHostile"
-        else
-            queueVis = "always"
-        end
-    end
-
-    if queueVis == "combatOnly" and not inCombat then
+    if not EvaluateQueueVisibility(profile, inCombat) then
         lastShouldShowQueue = false
         lastQueueUpdate = now
         return lastSpellIDs or {}
-    end
-
-    if queueVis == "requireHostile" and not inCombat then
-        local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
-        if not hasHostileTarget then
-            lastShouldShowQueue = false
-            lastQueueUpdate = now
-            return lastSpellIDs or {}
-        end
-    end
-
-    if profile.hideQueueWhenMounted then
-        local isMounted = IsMounted()
-        if not isMounted then
-            local formID = GetShapeshiftFormID()
-            if formID == 3 or formID == 27 then  -- Druid Travel/Flight Form
-                isMounted = true
-            end
-        end
-        if isMounted then
-            lastShouldShowQueue = false
-            lastQueueUpdate = now
-            return lastSpellIDs or {}
-        end
     end
 
     -- All visibility conditions passed: queue should be shown.
     lastShouldShowQueue = true
     lastQueueUpdate = now
 
-    -- PERFORMANCE: Clear per-update caches at start of each update cycle
     wipe(filterResultCache)
     wipe(rotationFilterCache)
-    if BlizzardAPI.ClearProcCache then
-        BlizzardAPI.ClearProcCache()
-    end
-    
-    -- Check if proc detection is blocked by secret values
-    local bypassProcs = BlizzardAPI and BlizzardAPI.IsProcFeatureAvailable
+    if BlizzardAPI.ClearProcCache then BlizzardAPI.ClearProcCache() end
+
+    local bypassProcs = BlizzardAPI.IsProcFeatureAvailable
         and not BlizzardAPI.IsProcFeatureAvailable() or false
-    
-    -- Reuse pooled tables to avoid GC pressure
+    local blacklist = GetBlacklistTable()
+
     wipe(recommendedSpells)
     wipe(addedSpellIDs)
     wipe(syntheticProcs)
@@ -285,36 +349,29 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(cooldownSpells)
     local maxIcons = profile.maxIcons or 4
     local spellCount = 0
-    
     local hideItems = profile.hideItemAbilities
 
-    -- Position 1: Get the spell Blizzard highlights on action bars (GetNextCastSpell)
-    -- By default, position 1 is never filtered — Blizzard's single-button assistant
-    -- won't advance until this spell is cast; hiding it freezes the entire rotation.
-    -- Optional: blacklistPosition1 applies the blacklist to position 1 as well.
-    local primarySpellID = BlizzardAPI and BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
-    
+    -- Position 1: Blizzard's primary suggestion. Never filtered by default — hiding
+    -- it freezes the rotation. blacklistPosition1 optionally enables blacklist check.
+    local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
+
     if primarySpellID and primarySpellID > 0 then
-        local displaySpellID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-        local blacklisted = profile.blacklistPosition1
-            and (SpellQueue.IsSpellBlacklisted(primarySpellID) or SpellQueue.IsSpellBlacklisted(displaySpellID))
-
-        if not blacklisted then
-            addedSpellIDs[displaySpellID] = true
-            addedSpellIDs[primarySpellID] = true
-
+        local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
+        if displaySpellID
+           and not (profile.blacklistPosition1 and SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist)) then
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
+        else
+            -- Undo claim if blacklisted
+            if displaySpellID then
+                addedSpellIDs[primarySpellID] = nil
+                addedSpellIDs[displaySpellID] = nil
+            end
         end
     end
 
-    -- Gap-closer injection.
-    -- Promote gap closer to position 1: the primary spell is out of range so
-    -- the gap closer is always the correct first action.  Existing spells shift
-    -- right to make room.
-    -- Skip entirely if position 1 is already a gap closer (Blizzard's assisted
-    -- combat system can suggest gap closers like Charge as the primary spell).
-    -- GapCloserEngine loads after SpellQueue in the TOC, so we resolve it lazily.
+    -- Gap-closer injection: promote to position 1 when target is out of melee range.
+    -- GapCloserEngine loads after SpellQueue, so we resolve it lazily.
     if spellCount < maxIcons then
         if not cachedGapCloserEngine then
             cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
@@ -323,7 +380,6 @@ function SpellQueue.GetCurrentSpellQueue()
             cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
         end
         if cachedGapCloserEngine and cachedGapCloserEngine.GetGapCloserSpell and cachedAddon then
-            -- If position 1 is already a gap closer, skip injection entirely
             local pos1Display = recommendedSpells[1]
             local pos1IsGapCloser = false
             if cachedGapCloserEngine.IsGapCloserSpell then
@@ -332,17 +388,10 @@ function SpellQueue.GetCurrentSpellQueue()
             end
 
             if not pos1IsGapCloser then
-                -- GapCloserEngine decides solely via its melee range reference
-                -- (IsActionInRange on the melee ref slot). pos1InRange is NOT
-                -- used here: ranged fillers like Shuriken Toss appear castable
-                -- at 11 yards but should not suppress a Shadowstep injection.
                 local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
                 if gcSpell then
                     local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
                     if spellCount >= 1 then
-                        -- Promote gap closer to position 1: push all existing
-                        -- spells down so the gap closer is always first.
-                        -- Track the displaced pos1 spell so it keeps its blue glow.
                         if pos1Display then displacedPrimary[pos1Display] = true end
                         if primarySpellID and primarySpellID ~= pos1Display then
                             displacedPrimary[primarySpellID] = true
@@ -365,134 +414,35 @@ function SpellQueue.GetCurrentSpellQueue()
                 end
             end
 
-            -- Suppress ALL gap-closer spells from the rotation list (positions 2+).
-            -- When the gap-closer system is enabled, our insertion controls when
-            -- these spells appear — letting them leak into the rotation causes
-            -- duplicates or inconsistent position changes.
+            -- Suppress gap-closers from rotation list — our injection controls placement.
             if cachedGapCloserEngine.MarkGapCloserSpellIDs then
                 cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
             end
         end
     end
 
-    -- Check for procced spells from spellbook that aren't in the rotation list
-    -- These should be shown immediately after position 1 (e.g., Fel Blade procs)
-    -- Only enabled if showSpellbookProcs setting is on
     if profile.showSpellbookProcs then
-        local spellbookProcs = ActionBarScanner and ActionBarScanner.GetSpellbookProccedSpells and ActionBarScanner.GetSpellbookProccedSpells()
-        if spellbookProcs then
-            for _, procSpellID in ipairs(spellbookProcs) do
-                if spellCount >= maxIcons then break end
-                
-                -- Get display spell ID to check for duplicates (handles overrides)
-                local displayProcSpellID = BlizzardAPI.GetDisplaySpellID(procSpellID)
-                
-                if procSpellID and not addedSpellIDs[procSpellID] and not addedSpellIDs[displayProcSpellID] then
-                    -- Filter: offensive, keybind, not blacklisted, not item, passes availability/usability/redundancy
-                    local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(procSpellID)
-                    if BlizzardAPI.IsOffensiveSpell(procSpellID)
-                       and ActionBarScanner.HasKeybind(procSpellID)
-                       and not SpellQueue.IsSpellBlacklisted(procSpellID)
-                       and not SpellQueue.IsSpellBlacklisted(displayProcSpellID)
-                       and not isItemSpell
-                       and PassesSpellFilters(procSpellID, profile) then
-                        spellCount = spellCount + 1
-                        recommendedSpells[spellCount] = procSpellID
-                        -- Track both base and display IDs to prevent duplicates
-                        addedSpellIDs[procSpellID] = true
-                        addedSpellIDs[displayProcSpellID] = true
-                    end
-                end
-            end
-        end
+        spellCount = AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
     end
 
-    -- Positions 2+: Get the rotation spell list (priority queue)
-    -- These are additional spells Blizzard exposes, shown in JustAC's queue slots 2+
-    -- Apply all filters: no duplicates of position 1, blacklist, availability, usability, redundancy
-    -- Procced spells are prioritized and moved to the front of the queue
-    -- PERFORMANCE: Use cached rotation list; only refreshed via InvalidateRotationCache()
-    if not cachedRotationList and BlizzardAPI and BlizzardAPI.GetRotationSpells then
+    -- Positions 2+: rotation spells, cached until InvalidateRotationCache().
+    if not cachedRotationList and BlizzardAPI.GetRotationSpells then
         cachedRotationList = BlizzardAPI.GetRotationSpells()
-        -- Register rotation spells for local cooldown tracking (spells with base CD > 3s)
         if cachedRotationList and BlizzardAPI.RegisterRotationSpell then
             for i = 1, #cachedRotationList do
                 local sid = cachedRotationList[i]
                 if sid then
                     BlizzardAPI.RegisterRotationSpell(sid)
-                    -- Also register the display/override spell ID
                     local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
-                    if displaySid and displaySid ~= sid then
-                        BlizzardAPI.RegisterRotationSpell(displaySid)
-                    end
+                    if displaySid ~= sid then BlizzardAPI.RegisterRotationSpell(displaySid) end
                 end
             end
         end
     end
-    local rotationList = cachedRotationList
-    if rotationList then
-        wipe(proccedSpells)
-        wipe(normalSpells)
-        local proccedCount, normalCount, cooldownCount = 0, 0, 0
-        local rotationCount = #rotationList
-
-        -- First pass: categorize into procced (priority), normal, and on-cooldown (deprioritized)
-        for i = 1, rotationCount do
-            local spellID = rotationList[i]
-            if spellID and not addedSpellIDs[spellID] then
-                if not SpellQueue.IsSpellBlacklisted(spellID) then
-                    local actualSpellID = BlizzardAPI.GetDisplaySpellID(spellID)
-
-                    if not addedSpellIDs[actualSpellID] then
-                        local isItemSpell = hideItems and BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(actualSpellID)
-                        if not SpellQueue.IsSpellBlacklisted(actualSpellID)
-                           and not isItemSpell
-                           and PassesRotationFilters(actualSpellID, profile) then
-                            addedSpellIDs[actualSpellID] = true
-                            addedSpellIDs[spellID] = true
-
-                            -- Check local cooldown tracking (spells with base CD > 3s)
-                            local isOnLocalCD = BlizzardAPI and BlizzardAPI.IsSpellOnLocalCooldown
-                                and BlizzardAPI.IsSpellOnLocalCooldown(actualSpellID)
-                            if isOnLocalCD then
-                                cooldownCount = cooldownCount + 1
-                                cooldownSpells[cooldownCount] = actualSpellID
-                            else
-                                local isProcced = not bypassProcs and BlizzardAPI.IsSpellProcced(actualSpellID)
-                                if isProcced then
-                                    proccedCount = proccedCount + 1
-                                    proccedSpells[proccedCount] = actualSpellID
-                                else
-                                    normalCount = normalCount + 1
-                                    normalSpells[normalCount] = actualSpellID
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Second pass: append procced first, then normal, then on-cooldown (deprioritized)
-        for i = 1, proccedCount do
-            if spellCount >= maxIcons then break end
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = proccedSpells[i]
-        end
-        for i = 1, normalCount do
-            if spellCount >= maxIcons then break end
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = normalSpells[i]
-        end
-        -- On-cooldown spells last (de-prioritized, not filtered)
-        for i = 1, cooldownCount do
-            if spellCount >= maxIcons then break end
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = cooldownSpells[i]
-        end
+    if cachedRotationList then
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs)
     end
 
-    -- Copy to lastSpellIDs (separate table so wipe(recommendedSpells) doesn't destroy cached results)
     wipe(lastSpellIDs)
     for i = 1, spellCount do
         lastSpellIDs[i] = recommendedSpells[i]
@@ -504,9 +454,7 @@ function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
 end
 
---- Returns the cached visibility verdict from the last GetCurrentSpellQueue() build.
---- True when all profile conditions (OOC, healer, mounted, hostile target) allow display.
---- UIRenderer reads this instead of re-evaluating the same conditions every render frame.
+--- Cached visibility verdict from last queue build — avoids re-evaluating per render frame.
 function SpellQueue.ShouldShowQueue()
     return lastShouldShowQueue
 end
