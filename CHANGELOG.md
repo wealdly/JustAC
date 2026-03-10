@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-03-10
+
+### Improved
+- Cooldown sweeps, charge rings, and usability tinting now use Blizzard's native action bar pipeline for more accurate display
+- Items in the defensive queue (potions, healthstones, etc.) now fully integrate with the same icon rendering as spells — cooldowns, hotkeys, tooltips, and proc glows all work consistently
+- Internal code consolidation across several modules for better performance and maintainability
+
+### Fixed
+- Fixed glow effects not properly stopping or resuming across combat transitions (e.g. proc glow lost after leaving combat)
+- Fixed charge-based defensive spells (e.g. Frenzied Regeneration) not greying out when all charges are depleted
+- Fixed cooldown sweep occasionally getting stuck at 12 o'clock when a spell comes off cooldown
+- Fixed charge recharge ring disappearing on spells placed behind macros
+- Fixed resource darkening (blue/purple tint) on queue icons only lasting one frame
+- Fixed gap-closer briefly disappearing when using target-cycling macros (e.g. /cleartarget + /targetenemy in a single keybind)
+
 ## [4.8.9] - 2026-03-09
 
 ### Added
