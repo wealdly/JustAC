@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 41)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 42)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -517,6 +517,68 @@ end
 -- Dynamic Aura Detection
 --------------------------------------------------------------------------------
 
+--- Prune expired entries from the trusted out-of-combat cache.
+--- Throttled to once every EXPIRATION_CHECK_INTERVAL seconds.
+--- Uses conservative 80% threshold for old caches, exact expiration for recent ones.
+local function PruneTrustedCacheExpiration(now)
+    if now < nextExpirationCheck then return end
+    nextExpirationCheck = now + EXPIRATION_CHECK_INTERVAL
+
+    local auraInfo = trustedOutOfCombatCache.auraInfo
+    if not auraInfo then return end
+
+    local cacheAge = now - lastTrustedCacheTime
+    local useConservativeThreshold = cacheAge > TRUSTED_CACHE_RECENT_THRESHOLD
+
+    for spellID, info in pairs(auraInfo) do
+        local shouldInvalidate = false
+        if useConservativeThreshold then
+            if info.halfwayThreshold and now >= info.halfwayThreshold then
+                shouldInvalidate = true
+            end
+        else
+            if info.expirationTime and info.expirationTime > 0 and now >= info.expirationTime then
+                shouldInvalidate = true
+            end
+        end
+        if shouldInvalidate then
+            trustedOutOfCombatCache.byID[spellID] = nil
+            auraInfo[spellID] = nil
+        end
+    end
+end
+
+--- Merge trusted out-of-combat cache as fallback when in-combat aura resolution
+--- has unresolved secrets. Skips spellIDs that were explicitly removed in combat,
+--- and auras whose cached expiration shows they'll expire within the threshold.
+local function MergeTrustedCacheFallback(now)
+    for spellID, v in pairs(trustedOutOfCombatCache.byID) do
+        if not cachedAuras.byID[spellID] and not combatRemovedSpellIDs[spellID] then
+            local info = trustedOutOfCombatCache.auraInfo and trustedOutOfCombatCache.auraInfo[spellID]
+            local skipExpiring = info
+                and info.expirationTime and info.expirationTime > 0
+                and info.duration and info.duration >= LONG_BUFF_DURATION_CUTOFF
+                and (info.expirationTime - now) < PRE_COMBAT_REFRESH_THRESHOLD
+            if not skipExpiring then
+                cachedAuras.byID[spellID] = v
+            end
+        end
+    end
+    for name, v in pairs(trustedOutOfCombatCache.byName or {}) do
+        if not cachedAuras.byName[name] then
+            local nameSpellID = (type(v) == "number") and v
+            if not nameSpellID or not combatRemovedSpellIDs[nameSpellID] then
+                cachedAuras.byName[name] = v
+            end
+        end
+    end
+    for spellID, info in pairs(trustedOutOfCombatCache.auraInfo or {}) do
+        if not cachedAuras.auraInfo[spellID] and not combatRemovedSpellIDs[spellID] then
+            cachedAuras.auraInfo[spellID] = info
+        end
+    end
+end
+
 -- Build cache of current player auras (by spellID, name, and icon)
 -- Now also stores duration and expiration time for pandemic window checks
 -- 12.0: Uses auraInstanceID mapping to resolve secret values in combat
@@ -528,36 +590,8 @@ RefreshAuraCache = function()
     -- The instance map resolution below may produce better results, but if it can't
     -- resolve everything, we still have trustedOutOfCombatCache as a safety net.
     -- CRITICAL: Only compare timestamps in combat - no arithmetic with cached values (may be secrets)
-    -- Throttle expiration checks to once per 5s (UNIT_AURA handles most invalidation)
     if inCombat and trustedOutOfCombatCache.byID and (now - lastTrustedCacheTime) < TRUSTED_CACHE_DURATION then
-        -- Only check for expired auras every 5 seconds (not every cache access)
-        if now >= nextExpirationCheck then
-            nextExpirationCheck = now + EXPIRATION_CHECK_INTERVAL
-            local cacheAge = now - lastTrustedCacheTime
-            local useConservativeThreshold = cacheAge > TRUSTED_CACHE_RECENT_THRESHOLD
-            
-            for spellID, auraInfo in pairs(trustedOutOfCombatCache.auraInfo or {}) do
-                local shouldInvalidate = false
-                
-                if useConservativeThreshold then
-                    -- Cache is older - use 80% threshold (pre-calculated out of combat)
-                    if auraInfo.halfwayThreshold and now >= auraInfo.halfwayThreshold then
-                        shouldInvalidate = true
-                    end
-                else
-                    -- Cache is recent - can use actual expiration time for more accuracy
-                    if auraInfo.expirationTime and auraInfo.expirationTime > 0 and now >= auraInfo.expirationTime then
-                        shouldInvalidate = true
-                    end
-                end
-                
-                if shouldInvalidate then
-                    -- Remove from cache to allow recast suggestions
-                    trustedOutOfCombatCache.byID[spellID] = nil
-                    trustedOutOfCombatCache.auraInfo[spellID] = nil
-                end
-            end
-        end
+        PruneTrustedCacheExpiration(now)
     end
     
     if cachedAuras.byID and (now - lastAuraCheck) < AURA_CACHE_DURATION then
@@ -813,42 +847,8 @@ RefreshAuraCache = function()
     end
     
     -- In combat with unresolved secrets: merge trustedOutOfCombatCache as fallback
-    -- This handles auras we couldn't resolve via instance map (new mid-combat auras)
-    -- CRITICAL: Skip spellIDs in combatRemovedSpellIDs — player explicitly removed those
-    -- CRITICAL: Skip auras whose cached expirationTime shows they're about to expire —
-    --   expirationTime is a plain Lua number captured out of combat, so the comparison
-    --   expirationTime - GetTime() is valid even in combat (no secret-value arithmetic).
     if inCombat and cachedAuras.hasSecrets and trustedOutOfCombatCache.byID then
-        local now_merge = GetTime()
-        for spellID, v in pairs(trustedOutOfCombatCache.byID) do
-            if not cachedAuras.byID[spellID] and not combatRemovedSpellIDs[spellID] then
-                -- Don't merge if aura is expiring within PRE_COMBAT_REFRESH_THRESHOLD.
-                -- This stops long buffs (poisons, raid buffs) from appearing active when
-                -- they'll expire seconds into combat, causing queue icon 1 to get stuck.
-                local info = trustedOutOfCombatCache.auraInfo and trustedOutOfCombatCache.auraInfo[spellID]
-                local skipExpiring = info
-                    and info.expirationTime and info.expirationTime > 0
-                    and info.duration and info.duration >= LONG_BUFF_DURATION_CUTOFF
-                    and (info.expirationTime - now_merge) < PRE_COMBAT_REFRESH_THRESHOLD
-                if not skipExpiring then
-                    cachedAuras.byID[spellID] = v
-                end
-            end
-        end
-        for name, v in pairs(trustedOutOfCombatCache.byName or {}) do
-            if not cachedAuras.byName[name] then
-                -- Check if the spell behind this name was removed
-                local nameSpellID = (type(v) == "number") and v
-                if not nameSpellID or not combatRemovedSpellIDs[nameSpellID] then
-                    cachedAuras.byName[name] = v
-                end
-            end
-        end
-        for spellID, info in pairs(trustedOutOfCombatCache.auraInfo or {}) do
-            if not cachedAuras.auraInfo[spellID] and not combatRemovedSpellIDs[spellID] then
-                cachedAuras.auraInfo[spellID] = info
-            end
-        end
+        MergeTrustedCacheFallback(GetTime())
     end
     
     return cachedAuras

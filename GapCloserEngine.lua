@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 3)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 4)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -13,6 +13,7 @@ local UnitClass = UnitClass
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
+local UnitGUID = UnitGUID
 local GetSpecialization = GetSpecialization
 local IsStealthed = IsStealthed
 local IsActionInRange = IsActionInRange
@@ -42,6 +43,7 @@ local lastOutOfRangeTime = 0
 -- cause a false-positive gap-closer flash on the new (in-range) target.
 local TARGET_SWITCH_COOLDOWN = 0.2  -- seconds
 local lastTargetSwitchTime = 0
+local previousTargetGUID = nil
 
 --------------------------------------------------------------------------------
 -- Cached state
@@ -286,9 +288,25 @@ function GapCloserEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
 end
 
 --- Clear range state (target changed, combat ended, etc.)
+--- Detects same-unit retargets (e.g. /cleartarget + /targetenemy macros) and
+--- skips the stabilization cooldown so the gap-closer doesn't blink off.
 function GapCloserEngine.ClearRangeState()
     lastOutOfRangeTime = 0
-    lastTargetSwitchTime = GetTime()
+    local currentGUID = UnitGUID("target")
+    if currentGUID then
+        if currentGUID == previousTargetGUID then
+            -- Same unit retargeted — cancel the cooldown, range hasn't changed
+            lastTargetSwitchTime = 0
+        else
+            -- Genuinely new target — apply stabilization cooldown
+            lastTargetSwitchTime = GetTime()
+        end
+        previousTargetGUID = currentGUID
+    else
+        -- Target cleared — apply cooldown tentatively.
+        -- If a retarget of the same unit follows (same frame), it cancels this.
+        lastTargetSwitchTime = GetTime()
+    end
     -- Don't clear cachedMeleeRefSlot here — the reference spell's slot
     -- doesn't change between targets, only the range state does.
     -- Slot is invalidated by InvalidateGapCloserCache() on spec/profile change.
@@ -305,6 +323,7 @@ function GapCloserEngine.InvalidateGapCloserCache()
     cachedMeleeRefSpellID = nil
     cachedMeleeRefSlot = nil
     cachedMeleeRefSpecKey = nil
+    previousTargetGUID = nil
 end
 
 --- Returns the first usable gap-closer spell ID for the current spec, or nil.

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 17)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 19)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -32,6 +32,11 @@ local WAIT_LABEL = ({
 local GetTime = GetTime
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
+local C_ActionBar_GetActionCooldown = C_ActionBar and C_ActionBar.GetActionCooldown
+local C_ActionBar_GetActionCharges = C_ActionBar and C_ActionBar.GetActionCharges
+local C_ActionBar_GetActionDisplayCount = C_ActionBar and C_ActionBar.GetActionDisplayCount
+local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
+local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
 local pcall = pcall
 local pairs = pairs
 local ipairs = ipairs
@@ -262,28 +267,11 @@ local function NormalizeHotkey(hotkey)
     return n
 end
 
--- 12.0+ DurationObject pipeline: Blizzard's opaque cooldown display bypasses secret values.
--- Detects API availability once at load time; falls back to legacy SetCooldown on pre-12.0.
-local HAS_DURATION_OBJECT_API = C_Spell and C_Spell.GetSpellCooldownDuration
-    and type(C_Spell.GetSpellCooldownDuration) == "function"
+-- Cooldown/charge sweep via Blizzard's ActionButton_ApplyCooldown (secret-safe).
+-- We handle: text overlays (charge count) and glow effects.
+local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1 }
+local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0 }
 
--- Returns true when a LuaDurationObject represents a finished/inactive cooldown.
--- Only callable out of combat (HasSecretValues() must be false first).
--- Handles two cases:
---   1. Zero-span cooldown (never started or 0s duration): IsZero() == true
---   2. Expired cooldown (e.g. charge recharge completed): remaining <= 0
-local function IsDurationFinished(dur)
-    if dur.IsZero and dur:IsZero() then return true end
-    if dur.GetRemainingDuration then
-        local ok, remaining = pcall(dur.GetRemainingDuration, dur)
-        if ok and remaining and type(remaining) == "number" and remaining <= 0 then
-            return true
-        end
-    end
-    return false
-end
-
--- Cooldown widgets accept secret values internally — never compare or do arithmetic on them.
 local function UpdateButtonCooldowns(button)
     if not button then return end
 
@@ -294,264 +282,66 @@ local function UpdateButtonCooldowns(button)
         if button.cooldown then button.cooldown:Clear() end
         if button.chargeCooldown then button.chargeCooldown:Clear() end
         if button.chargeText then button.chargeText:Hide() end
-        button._cooldownShown = false
-        button._chargeCooldownShown = false
         button._lastCooldownID = nil
         return
     end
 
-    -- When the spell on this button changes, clear stale cooldown state before
-    -- applying the new spell's cooldown.  Prevents sweep animations from a
-    -- previous spell bleeding through during queue re-ordering (e.g. combat exit).
     if id ~= button._lastCooldownID then
         if button.cooldown then button.cooldown:Clear() end
         if button.chargeCooldown then button.chargeCooldown:Clear(); button.chargeCooldown:Hide() end
-        button._cooldownShown = false
-        button._chargeCooldownShown = false
         button._lastCooldownID = id
     end
 
-    local cooldownInfo, chargeInfo
-    local usedDurationObject = false  -- Track whether opaque pipeline was used for main CD
-    local usedChargeDurationObject = false  -- Track for charge CD
-
+    -- Prefer slot-based APIs (secret-safe, handles spells/items/macros).
+    local directSlot
     if isItem then
+        directSlot = ActionBarScanner.GetDirectSlotForItem(id)
+    else
+        directSlot = ActionBarScanner.GetDirectSlotForSpell(id)
+    end
+
+    local cooldownInfo, chargeInfo
+
+    if directSlot and C_ActionBar_GetActionCooldown then
+        cooldownInfo = C_ActionBar_GetActionCooldown(directSlot)
+        chargeInfo = C_ActionBar_GetActionCharges and C_ActionBar_GetActionCharges(directSlot)
+    elseif isItem then
         local start, duration = GetItemCooldown(id)
         cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1 }
     else
-        -- Cached cooldownID avoids redundant override lookup.
         local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
-
-        -- 12.0+ opaque pipeline: SetCooldownFromDurationObject bypasses secret values.
-        -- LuaDurationObject is fully opaque — we cannot read or branch on its values,
-        -- but the Cooldown widget renders the sweep animation correctly.
-        if HAS_DURATION_OBJECT_API and button.cooldown and button.cooldown.SetCooldownFromDurationObject then
-            local ok, dur = pcall(C_Spell.GetSpellCooldownDuration, cooldownID)
-            if ok and dur then
-                -- HasSecretValues() is NeverSecret — safe to branch on in combat.
-                -- When no secrets: IsDurationFinished() checks both zero-span and expired CDs.
-                -- Clear() prevents the sweep from sticking at 12 o'clock.
-                -- When secrets present (combat): skip the check, pass through to
-                -- SetCooldownFromDurationObject which handles opaque durations correctly.
-                local hasSecrets = dur.HasSecretValues and dur:HasSecretValues()
-                if not hasSecrets and IsDurationFinished(dur) then
-                    if button._cooldownShown then
-                        button.cooldown:Clear()
-                        button._cooldownShown = false
-                    end
-                else
-                    if not button._cooldownShown then
-                        button.cooldown:SetDrawSwipe(true)
-                        button.cooldown:Show()
-                        button._cooldownShown = true
-                    end
-                    button.cooldown:SetCooldownFromDurationObject(dur)
-                end
-                usedDurationObject = true
-            elseif ok then
-                -- API succeeded but returned nil → no active cooldown (not on CD,
-                -- not on GCD).  Prevents fallthrough to legacy SetCooldown where
-                -- blanket-secreted zeros would park the sweep at 12 o'clock.
-                -- (Blizzard's own action bars avoid this via CreateSecureDelegate
-                -- which can evaluate secret comparisons; tainted addon code cannot.)
-                if button._cooldownShown then
-                    button.cooldown:Clear()
-                    button._cooldownShown = false
-                end
-                usedDurationObject = true
-            end
+        if C_Spell.GetSpellCooldown then
+            local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
+            if ok and result then cooldownInfo = result end
         end
-
-        -- Legacy cooldown info (still needed for the non-DurationObject fallback
-        -- and also for charge spell detection below which needs chargeInfo).
-        if not usedDurationObject or C_Spell.GetSpellCharges then
-            if C_Spell.GetSpellCooldown and not usedDurationObject then
-                local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
-                if ok then cooldownInfo = result end
-            end
-            if C_Spell.GetSpellCharges then
-                local ok, result = pcall(C_Spell.GetSpellCharges, cooldownID)
-                if ok then chargeInfo = result end
-            end
+        if C_Spell_GetSpellCharges then
+            local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
+            if ok and result then chargeInfo = result end
         end
     end
 
-    -- Main cooldown: only use legacy path if DurationObject wasn't applied above.
-    -- Guard: SetCooldown(startTime, duration) where duration==0 OR the cooldown has
-    -- already expired (startTime+duration <= now) both park the sweep at 12 o'clock.
-    -- Secret-value guard: if either field is opaque in 12.0 combat, pass through to
-    -- SetCooldown — the widget handles secret values internally; we cannot read them.
-    if not usedDurationObject then
-        if button.cooldown and cooldownInfo then
-            local startTime = cooldownInfo.startTime or 0
-            local duration = cooldownInfo.duration or 0
-            local modRate = cooldownInfo.modRate or 1
-            local durationIsSecret = BlizzardAPI.IsSecretValue(duration)
-            local startTimeIsSecret = BlizzardAPI.IsSecretValue(startTime)
-            -- Cooldown is genuinely active when: duration>0 AND the deadline
-            -- hasn't passed yet.  When values are secret (12.0 combat), addon code
-            -- cannot compare them — blanket-secreted zeros look "active" but are not.
-            -- Use NeverSecret IsSpellReady() fallback chain (isOnGCD + local tracking
-            -- + action bar usability) to determine true state.
-            local cooldownActive
-            if durationIsSecret or startTimeIsSecret then
-                cooldownActive = BlizzardAPI.IsSpellReady and not BlizzardAPI.IsSpellReady(id)
-            else
-                cooldownActive = duration > 0 and (startTime <= 0 or (startTime + duration) > GetTime())
-            end
-            if cooldownActive then
-                if not button._cooldownShown then
-                    button.cooldown:SetDrawSwipe(true)
-                    button.cooldown:Show()
-                    button._cooldownShown = true
-                end
-                button.cooldown:SetCooldown(startTime, duration, modRate)
-            else
-                if button._cooldownShown then
-                    button.cooldown:Clear()
-                    button._cooldownShown = false
-                end
-            end
-        elseif button.cooldown then
-            if button._cooldownShown then
-                button.cooldown:Clear()
-                button._cooldownShown = false
-            end
-        end
+    if ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
+        ActionButton_ApplyCooldown(
+            button.cooldown,
+            cooldownInfo or defaultCooldownInfo,
+            button.chargeCooldown,
+            chargeInfo or defaultChargeInfo,
+            nil, nil
+        )
     end
 
-    -- SetCooldown / SetCooldownFromDurationObject may re-show countdown text;
-    -- hide again if user disabled it.
-    if button.cooldown and button._cooldownShown and button.cooldownText then
-        local cdProfile = BlizzardAPI and BlizzardAPI.GetProfile()
-        local cdOverlays = cdProfile and cdProfile.textOverlays
-        if cdOverlays and cdOverlays.cooldown and cdOverlays.cooldown.show == false then
-            button.cooldownText:Hide()
-        end
-    end
-
-    -- All GetSpellCharges fields are SECRET in combat; use cached maxCharges to decide display.
-    -- When chargeInfo is nil in combat (GetSpellCharges can return nil for charge spells
-    -- in some combat states), fall back to cached maxCharges to keep the charge UI stable.
-    local effectiveMaxCharges = 0
-    if chargeInfo then
-        local maxCharges = chargeInfo.maxCharges
-        if maxCharges and not BlizzardAPI.IsSecretValue(maxCharges) then
-            effectiveMaxCharges = maxCharges
-        else
-            effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
-        end
-    else
-        -- chargeInfo is nil: check cached maxCharges to determine if this is a charge spell.
-        -- If cached says multi-charge, preserve the charge display even without fresh data.
-        effectiveMaxCharges = BlizzardAPI.GetCachedMaxCharges(id) or 0
-    end
-    local isMultiCharge = effectiveMaxCharges > 1
-
-    if button.chargeCooldown then
-        if isMultiCharge and chargeInfo then
-            local chargeStart    = chargeInfo.cooldownStartTime or 0
-            local chargeDuration = chargeInfo.cooldownDuration or 0
-            -- Guard: SetCooldown with duration==0 OR an already-expired recharge parks
-            -- the sweep at 12 o'clock. Secret-value guard: pass through if opaque.
-            local chargeDurationIsSecret = BlizzardAPI.IsSecretValue(chargeDuration)
-            local chargeStartIsSecret    = BlizzardAPI.IsSecretValue(chargeStart)
-            local chargeCDActive = chargeDurationIsSecret or chargeStartIsSecret
-                or (chargeDuration > 0 and (chargeStart <= 0 or (chargeStart + chargeDuration) > GetTime()))
-            if chargeCDActive then
-                if not button._chargeCooldownShown then
-                    button.chargeCooldown:Show()
-                    button._chargeCooldownShown = true
-                end
-                -- 12.0+ opaque pipeline for charge cooldown.
-                if HAS_DURATION_OBJECT_API and button.chargeCooldown.SetCooldownFromDurationObject
-                    and C_ActionBar and C_ActionBar.GetActionChargeDuration then
-                    -- GetActionChargeDuration requires an action bar slot; look up from spellID.
-                    local slot = ActionBarScanner and ActionBarScanner.GetSlotForSpell
-                        and ActionBarScanner.GetSlotForSpell(BlizzardAPI.GetDisplaySpellID(id))
-                    if slot then
-                        local ok, dur = pcall(C_ActionBar.GetActionChargeDuration, slot)
-                        if ok and dur then
-                            local hasSecrets = dur.HasSecretValues and dur:HasSecretValues()
-                            if not hasSecrets and IsDurationFinished(dur) then
-                                if button._chargeCooldownShown then
-                                    button.chargeCooldown:Clear()
-                                    button.chargeCooldown:Hide()
-                                    button._chargeCooldownShown = false
-                                end
-                            else
-                                button.chargeCooldown:SetCooldownFromDurationObject(dur)
-                            end
-                            usedChargeDurationObject = true
-                        elseif ok then
-                            -- API returned nil → no charge recharging.  Same pattern
-                            -- as the main cooldown nil-DurationObject fix above.
-                            if button._chargeCooldownShown then
-                                button.chargeCooldown:Clear()
-                                button.chargeCooldown:Hide()
-                                button._chargeCooldownShown = false
-                            end
-                            usedChargeDurationObject = true
-                        end
-                    end
-                end
-                if not usedChargeDurationObject then
-                    button.chargeCooldown:SetCooldown(
-                        chargeStart,
-                        chargeDuration,
-                        chargeInfo.chargeModRate or 1
-                    )
-                end
-            else
-                if button._chargeCooldownShown then
-                    button.chargeCooldown:Clear()
-                    button.chargeCooldown:Hide()
-                    button._chargeCooldownShown = false
-                end
-            end
-        elseif isMultiCharge and not chargeInfo then
-            -- Known charge spell but no chargeInfo (secreted nil or API error).
-            -- Keep charge cooldown visible if already shown; don't flicker it off.
-            -- The main cooldown swipe still runs via cooldownInfo above.
-        else
-            if button._chargeCooldownShown then
-                button.chargeCooldown:Clear()
-                button.chargeCooldown:Hide()
-                button._chargeCooldownShown = false
-            end
-        end
-    end
-
-    -- currentCharges may be secret; SetText() displays secret values correctly.
     if button.chargeText then
-        local chProfile = BlizzardAPI and BlizzardAPI.GetProfile()
-        local chOverlays = chProfile and chProfile.textOverlays
-        local showChargesCfg = not chOverlays or not chOverlays.charges or chOverlays.charges.show ~= false
-
-        if isItem and showChargesCfg then
-            -- Item stack quantity (e.g. healing potions, food)
+        if directSlot and C_ActionBar_GetActionDisplayCount then
+            button.chargeText:SetText(C_ActionBar_GetActionDisplayCount(directSlot))
+        elseif isItem then
             local count = GetItemCount(id)
-            if count and count > 1 then
-                button.chargeText:SetText(count)
-                button.chargeText:Show()
-            else
-                button.chargeText:Hide()
-            end
-        elseif isMultiCharge then
-            if showChargesCfg then
-                if chargeInfo and chargeInfo.currentCharges then
-                    button.chargeText:SetText(chargeInfo.currentCharges)
-                    button.chargeText:Show()
-                elseif not button.chargeText:IsShown() then
-                    -- No chargeInfo but known multi-charge: keep current text if visible,
-                    -- otherwise show nothing (avoid flicker).
-                end
-            else
-                button.chargeText:Hide()
-            end
+            button.chargeText:SetText(count and count > 1 and count or "")
+        elseif chargeInfo and chargeInfo.currentCharges then
+            button.chargeText:SetText(chargeInfo.currentCharges)
         else
-            button.chargeText:Hide()
+            button.chargeText:SetText("")
         end
+        button.chargeText:Show()
     end
 end
 
@@ -602,76 +392,68 @@ function UIRenderer.InvalidateHotkeyCache()
     end
 end
 
---------------------------------------------------------------------------------
--- Defensive Visual State (shared by ShowDefensiveIcon + per-frame update)
---------------------------------------------------------------------------------
--- Evaluates channeling + usability and applies the correct texture state.
--- Called per-frame from RenderSpellQueue (same cadence as offensive queue icons)
--- so defensives respond instantly to channeling transitions and resource changes.
---
--- States: 1=channeling (full desat), 2=no resources (blue tint),
---         4=on cooldown (grey desat), 3=normal (full color)
---
--- @param forceCheck  Force usability re-check (e.g. spell/item changed)
+-- Per-frame defensive visual state: channeling, usability, cooldown tinting.
+-- States: 1=channeling, 2=no resources, 3=normal, 4=on cooldown, 5=casting THIS.
 function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     if not defensiveIcon or not defensiveIcon.iconTexture then return end
 
     local id = defensiveIcon.currentID
     if not id then return end
 
-    -- Check if THIS defensive icon is the channeled/casted spell
+    -- Items use itemCastSpellID for channel/cast matching.
     local isDefActiveSpell = false
-    if not defensiveIcon.isItem and defensiveIcon.currentID then
-        local defID = defensiveIcon.currentID
-        if isChanneling and channelSpellID then
-            if defID == channelSpellID then
-                isDefActiveSpell = true
-            elseif C_Spell_GetOverrideSpell then
-                local overrideID = C_Spell_GetOverrideSpell(defID)
-                if overrideID and overrideID == channelSpellID then isDefActiveSpell = true end
+    if defensiveIcon.currentID then
+        local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or defensiveIcon.currentID
+        if defID then
+            if isChanneling and channelSpellID then
+                if defID == channelSpellID then
+                    isDefActiveSpell = true
+                elseif not defensiveIcon.isItem and C_Spell_GetOverrideSpell then
+                    local overrideID = C_Spell_GetOverrideSpell(defID)
+                    if overrideID and overrideID == channelSpellID then isDefActiveSpell = true end
+                end
             end
-        end
-        if not isDefActiveSpell and isCasting and castSpellID then
-            if defID == castSpellID then
-                isDefActiveSpell = true
-            elseif C_Spell_GetOverrideSpell then
-                local overrideID = C_Spell_GetOverrideSpell(defID)
-                if overrideID and overrideID == castSpellID then isDefActiveSpell = true end
+            if not isDefActiveSpell and isCasting and castSpellID then
+                if defID == castSpellID then
+                    isDefActiveSpell = true
+                elseif not defensiveIcon.isItem and C_Spell_GetOverrideSpell then
+                    local overrideID = C_Spell_GetOverrideSpell(defID)
+                    if overrideID and overrideID == castSpellID then isDefActiveSpell = true end
+                end
             end
         end
     end
 
-    -- Channeling/casting takes highest priority (unless THIS icon is the active spell)
     local isGreyingOut = (isChanneling or isCasting) and not isDefActiveSpell
     local defVisualState = isGreyingOut and 1 or 3
-    if isDefActiveSpell then defVisualState = 5 end  -- channeling/casting THIS spell
+    if isDefActiveSpell then defVisualState = 5 end
 
-    -- Usability check (throttled to ~80ms unless forced)
     local now = GetTime()
     if forceCheck or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
         defensiveIcon.lastDefUsableCheck = now
         if defensiveIcon.isItem then
-            local itemUsable = true
-            local itemNoResource = false
-            for slot = 1, 180 do
-                local actionType, actionID = GetActionInfo(slot)
-                if actionType == "item" and actionID == id then
-                    local slotUsable, slotNoMana = C_ActionBar.IsUsableAction(slot)
-                    if not BlizzardAPI.IsSecretValue(slotUsable) and not BlizzardAPI.IsSecretValue(slotNoMana) then
-                        itemUsable = slotUsable or false
-                        itemNoResource = slotNoMana or false
-                    end
-                    break
-                end
+            local itemSlot
+            if id and ActionBarScanner and ActionBarScanner.GetDirectSlotForItem then
+                itemSlot = ActionBarScanner.GetDirectSlotForItem(id)
             end
-            defensiveIcon.cachedDefUsable = itemUsable
-            defensiveIcon.cachedDefNoResource = itemNoResource
+            if itemSlot and C_ActionBar_IsUsableAction then
+                local slotUsable, slotNoMana = C_ActionBar_IsUsableAction(itemSlot)
+                if not BlizzardAPI.IsSecretValue(slotUsable) and not BlizzardAPI.IsSecretValue(slotNoMana) then
+                    defensiveIcon.cachedDefUsable = slotUsable or false
+                    defensiveIcon.cachedDefNoResource = slotNoMana or false
+                else
+                    defensiveIcon.cachedDefUsable = true
+                    defensiveIcon.cachedDefNoResource = false
+                end
+            else
+                defensiveIcon.cachedDefUsable = true
+                defensiveIcon.cachedDefNoResource = false
+            end
         else
             defensiveIcon.cachedDefUsable, defensiveIcon.cachedDefNoResource = BlizzardAPI.IsSpellUsable(id)
         end
     end
 
-    -- Apply usability state (only when not channeling)
     if defVisualState ~= 1 and not defensiveIcon.cachedDefUsable then
         if defensiveIcon.cachedDefNoResource then
             defVisualState = 2  -- no resources → blue tint
@@ -680,12 +462,9 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         end
     end
 
-    -- Force-apply every frame during channeling/casting so all icons
-    -- grey/ungrey on the exact same frame (no per-icon desync).
     if defensiveIcon.lastDefVisualState ~= defVisualState
        or isChanneling or isCasting then
         if defVisualState == 5 then
-            -- Channeling THIS spell: full color
             defensiveIcon.iconTexture:SetDesaturation(0)
             defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
         elseif defVisualState == 1 then
@@ -704,7 +483,6 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         defensiveIcon.lastDefVisualState = defVisualState
     end
 
-    -- Channel fill animation on the channeled defensive icon (not for hardcasts)
     if isDefActiveSpell and isChanneling then
         if not defensiveIcon._hasChannelFill and UIAnimations then
             UIAnimations.StartChannelFill(defensiveIcon)
@@ -713,22 +491,14 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         UIAnimations.StopChannelFill(defensiveIcon)
     end
 
-    -- ── Per-frame proc glow re-evaluation ───────────────────────────────────
-    -- ShowDefensiveIcon does a one-shot glow setup but proc state can change
-    -- mid-combat while the icon is still displayed. Re-evaluate every frame
-    -- so glow appears/disappears within one render pass (IsSpellProcced is a
-    -- cache lookup, not an API call — effectively free).
-    -- Glow hysteresis: require desired state to be stable for GLOW_HOLD_TIME
-    -- before switching animations, preventing flicker from transient proc toggles.
-    if not defensiveIcon.isItem and UIAnimations then
-        local isProc = IsSpellProcced(id)
+    -- Per-frame proc glow re-evaluation with hysteresis.
+    if UIAnimations then
+        local procCheckID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
+        local isProc = procCheckID and IsSpellProcced(procCheckID) or false
         local glowMode = defensiveIcon.defGlowMode or "all"
         local wantProcGlow = isProc and (glowMode == "all" or glowMode == "procOnly")
         local hasProcGlow = defensiveIcon.ProcGlowFrame and defensiveIcon.ProcGlowFrame:IsShown()
 
-        -- Apply hysteresis: don't toggle glow until desired state has been
-        -- stable for GLOW_HOLD_TIME (prevents animation restart on transient
-        -- proc state changes).
         local now = GetTime()
         local applyChange = false
         if wantProcGlow ~= hasProcGlow then
@@ -751,7 +521,6 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
                 UIAnimations.ShowProcGlow(defensiveIcon)
             elseif not wantProcGlow and hasProcGlow then
                 UIAnimations.HideProcGlow(defensiveIcon)
-                -- Restore marching ants if this is position 1
                 local showMarching = defensiveIcon.defShowGlow
                     and (glowMode == "all" or glowMode == "primaryOnly")
                 if showMarching then
@@ -770,17 +539,14 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
     
     if isItem then
-        -- C_Item.GetItemIconByID is lightweight and always-cached (no async needed)
         if C_Item and C_Item.GetItemIconByID then
             iconTexture = C_Item.GetItemIconByID(id)
         end
-        -- C_Item.GetItemInfo returns a 17-value tuple (same as legacy GetItemInfo)
         if C_Item and C_Item.GetItemInfo then
             name, _, _, _, _, _, _, _, _, iconTexture = C_Item.GetItemInfo(id)
         elseif GetItemInfo then
             name, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
         end
-        -- GetItemIconByID may have resolved even if name/GetItemInfo hasn't cached yet
         if not iconTexture then
             iconTexture = GetItemIcon and GetItemIcon(id)
         end
@@ -797,7 +563,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     defensiveIcon.itemID = isItem and id or nil
     defensiveIcon.isItem = isItem
     
-    -- Store item's cast spell ID so flash animation can match (items cast via spellID).
     defensiveIcon.itemCastSpellID = nil
     if isItem then
         local _, spellID = GetItemSpell(id)
@@ -809,7 +574,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.iconTexture:Show()
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
-        -- Reset usability visual state so new spell gets a fresh check
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
         defensiveIcon.lastDefVisualState = nil
@@ -817,7 +581,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     
     UpdateButtonCooldowns(defensiveIcon)
 
-    -- Needed for both display AND key press flash matching.
     local showHotkeys, showFlash
     if showHotkeysOverride ~= nil then
         showHotkeys = showHotkeysOverride
@@ -857,28 +620,20 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.normalizedHotkey = nil
     end
 
-    -- ── Usability visual state ──────────────────────────────────────────────
-    -- Handled per-frame by UpdateDefensiveVisualState() in RenderSpellQueue for
-    -- instant responsiveness (same cadence as offensive queue icons).
-    -- ShowDefensiveIcon only does a one-shot update on icon setup/spell change.
     UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
-
-    -- Module-level isInCombat avoids per-icon UnitAffectingCombat calls.
 
     local defGlowMode = glowModeOverride
         or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
         or "all"
 
-    -- Store glow context so per-frame re-evaluation in UpdateDefensiveVisualState
-    -- can toggle proc glow and restore marching ants without access to caller params.
     defensiveIcon.defGlowMode = defGlowMode
     defensiveIcon.defShowGlow = showGlow
 
-    local isProc = not isItem and IsSpellProcced(id)
+    local procCheckID = isItem and defensiveIcon.itemCastSpellID or id
+    local isProc = procCheckID and IsSpellProcced(procCheckID) or false
     local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
 
     if wantProcGlow then
-        -- Proc glow replaces defensive crawl to avoid confusing layered animations.
         UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.ShowProcGlow(defensiveIcon)
     else
@@ -1140,9 +895,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         end
                     end
                 end
-                -- Cooldown widget refresh on the same 0.08s throttle as offensive icons
-                -- so CD resets are reflected promptly (swipe self-animates but won't
-                -- clear on a reset without an explicit UpdateButtonCooldowns call).
+                -- Throttled cooldown widget refresh.
                 if shouldUpdateCooldowns then
                     UpdateButtonCooldowns(defIcon)
                 end
@@ -1171,10 +924,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     end
 
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
-    -- Detect interruptible cast via the target nameplate's cast bar frame
-    -- state.  Uses Icon:IsShown() for 12.0-safe interruptibility detection.
-    -- interruptMode: "disabled" | "kickOnly" | "ccPrefer"
-    -- ("importantOnly" reserved for future — all important-cast signals are SECRET in 12.0)
     local intIcon = addon.interruptIcon
     local resolvedInts = addon.resolvedInterrupts
     local interruptMode = profile.interruptMode or "ccPrefer"
@@ -1470,12 +1219,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.normalizedHotkey = nil
                 end
 
-                -- Blizzard's flash is button-bound, not spell-bound — can't mirror it.
-                
-                -- IsSpellInRange: per-frame check (cheap NeverSecret API, no throttle).
+                -- Range check: slot-based with spell fallback.
                 local isOutOfRange = false
-                if displayHotkey ~= "" and C_Spell_IsSpellInRange then
-                    local inRange = C_Spell_IsSpellInRange(spellID)
+                if displayHotkey ~= "" then
+                    local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                    local inRange
+                    if directSlot and C_ActionBar_IsActionInRange then
+                        inRange = C_ActionBar_IsActionInRange(directSlot, "target")
+                    elseif C_Spell_IsSpellInRange then
+                        inRange = C_Spell_IsSpellInRange(spellID)
+                    end
                     if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
                         icon.cachedOutOfRange = (inRange == false)
                     else
@@ -1493,12 +1246,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.lastOutOfRange = isOutOfRange
                 end
                 
-                -- 1 = channeling (grey), 2 = no resources (blue tint), 3 = normal,
-                -- 4 = channeling THIS spell (fill animation, full color)
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
-                -- Match via UnitChannelInfo spellID + GetOverrideSpell (IsCurrentSpell
-                -- returns false for channels). UnitChannelInfo returns the override
-                -- spellID (e.g. 234153) while the queue has the base (e.g. 689).
                 local isChanneledSpell = false
                 if isChanneling and channelSpellID then
                     if spellID == channelSpellID then
@@ -1523,9 +1271,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 elseif isChanneling or isCasting then
                     visualState = 1
                 elseif isInCombat then
-                    -- Per-frame usability check (IsSpellUsable is NeverSecret and
-                    -- lightweight) so resource-based tinting responds instantly.
-                    icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
+                    local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                    if directSlot and C_ActionBar_IsUsableAction then
+                        icon.cachedIsUsable, icon.cachedNotEnoughResources = C_ActionBar_IsUsableAction(directSlot)
+                    else
+                        icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
+                    end
                     if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
                         visualState = 2
                     else
@@ -1535,16 +1286,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     visualState = 3
                 end
                 
-                -- Force-apply every frame during channeling/casting so all icons
-                -- grey/ungrey on the exact same frame (no per-icon desync).
-                -- Apply every frame so the resource tint persists and
-                -- position-based brightness is always correct.  The
-                -- desaturation shortcut only fires on state transitions to
-                -- avoid redundant SetDesaturation calls.
+                -- Apply every frame for position-based brightness; desat on transitions only.
                 local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
                 local qa = (i > 1) and QUEUE_ICON_OPACITY or 1
                 if visualState == 4 then
-                    -- Channeling THIS spell: full color + cooldown sweep showing channel progress
                     if icon.lastVisualState ~= 4 or icon.lastBaseDesaturation ~= baseDesaturation then
                         iconTexture:SetDesaturation(baseDesaturation)
                     end

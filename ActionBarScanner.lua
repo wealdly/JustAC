@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 35)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 36)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -14,6 +14,7 @@ local GetTime = GetTime
 local HasAction = HasAction
 local GetBindingKey = GetBindingKey
 local GetActionCooldown = GetActionCooldown
+local GetItemSpell = GetItemSpell
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local FindBaseSpellByID = FindBaseSpellByID
@@ -119,6 +120,11 @@ local spellHotkeyCacheValid = false
 
 -- Cache slot mappings so hotkey lookups don't fail when spell changes mid-GCD
 local spellSlotCache = {}
+-- Parallel cache: true when slot directly represents the spell (safe for
+-- C_ActionBar slot-based queries), false when behind a macro modifier.
+local slotDirectCache = {}
+-- Item → action slot cache (items are always direct matches on the bar).
+local itemSlotCache = {}
 
 -- PERFORMANCE: Cache abbreviated keybinds (50+ gsub calls per abbreviation is expensive)
 -- Key: raw binding string, Value: abbreviated string
@@ -142,6 +148,15 @@ local cachedStateData = {
     valid = false,
 }
 
+-- Hash multipliers for action bar state change detection.
+-- Each field occupies a non-overlapping range so the composite hash
+-- uniquely identifies the combination of page + bonus + form + flags.
+local HASH_BONUS_OFFSET   = 100
+local HASH_FORM           = 10000
+local HASH_OVERRIDE       = 1000000
+local HASH_VEHICLE        = 2000000
+local HASH_TEMP_SHAPESHIFT = 4000000
+
 local function UpdateCachedState()
     cachedStateData.page = GetActionBarPage and GetActionBarPage() or 1
     cachedStateData.bonusOffset = GetBonusBarOffset and GetBonusBarOffset() or 0
@@ -151,10 +166,12 @@ local function UpdateCachedState()
     cachedStateData.hasVehicle = HasVehicleActionBar and HasVehicleActionBar() or false
     cachedStateData.hasTemp = HasTempShapeshiftActionBar and HasTempShapeshiftActionBar() or false
     
-    cachedStateData.hash = cachedStateData.page + (cachedStateData.bonusOffset * 100) + (cachedStateData.form * 10000)
-    if cachedStateData.hasOverride then cachedStateData.hash = cachedStateData.hash + 1000000 end
-    if cachedStateData.hasVehicle then cachedStateData.hash = cachedStateData.hash + 2000000 end
-    if cachedStateData.hasTemp then cachedStateData.hash = cachedStateData.hash + 4000000 end
+    cachedStateData.hash = cachedStateData.page
+        + cachedStateData.bonusOffset * HASH_BONUS_OFFSET
+        + cachedStateData.form * HASH_FORM
+    if cachedStateData.hasOverride then cachedStateData.hash = cachedStateData.hash + HASH_OVERRIDE end
+    if cachedStateData.hasVehicle then cachedStateData.hash = cachedStateData.hash + HASH_VEHICLE end
+    if cachedStateData.hasTemp then cachedStateData.hash = cachedStateData.hash + HASH_TEMP_SHAPESHIFT end
     
     cachedStateData.valid = true
 end
@@ -348,6 +365,8 @@ local function InvalidateKeybindCache()
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
+    wipe(slotDirectCache)
+    wipe(itemSlotCache)
 end
 
 local function InvalidateBindingCache()
@@ -454,6 +473,21 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                             priority = priority,
                             score = hasHotkey and 1000 or -500
                         }
+                    end
+                elseif actionType == "item" then
+                    -- Match items by cast spell so slot-based APIs work for items too.
+                    if GetItemSpell then
+                        local _, itemCastSpellID = GetItemSpell(id)
+                        if itemCastSpellID and itemCastSpellID == spellID then
+                            itemSlotCache[id] = slot
+                            candidates[#candidates + 1] = {
+                                slot = slot,
+                                type = "direct",
+                                modifiers = {},
+                                priority = priority,
+                                score = hasHotkey and 1000 or -500
+                            }
+                        end
                     end
                 elseif actionType == "macro" then
                     if subType == "spell" and macroSpellID and macroSpellID > 0 then
@@ -793,21 +827,23 @@ function ActionBarScanner.GetSpellHotkey(spellID)
 
     local spellInfo = C_Spell.GetSpellInfo(spellID)
     if not spellInfo or not spellInfo.name or spellInfo.name == "" then
-        -- Cache empty result too
         spellHotkeyCache[spellID] = ""
+        slotDirectCache[spellID] = false
         return previousValue or ""
     end
 
-    -- Helper: abbreviate + format + cache a hotkey for a given slot
     local function CacheHotkey(slot, modifiers, cacheID, extraCacheID)
         local baseKey = GetOptimizedKeybind(slot)
         if not baseKey then return nil end
         local finalHotkey = FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers)
         spellHotkeyCache[cacheID] = finalHotkey
         spellSlotCache[cacheID] = slot
+        local isDirect = not modifiers or not next(modifiers)
+        slotDirectCache[cacheID] = isDirect
         if extraCacheID then
             spellHotkeyCache[extraCacheID] = finalHotkey
             spellSlotCache[extraCacheID] = slot
+            slotDirectCache[extraCacheID] = isDirect
         end
         spellHotkeyCacheValid = true
         return finalHotkey
@@ -856,6 +892,7 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     end
 
     spellHotkeyCache[spellID] = ""
+    slotDirectCache[spellID] = false
     spellHotkeyCacheValid = true
     return previousValue or ""
 end
@@ -882,6 +919,12 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
         if HasAction(slot) then
             local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
             if actionType == "item" and actionID == itemID then
+                itemSlotCache[itemID] = slot
+                -- Cross-populate spell caches for unified slot-based lookups.
+                if castSpellID and castSpellID > 0 then
+                    spellSlotCache[castSpellID] = slot
+                    slotDirectCache[castSpellID] = true
+                end
                 local baseKey = GetOptimizedKeybind(slot)
                 if baseKey and baseKey ~= "" then
                     return AbbreviateKeybind(baseKey)
@@ -1051,11 +1094,12 @@ end
 function ActionBarScanner.ClearAllCaches()
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
+    wipe(slotDirectCache)
+    wipe(itemSlotCache)
     wipe(abbreviatedKeyCache)
     spellHotkeyCacheValid = false
 end
 
--- Uses cached slot from GetSpellHotkey lookups
 function ActionBarScanner.GetSlotForSpell(spellID)
     if not spellID then return nil end
 
@@ -1067,6 +1111,40 @@ function ActionBarScanner.GetSlotForSpell(spellID)
     -- Trigger hotkey lookup to populate cache
     local _ = ActionBarScanner.GetSpellHotkey(spellID)
     return spellSlotCache[spellID]
+end
+
+-- Returns slot only when it directly represents the spell/item (not behind
+-- a macro modifier). Safe for C_ActionBar slot-based queries.
+function ActionBarScanner.GetDirectSlotForSpell(spellID)
+    if not spellID then return nil end
+
+    -- Populate cache if needed
+    if slotDirectCache[spellID] == nil then
+        ActionBarScanner.GetSpellHotkey(spellID)
+    end
+
+    if slotDirectCache[spellID] then
+        return spellSlotCache[spellID]
+    end
+    return nil
+end
+
+-- Returns action slot for an item placed directly on the bar.
+function ActionBarScanner.GetDirectSlotForItem(itemID)
+    if not itemID then return nil end
+
+    local cached = itemSlotCache[itemID]
+    if cached ~= nil then
+        return cached or nil
+    end
+
+    -- Trigger scan via GetItemHotkey to populate cache
+    ActionBarScanner.GetItemHotkey(itemID)
+    local result = itemSlotCache[itemID]
+    if not result then
+        itemSlotCache[itemID] = false
+    end
+    return result
 end
 
 -- Returns action bar cooldown (Blizzard's ground truth for GCD vs spell CD)

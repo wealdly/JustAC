@@ -493,13 +493,18 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                         proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                     else
                         -- Check local cooldown tracking (works in combat via 12.0 CooldownTracking).
-                        -- Skip for charge-based spells: local CD fires on every cast but charges
-                        -- mean the spell may still be usable. IsSpellUsable handles this correctly.
+                        -- Charge-based spells use local charge tracking (0 charges = on cooldown).
+                        -- Non-charge spells use the flat local CD timer.
                         local cachedMaxCharges = BlizzardAPI.GetCachedMaxCharges and BlizzardAPI.GetCachedMaxCharges(resolvedID)
                         local isChargeSpell = cachedMaxCharges and cachedMaxCharges > 1
-                        local isOnLocalCD = not isChargeSpell
-                            and BlizzardAPI.IsSpellOnLocalCooldown
-                            and BlizzardAPI.IsSpellOnLocalCooldown(resolvedID)
+                        local isOnLocalCD
+                        if isChargeSpell then
+                            isOnLocalCD = BlizzardAPI.IsChargeSpellOnCooldown
+                                and BlizzardAPI.IsChargeSpellOnCooldown(resolvedID)
+                        else
+                            isOnLocalCD = BlizzardAPI.IsSpellOnLocalCooldown
+                                and BlizzardAPI.IsSpellOnLocalCooldown(resolvedID)
+                        end
                         local unusable, noResources
                         if isOnLocalCD then
                             unusable, noResources = true, false

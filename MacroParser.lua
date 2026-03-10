@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Macro Parser Module - Resolves macro conditionals to find actionable spells
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 21)
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 22)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -33,6 +33,32 @@ local DEBUG_THROTTLE_INTERVAL = 5
 
 local function GetLowercase(str)
     return str and string_lower(str) or ""
+end
+
+-- Extract the spell name from a macro clause, stripping any [condition] brackets.
+-- e.g. "[mod:shift] Judgment" → "Judgment", "[mod:shift]"
+--      "Templar's Verdict"    → "Templar's Verdict", nil
+local function StripBracketConditions(entry)
+    if not entry then return "", nil end
+    local trimmed = entry:match("^%s*(.-)%s*$")
+    if not trimmed or trimmed == "" then return "", nil end
+    -- Find the last ']' efficiently using string.find with reverse search
+    local lastBracketPos = 0
+    local pos = 1
+    while true do
+        local found = string_find(trimmed, "]", pos, true)
+        if not found then break end
+        lastBracketPos = found
+        pos = found + 1
+    end
+    if lastBracketPos > 0 and string_sub(trimmed, 1, 1) == "[" then
+        local conditionPart = string_sub(trimmed, 1, lastBracketPos)
+        local spellPart = string_match(string_sub(trimmed, lastBracketPos + 1), "^%s*(.-)%s*$") or ""
+        -- Extract innermost first condition for evaluation
+        local firstCondition = string_match(conditionPart, "^%[([^%]]*)%]")
+        return spellPart, (firstCondition and firstCondition ~= "") and firstCondition or nil
+    end
+    return trimmed, nil
 end
 
 local function GetDebugMode()
@@ -179,21 +205,7 @@ local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
                 
                 for spellEntry in string_gmatch(command, "[^;]+") do
                     clausePosition = clausePosition + 1
-                    local trimmedEntry = spellEntry:match("^%s*(.-)%s*$")
-                    
-                    local spellPart = trimmedEntry
-                    if trimmedEntry:match("^%[") then
-                        local lastBracketPos = 0
-                        for i = 1, #trimmedEntry do
-                            if trimmedEntry:sub(i, i) == "]" then
-                                lastBracketPos = i
-                            end
-                        end
-                        
-                        if lastBracketPos > 0 then
-                            spellPart = trimmedEntry:sub(lastBracketPos + 1):match("^%s*(.-)%s*$") or ""
-                        end
-                    end
+                    local spellPart = StripBracketConditions(spellEntry)
                     
                     if spellPart and spellPart ~= "" then
                         table.insert(simultaneousAbilities, spellPart)
@@ -207,12 +219,19 @@ local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
                 end
                 
                 if targetSpellFound then
+                    -- Count [condition] brackets on this line for specificity scoring
+                    local lineConditions = 0
+                    for _ in string_gmatch(lowerLine, "%[[^%]]*%]") do
+                        lineConditions = lineConditions + 1
+                    end
                     return {
                         order = globalExecutionOrder,
                         lineNumber = lineNumber,
                         positionInLine = targetSpellPosition,
                         totalInLine = #simultaneousAbilities,
-                        simultaneousAbilities = simultaneousAbilities
+                        simultaneousAbilities = simultaneousAbilities,
+                        conditionCount = lineConditions,
+                        isFirstClause = targetSpellPosition == 1,
                     }
                 end
             end
@@ -254,50 +273,12 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
             penalty = penalty + (executionInfo.totalInLine - 2) * 25
         end
         
-        local targetSpellInMacro = false
-        local isConditionalMatch = false
-        local conditionCount = 0
-        
-        for spellID, spellName in pairs(targetSpells) do
-            local lowerSpellName = GetLowercase(spellName)
-            
-            for line in string_gmatch(macroBody, "[^\r\n]+") do
-                local lowerLine = GetLowercase(line)
-                if string_find(lowerLine, lowerSpellName, 1, true) then
-                    targetSpellInMacro = true
-                    
-                    local lineConditions = 0
-                    for condition in string_gmatch(lowerLine, "%[[^%]]*%]") do
-                        lineConditions = lineConditions + 1
-                    end
-                    conditionCount = conditionCount + lineConditions
-                    
-                    local spellsOnLine = {}
-                    for spellMatch in string_gmatch(lowerLine, "/use[^;]*") do
-                        local spellList = string_match(spellMatch, "/use%s+(.+)")
-                        if spellList then
-                            for spell in string_gmatch(spellList, "[^;]+") do
-                                table_insert(spellsOnLine, spell)
-                            end
-                        end
-                    end
-                    
-                    if #spellsOnLine > 1 then
-                        local isFirstSpell = false
-                        if spellsOnLine[1] and string_find(spellsOnLine[1], lowerSpellName, 1, true) then
-                            isFirstSpell = true
-                        end
-                        
-                        if not isFirstSpell then
-                            penalty = penalty + 100
-                        end
-                    end
-                    
-                    break
-                end
-            end
+        -- Multi-spell line penalty: if target spell is not the first clause
+        if executionInfo.totalInLine > 1 and not executionInfo.isFirstClause then
+            penalty = penalty + 100
         end
         
+        local conditionCount = executionInfo.conditionCount or 0
         if conditionCount > 0 then
             score = score + (conditionCount * 50)
         end
@@ -454,29 +435,7 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
             if command then
                 for spellEntry in string_gmatch(command, "[^;]+") do
-                    local trimmedEntry = string_match(spellEntry, "^%s*(.-)%s*$")
-                    local conditions, spellPart = nil, nil
-                    local lastBracketPos = 0
-                    for i = 1, #trimmedEntry do
-                        if string_sub(trimmedEntry, i, i) == "]" then
-                            lastBracketPos = i
-                        end
-                    end
-
-                    if lastBracketPos > 0 and string_sub(trimmedEntry, 1, 1) == "[" then
-                        local conditionPart = string_sub(trimmedEntry, 1, lastBracketPos)
-                        spellPart = string_match(string_sub(trimmedEntry, lastBracketPos + 1), "^%s*(.-)%s*$")
-                        local firstCondition = string_match(conditionPart, "^%[([^%]]*)%]")
-                        if firstCondition and firstCondition ~= "" then
-                            conditions = firstCondition
-                        end
-                    else
-                        spellPart = trimmedEntry
-                    end
-
-                    if not spellPart or spellPart == "" then
-                        spellPart = trimmedEntry
-                    end
+                    local spellPart, conditions = StripBracketConditions(spellEntry)
 
                     local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
 

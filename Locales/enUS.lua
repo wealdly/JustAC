@@ -279,3 +279,8 @@ L["Expansion Direction desc"] = "Direction icons stack when there are multiple s
 L["Horizontal (Out)"] = "Horizontal (Out)"
 L["Vertical - Up"] = "Vertical - Up"
 L["Vertical - Down"] = "Vertical - Down"
+
+-- Performance
+L["Performance"] = "Performance"
+L["Disable Blizzard Highlight"] = "Disable Blizzard Action Bar Highlight"
+L["Disable Blizzard Highlight desc"] = "Disabling this improves performance. Blizzard's AssistedCombatManager runs a per-frame loop that scans every action bar button to show a blue marching-ants glow on the next suggested spell. JustAC already displays the same information in its own queue, making the Blizzard highlight redundant. Turning this off eliminates that loop and can prevent 'exceeded execution time limit' errors under heavy addon load. This setting persists across sessions."

@@ -188,6 +188,26 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            -- PERFORMANCE (17-19)
+            performanceHeader = {
+                type = "header",
+                name = L["Performance"],
+                order = 17,
+            },
+            disableBlizzardHighlight = {
+                type = "toggle",
+                name = L["Disable Blizzard Highlight"],
+                desc = L["Disable Blizzard Highlight desc"],
+                order = 18,
+                width = "full",
+                get = function() return not GetCVarBool("assistedCombatHighlight") end,
+                set = function(_, val)
+                    SetCVar("assistedCombatHighlight", val and 0 or 1)
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             -- SOUNDS (20-29)
             soundsHeader = {
                 type = "header",

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 2
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 3
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -29,6 +29,11 @@ local cachedMaxCharges = {}
 local trackedDefensiveSpells = {}
 local trackedRotationSpells = {}
 local cooldownEventFrame = nil
+
+-- Local charge tracking for multi-charge spells (e.g. Frenzied Regeneration)
+-- All GetSpellCharges fields are SECRET in combat — track charges locally via
+-- cast events + cached recharge duration for lazy recovery evaluation.
+local localCharges = {}
 
 -- Minimum base cooldown (ms) to track — ignore GCD-only spells
 local MIN_TRACKABLE_CD_MS = 3000
@@ -103,15 +108,44 @@ local function GetBestCooldownDuration(spellID)
     return 0
 end
 
+--- Process any completed charge recoveries for a tracked charge spell.
+--- Advances current charges by checking elapsed recharge timers.
+--- Called lazily on query and before recording new casts.
+local function ProcessChargeRecovery(data)
+    if not data or data.rechargeDuration <= 0 then return end
+    local now = GetTime()
+    while data.current < data.maxCharges and data.rechargeEndTime > 0 and now >= data.rechargeEndTime do
+        data.current = data.current + 1
+        if data.current < data.maxCharges then
+            data.rechargeEndTime = data.rechargeEndTime + data.rechargeDuration
+        else
+            data.rechargeEndTime = 0
+        end
+    end
+end
+
 local function RecordSpellCooldown(spellID)
     if not spellID or spellID == 0 then return end
     if not trackedDefensiveSpells[spellID] and not trackedRotationSpells[spellID] then return end
 
-    -- Skip charge-based spells: local CD tracking records a full-duration cooldown
-    -- on every cast, but charge spells remain usable while charges > 0.
-    -- IsSpellUsable (NeverSecret) handles charge depletion correctly at the call site.
+    -- Charge-based spells: decrement local charge count instead of recording
+    -- a flat cooldown. Local CD tracking would record a full-duration CD on every
+    -- cast, but charge spells remain usable while charges > 0.
     local maxCharges = cachedMaxCharges[spellID]
-    if maxCharges and maxCharges > 1 then return end
+    if maxCharges and maxCharges > 1 then
+        local data = localCharges[spellID]
+        if data then
+            local now = GetTime()
+            ProcessChargeRecovery(data)
+            data.current = data.current - 1
+            if data.current < 0 then data.current = 0 end
+            -- Start recharge timer if not already running
+            if data.rechargeDuration > 0 and (data.rechargeEndTime <= 0 or now >= data.rechargeEndTime) then
+                data.rechargeEndTime = now + data.rechargeDuration
+            end
+        end
+        return
+    end
 
     local now = GetTime()
     local duration = 0
@@ -145,22 +179,44 @@ end
 
 local function ClearLocalCooldowns()
     wipe(localCooldowns)
+    wipe(localCharges)
 end
 
 local function ClearCachedDurations()
     wipe(cachedDurations)
     wipe(cachedMaxCharges)
     wipe(localCooldowns)
+    wipe(localCharges)
 end
 
---- Cache maxCharges for a spell (call out of combat, fields are SECRET in combat).
+--- Cache maxCharges and current charge state for a spell.
+--- Call out of combat only — all GetSpellCharges fields are SECRET in combat.
 local function CacheChargesForSpell(spellID)
     if not spellID or not C_Spell_GetSpellCharges then return end
     if InCombatLockdown() then return end  -- fields are ALL SECRET in combat
     local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
     if ok and chargeInfo then
         local maxCharges = Unsecret(chargeInfo.maxCharges)
-        if maxCharges then cachedMaxCharges[spellID] = maxCharges end
+        if maxCharges then
+            cachedMaxCharges[spellID] = maxCharges
+            if maxCharges > 1 then
+                local current = Unsecret(chargeInfo.currentCharges) or maxCharges
+                local rechargeDuration = Unsecret(chargeInfo.cooldownDuration) or 0
+                local rechargeEndTime = 0
+                if current < maxCharges and rechargeDuration > 0 then
+                    local start = Unsecret(chargeInfo.cooldownStartTime)
+                    if start and start > 0 then
+                        rechargeEndTime = start + rechargeDuration
+                    end
+                end
+                localCharges[spellID] = {
+                    current = current,
+                    maxCharges = maxCharges,
+                    rechargeDuration = rechargeDuration,
+                    rechargeEndTime = rechargeEndTime,
+                }
+            end
+        end
     end
 end
 
@@ -331,6 +387,16 @@ function BlizzardAPI.GetCachedMaxCharges(spellID)
     return cachedMaxCharges[spellID]
 end
 
+--- Returns true when a charge-based spell has 0 charges remaining.
+--- Uses local charge tracking (cast decrements + lazy recharge recovery).
+--- Returns false (fail-open) if the spell has no cached charge data.
+function BlizzardAPI.IsChargeSpellOnCooldown(spellID)
+    local data = localCharges[spellID]
+    if not data then return false end
+    ProcessChargeRecovery(data)
+    return data.current <= 0
+end
+
 --------------------------------------------------------------------------------
 -- Spell Readiness (moved from SecretValues — depends on local CD tracking state)
 --------------------------------------------------------------------------------
@@ -368,22 +434,15 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
     if IsLocalCooldownActive(spellID) then return false end
 
-    -- Charge-based: if we have charges, spell is usable
-    if C_Spell_GetSpellCharges then
-        local csOk, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
-        if csOk and chargeInfo and chargeInfo.currentCharges then
-            local currentCharges = Unsecret(chargeInfo.currentCharges)
-            if currentCharges then
-                return currentCharges > 0
-            end
-            -- currentCharges is SECRET — use cached maxCharges to know if this
-            -- is even a charge spell (if not, skip to action bar fallback)
-            local cached = cachedMaxCharges[spellID]
-            if cached and cached > 1 then
-                -- Multi-charge spell but charges are secret — fail-open (assume usable)
-                return true
-            end
+    -- Charge-based: use local charge tracking (lazy recovery evaluation)
+    local cached = cachedMaxCharges[spellID]
+    if cached and cached > 1 then
+        local data = localCharges[spellID]
+        if data then
+            ProcessChargeRecovery(data)
+            return data.current > 0
         end
+        -- No local charge data — fall through to action bar fallback
     end
 
     -- Action bar usability (visual state, NeverSecret)
