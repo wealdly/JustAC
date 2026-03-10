@@ -112,50 +112,28 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
         order = 2.3,
         width = "normal",
         get = function() return SpellSearch.addHotkeyValueInput end,
-        set = function(_, val) SpellSearch.addHotkeyValueInput = val or "" end,
-    }
-    hotkeyArgs.addButton = {
-        type = "execute",
-        name = L["Add"],
-        desc = L["Add hotkey desc"],
-        order = 2.4,
-        width = "half",
-        func = function()
+        set = function(_, val)
+            SpellSearch.addHotkeyValueInput = val or ""
+            -- Auto-add on Enter/Accept when a spell is selected and value is non-empty
             local id = SpellSearch.previewState.hotkey
-            if not id then
-                addon:Print(L["Please search and select a spell first"])
-                return
-            end
-            if not SpellSearch.addHotkeyValueInput or SpellSearch.addHotkeyValueInput:trim() == "" then
-                addon:Print(L["Please enter a hotkey value"])
-                return
-            end
-
-            local displayName
-            if id < 0 then
-                displayName = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-id)
-                if not displayName then
-                    addon:Print("Invalid item ID: " .. (-id))
-                    return
+            local trimmed = SpellSearch.addHotkeyValueInput:trim()
+            if id and trimmed ~= "" then
+                local displayName
+                if id < 0 then
+                    displayName = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(-id)
+                else
+                    local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+                    displayName = spellInfo and spellInfo.name
                 end
-            else
-                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
-                if not spellInfo or not spellInfo.name then
-                    addon:Print("Invalid spell ID: " .. id)
-                    return
+                if displayName then
+                    hotkeyOverrides[id] = trimmed
+                    addon:Print("Hotkey set: " .. displayName .. " = '" .. trimmed .. "'")
+                    SpellSearch.previewState.hotkey = nil
+                    SpellSearch.addHotkeyValueInput = ""
+                    addon:ForceUpdate()
+                    Hotkeys.UpdateHotkeyOverrideOptions(addon)
                 end
-                displayName = spellInfo.name
             end
-
-            hotkeyOverrides[id] = SpellSearch.addHotkeyValueInput:trim()
-            addon:Print("Hotkey set: " .. displayName .. " = '" .. SpellSearch.addHotkeyValueInput:trim() .. "'")
-            SpellSearch.previewState.hotkey = nil
-            SpellSearch.addHotkeyValueInput = ""
-            addon:ForceUpdate()
-            Hotkeys.UpdateHotkeyOverrideOptions(addon)
-        end,
-        disabled = function()
-            return not SpellSearch.previewState.hotkey
         end,
     }
     hotkeyArgs.listHeader = {

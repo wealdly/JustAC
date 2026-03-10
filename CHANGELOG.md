@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-03-10
+
+### Fixed
+- Hide standard and overlay queues when the player is in a vehicle or controlling an NPC via override action bar (quest vehicles, NPC possession scenarios)
+- Fixed crash in GapCloserEngine when UnitGUID returns a secret value during target cycling macros in combat
+
 ## [4.9.0] - 2026-03-10
 
 ### Improved
