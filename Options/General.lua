@@ -63,6 +63,66 @@ function General.CreateTabArgs(addon)
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },
+            defensiveDetached = {
+                type = "toggle",
+                name = L["Independent Positioning"],
+                desc = L["Independent Positioning desc"],
+                order = 3,
+                width = "full",
+                get = function()
+                    return addon.db.profile.defensives and addon.db.profile.defensives.detached or false
+                end,
+                set = function(_, val)
+                    addon.db.profile.defensives = addon.db.profile.defensives or {}
+                    addon.db.profile.defensives.detached = val
+                    addon:UpdateFrameSize()
+                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                end,
+            },
+            detachedOrientation = {
+                type = "select",
+                name = L["Detached Orientation"],
+                desc = L["Detached Orientation desc"],
+                order = 4,
+                width = "normal",
+                values = {
+                    LEFT  = L["Left"],
+                    RIGHT = L["Right"],
+                    UP    = L["Up"],
+                    DOWN  = L["Down"],
+                },
+                sorting = { "LEFT", "RIGHT", "UP", "DOWN" },
+                get = function()
+                    return (addon.db.profile.defensives and addon.db.profile.defensives.detachedOrientation) or "LEFT"
+                end,
+                set = function(_, val)
+                    addon.db.profile.defensives = addon.db.profile.defensives or {}
+                    addon.db.profile.defensives.detachedOrientation = val
+                    addon:UpdateFrameSize()
+                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                end,
+                hidden = function()
+                    return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
+                end,
+            },
+            resetDefensivePosition = {
+                type = "execute",
+                name = L["Reset Defensive Frame Position"],
+                order = 5,
+                func = function()
+                    local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+                    if addon.defensiveFrame then
+                        addon.defensiveFrame:ClearAllPoints()
+                        addon.defensiveFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+                        if UIFrameFactory and UIFrameFactory.SaveDefensivePosition then
+                            UIFrameFactory.SaveDefensivePosition(addon)
+                        end
+                    end
+                end,
+                hidden = function()
+                    return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
+                end,
+            },
             -- SHARED BEHAVIOR (10-19)
             behaviorHeader = {
                 type = "header",

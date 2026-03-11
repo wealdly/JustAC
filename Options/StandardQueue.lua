@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Options/StandardQueue - Standard Queue panel settings (sub-tabbed: Layout, Offensive Display, Defensive Display, Appearance)
-local StandardQueue = LibStub:NewLibrary("JustAC-OptionsStandardQueue", 2)
+local StandardQueue = LibStub:NewLibrary("JustAC-OptionsStandardQueue", 3)
 if not StandardQueue then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
@@ -12,6 +12,16 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local function panelDisabled(addon)
     local dm = addon.db.profile.displayMode or "queue"
     return dm == "disabled" or dm == "overlay"
+end
+
+-- Defensive Display subtab is always accessible when defensives are detached
+-- (detached defensives are independent of displayMode).
+local function defensiveDisabled(addon)
+    local profile = addon.db.profile
+    if profile.defensives and profile.defensives.detached then
+        return false
+    end
+    return panelDisabled(addon)
 end
 
 function StandardQueue.CreateTabArgs(addon)
@@ -66,10 +76,22 @@ function StandardQueue.CreateTabArgs(addon)
                     queueOrientation = {
                         type = "select",
                         name = L["Queue Orientation"],
-                        desc = L["Queue Orientation desc"],
+                        desc = function()
+                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+                            return detached and L["Queue Orientation detached desc"] or L["Queue Orientation desc"]
+                        end,
                         order = 3,
                         width = "normal",
                         values = function()
+                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+                            if detached then
+                                return {
+                                    LEFT  = L["Left"],
+                                    RIGHT = L["Right"],
+                                    UP    = L["Up"],
+                                    DOWN  = L["Down"],
+                                }
+                            end
                             local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
                             if anchor == "LEFT" then
                                 return {
@@ -105,6 +127,10 @@ function StandardQueue.CreateTabArgs(addon)
                             end
                         end,
                         sorting = function()
+                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+                            if detached then
+                                return { "LEFT", "RIGHT", "UP", "DOWN" }
+                            end
                             local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
                             if anchor == "LEFT" then
                                 return { "UP_LEFT", "DOWN_LEFT" }
@@ -119,6 +145,10 @@ function StandardQueue.CreateTabArgs(addon)
                             end
                         end,
                         get = function()
+                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+                            if detached then
+                                return addon.db.profile.queueOrientation or "LEFT"
+                            end
                             local o = addon.db.profile.queueOrientation or "LEFT"
                             local s = addon.db.profile.defensives and addon.db.profile.defensives.position or "SIDE1"
                             if s == "LEADING" then s = "SIDE1" end
@@ -129,13 +159,18 @@ function StandardQueue.CreateTabArgs(addon)
                             end
                         end,
                         set = function(_, val)
-                            local orientation, side = val:match("^(%u+)_(%u+)$")
-                            if not orientation then return end
-                            addon.db.profile.queueOrientation = orientation
-                            if orientation == "LEFT" or orientation == "RIGHT" then
-                                addon.db.profile.defensives.position = (side == "ABOVE") and "SIDE1" or "SIDE2"
+                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+                            if detached then
+                                addon.db.profile.queueOrientation = val
                             else
-                                addon.db.profile.defensives.position = (side == "RIGHT") and "SIDE1" or "SIDE2"
+                                local orientation, side = val:match("^(%u+)_(%u+)$")
+                                if not orientation then return end
+                                addon.db.profile.queueOrientation = orientation
+                                if orientation == "LEFT" or orientation == "RIGHT" then
+                                    addon.db.profile.defensives.position = (side == "ABOVE") and "SIDE1" or "SIDE2"
+                                else
+                                    addon.db.profile.defensives.position = (side == "RIGHT") and "SIDE1" or "SIDE2"
+                                end
                             end
                             addon:UpdateFrameSize()
                         end,
@@ -187,22 +222,21 @@ function StandardQueue.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.targetFrameAnchor = val
                             if val ~= "DISABLED" then
+                                local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
                                 local o = addon.db.profile.queueOrientation or "LEFT"
-                                local s = addon.db.profile.defensives and addon.db.profile.defensives.position or "SIDE1"
-                                if s == "LEADING" then s = "SIDE1" end
                                 local isH = (o == "LEFT" or o == "RIGHT")
                                 if val == "LEFT" then
                                     if isH then addon.db.profile.queueOrientation = "UP" end
-                                    addon.db.profile.defensives.position = "SIDE2"
+                                    if not detached then addon.db.profile.defensives.position = "SIDE2" end
                                 elseif val == "RIGHT" then
                                     if isH then addon.db.profile.queueOrientation = "UP" end
-                                    addon.db.profile.defensives.position = "SIDE1"
+                                    if not detached then addon.db.profile.defensives.position = "SIDE1" end
                                 elseif val == "TOP" then
                                     if not isH then addon.db.profile.queueOrientation = "LEFT" end
-                                    addon.db.profile.defensives.position = "SIDE1"
+                                    if not detached then addon.db.profile.defensives.position = "SIDE1" end
                                 elseif val == "BOTTOM" then
                                     if not isH then addon.db.profile.queueOrientation = "LEFT" end
-                                    addon.db.profile.defensives.position = "SIDE2"
+                                    if not detached then addon.db.profile.defensives.position = "SIDE2" end
                                 end
                             end
                             if InCombatLockdown() then
@@ -491,7 +525,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon.db.profile.defensives.enabled = val
                             addon:UpdateFrameSize()
                         end,
-                        disabled = function() return panelDisabled(addon) end,
+                        disabled = function() return defensiveDisabled(addon) end,
                     },
                     displayMode = {
                         type = "select",
@@ -526,7 +560,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function()
-                            return panelDisabled(addon) or not addon.db.profile.defensives.enabled
+                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
                         end,
                     },
                     maxIcons = {
@@ -542,7 +576,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon:UpdateFrameSize()
                         end,
                         disabled = function()
-                            return panelDisabled(addon) or not addon.db.profile.defensives.enabled
+                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
                         end,
                     },
                     iconScale = {
@@ -558,7 +592,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon:UpdateFrameSize()
                         end,
                         disabled = function()
-                            return panelDisabled(addon) or not addon.db.profile.defensives.enabled
+                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
                         end,
                     },
                     glowMode = {
@@ -580,7 +614,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon:ForceUpdateAll()
                         end,
                         disabled = function()
-                            return panelDisabled(addon) or not addon.db.profile.defensives.enabled
+                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
                         end,
                     },
                     -- HEALTH BARS (10-19)
@@ -600,7 +634,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon.db.profile.defensives.showHealthBar = val
                             addon:UpdateFrameSize()
                         end,
-                        disabled = function() return panelDisabled(addon) end,
+                        disabled = function() return defensiveDisabled(addon) end,
                     },
                     showPetHealthBar = {
                         type = "toggle",
@@ -613,7 +647,7 @@ function StandardQueue.CreateTabArgs(addon)
                             addon.db.profile.defensives.showPetHealthBar = val
                             addon:UpdateFrameSize()
                         end,
-                        disabled = function() return panelDisabled(addon) end,
+                        disabled = function() return defensiveDisabled(addon) end,
                         hidden = function()
                             local _, pc = UnitClass("player")
                             if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end

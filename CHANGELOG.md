@@ -3,6 +3,28 @@
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-03-11
+
+### Added
+- **Independent defensive frame** — defensives can now be detached from the main queue into their own draggable frame anchored to UIParent
+  - Toggle in General options: "Independent Positioning"
+  - Configurable growth direction (Left / Right / Up / Down) via "Detached Orientation" selector
+  - Drag handle (grab tab) appears at the trailing edge of the icon cluster; right-click opens options
+  - Frame position persists across sessions; "Reset Position" button returns it to center-screen
+  - Detached frame stays visible regardless of Display Mode setting; fades in/out as icons appear and disappear
+
+### Fixed
+- Interrupt reminder now correctly suppresses CC suggestions in "Kick Only" mode — previously a CC spell could appear as a fallback when the kick was on cooldown
+- CC spells in the interrupt reminder now use fail-closed usability checks — previously a CC on cooldown could appear usable in 12.0 combat due to secret value fail-open behaviour
+- Defensive icons no longer flash during rebuilds — first-show now skips the fade-in animation
+- Detached defensive frame and its grab tab now receive mouse input correctly (were not registering clicks)
+
+### Improved
+- Fade animation durations reduced from 150–200 ms to 100 ms across main frame, defensive frame, and individual icons for a snappier feel
+- Defensive display options (display mode, max icons, scale, glow, health bars) remain accessible in the Standard Queue options panel when defensives are detached
+- Interrupt Reminder option description notes that it does not trigger on training dummies or trivial adds
+- Health bars reposition correctly when attached to the detached defensive frame, including vertical orientations with grab tab spacing
+
 ## [4.9.1] - 2026-03-10
 
 ### Fixed
