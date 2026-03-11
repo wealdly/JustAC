@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 12)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 13)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -378,7 +378,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
     fadeInAlpha:SetFromAlpha(0)
     fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
+    fadeInAlpha:SetDuration(0.1)
     fadeInAlpha:SetSmoothing("OUT")
     fadeIn:SetToFinalAlpha(true)
     button.fadeIn = fadeIn
@@ -387,7 +387,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
     fadeOutAlpha:SetFromAlpha(1)
     fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetDuration(0.1)
     fadeOutAlpha:SetSmoothing("IN")
     fadeOut:SetToFinalAlpha(true)
     fadeOut:SetScript("OnFinished", function()
@@ -430,62 +430,88 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
 end
 
 -- Helper: Create a single defensive icon button at the specified index (0-based)
--- Position offset is calculated based on index, orientation, and defensive position
+-- Position offset is calculated based on index, orientation, and defensive position.
+-- When detached=true, parents to addon.defensiveFrame and lays out along detachedOrientation.
 local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize, defPosition, queueOrientation, spacing)
+    local isDetached = profile.defensives and profile.defensives.detached
+    local parentFrame = (isDetached and addon.defensiveFrame) or addon.mainFrame
     -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true, profile)
+    local button = CreateBaseIcon(parentFrame, actualIconSize, true, true, profile)
     if not button then return nil end
 
     -- Defensive-specific slot tracking
     button.iconIndex = index
 
-    -- Position the button relative to mainFrame based on queue orientation and defensive position
-    local firstIconCenter = actualIconSize / 2
-    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-    local effectiveSpacing = math.max(spacing, baseSpacing)
-    local iconOffset = index * (actualIconSize + spacing)
-
-    -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
-    -- predictable position (right for horizontal, bottom for vertical).
-    -- Defensive icons must match that shift so they align with the queue icons.
-    local grabTabReserve = 0
-    if queueOrientation == "RIGHT" or queueOrientation == "UP" then
+    if isDetached then
+        -- Detached mode: lay out along detachedOrientation within defensiveFrame.
+        -- Mirrors the spell-icon layout in CreateSpellIcons.
+        local detachOrientation = profile.defensives.detachedOrientation or "LEFT"
+        local iconOffset = index * (actualIconSize + spacing)
         local GRAB_TAB_LENGTH = 12
-        local isVert = (queueOrientation == "UP")
-        grabTabReserve = spacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
-    end
+        -- Grab tab location per orientation:
+        --   LEFT → tab at RIGHT  → icons start at LEFT, no reserve needed
+        --   RIGHT → tab at LEFT  → icons start at RIGHT, no reserve needed
+        --   UP   → tab at BOTTOM → icons start above tab, reserve at BOTTOM
+        --   DOWN → tab at TOP    → icons start below tab, reserve at TOP
+        local grabTabReserve = spacing + GRAB_TAB_LENGTH  -- used only for UP and DOWN
+        if detachOrientation == "LEFT" then
+            button:SetPoint("LEFT", parentFrame, "LEFT", iconOffset, 0)
+        elseif detachOrientation == "RIGHT" then
+            button:SetPoint("RIGHT", parentFrame, "RIGHT", -iconOffset, 0)
+        elseif detachOrientation == "UP" then
+            button:SetPoint("BOTTOM", parentFrame, "BOTTOM", 0, iconOffset + grabTabReserve)
+        elseif detachOrientation == "DOWN" then
+            button:SetPoint("TOP", parentFrame, "TOP", 0, -(iconOffset + grabTabReserve))
+        end
+    else
+        -- Attached mode: position relative to mainFrame based on queue orientation and defensive position
+        local firstIconCenter = actualIconSize / 2
+        local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
+        local effectiveSpacing = math.max(spacing, baseSpacing)
+        local iconOffset = index * (actualIconSize + spacing)
 
-    if queueOrientation == "LEFT" then
-        if defPosition == "SIDE1" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
-        else -- LEADING
-            button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
+        -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
+        -- predictable position (right for horizontal, bottom for vertical).
+        -- Defensive icons must match that shift so they align with the queue icons.
+        local grabTabReserve = 0
+        if queueOrientation == "RIGHT" or queueOrientation == "UP" then
+            local GRAB_TAB_LENGTH = 12
+            local isVert = (queueOrientation == "UP")
+            grabTabReserve = spacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
         end
-    elseif queueOrientation == "RIGHT" then
-        if defPosition == "SIDE1" then
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset - grabTabReserve, effectiveSpacing)
-        elseif defPosition == "SIDE2" then
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset - grabTabReserve, -effectiveSpacing)
-        else -- LEADING
-            button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
-        end
-    elseif queueOrientation == "UP" then
-        if defPosition == "SIDE1" then
-            button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
-        elseif defPosition == "SIDE2" then
-            button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
-        else -- LEADING
-            button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
-        end
-    elseif queueOrientation == "DOWN" then
-        if defPosition == "SIDE1" then
-            button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
-        elseif defPosition == "SIDE2" then
-            button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
-        else -- LEADING
-            button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
+
+        if queueOrientation == "LEFT" then
+            if defPosition == "SIDE1" then
+                button:SetPoint("BOTTOM", addon.mainFrame, "TOPLEFT", firstIconCenter + iconOffset, effectiveSpacing)
+            elseif defPosition == "SIDE2" then
+                button:SetPoint("TOP", addon.mainFrame, "BOTTOMLEFT", firstIconCenter + iconOffset, -effectiveSpacing)
+            else -- LEADING
+                button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, iconOffset)
+            end
+        elseif queueOrientation == "RIGHT" then
+            if defPosition == "SIDE1" then
+                button:SetPoint("BOTTOM", addon.mainFrame, "TOPRIGHT", -firstIconCenter - iconOffset - grabTabReserve, effectiveSpacing)
+            elseif defPosition == "SIDE2" then
+                button:SetPoint("TOP", addon.mainFrame, "BOTTOMRIGHT", -firstIconCenter - iconOffset - grabTabReserve, -effectiveSpacing)
+            else -- LEADING
+                button:SetPoint("LEFT", addon.mainFrame, "RIGHT", effectiveSpacing, iconOffset)
+            end
+        elseif queueOrientation == "UP" then
+            if defPosition == "SIDE1" then
+                button:SetPoint("LEFT", addon.mainFrame, "BOTTOMRIGHT", effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
+            elseif defPosition == "SIDE2" then
+                button:SetPoint("RIGHT", addon.mainFrame, "BOTTOMLEFT", -effectiveSpacing, firstIconCenter + iconOffset + grabTabReserve)
+            else -- LEADING
+                button:SetPoint("TOP", addon.mainFrame, "BOTTOM", iconOffset, -effectiveSpacing)
+            end
+        elseif queueOrientation == "DOWN" then
+            if defPosition == "SIDE1" then
+                button:SetPoint("LEFT", addon.mainFrame, "TOPRIGHT", effectiveSpacing, -firstIconCenter - iconOffset)
+            elseif defPosition == "SIDE2" then
+                button:SetPoint("RIGHT", addon.mainFrame, "TOPLEFT", -effectiveSpacing, -firstIconCenter - iconOffset)
+            else -- LEADING
+                button:SetPoint("BOTTOM", addon.mainFrame, "TOP", iconOffset, effectiveSpacing)
+            end
         end
     end
 
@@ -578,9 +604,274 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     return button
 end
 
+-- Creates the detached defensive frame (UIParent child) with fade animations.
+-- Mirrors CreateMainFrame pattern. Called by CreateDefensiveIcons when detached=true.
+local function CreateDetachedDefensiveFrame(addon)
+    -- Destroy any existing detached frame
+    if addon.defensiveFrame then
+        addon.defensiveFrame:Hide()
+        addon.defensiveFrame:SetParent(nil)
+        addon.defensiveFrame = nil
+    end
+    if addon.defensiveGrabTab then
+        addon.defensiveGrabTab:Hide()
+        addon.defensiveGrabTab:SetParent(nil)
+        addon.defensiveGrabTab = nil
+    end
+
+    local profile = addon:GetProfile()
+    if not profile then return end
+
+    local frame = CreateFrame("Frame", "JustACDefensiveFrame", UIParent)
+    if not frame then return end
+    addon.defensiveFrame = frame
+
+    -- Restore saved position
+    local dpos = profile.defensives and profile.defensives.detachedPosition
+    if dpos and dpos.point then
+        frame:SetPoint(dpos.point, UIParent, dpos.point, dpos.x or 0, dpos.y or 100)
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+    end
+
+    frame:EnableMouse(true)
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+
+    frame:SetScript("OnLeave", function()
+        if addon.defensiveGrabTab and addon.defensiveGrabTab.fadeOut
+            and not addon.defensiveGrabTab:IsMouseOver()
+            and not addon.defensiveGrabTab.isDragging then
+            addon.defensiveGrabTab.fadeOut:Play()
+        end
+    end)
+
+    frame:SetScript("OnMouseDown", function(_, mouseButton)
+        if mouseButton == "RightButton" then
+            if addon.OpenOptionsPanel then
+                addon:OpenOptionsPanel()
+            else
+                Settings.OpenToCategory("JustAssistedCombat")
+            end
+        end
+    end)
+
+    -- Fade-in animation
+    local fadeIn = frame:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.1)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    fadeIn:SetScript("OnFinished", function()
+        local currentProfile = addon:GetProfile()
+        local frameOpacity = currentProfile and currentProfile.frameOpacity or 1.0
+        frame:SetAlpha(frameOpacity)
+    end)
+    frame.fadeIn = fadeIn
+
+    -- Fade-out animation
+    local fadeOut = frame:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.1)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        frame:Hide()
+        frame:SetAlpha(0)
+    end)
+    frame.fadeOut = fadeOut
+
+    frame:SetAlpha(0)
+    frame:Hide()
+end
+
+-- Creates the drag handle for the detached defensive frame.
+-- Position based on detachedOrientation (mirrors CreateGrabTab for mainFrame).
+local function CreateDefensiveGrabTab(addon)
+    if not addon.defensiveFrame then return end
+    local profile = addon:GetProfile()
+    local orientation = profile and profile.defensives and profile.defensives.detachedOrientation or "LEFT"
+    local isVertical = (orientation == "UP" or orientation == "DOWN")
+
+    local tab = CreateFrame("Button", nil, addon.defensiveFrame, "BackdropTemplate")
+    if not tab then return end
+    addon.defensiveGrabTab = tab
+
+    if isVertical then
+        tab:SetSize(20, 12)
+    else
+        tab:SetSize(12, 20)
+    end
+    tab:SetHitRectInsets(-6, -6, -6, -6)
+
+    -- Grab tab sits at the "end" of the icon growth direction:
+    --   LEFT  → icons grow left-to-right  → grab tab on RIGHT
+    --   RIGHT → icons grow right-to-left  → grab tab on LEFT
+    --   UP    → icons grow bottom-to-top  → grab tab on BOTTOM
+    --   DOWN  → icons grow top-to-bottom  → grab tab on TOP
+    if orientation == "LEFT" then
+        tab:SetPoint("RIGHT", addon.defensiveFrame, "RIGHT", 0, 0)
+    elseif orientation == "RIGHT" then
+        tab:SetPoint("LEFT", addon.defensiveFrame, "LEFT", 0, 0)
+    elseif orientation == "UP" then
+        tab:SetPoint("BOTTOM", addon.defensiveFrame, "BOTTOM", 0, 0)
+    elseif orientation == "DOWN" then
+        tab:SetPoint("TOP", addon.defensiveFrame, "TOP", 0, 0)
+    end
+
+    tab:SetBackdrop({
+        bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 8, edgeSize = 4,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 }
+    })
+    tab:SetBackdropColor(0.3, 0.3, 0.3, 0.8)
+    tab:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
+
+    local dot1 = tab:CreateTexture(nil, "OVERLAY")
+    dot1:SetSize(2, 2)
+    dot1:SetColorTexture(0.8, 0.8, 0.8, 1)
+    local dot2 = tab:CreateTexture(nil, "OVERLAY")
+    dot2:SetSize(2, 2)
+    dot2:SetColorTexture(0.8, 0.8, 0.8, 1)
+    local dot3 = tab:CreateTexture(nil, "OVERLAY")
+    dot3:SetSize(2, 2)
+    dot3:SetColorTexture(0.8, 0.8, 0.8, 1)
+    if isVertical then
+        dot1:SetPoint("CENTER", tab, "CENTER", -4, 0)
+        dot2:SetPoint("CENTER", tab, "CENTER",  0, 0)
+        dot3:SetPoint("CENTER", tab, "CENTER",  4, 0)
+    else
+        dot1:SetPoint("CENTER", tab, "CENTER", 0,  4)
+        dot2:SetPoint("CENTER", tab, "CENTER", 0,  0)
+        dot3:SetPoint("CENTER", tab, "CENTER", 0, -4)
+    end
+
+    tab:EnableMouse(true)
+    tab:RegisterForDrag("LeftButton")
+    tab:RegisterForClicks("RightButtonUp")
+
+    tab:SetScript("OnDragStart", function(self)
+        local p = addon:GetProfile()
+        if p and IsPanelLocked(p) then return end
+        self.isDragging = true
+        addon.isDragging = true
+        if self.fadeOut and self.fadeOut:IsPlaying() then self.fadeOut:Stop() end
+        if self.fadeIn  and self.fadeIn:IsPlaying()  then self.fadeIn:Stop()  end
+        self:SetAlpha(1)
+        addon.defensiveFrame:StartMoving(true)
+    end)
+
+    tab:SetScript("OnDragStop", function(self)
+        addon.defensiveFrame:StopMovingOrSizing()
+        UIFrameFactory.SaveDefensivePosition(addon)
+        self.isDragging = false
+        addon.isDragging = false
+        if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+        if not addon.defensiveFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
+            self.fadeOut:Play()
+        end
+    end)
+
+    tab:SetScript("OnClick", function(_, mouseButton)
+        if mouseButton == "RightButton" then
+            if addon.OpenOptionsPanel then
+                addon:OpenOptionsPanel()
+            else
+                Settings.OpenToCategory("JustAssistedCombat")
+            end
+        end
+    end)
+
+    tab:SetScript("OnEnter", function(self)
+        if self.fadeOut and self.fadeOut:IsPlaying() then self.fadeOut:Stop() end
+        self:SetAlpha(1)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("JustAssistedCombat")
+        GameTooltip:AddLine("Defensive Panel — Drag to move", 1, 1, 1)
+        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        GameTooltip:Show()
+    end)
+
+    tab:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+        if not addon.defensiveFrame:IsMouseOver() and not self.isDragging and self.fadeOut then
+            self.fadeOut:Play()
+        end
+    end)
+
+    -- Fade animations
+    local fadeIn = tab:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(0.15)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    tab.fadeIn = fadeIn
+
+    local fadeOut = tab:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    fadeOut:SetScript("OnFinished", function()
+        tab:SetAlpha(0)
+    end)
+    tab.fadeOut = fadeOut
+
+    tab:SetAlpha(0)
+    tab:Show()
+end
+
+function UIFrameFactory.SaveDefensivePosition(addon)
+    if not addon.defensiveFrame then return end
+    local profile = addon:GetProfile()
+    if not profile or not profile.defensives then return end
+    local point, _, _, x, y = addon.defensiveFrame:GetPoint()
+    if not point then return end
+    profile.defensives.detachedPosition = { point = point, x = x or 0, y = y or 100 }
+end
+
+function UIFrameFactory.UpdateDefensiveFrameSize(addon)
+    if not addon.defensiveFrame then return end
+    local profile = addon:GetProfile()
+    if not profile or not profile.defensives then return end
+
+    local defOrientation = profile.defensives.detachedOrientation or "LEFT"
+    local isVertical = (defOrientation == "UP" or defOrientation == "DOWN")
+    local iconSize    = profile.iconSize or 42
+    local iconScale   = profile.defensives.iconScale or 1.0
+    local actualIconSize = iconSize * iconScale
+    local iconSpacing = profile.iconSpacing or 1
+    local maxIcons    = math.min(profile.defensives.maxIcons or 4, 7)
+
+    local grabTabLength = 12
+    local grabTabSpacing
+    if isVertical then
+        grabTabSpacing = iconSpacing + grabTabLength
+    else
+        grabTabSpacing = iconSpacing + grabTabLength + 1
+    end
+
+    local totalLength = maxIcons * actualIconSize + (maxIcons - 1) * iconSpacing
+
+    if isVertical then
+        addon.defensiveFrame:SetSize(actualIconSize, totalLength + grabTabSpacing)
+    else
+        addon.defensiveFrame:SetSize(totalLength + grabTabSpacing, actualIconSize)
+    end
+end
+
 local function CreateDefensiveIcons(addon, profile)
     local StopDefensiveGlow = UIAnimations and UIAnimations.StopDefensiveGlow
-    
+
     -- Preserve state before destroying old icons
     local savedStates = {}
     for i, icon in ipairs(defensiveIcons) do
@@ -592,17 +883,13 @@ local function CreateDefensiveIcons(addon, profile)
             }
         end
     end
-    
+
     -- Cleanup all existing defensive icons
     local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
     for _, icon in ipairs(defensiveIcons) do
         if icon then
-            if StopDefensiveGlow then
-                StopDefensiveGlow(icon)
-            end
-            if MasqueDefensiveGroup then
-                MasqueDefensiveGroup:RemoveButton(icon)
-            end
+            if StopDefensiveGlow then StopDefensiveGlow(icon) end
+            if MasqueDefensiveGroup then MasqueDefensiveGroup:RemoveButton(icon) end
             icon:Hide()
             icon:SetParent(nil)
         end
@@ -610,16 +897,35 @@ local function CreateDefensiveIcons(addon, profile)
     wipe(defensiveIcons)
     addon.defensiveIcons = nil
     addon.defensiveIcon = nil
-    
+
+    -- Always destroy the detached frame on rebuild; recreated below if still detached.
+    if addon.defensiveFrame then
+        addon.defensiveFrame:Hide()
+        addon.defensiveFrame:SetParent(nil)
+        addon.defensiveFrame = nil
+    end
+    if addon.defensiveGrabTab then
+        addon.defensiveGrabTab:Hide()
+        addon.defensiveGrabTab:SetParent(nil)
+        addon.defensiveGrabTab = nil
+    end
+
     if not profile.defensives or not profile.defensives.enabled then return end
-    
+
+    -- When detached, create the independent frame BEFORE parenting icons to it.
+    local isDetached = profile.defensives.detached
+    if isDetached then
+        CreateDetachedDefensiveFrame(addon)
+        if not addon.defensiveFrame then return end  -- frame creation failed
+    end
+
     -- Calculate shared sizing
     local defensiveIconScale = profile.defensives.iconScale or 1.0
     local actualIconSize = profile.iconSize * defensiveIconScale
     local defPosition = profile.defensives.position or "SIDE1"
     local queueOrientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing
-    
+
     -- Don't reuse module-level table to avoid stale reference issues.
     local maxIcons = profile.defensives.maxIcons or 4
     maxIcons = math.min(maxIcons, 7)  -- Cap at 7 (same as offensive queue)
@@ -632,15 +938,24 @@ local function CreateDefensiveIcons(addon, profile)
             defensiveIcons[i] = button  -- Also update module-level for cleanup on next call
         end
     end
-    
+
     -- Expose to addon (use the fresh table, not the module-level one)
     addon.defensiveIcons = newIcons
     addon.defensiveIcon = newIcons[1]  -- Backward compatibility
 
+    -- When detached, size the container frame and create its grab tab.
+    if isDetached then
+        UIFrameFactory.UpdateDefensiveFrameSize(addon)
+        CreateDefensiveGrabTab(addon)
+        -- Skip fade-in on first show after a rebuild so icons appear instantly.
+        if addon.defensiveFrame then
+            addon.defensiveFrame.skipNextFade = true
+        end
+    end
+
     local UIRenderer = LibStub("JustAC-UIRenderer", true)
     for i, state in pairs(savedStates) do
         if newIcons[i] and state.isShown and UIRenderer and UIRenderer.ShowDefensiveIcon then
-            -- Only show glow on slot 1
             local showGlow = (i == 1)
             UIRenderer.ShowDefensiveIcon(addon, state.id, state.isItem, newIcons[i], showGlow)
         end
@@ -703,7 +1018,7 @@ function UIFrameFactory.CreateMainFrame(addon)
     local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
     fadeInAlpha:SetFromAlpha(0)
     fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.2)
+    fadeInAlpha:SetDuration(0.1)
     fadeInAlpha:SetSmoothing("OUT")
     fadeIn:SetToFinalAlpha(true)
     fadeIn:SetScript("OnFinished", function()
@@ -713,13 +1028,13 @@ function UIFrameFactory.CreateMainFrame(addon)
         addon.mainFrame:SetAlpha(frameOpacity)
     end)
     addon.mainFrame.fadeIn = fadeIn
-    
+
     -- Create fade-out animation
     local fadeOut = addon.mainFrame:CreateAnimationGroup()
     local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
     fadeOutAlpha:SetFromAlpha(1)
     fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
+    fadeOutAlpha:SetDuration(0.1)
     fadeOutAlpha:SetSmoothing("IN")
     fadeOut:SetToFinalAlpha(true)
     fadeOut:SetScript("OnFinished", function()
@@ -1156,9 +1471,8 @@ function UIFrameFactory.CreateSpellIcons(addon)
     
     -- Create interrupt icon (position 0, hidden until interruptible cast detected)
     CreateInterruptIcon(addon, profile)
-    
-    -- Create defensive icons (1-3 positioned relative to position 1 based on user settings)
-    CreateDefensiveIcons(addon, profile)
+    -- NOTE: CreateDefensiveIcons is called separately from UpdateFrameSize, not here,
+    -- so that defensive icon creation is not gated by the mainFrame guard above.
 end
 
 -- SIMPLIFIED: Pure display-only icons with configuration only
@@ -1292,7 +1606,10 @@ function UIFrameFactory.UpdateFrameSize(addon)
     local orientation = profile.queueOrientation or "LEFT"
 
     UIFrameFactory.CreateSpellIcons(addon)
-    
+    -- Defensives are decoupled from CreateSpellIcons and always created here,
+    -- so they are not gated by CreateSpellIcons's mainFrame guard.
+    CreateDefensiveIcons(addon, profile)
+
     -- Recreate grab tab to update position/size for new orientation
     if addon.grabTab then
         addon.grabTab:Hide()

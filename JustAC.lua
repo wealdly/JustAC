@@ -106,6 +106,9 @@ local defaults = {
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
+            detached = false,                                    -- Give defensives their own independent draggable frame
+            detachedPosition = { point = "CENTER", x = 0, y = 100 }, -- Saved position of the detached defensive frame
+            detachedOrientation = "LEFT",                        -- Icon growth direction for detached frame (LEFT/RIGHT/UP/DOWN)
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
@@ -612,8 +615,14 @@ function JustAC:EnterDisabledMode()
         self.mainFrame:Hide()
     end
 
-    -- Hide defensive icons
-    if self.defensiveIcons then
+    local profile = self:GetProfile()
+    local isDetached = profile and profile.defensives and profile.defensives.detached
+    if self.defensiveFrame and not isDetached then
+        self.defensiveFrame:Hide()
+    end
+
+    -- Hide defensive icons (when not detached; detached frame shows regardless of displayMode)
+    if not isDetached and self.defensiveIcons then
         for _, icon in ipairs(self.defensiveIcons) do
             if icon then icon:Hide() end
         end
@@ -641,6 +650,10 @@ function JustAC:ExitDisabledMode()
 
     if self.mainFrame then
         self.mainFrame:Show()
+    end
+
+    if self.defensiveFrame then
+        self.defensiveFrame:Show()
     end
 
     -- Restore health bar if setting is enabled
@@ -675,6 +688,14 @@ function JustAC:RefreshConfig()
         -- Save before anchoring so we preserve UIParent-relative coords as fallback
         self:SavePosition()
         if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
+    end
+    if self.defensiveFrame then
+        local profile = self:GetProfile()
+        local defPos = profile.defensives and profile.defensives.detachedPosition
+        if defPos then
+            self.defensiveFrame:ClearAllPoints()
+            self.defensiveFrame:SetPoint(defPos.point or "CENTER", UIParent, defPos.point or "CENTER", defPos.x or 0, defPos.y or 100)
+        end
     end
     if UINameplateOverlay then
         UINameplateOverlay.Destroy(self)
@@ -1401,7 +1422,8 @@ function JustAC:StartUpdates()
         local mainFrame = self.mainFrame
         local mainHidden = not mainFrame or not mainFrame:IsShown()
         local defIcons = self.defensiveIcons
-        local defHidden = not defIcons or #defIcons == 0
+        local defHidden = (not defIcons or #defIcons == 0)
+            and (not self.defensiveFrame or not self.defensiveFrame:IsShown())
         local npHidden = not self.nameplateIcons or #self.nameplateIcons == 0
         if mainHidden and defHidden and npHidden
                 and not spellQueueDirty then

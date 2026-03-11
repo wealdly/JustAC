@@ -651,8 +651,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
             defensiveIcon.fadeOut:Stop()
         end
         defensiveIcon:Show()
-        defensiveIcon:SetAlpha(0)
-        if defensiveIcon.fadeIn then
+        if addon.defensiveFrame and addon.defensiveFrame.skipNextFade then
+            defensiveIcon:SetAlpha(1)
+        elseif defensiveIcon.fadeIn then
+            defensiveIcon:SetAlpha(0)
             defensiveIcon.fadeIn:Play()
         else
             defensiveIcon:SetAlpha(1)
@@ -712,25 +714,63 @@ end
 
 function UIRenderer.ShowDefensiveIcons(addon, queue)
     if not addon or not addon.defensiveIcons then return end
-    
+
     local icons = addon.defensiveIcons
-    
+    local anyVisible = false
+
     for i, icon in ipairs(icons) do
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow)
+            anyVisible = true
         else
             UIRenderer.HideDefensiveIcon(icon)
+        end
+    end
+
+    -- Consume the rebuild flag — icons are now at full alpha, future shows should fade in normally.
+    if addon.defensiveFrame then
+        addon.defensiveFrame.skipNextFade = nil
+    end
+
+    -- Show/hide the detached container frame on state transitions only.
+    -- Guarding on IsShown() prevents restarting the fade animation every tick.
+    if addon.defensiveFrame then
+        if anyVisible then
+            if not addon.defensiveFrame:IsShown() then
+                if addon.defensiveFrame.fadeOut then addon.defensiveFrame.fadeOut:Stop() end
+                addon.defensiveFrame:Show()
+                if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Play() end
+            end
+        else
+            if addon.defensiveFrame:IsShown() then
+                if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Stop() end
+                if addon.defensiveFrame.fadeOut then
+                    addon.defensiveFrame.fadeOut:Play()
+                else
+                    addon.defensiveFrame:Hide()
+                end
+            end
         end
     end
 end
 
 function UIRenderer.HideDefensiveIcons(addon)
     if not addon or not addon.defensiveIcons then return end
-    
+
     for _, icon in ipairs(addon.defensiveIcons) do
         UIRenderer.HideDefensiveIcon(icon)
+    end
+
+    -- Hide the detached container frame (covers vehicle/possess mode).
+    if addon.defensiveFrame and addon.defensiveFrame:IsShown() then
+        if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Stop() end
+        if addon.defensiveFrame.fadeOut then
+            addon.defensiveFrame.fadeOut:Play()
+        else
+            addon.defensiveFrame:Hide()
+        end
     end
 end
 
@@ -794,7 +834,6 @@ end
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
-    if not spellIconsRef then return end
 
     local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     if not profile then return end
@@ -902,7 +941,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             end
         end
     end
-    
+
+    -- Offensive icon rendering requires spellIcons; defensive loop above runs regardless.
+    if not spellIconsRef then return end
+
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
     local overlays = profile.textOverlays
     local showHotkeys = not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
@@ -1457,6 +1499,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         if addon.grabTab then
             addon.grabTab:EnableMouse(not isClickThrough)
         end
+        if addon.defensiveFrame then
+            addon.defensiveFrame:EnableMouse(not isLocked)
+        end
+        if addon.defensiveGrabTab then
+            addon.defensiveGrabTab:EnableMouse(not isClickThrough)
+        end
     end
     
     -- Skip if fade animation is playing to avoid interrupting it.
@@ -1468,11 +1516,22 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             addon.mainFrame:SetAlpha(frameOpacity)
         end
     end
-    if addon.defensiveIcon then
-        local isFading = (addon.defensiveIcon.fadeIn and addon.defensiveIcon.fadeIn:IsPlaying()) or
-                         (addon.defensiveIcon.fadeOut and addon.defensiveIcon.fadeOut:IsPlaying())
+    -- Apply frameOpacity to the detached container (icons inherit) or all individual icons.
+    if addon.defensiveFrame then
+        local isFading = (addon.defensiveFrame.fadeIn and addon.defensiveFrame.fadeIn:IsPlaying()) or
+                         (addon.defensiveFrame.fadeOut and addon.defensiveFrame.fadeOut:IsPlaying())
         if not isFading then
-            addon.defensiveIcon:SetAlpha(frameOpacity)
+            addon.defensiveFrame:SetAlpha(frameOpacity)
+        end
+    elseif addon.defensiveIcons then
+        for _, defIcon in ipairs(addon.defensiveIcons) do
+            if defIcon then
+                local isFading = (defIcon.fadeIn and defIcon.fadeIn:IsPlaying()) or
+                                 (defIcon.fadeOut and defIcon.fadeOut:IsPlaying())
+                if not isFading then
+                    defIcon:SetAlpha(frameOpacity)
+                end
+            end
         end
     end
     
@@ -1578,11 +1637,16 @@ function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
                 for _, entry in ipairs(resolvedInts) do
                     local sid, stype = entry.spellID, entry.type
                     -- In ccOnly mode, skip non-CC spells (kicks can't stop shielded casts).
+                    -- In kickOnly mode, skip CC spells entirely.
                     if ccOnly and stype ~= "cc" then
+                        -- skip
+                    elseif interruptMode == "kickOnly" and stype == "cc" then
                         -- skip
                     elseif (stype == "cc" and targetCCImmune) or targetAlreadyCC then
                         -- CC spells unusable on immune / already CC'd targets — skip.
-                    elseif BlizzardAPI.IsSpellUsable(sid) and not SpellDB.IsInterruptOnCooldown(sid) then
+                    -- failOpen=true for kicks (short CD, always useful to remind);
+                    -- failOpen=false for CCs so we never recommend one we can't confirm is castable.
+                    elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
                         if (preferCC or ccOnly) and stype == "cc" then
                             intSpellID = sid; shouldShow = true; break
                         elseif not fallbackID then
