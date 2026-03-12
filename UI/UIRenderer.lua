@@ -518,7 +518,7 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         if applyChange then
             if wantProcGlow and not hasProcGlow then
                 UIAnimations.StopDefensiveGlow(defensiveIcon)
-                UIAnimations.ShowProcGlow(defensiveIcon)
+                UIAnimations.ShowProcGlow(defensiveIcon, isInCombat)
             elseif not wantProcGlow and hasProcGlow then
                 UIAnimations.HideProcGlow(defensiveIcon)
                 local showMarching = defensiveIcon.defShowGlow
@@ -635,7 +635,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     if wantProcGlow then
         UIAnimations.StopDefensiveGlow(defensiveIcon)
-        UIAnimations.ShowProcGlow(defensiveIcon)
+        UIAnimations.ShowProcGlow(defensiveIcon, isInCombat)
     else
         UIAnimations.HideProcGlow(defensiveIcon)
         local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
@@ -789,8 +789,9 @@ function UIRenderer.HideInterruptIcon(intIcon)
     intIcon.hotkeyText:SetText("")
     intIcon.iconTexture:SetDesaturation(0)
     if UIAnimations then
-        if intIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(intIcon); intIcon.hasInterruptGlow = false end
-        if intIcon.hasProcGlow      then UIAnimations.HideProcGlow(intIcon);      intIcon.hasProcGlow      = false end
+        UIAnimations.HideInterruptProcGlow(intIcon)
+        if intIcon.hasProcGlow then UIAnimations.HideProcGlow(intIcon); intIcon.hasProcGlow = false end
+        intIcon.hasInterruptGlow = false
     end
     if intIcon.castAura then
         intIcon.castAura:Hide()
@@ -1043,7 +1044,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             -- player may want to cancel a channel to use.
 
             if not intIcon.hasInterruptGlow then
-                UIAnimations.StartInterruptGlow(intIcon, isInCombat)
+                UIAnimations.ShowInterruptProcGlow(intIcon)
                 intIcon.hasInterruptGlow = true
             end
 
@@ -1209,7 +1210,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 if glowState == GLOW_PROC then
                     if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
-                    if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon); icon.hasProcGlow = true end
+                    if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, isInCombat); icon.hasProcGlow = true end
                 else
                     if icon.hasProcGlow then UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false end
                     -- Stale flag guard: re-sync if external code hid the frame without clearing the flag.
@@ -1495,15 +1496,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
         end
-        -- Grab tab stays interactive unless click-through so users can still unlock.
+        -- Grab tab always stays interactive so users can drag/unlock even in click-through mode.
         if addon.grabTab then
-            addon.grabTab:EnableMouse(not isClickThrough)
+            addon.grabTab:EnableMouse(true)
         end
         if addon.defensiveFrame then
             addon.defensiveFrame:EnableMouse(not isLocked)
         end
         if addon.defensiveGrabTab then
-            addon.defensiveGrabTab:EnableMouse(not isClickThrough)
+            addon.defensiveGrabTab:EnableMouse(true)
         end
     end
     

@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.10.1] - 2026-03-11
+
+### Fixed
+- Queue grab tab now remains draggable when interaction mode is set to Click Through
+
 ## [4.10.0] - 2026-03-11
 
 ### Added
