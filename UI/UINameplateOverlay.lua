@@ -913,8 +913,9 @@ function UINameplateOverlay.UpdateAnchor(addon)
         end
         if interruptIcon then
             if UIAnimations then
-                if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
-                if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
+                UIAnimations.HideInterruptProcGlow(interruptIcon)
+                if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
+                interruptIcon.hasInterruptGlow = false
             end
             interruptIcon:ClearAllPoints()
             interruptIcon:Hide()
@@ -1096,9 +1097,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.
 
-            -- Glow: red-tinted proc glow for interrupt urgency
+            -- Glow: red-tinted proc burst for interrupt urgency
             if not interruptIcon.hasInterruptGlow and UIAnimations then
-                UIAnimations.StartInterruptGlow(interruptIcon, inCombat)
+                UIAnimations.ShowInterruptProcGlow(interruptIcon)
                 interruptIcon.hasInterruptGlow = true
             end
 
@@ -1249,7 +1250,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
 
             if wantProcGlow then
-                if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon); icon.hasProcGlow = true end
+                if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, inCombat); icon.hasProcGlow = true end
             elseif icon.hasProcGlow then
                 UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false
             end
@@ -1746,8 +1747,9 @@ function UINameplateOverlay.HideAll()
     if petHealthBar then petHealthBar:Hide() end
     if interruptIcon then
         if UIAnimations then
-            if interruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(interruptIcon); interruptIcon.hasInterruptGlow = false end
-            if interruptIcon.hasProcGlow     then UIAnimations.HideProcGlow(interruptIcon);       interruptIcon.hasProcGlow      = false end
+            UIAnimations.HideInterruptProcGlow(interruptIcon)
+            if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
+            interruptIcon.hasInterruptGlow = false
         end
         interruptIcon:Hide()
         interruptShown = false
