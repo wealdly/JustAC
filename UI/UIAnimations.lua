@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 12)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 14)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -100,7 +100,7 @@ local function CreateProcGlowFrame(parent, frameKey)
 end
 
 -- Display proc glow to highlight instantly available abilities
-local function ShowProcGlow(icon)
+local function ShowProcGlow(icon, isInCombat)
     if not icon then return end
     
     local procFrame = icon.ProcGlowFrame
@@ -111,11 +111,21 @@ local function ShowProcGlow(icon)
     local width = icon:GetWidth()
     procFrame:SetScale(width / 45)
     
-    procFrame.ProcLoopFlipbook:SetAlpha(1)
+    procFrame:SetAlpha(1.0)
     procFrame:Show()
     
-    if not procFrame.ProcLoop:IsPlaying() then
-        procFrame.ProcLoop:Play()
+    if isInCombat then
+        if not procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Play()
+        end
+    else
+        -- Show frame but freeze animation out of combat
+        if procFrame.ProcLoop:IsPlaying() then
+            procFrame.ProcLoop:Pause()
+        elseif not procFrame.ProcLoop:IsPaused() then
+            procFrame.ProcLoop:Play()
+            procFrame.ProcLoop:Pause()
+        end
     end
 end
 
@@ -126,6 +136,44 @@ local function HideProcGlow(icon)
     icon.ProcGlowFrame:Hide()
     if icon.ProcGlowFrame.ProcLoop:IsPlaying() then
         icon.ProcGlowFrame.ProcLoop:Stop()
+    end
+end
+
+-- Red-tinted, fainter proc glow for the interrupt icon
+local INTERRUPT_PROC_ALPHA = 1.0
+local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05
+
+local function ShowInterruptProcGlow(icon)
+    if not icon then return end
+
+    local procFrame = icon.InterruptProcGlowFrame
+    if not procFrame then
+        procFrame = CreateProcGlowFrame(icon, "InterruptProcGlowFrame")
+        -- Desaturate to greyscale then tint red
+        procFrame.ProcLoopFlipbook:SetDesaturated(true)
+        procFrame.ProcLoopFlipbook:SetVertexColor(INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B, 1)
+    end
+
+    local width = icon:GetWidth()
+    procFrame:SetScale(width / 45)
+
+    -- Set alpha on the frame itself; the internal Alpha animation forces
+    -- the texture alpha to 1 every loop iteration, so texture-level alpha
+    -- would be overridden.  Frame-level alpha stacks and is not touched.
+    procFrame:SetAlpha(INTERRUPT_PROC_ALPHA)
+    procFrame:Show()
+
+    if not procFrame.ProcLoop:IsPlaying() then
+        procFrame.ProcLoop:Play()
+    end
+end
+
+local function HideInterruptProcGlow(icon)
+    if not icon or not icon.InterruptProcGlowFrame then return end
+
+    icon.InterruptProcGlowFrame:Hide()
+    if icon.InterruptProcGlowFrame.ProcLoop:IsPlaying() then
+        icon.InterruptProcGlowFrame.ProcLoop:Stop()
     end
 end
 
@@ -174,7 +222,7 @@ local GLOW_CONFIG = {
     },
     GAP_CLOSER = {
         frameKey    = "GapCloserHighlightFrame",
-        r = 1.0, g = 0.95, b = 0.4,         -- Bright gold (desaturated atlas → grey → gold tint)
+        r = 1.0, g = 0.85, b = 0.2,         -- Bright gold (desaturated atlas → grey → gold tint)
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
@@ -428,9 +476,9 @@ local function ResumeAllGlows(addon)
                     icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
                 end
             end
-            -- Proc glow: restore if icon still has proc state
+            -- Proc glow: restore if icon still has proc state (frozen OOC)
             if icon.ProcGlowFrame and icon.hasProcGlow then
-                ShowProcGlow(icon)
+                ShowProcGlow(icon, false)
             end
         end
     end
@@ -573,6 +621,8 @@ UIAnimations.StartInterruptGlow = StartInterruptGlow
 UIAnimations.StopInterruptGlow = StopInterruptGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
+UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
+UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash

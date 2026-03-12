@@ -56,6 +56,7 @@ $coreFiles = @(
     "GapCloserEngine.lua",
     "DebugCommands.lua",
     "Options\SpellSearch.lua",
+    "Options\LiveSearchPopup.lua",
     "Options\General.lua",
     "Options\StandardQueue.lua",
     "Options\Offensive.lua",
