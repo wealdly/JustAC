@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [4.10.2] - 2026-03-12
+
+### Changed
+- Interrupt icon now uses a dedicated red-tinted proc glow instead of the generic marching-ants highlight
+- Proc glow animation freezes out of combat (static frame, no looping flipbook)
+- Gap-closer glow gold tint adjusted for better visibility
+
+### Fixed
+- LiveSearchPopup.lua missing from local build script
+- build.ps1 no longer included in CurseForge package
+
 ## [4.10.1] - 2026-03-11
 
 ### Fixed
