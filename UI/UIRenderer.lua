@@ -1496,15 +1496,28 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
         end
-        -- Grab tab always stays interactive so users can drag/unlock even in click-through mode.
+        -- In click-through mode, hide grab tabs so clicks pass through with zero dead zone.
+        -- Alt-key reveal is wired via MODIFIER_STATE_CHANGED in UIFrameFactory.CreateGrabTab.
         if addon.grabTab then
-            addon.grabTab:EnableMouse(true)
+            if isClickThrough then
+                addon.grabTab:Hide()
+                addon.grabTab:EnableMouse(false)
+            else
+                addon.grabTab:Show()
+                addon.grabTab:EnableMouse(true)
+            end
         end
         if addon.defensiveFrame then
             addon.defensiveFrame:EnableMouse(not isLocked)
         end
         if addon.defensiveGrabTab then
-            addon.defensiveGrabTab:EnableMouse(true)
+            if isClickThrough then
+                addon.defensiveGrabTab:Hide()
+                addon.defensiveGrabTab:EnableMouse(false)
+            else
+                addon.defensiveGrabTab:Show()
+                addon.defensiveGrabTab:EnableMouse(true)
+            end
         end
     end
     
