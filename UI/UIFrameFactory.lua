@@ -772,6 +772,18 @@ local function CreateDefensiveGrabTab(addon)
         self.isDragging = false
         addon.isDragging = false
         if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+
+        -- In click-through mode, re-hide tab now that drag is done (unless Alt still held)
+        local p = addon:GetProfile()
+        local mode = p and (p.panelInteraction or (p.panelLocked and "locked" or "unlocked"))
+        if mode == "clickthrough" then
+            if not IsAltKeyDown() then
+                self:Hide()
+                self:EnableMouse(false)
+            end
+            return
+        end
+
         if not addon.defensiveFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
             self.fadeOut:Play()
         end
@@ -799,6 +811,10 @@ local function CreateDefensiveGrabTab(addon)
 
     tab:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
+        local p = addon:GetProfile()
+        local mode = p and (p.panelInteraction or (p.panelLocked and "locked" or "unlocked"))
+        -- In click-through mode, MODIFIER_STATE_CHANGED owns visibility — don't fade here
+        if mode == "clickthrough" then return end
         if not addon.defensiveFrame:IsMouseOver() and not self.isDragging and self.fadeOut then
             self.fadeOut:Play()
         end
@@ -828,6 +844,26 @@ local function CreateDefensiveGrabTab(addon)
 
     tab:SetAlpha(0)
     tab:Show()
+
+    -- Alt-key reveal for click-through mode (mirrors logic in CreateGrabTab).
+    local defModListener = CreateFrame("Frame")
+    defModListener:RegisterEvent("MODIFIER_STATE_CHANGED")
+    defModListener:SetScript("OnEvent", function()
+        local p = addon:GetProfile()
+        if not p then return end
+        local mode = p.panelInteraction or (p.panelLocked and "locked" or "unlocked")
+        if mode ~= "clickthrough" then return end
+        if IsAltKeyDown() then
+            if tab.fadeOut and tab.fadeOut:IsPlaying() then tab.fadeOut:Stop() end
+            tab:SetAlpha(1)
+            tab:Show()
+            tab:EnableMouse(true)
+        elseif not tab.isDragging then
+            tab:Hide()
+            tab:EnableMouse(false)
+        end
+    end)
+    addon.defensiveGrabTabModListener = defModListener
 end
 
 function UIFrameFactory.SaveDefensivePosition(addon)
@@ -1148,7 +1184,7 @@ function UIFrameFactory.CreateGrabTab(addon)
     
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
-        
+
         -- User manually dragged — auto-disable target frame anchor so it doesn't snap back
         local profile = addon:GetProfile()
         if profile and profile.targetFrameAnchor and profile.targetFrameAnchor ~= "DISABLED" then
@@ -1156,16 +1192,26 @@ function UIFrameFactory.CreateGrabTab(addon)
             addon.targetframe_anchored = false
             if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
         end
-        
+
         UIFrameFactory.SavePosition(addon)
-        
+
         self.isDragging = false
         addon.isDragging = false
-        
+
         -- Mark queues dirty so icons refresh immediately at new position
         if addon.MarkQueueDirty then addon:MarkQueueDirty() end
         if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-        
+
+        -- In click-through mode, re-hide tab now that drag is done (unless Alt still held)
+        local mode = profile and (profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked"))
+        if mode == "clickthrough" then
+            if not IsAltKeyDown() then
+                self:Hide()
+                self:EnableMouse(false)
+            end
+            return
+        end
+
         -- Fade out if mouse isn't over frame/tab
         if not addon.mainFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
             self.fadeOut:Play()
@@ -1200,11 +1246,15 @@ function UIFrameFactory.CreateGrabTab(addon)
 
         local profile = addon:GetProfile()
         local isLocked = IsPanelLocked(profile)
-        
+        local interactionMode = profile and (profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked"))
+
         GameTooltip:SetOwner(addon.grabTab, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
         GameTooltip:AddLine("Drag to move", 1, 1, 1)
         GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        if interactionMode == "clickthrough" then
+            GameTooltip:AddLine("Hold Alt to reveal drag handle", 0.6, 0.8, 1)
+        end
         GameTooltip:AddLine(" ")
         if isLocked then
             GameTooltip:AddLine("|cffff6666Panel Locked|r", 1, 1, 1)
@@ -1218,6 +1268,10 @@ function UIFrameFactory.CreateGrabTab(addon)
     
     addon.grabTab:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
+        local p = addon:GetProfile()
+        local mode = p and (p.panelInteraction or (p.panelLocked and "locked" or "unlocked"))
+        -- In click-through mode, MODIFIER_STATE_CHANGED owns visibility — don't fade here
+        if mode == "clickthrough" then return end
         -- Hide grab tab if mouse leaves and isn't over main frame or being dragged
         if not addon.mainFrame:IsMouseOver() and not self.isDragging and addon.grabTab.fadeOut then
             addon.grabTab.fadeOut:Play()
@@ -1251,6 +1305,29 @@ function UIFrameFactory.CreateGrabTab(addon)
     -- Start invisible but shown so mouse detection works immediately
     addon.grabTab:SetAlpha(0)
     addon.grabTab:Show()
+
+    -- Alt-key reveal for click-through mode: show/hide grab tab while Alt is held.
+    -- Only activates when panelInteraction == "clickthrough"; no-ops in other modes.
+    local grabModListener = CreateFrame("Frame")
+    grabModListener:RegisterEvent("MODIFIER_STATE_CHANGED")
+    grabModListener:SetScript("OnEvent", function()
+        local p = addon:GetProfile()
+        if not p then return end
+        local mode = p.panelInteraction or (p.panelLocked and "locked" or "unlocked")
+        if mode ~= "clickthrough" then return end
+        if IsAltKeyDown() then
+            if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
+                addon.grabTab.fadeOut:Stop()
+            end
+            addon.grabTab:SetAlpha(1)
+            addon.grabTab:Show()
+            addon.grabTab:EnableMouse(true)
+        elseif not addon.grabTab.isDragging then
+            addon.grabTab:Hide()
+            addon.grabTab:EnableMouse(false)
+        end
+    end)
+    addon.grabTabModListener = grabModListener
 end
 
 -- Create a single interrupt icon positioned in the "leading" direction before slot 1.

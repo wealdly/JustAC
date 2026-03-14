@@ -31,11 +31,12 @@ end
 3. **Test with debug commands** — Use `/jac test`, `/jac modules`, `/jac formcheck` to validate changes
 4. **DO NOT auto-increment versions** — Track changes in `UNRELEASED.md`, only bump version on explicit instruction
 5. **DO NOT auto-build or push** — Commit changes, let user build/push manually
+6. **NO AI attribution** — Never add `Co-Authored-By`, credits, acknowledgments, or any other reference to AI agents/models in commit messages, code comments, README, CHANGELOG, or any project file. All contributions are authored solely by the project owner.
 
 ## Versioning
 
 **Semantic Versioning (MAJOR.MINOR.PATCH):**
-- Current: 4.9.0
+- Current: 4.10.2
 - Hotfixes: 4.5.5, 4.5.6, etc. (bug fixes only)
 - Features: 4.6.0, 4.7.0, etc. (new functionality)
 - Breaking: 5.0.0, 6.0.0, etc. (major rewrites)

@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.10.3] - 2026-03-13
+
+### Changed
+- Click-Through mode: grab tabs (queue and defensive) are now fully hidden in click-through mode, eliminating the dead zone where clicks could not pass through to the game world. Hold Alt to temporarily reveal the drag handle for repositioning; releasing Alt (or finishing a drag) hides it again.
+
 ## [4.10.2] - 2026-03-12
 
 ### Changed
