@@ -1086,6 +1086,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local spellCountChanged = (lastFrameState.spellCount ~= spellCount)
     
     local maxIcons = profile.maxIcons
+    local textOverlays = profile.textOverlays
     local glowMode = profile.glowMode or "all"
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
@@ -1154,8 +1155,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         end
                         if defIcon.cachedHotkey ~= defHotkey then
                             defIcon.cachedHotkey = defHotkey
-                            local defOverlays = profile.textOverlays
-                            local defShowHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
+                            local defShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
                             local displayDefHotkey = defShowHotkeys and defHotkey or ""
                             defIcon.hotkeyText:SetText(displayDefHotkey)
                             if defHotkey ~= "" then
@@ -1181,8 +1181,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not spellIconsRef then return end
 
     local IsSpellUsable = BlizzardAPI.IsSpellUsable
-    local overlays = profile.textOverlays
-    local showHotkeys = not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
+    local showHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
     local showFlash = profile.showFlash ~= false
     local GetSpellHotkey = (showHotkeys or showFlash) and ActionBarScanner and ActionBarScanner.GetSpellHotkey or nil
     local GetCachedSpellInfo = BlizzardAPI.GetCachedSpellInfo
@@ -1203,9 +1202,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- ── Interrupt reminder (position 0) ─────────────────────────────────────
     local intIcon = addon.interruptIcon
     local resolvedInts = addon.resolvedInterrupts
-    local interruptMode = profile.interruptMode or "ccPrefer"
-    -- Retired mode in saved data → safe fallback.
+    local interruptMode = profile.interruptMode or "kickPrefer"
+    -- Retired modes in saved data → safe fallback.
     if interruptMode == "importantOnly" then interruptMode = "kickOnly" end
+    if interruptMode == "ccShielded" then interruptMode = "kickPrefer" end
     if intIcon and resolvedInts and shouldShowFrame and interruptMode ~= "disabled" then
         -- Shared evaluation: both renderers see identical state and share one debounce timer.
         local intResult           = UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
@@ -1236,8 +1236,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 UpdateButtonCooldowns(intIcon)
             end
 
-            local intOverlays = profile.textOverlays
-            local intShowHotkeys = not intOverlays or not intOverlays.hotkey or intOverlays.hotkey.show ~= false
+            local intShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
             if spellChanged or shouldUpdateCooldowns or not intIcon.cachedHotkey then
                 local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
                 intIcon.cachedHotkey = hotkey
@@ -1267,7 +1266,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     if isOutOfRange then
                         intIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
                     else
-                        local hkc = intOverlays and intOverlays.hotkey and intOverlays.hotkey.color
+                        local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
                         intIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
                     end
                     intIcon.lastOutOfRange = isOutOfRange
@@ -1499,7 +1498,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- Range check: slot-based with spell fallback.
                 local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
                 local isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
-                local hkc = overlays and overlays.hotkey and overlays.hotkey.color
+                local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
                 UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
                 
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
@@ -1767,9 +1766,9 @@ function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
             local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
             local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
             local canCC = not targetCCImmune and not targetAlreadyCC
-            -- ccShielded / ccPrefer: when cast is shielded, only CC spells can stop it.
+            -- kickPrefer / ccPrefer: when cast is shielded, only CC spells can stop it.
             local ccOnly = not interruptible and canCC
-                and (interruptMode == "ccShielded" or interruptMode == "ccPrefer")
+                and (interruptMode == "kickPrefer" or interruptMode == "ccPrefer")
             local preferCC = interruptMode == "ccPrefer" and canCC
 
             -- Uninterruptible + kickOnly → nothing useful to suggest.

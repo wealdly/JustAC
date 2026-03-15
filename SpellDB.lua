@@ -916,35 +916,16 @@ end
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
 local pcall = pcall
-local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
+local cachedBlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
---- Check whether a spell is on a real cooldown (not just GCD).
---- Uses the NeverSecret `isOnGCD` field to distinguish GCD from actual CD
---- even when other cooldown fields are secret in 12.0 combat.
---- Returns true if the spell is on a real (non-GCD) cooldown, false otherwise.
---- Fail-open: returns false if anything errors.
----
---- 12.0 combat: duration/startTime are blanket-secreted (even when 0).
---- However, isOnGCD is NeverSecret and has three distinct states:
----   true  → GCD only, spell is effectively ready
----   false → real cooldown is actively running
----   nil   → no cooldown at all, spell is ready
---- Only isOnGCD==false reliably indicates a real cooldown in combat.
+--- Check whether an interrupt/CC spell is on a real cooldown (not just GCD).
+--- Delegates to BlizzardAPI.IsSpellReady() which handles the full 12.0 fallback
+--- chain: isOnGCD → OOC duration → local cooldown tracking → action bar usability.
+--- Interrupt spells are registered for local CD tracking in ResolveInterruptSpells().
+--- Fail-open: returns false (spell ready) if anything errors.
 function SpellDB.IsInterruptOnCooldown(spellID)
-    if not spellID or not C_Spell_GetSpellCooldown then return false end
-    local ok, cdInfo = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cdInfo then return false end
-    -- isOnGCD is NeverSecret:
-    --   true  → GCD only, spell is effectively ready
-    --   nil   → no cooldown at all, spell is ready
-    --   false → real cooldown is actively running (only state we treat as "on CD")
-    if cdInfo.isOnGCD ~= false then return false end
-    -- isOnGCD == false → real cooldown running
-    -- If duration is secret, we already know it's non-zero from isOnGCD==false
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    if BlizzardAPI and BlizzardAPI.IsSecretValue(cdInfo.duration) then return true end
-    -- Regular number: 0 = off CD, >0 = on CD (out of combat path)
-    return cdInfo.duration > 0
+    if not cachedBlizzardAPI or not cachedBlizzardAPI.IsSpellReady then return false end
+    return not cachedBlizzardAPI.IsSpellReady(spellID)
 end
 
 --- Resolve the current player's interrupt spell IDs (primary interrupt + CC backups).
@@ -970,6 +951,11 @@ function SpellDB.ResolveInterruptSpells()
         end
         if BlizzardAPI.IsSpellAvailable(resolvedID) then
             result[#result + 1] = { spellID = resolvedID, type = spellType }
+            -- Register for local cooldown tracking so IsSpellReady() can detect
+            -- CD state in combat (isOnGCD is nil for most interrupt spells).
+            if BlizzardAPI.RegisterRotationSpell then
+                BlizzardAPI.RegisterRotationSpell(resolvedID)
+            end
         end
     end
     return #result > 0 and result or nil

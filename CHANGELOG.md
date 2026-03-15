@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-03-15
+
+### Fixed
+- Interrupt detection now works correctly with all nameplate addons (Platynator, Plater, ElvUI, etc.) — no longer depends on visible cast bar frames to determine interruptibility
+- Fixed non-interruptible casts being treated as interruptible when switching targets mid-cast with third-party nameplate addons installed
+- Secret `notInterruptible` values (12.0 combat) resolved through `SetAlphaFromBoolean` opaque pipeline instead of `SetShown` (which rejects secrets from addon code); falls back to existing cast bar cascade when probe fails
+- **Fixed interrupt cooldown detection for unflagged spells (Kick, Pummel, etc.)** — `isOnGCD` stays `nil` for most interrupt spells even when on cooldown, so the old `isOnGCD == false` check never detected them as on-CD. Now delegates to `BlizzardAPI.IsSpellReady()` (local cooldown tracking via `UNIT_SPELLCAST_SUCCEEDED`). Interrupt spells are registered for local CD tracking at resolve time. This fixes Kick Priority mode not suggesting CC as fallback when the kick is on cooldown.
+- **Fixed gap-closer cooldown detection** — Gap-closer spells (Charge, Shadowstep, Fel Rush, etc.) now registered for local cooldown tracking so `IsSpellReady()` can detect their CD state in combat when `isOnGCD` is `nil`.
+- **Fixed local CD tracker ignoring cooldown reduction effects** — When passive CDR (Blade of Justice → Wake of Ashes, Anger Management, etc.) shortened a real cooldown below the local timer estimate, `IsSpellReady()` returned false too long because the local timer blocked the action bar usability fallback. Now cross-checks: if the local timer says "on CD" but the action bar shows usable, clears the stale timer and returns ready.
+
+### Changed
+- **Interrupt mode rework** — Renamed `Kick + CC` → `Kick Priority` (new default) and `Prefer CC` → `CC Priority` (now includes disclaimer about wasting CC cooldowns). `Kick Priority` kicks interruptible casts first, falls back to CC when kick is on cooldown, and uses CC on shielded (non-interruptible) casts. Previous `ccShielded` saved data automatically migrated.
+- Cache `profile.textOverlays` once per render cycle in UIRenderer instead of re-reading 5-8 times per frame
+
 ## [4.12.0] - 2026-03-15
 
 ### Added

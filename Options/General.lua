@@ -138,11 +138,11 @@ function General.CreateTabArgs(addon)
                 values = {
                     disabled      = L["Interrupt Mode Disabled"],
                     kickOnly      = L["Interrupt Mode Kick Only"],
-                    ccShielded    = L["Interrupt Mode CC Shielded"],
+                    kickPrefer    = L["Interrupt Mode Kick Prefer"],
                     ccPrefer      = L["Interrupt Mode CC Prefer"],
                 },
-                sorting = { "disabled", "kickOnly", "ccShielded", "ccPrefer" },
-                get = function() return addon.db.profile.interruptMode or "ccPrefer" end,
+                sorting = { "disabled", "kickOnly", "kickPrefer", "ccPrefer" },
+                get = function() return addon.db.profile.interruptMode or "kickPrefer" end,
                 set = function(_, val)
                     addon.db.profile.interruptMode = val
                     addon:UpdateFrameSize()
@@ -463,7 +463,7 @@ function General.CreateTabArgs(addon)
                 func = function()
                     local p = addon.db.profile
                     p.displayMode         = "queue"
-                    p.interruptMode       = "ccPrefer"
+                    p.interruptMode       = "kickPrefer"
                     p.showFlash           = true
                     p.showUsabilityTint   = true
                     p.showRangeTint       = true

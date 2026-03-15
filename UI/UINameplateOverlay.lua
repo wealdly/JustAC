@@ -696,7 +696,7 @@ function UINameplateOverlay.Create(addon)
 
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)
     -- interruptMode is centralized in profile (no longer per-surface)
-    local interruptMode = profile.interruptMode or "ccPrefer"
+    local interruptMode = profile.interruptMode or "kickPrefer"
     if interruptMode ~= "disabled" and interruptMode ~= "off" then
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
@@ -1041,11 +1041,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
     -- Detect interruptible cast via the nameplate's cast bar frame state.
     -- Uses Icon:IsShown() for 12.0-safe interruptibility detection.
     -- interruptMode: centralized in profile (no longer per-surface)
-    -- "disabled" | "kickOnly" | "ccPrefer"
-    -- ("importantOnly" reserved for future — all important-cast signals are SECRET in 12.0)
-    local npoInterruptMode = profile.interruptMode or "ccPrefer"
-    -- Fallback: if saved data contains retired "importantOnly", treat as "kickOnly"
+    -- "disabled" | "kickOnly" | "kickPrefer" | "ccPrefer"
+    local npoInterruptMode = profile.interruptMode or "kickPrefer"
+    -- Retired modes in saved data → safe fallback.
     if npoInterruptMode == "importantOnly" then npoInterruptMode = "kickOnly" end
+    if npoInterruptMode == "ccShielded" then npoInterruptMode = "kickPrefer" end
     if interruptIcon and resolvedInterrupts and npoInterruptMode ~= "disabled" then
         -- Delegate to UIRenderer.EvaluateInterrupt() — single evaluation shared between
         -- RenderSpellQueue and UINameplateOverlay.Render so both renderers see identical

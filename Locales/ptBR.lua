@@ -220,10 +220,10 @@ L["Interrupt Mode desc"] = "Controla quando o ícone de lembrete de interrupçã
 L["Sounds"] = "Sons"
 L["Interrupt Alert"] = "Alerta de interrupção"
 L["Interrupt Alert Sound desc"] = "Tocar um som quando o ícone de interrupção aparece pela primeira vez."
-L["Interrupt Mode Disabled"] = "Desativado — Sem ícones de interrupção"
-L["Interrupt Mode Kick Only"] = "Apenas Kick — Sugerir kick em conjurações interrompíveis"
-L["Interrupt Mode CC Shielded"] = "Kick + CC — Também atordoar/amedrontar conjurações protegidas"
-L["Interrupt Mode CC Prefer"] = "Preferir CC — Atordoamentos sobre kicks; kick em chefes"
+L["Interrupt Mode Disabled"] = "Desativado"
+L["Interrupt Mode Kick Only"] = "Apenas Kick — Só interrupções, sem CC"
+L["Interrupt Mode Kick Prefer"] = "Prioridade Kick — Kick primeiro, CC como reserva"
+L["Interrupt Mode CC Prefer"] = "Prioridade CC — CC sobre kicks (gasta CC em conjurações kickáveis)"
 L["Nameplate Show Health Bars desc"] = "Mostrar barras de vida compactas do jogador e pet acima dos ícones defensivos. A barra do pet se oculta sem pet ativo. Oculta-se automaticamente sem defensivos visíveis."
 
 -- Reset buttons (5 keys)

@@ -220,10 +220,10 @@ L["Interrupt Mode desc"] = "Contrôle quand l'icône de rappel d'interruption ap
 L["Sounds"] = "Sons"
 L["Interrupt Alert"] = "Alerte d'interruption"
 L["Interrupt Alert Sound desc"] = "Jouer un son lorsque l'icône d'interruption apparaît pour la première fois."
-L["Interrupt Mode Disabled"] = "Désactivé — Aucune icône d'interruption"
-L["Interrupt Mode Kick Only"] = "Kick uniquement — Suggérer le kick sur sorts interruptibles"
-L["Interrupt Mode CC Shielded"] = "Kick + CC — Aussi étourdir/effrayer les sorts protégés"
-L["Interrupt Mode CC Prefer"] = "Préférer CC — Étourdissements plutôt que kicks ; kick sur boss"
+L["Interrupt Mode Disabled"] = "Désactivé"
+L["Interrupt Mode Kick Only"] = "Kick uniquement — Interruptions seulement, pas de CC"
+L["Interrupt Mode Kick Prefer"] = "Priorité kick — Kick d'abord, CC en secours"
+L["Interrupt Mode CC Prefer"] = "Priorité CC — CC plutôt que kicks (gaspille le CC sur les sorts kickables)"
 L["Nameplate Show Health Bars desc"] = "Afficher des barres de santé compactes du joueur et du familier au-dessus des icônes défensives. La barre du familier se masque sans familier actif. Se masque automatiquement sans défensifs visibles."
 
 -- Reset buttons (5 keys)
