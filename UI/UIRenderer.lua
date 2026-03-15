@@ -35,6 +35,7 @@ local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_ActionBar_GetActionCooldown = C_ActionBar and C_ActionBar.GetActionCooldown
 local C_ActionBar_GetActionCharges = C_ActionBar and C_ActionBar.GetActionCharges
 local C_ActionBar_GetActionDisplayCount = C_ActionBar and C_ActionBar.GetActionDisplayCount
+
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
 local pcall = pcall
@@ -320,6 +321,28 @@ local function UpdateButtonCooldowns(button)
         end
     end
 
+    -- Always fetch spell-based charge info for accurate charge count display.
+    -- Slot-based GetActionDisplayCount reflects the current macro state (modifier-conditional
+    -- macros change what's shown), so it returns wrong counts when the spell is "hidden" by
+    -- an active modifier. Direct spell API is preferred; fields are validated with
+    -- IsSecretValue before any comparison to handle the PLAYER_REGEN_DISABLED race window
+    -- where secrets activate before UIRenderer.SetCombatState(true) is called.
+    local spellChargeInfo
+    if not isItem and C_Spell_GetSpellCharges then
+        local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
+        local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
+        if ok and result then
+            -- Validate fields are readable before storing; discard secret tables
+            local maxOk = not BlizzardAPI.IsSecretValue(result.maxCharges)
+            local curOk = not BlizzardAPI.IsSecretValue(result.currentCharges)
+            if maxOk and curOk then
+                spellChargeInfo = result
+            end
+        end
+    end
+    -- Use spell-based chargeInfo as fallback for the CD sweep if slot gave nothing
+    chargeInfo = chargeInfo or spellChargeInfo
+
     if ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
         ActionButton_ApplyCooldown(
             button.cooldown,
@@ -331,13 +354,18 @@ local function UpdateButtonCooldowns(button)
     end
 
     if button.chargeText then
-        if directSlot and C_ActionBar_GetActionDisplayCount then
-            button.chargeText:SetText(C_ActionBar_GetActionDisplayCount(directSlot))
-        elseif isItem then
+        if isItem then
             local count = GetItemCount(id)
             button.chargeText:SetText(count and count > 1 and count or "")
-        elseif chargeInfo and chargeInfo.currentCharges then
-            button.chargeText:SetText(chargeInfo.currentCharges)
+        elseif spellChargeInfo and (spellChargeInfo.maxCharges or 0) > 1 then
+            -- Spell API readable (validated above): accurate regardless of modifier macro state.
+            -- Show count only when not at maximum (mirrors WoW action button behaviour).
+            local cur = spellChargeInfo.currentCharges or 0
+            local max = spellChargeInfo.maxCharges
+            button.chargeText:SetText(cur > 0 and cur < max and cur or "")
+        elseif directSlot and C_ActionBar_GetActionDisplayCount then
+            -- Spell API was secret; slot-based is NeverSecret — safe combat fallback.
+            button.chargeText:SetText(C_ActionBar_GetActionDisplayCount(directSlot))
         else
             button.chargeText:SetText("")
         end
@@ -1496,8 +1524,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
         end
-        -- In click-through mode, hide grab tabs so clicks pass through with zero dead zone.
-        -- Alt-key reveal is wired via MODIFIER_STATE_CHANGED in UIFrameFactory.CreateGrabTab.
+        -- In click-through mode, grab tabs are fully hidden; icons become drag handles on Alt hold.
         if addon.grabTab then
             if isClickThrough then
                 addon.grabTab:Hide()

@@ -46,15 +46,47 @@ end
 --------------------------------------------------------------------------------
 -- Action Bar Usability Helper (shared by IsSpellReady + IsSpellUsable)
 --------------------------------------------------------------------------------
+-- Event-driven usability cache, populated by ACTION_USABLE_CHANGED.
+-- Keyed by absolute action slot number → {usable, noMana}.
+-- Macro modifier effects are handled by the C engine: when a modifier changes
+-- the effective spell on a slot, ACTION_USABLE_CHANGED re-fires for that slot
+-- with updated usability reflecting the newly-resolved spell.
+local slotUsabilityCache = {}
+local wipe = wipe
+
+--- Process ACTION_USABLE_CHANGED batched payload.
+--- @param changes table Array of {slot=luaIndex, usable=bool, noMana=bool}
+function BlizzardAPI.OnActionUsableChanged(changes)
+    for _, change in ipairs(changes) do
+        slotUsabilityCache[change.slot] = change
+    end
+end
+
+--- Wipe slot usability cache (call when slot content changes, e.g. bar page
+--- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
+function BlizzardAPI.InvalidateSlotUsabilityCache()
+    wipe(slotUsabilityCache)
+end
+
 --- Returns the action bar usability state for a spell, or nil if unavailable.
 --- NeverSecret API — safe in combat. Uses ActionBarScanner to find the slot.
+--- Checks the event-driven cache first; falls back to live API.
 --- @param spellID number
 --- @return boolean|nil usable, boolean|nil notEnoughMana
 function BlizzardAPI.GetActionBarUsability(spellID)
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     if not ABS or not ABS.GetSlotForSpell then return nil, nil end
     local slot = ABS.GetSlotForSpell(spellID)
-    if not slot or not C_ActionBar or not C_ActionBar.IsUsableAction then return nil, nil end
+    if not slot then return nil, nil end
+
+    -- Prefer event-driven cache (ACTION_USABLE_CHANGED)
+    local cached = slotUsabilityCache[slot]
+    if cached then
+        return cached.usable, cached.noMana
+    end
+
+    -- Fallback to live API (cache not yet populated for this slot)
+    if not C_ActionBar or not C_ActionBar.IsUsableAction then return nil, nil end
     local usable, noMana = C_ActionBar.IsUsableAction(slot)
     if BlizzardAPI.IsSecretValue(usable) or BlizzardAPI.IsSecretValue(noMana) then return nil, nil end
     return usable, noMana

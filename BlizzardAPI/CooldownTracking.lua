@@ -153,13 +153,11 @@ local function RecordSpellCooldown(spellID)
 
     if not inCombat and C_Spell_GetSpellCooldown then
         local cd = C_Spell_GetSpellCooldown(spellID)
-        if cd and cd.duration and cd.duration > 0 then
-            if not IsSecretValue(cd.duration) then
-                -- Only cache if it's a real cooldown (> 3s), not a GCD read
-                if cd.duration > MIN_TRACKABLE_CD_MS / 1000 then
-                    duration = cd.duration
-                    cachedDurations[spellID] = duration
-                end
+        if cd and cd.duration and not IsSecretValue(cd.duration) and cd.duration > 0 then
+            -- Only cache if it's a real cooldown (> 3s), not a GCD read
+            if cd.duration > MIN_TRACKABLE_CD_MS / 1000 then
+                duration = cd.duration
+                cachedDurations[spellID] = duration
             end
         end
     end
@@ -312,12 +310,18 @@ local function InitCooldownTracking()
             CheckCooldownCompletions(spellID)
         elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
             ClearLocalCooldowns()
+            -- Re-scan OOC after world load — rotation list may not be registered yet
+            -- so this is a best-effort pre-cache for any already-registered spells.
+            ScanCooldownDurations()
         elseif event == "PLAYER_REGEN_ENABLED" then
             -- Combat exit: scan all tracked spells while CD fields are readable
             ClearLocalCooldowns()
             ScanCooldownDurations()
         elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
             ClearCachedDurations()
+            -- Re-scan with new talent-adjusted durations (OOC only — in-combat
+            -- talent changes are impossible under normal gameplay conditions)
+            ScanCooldownDurations()
         end
     end)
 end
