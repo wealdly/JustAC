@@ -221,10 +221,10 @@ L["Interrupt Mode desc"] = "Controla cuándo aparece el icono de recordatorio de
 L["Sounds"] = "Sonidos"
 L["Interrupt Alert"] = "Alerta de interrupción"
 L["Interrupt Alert Sound desc"] = "Reproducir un sonido cuando el icono de interrupción aparece por primera vez."
-L["Interrupt Mode Disabled"] = "Desactivado — Sin iconos de interrupción"
-L["Interrupt Mode Kick Only"] = "Solo Kick — Sugerir kick en lanzamientos interrumpibles"
-L["Interrupt Mode CC Shielded"] = "Kick + CC — También aturdir/temer lanzamientos protegidos"
-L["Interrupt Mode CC Prefer"] = "Preferir CC — Aturdimientos sobre kicks; kick en jefes"
+L["Interrupt Mode Disabled"] = "Desactivado"
+L["Interrupt Mode Kick Only"] = "Solo Kick — Solo interrupciones, sin CC"
+L["Interrupt Mode Kick Prefer"] = "Prioridad Kick — Kick primero, CC como respaldo"
+L["Interrupt Mode CC Prefer"] = "Prioridad CC — CC sobre kicks (gasta CC en lanzamientos kickables)"
 L["Nameplate Show Health Bars desc"] = "Mostrar barras de salud compactas del jugador y mascota sobre los iconos defensivos. La barra de mascota se oculta sin mascota activa. Se oculta automáticamente sin defensivos visibles."
 
 -- Reset buttons (5 keys)

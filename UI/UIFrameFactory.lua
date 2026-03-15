@@ -1377,7 +1377,7 @@ local function CreateInterruptIcon(addon, profile)
     addon.interruptIcon = nil
     addon.resolvedInterrupts = nil
 
-    if (profile.interruptMode or "ccPrefer") == "disabled" then return end
+    if (profile.interruptMode or "kickPrefer") == "disabled" then return end
 
     local firstIconScale = profile.firstIconScale or 1.0
     local actualIconSize = profile.iconSize * firstIconScale

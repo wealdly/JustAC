@@ -436,7 +436,18 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
 
     -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
-    if IsLocalCooldownActive(spellID) then return false end
+    -- Cross-check with action bar usability: if the local timer says "on CD"
+    -- but the action bar shows usable, a CDR effect has shortened the cooldown
+    -- (e.g. Blade of Justice reducing Wake of Ashes CD). Trust the action bar.
+    if IsLocalCooldownActive(spellID) then
+        local actionUsable = BlizzardAPI.GetActionBarUsability(spellID)
+        if actionUsable == true then
+            -- CDR reduced the real CD below our local estimate — clear stale timer
+            localCooldowns[spellID] = nil
+            return true
+        end
+        return false
+    end
 
     -- Charge-based: use local charge tracking (lazy recovery evaluation)
     local cached = cachedMaxCharges[spellID]

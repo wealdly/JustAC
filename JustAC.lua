@@ -46,7 +46,7 @@ local defaults = {
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
-        interruptMode = "ccPrefer",        -- Interrupt reminder mode: "disabled", "kickOnly", "ccPrefer" ("importantOnly" reserved for future)
+        interruptMode = "kickPrefer",      -- Interrupt reminder mode: "disabled", "kickOnly", "kickPrefer", "ccPrefer"
         interruptAlertSound = "none",      -- Alert sound when interrupt icon first appears; see INTERRUPT_ALERT_SOUNDS in UIRenderer.lua
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
@@ -312,7 +312,7 @@ function JustAC:NormalizeSavedData()
         elseif profile.ccRegularMobs == false then
             profile.interruptMode = "kickOnly"
         else
-            profile.interruptMode = "ccPrefer"
+            profile.interruptMode = "kickPrefer"
         end
     end
     if npo and (npo.showInterrupt ~= nil or npo.ccRegularMobs ~= nil) then
@@ -321,15 +321,18 @@ function JustAC:NormalizeSavedData()
         elseif npo.ccRegularMobs == false then
             npo.interruptMode = "kickOnly"
         else
-            npo.interruptMode = "ccPrefer"
+            npo.interruptMode = "kickPrefer"
         end
     end
+    -- Migrate ccShielded → kickPrefer (renamed mode, same behavior)
+    if profile.interruptMode == "ccShielded" then profile.interruptMode = "kickPrefer" end
     -- Centralization migration: per-surface settings → single central setting
     -- interruptMode: overlay had its own copy → use profile-level only
     if npo and npo.interruptMode ~= nil then
+        if npo.interruptMode == "ccShielded" then npo.interruptMode = "kickPrefer" end
         -- If user customized the overlay's interrupt mode, adopt it as the central value
         -- (only if the main queue is still at default, otherwise main queue wins)
-        if profile.interruptMode == "ccPrefer" and npo.interruptMode ~= "ccPrefer" then
+        if profile.interruptMode == "kickPrefer" and npo.interruptMode ~= "kickPrefer" then
             profile.interruptMode = npo.interruptMode
         end
         npo.interruptMode = nil

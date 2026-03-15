@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 5
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 6
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -479,6 +479,52 @@ local UnitCastingInfo  = UnitCastingInfo  ---@diagnostic disable-line: undefined
 local UnitChannelInfo  = UnitChannelInfo  ---@diagnostic disable-line: undefined-global
 local castEventFrame = nil
 
+-- Secret boolean probe (addon-agnostic 12.0 workaround):
+-- SetAlphaFromBoolean() is designed for the opaque pipeline and accepts secret
+-- booleans from addon code (unlike SetShown which rejects them).  Evaluates
+-- true→alpha 1.0, false→alpha 0.0 at C++; GetAlpha() reads the concrete result.
+-- Same pipeline Platynator uses: marker:SetAlphaFromBoolean(notInterruptible).
+local secretProbe = CreateFrame("Frame")
+secretProbe:Hide()
+
+local function ResolveSecretBool(val)
+    if val == nil then return nil end
+    if not IsSecretValue(val) then return val end
+    if not secretProbe.SetAlphaFromBoolean then return nil end
+    local ok, alpha = pcall(function()
+        secretProbe:SetAlphaFromBoolean(val)
+        return secretProbe:GetAlpha()
+    end)
+    if ok and alpha ~= nil and not IsSecretValue(alpha) then
+        return alpha > 0.5
+    end
+    return nil  -- Truly unresolvable; caller decides fail-open/closed
+end
+
+--- Probe the current target for an in-progress cast/channel and resolve its
+--- notInterruptible flag.  Called on PLAYER_TARGET_CHANGED (to catch casts
+--- already in progress that won't fire SPELLCAST_START for us).
+local function ProbeTargetCast()
+    local castName, notInt
+    castName, _, _, _, _, _, _, notInt = UnitCastingInfo("target")
+    if not (IsSecretValue(castName) or castName) then
+        castName, _, _, _, _, _, notInt = UnitChannelInfo("target")
+        if not (IsSecretValue(castName) or castName) then
+            return  -- No cast or channel on target
+        end
+    end
+    targetCastActive = true
+    local resolved = ResolveSecretBool(notInt)
+    if resolved ~= nil then
+        targetCastInterruptible = not resolved
+        targetCastInterruptKnown = true
+    else
+        -- Unresolvable: fail-open, let downstream cascade handle it
+        targetCastInterruptible = true
+        targetCastInterruptKnown = false
+    end
+end
+
 local function InitTargetCastTracking()
     if castEventFrame then return end
     castEventFrame = CreateFrame("Frame")
@@ -506,22 +552,23 @@ local function InitTargetCastTracking()
         elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
             -- New cast started. INTERRUPTIBLE/NOT_INTERRUPTIBLE events only
             -- fire for mid-cast transitions, NOT for initially non-interruptible
-            -- casts. Read notInterruptible from the API immediately so we don't
-            -- depend on a visible cast bar (which third-party addons may hide).
+            -- casts. Read notInterruptible from the API immediately and resolve
+            -- it through C++ if secret (addon-agnostic: no cast bar frame needed).
             targetCastActive = true
-            targetCastInterruptKnown = false
-            targetCastInterruptible = true  -- fail-open until determined
-
             local notInt
             if event == "UNIT_SPELLCAST_START" then
                 _, _, _, _, _, _, _, notInt = UnitCastingInfo("target")
             else
                 _, _, _, _, _, _, notInt = UnitChannelInfo("target")
             end
-            -- In 11.x: real boolean. In 12.0 combat: may be secret.
-            if notInt ~= nil and not IsSecretValue(notInt) then
-                targetCastInterruptible = not notInt
+            local resolved = ResolveSecretBool(notInt)
+            if resolved ~= nil then
+                targetCastInterruptible = not resolved
                 targetCastInterruptKnown = true
+            else
+                -- Unresolvable: fail-open, let downstream cascade handle it
+                targetCastInterruptible = true
+                targetCastInterruptKnown = false
             end
         elseif event == "UNIT_SPELLCAST_STOP"
             or event == "UNIT_SPELLCAST_CHANNEL_STOP"
@@ -532,10 +579,13 @@ local function InitTargetCastTracking()
             targetCastInterruptKnown = false
             targetCastInterruptible = true
         elseif event == "PLAYER_TARGET_CHANGED" then
-            -- New target — previous state is stale
+            -- New target — probe for an existing cast on the new target so we
+            -- detect mid-cast interruptibility without depending on a visible
+            -- cast bar frame (addon-agnostic).
             targetCastActive = false
             targetCastInterruptKnown = false
             targetCastInterruptible = true
+            ProbeTargetCast()
         end
     end)
 end

@@ -220,10 +220,10 @@ L["Interrupt Mode desc"] = "Steuert wann das Unterbrechungserinnerungssymbol ers
 L["Sounds"] = "Töne"
 L["Interrupt Alert"] = "Unterbrechungsalarm"
 L["Interrupt Alert Sound desc"] = "Einen Sound abspielen, wenn das Unterbrechungssymbol erstmals erscheint."
-L["Interrupt Mode Disabled"] = "Deaktiviert — Keine Unterbrechungssymbole"
-L["Interrupt Mode Kick Only"] = "Nur Kick — Kick bei unterbrechbaren Zaubern"
-L["Interrupt Mode CC Shielded"] = "Kick + CC — Auch Betäubung/Furcht bei geschützten Zaubern"
-L["Interrupt Mode CC Prefer"] = "CC bevorzugen — Betäubung statt Kick; Kick bei Bossen"
+L["Interrupt Mode Disabled"] = "Aus"
+L["Interrupt Mode Kick Only"] = "Nur Kick — Nur Unterbrechungen, kein CC"
+L["Interrupt Mode Kick Prefer"] = "Kick-Priorität — Kick zuerst, CC als Ausweichlösung"
+L["Interrupt Mode CC Prefer"] = "CC-Priorität — CC statt Kick (verschwendet CC bei kickbaren Zaubern)"
 L["Nameplate Show Health Bars desc"] = "Kompakte Spieler- und Begleiter-Lebensleisten über den Defensiv-Symbolen anzeigen. Begleiter-Leiste wird ohne aktiven Begleiter ausgeblendet. Automatisch ausgeblendet wenn keine Defensiven sichtbar."
 
 -- Reset buttons (5 keys)
