@@ -47,6 +47,12 @@ L["Grey Out While Casting"] = "Grey Out While Casting"
 L["Grey Out While Casting desc"] = "Desaturate queue icons while you are hardcasting a spell. The spell being cast stays full color."
 L["Grey Out While Channeling"] = "Grey Out While Channeling"
 L["Grey Out While Channeling desc"] = "Desaturate queue icons while you are channeling a spell. The channeled spell stays full color with a fill animation."
+L["Show Usability Tint"] = "Show Usability Tint"
+L["Show Usability Tint desc"] = "Tint icons by usability state: blue when out of resources, gray when unavailable (on cooldown, wrong form, etc)."
+L["Show Range Tint"] = "Show Range Tint"
+L["Show Range Tint desc"] = "Tint icons red when the target is out of range."
+L["Show Casting Highlight"] = "Show Casting Highlight"
+L["Show Casting Highlight desc"] = "Show a white border highlight on an icon while its spell is actively being cast or channeled."
 
 -- Blacklist
 L["Remove"] = "Remove"

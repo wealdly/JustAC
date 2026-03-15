@@ -196,11 +196,53 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
+            showUsabilityTint = {
+                type = "toggle",
+                name = L["Show Usability Tint"],
+                desc = L["Show Usability Tint desc"],
+                order = 15,
+                width = "full",
+                get = function() return addon.db.profile.showUsabilityTint ~= false end,
+                set = function(_, val)
+                    addon.db.profile.showUsabilityTint = val
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            showRangeTint = {
+                type = "toggle",
+                name = L["Show Range Tint"],
+                desc = L["Show Range Tint desc"],
+                order = 16,
+                width = "full",
+                get = function() return addon.db.profile.showRangeTint ~= false end,
+                set = function(_, val)
+                    addon.db.profile.showRangeTint = val
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
+            showCastingHighlight = {
+                type = "toggle",
+                name = L["Show Casting Highlight"],
+                desc = L["Show Casting Highlight desc"],
+                order = 17,
+                width = "full",
+                get = function() return addon.db.profile.showCastingHighlight ~= false end,
+                set = function(_, val)
+                    addon.db.profile.showCastingHighlight = val
+                end,
+                disabled = function()
+                    return (addon.db.profile.displayMode or "queue") == "disabled"
+                end,
+            },
             gamepadIconStyle = {
                 type = "select",
                 name = L["Gamepad Icon Style"],
                 desc = L["Gamepad Icon Style desc"],
-                order = 15,
+                order = 18,
                 width = "normal",
                 values = {
                     generic = L["Generic"],
@@ -224,7 +266,7 @@ function General.CreateTabArgs(addon)
                 type = "select",
                 name = L["Input Preference"],
                 desc = L["Input Preference desc"],
-                order = 16,
+                order = 19,
                 width = "normal",
                 values = {
                     auto = L["Auto-Detect"],
@@ -248,17 +290,17 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
-            -- PERFORMANCE (17-19)
+            -- PERFORMANCE (20-22)
             performanceHeader = {
                 type = "header",
                 name = L["Performance"],
-                order = 17,
+                order = 20,
             },
             disableBlizzardHighlight = {
                 type = "toggle",
                 name = L["Disable Blizzard Highlight"],
                 desc = L["Disable Blizzard Highlight desc"],
-                order = 18,
+                order = 21,
                 width = "full",
                 get = function() return not GetCVarBool("assistedCombatHighlight") end,
                 set = function(_, val)
@@ -268,17 +310,17 @@ function General.CreateTabArgs(addon)
                     return (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
-            -- SOUNDS (20-29)
+            -- SOUNDS (23-29)
             soundsHeader = {
                 type = "header",
                 name = L["Sounds"],
-                order = 20,
+                order = 23,
             },
             interruptAlertSound = {
                 type = "select",
                 name = L["Interrupt Alert"],
                 desc = L["Interrupt Alert Sound desc"],
-                order = 21,
+                order = 24,
                 width = "double",
                 values = {
                     none          = L["Disabled"],
@@ -316,7 +358,7 @@ function General.CreateTabArgs(addon)
             testInterruptSound = {
                 type = "execute",
                 name = "|TInterface\\Common\\VoiceChat-Speaker:0|t Test",
-                order = 22,
+                order = 25,
                 width = "half",
                 func = function()
                     local UIRenderer = LibStub("JustAC-UIRenderer", true)
@@ -423,6 +465,9 @@ function General.CreateTabArgs(addon)
                     p.displayMode         = "queue"
                     p.interruptMode       = "ccPrefer"
                     p.showFlash           = true
+                    p.showUsabilityTint   = true
+                    p.showRangeTint       = true
+                    p.showCastingHighlight = true
                     p.greyOutWhileCasting = true
                     p.greyOutWhileChanneling = true
                     p.gamepadIconStyle    = "xbox"

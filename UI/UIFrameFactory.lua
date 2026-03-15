@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 13)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 14)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -319,9 +319,19 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     button.NormalTexture = normalTexture
     button.borderFrame = borderFrame
 
+    -- Casting highlight: shown while IsCurrentSpell is true for the displayed spell.
+    -- Sits above the border (sublayer 1) but below glow animations (L+4+).
+    local castingHighlight = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    castingHighlight:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    castingHighlight:SetSize(size, size)
+    castingHighlight:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    castingHighlight:SetVertexColor(1, 1, 1, 0.6)
+    castingHighlight:Hide()
+    button.castingHighlight = castingHighlight
+
     if isClickable then
         -- Pushed texture
-        local pushedTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+        local pushedTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 2)
         pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
         pushedTexture:SetSize(size, size)
         pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
@@ -406,6 +416,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     button._cooldownShown = false
     button._chargeCooldownShown = false
     button._cachedMaxCharges = nil
+    button.castingHighlightShown = false
 
     button.normalizedHotkey = nil
     button.previousNormalizedHotkey = nil

@@ -24,6 +24,9 @@ local defaults = {
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
         glowMode = "all",                 -- "all", "primaryOnly", "procOnly", "none"
         showFlash = true,                 -- Flash icon on matching key press
+        showUsabilityTint = true,         -- Tint icons by usability state (blue=no resources, gray=unavailable)
+        showRangeTint = true,             -- Red tint icons when target is out of range
+        showCastingHighlight = true,      -- White border on icon while its spell is actively being cast
         firstIconScale = 1.0,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)

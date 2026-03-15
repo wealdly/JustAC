@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 19)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 21)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -38,6 +38,7 @@ local C_ActionBar_GetActionDisplayCount = C_ActionBar and C_ActionBar.GetActionD
 
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
+local C_Spell_IsCurrentSpell = C_Spell and C_Spell.IsCurrentSpell
 local pcall = pcall
 local pairs = pairs
 local ipairs = ipairs
@@ -406,6 +407,208 @@ local lastFrameState = {
 local lastCooldownUpdate = 0
 local COOLDOWN_UPDATE_INTERVAL = 0.08
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+--- Check whether a spell is out of range. Updates icon.cachedOutOfRange.
+--- @param icon table  Icon button table
+--- @param spellID number
+--- @param directSlot number|nil  Action bar slot (preferred, NeverSecret)
+--- @return boolean isOutOfRange
+local function CheckSpellRange(icon, spellID, directSlot)
+    local inRange
+    if directSlot and C_ActionBar_IsActionInRange then
+        inRange = C_ActionBar_IsActionInRange(directSlot, "target")
+    elseif C_Spell_IsSpellInRange then
+        inRange = C_Spell_IsSpellInRange(spellID)
+    end
+    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
+        icon.cachedOutOfRange = (inRange == false)
+    else
+        icon.cachedOutOfRange = false
+    end
+    return icon.cachedOutOfRange or false
+end
+
+--- Update hotkey text color based on out-of-range state.
+--- @param icon table  Icon button with .hotkeyText and .lastOutOfRange
+--- @param isOutOfRange boolean
+--- @param hotkeyColor table|nil  {r,g,b,a} from profile hotkey color
+local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
+    if icon.lastOutOfRange == isOutOfRange then return end
+    if isOutOfRange then
+        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
+    else
+        local c = hotkeyColor
+        icon.hotkeyText:SetTextColor((c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or 1)
+    end
+    icon.lastOutOfRange = isOutOfRange
+end
+
+--- Determine whether this icon's spell matches the current cast/channel.
+--- @return boolean isChanneledSpell, boolean isCastedSpell
+local function MatchActiveCast(spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+    local isChanneledSpell = false
+    if isChanneling and channelSpellID then
+        if spellID == channelSpellID then
+            isChanneledSpell = true
+        elseif C_Spell_GetOverrideSpell then
+            local overrideID = C_Spell_GetOverrideSpell(spellID)
+            isChanneledSpell = (overrideID and overrideID == channelSpellID)
+        end
+    end
+    local isCastedSpell = false
+    if isCasting and castSpellID then
+        if spellID == castSpellID then
+            isCastedSpell = true
+        elseif C_Spell_GetOverrideSpell then
+            local overrideID = C_Spell_GetOverrideSpell(spellID)
+            isCastedSpell = (overrideID and overrideID == castSpellID)
+        end
+    end
+    return isChanneledSpell, isCastedSpell
+end
+
+--- Resolve the visual state for a DPS icon.
+--- States: 1=greyed (other casting), 2=no resources (blue), 3=normal,
+--- 4=active cast/channel, 5=unavailable (gray desat), 6=out of range (red).
+--- @param icon table  Icon button (caches cachedIsUsable/cachedNotEnoughResources)
+--- @param spellID number
+--- @param isChanneledSpell boolean
+--- @param isCastedSpell boolean
+--- @param isChanneling boolean
+--- @param isCasting boolean
+--- @param isOutOfRange boolean
+--- @param showRangeTint boolean
+--- @param showUsabilityTint boolean
+--- @param inCombat boolean
+--- @param directSlot number|nil  Action bar slot for slot-based usability
+--- @return number visualState
+local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
+                                  isChanneling, isCasting, isOutOfRange,
+                                  showRangeTint, showUsabilityTint, inCombat, directSlot)
+    if isChanneledSpell or isCastedSpell then
+        return 4
+    elseif isChanneling or isCasting then
+        return 1
+    elseif showRangeTint and isOutOfRange then
+        return 6
+    elseif inCombat then
+        -- Usability check: prefer slot-based (NeverSecret), fallback to spell API
+        if directSlot and C_ActionBar_IsUsableAction then
+            icon.cachedIsUsable, icon.cachedNotEnoughResources = C_ActionBar_IsUsableAction(directSlot)
+        else
+            icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+        end
+        if not icon.cachedIsUsable then
+            if icon.cachedNotEnoughResources then
+                return 2  -- no resources → blue tint
+            elseif showUsabilityTint then
+                return 5  -- unavailable (CD/wrong form) → gray desat
+            end
+        end
+    end
+    return 3
+end
+
+--- Apply visual state colors/desaturation to an icon.
+--- @param icon table  Icon button
+--- @param visualState number  1-6
+--- @param baseDesaturation number  Position-based desaturation
+--- @param brightness number  Vertex color multiplier for state 3 (1.0 = full)
+--- @param opacity number  Alpha multiplier for state 3 (1.0 = full)
+local function ApplyVisualState(icon, visualState, baseDesaturation, brightness, opacity)
+    local iconTexture = icon.iconTexture
+    -- Skip redundant GPU calls when state + desaturation haven't changed and
+    -- we're not in a channel/cast frame (which requires per-frame sync).
+    local prevState = icon.lastVisualState
+    local prevDesat = icon.lastBaseDesaturation
+    local changed = (prevState ~= visualState) or (prevDesat ~= baseDesaturation)
+    if visualState == 4 then
+        if changed then iconTexture:SetDesaturation(baseDesaturation) end
+        iconTexture:SetVertexColor(1, 1, 1)
+    elseif visualState == 1 then
+        if prevState ~= 1 then iconTexture:SetDesaturation(1.0) end
+        iconTexture:SetVertexColor(1, 1, 1)
+    elseif visualState == 2 then
+        if prevState ~= 2 then iconTexture:SetDesaturation(0) end
+        iconTexture:SetVertexColor(0.4, 0.4, 1.0)
+    elseif visualState == 5 then
+        if prevState ~= 5 then iconTexture:SetDesaturation(0.8) end
+        iconTexture:SetVertexColor(0.4, 0.4, 0.4)
+    elseif visualState == 6 then
+        if changed then iconTexture:SetDesaturation(baseDesaturation) end
+        iconTexture:SetVertexColor(1.0, 0.2, 0.2)
+    else
+        if changed then iconTexture:SetDesaturation(baseDesaturation) end
+        iconTexture:SetVertexColor(brightness, brightness, brightness, opacity)
+    end
+    icon.lastVisualState = visualState
+    icon.lastBaseDesaturation = baseDesaturation
+end
+
+--- Show or hide the casting highlight overlay.
+--- @param icon table  Icon button with .castingHighlight and .castingHighlightShown
+--- @param showCastingHighlight boolean  Profile toggle
+--- @param spellID number
+--- @param isChanneledSpell boolean
+--- @param isCastedSpell boolean
+local function UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
+    if showCastingHighlight and icon.castingHighlight then
+        local wantHighlight = (isChanneledSpell or isCastedSpell)
+            or (C_Spell_IsCurrentSpell and C_Spell_IsCurrentSpell(spellID))
+        if wantHighlight and not icon.castingHighlightShown then
+            icon.castingHighlight:Show()
+            icon.castingHighlightShown = true
+        elseif not wantHighlight and icon.castingHighlightShown then
+            icon.castingHighlight:Hide()
+            icon.castingHighlightShown = false
+        end
+    elseif icon.castingHighlightShown and icon.castingHighlight then
+        icon.castingHighlight:Hide()
+        icon.castingHighlightShown = false
+    end
+end
+
+--- Reset all per-icon state fields when an icon slot becomes empty.
+--- @param icon table  Icon button
+local function ClearIconState(icon)
+    icon.spellID = nil
+    icon.iconTexture:Hide()
+    if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
+    if icon.centerText then icon.centerText:Hide() end
+    if icon.chargeText then icon.chargeText:Hide() end
+    icon._cooldownShown        = false
+    icon._chargeCooldownShown  = false
+    icon.castingHighlightShown = false
+    icon.cachedHotkey          = nil
+    icon.cachedIsUsable        = nil
+    icon.cachedNotEnoughResources = nil
+    icon.isWaitingSpell        = nil
+    icon.lastOutOfRange        = nil
+    icon.lastVisualState       = nil
+    icon.lastBaseDesaturation  = nil
+    icon.cachedOutOfRange      = nil
+    icon.normalizedHotkey      = nil
+    icon.lastSpellSetTime      = nil
+    icon.lastRenderedGlow      = nil
+    icon.pendingGlowState      = nil
+    icon.pendingGlowTime       = nil
+    if icon.castingHighlight then
+        icon.castingHighlight:Hide()
+    end
+    if UIAnimations then
+        if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
+        if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon) end
+        if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon) end
+    end
+    icon.hasAssistedGlow  = false
+    icon.hasProcGlow      = false
+    icon.hasGapCloserGlow = false
+    icon.hotkeyText:SetText("")
+end
+
 -- Stale atlas markup can appear if cached hotkeys survive a binding change.
 function UIRenderer.InvalidateHotkeyCache()
     hotkeysDirty = true
@@ -500,7 +703,7 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
             defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
         elseif defVisualState == 2 then
             defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
+            defensiveIcon.iconTexture:SetVertexColor(0.4, 0.4, 1.0)
         elseif defVisualState == 4 then
             defensiveIcon.iconTexture:SetDesaturation(0.8)
             defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
@@ -888,6 +1091,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
     local queueDesaturation = GetQueueDesaturation()
+    local showUsabilityTint = profile.showUsabilityTint ~= false
+    local showRangeTint = profile.showRangeTint ~= false
+    local showCastingHighlight = profile.showCastingHighlight ~= false
     
     -- Grey out all icons while channeling (optional, gated by profile toggle).
     -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
@@ -1291,103 +1497,26 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Range check: slot-based with spell fallback.
-                local isOutOfRange = false
-                if displayHotkey ~= "" then
-                    local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
-                    local inRange
-                    if directSlot and C_ActionBar_IsActionInRange then
-                        inRange = C_ActionBar_IsActionInRange(directSlot, "target")
-                    elseif C_Spell_IsSpellInRange then
-                        inRange = C_Spell_IsSpellInRange(spellID)
-                    end
-                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                        icon.cachedOutOfRange = (inRange == false)
-                    else
-                        icon.cachedOutOfRange = false
-                    end
-                    isOutOfRange = icon.cachedOutOfRange or false
-                end
-                if icon.lastOutOfRange ~= isOutOfRange then
-                    if isOutOfRange then
-                        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
-                    else
-                        local hkc = overlays and overlays.hotkey and overlays.hotkey.color
-                        icon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
-                    end
-                    icon.lastOutOfRange = isOutOfRange
-                end
+                local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                local isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
+                local hkc = overlays and overlays.hotkey and overlays.hotkey.color
+                UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
                 
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
-                local isChanneledSpell = false
-                if isChanneling and channelSpellID then
-                    if spellID == channelSpellID then
-                        isChanneledSpell = true
-                    elseif C_Spell_GetOverrideSpell then
-                        local overrideID = C_Spell_GetOverrideSpell(spellID)
-                        isChanneledSpell = (overrideID and overrideID == channelSpellID)
-                    end
-                end
-                local isCastedSpell = false
-                if isCasting and castSpellID then
-                    if spellID == castSpellID then
-                        isCastedSpell = true
-                    elseif C_Spell_GetOverrideSpell then
-                        local overrideID = C_Spell_GetOverrideSpell(spellID)
-                        isCastedSpell = (overrideID and overrideID == castSpellID)
-                    end
-                end
-                local visualState
-                if isChanneledSpell or isCastedSpell then
-                    visualState = 4
-                elseif isChanneling or isCasting then
-                    visualState = 1
-                elseif isInCombat then
-                    local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
-                    if directSlot and C_ActionBar_IsUsableAction then
-                        icon.cachedIsUsable, icon.cachedNotEnoughResources = C_ActionBar_IsUsableAction(directSlot)
-                    else
-                        icon.cachedIsUsable, icon.cachedNotEnoughResources = IsSpellUsable(spellID)
-                    end
-                    if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
-                        visualState = 2
-                    else
-                        visualState = 3
-                    end
-                else
-                    visualState = 3
-                end
+                local isChanneledSpell, isCastedSpell = MatchActiveCast(
+                    spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+
+                local visualState = ResolveVisualState(icon, spellID,
+                    isChanneledSpell, isCastedSpell, isChanneling, isCasting,
+                    isOutOfRange, showRangeTint, showUsabilityTint, isInCombat, directSlot)
                 
-                -- Apply every frame for position-based brightness; desat on transitions only.
                 local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
                 local qa = (i > 1) and QUEUE_ICON_OPACITY or 1
-                if visualState == 4 then
-                    if icon.lastVisualState ~= 4 or icon.lastBaseDesaturation ~= baseDesaturation then
-                        iconTexture:SetDesaturation(baseDesaturation)
-                    end
-                    iconTexture:SetVertexColor(1, 1, 1)
-                elseif visualState == 1 then
-                    if icon.lastVisualState ~= 1 then
-                        iconTexture:SetDesaturation(1.0)
-                    end
-                    iconTexture:SetVertexColor(1, 1, 1)
-                elseif visualState == 2 then
-                    if icon.lastVisualState ~= 2 then
-                        iconTexture:SetDesaturation(0)
-                    end
-                    iconTexture:SetVertexColor(0.3, 0.3, 0.8)
-                else
-                    if icon.lastVisualState ~= 3 or icon.lastBaseDesaturation ~= baseDesaturation then
-                        iconTexture:SetDesaturation(baseDesaturation)
-                    end
-                    iconTexture:SetVertexColor(qb, qb, qb, qa)
-                end
-                icon.lastVisualState = visualState
-                icon.lastBaseDesaturation = baseDesaturation
+                ApplyVisualState(icon, visualState, baseDesaturation, qb, qa)
 
-                -- Channel/cast fill animation: Blizzard-style sliding fill on the active icon.
-                -- Uses the same atlas textures as the action bar (UI-HUD-ActionBar-Channel-Fill).
-                -- StartChannelFill reads UnitChannelInfo timing (NeverSecret) internally.
-                -- Only shown for channels (not hardcasts) — casts just grey out.
+                UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
+
+                -- Channel fill animation (channels only, not hardcasts).
                 if isChanneledSpell then
                     if not icon._hasChannelFill then
                         UIAnimations.StartChannelFill(icon)
@@ -1401,33 +1530,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             else
                 if icon.spellID then
-                    icon.spellID = nil
-                    icon.iconTexture:Hide()
-                    icon.cooldown:Hide()
-                    if icon.centerText then icon.centerText:Hide() end
-                    if icon.chargeText then icon.chargeText:Hide() end
-                    icon._cooldownShown = nil
-                    icon._chargeCooldownShown = nil
-                    icon.cachedHotkey = nil
-                    icon.cachedIsUsable = nil
-                    icon.cachedNotEnoughResources = nil
-                    icon.isWaitingSpell = nil
-                    icon.hasAssistedGlow   = false
-                    icon.hasProcGlow        = false
-                    icon.hasGapCloserGlow   = false
-                    icon.lastOutOfRange = nil
-                    icon.lastVisualState = nil
-                    icon.lastBaseDesaturation = nil
-                    icon.cachedOutOfRange = nil
-                    icon.normalizedHotkey = nil  -- Stale value causes wrong previousNormalizedHotkey on refill.
-                    icon.lastSpellSetTime = nil
-                    icon.lastRenderedGlow = nil
-                    icon.pendingGlowState = nil
-                    icon.pendingGlowTime = nil
-                    UIAnimations.StopAssistedGlow(icon)
-                    UIAnimations.HideProcGlow(icon)
-                    UIAnimations.StopGapCloserGlow(icon)
-                    icon.hotkeyText:SetText("")
+                    ClearIconState(icon)
                 end
                 
                 if not icon:IsShown() then
@@ -1730,6 +1833,14 @@ end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.NormalizeHotkey       = NormalizeHotkey
+UIRenderer.CheckSpellRange       = CheckSpellRange
+UIRenderer.UpdateRangeHotkeyColor = UpdateRangeHotkeyColor
+UIRenderer.MatchActiveCast       = MatchActiveCast
+UIRenderer.ResolveVisualState    = ResolveVisualState
+UIRenderer.ApplyVisualState      = ApplyVisualState
+UIRenderer.UpdateCastingHighlight = UpdateCastingHighlight
+UIRenderer.ClearIconState        = ClearIconState
+UIRenderer.WAIT_LABEL            = WAIT_LABEL
 
 -- Suppresses CC suggestions until the game registers the CC state on the target.
 function UIRenderer.NotifyCCApplied()

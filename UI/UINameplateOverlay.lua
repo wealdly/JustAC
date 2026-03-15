@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 6)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 8)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -29,7 +29,6 @@ local UnitExists         = UnitExists
 local UnitIsDead         = UnitIsDead
 local UnitChannelInfo    = UnitChannelInfo
 local UnitCastingInfo    = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
-local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local math_max           = math.max
 local math_min           = math.min
 local math_floor         = math.floor
@@ -185,6 +184,16 @@ local function CreateOverlayIcon(iconSize, profile)
     button.NormalTexture = normalTexture
     button.borderFrame   = borderFrame
 
+    -- Casting highlight (parity with UIFrameFactory.CreateBaseIcon)
+    local castingHighlight = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    castingHighlight:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    castingHighlight:SetSize(iconSize, iconSize)
+    castingHighlight:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    castingHighlight:SetVertexColor(1, 1, 1, 0.6)
+    castingHighlight:Hide()
+    button.castingHighlight = castingHighlight
+    button.castingHighlightShown = false
+
     -- Hotkey text (top-right corner; display controlled by showHotkey setting)
     local hotkeyFrame = CreateFrame("Frame", nil, button)
     hotkeyFrame:SetFrameStrata("BACKGROUND")
@@ -207,6 +216,17 @@ local function CreateOverlayIcon(iconSize, profile)
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
+
+    -- "WAIT" center indicator (parity with UIFrameFactory.CreateBaseIcon)
+    local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
+    centerText:SetFont(STANDARD_TEXT_FONT, math_max(9, math_floor(iconSize * 0.26)), "OUTLINE")
+    centerText:SetTextColor(1, 0.9, 0.2, 1)
+    centerText:SetJustifyH("CENTER")
+    centerText:SetJustifyV("MIDDLE")
+    centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
+    centerText:SetText("")
+    centerText:Hide()
+    button.centerText = centerText
 
     -- Fade-in / fade-out animations (required by UIRenderer.ShowDefensiveIcon /
     -- HideDefensiveIcon; gracefully skipped if nil, but present for full parity)
@@ -963,6 +983,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
     local showHotkey   = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
+    local showUsabilityTint = profile.showUsabilityTint ~= false
+    local showRangeTint = profile.showRangeTint ~= false
+    local showCastingHighlight = profile.showCastingHighlight ~= false
     local opacity      = npo.opacity or 1.0
     local now        = GetTime()
     local shouldUpdateCooldowns = (now - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -1189,6 +1212,19 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.cachedHotkey         = nil
             end
 
+            -- Wait label: Blizzard's "waiting for resources" placeholder (iconID 134377).
+            if spellChanged then
+                icon.isWaitingSpell = spellInfo.iconID == 134377
+            end
+            if icon.centerText then
+                if icon.isWaitingSpell then
+                    icon.centerText:SetText(UIRenderer.WAIT_LABEL)
+                    icon.centerText:Show()
+                else
+                    icon.centerText:Hide()
+                end
+            end
+
             -- Cooldowns (throttled, same interval as main panel)
             if spellChanged or shouldUpdateCooldowns then
                 UIRenderer.UpdateButtonCooldowns(icon)
@@ -1288,95 +1324,30 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Out-of-range indicator: per-frame (IsSpellInRange is cheap NeverSecret).
-            if showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= "" and C_Spell_IsSpellInRange then
-                do
-                    local inRange = C_Spell_IsSpellInRange(spellID)
-                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                        icon.cachedOutOfRange = (inRange == false)
-                    else
-                        icon.cachedOutOfRange = false
-                    end
-                end
-                local isOutOfRange = icon.cachedOutOfRange or false
-                if icon.lastOutOfRange ~= isOutOfRange then
-                    if isOutOfRange then
-                        icon.hotkeyText:SetTextColor(1, 0, 0, 1)
-                    else
-                        local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-                        icon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
-                    end
-                    icon.lastOutOfRange = isOutOfRange
-                end
-            end
+            -- Range check: slot-based with spell fallback (shared helper).
+            local directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
+            local isOutOfRange = UIRenderer.CheckSpellRange(icon, spellID, directSlot)
+            local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+            UIRenderer.UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
 
-            -- 1 = channeling/casting (grey), 2 = no resources (blue tint), 3 = normal,
-            -- 4 = channeling/casting THIS spell (fill animation, full color)
-            local isChanneledSpell = false
-            if isChanneling and channelSpellID then
-                if spellID == channelSpellID then
-                    isChanneledSpell = true
-                elseif C_Spell_GetOverrideSpell then
-                    local overrideID = C_Spell_GetOverrideSpell(spellID)
-                    isChanneledSpell = (overrideID and overrideID == channelSpellID)
-                end
-            end
-            local isCastedSpell = false
-            if isCasting and castSpellID then
-                if spellID == castSpellID then
-                    isCastedSpell = true
-                elseif C_Spell_GetOverrideSpell then
-                    local overrideID = C_Spell_GetOverrideSpell(spellID)
-                    isCastedSpell = (overrideID and overrideID == castSpellID)
-                end
-            end
-            local visualState
-            if isChanneledSpell or isCastedSpell then
-                visualState = 4
-            elseif isChanneling or isCasting then
-                visualState = 1
-            elseif inCombat then
-                -- Per-frame usability (NeverSecret, lightweight) so resource tint responds instantly.
-                icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
-                if not icon.cachedIsUsable and icon.cachedNotEnoughResources then
-                    visualState = 2
-                else
-                    visualState = 3
-                end
-            else
-                visualState = 3
-            end
-            -- Force-apply every frame during channeling/casting so all icons
-            -- grey/ungrey on the exact same frame (no per-icon desync).
-            -- Also re-apply when npoDesaturation changes (slider moved).
+            local isChanneledSpell, isCastedSpell = UIRenderer.MatchActiveCast(
+                spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+
             local baseDesaturation = (i == 1) and 0 or npoDesaturation
-            if icon.lastVisualState ~= visualState
-               or icon.lastBaseDesaturation ~= baseDesaturation
-               or isChanneling or isCasting then
-                if visualState == 4 then
-                    icon.iconTexture:SetDesaturation(0)
-                    icon.iconTexture:SetVertexColor(1, 1, 1)
-                elseif visualState == 1 then
-                    icon.iconTexture:SetDesaturation(1.0)
-                    icon.iconTexture:SetVertexColor(1, 1, 1)
-                elseif visualState == 2 then
-                    icon.iconTexture:SetDesaturation(0)
-                    icon.iconTexture:SetVertexColor(0.3, 0.3, 0.8)
-                else
-                    icon.iconTexture:SetDesaturation(baseDesaturation)
-                    icon.iconTexture:SetVertexColor(1, 1, 1)
-                end
-                icon.lastVisualState = visualState
-                icon.lastBaseDesaturation = baseDesaturation
-            end
+            local visualState = UIRenderer.ResolveVisualState(icon, spellID,
+                isChanneledSpell, isCastedSpell, isChanneling, isCasting,
+                isOutOfRange, showRangeTint, showUsabilityTint, inCombat, directSlot)
+            UIRenderer.ApplyVisualState(icon, visualState, baseDesaturation, 1, 1)
 
-            -- First icon scale (parity with standard queue firstIconScale)
+            UIRenderer.UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
+
+            -- First icon scale
             local targetScale = (i == 1) and npoFirstIconScale or 1.0
             if icon:GetScale() ~= targetScale then
                 icon:SetScale(targetScale)
             end
 
-            -- Channel fill animation: Blizzard-style sliding fill (channels only, not hardcasts).
+            -- Channel fill animation (channels only, not hardcasts).
             if isChanneledSpell then
                 if not icon._hasChannelFill and UIAnimations then
                     UIAnimations.StartChannelFill(icon)
@@ -1390,23 +1361,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
         else
             -- Empty slot: clear icon
             if icon.spellID then
-                icon.spellID = nil
-                icon.iconTexture:Hide()
-                if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
-                icon._cooldownShown       = false
-                icon._chargeCooldownShown = false
-                icon.normalizedHotkey     = nil
-                icon.cachedHotkey         = nil
-                icon.lastSpellSetTime     = nil
-                icon.lastVisualState      = nil
-                icon.lastBaseDesaturation = nil
-                icon.lastRenderedGlow     = nil
-                icon.pendingGlowState     = nil
-                icon.pendingGlowTime      = nil
-                if UIAnimations then
-                    if icon.hasAssistedGlow then UIAnimations.StopAssistedGlow(icon); icon.hasAssistedGlow = false end
-                    if icon.hasProcGlow     then UIAnimations.HideProcGlow(icon);     icon.hasProcGlow     = false end
-                end
+                UIRenderer.ClearIconState(icon)
             end
             icon:Hide()
         end
