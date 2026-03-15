@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-03-15
+
+### Added
+- **Usability tint**: Icons grey out when the spell is unavailable (CD/wrong form) and tint blue when lacking resources. Toggle in General options.
+- **Range tint**: Icons tint red when the target is out of range. Toggle in General options.
+- **Casting highlight**: White border overlay on the icon while its spell is actively being cast or channeled. Toggle in General options.
+- **Wait label**: Nameplate overlay now shows the "WAIT" indicator when Assisted Combat is waiting for resources (parity with standard queue).
+
+### Changed
+- Consolidated visual state machine, range checking, casting highlight, and icon clear logic into shared helpers (`UIRenderer.CheckSpellRange`, `ResolveVisualState`, `ApplyVisualState`, `MatchActiveCast`, `UpdateCastingHighlight`, `ClearIconState`). Both standard and nameplate queues now call the same code paths.
+- Nameplate overlay now uses slot-based range checking with spell API fallback (previously spell API only), matching standard queue behavior.
+- Nameplate overlay icons now include `castingHighlight` and `centerText` widgets (parity with standard queue frames).
+- Blue "no resources" tint updated from (0.3, 0.3, 0.8) to (0.4, 0.4, 1.0) across all render paths for consistency.
+- Bumped UIRenderer to v21, UIFrameFactory to v14, UINameplateOverlay to v8.
+
 ## [4.11.0] - 2026-03-14
 
 ### Added
