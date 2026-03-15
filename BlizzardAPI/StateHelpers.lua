@@ -343,7 +343,7 @@ end
 -- Player & Pet Health (moved from SpellQuery — consolidated with health helpers)
 --------------------------------------------------------------------------------
 
--- UnitHealth/UnitHealthMax don't return secrets for player units
+-- UnitHealth/UnitHealthMax are SECRET in 12.0 combat — returns nil when secret.
 function BlizzardAPI.GetPlayerHealthPercent()
     if not UnitExists("player") then return nil end
 
@@ -403,7 +403,9 @@ function BlizzardAPI.GetPetStatus()
     return "alive"
 end
 
--- Falls back to LowHealthFrame when UnitHealth() returns secrets
+-- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.
+-- In combat UnitHealth() is secret — only the LowHealthFrame binary (~35% threshold)
+-- is reliable. Health percentages above 35% are indistinguishable in combat.
 function BlizzardAPI.GetPlayerHealthPercentSafe()
     local exactPct = BlizzardAPI.GetPlayerHealthPercent()
     if exactPct then

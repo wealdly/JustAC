@@ -484,6 +484,7 @@ function JustAC:OnEnable()
     self:RegisterEvent("SPELL_UPDATE_ICON", "OnSpellIconChanged")
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
     self:RegisterEvent("ACTION_RANGE_CHECK_UPDATE", "OnActionRangeUpdate")
+    self:RegisterEvent("ACTION_USABLE_CHANGED", "OnActionUsableChanged")
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
@@ -1141,6 +1142,9 @@ end
 
 function JustAC:OnActionBarChanged()
     self:InvalidateCaches({hotkeys = true, macros = true})
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1154,6 +1158,9 @@ function JustAC:OnVehicleChanged(event, unit)
 
     self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1161,6 +1168,9 @@ function JustAC:OnOverrideBarChanged()
     -- Fires when an override action bar appears or disappears (quest vehicles, NPC control).
     self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1168,6 +1178,9 @@ function JustAC:OnPossessBarChanged()
     -- Fires when Mind Control / possess effects begin or end.
     self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1221,6 +1234,13 @@ function JustAC:OnTargetChanged()
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
     -- ForceUpdateAll marks both queues dirty; OnUpdate renders on next tick.
+    self:ForceUpdateAll()
+end
+
+function JustAC:OnActionUsableChanged(_, changes)
+    if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
+        BlizzardAPI.OnActionUsableChanged(changes)
+    end
     self:ForceUpdateAll()
 end
 

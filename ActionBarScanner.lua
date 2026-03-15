@@ -1098,6 +1098,9 @@ function ActionBarScanner.ClearAllCaches()
     wipe(itemSlotCache)
     wipe(abbreviatedKeyCache)
     spellHotkeyCacheValid = false
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
 end
 
 function ActionBarScanner.GetSlotForSpell(spellID)

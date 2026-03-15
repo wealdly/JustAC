@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-03-14
+
+### Added
+- **ACTION_USABLE_CHANGED event integration** — Event-driven slot usability cache in BlizzardAPI, populated by the batched `ACTION_USABLE_CHANGED` event (NeverSecret per-slot `usable`/`noMana` bools). `GetActionBarUsability()` now checks the event cache before falling back to the live `C_ActionBar.IsUsableAction()` API. Macro modifier effects are handled correctly: the C engine re-fires the event when a modifier key changes the effective spell on a slot, keeping the cache in sync. Cache is invalidated on slot content changes (`ACTIONBAR_SLOT_CHANGED`, page changes, vehicle/possess/override transitions).
+
+### Fixed
+- Charge counts no longer disappear from queue icons when the related ability is hidden from the action bar (e.g. by a modifier-conditional macro). Charge text now uses `C_Spell.GetSpellCharges` directly (validated against secret values) for accuracy, falling back to the slot-based `GetActionDisplayCount` in combat.
+- Local cooldown duration cache now re-scans on `PLAYER_ENTERING_WORLD` and after talent/specialization changes, in addition to combat exit. This prevents first-combat edge cases where un-talented base cooldowns were used for spells whose durations are modified by talents.
+
+### Changed
+- Click-Through mode: grab tabs are now fully hidden, eliminating all dead zones. Hold Alt for 0.4 s to enter icon-drag mode — any queue or defensive icon becomes a drag handle. Brief Alt presses (modifier macros) are ignored by the hold threshold. Releasing Alt or finishing a drag exits icon-drag mode and restores full click-through.
+
 ## [4.10.3] - 2026-03-13
 
 ### Changed

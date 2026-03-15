@@ -99,18 +99,12 @@ local function ApplyOverlayQueue(addon, npoQueue)
 end
 
 -- Resolve player health into isLow boolean.
--- 12.0: UnitHealth() is secret in combat — falls back to LowHealthFrame binary states.
--- In combat (secret): GetPlayerHealthPercentSafe returns 100 (not low) or ≤35
--- (LowHealthFrame shown, ~35% threshold, NeverSecret). Configurable thresholds
--- are impossible since we only have a binary signal.
--- Out of combat: real health available, uses fixed 80% threshold.
+-- 12.0: UnitHealth() is secret in combat. The only reliable in-combat signal is
+-- LowHealthFrame visibility (~35% threshold, NeverSecret). Health levels above 35%
+-- are indistinguishable in combat — no thresholds above 35% are usable.
 ResolveHealthState = function(profile)
-    local healthPercent = BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe
-        and BlizzardAPI.GetPlayerHealthPercentSafe()
-    if healthPercent then
-        return healthPercent <= 80
-    end
-    return false
+    local isLow = BlizzardAPI and BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState()
+    return isLow == true
 end
 
 
