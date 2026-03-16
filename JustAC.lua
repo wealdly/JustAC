@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB
 
 local defaults = {
     profile = {
@@ -720,6 +720,7 @@ function JustAC:RefreshConfig()
         if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
         if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
+        if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
     end
 end
 
@@ -759,6 +760,9 @@ function JustAC:InitializeDefensiveSpells()
     end
     if GapCloserEngine then
         GapCloserEngine.InitializeGapClosers(self)
+    end
+    if BurstInjectionEngine then
+        BurstInjectionEngine.InitializeBurstInjection(self)
     end
 end
 function JustAC:RestoreDefensiveDefaults(listType)
@@ -817,6 +821,8 @@ function JustAC:LoadModules()
     if not DefensiveEngine then self:Print("Warning: DefensiveEngine module not found") end
     GapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
     if not GapCloserEngine then self:Print("Warning: GapCloserEngine module not found") end
+    BurstInjectionEngine = LibStub("JustAC-BurstInjectionEngine", true)
+    if not BurstInjectionEngine then self:Print("Warning: BurstInjectionEngine module not found") end
     TargetFrameAnchor = LibStub("JustAC-TargetFrameAnchor", true)
     if not TargetFrameAnchor then self:Print("Warning: TargetFrameAnchor module not found") end
     KeyPressDetector = LibStub("JustAC-KeyPressDetector", true)
@@ -1030,6 +1036,10 @@ function JustAC:OnCombatEvent(event)
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
         end
+        -- Clear any active burst window so it doesn't carry into the next pull
+        if BurstInjectionEngine and BurstInjectionEngine.ClearBurstState then
+            BurstInjectionEngine.ClearBurstState()
+        end
         -- Re-resolve interrupt spells if deferred from combat
         if self.interruptRefreshPending then
             self:RefreshInterruptSpells()
@@ -1079,6 +1089,10 @@ function JustAC:OnSpecChange()
     -- Populate gap closer defaults for the new spec if empty
     if GapCloserEngine and GapCloserEngine.InitializeGapClosers then
         GapCloserEngine.InitializeGapClosers(self)
+    end
+    -- Populate burst injection defaults for the new spec if empty
+    if BurstInjectionEngine and BurstInjectionEngine.InitializeBurstInjection then
+        BurstInjectionEngine.InitializeBurstInjection(self)
     end
     -- Invalidate options spellbook cache so it rebuilds for the new spec
     local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)

@@ -602,10 +602,12 @@ local function ClearIconState(icon)
         if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
         if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon) end
         if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon) end
+        if icon.hasBurstGlow     then UIAnimations.StopBurstGlow(icon) end
     end
     icon.hasAssistedGlow  = false
     icon.hasProcGlow      = false
     icon.hasGapCloserGlow = false
+    icon.hasBurstGlow     = false
     icon.hotkeyText:SetText("")
 end
 
@@ -1048,12 +1050,15 @@ local GLOW_NONE       = 0   -- no glow
 local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
 local GLOW_PROC       = 2   -- gold burst (spell is procced / critically available)
 local GLOW_GAP_CLOSER = 3   -- gold crawl (gap-closer, target out of melee range)
+local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window active)
 
---- Priority: gap-closer > proc > assisted > none.
+--- Priority: gap-closer > burst > proc > assisted > none.
 --- No WoW API calls — all inputs pre-computed by caller.
-local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
+local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow, showBurstGlow)
     local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
+    local isBurstInjection = SpellQueue.IsBurstInjection and SpellQueue.IsBurstInjection(spellID)
+    if isBurstInjection and showBurstGlow then return GLOW_BURST end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
     if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
     -- Spell displaced to position 2 by a gap-closer injection keeps its blue glow
@@ -1091,6 +1096,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
+    local showBurstGlow = showPrimaryGlow and profile.burstInjection and profile.burstInjection.showGlow == true
     local queueDesaturation = GetQueueDesaturation()
     local showUsabilityTint = profile.showUsabilityTint ~= false
     local showRangeTint = profile.showRangeTint ~= false
@@ -1194,6 +1200,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if icon.hasAssistedGlow   then UIAnimations.StopAssistedGlow(icon);  icon.hasAssistedGlow   = false end
                 if icon.hasProcGlow       then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow       = false end
                 if icon.hasGapCloserGlow  then UIAnimations.StopGapCloserGlow(icon);  icon.hasGapCloserGlow  = false end
+                if icon.hasBurstGlow      then UIAnimations.StopBurstGlow(icon);      icon.hasBurstGlow      = false end
                 if icon.hasDefensiveGlow  then UIAnimations.StopDefensiveGlow(icon);  icon.hasDefensiveGlow  = false end
             end
         end
@@ -1405,7 +1412,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Proc glow replaces all other glows to avoid confusing layered animations.
-                local glowState = ResolveGlowState(i, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
+                local glowState = ResolveGlowState(i, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow, showBurstGlow)
 
                 -- Glow hysteresis (positions 2+): require desired glow state to be
                 -- stable for GLOW_HOLD_TIME before switching animations. Prevents
@@ -1443,6 +1450,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 if glowState == GLOW_PROC then
                     if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
+                    if icon.hasBurstGlow then UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false end
                     if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, isInCombat); icon.hasProcGlow = true end
                 else
                     if icon.hasProcGlow then UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false end
@@ -1451,12 +1459,23 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         and not icon.GapCloserHighlightFrame:IsShown() then
                         icon.hasGapCloserGlow = false
                     end
+                    if icon.hasBurstGlow and icon.BurstHighlightFrame
+                        and not icon.BurstHighlightFrame:IsShown() then
+                        icon.hasBurstGlow = false
+                    end
                     if glowState == GLOW_GAP_CLOSER and not icon.hasGapCloserGlow then
                         UIAnimations.StartGapCloserGlow(icon)
                         icon.hasGapCloserGlow = true
                     elseif glowState ~= GLOW_GAP_CLOSER and icon.hasGapCloserGlow then
                         UIAnimations.StopGapCloserGlow(icon)
                         icon.hasGapCloserGlow = false
+                    end
+                    if glowState == GLOW_BURST and not icon.hasBurstGlow then
+                        UIAnimations.StartBurstGlow(icon)
+                        icon.hasBurstGlow = true
+                    elseif glowState ~= GLOW_BURST and icon.hasBurstGlow then
+                        UIAnimations.StopBurstGlow(icon)
+                        icon.hasBurstGlow = false
                     end
                 end
 

@@ -18,6 +18,7 @@ local FLASH_NO_PREV_HANDLER = {}
 local StopAssistedGlow
 local StopDefensiveGlow
 local StopGapCloserGlow
+local StopBurstGlow
 local UpdateFlash
 
 -- Create marching ants glow to show active abilities (Blizzard's rotation helper style)
@@ -168,6 +169,37 @@ local function ShowInterruptProcGlow(icon)
     end
 end
 
+-- Purple-tinted proc glow for burst injection icons
+local BURST_PROC_R, BURST_PROC_G, BURST_PROC_B = 0.7, 0.2, 1.0
+
+local function ShowBurstProcGlow(icon)
+    if not icon then return end
+
+    local procFrame = icon.BurstProcGlowFrame
+    if not procFrame then
+        procFrame = CreateProcGlowFrame(icon, "BurstProcGlowFrame")
+        procFrame.ProcLoopFlipbook:SetDesaturated(true)
+        procFrame.ProcLoopFlipbook:SetVertexColor(BURST_PROC_R, BURST_PROC_G, BURST_PROC_B, 1)
+    end
+
+    local width = icon:GetWidth()
+    procFrame:SetScale(width / 45)
+    procFrame:SetAlpha(1.0)
+    procFrame:Show()
+
+    if not procFrame.ProcLoop:IsPlaying() then
+        procFrame.ProcLoop:Play()
+    end
+end
+
+local function HideBurstProcGlow(icon)
+    if not icon or not icon.BurstProcGlowFrame then return end
+    icon.BurstProcGlowFrame:Hide()
+    if icon.BurstProcGlowFrame.ProcLoop:IsPlaying() then
+        icon.BurstProcGlowFrame.ProcLoop:Stop()
+    end
+end
+
 local function HideInterruptProcGlow(icon)
     if not icon or not icon.InterruptProcGlowFrame then return end
 
@@ -239,6 +271,16 @@ local GLOW_CONFIG = {
         flagField   = "hasInterruptGlow",
         pauseField  = nil,
         clearsProc  = true,
+    },
+    BURST = {
+        frameKey    = "BurstHighlightFrame",
+        r = 0.7, g = 0.2, b = 1.0,          -- Purple for burst injection
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- Always animate to draw attention
+        flagField   = "hasBurstGlow",
+        pauseField  = nil,
+        clearsProc  = false,
     },
 }
 
@@ -344,6 +386,14 @@ StopGapCloserGlow = function(icon)
     StopMarchingAntsGlow(icon, GLOW_CONFIG.GAP_CLOSER)
 end
 
+local function StartBurstGlow(icon)
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.BURST)
+end
+
+StopBurstGlow = function(icon)
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.BURST)
+end
+
 local function StartInterruptGlow(icon, isInCombat)
     StartMarchingAntsGlow(icon, GLOW_CONFIG.INTERRUPT, isInCombat)
 end
@@ -419,6 +469,7 @@ local function HideAllGlows(addon)
             StopAssistedGlow(icon)
             StopDefensiveGlow(icon)
             StopGapCloserGlow(icon)
+            StopBurstGlow(icon)
             StopInterruptGlow(icon)
             HideProcGlow(icon)
         end
@@ -617,12 +668,16 @@ UIAnimations.StartDefensiveGlow = StartDefensiveGlow
 UIAnimations.StopDefensiveGlow = StopDefensiveGlow
 UIAnimations.StartGapCloserGlow = StartGapCloserGlow
 UIAnimations.StopGapCloserGlow = StopGapCloserGlow
+UIAnimations.StartBurstGlow = StartBurstGlow
+UIAnimations.StopBurstGlow = StopBurstGlow
 UIAnimations.StartInterruptGlow = StartInterruptGlow
 UIAnimations.StopInterruptGlow = StopInterruptGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
+UIAnimations.ShowBurstProcGlow = ShowBurstProcGlow
+UIAnimations.HideBurstProcGlow = HideBurstProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash

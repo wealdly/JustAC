@@ -25,18 +25,23 @@ local lastQueueUpdate = 0
 -- Avoids re-evaluating the same mount/healer/OOC conditions every render frame.
 local lastShouldShowQueue = true
 
--- Lazy-resolved references for gap-closer (GapCloserEngine loads after SpellQueue in TOC)
+-- Lazy-resolved references for gap-closer and burst injection (load after SpellQueue in TOC)
 local cachedGapCloserEngine = nil
+local cachedBurstEngine = nil
 local cachedAddon = nil
 
 -- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
 -- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
 local syntheticProcs = {}
 
--- Spells displaced from position 1 to position 2 by a gap-closer injection.
+-- Spells displaced from position 1 to position 2 by a gap-closer/burst injection.
 -- These were Blizzard's primary recommendation; they keep the blue assisted glow
 -- at their new position so the player knows they're still the next cast after closing.
 local displacedPrimary = {}
+
+-- Spells injected by the burst injection system.  Separate from syntheticProcs
+-- so UIRenderer can apply a distinct purple glow instead of the gap-closer gold.
+local burstInjectedSpells = {}
 
 -- Reusable pooled tables (wiped at start of each queue build to avoid GC pressure)
 local proccedSpells = {}
@@ -346,6 +351,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(addedSpellIDs)
     wipe(syntheticProcs)
     wipe(displacedPrimary)
+    wipe(burstInjectedSpells)
     wipe(cooldownSpells)
     local maxIcons = profile.maxIcons or 4
     local spellCount = 0
@@ -421,6 +427,52 @@ function SpellQueue.GetCurrentSpellQueue()
         end
     end
 
+    -- Burst injection: inject priority spell at position 1 when burst window is active.
+    -- BurstInjectionEngine loads after SpellQueue, so we resolve it lazily.
+    if spellCount < maxIcons then
+        if not cachedBurstEngine then
+            cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true)
+        end
+        if not cachedAddon then
+            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        end
+        if cachedBurstEngine and cachedBurstEngine.CheckTrigger and cachedAddon then
+            if cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID) then
+                local biSpell, biBase = cachedBurstEngine.GetBurstInjectionSpell(cachedAddon, addedSpellIDs)
+                if biSpell then
+                    local biDisplay = BlizzardAPI.GetDisplaySpellID(biSpell)
+                    if spellCount >= 1 then
+                        local pos1Display = recommendedSpells[1]
+                        if pos1Display then displacedPrimary[pos1Display] = true end
+                        if primarySpellID and primarySpellID ~= pos1Display then
+                            displacedPrimary[primarySpellID] = true
+                        end
+                        for i = spellCount, 1, -1 do
+                            recommendedSpells[i + 1] = recommendedSpells[i]
+                        end
+                        recommendedSpells[1] = biSpell
+                    else
+                        recommendedSpells[1] = biSpell
+                    end
+                    spellCount = spellCount + 1
+                    addedSpellIDs[biSpell] = true
+                    addedSpellIDs[biDisplay] = true
+                    if biBase and biBase ~= biSpell then
+                        addedSpellIDs[biBase] = true
+                    end
+                    burstInjectedSpells[biSpell] = true
+                    burstInjectedSpells[biDisplay] = true
+                end
+
+                -- Suppress burst injection spells from rotation list during active burst
+                -- window — our injection controls when they appear.
+                if cachedBurstEngine.MarkBurstInjectionSpellIDs then
+                    cachedBurstEngine.MarkBurstInjectionSpellIDs(cachedAddon, addedSpellIDs)
+                end
+            end
+        end
+    end
+
     if profile.showSpellbookProcs then
         spellCount = AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
     end
@@ -463,6 +515,11 @@ end
 --- by the most recent GetCurrentSpellQueue() call.
 function SpellQueue.IsSyntheticProc(spellID)
     return syntheticProcs[spellID] == true
+end
+
+--- Returns true if spellID was injected by the burst injection system this frame.
+function SpellQueue.IsBurstInjection(spellID)
+    return burstInjectedSpells[spellID] == true
 end
 
 --- Returns true if spellID was displaced from position 1 to position 2 by a

@@ -3,6 +3,31 @@
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-03-15
+
+### Added
+- **Burst Injection**: New feature that injects priority spells (secondary CDs, empowered abilities) into queue position 1 during burst windows. Triggers automatically when Blizzard recommends a spell with a base cooldown ≥ 45s. Configurable trigger threshold, per-spec trigger and injection spell lists. Purple marching-ant glow on injected icons. Options tab under Offensive.
+- **Detected Burst Triggers display**: Options panel shows auto-detected trigger spells from the current rotation, so users know what will fire the burst window without manual configuration.
+- Burst injection defaults for all 37 DPS/tank specs (13 classes), including the new Devourer Demon Hunter spec (The Hunt, Void-Scarred).
+
+### Fixed
+- Replaced broken `SetAlphaFromBoolean` secret-resolution probe with `TargetFrame.spellbar:IsInterruptable()` pcall attempt in `ResolveSecretBool`. Neither resolves secrets from addon context (`barType` is `ForceTaint_Strong`), but removes dead `CreateFrame` allocation and avoids the `GetAlpha()` stays-secret pitfall.
+
+### Changed
+- Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
+
+### Known Issues
+- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones — kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
+
+## [4.13.1] - 2026-03-15
+
+### Changed
+- Replaced broken `SetAlphaFromBoolean` secret-resolution probe with `TargetFrame.spellbar:IsInterruptable()` attempt in `ResolveSecretBool`. Neither resolves secrets from addon context (barType is tainted), but removes dead `CreateFrame` allocation.
+- Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
+
+### Known Issues
+- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones — kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
+
 ## [4.13.0] - 2026-03-15
 
 ### Fixed
