@@ -893,6 +893,116 @@ SpellDB.GAP_CLOSER_REQUIRES_STEALTH = {
     [185438] = true,  -- Shadowstrike (Sub Rogue): teleports only in stealth/Shadow Dance
 }
 
+--------------------------------------------------------------------------------
+-- BURST WINDOW DURATION DEFAULTS (seconds)
+-- How long the burst window stays active after trigger fires.
+-- Per-spec overrides for specs with shorter/longer burst CDs.
+-- Fallback: 10 seconds.
+--------------------------------------------------------------------------------
+SpellDB.CLASS_BURST_DURATION_DEFAULTS = {
+    -- Specs with notably longer burst windows
+    DEATHKNIGHT_1 = 15,  -- Dancing Rune Weapon lasts 15s
+    DEMONHUNTER_1 = 24,  -- Metamorphosis lasts 24s
+    DRUID_2       = 20,  -- Berserk lasts 20s
+    DRUID_3       = 15,  -- Guardian Berserk lasts 15s
+    MAGE_2        = 12,  -- Combustion lasts 12s
+    ROGUE_2       = 20,  -- Adrenaline Rush lasts 20s
+    ROGUE_3       = 20,  -- Shadow Blades lasts 20s
+    WARRIOR_2     = 12,  -- Recklessness lasts 12s
+    WARRIOR_3     = 20,  -- Avatar lasts 20s
+    -- Default (10s) is fine for most specs
+}
+
+SpellDB.BURST_DURATION_FALLBACK = 10  -- seconds
+SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT = 45  -- seconds; spells with base CD >= this trigger burst
+
+--------------------------------------------------------------------------------
+-- BURST INJECTION DEFAULTS
+-- Per-spec ordered list of spells to inject at position 1 during burst.
+-- First usable spell wins. Typically secondary CDs, empowered abilities,
+-- or spells the player wants to guarantee during a burst window.
+-- Intentionally sparse — users can customize. Ship with known combos only.
+--------------------------------------------------------------------------------
+SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
+    -- Death Knight
+    DEATHKNIGHT_1 = {194844},                        -- Blood: Bonestorm (60s)
+    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s)
+    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s)
+
+    -- Demon Hunter
+    DEMONHUNTER_1 = {370965},                        -- Havoc: The Hunt (90s)
+    DEMONHUNTER_2 = {187827},                        -- Vengeance: Metamorphosis (180s)
+    DEMONHUNTER_3 = {1246167},                       -- Devourer: The Hunt (90s, Void-Scarred)
+
+    -- Druid
+    DRUID_1 = {391528},                              -- Balance: Convoke the Spirits (120s)
+    DRUID_2 = {391528, 274837},                      -- Feral: Convoke the Spirits (120s), Feral Frenzy (45s)
+    DRUID_3 = {236716},                              -- Guardian: Rage of the Sleeper (60s)
+
+    -- Evoker
+    EVOKER_1 = {357210},                             -- Devastation: Deep Breath (120s)
+    EVOKER_3 = {403631},                             -- Augmentation: Breath of Eons (120s)
+
+    -- Hunter
+    HUNTER_1 = {359844, 321530},                     -- Beast Mastery: Call of the Wild (120s), Bloodshed (60s)
+    HUNTER_2 = {260243},                             -- Marksmanship: Volley (45s)
+    HUNTER_3 = {203415},                             -- Survival: Fury of the Eagle (45s)
+
+    -- Mage
+    MAGE_1  = {321507},                              -- Arcane: Touch of the Magi (45s)
+    MAGE_2  = {153561},                              -- Fire: Meteor (45s)
+    MAGE_3  = {84714},                               -- Frost: Frozen Orb (60s)
+
+    -- Monk
+    MONK_1  = {325153},                              -- Brewmaster: Exploding Keg (60s)
+    MONK_3  = {123904},                              -- Windwalker: Invoke Xuen, the White Tiger (120s)
+
+    -- Paladin
+    PALADIN_1 = {387174},                            -- Protection: Eye of Tyr (60s)
+    PALADIN_3 = {255937},                            -- Retribution: Wake of Ashes (45s)
+
+    -- Priest
+    PRIEST_3 = {263165},                             -- Shadow: Void Torrent (45s)
+
+    -- Rogue
+    ROGUE_1 = {360194},                              -- Assassination: Deathmark (120s)
+    ROGUE_2 = {51690},                               -- Outlaw: Killing Spree (120s)
+    ROGUE_3 = {280719},                              -- Subtlety: Secret Technique (45s)
+
+    -- Shaman
+    SHAMAN_1 = {114050},                             -- Elemental: Ascendance (180s)
+    SHAMAN_2 = {384352},                             -- Enhancement: Doom Winds (60s)
+
+    -- Warlock
+    WARLOCK_1 = {386997},                            -- Affliction: Soul Rot (60s)
+    WARLOCK_2 = {111898},                            -- Demonology: Grimoire: Felguard (120s)
+    WARLOCK_3 = {152108},                            -- Destruction: Cataclysm (45s)
+
+    -- Warrior
+    WARRIOR_1 = {107574},                            -- Arms: Avatar (90s)
+    WARRIOR_2 = {107574},                            -- Fury: Avatar (90s)
+    WARRIOR_3 = {228920},                            -- Protection: Ravager (45s)
+}
+
+--- Return the burst injection default list for the current class+spec, or nil.
+function SpellDB.GetBurstInjectionDefaults()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil end
+    return SpellDB.CLASS_BURST_INJECTION_DEFAULTS[playerClass .. "_" .. spec]
+end
+
+--- Return the default burst window duration for the current class+spec.
+function SpellDB.GetBurstDurationDefault()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return SpellDB.BURST_DURATION_FALLBACK end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return SpellDB.BURST_DURATION_FALLBACK end
+    return SpellDB.CLASS_BURST_DURATION_DEFAULTS[playerClass .. "_" .. spec]
+        or SpellDB.BURST_DURATION_FALLBACK
+end
+
 --- Check whether the current spec has gap-closer defaults (i.e. is a melee spec).
 --- Returns true if CLASS_GAPCLOSER_DEFAULTS has an entry for the current class+spec.
 function SpellDB.IsMeleeSpec()

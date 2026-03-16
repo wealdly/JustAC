@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.13.0
+## Version: 4.14.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -51,6 +51,7 @@ UI\UIRenderer.lua
 UI\UINameplateOverlay.lua
 DefensiveEngine.lua
 GapCloserEngine.lua
+BurstInjectionEngine.lua
 DebugCommands.lua
 Options\SpellSearch.lua
 Options\LiveSearchPopup.lua
@@ -60,6 +61,7 @@ Options\Offensive.lua
 Options\Overlay.lua
 Options\Defensives.lua
 Options\GapClosers.lua
+Options\BurstInjection.lua
 Options\Labels.lua
 Options\Hotkeys.lua
 Options\Profiles.lua

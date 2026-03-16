@@ -14,8 +14,9 @@ local StandardQueue = LibStub("JustAC-OptionsStandardQueue", true)
 local Offensive     = LibStub("JustAC-OptionsOffensive", true)
 local Overlay     = LibStub("JustAC-OptionsOverlay", true)
 local Defensives  = LibStub("JustAC-OptionsDefensives", true)
-local GapClosers  = LibStub("JustAC-OptionsGapClosers", true)
-local Labels      = LibStub("JustAC-OptionsLabels", true)
+local GapClosers      = LibStub("JustAC-OptionsGapClosers", true)
+local BurstInjection  = LibStub("JustAC-OptionsBurstInjection", true)
+local Labels          = LibStub("JustAC-OptionsLabels", true)
 local Hotkeys     = LibStub("JustAC-OptionsHotkeys", true)
 local Profiles    = LibStub("JustAC-OptionsProfiles", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -48,6 +49,13 @@ function Options.UpdateGapCloserOptions(addon)
     if not GapClosers then GapClosers = LibStub("JustAC-OptionsGapClosers", true) end
     if GapClosers and GapClosers.UpdateGapCloserOptions then
         GapClosers.UpdateGapCloserOptions(addon)
+    end
+end
+
+function Options.UpdateBurstInjectionOptions(addon)
+    if not BurstInjection then BurstInjection = LibStub("JustAC-OptionsBurstInjection", true) end
+    if BurstInjection and BurstInjection.UpdateBurstInjectionOptions then
+        BurstInjection.UpdateBurstInjectionOptions(addon)
     end
 end
 
@@ -93,6 +101,7 @@ local function HandleSlashCommand(addon, input)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
         Options.UpdateGapCloserOptions(addon)
+        Options.UpdateBurstInjectionOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
         return
     end
@@ -111,6 +120,7 @@ local function HandleSlashCommand(addon, input)
         Options.UpdateHotkeyOverrideOptions(addon)
         Options.UpdateDefensivesOptions(addon)
         Options.UpdateGapCloserOptions(addon)
+        Options.UpdateBurstInjectionOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
 
     elseif command == "toggle" then

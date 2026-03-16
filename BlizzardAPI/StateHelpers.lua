@@ -479,26 +479,21 @@ local UnitCastingInfo  = UnitCastingInfo  ---@diagnostic disable-line: undefined
 local UnitChannelInfo  = UnitChannelInfo  ---@diagnostic disable-line: undefined-global
 local castEventFrame = nil
 
--- Secret boolean probe (addon-agnostic 12.0 workaround):
--- SetAlphaFromBoolean() is designed for the opaque pipeline and accepts secret
--- booleans from addon code (unlike SetShown which rejects them).  Evaluates
--- true→alpha 1.0, false→alpha 0.0 at C++; GetAlpha() reads the concrete result.
--- Same pipeline Platynator uses: marker:SetAlphaFromBoolean(notInterruptible).
-local secretProbe = CreateFrame("Frame")
-secretProbe:Hide()
-
+-- Resolve a secret notInterruptible boolean by reading Blizzard's target frame
+-- spellbar. CastingBarMixin runs in privileged context and resolves the secret
+-- via GetEffectiveType() before our handler fires (registered first at UI load).
+-- IsInterruptable() returns a plain boolean from the already-resolved barType.
 local function ResolveSecretBool(val)
     if val == nil then return nil end
     if not IsSecretValue(val) then return val end
-    if not secretProbe.SetAlphaFromBoolean then return nil end
-    local ok, alpha = pcall(function()
-        secretProbe:SetAlphaFromBoolean(val)
-        return secretProbe:GetAlpha()
-    end)
-    if ok and alpha ~= nil and not IsSecretValue(alpha) then
-        return alpha > 0.5
+    local sb = TargetFrame and TargetFrame.spellbar
+    if sb and sb.IsInterruptable then
+        local ok, inter = pcall(sb.IsInterruptable, sb)
+        if ok and inter ~= nil and not IsSecretValue(inter) then
+            return not inter  -- IsInterruptable()=true → notInterruptible=false
+        end
     end
-    return nil  -- Truly unresolvable; caller decides fail-open/closed
+    return nil
 end
 
 --- Probe the current target for an in-progress cast/channel and resolve its

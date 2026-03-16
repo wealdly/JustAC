@@ -11,6 +11,7 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function Offensive.CreateTabArgs(addon)
     local GapClosers = LibStub("JustAC-OptionsGapClosers", true)
+    local BurstInjection = LibStub("JustAC-OptionsBurstInjection", true)
     return {
         type = "group",
         name = L["Offensive"],
@@ -19,6 +20,8 @@ function Offensive.CreateTabArgs(addon)
         args = {
             -- Sub-tab 1: Gap-Closers
             gapClosers = (GapClosers and GapClosers.CreateTabArgs) and GapClosers.CreateTabArgs(addon) or nil,
+            -- Sub-tab 1.5: Burst Injection
+            burstInjection = (BurstInjection and BurstInjection.CreateTabArgs) and BurstInjection.CreateTabArgs(addon) or nil,
             -- Sub-tab 2: Blacklist
             blacklist = {
                 type = "group",
