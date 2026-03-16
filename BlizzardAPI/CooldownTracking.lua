@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 3
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 6
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -26,9 +26,12 @@ local Unsecret      = BlizzardAPI.Unsecret
 local localCooldowns = {}
 local cachedDurations = {}
 local cachedMaxCharges = {}
-local trackedDefensiveSpells = {}
-local trackedRotationSpells = {}
 local cooldownEventFrame = nil
+
+-- Unified spell tracking: spellID → category string
+-- Categories: "defensive", "rotation", "burst", "gapcloser", "interrupt"
+-- Only "rotation" has a CD duration gate (>3s) — all others register unconditionally.
+local trackedSpells = {}
 
 -- Local charge tracking for multi-charge spells (e.g. Frenzied Regeneration)
 -- All GetSpellCharges fields are SECRET in combat — track charges locally via
@@ -126,7 +129,7 @@ end
 
 local function RecordSpellCooldown(spellID)
     if not spellID or spellID == 0 then return end
-    if not trackedDefensiveSpells[spellID] and not trackedRotationSpells[spellID] then return end
+    if not trackedSpells[spellID] then return end
 
     -- Charge-based spells: decrement local charge count instead of recording
     -- a flat cooldown. Local CD tracking would record a full-duration CD on every
@@ -237,10 +240,7 @@ local function ScanCooldownDurations()
         -- Also cache maxCharges while we're at it
         CacheChargesForSpell(spellID)
     end
-    for spellID in pairs(trackedRotationSpells) do
-        scanSpell(spellID)
-    end
-    for spellID in pairs(trackedDefensiveSpells) do
+    for spellID in pairs(trackedSpells) do
         scanSpell(spellID)
     end
 end
@@ -326,58 +326,68 @@ local function InitCooldownTracking()
     end)
 end
 
-function BlizzardAPI.RegisterDefensiveSpell(spellID)
+--- Register a spell for local cooldown tracking.
+--- @param spellID number
+--- @param category string One of: "defensive", "rotation", "burst", "gapcloser", "interrupt"
+---   Only "rotation" has a CD duration gate (>3s) — all others register unconditionally.
+---   Duration is always cached regardless of category (needed by RecordSpellCooldown).
+function BlizzardAPI.RegisterSpellForTracking(spellID, category)
     if not spellID or spellID == 0 then return end
-    trackedDefensiveSpells[spellID] = true
-    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
+    if trackedSpells[spellID] then return end  -- already registered
+
+    -- Always attempt to cache duration (needed by RecordSpellCooldown)
+    if not cachedDurations[spellID] or cachedDurations[spellID] <= 0 then
+        local tooltipCD = ParseTooltipCooldown(spellID)
+        if tooltipCD and tooltipCD > 0 then
+            cachedDurations[spellID] = tooltipCD
+        else
+            local baseCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) or 0
+            if baseCdMs > 0 then
+                cachedDurations[spellID] = baseCdMs / 1000
+            end
+        end
+    end
+
+    -- Only "rotation" category has the CD duration gate
+    if category == "rotation" then
+        local effectiveCdMs = (cachedDurations[spellID] or 0) * 1000
+        if effectiveCdMs < MIN_TRACKABLE_CD_MS then return end
+    end
+
+    trackedSpells[spellID] = category or "rotation"
     CacheChargesForSpell(spellID)
     if not cooldownEventFrame then
         InitCooldownTracking()
     end
+end
+
+--- Legacy wrapper: register a defensive spell for tracking.
+function BlizzardAPI.RegisterDefensiveSpell(spellID)
+    BlizzardAPI.RegisterSpellForTracking(spellID, "defensive")
+end
+
+--- Legacy wrapper: register a rotation spell for tracking (CD > 3s gate).
+function BlizzardAPI.RegisterRotationSpell(spellID)
+    BlizzardAPI.RegisterSpellForTracking(spellID, "rotation")
 end
 
 function BlizzardAPI.ClearTrackedDefensives()
-    wipe(trackedDefensiveSpells)
+    for spellID, cat in pairs(trackedSpells) do
+        if cat == "defensive" then
+            trackedSpells[spellID] = nil
+        end
+    end
     wipe(localCooldowns)
 end
 
---- Register a rotation spell for local cooldown tracking.
---- Only tracks spells with effective CD > MIN_TRACKABLE_CD_MS (3s)
---- to avoid treating GCD-only spells as on-cooldown.
-function BlizzardAPI.RegisterRotationSpell(spellID)
-    if not spellID or spellID == 0 then return end
-    -- Already registered — skip redundant tooltip scan
-    if trackedRotationSpells[spellID] then return end
-
-    -- Only track spells with a real cooldown (> 3s)
-    -- Check cached duration first (avoids tooltip scan if already known)
-    local effectiveCdMs
-    if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
-        effectiveCdMs = cachedDurations[spellID] * 1000
-    else
-        -- Tooltip reflects talent modifications (only works out of combat)
-        local tooltipCD = ParseTooltipCooldown(spellID)
-        if tooltipCD and tooltipCD > 0 then
-            effectiveCdMs = tooltipCD * 1000
-            cachedDurations[spellID] = tooltipCD
-        else
-            -- Fall back to base CD (unmodified by talents)
-            effectiveCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) or 0
+function BlizzardAPI.ClearTrackedRotationSpells()
+    for spellID, cat in pairs(trackedSpells) do
+        if cat ~= "defensive" then
+            trackedSpells[spellID] = nil
         end
     end
-    if effectiveCdMs < MIN_TRACKABLE_CD_MS then return end
-    trackedRotationSpells[spellID] = true
-    -- Pre-cache charges while out of combat (ALL fields SECRET in combat)
-    CacheChargesForSpell(spellID)
-    if not cooldownEventFrame then
-        InitCooldownTracking()
-    end
-end
-
-function BlizzardAPI.ClearTrackedRotationSpells()
-    wipe(trackedRotationSpells)
     -- Don't wipe localCooldowns here — defensives may still need them.
-    -- Stale rotation entries expire naturally via endTime.
+    -- Stale non-defensive entries expire naturally via endTime.
 end
 
 function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
@@ -436,16 +446,10 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
 
     -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
-    -- Cross-check with action bar usability: if the local timer says "on CD"
-    -- but the action bar shows usable, a CDR effect has shortened the cooldown
-    -- (e.g. Blade of Justice reducing Wake of Ashes CD). Trust the action bar.
+    -- IsUsableAction returns true even on cooldown — cannot cross-check with
+    -- action bar usability. CDR corrections are handled by CheckCooldownCompletions
+    -- via SPELL_UPDATE_COOLDOWN events and by ClearLocalCooldowns on combat exit.
     if IsLocalCooldownActive(spellID) then
-        local actionUsable = BlizzardAPI.GetActionBarUsability(spellID)
-        if actionUsable == true then
-            -- CDR reduced the real CD below our local estimate — clear stale timer
-            localCooldowns[spellID] = nil
-            return true
-        end
         return false
     end
 
@@ -460,14 +464,11 @@ function BlizzardAPI.IsSpellReady(spellID)
         -- No local charge data — fall through to action bar fallback
     end
 
-    -- Action bar usability (visual state, NeverSecret)
+    -- Action bar usability: can only detect "not usable for non-resource reasons"
+    -- (wrong form, etc). IsUsableAction returns true even on cooldown, so
+    -- actionUsable == true is no better than the fail-open default below.
     local actionUsable, notEnoughMana = BlizzardAPI.GetActionBarUsability(spellID)
-    if actionUsable ~= nil then
-        -- Not usable AND not a mana issue → likely on cooldown
-        if actionUsable == false and not notEnoughMana then return false end
-        -- Usable → spell is ready
-        if actionUsable == true then return true end
-    end
+    if actionUsable == false and not notEnoughMana then return false end
 
     -- Fail-open: assume ready when we can't determine state
     return true

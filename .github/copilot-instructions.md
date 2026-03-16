@@ -58,7 +58,7 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | `Locales/*.lua` | AceLocale-3.0 localization (9 languages) | `L` global | N/A (not LibStub) |
 | `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v8 |
 | `BlizzardAPI.lua` | Root: secret value primitives, version detection | `IsSecretValue()`, `Unsecret()`, `GetActionBarUsability()` | v33 |
-| `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `IsSpellOnLocalCooldown()`, `RegisterRotationSpell()` | v2 |
+| `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `RegisterSpellForTracking()`, `IsSpellOnLocalCooldown()` | v6 |
 | `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `IsMidnightOrLater()` | v1 |
 | `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v1 |
 | `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v5 |

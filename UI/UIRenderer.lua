@@ -472,7 +472,8 @@ end
 
 --- Resolve the visual state for a DPS icon.
 --- States: 1=greyed (other casting), 2=no resources (blue), 3=normal,
---- 4=active cast/channel, 5=unavailable (gray desat), 6=out of range (red).
+--- 4=active cast/channel, 5=unavailable (gray desat), 6=out of range (red),
+--- 7=out of range with hotkey text (slight desat, no red).
 --- @param icon table  Icon button (caches cachedIsUsable/cachedNotEnoughResources)
 --- @param spellID number
 --- @param isChanneledSpell boolean
@@ -484,16 +485,18 @@ end
 --- @param showUsabilityTint boolean
 --- @param inCombat boolean
 --- @param directSlot number|nil  Action bar slot for slot-based usability
+--- @param hasVisibleHotkey boolean|nil  When true, hotkey text handles range feedback; icon red tint is skipped
 --- @return number visualState
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
                                   isChanneling, isCasting, isOutOfRange,
-                                  showRangeTint, showUsabilityTint, inCombat, directSlot)
+                                  showRangeTint, showUsabilityTint, inCombat, directSlot,
+                                  hasVisibleHotkey)
     if isChanneledSpell or isCastedSpell then
         return 4
     elseif isChanneling or isCasting then
         return 1
     elseif showRangeTint and isOutOfRange then
-        return 6
+        return hasVisibleHotkey and 7 or 6
     elseif inCombat then
         -- Usability check: prefer slot-based (NeverSecret), fallback to spell API
         if directSlot and C_ActionBar_IsUsableAction then
@@ -514,7 +517,7 @@ end
 
 --- Apply visual state colors/desaturation to an icon.
 --- @param icon table  Icon button
---- @param visualState number  1-6
+--- @param visualState number  1-7
 --- @param baseDesaturation number  Position-based desaturation
 --- @param brightness number  Vertex color multiplier for state 3 (1.0 = full)
 --- @param opacity number  Alpha multiplier for state 3 (1.0 = full)
@@ -540,6 +543,10 @@ local function ApplyVisualState(icon, visualState, baseDesaturation, brightness,
     elseif visualState == 6 then
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         iconTexture:SetVertexColor(1.0, 0.2, 0.2)
+    elseif visualState == 7 then
+        -- Muted warm tint — hotkey text provides the red range feedback
+        if prevState ~= 7 then iconTexture:SetDesaturation(0) end
+        iconTexture:SetVertexColor(0.55, 0.35, 0.35)
     else
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         iconTexture:SetVertexColor(brightness, brightness, brightness, opacity)
@@ -1524,9 +1531,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 local isChanneledSpell, isCastedSpell = MatchActiveCast(
                     spellID, isChanneling, channelSpellID, isCasting, castSpellID)
 
+                local hasVisibleHotkey = showHotkeys and hotkey ~= ""
                 local visualState = ResolveVisualState(icon, spellID,
                     isChanneledSpell, isCastedSpell, isChanneling, isCasting,
-                    isOutOfRange, showRangeTint, showUsabilityTint, isInCombat, directSlot)
+                    isOutOfRange, showRangeTint, showUsabilityTint, isInCombat, directSlot,
+                    hasVisibleHotkey)
                 
                 local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
                 local qa = (i > 1) and QUEUE_ICON_OPACITY or 1

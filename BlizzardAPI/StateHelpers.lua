@@ -51,7 +51,7 @@ end
 -- Check defensive spell usability in one call (avoids repeated API lookups)
 -- Returns: isUsable, isRedundant, isProcced
 -- isUsable = spell is known AND NOT redundant (buff already active).
--- Cooldown gating is handled by the caller via IsSpellOnLocalCooldown / IsSpellUsable.
+-- Cooldown gating is handled by the caller via IsSpellReady / IsSpellUsable.
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false

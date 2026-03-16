@@ -1334,9 +1334,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 spellID, isChanneling, channelSpellID, isCasting, castSpellID)
 
             local baseDesaturation = (i == 1) and 0 or npoDesaturation
+            local hasVisibleHotkey = showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= ""
             local visualState = UIRenderer.ResolveVisualState(icon, spellID,
                 isChanneledSpell, isCastedSpell, isChanneling, isCasting,
-                isOutOfRange, showRangeTint, showUsabilityTint, inCombat, directSlot)
+                isOutOfRange, showRangeTint, showUsabilityTint, inCombat, directSlot,
+                hasVisibleHotkey)
             UIRenderer.ApplyVisualState(icon, visualState, baseDesaturation, 1, 1)
 
             UIRenderer.UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)

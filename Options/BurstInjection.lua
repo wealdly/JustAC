@@ -77,41 +77,6 @@ function BurstInjection.CreateTabArgs(addon)
                     addon:ForceUpdateAll()
                 end,
             },
-            windowDuration = {
-                type = "range",
-                name = L["Burst Window Duration"],
-                desc = L["Burst Window Duration desc"],
-                order = 3,
-                min = 3,
-                max = 30,
-                step = 1,
-                width = "double",
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                end,
-                get = function()
-                    local profile = addon:GetProfile()
-                    local dur = profile and profile.burstInjection and profile.burstInjection.windowDuration
-                    if dur then return dur end
-                    -- Fall back to SpellDB default for current spec
-                    if not SpellDB then SpellDB = LibStub("JustAC-SpellDB", true) end
-                    if SpellDB and SpellDB.GetBurstDurationDefault then
-                        return SpellDB.GetBurstDurationDefault() or 10
-                    end
-                    return 10
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.burstInjection then
-                        profile.burstInjection = { enabled = true, showGlow = true, triggerSpells = {}, injectionSpells = {} }
-                    end
-                    profile.burstInjection.windowDuration = val
-                    local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
-                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
-                end,
-            },
             triggerThreshold = {
                 type = "range",
                 name = L["Burst Trigger Threshold"],

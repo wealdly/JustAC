@@ -218,7 +218,7 @@ function GapClosers.CreateTabArgs(addon)
                         local _, name = GetSpecializationInfo(specIndex)
                         specName = name
                     end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r Gap-Closers (" .. (specName or "?") .. ")"
+                    return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Gap-Closers"] .. " (" .. (specName or "?") .. ")"
                 end,
                 order = 10,
                 disabled = function()

@@ -1381,6 +1381,7 @@ function JustAC:OpenOptionsPanel()
         if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
         if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
+        if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
     end
 
     if BlizzardAPI and BlizzardAPI.IsMidnightOrLater() then

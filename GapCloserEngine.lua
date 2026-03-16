@@ -103,7 +103,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
 
     -- Cooldown check: don't suggest spells on CD
     -- Ensure spell is registered for local CD tracking (idempotent after first call)
-    if BlizzardAPI.RegisterRotationSpell then BlizzardAPI.RegisterRotationSpell(resolvedID) end
+    if BlizzardAPI.RegisterSpellForTracking then BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser") end
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Range check: only when caller requests it AND we can find the slot.
