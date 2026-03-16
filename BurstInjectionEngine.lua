@@ -12,21 +12,13 @@ local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 2
 if not BurstInjectionEngine then return end
 
 -- Hot path cache
-local GetTime = GetTime
 local GetSpellBaseCooldown = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 local ipairs = ipairs
+local issecretvalue = issecretvalue ---@diagnostic disable-line: undefined-global
 
 -- Module references (resolved at load time)
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI", true)
 local SpellDB          = LibStub("JustAC-SpellDB", true)
-
---------------------------------------------------------------------------------
--- Burst window state
---------------------------------------------------------------------------------
-
-local burstActive = false
-local burstStartTime = 0
-local burstDuration = 10  -- resolved per window from profile or defaults
 
 --------------------------------------------------------------------------------
 -- Cached state (wiped on spec/profile change)
@@ -55,13 +47,15 @@ local function GetSpecKey()
 end
 
 --- Return the base cooldown of a spell in seconds (cached).
---- Uses GetSpellBaseCooldown (returns ms, unaffected by secret values).
+--- Uses GetSpellBaseCooldown (returns ms). In combat this API returns secret
+--- values — never cache secrets (they compare truthy and break threshold logic).
 local function GetBaseCooldownSeconds(spellID)
     if not spellID or spellID <= 0 then return 0 end
     local cached = baseCooldownCache[spellID]
     if cached then return cached end
     local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    local sec = (ms and ms > 0) and (ms / 1000) or 0
+    if not ms or (issecretvalue and issecretvalue(ms)) then return 0 end
+    local sec = ms > 0 and (ms / 1000) or 0
     baseCooldownCache[spellID] = sec
     return sec
 end
@@ -146,19 +140,6 @@ local function ResolveInjectionSpells(addon)
     return nil
 end
 
---- Resolve the burst window duration from profile or SpellDB defaults.
-local function ResolveBurstDuration(addon)
-    local profile = addon and addon.db and addon.db.profile
-    local bi = profile and profile.burstInjection
-    if bi and bi.windowDuration and bi.windowDuration > 0 then
-        return bi.windowDuration
-    end
-    if SpellDB and SpellDB.GetBurstDurationDefault then
-        return SpellDB.GetBurstDurationDefault()
-    end
-    return 10
-end
-
 --- Evaluate a single injection candidate.
 --- Returns resolvedID, baseID on success, or nil.
 local function TryInjectionCandidate(spellID, addedSpellIDs)
@@ -174,8 +155,8 @@ local function TryInjectionCandidate(spellID, addedSpellIDs)
     if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
 
     -- Register for local CD tracking (idempotent)
-    if BlizzardAPI.RegisterRotationSpell then
-        BlizzardAPI.RegisterRotationSpell(resolvedID)
+    if BlizzardAPI.RegisterSpellForTracking then
+        BlizzardAPI.RegisterSpellForTracking(resolvedID, "burst")
     end
 
     -- Cooldown check: don't suggest spells on CD
@@ -219,28 +200,18 @@ function BurstInjectionEngine.GetDetectedTriggers(addon)
 end
 
 --- Check if the given primarySpellID (Blizzard's pos-1 recommendation) is a
---- burst trigger. Two-tier detection:
+--- Per-frame trigger check: returns true when the position-1 spell qualifies
+--- as a burst trigger AND at least one injection spell is usable.
+--- No time-based window — injection only occurs while the trigger spell is
+--- actively recommended by Blizzard in position 1.
+--- Two-tier detection:
 ---   1. If user has explicit trigger spells configured, match against those.
 ---   2. Otherwise, trigger on any spell with base CD >= threshold (default 45s).
---- Starts the burst window if triggered and not already active.
---- Returns true if a burst window is currently active.
 function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
     if not addon or not addon.db or not addon.db.profile then return false end
     local bi = addon.db.profile.burstInjection
     if not bi or not bi.enabled then return false end
 
-    local now = GetTime()
-
-    -- Check if existing window is still active
-    if burstActive then
-        if (now - burstStartTime) <= burstDuration then
-            return true
-        end
-        -- Window expired
-        burstActive = false
-    end
-
-    -- No active window — check for trigger
     if not primarySpellID or primarySpellID <= 0 then return false end
 
     local triggers = ResolveTriggerSpells(addon)
@@ -269,26 +240,18 @@ function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
         isTrigger = (baseCd >= threshold)
     end
 
-    if isTrigger then
-        burstActive = true
-        burstStartTime = now
-        burstDuration = ResolveBurstDuration(addon)
-        return true
-    end
-
-    return false
+    return isTrigger
 end
 
 --- Returns true if a burst window is currently active.
+--- Kept for API compatibility (UI glow checks, etc.) — now always false
+--- since the window concept is removed.
 function BurstInjectionEngine.IsBurstActive()
-    if not burstActive then return false end
-    return (GetTime() - burstStartTime) <= burstDuration
+    return false
 end
 
---- Clear burst window state (combat exit, death, world load).
+--- No-op — window concept removed. Kept for API compatibility.
 function BurstInjectionEngine.ClearBurstState()
-    burstActive = false
-    burstStartTime = 0
 end
 
 --- Invalidate cached spell lists (spec change, profile change).
@@ -298,7 +261,6 @@ function BurstInjectionEngine.InvalidateBurstCache()
     cachedInjectionSpells = nil
     cachedSpecKey = nil
     cachedTriggerThreshold = nil
-    BurstInjectionEngine.ClearBurstState()
 end
 
 --- Returns the first usable injection spell for the current burst window.
@@ -314,6 +276,7 @@ function BurstInjectionEngine.GetBurstInjectionSpell(addon, addedSpellIDs)
         if resolved then return resolved, base end
     end
 
+    -- All injection spells on CD or already shown — nothing to inject.
     return nil
 end
 
@@ -377,4 +340,23 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
     end
 
     BurstInjectionEngine.InvalidateBurstCache()
+
+    -- Pre-cache base cooldowns AND register for local CD tracking while out
+    -- of combat. GetSpellBaseCooldown and RegisterSpellForTracking both need
+    -- non-secret API values — in combat they fail silently.
+    local injList = profile.burstInjection.injectionSpells[specKey]
+    if injList then
+        for _, sid in ipairs(injList) do
+            if sid and sid > 0 then
+                GetBaseCooldownSeconds(sid)
+                local resolvedID = BlizzardAPI.ResolveSpellID(sid)
+                if BlizzardAPI.RegisterSpellForTracking then
+                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "burst")
+                    if resolvedID ~= sid then
+                        BlizzardAPI.RegisterSpellForTracking(sid, "burst")
+                    end
+                end
+            end
+        end
+    end
 end

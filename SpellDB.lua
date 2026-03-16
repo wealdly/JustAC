@@ -657,7 +657,7 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Feral: Regrowth, Survival Instincts, Barkskin, Renewal
     DRUID_2       = {8936, 61336, 22812, 108238},              -- Regrowth, Survival Instincts, Barkskin, Renewal
     -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
-    DRUID_3       = {22842, 192081, 22812, 61336, 106922},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
+    DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs share similar defensives)
@@ -937,7 +937,7 @@ SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
     -- Druid
     DRUID_1 = {391528},                              -- Balance: Convoke the Spirits (120s)
     DRUID_2 = {391528, 274837},                      -- Feral: Convoke the Spirits (120s), Feral Frenzy (45s)
-    DRUID_3 = {236716},                              -- Guardian: Rage of the Sleeper (60s)
+    DRUID_3 = {50334, 102558, 391528},               -- Guardian: Berserk (180s), Incarnation: Guardian of Ursoc (180s), Convoke the Spirits (120s)
 
     -- Evoker
     EVOKER_1 = {357210},                             -- Devastation: Deep Breath (120s)
@@ -1063,8 +1063,8 @@ function SpellDB.ResolveInterruptSpells()
             result[#result + 1] = { spellID = resolvedID, type = spellType }
             -- Register for local cooldown tracking so IsSpellReady() can detect
             -- CD state in combat (isOnGCD is nil for most interrupt spells).
-            if BlizzardAPI.RegisterRotationSpell then
-                BlizzardAPI.RegisterRotationSpell(resolvedID)
+            if BlizzardAPI.RegisterSpellForTracking then
+                BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
             end
         end
     end

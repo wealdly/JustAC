@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [4.14.1] - 2026-03-16
+
+### Changed
+- Range tint: out-of-range now shows red hotkey text + slight icon desaturation when hotkey text is visible; full icon red tint reserved for spells with no keybind
+- Burst injection: removed time-based window — injection now only occurs while the trigger spell is in position 1; window duration slider removed from options
+- Options: moved Queue Visibility and Hide When Mounted above the tabs in Standard Queue and Nameplate Overlay sections
+- Options: consistent spec indicators on spell list headers (class-colored) across Blacklist, Gap-Closers, and Burst Injection tabs; fixed unlocalized "Gap-Closers" string
+- Cooldown tracking: unified `RegisterSpellForTracking(spellID, category)` API replaces `RegisterDefensiveSpell`/`RegisterRotationSpell` — explicit categories (`"defensive"`, `"rotation"`, `"burst"`, `"gapcloser"`, `"interrupt"`) determine behavior; only `"rotation"` has the 3s CD gate; duration always cached regardless of category; old APIs kept as legacy wrappers
+
+### Fixed
+- SpellDB: Guardian Druid burst injection default was Strength of the Wild (236716, PvP ability) instead of Berserk/Incarnation/Convoke — replaced with {50334, 102558, 391528}
+- SpellDB: Guardian Druid defensive list referenced removed spell 106922 (Might of Ursoc) instead of Rage of the Sleeper (200851)
+- Burst injection: secret values from `GetSpellBaseCooldown` in combat caused threshold comparisons to always pass — now detected and rejected, with base cooldowns pre-cached out of combat
+- Burst injection: injection spells now registered for local CD tracking at initialization (OOC) — previously only registered in combat where `RegisterRotationSpell` silently failed
+- Cooldown detection: removed CDR cross-check in `IsSpellReady` that cleared local CD timers when `IsUsableAction` returned `true` — `IsUsableAction` returns true even on cooldown, causing local timers to be immediately cleared on every query
+- Cooldown detection: removed deceptive `actionUsable == true → return true` fallback from `IsSpellReady` — `IsUsableAction` returns true even on cooldown, so this was indistinguishable from the fail-open default
+- Burst injection: Options panel showed empty spell lists when opened via grab tab — `OpenOptionsPanel()` was missing `UpdateBurstInjectionOptions`
+- Cooldown detection: SpellQueue and DefensiveEngine now use `IsSpellReady()` — gains `isOnGCD` early-return, CDR cross-check, charge spell handling, and action bar usability fallback
+
 ## [4.14.0] - 2026-03-15
 
 ### Added

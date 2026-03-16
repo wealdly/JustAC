@@ -46,6 +46,14 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Injects into the offensive queue for natural flow
 - Push-based range detection via `C_ActionBar.EnableActionRangeCheck` for minimal polling
 
+### Burst Injection *(Experimental)*
+
+- Detects burst windows when Blizzard's assistant recommends a long-cooldown spell (e.g. Avenging Wrath, Convoke the Spirits)
+- Injects your configured burst spells at position 1 with a purple glow indicator
+- Per-spec injection spell lists with class-appropriate defaults
+- Configurable cooldown threshold for trigger detection
+- **Unreliable in 12.0**: Cooldown detection for major CDs relies on local timer tracking (WoW 12.0 secrets hide native cooldown fields in combat). Spells may occasionally appear ready when still on cooldown, or fail to inject when they should. Additionally, Blizzard's Assisted Combat does not consistently include major cooldowns in its rotation suggestions, so burst window detection (which triggers when a long-CD spell appears at position 1) may not fire for all specs or encounters. This feature is opt-in and disabled by default.
+
 ### Smart Hotkey Detection
 
 - Scans all action bars to find your keybinds for any spell
@@ -134,6 +142,22 @@ The WoW addon community's decades of innovation in action bar addons, rotation h
 ### The WoW Addon Community
 
 To everyone who has contributed to wowace.com, curseforge, GitHub discussions, and the countless forum threads that help addon developers learn and grow. Your shared knowledge makes projects like this possible.
+
+---
+
+## Known Issues
+
+### Non-interruptible cast detection with nameplate replacement addons
+
+Addons that replace or heavily modify Blizzard's nameplate cast bars (e.g. Platynator) can break JustAC's ability to distinguish interruptible from non-interruptible casts. When this happens, interrupt/CC abilities may be suggested on uninterruptible (shielded) casts.
+
+**Why:** In WoW 12.0, the `notInterruptible` field from `UnitCastingInfo()` is a secret value in combat — addons cannot read it directly. JustAC's only reliable signal is the Blizzard nameplate cast bar's icon visibility (`HideIconWhenNotInterruptible`), which Blizzard resolves internally. Addons that disable or replace that cast bar remove the only working signal.
+
+**Workaround:** Use Blizzard default nameplates, or a nameplate addon that preserves the Blizzard cast bar frame (Plater and ElvUI work correctly). If you use a nameplate addon that fully replaces the cast bar, interrupt suggestions will fail-open (assume interruptible).
+
+### Burst injection cooldown detection
+
+See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Major cooldown tracking in WoW 12.0 combat relies on local timer estimates which may drift or miss cooldown reduction effects.
 
 ---
 

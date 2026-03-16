@@ -273,7 +273,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
             if displayID
                and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
                and PassesRotationFilters(displayID, profile) then
-                if BlizzardAPI.IsSpellOnLocalCooldown(displayID) then
+                if not BlizzardAPI.IsSpellReady(displayID) then
                     cooldownCount = cooldownCount + 1
                     cooldownSpells[cooldownCount] = displayID
                 elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
@@ -462,12 +462,12 @@ function SpellQueue.GetCurrentSpellQueue()
                     end
                     burstInjectedSpells[biSpell] = true
                     burstInjectedSpells[biDisplay] = true
-                end
 
-                -- Suppress burst injection spells from rotation list during active burst
-                -- window — our injection controls when they appear.
-                if cachedBurstEngine.MarkBurstInjectionSpellIDs then
-                    cachedBurstEngine.MarkBurstInjectionSpellIDs(cachedAddon, addedSpellIDs)
+                    -- Suppress burst injection spells from rotation list — only when
+                    -- we actually injected one, so they show normally when all on CD.
+                    if cachedBurstEngine.MarkBurstInjectionSpellIDs then
+                        cachedBurstEngine.MarkBurstInjectionSpellIDs(cachedAddon, addedSpellIDs)
+                    end
                 end
             end
         end
@@ -480,13 +480,13 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Positions 2+: rotation spells, cached until InvalidateRotationCache().
     if not cachedRotationList and BlizzardAPI.GetRotationSpells then
         cachedRotationList = BlizzardAPI.GetRotationSpells()
-        if cachedRotationList and BlizzardAPI.RegisterRotationSpell then
+        if cachedRotationList and BlizzardAPI.RegisterSpellForTracking then
             for i = 1, #cachedRotationList do
                 local sid = cachedRotationList[i]
                 if sid then
-                    BlizzardAPI.RegisterRotationSpell(sid)
+                    BlizzardAPI.RegisterSpellForTracking(sid, "rotation")
                     local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
-                    if displaySid ~= sid then BlizzardAPI.RegisterRotationSpell(displaySid) end
+                    if displaySid ~= sid then BlizzardAPI.RegisterSpellForTracking(displaySid, "rotation") end
                 end
             end
         end

@@ -280,7 +280,7 @@ end
 
 -- Enables 12.0 compatibility when C_Spell.GetSpellCooldown returns secrets
 function DefensiveEngine.RegisterDefensivesForTracking(addon)
-    if not BlizzardAPI or not BlizzardAPI.RegisterDefensiveSpell then return end
+    if not BlizzardAPI or not BlizzardAPI.RegisterSpellForTracking then return end
 
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
@@ -297,7 +297,7 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
             for _, entry in ipairs(spellList) do
                 -- Only register positive entries (spells) — negative entries are items
                 if entry and entry > 0 then
-                    BlizzardAPI.RegisterDefensiveSpell(entry)
+                    BlizzardAPI.RegisterSpellForTracking(entry, "defensive")
                 end
             end
         end
@@ -486,21 +486,10 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                         -- Procced: top priority (instant/free cast)
                         proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                     else
-                        -- Check local cooldown tracking (works in combat via 12.0 CooldownTracking).
-                        -- Charge-based spells use local charge tracking (0 charges = on cooldown).
-                        -- Non-charge spells use the flat local CD timer.
-                        local cachedMaxCharges = BlizzardAPI.GetCachedMaxCharges and BlizzardAPI.GetCachedMaxCharges(resolvedID)
-                        local isChargeSpell = cachedMaxCharges and cachedMaxCharges > 1
-                        local isOnLocalCD
-                        if isChargeSpell then
-                            isOnLocalCD = BlizzardAPI.IsChargeSpellOnCooldown
-                                and BlizzardAPI.IsChargeSpellOnCooldown(resolvedID)
-                        else
-                            isOnLocalCD = BlizzardAPI.IsSpellOnLocalCooldown
-                                and BlizzardAPI.IsSpellOnLocalCooldown(resolvedID)
-                        end
+                        -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
+                        -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
                         local unusable, noResources
-                        if isOnLocalCD then
+                        if not BlizzardAPI.IsSpellReady(resolvedID) then
                             unusable, noResources = true, false
                         else
                             local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
