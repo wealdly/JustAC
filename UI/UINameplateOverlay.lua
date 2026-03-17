@@ -318,6 +318,7 @@ local function CreateOverlayIcon(iconSize, profile)
     button.hasInterruptGlow   = false
     button.hasProcGlow        = false
     button.hasGapCloserGlow   = false
+    button.hasBurstGlow       = false
     button.hasDefensiveGlow   = false
 
     -- Tag for UIAnimations: use lower glow frame levels to stay behind addon UI
@@ -971,6 +972,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
                 if icon.hasAssistedGlow    then UIAnimations.StopAssistedGlow(icon);    icon.hasAssistedGlow    = false end
                 if icon.hasProcGlow        then UIAnimations.HideProcGlow(icon);        icon.hasProcGlow        = false end
                 if icon.hasGapCloserGlow   then UIAnimations.StopGapCloserGlow(icon);   icon.hasGapCloserGlow   = false end
+                if icon.hasBurstGlow       then UIAnimations.StopBurstGlow(icon);       icon.hasBurstGlow       = false end
             end
             icon:ClearAllPoints()
             icon:Hide()
@@ -1039,6 +1041,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoShowPrimaryGlow = (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
     local npoShowProcGlow    = (npoGlowMode == "all" or npoGlowMode == "procOnly")
     local showGapCloserGlow  = npoShowPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
+    local showBurstGlow      = npoShowPrimaryGlow and profile.burstInjection and profile.burstInjection.showGlow == true
     local npoDesaturation = npo.queueIconDesaturation or 0
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
@@ -1055,6 +1058,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo
     local IsSyntheticProc    = SpellQueue  and SpellQueue.IsSyntheticProc
     local IsDisplacedPrimary = SpellQueue  and SpellQueue.IsDisplacedPrimary
+    local IsBurstInjection   = SpellQueue  and SpellQueue.IsBurstInjection
     local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
@@ -1297,23 +1301,27 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- crawl instead — matching standard queue behavior.
             local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
             local isDisplaced     = IsDisplacedPrimary and IsDisplacedPrimary(spellID)
+            local isBurstInjection = IsBurstInjection and IsBurstInjection(spellID)
             local isGapCloser     = isSyntheticProc
             local isRealProc      = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
-            -- Priority: gap-closer > proc > assisted (matches UIRenderer.ResolveGlowState)
+            -- Priority: gap-closer > burst > proc > assisted (matches UIRenderer.ResolveGlowState)
             local wantGapCloserGlow = isGapCloser and showGapCloserGlow
-            local wantProcGlow      = isRealProc and npoShowProcGlow and not wantGapCloserGlow
+            local wantBurstGlow     = isBurstInjection and showBurstGlow and not wantGapCloserGlow
+            local wantProcGlow      = isRealProc and npoShowProcGlow and not wantGapCloserGlow and not wantBurstGlow
             local wantAssistedGlow  = (i == 1 or isDisplaced) and npoShowPrimaryGlow
-                and not wantGapCloserGlow and not wantProcGlow
+                and not wantGapCloserGlow and not wantBurstGlow and not wantProcGlow
 
             -- Glow hysteresis (positions 2+): require desired glow state to be
             -- stable for GLOW_HOLD_TIME before switching animations. Prevents
             -- jarring animation restarts from transient proc toggles.
             -- Position 1 always reflects current state immediately.
+            -- Displaced primaries (injected down from pos 1) also bypass
+            -- hysteresis so the blue glow appears instantly.
             -- Encode glow intent as a simple tag for comparison.
-            local desiredGlow = wantGapCloserGlow and "gc" or wantProcGlow and "proc"
-                or wantAssistedGlow and "assisted" or "none"
+            local desiredGlow = wantGapCloserGlow and "gc" or wantBurstGlow and "burst"
+                or wantProcGlow and "proc" or wantAssistedGlow and "assisted" or "none"
             if i > 1 then
-                if spellChanged then
+                if spellChanged or isDisplaced then
                     icon.lastRenderedGlow = desiredGlow
                     icon.pendingGlowState = nil
                 elseif icon.lastRenderedGlow and desiredGlow ~= icon.lastRenderedGlow then
@@ -1329,6 +1337,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     -- Keep previous glow state during hold period
                     desiredGlow = icon.lastRenderedGlow
                     wantGapCloserGlow = (desiredGlow == "gc")
+                    wantBurstGlow = (desiredGlow == "burst")
                     wantProcGlow = (desiredGlow == "proc")
                     wantAssistedGlow = (desiredGlow == "assisted")
                 else
@@ -1346,6 +1355,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
 
             if wantProcGlow then
+                if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
+                if icon.hasBurstGlow then UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false end
                 if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, inCombat); icon.hasProcGlow = true end
             elseif icon.hasProcGlow then
                 UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false
@@ -1355,6 +1366,12 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 if not icon.hasGapCloserGlow then UIAnimations.StartGapCloserGlow(icon); icon.hasGapCloserGlow = true end
             elseif icon.hasGapCloserGlow then
                 UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false
+            end
+
+            if wantBurstGlow then
+                if not icon.hasBurstGlow then UIAnimations.StartBurstGlow(icon); icon.hasBurstGlow = true end
+            elseif icon.hasBurstGlow then
+                UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false
             end
 
             -- Hotkey: look up on spell change or throttle interval; always track

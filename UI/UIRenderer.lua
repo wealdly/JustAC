@@ -1440,9 +1440,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- stable for GLOW_HOLD_TIME before switching animations. Prevents
                 -- jarring animation restarts from transient proc toggles.
                 -- Position 1 always reflects current state immediately.
+                -- Displaced primaries (injected down from pos 1) also bypass
+                -- hysteresis so the blue glow appears instantly.
+                local isDisplaced = SpellQueue.IsDisplacedPrimary and SpellQueue.IsDisplacedPrimary(spellID)
                 if i > 1 then
-                    if spellChanged then
-                        -- Spell changed: reset hysteresis, apply immediately
+                    if spellChanged or isDisplaced then
+                        -- Spell changed or displaced from pos 1: apply immediately
                         icon.lastRenderedGlow = glowState
                         icon.pendingGlowState = nil
                     elseif icon.lastRenderedGlow and glowState ~= icon.lastRenderedGlow then
