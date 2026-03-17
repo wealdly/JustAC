@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.15.1] - 2026-03-17
+
+### Fixed
+- Displaced primary spell (pushed to slot 2 by gap-closer/burst injection) now shows its blue glow immediately instead of delayed by hysteresis debounce.
+
+### Added
+- Burst injection purple glow now appears in nameplate overlay (parity with standard queue display).
+
 ## [4.15.0] - 2026-03-17
 
 ### Added
