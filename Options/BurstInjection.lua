@@ -77,46 +77,35 @@ function BurstInjection.CreateTabArgs(addon)
                     addon:ForceUpdateAll()
                 end,
             },
-            triggerThreshold = {
+            fallbackDuration = {
                 type = "range",
-                name = L["Burst Trigger Threshold"],
-                desc = L["Burst Trigger Threshold desc"],
-                order = 4,
-                min = 15,
-                max = 120,
-                step = 5,
+                name = L["Burst Window Duration"],
+                desc = L["Burst Window Duration desc"],
+                order = 3,
                 width = "double",
+                min = 5,
+                max = 30,
+                step = 1,
                 disabled = function()
                     local profile = addon:GetProfile()
-                    if not (profile and profile.burstInjection and profile.burstInjection.enabled) then
-                        return true
-                    end
-                    -- Disable when explicit trigger spells are configured (they override threshold)
-                    local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
-                    local specKey = engine and engine.GetBurstSpecKey and engine.GetBurstSpecKey()
-                    if specKey and profile.burstInjection.triggerSpells
-                       and profile.burstInjection.triggerSpells[specKey]
-                       and #profile.burstInjection.triggerSpells[specKey] > 0 then
-                        return true
-                    end
-                    return false
+                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
                 end,
                 get = function()
                     local profile = addon:GetProfile()
-                    local thresh = profile and profile.burstInjection and profile.burstInjection.triggerThreshold
-                    if thresh and thresh > 0 then return thresh end
-                    if not SpellDB then SpellDB = LibStub("JustAC-SpellDB", true) end
-                    return (SpellDB and SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT) or 45
+                    if not profile or not profile.burstInjection or not profile.burstInjection.fallbackDuration then
+                        if not SpellDB then SpellDB = LibStub("JustAC-SpellDB", true) end
+                        return (SpellDB and SpellDB.GetBurstDurationDefault and SpellDB.GetBurstDurationDefault()) or 10
+                    end
+                    return profile.burstInjection.fallbackDuration
                 end,
                 set = function(_, val)
                     local profile = addon:GetProfile()
                     if not profile then return end
                     if not profile.burstInjection then
-                        profile.burstInjection = { enabled = true, showGlow = true, triggerSpells = {}, injectionSpells = {} }
+                        profile.burstInjection = { enabled = true, showGlow = true, fallbackDuration = val, triggerSpells = {}, injectionSpells = {} }
+                    else
+                        profile.burstInjection.fallbackDuration = val
                     end
-                    profile.burstInjection.triggerThreshold = val
-                    local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
-                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
                 end,
             },
             -- RESET (990+)
@@ -139,8 +128,8 @@ function BurstInjection.CreateTabArgs(addon)
                     end
                     profile.burstInjection.enabled = false
                     profile.burstInjection.showGlow = true
-                    profile.burstInjection.windowDuration = nil
-                    profile.burstInjection.triggerThreshold = nil
+                    profile.burstInjection.fallbackDuration = nil
+
                     local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                     if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
                     addon:ForceUpdateAll()
@@ -169,11 +158,6 @@ function BurstInjection.CreateTabArgs(addon)
                     return not (profile and profile.burstInjection and profile.burstInjection.enabled)
                 end,
                 args = {
-                    triggerHeader = {
-                        type = "header",
-                        name = L["Burst Trigger Override"],
-                        order = 10,
-                    },
                     triggerInfo = {
                         type = "description",
                         name = L["Burst Trigger Override desc"],
@@ -184,16 +168,6 @@ function BurstInjection.CreateTabArgs(addon)
                         type = "description",
                         name = function()
                             local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
-                            local profile = addon:GetProfile()
-                            -- Only show when using threshold detection (no explicit overrides)
-                            if engine and profile and profile.burstInjection then
-                                local specKey = engine.GetBurstSpecKey and engine.GetBurstSpecKey()
-                                if specKey and profile.burstInjection.triggerSpells
-                                   and profile.burstInjection.triggerSpells[specKey]
-                                   and #profile.burstInjection.triggerSpells[specKey] > 0 then
-                                    return ""
-                                end
-                            end
                             if not engine or not engine.GetDetectedTriggers then
                                 return L["Detected Burst Triggers"] .. " —"
                             end
@@ -268,11 +242,6 @@ function BurstInjection.CreateTabArgs(addon)
                     return not (profile and profile.burstInjection and profile.burstInjection.enabled)
                 end,
                 args = {
-                    injectionHeader = {
-                        type = "header",
-                        name = L["Burst Injection Priority List"],
-                        order = 10,
-                    },
                     injectionInfo = {
                         type = "description",
                         name = L["Burst Injection Priority desc"],
@@ -333,7 +302,7 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
     if triggerGroup then
         local triggerArgs = triggerGroup.args
         local triggerStatic = {
-            triggerHeader = true, triggerInfo = true, clearTriggerOverrides = true,
+            triggerInfo = true, detectedTriggers = true, clearTriggerOverrides = true,
         }
         local keysToClear = {}
         for key, _ in pairs(triggerArgs) do
@@ -387,7 +356,7 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
     if injectionGroup then
         local injectionArgs = injectionGroup.args
         local injectionStatic = {
-            injectionHeader = true, injectionInfo = true, restoreInjectionDefaults = true,
+            injectionInfo = true, restoreInjectionDefaults = true,
         }
         local keysToClear = {}
         for key, _ in pairs(injectionArgs) do

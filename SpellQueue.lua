@@ -429,6 +429,8 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     -- Burst injection: inject priority spell at position 1 when burst window is active.
+    -- Two-phase: "pending" = trigger CD at pos 1 (glow only, no injection),
+    --            "active"  = trigger aura on player (inject from injection list).
     -- BurstInjectionEngine loads after SpellQueue, so we resolve it lazily.
     if spellCount < maxIcons then
         if not cachedBurstEngine then
@@ -438,7 +440,21 @@ function SpellQueue.GetCurrentSpellQueue()
             cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
         end
         if cachedBurstEngine and cachedBurstEngine.CheckTrigger and cachedAddon then
-            if cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID) then
+            local burstPhase, triggerAtPos1 = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID)
+            -- Phase "pending": trigger CD is at position 1. Mark it as burst so
+            -- renderers can show the burst glow (signal to press it), but don't
+            -- inject anything — let Blizzard's recommendation stand.
+            if burstPhase == "pending" and triggerAtPos1 and spellCount >= 1 then
+                local pos1Display = recommendedSpells[1]
+                if pos1Display then
+                    burstInjectedSpells[pos1Display] = true
+                end
+                if primarySpellID and primarySpellID ~= pos1Display then
+                    burstInjectedSpells[primarySpellID] = true
+                end
+            end
+            -- Phase "active": trigger aura is on the player. Inject from injection list.
+            if burstPhase == "active" then
                 local biSpell, biBase = cachedBurstEngine.GetBurstInjectionSpell(cachedAddon, addedSpellIDs)
                 if biSpell then
                     local biDisplay = BlizzardAPI.GetDisplaySpellID(biSpell)

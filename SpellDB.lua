@@ -991,6 +991,23 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
 }
 
 --------------------------------------------------------------------------------
+-- BURST TRIGGER AURA OVERRIDES
+-- Maps cast spellID → buff spellID for triggers where the self-buff uses a
+-- different spell ID than the cast.  Most CDs share the same ID for cast and
+-- buff; only list exceptions here.  BurstInjectionEngine uses this to resolve
+-- which aura to scan for during the aura-based burst window.
+--------------------------------------------------------------------------------
+SpellDB.BURST_TRIGGER_AURA_OVERRIDES = {
+    [191427] = 162264,   -- Havoc DH: Metamorphosis cast → Meta buff
+}
+
+--- Return the aura spell ID to scan for a given trigger spell.
+--- Falls back to the trigger spellID itself when no override exists.
+function SpellDB.GetTriggerAuraID(triggerSpellID)
+    return SpellDB.BURST_TRIGGER_AURA_OVERRIDES[triggerSpellID] or triggerSpellID
+end
+
+--------------------------------------------------------------------------------
 -- BURST INJECTION DEFAULTS
 -- Per-spec ordered list of spells to inject at position 1 during burst.
 -- First usable spell wins. Typically secondary CDs, empowered abilities,
@@ -1000,18 +1017,17 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
 SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
     -- Death Knight
     DEATHKNIGHT_1 = {194844},                        -- Blood: Bonestorm (60s)
-    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s)
-    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s)
+    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s) — stack during Breath window
+    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s) — stack during Dark Transformation
 
     -- Demon Hunter
     DEMONHUNTER_1 = {370965},                        -- Havoc: The Hunt (90s)
     DEMONHUNTER_2 = {187827},                        -- Vengeance: Metamorphosis (180s)
-    DEMONHUNTER_3 = {1246167},                       -- Devourer: The Hunt (90s, Void-Scarred)
 
     -- Druid
     DRUID_1 = {391528},                              -- Balance: Convoke the Spirits (120s)
     DRUID_2 = {391528, 274837},                      -- Feral: Convoke the Spirits (120s), Feral Frenzy (45s)
-    DRUID_3 = {50334, 102558, 391528},               -- Guardian: Berserk (180s), Incarnation: Guardian of Ursoc (180s), Convoke the Spirits (120s)
+    DRUID_3 = {50334, 102558, 391528},               -- Guardian: Berserk/Incarnation + Convoke
 
     -- Evoker
     EVOKER_1 = {357210},                             -- Devastation: Deep Breath (120s)

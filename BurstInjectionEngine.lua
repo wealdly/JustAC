@@ -1,30 +1,39 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
--- BurstInjectionEngine.lua — Burst injection system: detect burst windows from
--- Blizzard's Assisted Combat recommendations and inject user-configured priority
--- spells at position 1.  Mirrors GapCloserEngine architecture.
+-- BurstInjectionEngine.lua — Burst injection system: detect burst windows and
+-- inject user-configured priority spells at position 1.
 --
--- Trigger detection: curated per-spec major CDs (SpellDB.CLASS_BURST_TRIGGER_DEFAULTS)
--- that Blizzard recommends when burst is appropriate.  Users can optionally
--- configure an explicit trigger spell list to override.
+-- Two-phase trigger detection:
+--   Phase 1 ("pending"): Blizzard recommends a trigger CD at position 1.
+--     → Show burst glow on the trigger to signal "press this to start burst".
+--     → No injection yet (let Blizzard's recommendation stand).
+--   Phase 2 ("active"): Trigger CD's self-buff aura is active on the player.
+--     → Inject priority spells from the injection list at position 1.
+--     → Window ends when aura expires OR all injection spells are on cooldown.
+--
+-- Trigger spells: curated per-spec major CDs (SpellDB.CLASS_BURST_TRIGGER_DEFAULTS)
+-- with optional user overrides.  Aura IDs resolved via SpellDB.GetTriggerAuraID().
 
-local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 3)
+local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 4)
 if not BurstInjectionEngine then return end
 
 -- Hot path cache
 local GetSpellBaseCooldown = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
+local GetTime = GetTime
 local ipairs = ipairs
 local issecretvalue = issecretvalue ---@diagnostic disable-line: undefined-global
 
 -- Module references (resolved at load time)
-local BlizzardAPI      = LibStub("JustAC-BlizzardAPI", true)
-local SpellDB          = LibStub("JustAC-SpellDB", true)
+local BlizzardAPI        = LibStub("JustAC-BlizzardAPI", true)
+local SpellDB            = LibStub("JustAC-SpellDB", true)
+local RedundancyFilter   = LibStub("JustAC-RedundancyFilter", true)
 
 --------------------------------------------------------------------------------
 -- Cached state (wiped on spec/profile change)
 --------------------------------------------------------------------------------
 
 local cachedTriggerSpells = nil    -- resolved trigger set: { [spellID] = true }
+local cachedTriggerAuraIDs = nil   -- resolved aura set: { [auraSpellID] = true }
 local cachedTriggerSource = nil   -- "explicit", "defaults", or nil
 local cachedInjectionSpells = nil  -- resolved injection list: { spellID, ... }
 local cachedSpecKey = nil
@@ -32,6 +41,13 @@ local cachedSpecKey = nil
 --- Cache of base cooldown durations (seconds) for spells seen via CheckTrigger.
 --- Populated lazily; survives across cache invalidations (spell CDs don't change).
 local baseCooldownCache = {}       -- { [spellID] = seconds }
+
+--- Timer fallback state for non-aura triggers (pet summons, target debuffs).
+--- When a trigger spell is cast but no matching aura appears on the player,
+--- the engine falls back to a fixed-duration window.
+local AURA_GRACE_PERIOD = 0.5      -- seconds to wait for aura before using timer fallback
+local timerFallbackExpiry = 0       -- GetTime() when timer fallback window ends (0 = inactive)
+local timerTriggerCastTime = 0      -- GetTime() when a trigger spell was last cast
 
 --------------------------------------------------------------------------------
 -- Internal helpers
@@ -77,6 +93,32 @@ local function GetBaseCooldownSeconds(spellID)
     return sec
 end
 
+--- Build the trigger aura ID set from the trigger spell set.
+--- Maps each trigger spellID → its aura spellID via SpellDB.GetTriggerAuraID().
+--- Also adds ResolveSpellID variants so talent overrides are covered.
+local function BuildTriggerAuraIDSet(sourceList)
+    cachedTriggerAuraIDs = {}
+    if not sourceList then return end
+    local GetTriggerAuraID = SpellDB and SpellDB.GetTriggerAuraID
+    for _, spellID in ipairs(sourceList) do
+        if spellID and spellID > 0 then
+            local auraID = GetTriggerAuraID and GetTriggerAuraID(spellID) or spellID
+            cachedTriggerAuraIDs[auraID] = true
+            -- Also add the resolved variant (talent overrides may remap)
+            local resolved = BlizzardAPI.ResolveSpellID(auraID)
+            if resolved ~= auraID then
+                cachedTriggerAuraIDs[resolved] = true
+            end
+            -- If spell itself resolves to something different, add that aura too
+            local resolvedSpell = BlizzardAPI.ResolveSpellID(spellID)
+            if resolvedSpell ~= spellID then
+                local resolvedAura = GetTriggerAuraID and GetTriggerAuraID(resolvedSpell) or resolvedSpell
+                cachedTriggerAuraIDs[resolvedAura] = true
+            end
+        end
+    end
+end
+
 --- Resolve the trigger spell set for the current spec.
 --- Priority: 1) user-configured explicit overrides, 2) SpellDB curated defaults.
 --- Returns a set { [spellID] = true } or nil.
@@ -90,6 +132,7 @@ local function ResolveTriggerSpells(addon)
 
     cachedSpecKey = specKey
     cachedTriggerSpells = {}
+    cachedTriggerAuraIDs = {}
     cachedTriggerSource = nil
 
     -- Tier 1: user-configured trigger list (explicit override)
@@ -106,6 +149,7 @@ local function ResolveTriggerSpells(addon)
                 end
             end
         end
+        BuildTriggerAuraIDSet(bi.triggerSpells[specKey])
         return cachedTriggerSpells
     end
 
@@ -123,6 +167,7 @@ local function ResolveTriggerSpells(addon)
                     end
                 end
             end
+            BuildTriggerAuraIDSet(defaults)
         end
     end
 
@@ -218,6 +263,31 @@ function BurstInjectionEngine.GetBurstSpecKey()
     return GetSpecKey()
 end
 
+--- Return class default trigger spells for the current spec (ignores overrides).
+--- Shows all defaults regardless of talent status — for display in options panel.
+--- Returns: { {spellID=number, name=string, baseCd=number}, ... } or empty table.
+function BurstInjectionEngine.GetDefaultTriggers()
+    local specKey = GetSpecKey()
+    if not specKey or not SpellDB or not SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then return {} end
+    local defaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
+    if not defaults then return {} end
+    local result = {}
+    for _, spellID in ipairs(defaults) do
+        if spellID and spellID > 0 then
+            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
+            local displayID = resolvedID or spellID
+            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(displayID)
+            if not spellInfo then
+                spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            end
+            local name = spellInfo and spellInfo.name or tostring(spellID)
+            local baseCd = GetBaseCooldownSeconds(displayID)
+            result[#result + 1] = { spellID = displayID, name = name, baseCd = baseCd }
+        end
+    end
+    return result
+end
+
 --- Return the active trigger spell list for the current spec.
 --- Shows explicit overrides if configured, otherwise SpellDB curated defaults.
 --- Filters by IsSpellAvailable (talent alternatives the player doesn't know are hidden).
@@ -260,50 +330,120 @@ function BurstInjectionEngine.GetDetectedTriggers(addon)
     return result
 end
 
---- Per-frame trigger check: returns true when the position-1 spell qualifies
---- as a burst trigger.
---- No time-based window — injection only occurs while the trigger spell is
---- actively recommended by Blizzard in position 1.
---- Matches against: 1) user explicit overrides, or 2) SpellDB curated defaults.
+--- Two-phase burst trigger check.
+--- Returns: phase, isTriggerAtPos1
+---   phase = "active"  → trigger aura is on player, inject from injection list
+---   phase = "pending" → Blizzard recommends trigger CD at pos 1 (show glow, don't inject)
+---   phase = nil        → no burst condition detected
+---   isTriggerAtPos1    → true when primarySpellID is itself a trigger (for glow)
 function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
-    if not addon or not addon.db or not addon.db.profile then return false end
+    if not addon or not addon.db or not addon.db.profile then return nil, false end
     local bi = addon.db.profile.burstInjection
-    if not bi or not bi.enabled then return false end
-
-    if not primarySpellID or primarySpellID <= 0 then return false end
+    if not bi or not bi.enabled then return nil, false end
 
     local triggers = ResolveTriggerSpells(addon)
-    if not triggers then return false end
+    if not triggers then return nil, false end
 
-    -- Direct match
-    if triggers[primarySpellID] then return true end
-
-    -- Check display/override form (talent-overridden spells)
-    local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-    if displayID and displayID ~= primarySpellID and triggers[displayID] then
-        return true
+    -- Phase 2a: is a trigger aura currently active on the player?
+    -- Lazy-resolve RedundancyFilter (loaded later in TOC order)
+    if not RedundancyFilter then
+        RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    end
+    local auraActive = false
+    if RedundancyFilter and RedundancyFilter.IsAnyAuraActive and cachedTriggerAuraIDs then
+        auraActive = RedundancyFilter.IsAnyAuraActive(cachedTriggerAuraIDs)
     end
 
-    return false
+    -- Phase 2b: timer fallback for non-aura triggers (pet summons, target debuffs).
+    -- If a trigger was cast recently but no matching aura appeared after the grace
+    -- period, fall back to a fixed-duration window.
+    local now = GetTime()
+    local timerActive = false
+    if not auraActive and timerFallbackExpiry > 0 and now < timerFallbackExpiry then
+        -- Only activate timer fallback after the grace period (give aura time to appear)
+        if now - timerTriggerCastTime > AURA_GRACE_PERIOD then
+            timerActive = true
+        end
+    end
+
+    if auraActive or timerActive then
+        -- Check position-1 match for glow signal
+        local triggerAtPos1 = false
+        if primarySpellID and primarySpellID > 0 then
+            if triggers[primarySpellID] then
+                triggerAtPos1 = true
+            else
+                local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+                if displayID and displayID ~= primarySpellID and triggers[displayID] then
+                    triggerAtPos1 = true
+                end
+            end
+        end
+        return "active", triggerAtPos1
+    end
+
+    -- Phase 1: is Blizzard recommending a trigger spell at position 1?
+    if primarySpellID and primarySpellID > 0 then
+        if triggers[primarySpellID] then return "pending", true end
+        local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+        if displayID and displayID ~= primarySpellID and triggers[displayID] then
+            return "pending", true
+        end
+    end
+
+    return nil, false
 end
 
---- Returns true if a burst window is currently active.
---- Kept for API compatibility (UI glow checks, etc.) — now always false
---- since the window concept is removed.
-function BurstInjectionEngine.IsBurstActive()
-    return false
+--- Returns true if a burst window is currently active (trigger aura on player
+--- or timer fallback running).
+function BurstInjectionEngine.IsBurstActive(addon)
+    if not addon then return false end
+    local phase = BurstInjectionEngine.CheckTrigger(addon, nil)
+    return phase == "active"
 end
 
---- No-op — window concept removed. Kept for API compatibility.
+--- Record that a trigger spell was just cast.
+--- Called from JustAC:OnSpellcastSucceeded. Starts the timer fallback window
+--- so non-aura triggers (pet summons, target debuffs) still get a burst window.
+function BurstInjectionEngine.RecordTriggerCast(addon, spellID)
+    if not spellID or not cachedTriggerSpells then return end
+    -- Check if this spell (or its resolved/display form) is a trigger
+    local isTrigger = cachedTriggerSpells[spellID]
+    if not isTrigger then
+        local resolved = BlizzardAPI.ResolveSpellID(spellID)
+        isTrigger = cachedTriggerSpells[resolved]
+        if not isTrigger then
+            local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+            isTrigger = displayID and cachedTriggerSpells[displayID]
+        end
+    end
+    if not isTrigger then return end
+    local now = GetTime()
+    timerTriggerCastTime = now
+    -- Duration: profile override → CLASS_BURST_DURATION_DEFAULTS → 10s
+    local profile = addon and addon.db and addon.db.profile
+    local duration = profile and profile.burstInjection and profile.burstInjection.fallbackDuration
+    if not duration then
+        duration = (SpellDB and SpellDB.GetBurstDurationDefault and SpellDB.GetBurstDurationDefault())
+            or 10
+    end
+    timerFallbackExpiry = now + duration
+end
+
+--- Clear timer fallback state (combat end, spec change).
 function BurstInjectionEngine.ClearBurstState()
+    timerFallbackExpiry = 0
+    timerTriggerCastTime = 0
 end
 
 --- Invalidate cached spell lists (spec change, profile change).
 function BurstInjectionEngine.InvalidateBurstCache()
     cachedTriggerSpells = nil
+    cachedTriggerAuraIDs = nil
     cachedTriggerSource = nil
     cachedInjectionSpells = nil
     cachedSpecKey = nil
+    BurstInjectionEngine.ClearBurstState()
 end
 
 --- Returns the first usable injection spell for the current burst window.

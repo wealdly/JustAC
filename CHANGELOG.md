@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-03-17
+
+### Changed
+- **Aura-based burst windows** — Burst injection now activates when the trigger spell's self-buff aura is active on the player (e.g., the full 20s of Avenging Wrath), not just while Blizzard recommends the CD at position 1. Window ends when the aura expires or all injection spells are on cooldown. Trigger spell at position 1 now shows burst glow as a "press to start burst" signal without injecting.
+- **Timer fallback for non-aura triggers** — Triggers that don't create a player self-buff (pet summons, target debuffs) fall back to a fixed-duration burst window based on per-spec defaults.
+- Removed obsolete Burst Trigger Threshold slider from options (replaced by aura-based detection).
+- Cleaned up Burst Injection panel labels — removed verbose/outdated text, removed redundant headers, class defaults now always visible.
+
+### Added
+- `/jac burst` now shows aura-based burst window status (active/inactive).
+- Fallback Window Duration slider — controls burst window length when the trigger doesn't create a self-buff.
+
 ## [4.15.1] - 2026-03-17
 
 ### Fixed
