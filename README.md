@@ -48,11 +48,12 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 
 ### Burst Injection *(Experimental)*
 
-- Detects burst windows when Blizzard's assistant recommends a long-cooldown spell (e.g. Avenging Wrath, Convoke the Spirits)
-- Injects your configured burst spells at position 1 with a purple glow indicator
-- Per-spec injection spell lists with class-appropriate defaults
-- Configurable cooldown threshold for trigger detection
-- **Unreliable in 12.0**: Cooldown detection for major CDs relies on local timer tracking (WoW 12.0 secrets hide native cooldown fields in combat). Spells may occasionally appear ready when still on cooldown, or fail to inject when they should. Additionally, Blizzard's Assisted Combat does not consistently include major cooldowns in its rotation suggestions, so burst window detection (which triggers when a long-CD spell appears at position 1) may not fire for all specs or encounters. This feature is opt-in and disabled by default.
+- Detects burst windows via aura tracking — when a trigger spell's self-buff is active on the player, configured burst spells inject at position 1 with a purple glow
+- Trigger spell at position 1 shows glow as a "press to start burst" signal before the window opens
+- Timer fallback for triggers that don't create a self-buff (pet summons, target debuffs)
+- Per-spec trigger and injection spell lists with class-appropriate defaults
+- Configurable fallback window duration
+- **Experimental in 12.0**: Aura identity relies on `auraInstanceID` mapping (combat-safe). Works well for self-buff triggers but may miss edge cases. This feature is opt-in and disabled by default.
 
 ### Smart Hotkey Detection
 

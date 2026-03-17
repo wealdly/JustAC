@@ -618,6 +618,10 @@ function DebugCommands.BurstDiagnostics(addon)
         and bi.triggerSpells[specKey] and #bi.triggerSpells[specKey] > 0
         and "|cffadd8e6Custom overrides|r" or "|cff888888SpellDB defaults|r"))
 
+    -- Aura-based window status
+    local burstActive = BurstInjectionEngine.IsBurstActive and BurstInjectionEngine.IsBurstActive(addon)
+    addon:Print("Burst window: " .. (burstActive and "|cffb048f8ACTIVE (trigger aura detected)|r" or "|cff888888inactive|r"))
+
     -- ── Injection priority list ──
     addon:Print("")
     addon:Print("Injection Priority List (first usable wins):")

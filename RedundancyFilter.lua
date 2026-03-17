@@ -1403,6 +1403,30 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
 end
 
 --------------------------------------------------------------------------------
+-- Aura Query API
+--------------------------------------------------------------------------------
+
+--- Returns true if the player currently has a buff matching the given spellID.
+--- Combat-safe: uses instanceToSpellMap (maintained by UNIT_AURA events).
+function RedundancyFilter.IsAuraActiveBySpellID(spellID)
+    if not spellID then return false end
+    for _, mapSpellID in pairs(instanceToSpellMap) do
+        if mapSpellID == spellID then return true end
+    end
+    return false
+end
+
+--- Returns true if ANY spellID in the given set is active as a player aura.
+--- Efficient single-pass scan for checking multiple trigger auras at once.
+function RedundancyFilter.IsAnyAuraActive(spellIDSet)
+    if not spellIDSet then return false end
+    for _, mapSpellID in pairs(instanceToSpellMap) do
+        if spellIDSet[mapSpellID] then return true end
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
 -- Debug / Diagnostic Functions
 --------------------------------------------------------------------------------
 

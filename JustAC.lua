@@ -1349,6 +1349,11 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         RedundancyFilter.RecordSpellActivation(spellID)
     end
 
+    -- Burst injection: record trigger spell casts for timer fallback window
+    if BurstInjectionEngine and BurstInjectionEngine.RecordTriggerCast then
+        BurstInjectionEngine.RecordTriggerCast(self, spellID)
+    end
+
     -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
     -- spellID from UNIT_SPELLCAST_SUCCEEDED is NeverSecret (player's own cast).
