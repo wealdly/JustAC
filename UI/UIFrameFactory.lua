@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 14)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 15)
 if not UIFrameFactory then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -144,21 +144,19 @@ local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 local stdInterruptIcon = nil  -- Standard queue interrupt icon ("position 0")
 
--- Masque support
+-- Masque support (single group for all standard queue icons)
 local Masque = LibStub("Masque", true)
-local GetMasqueGroup, GetMasqueDefensiveGroup
+local GetMasqueGroup
 
 if Masque then
-    local MasqueGroup = Masque:Group("JustAssistedCombat", "Spell Queue")
-    local MasqueDefensiveGroup = Masque:Group("JustAssistedCombat", "Defensive")
-    
+    local MasqueGroup = Masque:Group("JustAssistedCombat", "Standard Queue")
+
     GetMasqueGroup = function() return MasqueGroup end
-    GetMasqueDefensiveGroup = function() return MasqueDefensiveGroup end
 
     -- Re-apply text overlay settings after Masque re-skins (user changes skin).
     -- Masque's Skin_Text repositions HotKey; our ApplyTextOverlaySettings must
     -- override afterwards to restore user-configured anchors.
-    local function OnSpellQueueSkinChanged(Group, Option)
+    local function OnStandardQueueSkinChanged(Group, Option)
         if Option ~= "SkinID" and Option ~= "Reset" and Option ~= "Disabled" then return end
         local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
         if not addon or not addon.db then return end
@@ -175,29 +173,18 @@ if Masque then
         if stdInterruptIcon then
             UIFrameFactory.ApplyTextOverlaySettings(stdInterruptIcon, profile.iconSize * firstIconScale, overlays)
         end
-    end
-
-    local function OnDefensiveSkinChanged(Group, Option)
-        if Option ~= "SkinID" and Option ~= "Reset" and Option ~= "Disabled" then return end
-        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-        if not addon or not addon.db then return end
-        local profile = addon:GetProfile()
-        if not profile then return end
-        local overlays = profile.textOverlays
         local defScale = profile.defensives and profile.defensives.iconScale or 1.0
-        local sz = profile.iconSize * defScale
+        local defSz = profile.iconSize * defScale
         for _, icon in ipairs(defensiveIcons) do
             if icon then
-                UIFrameFactory.ApplyTextOverlaySettings(icon, sz, overlays)
+                UIFrameFactory.ApplyTextOverlaySettings(icon, defSz, overlays)
             end
         end
     end
 
-    MasqueGroup:RegisterCallback(OnSpellQueueSkinChanged)
-    MasqueDefensiveGroup:RegisterCallback(OnDefensiveSkinChanged)
+    MasqueGroup:RegisterCallback(OnStandardQueueSkinChanged)
 else
     GetMasqueGroup = function() return nil end
-    GetMasqueDefensiveGroup = function() return nil end
 end
 
 -- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
@@ -595,9 +582,9 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
-    if MasqueDefensiveGroup then
-        MasqueDefensiveGroup:AddButton(button, {
+    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
             Icon = button.iconTexture,
             Cooldown = button.cooldown,
             ChargeCooldown = button.chargeCooldown,
@@ -985,11 +972,11 @@ local function CreateDefensiveIcons(addon, profile)
     end
 
     -- Cleanup all existing defensive icons
-    local MasqueDefensiveGroup = GetMasqueDefensiveGroup and GetMasqueDefensiveGroup()
+    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
     for _, icon in ipairs(defensiveIcons) do
         if icon then
             if StopDefensiveGlow then StopDefensiveGlow(icon) end
-            if MasqueDefensiveGroup then MasqueDefensiveGroup:RemoveButton(icon) end
+            if MasqueGroup then MasqueGroup:RemoveButton(icon) end
             icon:Hide()
             icon:SetParent(nil)
         end

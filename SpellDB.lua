@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 8)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 9)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -282,6 +282,7 @@ local HEALING_SPELLS = {
 --------------------------------------------------------------------------------
 local CROWD_CONTROL_SPELLS = {
     -- Death Knight
+    [47476] = true,   -- Strangulate (silence)
     [47528] = true,   -- Mind Freeze (interrupt)
     [91800] = true,   -- Gnaw (pet stun)
     [108194] = true,  -- Asphyxiate
@@ -307,6 +308,7 @@ local CROWD_CONTROL_SPELLS = {
     [102359] = true,  -- Mass Entanglement
     [102793] = true,  -- Ursol's Vortex
     [106839] = true,  -- Skull Bash (interrupt)
+    [132469] = true,  -- Typhoon (knockback+daze)
     [203123] = true,  -- Maim
     
     -- Evoker
@@ -324,6 +326,7 @@ local CROWD_CONTROL_SPELLS = {
     [147362] = true,  -- Counter Shot (interrupt)
     [162488] = true,  -- Steel Trap (root)
     [187650] = true,  -- Freezing Trap
+    [186387] = true,  -- Bursting Shot (disorient knockback)
     [187707] = true,  -- Muzzle (interrupt)
     [213691] = true,  -- Scatter Shot
     [236776] = true,  -- Hi-Explosive Trap (knockback)
@@ -347,6 +350,10 @@ local CROWD_CONTROL_SPELLS = {
     [126819] = true,  -- Polymorph (Porcupine)
     [28272] = true,   -- Polymorph (Pig)
     [28271] = true,   -- Polymorph (Turtle)
+    [61721] = true,   -- Polymorph (Rabbit)
+    [61780] = true,   -- Polymorph (Turkey)
+    [277787] = true,  -- Polymorph (Direhorn)
+    [277792] = true,  -- Polymorph (Bumblebee)
     
     -- Monk
     [115078] = true,  -- Paralysis
@@ -766,7 +773,7 @@ SpellDB.CLASS_PETHEAL_DEFAULTS = {
 -- First entry is the class's primary interrupt. Subsequent entries are fallbacks
 -- shown when earlier spells are on cooldown.
 SpellDB.CLASS_INTERRUPT_DEFAULTS = {
-    DEATHKNIGHT = {{47528,"interrupt"}, {108194,"cc"}, {221562,"cc"}, {207167,"cc"}},       -- Mind Freeze, Asphyxiate, Asphyxiate (Blood), Blinding Sleet
+    DEATHKNIGHT = {{47528,"interrupt"}, {108194,"cc"}, {221562,"cc"}, {207167,"cc"}, {47476,"cc"}}, -- Mind Freeze, Asphyxiate, Asphyxiate (Blood), Blinding Sleet, Strangulate
     DEMONHUNTER = {{183752,"interrupt"}, {179057,"cc"}, {211881,"cc"}},                     -- Disrupt, Chaos Nova, Fel Eruption
     DRUID       = {{106839,"interrupt"}, {78675,"interrupt"}, {5211,"cc"}, {99,"cc"}},      -- Skull Bash, Solar Beam, Mighty Bash, Incapacitating Roar
     EVOKER      = {{351338,"interrupt"}, {357208,"cc"}},                                    -- Quell, Oppressing Roar
@@ -914,7 +921,74 @@ SpellDB.CLASS_BURST_DURATION_DEFAULTS = {
 }
 
 SpellDB.BURST_DURATION_FALLBACK = 10  -- seconds
-SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT = 45  -- seconds; spells with base CD >= this trigger burst
+SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT = 45  -- seconds; legacy, kept for Options UI compatibility
+
+--------------------------------------------------------------------------------
+-- BURST TRIGGER DEFAULTS
+-- Per-spec list of major offensive CDs that Blizzard's Assisted Combat will
+-- recommend when a burst window is appropriate.  When any of these appear at
+-- position 1, the engine activates burst injection.
+-- Includes talent alternatives (e.g. Incarnation vs Berserk) — the engine
+-- filters by IsSpellAvailable at runtime.
+--------------------------------------------------------------------------------
+SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
+    -- Death Knight
+    DEATHKNIGHT_1 = {49028},                         -- Blood: Dancing Rune Weapon (120s)
+    DEATHKNIGHT_2 = {51271, 152279},                 -- Frost: Pillar of Frost (60s), Breath of Sindragosa (120s)
+    DEATHKNIGHT_3 = {63560, 42650},                  -- Unholy: Dark Transformation (60s), Army of the Dead (180s)
+
+    -- Demon Hunter
+    DEMONHUNTER_1 = {191427},                        -- Havoc: Metamorphosis (180s)
+    DEMONHUNTER_2 = {187827},                        -- Vengeance: Metamorphosis (180s)
+
+    -- Druid
+    DRUID_1 = {194223, 102560},                      -- Balance: Celestial Alignment (180s), Incarnation: Chosen of Elune (180s)
+    DRUID_2 = {106951, 102543},                      -- Feral: Berserk (180s), Incarnation: Avatar of Ashamane (180s)
+    DRUID_3 = {50334, 102558},                       -- Guardian: Berserk (180s), Incarnation: Guardian of Ursoc (180s)
+
+    -- Evoker
+    EVOKER_1 = {375087},                             -- Devastation: Dragonrage (120s)
+    EVOKER_3 = {403631},                             -- Augmentation: Breath of Eons (120s)
+
+    -- Hunter
+    HUNTER_1 = {19574, 359844},                      -- Beast Mastery: Bestial Wrath (90s), Call of the Wild (120s)
+    HUNTER_2 = {288613},                             -- Marksmanship: Trueshot (120s)
+    HUNTER_3 = {360952},                             -- Survival: Coordinated Assault (120s)
+
+    -- Mage
+    MAGE_1  = {365350},                              -- Arcane: Arcane Surge (90s)
+    MAGE_2  = {190319},                              -- Fire: Combustion (120s)
+    MAGE_3  = {12472},                               -- Frost: Icy Veins (180s)
+
+    -- Monk
+    MONK_3  = {137639},                              -- Windwalker: Storm, Earth, and Fire (90s)
+
+    -- Paladin
+    PALADIN_2 = {31884},                             -- Protection: Avenging Wrath (120s)
+    PALADIN_3 = {31884, 231895},                     -- Retribution: Avenging Wrath (120s), Crusade (120s)
+
+    -- Priest
+    PRIEST_3 = {228260, 391109},                     -- Shadow: Void Eruption (90s), Dark Ascension (60s)
+
+    -- Rogue
+    ROGUE_1 = {360194},                              -- Assassination: Deathmark (120s)
+    ROGUE_2 = {13750},                               -- Outlaw: Adrenaline Rush (180s)
+    ROGUE_3 = {121471},                              -- Subtlety: Shadow Blades (180s)
+
+    -- Shaman
+    SHAMAN_1 = {114050},                             -- Elemental: Ascendance (180s)
+    SHAMAN_2 = {51533},                              -- Enhancement: Feral Spirit (90s)
+
+    -- Warlock
+    WARLOCK_1 = {205180},                            -- Affliction: Summon Darkglare (120s)
+    WARLOCK_2 = {265187},                            -- Demonology: Summon Demonic Tyrant (120s)
+    WARLOCK_3 = {1122},                              -- Destruction: Summon Infernal (180s)
+
+    -- Warrior
+    WARRIOR_1 = {167105, 262161},                    -- Arms: Colossus Smash (45s), Warbreaker (45s)
+    WARRIOR_2 = {1719},                              -- Fury: Recklessness (90s)
+    WARRIOR_3 = {107574},                            -- Protection: Avatar (90s)
+}
 
 --------------------------------------------------------------------------------
 -- BURST INJECTION DEFAULTS
@@ -991,6 +1065,15 @@ function SpellDB.GetBurstInjectionDefaults()
     local spec = GetSpecialization and GetSpecialization()
     if not spec then return nil end
     return SpellDB.CLASS_BURST_INJECTION_DEFAULTS[playerClass .. "_" .. spec]
+end
+
+--- Return the burst trigger default list for the current class+spec, or nil.
+function SpellDB.GetBurstTriggerDefaults()
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return nil end
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return nil end
+    return SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[playerClass .. "_" .. spec]
 end
 
 --- Return the default burst window duration for the current class+spec.

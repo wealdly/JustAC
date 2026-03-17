@@ -211,6 +211,59 @@ function SpellSearch.GetFilteredSpellbookSpells(filterText, excludeList)
 end
 
 -------------------------------------------------------------------------------
+-- Aura search — returns active player buffs for linking to items.
+-- Empty/short text → all active buffs. Text input → filter by name or spell ID.
+-- Returns {[spellID] = "Aura Name (ID: 12345)"} — positive keys (auras are spells).
+-------------------------------------------------------------------------------
+function SpellSearch.GetFilteredPlayerAuras(filterText, excludeList)
+    local results = {}
+    local filter = (filterText or ""):trim()
+    local filterLower = filter:lower()
+    local filterAsNumber = tonumber(filter)
+
+    local excluded = {}
+    if excludeList then
+        for _, id in ipairs(excludeList) do excluded[id] = true end
+    end
+
+    -- Scan active player buffs
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 40 do
+            local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+            if not ok or not data then break end
+            local spellId = data.spellId
+            local name = data.name
+            if spellId and name and not excluded[spellId] then
+                local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue and (BlizzardAPI.IsSecretValue(spellId) or BlizzardAPI.IsSecretValue(name))
+                if not isSecret then
+                    local match = false
+                    if filter == "" or #filter < 2 then
+                        match = true  -- show all active buffs on empty search
+                    elseif name:lower():find(filterLower, 1, true) then
+                        match = true
+                    elseif filterAsNumber and spellId == filterAsNumber then
+                        match = true
+                    end
+                    if match then
+                        results[spellId] = name .. " |cff888888(ID: " .. spellId .. ")|r"
+                    end
+                end
+            end
+        end
+    end
+
+    -- Allow direct spellID entry even if not currently active
+    if filterAsNumber and filterAsNumber > 0 and not results[filterAsNumber] and not excluded[filterAsNumber] then
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(filterAsNumber)
+        if info and info.name then
+            results[filterAsNumber] = info.name .. " |cffff8800(not active)|r |cff888888(ID: " .. filterAsNumber .. ")|r"
+        end
+    end
+
+    return results
+end
+
+-------------------------------------------------------------------------------
 -- Helper to add a spell or item to a list (used by both dropdown and manual input)
 -- Positive ID = spell, negative ID = item (stored as -itemID in the list)
 -------------------------------------------------------------------------------
@@ -334,12 +387,105 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     order = 3,
                     width = 0.5,
                     func = function()
+                        -- Clean up item settings when removing an item entry
+                        if isItemEntry then
+                            local itemID = -entry
+                            local profile = _addon:GetProfile()
+                            if profile and profile.defensives and profile.defensives.itemSettings then
+                                profile.defensives.itemSettings[itemID] = nil
+                            end
+                        end
                         table.remove(spellList, i)
                         updateFunc()
                     end
                 }
             }
         }
+
+        -- Per-item controls: Link Aura + Hide in Combat
+        if isItemEntry then
+            local itemID = -entry
+            local entryArgs = defensivesArgs[listType .. "_" .. i].args
+
+            entryArgs.linkAura = {
+                type = "execute",
+                order = 4,
+                width = 0.7,
+                name = function()
+                    local profile = _addon:GetProfile()
+                    local settings = profile and profile.defensives and profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
+                    if settings and settings.linkedAura then
+                        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(settings.linkedAura)
+                        local auraName = info and info.name or tostring(settings.linkedAura)
+                        return L["Linked: %s"]:format(auraName)
+                    end
+                    return L["Link Aura..."]
+                end,
+                desc = L["Link Aura desc"],
+                func = function()
+                    local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
+                    if not LiveSearchPopup then return end
+
+                    LiveSearchPopup.Open({
+                        title = L["Link Aura..."],
+                        searchFunc = SpellSearch.GetFilteredPlayerAuras,
+                        onSelect = function(auraSpellID, _)
+                            local profile = _addon:GetProfile()
+                            if not profile or not profile.defensives then return end
+                            if not profile.defensives.itemSettings then profile.defensives.itemSettings = {} end
+                            if not profile.defensives.itemSettings[itemID] then profile.defensives.itemSettings[itemID] = {} end
+                            profile.defensives.itemSettings[itemID].linkedAura = auraSpellID
+                            -- Default to hiding in combat when linking an aura
+                            -- (item auras are almost certainly secret in combat)
+                            if profile.defensives.itemSettings[itemID].combatHide == nil then
+                                profile.defensives.itemSettings[itemID].combatHide = true
+                            end
+                            updateFunc()
+                        end,
+                    })
+                end,
+            }
+
+            entryArgs.clearLink = {
+                type = "execute",
+                order = 5,
+                width = 0.3,
+                name = L["Clear Link"],
+                desc = L["Clear Link desc"],
+                hidden = function()
+                    local profile = _addon:GetProfile()
+                    local settings = profile and profile.defensives and profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
+                    return not (settings and settings.linkedAura)
+                end,
+                func = function()
+                    local profile = _addon:GetProfile()
+                    if profile and profile.defensives and profile.defensives.itemSettings and profile.defensives.itemSettings[itemID] then
+                        profile.defensives.itemSettings[itemID].linkedAura = nil
+                    end
+                    updateFunc()
+                end,
+            }
+
+            entryArgs.combatHide = {
+                type = "toggle",
+                order = 6,
+                width = 0.7,
+                name = L["Hide in Combat"],
+                desc = L["Hide in Combat desc"],
+                get = function()
+                    local profile = _addon:GetProfile()
+                    local settings = profile and profile.defensives and profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
+                    return settings and settings.combatHide or false
+                end,
+                set = function(_, val)
+                    local profile = _addon:GetProfile()
+                    if not profile or not profile.defensives then return end
+                    if not profile.defensives.itemSettings then profile.defensives.itemSettings = {} end
+                    if not profile.defensives.itemSettings[itemID] then profile.defensives.itemSettings[itemID] = {} end
+                    profile.defensives.itemSettings[itemID].combatHide = val
+                end,
+            }
+        end
     end
 end
 

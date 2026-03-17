@@ -206,7 +206,17 @@ L["Pet Heal Priority List"] = "Cura de pet (prioridade)"
 L["Pet Heal Priority desc"] = "Exibido quando a vida do pet está baixa. A vida do pet pode estar oculta em combate."
 L["Restore Pet Heal Defaults desc"] = "Redefinir magias de cura de pet para os padrões da classe"
 L["Show Pet Health Bar"] = "Mostrar barra de vida do pet"
-L["Show Pet Health Bar desc"] = "Barra de vida compacta do pet (apenas classes com pet). Cor turquesa. Oculta-se sem pet ativo."
+L["Show Pet Health Bar desc"] = "Barra de vida compacta do pet (apenas classes com pet). Oculta-se sem pet ativo."
+
+-- Item settings (per-item aura link / combat hide)
+L["Link Aura..."] = "Vincular aura..."
+L["Link Aura desc"] = "Vincule uma aura de buff (comida, frasco, poção, etc.) a este item. O item é ocultado enquanto o buff estiver ativo."
+L["Hide in Combat"] = "Ocultar em combate"
+L["Hide in Combat desc"] = "Ocultar este item da fila durante o combate. Recomendado para buffs de longa duração (comida, frascos) pois suas auras não podem ser detectadas em combate."
+L["Linked: %s"] = "Vinculado: %s"
+L["Clear Link"] = "Limpar"
+L["Clear Link desc"] = "Remover a aura vinculada"
+L["Search auras desc"] = "Mostra os buffs ativos do jogador. Digite para filtrar ou insira um ID de feitiço diretamente."
 
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
@@ -224,7 +234,7 @@ L["Interrupt Mode Disabled"] = "Desativado"
 L["Interrupt Mode Kick Only"] = "Apenas Kick — Só interrupções, sem CC"
 L["Interrupt Mode Kick Prefer"] = "Prioridade Kick — Kick primeiro, CC como reserva"
 L["Interrupt Mode CC Prefer"] = "Prioridade CC — CC sobre kicks (gasta CC em conjurações kickáveis)"
-L["Nameplate Show Health Bars desc"] = "Mostrar barras de vida compactas do jogador e pet acima dos ícones defensivos. A barra do pet se oculta sem pet ativo. Oculta-se automaticamente sem defensivos visíveis."
+L["Nameplate Show Health Bars desc"] = "Barras de vida compactas acima dos ícones defensivos. Oculta-se automaticamente sem defensivos visíveis."
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Redefinir padrões"
@@ -257,7 +267,7 @@ L["Reset Icon Labels desc"] = "Redefinir todas as configurações de rótulos de
 
 -- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Direção de expansão"
-L["Expansion Direction desc"] = "Direção de empilhamento dos ícones. Horizontal se expande a partir da placa. Vertical cima/baixo empilha acima/abaixo do espaço 1."
+L["Expansion Direction desc"] = "Direção de empilhamento dos ícones. Horizontal se expande a partir da placa."
 L["Horizontal (Out)"] = "Horizontal (para fora)"
 L["Vertical - Up"] = "Vertical - Cima"
 L["Vertical - Down"] = "Vertical - Baixo"
@@ -269,7 +279,7 @@ L["Enable Gap-Closer Suggestions desc"] = "Sugere habilidades de aproximação q
 L["Gap-Closer Priority List"] = "Lista de prioridade de aproximação"
 L["Gap-Closer Priority desc"] = "O primeiro feitiço utilizável é mostrado. Reordenar para definir prioridade."
 L["Restore Gap-Closer Defaults desc"] = "Redefinir a lista de aproximação para os feitiços padrão da classe e especialização"
-L["No Gap-Closer Spells"] = "Nenhum feitiço de aproximação configurado. Use o menu suspenso para adicionar um ou clique em Restaurar padrões da classe."
+L["No Gap-Closer Spells"] = "Nenhum feitiço de aproximação configurado. Adicione um abaixo ou clique em Restaurar padrões da classe."
 L["Reset Gap-Closers desc"] = "Redefinir configurações de aproximação. A lista de magias não é afetada."
 L["Show Gap-Closer Glow"] = "Brilho de aproximação"
 L["Show Gap-Closer Glow desc"] = "Exibe um brilho dourado nos ícones de aproximação para destacar que estão disponíveis."
@@ -292,5 +302,5 @@ L["Blacklist Position 1 desc"] = "Aplicar a lista negra também à posição 1 (
 -- Performance
 L["Performance"] = "Desempenho"
 L["Disable Blizzard Highlight"] = "Desativar destaque da barra de ação da Blizzard"
-L["Disable Blizzard Highlight desc"] = "Desativar isso melhora o desempenho. O AssistedCombatManager da Blizzard executa um loop por quadro que escaneia todos os botões de barra de ação para mostrar um brilho azul. O JustAC já exibe essa informação em sua própria fila. Desativá-lo elimina esse loop e pode prevenir erros de 'limite de tempo de execução de script excedido' sob carga pesada de addons. Esta configuração persiste entre sessões."
+L["Disable Blizzard Highlight desc"] = "Desativar o brilho da Blizzard na barra de ação (redundante com JustAC). Melhora o desempenho e previne erros de 'limite de tempo de execução' sob carga pesada de addons."
 

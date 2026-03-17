@@ -206,7 +206,17 @@ L["Pet Heal Priority List"] = "Begleiter-Heilung (Priorität)"
 L["Pet Heal Priority desc"] = "Wird angezeigt wenn Begleiter-Gesundheit niedrig. Begleiter-Gesundheit kann im Kampf verborgen sein."
 L["Restore Pet Heal Defaults desc"] = "Begleiter-Heilzauber auf Klassen-Standard zurücksetzen"
 L["Show Pet Health Bar"] = "Begleiter-Lebensleiste anzeigen"
-L["Show Pet Health Bar desc"] = "Kompakte Begleiter-Lebensleiste (nur Begleiterklassen). Türkis gefärbt. Wird ohne aktiven Begleiter ausgeblendet."
+L["Show Pet Health Bar desc"] = "Kompakte Begleiter-Lebensleiste (nur Begleiterklassen). Wird ohne aktiven Begleiter ausgeblendet."
+
+-- Item settings (per-item aura link / combat hide)
+L["Link Aura..."] = "Aura verknüpfen..."
+L["Link Aura desc"] = "Verknüpfe eine Buff-Aura (Essen, Fläschchen, Trank, etc.) mit diesem Gegenstand. Der Gegenstand wird ausgeblendet, solange der Buff aktiv ist."
+L["Hide in Combat"] = "Im Kampf ausblenden"
+L["Hide in Combat desc"] = "Diesen Gegenstand im Kampf aus der Warteschlange ausblenden. Empfohlen für langanhaltende Buffs (Essen, Fläschchen), da ihre Auren im Kampf nicht erkannt werden können."
+L["Linked: %s"] = "Verknüpft: %s"
+L["Clear Link"] = "Lösch."
+L["Clear Link desc"] = "Verknüpfte Aura entfernen"
+L["Search auras desc"] = "Zeigt aktive Spieler-Buffs. Zum Filtern tippen oder direkt eine Zauber-ID eingeben."
 
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
@@ -224,7 +234,7 @@ L["Interrupt Mode Disabled"] = "Aus"
 L["Interrupt Mode Kick Only"] = "Nur Kick — Nur Unterbrechungen, kein CC"
 L["Interrupt Mode Kick Prefer"] = "Kick-Priorität — Kick zuerst, CC als Ausweichlösung"
 L["Interrupt Mode CC Prefer"] = "CC-Priorität — CC statt Kick (verschwendet CC bei kickbaren Zaubern)"
-L["Nameplate Show Health Bars desc"] = "Kompakte Spieler- und Begleiter-Lebensleisten über den Defensiv-Symbolen anzeigen. Begleiter-Leiste wird ohne aktiven Begleiter ausgeblendet. Automatisch ausgeblendet wenn keine Defensiven sichtbar."
+L["Nameplate Show Health Bars desc"] = "Kompakte Lebensleisten über den Defensiv-Symbolen. Automatisch ausgeblendet wenn keine Defensiven sichtbar."
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Auf Standard zurücksetzen"
@@ -257,7 +267,7 @@ L["Reset Icon Labels desc"] = "Alle Symbolbeschriftungs-Einstellungen auf Standa
 
 -- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Erweiterungsrichtung"
-L["Expansion Direction desc"] = "Stapelrichtung der Symbole bei mehreren Plätzen. Horizontal erweitert von der Namensplakette weg. Vertikal hoch/runter stapelt über/unter Platz 1."
+L["Expansion Direction desc"] = "Stapelrichtung der Symbole bei mehreren Plätzen. Horizontal erweitert von der Namensplakette weg."
 L["Horizontal (Out)"] = "Horizontal (raus)"
 L["Vertical - Up"] = "Vertikal - Hoch"
 L["Vertical - Down"] = "Vertikal - Runter"
@@ -269,7 +279,7 @@ L["Enable Gap-Closer Suggestions desc"] = "Schlägt Fähigkeiten vor, wenn das Z
 L["Gap-Closer Priority List"] = "Prioritätsliste der Annäherung"
 L["Gap-Closer Priority desc"] = "Der erste verwendbare Zauber wird angezeigt. Reihenfolge ändern, um Priorität festzulegen."
 L["Restore Gap-Closer Defaults desc"] = "Annäherungsliste auf Klassen-Standardzauber zurücksetzen"
-L["No Gap-Closer Spells"] = "Keine Annäherungszauber konfiguriert. Dropdown nutzen oder Klassen-Standards wiederherstellen."
+L["No Gap-Closer Spells"] = "Keine Annäherungszauber konfiguriert. Unten hinzufügen oder Klassen-Standards wiederherstellen."
 L["Reset Gap-Closers desc"] = "Annäherungs-Einstellungen zurücksetzen. Die Zauberliste wird nicht beeinflusst."
 L["Show Gap-Closer Glow"] = "Annäherungsleuchten anzeigen"
 L["Show Gap-Closer Glow desc"] = "Goldenes Leuchten auf Annäherungssymbolen anzeigen, um deren Verfügbarkeit hervorzuheben."
@@ -292,5 +302,5 @@ L["Blacklist Position 1 desc"] = "Die Sperrliste auch auf Position 1 (Blizzards 
 -- Performance
 L["Performance"] = "Leistung"
 L["Disable Blizzard Highlight"] = "Blizzard-Aktionsleisten-Hervorhebung deaktivieren"
-L["Disable Blizzard Highlight desc"] = "Deaktivierung verbessert die Leistung. Blizzards AssistedCombatManager führt jeden Frame eine Schleife aus, die alle Aktionsleisten-Buttons nach dem blauen Ameisenmarsch-Leuchten durchsucht. JustAC zeigt dieselben Informationen bereits in seiner eigenen Warteschlange an. Diese Option stoppt diese Schleife und kann Fehler vom Typ ‚Skript-Ausführungszeitlimit überschritten' bei hoher Addon-Last verhindern. Diese Einstellung bleibt sitzungsübergreifend erhalten."
+L["Disable Blizzard Highlight desc"] = "Blizzards Aktionsleisten-Leuchteffekt deaktivieren (redundant mit JustAC). Verbessert die Leistung und verhindert ‚Skript-Ausführungszeitlimit'-Fehler bei hoher Addon-Last."
 

@@ -198,6 +198,13 @@ local function HandleSlashCommand(addon, input)
             addon:Print("DebugCommands module not available")
         end
 
+    elseif command == "burst" then
+        if DebugCommands and DebugCommands.BurstDiagnostics then
+            DebugCommands.BurstDiagnostics(addon)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+
     elseif command == "help" then
         if DebugCommands and DebugCommands.ShowHelp then
             DebugCommands.ShowHelp(addon)

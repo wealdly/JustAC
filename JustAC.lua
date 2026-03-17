@@ -107,6 +107,7 @@ local defaults = {
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
+            itemSettings = {},        -- Per-item settings: itemSettings[itemID] = {linkedAura=spellID, combatHide=bool}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
             detached = false,                                    -- Give defensives their own independent draggable frame
@@ -512,6 +513,10 @@ function JustAC:OnEnable()
                 if SpellQueue.InvalidateRotationCache then
                     SpellQueue.InvalidateRotationCache()
                 end
+            end
+            -- Re-cache base cooldowns for any new rotation spells (talent change, etc.)
+            if BurstInjectionEngine and BurstInjectionEngine.PreCacheRotationCooldowns then
+                BurstInjectionEngine.PreCacheRotationCooldowns()
             end
             self:ForceUpdate()
         end, self)
@@ -1040,6 +1045,10 @@ function JustAC:OnCombatEvent(event)
         if BurstInjectionEngine and BurstInjectionEngine.ClearBurstState then
             BurstInjectionEngine.ClearBurstState()
         end
+        -- Pre-cache base cooldowns for rotation spells (secret in combat)
+        if BurstInjectionEngine and BurstInjectionEngine.PreCacheRotationCooldowns then
+            BurstInjectionEngine.PreCacheRotationCooldowns()
+        end
         -- Re-resolve interrupt spells if deferred from combat
         if self.interruptRefreshPending then
             self:RefreshInterruptSpells()
@@ -1165,6 +1174,9 @@ function JustAC:OnActionBarChanged()
     if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
         BlizzardAPI.InvalidateSlotUsabilityCache()
     end
+    if ActionBarScanner and ActionBarScanner.InvalidateAssistedSlot then
+        ActionBarScanner.InvalidateAssistedSlot()
+    end
     self:ForceUpdate()
 end
 
@@ -1253,6 +1265,11 @@ function JustAC:OnTargetChanged()
     end
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
+    -- Invalidate rotation cache so Blizzard is re-queried for the new target
+    -- (prevents stale spells from previous target persisting).
+    if SpellQueue and SpellQueue.InvalidateRotationCache then
+        SpellQueue.InvalidateRotationCache()
+    end
     -- ForceUpdateAll marks both queues dirty; OnUpdate renders on next tick.
     self:ForceUpdateAll()
 end

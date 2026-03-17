@@ -510,16 +510,29 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
         elseif entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
             -- Negative entry = item (stored as -itemID)
             local itemID = -entry
-            local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
-            if hasItem then
-                if isUsable then
-                    nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
-                else
-                    -- Item on cooldown — show greyed out (parity with spell behavior)
-                    unusableBuffer[#unusableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false, unusable = true, noResources = false}
+            -- Per-item settings: combat hide + linked aura suppression
+            local itemSettings = profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
+            local suppress = false
+            if itemSettings then
+                if itemSettings.combatHide and InCombatLockdown() then
+                    suppress = true
                 end
-                usableAddedHere[entry] = true
-                usableAddedHere[itemID] = true
+                if not suppress and itemSettings.linkedAura and BlizzardAPI.IsAuraActive("player", itemSettings.linkedAura) then
+                    suppress = true
+                end
+            end
+            if not suppress then
+                local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+                if hasItem then
+                    if isUsable then
+                        nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
+                    else
+                        -- Item on cooldown — show greyed out (parity with spell behavior)
+                        unusableBuffer[#unusableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false, unusable = true, noResources = false}
+                    end
+                    usableAddedHere[entry] = true
+                    usableAddedHere[itemID] = true
+                end
             end
         end
     end

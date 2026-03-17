@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 6
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 7
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -107,6 +107,42 @@ function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
     end
 
     return true, true, false
+end
+
+--------------------------------------------------------------------------------
+-- Aura Active Detection (used by item→aura linking in defensive queue)
+--------------------------------------------------------------------------------
+
+--- Check if a specific aura (by spellID) is active on a unit.
+--- Uses RedundancyFilter's combat-safe instance map (resolves secret aura IDs).
+--- Fail-open: returns false if aura status cannot be determined.
+--- @param unit string  Unit token (typically "player")
+--- @param auraSpellID number  The spellID of the aura to check
+--- @return boolean  true if the aura is currently active
+function BlizzardAPI.IsAuraActive(unit, auraSpellID)
+    if not auraSpellID or auraSpellID == 0 then return false end
+
+    -- Prefer RedundancyFilter's aura cache (combat-safe, maintains instance maps)
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    if RedundancyFilter and RedundancyFilter.GetAuraCache then
+        local cache = RedundancyFilter.GetAuraCache()
+        if cache and cache.byID then
+            return cache.byID[auraSpellID] == true
+        end
+    end
+
+    -- Fallback: direct scan (works OOC when aura fields are readable)
+    if unit and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 40 do
+            local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
+            if not ok or not data then break end
+            if data.spellId and not IsSecretValue(data.spellId) and data.spellId == auraSpellID then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 --------------------------------------------------------------------------------

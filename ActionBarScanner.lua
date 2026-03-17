@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 36)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 37)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -1203,4 +1203,31 @@ function ActionBarScanner.GetDefensiveProccedSpells()
     defensiveProcsListDirty = true
     RebuildDefensiveProcList()
     return defensiveProcsList
+end
+
+--------------------------------------------------------------------------------
+-- Assisted Combat Slot Lookup
+--------------------------------------------------------------------------------
+
+local cachedAssistedSlot = nil
+local assistedSlotDirty = true
+
+--- Invalidate the cached assisted combat slot.
+--- Called on ACTIONBAR_SLOT_CHANGED / bar page changes.
+function ActionBarScanner.InvalidateAssistedSlot()
+    assistedSlotDirty = true
+end
+
+--- Returns the first action bar slot containing the Assisted Combat button,
+--- or nil if the player hasn't placed it on any bar.
+function ActionBarScanner.GetAssistedCombatSlot()
+    if not assistedSlotDirty then return cachedAssistedSlot end
+    assistedSlotDirty = false
+    cachedAssistedSlot = nil
+    if not C_ActionBar or not C_ActionBar.FindAssistedCombatActionButtons then return nil end
+    local slots = C_ActionBar.FindAssistedCombatActionButtons()
+    if slots and slots[1] then
+        cachedAssistedSlot = slots[1]
+    end
+    return cachedAssistedSlot
 end
