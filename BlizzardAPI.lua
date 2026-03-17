@@ -3,7 +3,7 @@
 -- JustAC: Blizzard API Module - entry point, version detection and LibStub registration.
 -- Public functions are defined in the BlizzardAPI\ submodules, loaded immediately
 -- after this file in JustAC.toc: CooldownTracking, SecretValues, SpellQuery, StateHelpers.
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 33)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 34)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -60,16 +60,25 @@ function BlizzardAPI.OnActionUsableChanged(changes)
     for _, change in ipairs(changes) do
         slotUsabilityCache[change.slot] = change
     end
+    -- Detect CD completion via usability flips (Phase 2 CDR detection)
+    if BlizzardAPI.CheckUsabilityFlips then
+        BlizzardAPI.CheckUsabilityFlips(changes)
+    end
 end
 
 --- Wipe slot usability cache (call when slot content changes, e.g. bar page
 --- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
 function BlizzardAPI.InvalidateSlotUsabilityCache()
     wipe(slotUsabilityCache)
+    -- Also invalidate the reverse slot→spell map for CDR flip detection
+    if BlizzardAPI.InvalidateReverseSlotMap then
+        BlizzardAPI.InvalidateReverseSlotMap()
+    end
 end
 
 --- Returns the action bar usability state for a spell, or nil if unavailable.
 --- NeverSecret API — safe in combat. Uses ActionBarScanner to find the slot.
+--- Falls back to assisted combat slot when spell isn't on the player's bars.
 --- Checks the event-driven cache first; falls back to live API.
 --- @param spellID number
 --- @return boolean|nil usable, boolean|nil notEnoughMana
@@ -77,6 +86,20 @@ function BlizzardAPI.GetActionBarUsability(spellID)
     local ABS = LibStub("JustAC-ActionBarScanner", true)
     if not ABS or not ABS.GetSlotForSpell then return nil, nil end
     local slot = ABS.GetSlotForSpell(spellID)
+
+    -- Assisted combat slot fallback: if the spell isn't on any bar but matches
+    -- the current assistant recommendation, use that slot for usability checks.
+    if not slot and ABS.GetAssistedCombatSlot then
+        local C_AssistedCombat = C_AssistedCombat
+        if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
+            local nextCast = C_AssistedCombat.GetNextCastSpell(true)
+            local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+            if nextCast and (nextCast == spellID or nextCast == displayID) then
+                slot = ABS.GetAssistedCombatSlot()
+            end
+        end
+    end
+
     if not slot then return nil, nil end
 
     -- Prefer event-driven cache (ACTION_USABLE_CHANGED)

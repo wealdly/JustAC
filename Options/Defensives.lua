@@ -199,6 +199,11 @@ function Defensives.UpdateDefensivesOptions(addon)
 
     local updateFunc = function()
         Defensives.UpdateDefensivesOptions(addon)
+        -- Re-register all defensive spells for local CD tracking (new additions included)
+        local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+        if DefensiveEngine and DefensiveEngine.RegisterDefensivesForTracking then
+            DefensiveEngine.RegisterDefensivesForTracking(addon)
+        end
         addon:ForceUpdateAll()
     end
 

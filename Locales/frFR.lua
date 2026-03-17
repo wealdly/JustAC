@@ -206,7 +206,17 @@ L["Pet Heal Priority List"] = "Soin du familier (priorité)"
 L["Pet Heal Priority desc"] = "Affiché quand la santé du familier est basse. La santé du familier peut être cachée en combat."
 L["Restore Pet Heal Defaults desc"] = "Réinitialiser les sorts de soin du familier aux valeurs par défaut"
 L["Show Pet Health Bar"] = "Barre de santé du familier"
-L["Show Pet Health Bar desc"] = "Barre de santé compacte du familier (classes avec familier). Couleur sarcelle. Se masque sans familier actif."
+L["Show Pet Health Bar desc"] = "Barre de santé compacte du familier (classes avec familier). Se masque sans familier actif."
+
+-- Item settings (per-item aura link / combat hide)
+L["Link Aura..."] = "Lier une aura..."
+L["Link Aura desc"] = "Lie une aura de buff (nourriture, fiole, potion, etc.) à cet objet. L'objet est masqué tant que le buff est actif."
+L["Hide in Combat"] = "Masquer en combat"
+L["Hide in Combat desc"] = "Masquer cet objet de la file en combat. Recommandé pour les buffs longue durée (nourriture, fioles) car leurs auras ne sont pas détectables en combat."
+L["Linked: %s"] = "Lié : %s"
+L["Clear Link"] = "Retirer"
+L["Clear Link desc"] = "Retirer l'aura liée"
+L["Search auras desc"] = "Affiche les buffs actifs du joueur. Tapez pour filtrer ou entrez un ID de sort directement."
 
 -- Nameplate Overlay (16 keys)
 L["Nameplate Overlay"] = "Overlay"
@@ -224,7 +234,7 @@ L["Interrupt Mode Disabled"] = "Désactivé"
 L["Interrupt Mode Kick Only"] = "Kick uniquement — Interruptions seulement, pas de CC"
 L["Interrupt Mode Kick Prefer"] = "Priorité kick — Kick d'abord, CC en secours"
 L["Interrupt Mode CC Prefer"] = "Priorité CC — CC plutôt que kicks (gaspille le CC sur les sorts kickables)"
-L["Nameplate Show Health Bars desc"] = "Afficher des barres de santé compactes du joueur et du familier au-dessus des icônes défensives. La barre du familier se masque sans familier actif. Se masque automatiquement sans défensifs visibles."
+L["Nameplate Show Health Bars desc"] = "Barres de santé compactes au-dessus des icônes défensives. Se masque automatiquement sans défensifs visibles."
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Réinitialiser"
@@ -257,7 +267,7 @@ L["Reset Icon Labels desc"] = "Réinitialiser tous les paramètres de libellés 
 
 -- Expansion Direction / positioning (5 keys)
 L["Expansion Direction"] = "Direction d'expansion"
-L["Expansion Direction desc"] = "Direction d'empilement des icônes. Horizontal s'étend depuis la plaque. Vertical haut/bas empile au-dessus/en dessous de l'emplacement 1."
+L["Expansion Direction desc"] = "Direction d'empilement des icônes. Horizontal s'étend depuis la plaque."
 L["Horizontal (Out)"] = "Horizontal (vers l'ext.)"
 L["Vertical - Up"] = "Vertical - Haut"
 L["Vertical - Down"] = "Vertical - Bas"
@@ -269,7 +279,7 @@ L["Enable Gap-Closer Suggestions desc"] = "Suggère des capacités d'approche qu
 L["Gap-Closer Priority List"] = "Liste de priorité des approches"
 L["Gap-Closer Priority desc"] = "Le premier sort utilisable est affiché. Réordonner pour définir la priorité."
 L["Restore Gap-Closer Defaults desc"] = "Réinitialiser la liste d'approche aux sorts par défaut de votre classe et spécialisation"
-L["No Gap-Closer Spells"] = "Aucun sort d'approche configuré. Utilisez le menu déroulant ou cliquez sur Restaurer les défauts de classe."
+L["No Gap-Closer Spells"] = "Aucun sort d'approche configuré. Ajoutez-en un ci-dessous ou cliquez sur Restaurer les défauts de classe."
 L["Reset Gap-Closers desc"] = "Réinitialiser les paramètres d'approche. La liste de sorts n'est pas affectée."
 L["Show Gap-Closer Glow"] = "Lueur d'approche"
 L["Show Gap-Closer Glow desc"] = "Affiche une lueur dorée sur les icônes d'approche pour indiquer leur disponibilité."
@@ -292,5 +302,5 @@ L["Blacklist Position 1 desc"] = "Appliquer également la liste noire à la posi
 -- Performance
 L["Performance"] = "Performance"
 L["Disable Blizzard Highlight"] = "Désactiver le surlignage Blizzard"
-L["Disable Blizzard Highlight desc"] = "Désactiver ceci améliore les performances. L'AssistedCombatManager de Blizzard exécute une boucle par image qui scanne chaque bouton de barre d'action pour afficher un effet lumineux bleu. JustAC affiche déjà ces informations dans sa propre file. Le désactiver supprime cette boucle et peut empêcher les erreurs « limite de temps d'exécution de script dépassée » sous forte charge d'addons. Ce paramètre persiste entre les sessions."
+L["Disable Blizzard Highlight desc"] = "Désactiver le scan lumineux de Blizzard sur la barre d'action (redondant avec JustAC). Améliore les performances et empêche les erreurs « limite de temps d'exécution » sous forte charge d'addons."
 

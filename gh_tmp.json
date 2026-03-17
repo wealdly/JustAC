@@ -1,0 +1,13 @@
+{
+  "message": "Requires authentication",
+  "errors": [
+    {
+      "message": "Must be authenticated to access the code search API",
+      "resource": "Search",
+      "field": "q",
+      "code": "invalid"
+    }
+  ],
+  "documentation_url": "https://docs.github.com/rest/search/search#search-code",
+  "status": "401"
+}

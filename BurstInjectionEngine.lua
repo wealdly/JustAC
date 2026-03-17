@@ -4,11 +4,11 @@
 -- Blizzard's Assisted Combat recommendations and inject user-configured priority
 -- spells at position 1.  Mirrors GapCloserEngine architecture.
 --
--- Primary trigger mechanism: any Blizzard-recommended spell with a base
--- cooldown >= threshold (default 45s) starts a burst window.  Users can
--- optionally configure an explicit trigger spell list to override.
+-- Trigger detection: curated per-spec major CDs (SpellDB.CLASS_BURST_TRIGGER_DEFAULTS)
+-- that Blizzard recommends when burst is appropriate.  Users can optionally
+-- configure an explicit trigger spell list to override.
 
-local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 2)
+local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 3)
 if not BurstInjectionEngine then return end
 
 -- Hot path cache
@@ -24,11 +24,10 @@ local SpellDB          = LibStub("JustAC-SpellDB", true)
 -- Cached state (wiped on spec/profile change)
 --------------------------------------------------------------------------------
 
-local cachedTriggerSpells = nil    -- explicit override set: { [spellID] = true } or empty
-local cachedHasExplicitTriggers = false -- true when user/defaults populate trigger list
+local cachedTriggerSpells = nil    -- resolved trigger set: { [spellID] = true }
+local cachedTriggerSource = nil   -- "explicit", "defaults", or nil
 local cachedInjectionSpells = nil  -- resolved injection list: { spellID, ... }
 local cachedSpecKey = nil
-local cachedTriggerThreshold = nil -- CD threshold in seconds
 
 --- Cache of base cooldown durations (seconds) for spells seen via CheckTrigger.
 --- Populated lazily; survives across cache invalidations (spell CDs don't change).
@@ -47,35 +46,40 @@ local function GetSpecKey()
 end
 
 --- Return the base cooldown of a spell in seconds (cached).
---- Uses GetSpellBaseCooldown (returns ms). In combat this API returns secret
---- values — never cache secrets (they compare truthy and break threshold logic).
+--- Uses GetSpellBaseCooldown (returns ms) with fallback to C_Spell.GetSpellCharges
+--- cooldownDuration for charge-based spells where GetSpellBaseCooldown returns 0.
+--- Must be called out of combat — both APIs return secrets in combat.
 local function GetBaseCooldownSeconds(spellID)
     if not spellID or spellID <= 0 then return 0 end
     local cached = baseCooldownCache[spellID]
     if cached then return cached end
+
+    local sec = 0
+
+    -- Try GetSpellBaseCooldown first (returns ms)
     local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    if not ms or (issecretvalue and issecretvalue(ms)) then return 0 end
-    local sec = ms > 0 and (ms / 1000) or 0
+    if ms and not (issecretvalue and issecretvalue(ms)) and ms > 0 then
+        sec = ms / 1000
+    end
+
+    -- Fallback: charge-based spells report 0 base CD but have a recharge time
+    if sec == 0 and C_Spell and C_Spell.GetSpellCharges then
+        local ok, charges = pcall(C_Spell.GetSpellCharges, spellID)
+        if ok and charges then
+            local dur = charges.cooldownDuration
+            if dur and not (issecretvalue and issecretvalue(dur)) and dur > 0 then
+                sec = dur
+            end
+        end
+    end
+
     baseCooldownCache[spellID] = sec
     return sec
 end
 
---- Resolve the trigger CD threshold from profile or SpellDB constant.
-local function ResolveTriggerThreshold(addon)
-    if cachedTriggerThreshold then return cachedTriggerThreshold end
-    local profile = addon and addon.db and addon.db.profile
-    local bi = profile and profile.burstInjection
-    if bi and bi.triggerThreshold and bi.triggerThreshold > 0 then
-        cachedTriggerThreshold = bi.triggerThreshold
-    else
-        cachedTriggerThreshold = (SpellDB and SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT) or 45
-    end
-    return cachedTriggerThreshold
-end
-
---- Resolve the explicit trigger spell set for the current spec (override only).
---- If the user has configured trigger spells, returns a populated set.
---- Otherwise returns an empty table (threshold-based detection is primary).
+--- Resolve the trigger spell set for the current spec.
+--- Priority: 1) user-configured explicit overrides, 2) SpellDB curated defaults.
+--- Returns a set { [spellID] = true } or nil.
 local function ResolveTriggerSpells(addon)
     local specKey = GetSpecKey()
     if not specKey then return nil end
@@ -86,20 +90,37 @@ local function ResolveTriggerSpells(addon)
 
     cachedSpecKey = specKey
     cachedTriggerSpells = {}
-    cachedHasExplicitTriggers = false
+    cachedTriggerSource = nil
 
-    -- Check profile for user-configured trigger list (explicit override)
+    -- Tier 1: user-configured trigger list (explicit override)
     local profile = addon and addon.db and addon.db.profile
     local bi = profile and profile.burstInjection
     if bi and bi.triggerSpells and bi.triggerSpells[specKey] and #bi.triggerSpells[specKey] > 0 then
-        cachedHasExplicitTriggers = true
+        cachedTriggerSource = "explicit"
         for _, spellID in ipairs(bi.triggerSpells[specKey]) do
             if spellID and spellID > 0 then
                 cachedTriggerSpells[spellID] = true
-                -- Also map talent-overridden form
                 local resolved = BlizzardAPI.ResolveSpellID(spellID)
                 if resolved ~= spellID then
                     cachedTriggerSpells[resolved] = true
+                end
+            end
+        end
+        return cachedTriggerSpells
+    end
+
+    -- Tier 2: SpellDB curated defaults for this spec
+    if SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then
+        local defaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
+        if defaults and #defaults > 0 then
+            cachedTriggerSource = "defaults"
+            for _, spellID in ipairs(defaults) do
+                if spellID and spellID > 0 then
+                    cachedTriggerSpells[spellID] = true
+                    local resolved = BlizzardAPI.ResolveSpellID(spellID)
+                    if resolved ~= spellID then
+                        cachedTriggerSpells[resolved] = true
+                    end
                 end
             end
         end
@@ -110,6 +131,7 @@ end
 
 --- Resolve the injection spell list for the current spec.
 --- Reads from profile (user-configured) with SpellDB defaults as fallback.
+--- Dynamically registers all resolved spells for local CD tracking.
 --- Returns an ordered array of spell IDs, or nil.
 local function ResolveInjectionSpells(addon)
     local specKey = GetSpecKey()
@@ -119,25 +141,47 @@ local function ResolveInjectionSpells(addon)
         return cachedInjectionSpells
     end
 
+    cachedSpecKey = specKey
+    local spellList
+
     -- Check profile for user-configured list
     local profile = addon and addon.db and addon.db.profile
     local bi = profile and profile.burstInjection
     if bi and bi.injectionSpells and bi.injectionSpells[specKey] and #bi.injectionSpells[specKey] > 0 then
-        cachedInjectionSpells = bi.injectionSpells[specKey]
-        return cachedInjectionSpells
+        spellList = bi.injectionSpells[specKey]
     end
 
     -- Fall back to SpellDB defaults
-    if SpellDB and SpellDB.CLASS_BURST_INJECTION_DEFAULTS then
+    if not spellList and SpellDB and SpellDB.CLASS_BURST_INJECTION_DEFAULTS then
         local defaults = SpellDB.CLASS_BURST_INJECTION_DEFAULTS[specKey]
         if defaults then
-            cachedInjectionSpells = defaults
-            return cachedInjectionSpells
+            spellList = defaults
         end
     end
 
-    cachedInjectionSpells = nil
-    return nil
+    if not spellList then
+        cachedInjectionSpells = nil
+        return nil
+    end
+
+    -- Register every injection spell for local CD tracking (idempotent).
+    -- This ensures custom user-added spells get tracked dynamically.
+    if BlizzardAPI.RegisterSpellForTracking then
+        for _, sid in ipairs(spellList) do
+            if sid and sid > 0 then
+                local resolvedID = BlizzardAPI.ResolveSpellID(sid)
+                BlizzardAPI.RegisterSpellForTracking(resolvedID, "burst")
+                if resolvedID ~= sid then
+                    BlizzardAPI.RegisterSpellForTracking(sid, "burst")
+                end
+                -- Pre-cache base CD while we're at it (no-op if already cached)
+                GetBaseCooldownSeconds(resolvedID)
+            end
+        end
+    end
+
+    cachedInjectionSpells = spellList
+    return cachedInjectionSpells
 end
 
 --- Evaluate a single injection candidate.
@@ -174,39 +218,53 @@ function BurstInjectionEngine.GetBurstSpecKey()
     return GetSpecKey()
 end
 
---- Return rotation spells that meet the current CD threshold.
---- Used by Options to show which spells would trigger a burst window.
+--- Return the active trigger spell list for the current spec.
+--- Shows explicit overrides if configured, otherwise SpellDB curated defaults.
+--- Filters by IsSpellAvailable (talent alternatives the player doesn't know are hidden).
 --- Returns: { {spellID=number, name=string, baseCd=number}, ... } or empty table.
 function BurstInjectionEngine.GetDetectedTriggers(addon)
     local result = {}
-    if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return result end
-    local rotationSpells = BlizzardAPI.GetRotationSpells()
-    if not rotationSpells then return result end
+    ResolveTriggerSpells(addon)  -- ensure cache is populated
 
-    local threshold = ResolveTriggerThreshold(addon)
+    -- Build source list from either explicit overrides or SpellDB defaults
+    local sourceList
+    local profile = addon and addon.db and addon.db.profile
+    local bi = profile and profile.burstInjection
+    local specKey = GetSpecKey()
+
+    if cachedTriggerSource == "explicit" and bi and bi.triggerSpells and specKey then
+        sourceList = bi.triggerSpells[specKey]
+    elseif SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS and specKey then
+        sourceList = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
+    end
+
+    if not sourceList then return result end
+
     local seen = {}
-    for _, spellID in ipairs(rotationSpells) do
+    for _, spellID in ipairs(sourceList) do
         if spellID and spellID > 0 and not seen[spellID] then
             seen[spellID] = true
-            local baseCd = GetBaseCooldownSeconds(spellID)
-            if baseCd >= threshold then
-                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-                local name = spellInfo and spellInfo.name or tostring(spellID)
-                result[#result + 1] = { spellID = spellID, name = name, baseCd = baseCd }
+            -- Filter to spells the player actually knows (e.g. Incarnation vs Berserk)
+            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
+            local checkID = (BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)) and resolvedID
+                or (BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)) and spellID
+                or nil
+            if checkID then
+                local baseCd = GetBaseCooldownSeconds(checkID)
+                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(checkID)
+                local name = spellInfo and spellInfo.name or tostring(checkID)
+                result[#result + 1] = { spellID = checkID, name = name, baseCd = baseCd }
             end
         end
     end
     return result
 end
 
---- Check if the given primarySpellID (Blizzard's pos-1 recommendation) is a
 --- Per-frame trigger check: returns true when the position-1 spell qualifies
---- as a burst trigger AND at least one injection spell is usable.
+--- as a burst trigger.
 --- No time-based window — injection only occurs while the trigger spell is
 --- actively recommended by Blizzard in position 1.
---- Two-tier detection:
----   1. If user has explicit trigger spells configured, match against those.
----   2. Otherwise, trigger on any spell with base CD >= threshold (default 45s).
+--- Matches against: 1) user explicit overrides, or 2) SpellDB curated defaults.
 function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
     if not addon or not addon.db or not addon.db.profile then return false end
     local bi = addon.db.profile.burstInjection
@@ -215,32 +273,18 @@ function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
     if not primarySpellID or primarySpellID <= 0 then return false end
 
     local triggers = ResolveTriggerSpells(addon)
-    local isTrigger = false
+    if not triggers then return false end
 
-    if cachedHasExplicitTriggers and triggers then
-        -- Tier 1: explicit trigger list (user override)
-        isTrigger = triggers[primarySpellID]
-        if not isTrigger then
-            local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-            if displayID and displayID ~= primarySpellID then
-                isTrigger = triggers[displayID]
-            end
-        end
-    else
-        -- Tier 2: CD threshold detection (primary mechanism)
-        local threshold = ResolveTriggerThreshold(addon)
-        local baseCd = GetBaseCooldownSeconds(primarySpellID)
-        if baseCd < threshold then
-            -- Also check the display/override form
-            local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-            if displayID and displayID ~= primarySpellID then
-                baseCd = GetBaseCooldownSeconds(displayID)
-            end
-        end
-        isTrigger = (baseCd >= threshold)
+    -- Direct match
+    if triggers[primarySpellID] then return true end
+
+    -- Check display/override form (talent-overridden spells)
+    local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+    if displayID and displayID ~= primarySpellID and triggers[displayID] then
+        return true
     end
 
-    return isTrigger
+    return false
 end
 
 --- Returns true if a burst window is currently active.
@@ -257,10 +301,9 @@ end
 --- Invalidate cached spell lists (spec change, profile change).
 function BurstInjectionEngine.InvalidateBurstCache()
     cachedTriggerSpells = nil
-    cachedHasExplicitTriggers = false
+    cachedTriggerSource = nil
     cachedInjectionSpells = nil
     cachedSpecKey = nil
-    cachedTriggerThreshold = nil
 end
 
 --- Returns the first usable injection spell for the current burst window.
@@ -299,8 +342,7 @@ function BurstInjectionEngine.MarkBurstInjectionSpellIDs(addon, spellIDSet)
 end
 
 --- Initialize burst injection defaults for the current spec if not yet populated.
---- Trigger spells are NOT auto-populated — CD threshold is the default mechanism.
---- Users who want explicit triggers can add them manually in Options.
+--- Trigger spells use SpellDB curated defaults unless overridden by the user.
 function BurstInjectionEngine.InitializeBurstInjection(addon)
     local profile = addon and addon.db and addon.db.profile
     if not profile then return end
@@ -323,8 +365,8 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
     local specKey = GetSpecKey()
     if not specKey then return end
 
-    -- Trigger spells: left empty by default (CD threshold is primary detection)
-    -- Users can add explicit overrides via Options
+    -- Trigger spells: SpellDB curated defaults used automatically;
+    -- users can add explicit overrides via Options
 
     -- Populate injection spells from defaults if empty
     if not profile.burstInjection.injectionSpells[specKey]
@@ -356,7 +398,52 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
                         BlizzardAPI.RegisterSpellForTracking(sid, "burst")
                     end
                 end
+                -- Seed local CD if spell is already on cooldown at init time.
+                -- Without this, spells on CD from a previous session have no
+                -- UNIT_SPELLCAST_SUCCEEDED event, so IsSpellReady fails-open.
+                if BlizzardAPI.SeedLocalCooldownIfActive then
+                    BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
+                    if resolvedID ~= sid then
+                        BlizzardAPI.SeedLocalCooldownIfActive(sid)
+                    end
+                end
             end
         end
     end
+
+    -- Pre-cache base cooldowns for trigger defaults (for debug display)
+    if SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then
+        local trigDefaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
+        if trigDefaults then
+            for _, sid in ipairs(trigDefaults) do
+                if sid and sid > 0 then
+                    GetBaseCooldownSeconds(sid)
+                end
+            end
+        end
+    end
+
+    -- Pre-cache base cooldowns for rotation spells (general cache warming)
+    BurstInjectionEngine.PreCacheRotationCooldowns()
+end
+
+--- Pre-cache base cooldowns for all spells in the Blizzard rotation list.
+--- Must be called OUT of combat (GetSpellBaseCooldown returns secrets in combat).
+--- Safe to call multiple times — already-cached spells are skipped.
+function BurstInjectionEngine.PreCacheRotationCooldowns()
+    if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return end
+    local rotationSpells = BlizzardAPI.GetRotationSpells()
+    if not rotationSpells then return end
+    for _, spellID in ipairs(rotationSpells) do
+        if spellID and spellID > 0 then
+            GetBaseCooldownSeconds(spellID)
+        end
+    end
+end
+
+--- Return the cached base cooldown for a spell (seconds), or 0 if not cached.
+--- Combat-safe: reads from the pre-populated cache, never calls GetSpellBaseCooldown.
+function BurstInjectionEngine.GetCachedBaseCooldown(spellID)
+    if not spellID then return 0 end
+    return baseCooldownCache[spellID] or 0
 end

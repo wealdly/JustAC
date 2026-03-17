@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 8)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 9)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -66,6 +66,43 @@ local interruptShown   = false -- whether interruptIcon is currently visible (co
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-global
+
+-- Masque support (separate group from standard/defensive queues)
+local Masque = LibStub("Masque", true)
+local MasqueOverlayGroup
+local GetMasqueOverlayGroup
+
+if Masque then
+    MasqueOverlayGroup = Masque:Group("JustAssistedCombat", "Nameplate Overlay")
+    GetMasqueOverlayGroup = function() return MasqueOverlayGroup end
+
+    -- Re-apply text overlay settings after Masque re-skins (user changes skin).
+    -- Masque's Skin_Text repositions HotKey; our ApplyTextOverlaySettings must
+    -- override afterwards to restore user-configured anchors.
+    local function OnOverlaySkinChanged(Group, Option)
+        if Option ~= "SkinID" and Option ~= "Reset" and Option ~= "Disabled" then return end
+        local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        if not addon or not addon.db then return end
+        local profile = addon:GetProfile()
+        if not profile or not profile.nameplateOverlay then return end
+        local npo = profile.nameplateOverlay
+        local iconSize = npo.iconSize or 32
+        local mergedOverlays = UIFrameFactory and UIFrameFactory.MergeOverlayTextOverlays and UIFrameFactory.MergeOverlayTextOverlays(profile)
+        for _, icon in ipairs(dpsIcons) do
+            if icon then UIFrameFactory.ApplyTextOverlaySettings(icon, iconSize, mergedOverlays) end
+        end
+        for _, icon in ipairs(defIcons) do
+            if icon then UIFrameFactory.ApplyTextOverlaySettings(icon, iconSize, mergedOverlays) end
+        end
+        if interruptIcon then
+            UIFrameFactory.ApplyTextOverlaySettings(interruptIcon, iconSize, mergedOverlays)
+        end
+    end
+
+    MasqueOverlayGroup:RegisterCallback(OnOverlaySkinChanged)
+else
+    GetMasqueOverlayGroup = function() return nil end
+end
 
 -- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
 local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainRelPt, chainOffX, chainOffY, iconSpacing }
@@ -289,7 +326,21 @@ local function CreateOverlayIcon(iconSize, profile)
     button:SetAlpha(0)
     button:Hide()
 
-    -- Apply central text overlay settings with overlay-specific fontScale
+    -- Register with Masque for user-configurable skinning (parity with UIFrameFactory)
+    local MasqueGroup = GetMasqueOverlayGroup and GetMasqueOverlayGroup()
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            ChargeCooldown = button.chargeCooldown,
+            HotKey = button.hotkeyText,
+            Count = button.chargeText,
+            Normal = button.NormalTexture,
+        })
+    end
+
+    -- Apply central text overlay settings AFTER Masque so our anchor overrides
+    -- the skin's HotKey position.
     if UIFrameFactory and UIFrameFactory.ApplyTextOverlaySettings then
         local mergedOverlays = UIFrameFactory.MergeOverlayTextOverlays(profile)
         UIFrameFactory.ApplyTextOverlaySettings(button, iconSize, mergedOverlays)
@@ -789,10 +840,19 @@ function UINameplateOverlay.Destroy(addon)
         icon:SetParent(nil)
     end
 
-    for _, icon in ipairs(dpsIcons) do CleanIcon(icon) end
-    for _, icon in ipairs(defIcons) do CleanIcon(icon) end
+    -- Remove all overlay icons from Masque before cleanup
+    local MasqueGroup = GetMasqueOverlayGroup and GetMasqueOverlayGroup()
+    for _, icon in ipairs(dpsIcons) do
+        if MasqueGroup then MasqueGroup:RemoveButton(icon) end
+        CleanIcon(icon)
+    end
+    for _, icon in ipairs(defIcons) do
+        if MasqueGroup then MasqueGroup:RemoveButton(icon) end
+        CleanIcon(icon)
+    end
 
     if interruptIcon then
+        if MasqueGroup then MasqueGroup:RemoveButton(interruptIcon) end
         CleanIcon(interruptIcon)
         interruptIcon = nil
     end

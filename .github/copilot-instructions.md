@@ -324,6 +324,8 @@ end
    - Move UNRELEASED changes to CHANGELOG.md
    - Increment version in JustAC.toc
    - Update library versions if breaking changes
+   - Update README.md if new features, removed features, or significant behavior changes
+   - Verify `build.ps1` lists all current source files (new files must be added)
    - Clear UNRELEASED.md
    - Commit version bump
 5. User runs `.\build.ps1` when ready to test locally

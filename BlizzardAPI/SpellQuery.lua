@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Info, Usability, Rotation API, Item Detection, Availability
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SecretValues.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SpellQuery", 1
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SpellQuery", 2
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -435,19 +435,31 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         return cached
     end
 
-    if C_SpellBook_IsSpellInSpellBook then
-        if C_SpellBook_IsSpellInSpellBook(spellID, Enum_SpellBookSpellBank_Player) then
+    -- Authoritative checks first: IsSpellKnown/IsPlayerSpell are definitive
+    -- for active spells and correctly exclude unselected choice-node talents.
+    if IsSpellKnown then
+        if IsSpellKnown(spellID) or IsSpellKnown(spellID, true) then
             spellAvailabilityCache[spellID] = true
             return true
         end
     end
 
-    if IsSpellKnown then
-        if IsSpellKnown(spellID) then
-            spellAvailabilityCache[spellID] = true
-            return true
-        end
-        if IsSpellKnown(spellID, true) then
+    if IsPlayerSpell and IsPlayerSpell(spellID) then
+        spellAvailabilityCache[spellID] = true
+        return true
+    end
+
+    -- Spellbook fallback: catches edge cases (e.g. racial abilities) but includes
+    -- unselected choice-node talents. Cross-check with IsSpellKnown to filter those.
+    if C_SpellBook_IsSpellInSpellBook then
+        if C_SpellBook_IsSpellInSpellBook(spellID, Enum_SpellBookSpellBank_Player) then
+            -- Choice-node guard: spellbook returns true for all options in a
+            -- talent choice row, even unselected ones. If IsSpellKnown explicitly
+            -- returned false above, this is an unselected talent — reject it.
+            if IsSpellKnown and not IsSpellKnown(spellID) and not IsPlayerSpell(spellID) then
+                spellAvailabilityCache[spellID] = false
+                return false
+            end
             spellAvailabilityCache[spellID] = true
             return true
         end
@@ -459,11 +471,6 @@ function BlizzardAPI.IsSpellAvailable(spellID)
             spellAvailabilityCache[spellID] = false
             return false
         end
-    end
-
-    if IsPlayerSpell and IsPlayerSpell(spellID) then
-        spellAvailabilityCache[spellID] = true
-        return true
     end
 
     spellAvailabilityCache[spellID] = false

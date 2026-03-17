@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 21)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 22)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -35,6 +35,7 @@ local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_ActionBar_GetActionCooldown = C_ActionBar and C_ActionBar.GetActionCooldown
 local C_ActionBar_GetActionCharges = C_ActionBar and C_ActionBar.GetActionCharges
 local C_ActionBar_GetActionDisplayCount = C_ActionBar and C_ActionBar.GetActionDisplayCount
+local C_AssistedCombat_GetNextCastSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
 
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
@@ -269,8 +270,9 @@ local function NormalizeHotkey(hotkey)
     return n
 end
 
--- Cooldown/charge sweep via Blizzard's ActionButton_ApplyCooldown (secret-safe).
--- We handle: text overlays (charge count) and glow effects.
+-- Cooldown/charge display via Blizzard's ActionButton_ApplyCooldown (secret-safe passthrough).
+-- Display layer: pipe secret values straight to UI widgets (Blizzard renders them).
+-- Logic layer: all readiness decisions use cached OOC data (CooldownTracking).
 local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1 }
 local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0 }
 
@@ -294,14 +296,27 @@ local function UpdateButtonCooldowns(button)
         button._lastCooldownID = id
     end
 
-    -- Prefer slot-based APIs (secret-safe, handles spells/items/macros).
+    -- Resolve display spellID once (spell overrides, e.g. Pyroblast → Hot Streak).
+    local cooldownID = not isItem and BlizzardAPI.GetDisplaySpellID(id) or nil
+
+    -- Find the best action bar slot for this spell/item.
+    -- Priority: direct slot > assisted combat slot (pos1 off-bar spells).
     local directSlot
     if isItem then
         directSlot = ActionBarScanner.GetDirectSlotForItem(id)
     else
         directSlot = ActionBarScanner.GetDirectSlotForSpell(id)
+        if not directSlot and C_AssistedCombat_GetNextCastSpell then
+            local nextCast = C_AssistedCombat_GetNextCastSpell(true)
+            if nextCast and (nextCast == id or nextCast == cooldownID) then
+                directSlot = ActionBarScanner.GetAssistedCombatSlot()
+            end
+        end
     end
 
+    -- Fetch cooldown + charge data for the swipe animation.
+    -- Slot-based APIs handle secrets via passthrough; spell APIs return secret
+    -- structs that ActionButton_ApplyCooldown also renders correctly.
     local cooldownInfo, chargeInfo
 
     if directSlot and C_ActionBar_GetActionCooldown then
@@ -310,8 +325,7 @@ local function UpdateButtonCooldowns(button)
     elseif isItem then
         local start, duration = GetItemCooldown(id)
         cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1 }
-    else
-        local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
+    elseif cooldownID then
         if C_Spell.GetSpellCooldown then
             local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
             if ok and result then cooldownInfo = result end
@@ -322,28 +336,37 @@ local function UpdateButtonCooldowns(button)
         end
     end
 
-    -- Always fetch spell-based charge info for accurate charge count display.
-    -- Slot-based GetActionDisplayCount reflects the current macro state (modifier-conditional
-    -- macros change what's shown), so it returns wrong counts when the spell is "hidden" by
-    -- an active modifier. Direct spell API is preferred; fields are validated with
-    -- IsSecretValue before any comparison to handle the PLAYER_REGEN_DISABLED race window
-    -- where secrets activate before UIRenderer.SetCombatState(true) is called.
-    local spellChargeInfo
-    if not isItem and C_Spell_GetSpellCharges then
-        local cooldownID = BlizzardAPI.GetDisplaySpellID(id)
+    -- Charge count text: determine readable currentCharges for the text overlay.
+    -- Fetched once here, used for both the sweep fallback and the text display.
+    local chargeText = ""
+    if not isItem and cooldownID and C_Spell_GetSpellCharges then
         local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
         if ok and result then
-            -- Validate fields are readable before storing; discard secret tables
             local maxOk = not BlizzardAPI.IsSecretValue(result.maxCharges)
             local curOk = not BlizzardAPI.IsSecretValue(result.currentCharges)
             if maxOk and curOk then
-                spellChargeInfo = result
+                -- OOC or race window: fields fully readable — use for sweep + text.
+                chargeInfo = chargeInfo or result
+                if result.maxCharges > 1 then
+                    local cur = result.currentCharges
+                    chargeText = (cur > 0 and cur < result.maxCharges) and cur or ""
+                end
+            elseif BlizzardAPI.GetCachedMaxCharges then
+                -- Combat: maxCharges from OOC cache, currentCharges via passthrough.
+                local cachedMax = BlizzardAPI.GetCachedMaxCharges(id)
+                if cachedMax and cachedMax > 1 and result.currentCharges ~= nil then
+                    chargeText = result.currentCharges  -- secret → SetText passthrough
+                end
             end
         end
     end
-    -- Use spell-based chargeInfo as fallback for the CD sweep if slot gave nothing
-    chargeInfo = chargeInfo or spellChargeInfo
 
+    -- Slot-based fallback for charge text (NeverSecret, always readable).
+    if chargeText == "" and directSlot and C_ActionBar_GetActionDisplayCount then
+        chargeText = C_ActionBar_GetActionDisplayCount(directSlot)
+    end
+
+    -- Apply cooldown swipe animation (handles secrets internally).
     if ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
         ActionButton_ApplyCooldown(
             button.cooldown,
@@ -354,21 +377,13 @@ local function UpdateButtonCooldowns(button)
         )
     end
 
+    -- Apply charge/item count text.
     if button.chargeText then
         if isItem then
             local count = GetItemCount(id)
             button.chargeText:SetText(count and count > 1 and count or "")
-        elseif spellChargeInfo and (spellChargeInfo.maxCharges or 0) > 1 then
-            -- Spell API readable (validated above): accurate regardless of modifier macro state.
-            -- Show count only when not at maximum (mirrors WoW action button behaviour).
-            local cur = spellChargeInfo.currentCharges or 0
-            local max = spellChargeInfo.maxCharges
-            button.chargeText:SetText(cur > 0 and cur < max and cur or "")
-        elseif directSlot and C_ActionBar_GetActionDisplayCount then
-            -- Spell API was secret; slot-based is NeverSecret — safe combat fallback.
-            button.chargeText:SetText(C_ActionBar_GetActionDisplayCount(directSlot))
         else
-            button.chargeText:SetText("")
+            button.chargeText:SetText(chargeText)
         end
         button.chargeText:Show()
     end

@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-03-17
+
+### Added
+- **Burst Injection Engine** — Detects burst windows and injects off-cooldown burst abilities at position 1 with purple glow. Curated per-spec trigger defaults with dynamic cooldown tracking.
+- **Per-item defensive settings** — Items can be linked to a buff aura and/or hidden during combat. "Hide in Combat" defaults to on when linking an aura.
+- **Off-bar spell display** — Cooldown swipes, charge counts, and usability checks now work for spells not on action bars via assisted combat slot fallback.
+- **CC/interrupt spell completeness (SpellDB v9)** — Added Strangulate, Typhoon, Bursting Shot, Polymorph variants to CC lists; Strangulate as DK interrupt fallback.
+
+### Changed
+- **Cooldown display consolidation** — Single-pass slot resolution, single charge query, unified charge text. Removed redundant API calls and duplicated fallback branches.
+- **Improved CDR detection** — Local cooldown timers detect early CD completion via action bar usability cross-checks and `ACTION_USABLE_CHANGED` flip detection. Fixes 5-30s drift after CDR procs.
+
+### Fixed
+- Fixed burst injection showing on-cooldown spells — cooldown tracking registrations for burst/gapcloser/interrupt categories no longer wiped on target switch; pre-existing CDs seeded at login/spec-change
+- Fixed unselected choice-node talents (e.g. Incarnation vs Convoke) passing spell availability checks — `IsSpellAvailable` now checks `IsSpellKnown`/`IsPlayerSpell` before the spellbook API, which incorrectly returns true for all options in a talent choice row
+- Fixed interrupt icon showing kick on cooldown instead of falling back to CC spells
+- Fixed "Require Hostile Target" hiding queue when target is out of range
+- Fixed rotation cache not invalidating on target change
+
 ## [4.14.1] - 2026-03-16
 
 ### Changed

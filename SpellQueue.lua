@@ -332,7 +332,8 @@ function SpellQueue.GetCurrentSpellQueue()
     if not EvaluateQueueVisibility(profile, inCombat) then
         lastShouldShowQueue = false
         lastQueueUpdate = now
-        return lastSpellIDs or {}
+        wipe(lastSpellIDs)
+        return lastSpellIDs
     end
 
     -- All visibility conditions passed: queue should be shown.
@@ -495,9 +496,14 @@ function SpellQueue.GetCurrentSpellQueue()
         spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs)
     end
 
-    wipe(lastSpellIDs)
-    for i = 1, spellCount do
-        lastSpellIDs[i] = recommendedSpells[i]
+    -- When Blizzard returns no spells (e.g. target out of range OOC) but
+    -- visibility conditions passed, preserve the previous queue so the frame
+    -- stays visible with stale icons instead of hiding entirely.
+    if spellCount > 0 then
+        wipe(lastSpellIDs)
+        for i = 1, spellCount do
+            lastSpellIDs[i] = recommendedSpells[i]
+        end
     end
     return lastSpellIDs
 end

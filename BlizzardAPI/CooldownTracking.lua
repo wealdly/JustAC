@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 6
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 8
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -183,6 +183,34 @@ local function ClearLocalCooldowns()
     wipe(localCharges)
 end
 
+--- Resync local cooldowns from the API (out of combat only).
+--- Preserves CD tracking across combat transitions by reading actual CD state
+--- when the data is readable (OOC), instead of wiping it.
+local function ResyncLocalCooldowns()
+    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    local now = GetTime()
+    wipe(localCooldowns)
+    for spellID in pairs(trackedSpells) do
+        local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+        if ok and cd then
+            local duration = Unsecret(cd.duration)
+            local startTime = Unsecret(cd.startTime)
+            if duration and duration > 1.5 and startTime and startTime > 0 then
+                local endTime = startTime + duration
+                if endTime > now then
+                    localCooldowns[spellID] = {
+                        endTime = endTime,
+                        duration = duration,
+                        startTime = startTime,
+                    }
+                end
+            end
+        end
+    end
+    -- Charge state is resynced by ScanCooldownDurations → CacheChargesForSpell
+    wipe(localCharges)
+end
+
 local function ClearCachedDurations()
     wipe(cachedDurations)
     wipe(cachedMaxCharges)
@@ -245,12 +273,35 @@ local function ScanCooldownDurations()
     end
 end
 
+--- Try to clear a local cooldown/charge entry via action bar usability.
+--- Called when isOnGCD is nil (unflagged spell) — usability cross-check detects
+--- CDR completion that isOnGCD alone cannot see.
+--- Returns true if the local CD was cleared.
+local function TryClearViaCrossCheck(spellID)
+    local usable, noMana = BlizzardAPI.GetActionBarUsability(spellID)
+    if usable == nil then return false end  -- no slot, can't determine
+    -- usable=true → CD done. noMana=true → CD done but resource-blocked.
+    -- Either way the cooldown has expired.
+    if usable or noMana then
+        localCooldowns[spellID] = nil
+        -- Also advance charge recovery if charge spell at 0 charges
+        local chargeData = localCharges[spellID]
+        if chargeData and chargeData.current <= 0 then
+            ProcessChargeRecovery(chargeData)
+            if chargeData.current <= 0 then
+                chargeData.current = 1
+            end
+        end
+        return true
+    end
+    return false
+end
+
 --- Check tracked spells with active local cooldowns for early CD completion.
---- Called on SPELL_UPDATE_COOLDOWN — if isOnGCD is true for a spell we think
---- is on cooldown, the real CD has ended (e.g., CDR proc reduced it).
---- NOTE: Only works for spells that trigger GCD. Off-GCD spells (Shadow Blades,
---- Shadow Dance, etc.) go from nil→nil so this can't detect their early completion.
---- For those, the local timer naturally expires or action bar usability catches it.
+--- Called on SPELL_UPDATE_COOLDOWN. Two detection methods:
+---   1. isOnGCD == true → GCD only, real CD has ended (flagged rotation spells)
+---   2. isOnGCD == nil  → unflagged spell; cross-check via action bar usability
+---      (NeverSecret). Catches CDR completion for major CDs (Divine Toll, etc.)
 ---
 --- @param eventSpellID number|nil  spellID from SPELL_UPDATE_COOLDOWN payload.
 ---   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
@@ -264,8 +315,13 @@ local function CheckCooldownCompletions(eventSpellID)
         local data = localCooldowns[eventSpellID]
         if data and GetTime() < data.endTime then
             local ok, cd = pcall(C_Spell_GetSpellCooldown, eventSpellID)
-            if ok and cd and cd.isOnGCD == true then
-                localCooldowns[eventSpellID] = nil
+            if ok and cd then
+                if cd.isOnGCD == true then
+                    localCooldowns[eventSpellID] = nil
+                elseif cd.isOnGCD == nil then
+                    -- Unflagged spell: cross-check via action bar usability
+                    TryClearViaCrossCheck(eventSpellID)
+                end
             end
         end
         return
@@ -276,9 +332,11 @@ local function CheckCooldownCompletions(eventSpellID)
         if GetTime() < data.endTime then
             local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
             if ok and cd then
-                -- isOnGCD is NeverSecret: true = GCD only (real CD done)
                 if cd.isOnGCD == true then
+                    -- isOnGCD is NeverSecret: true = GCD only (real CD done)
                     localCooldowns[spellID] = nil
+                elseif cd.isOnGCD == nil then
+                    TryClearViaCrossCheck(spellID)
                 end
             end
         end
@@ -314,8 +372,9 @@ local function InitCooldownTracking()
             -- so this is a best-effort pre-cache for any already-registered spells.
             ScanCooldownDurations()
         elseif event == "PLAYER_REGEN_ENABLED" then
-            -- Combat exit: scan all tracked spells while CD fields are readable
-            ClearLocalCooldowns()
+            -- Combat exit: resync from API instead of wiping, so CDs that are
+            -- still ticking survive into the next combat session.
+            ResyncLocalCooldowns()
             ScanCooldownDurations()
         elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "PLAYER_TALENT_UPDATE" or event == "TRAIT_CONFIG_UPDATED" then
             ClearCachedDurations()
@@ -382,12 +441,12 @@ end
 
 function BlizzardAPI.ClearTrackedRotationSpells()
     for spellID, cat in pairs(trackedSpells) do
-        if cat ~= "defensive" then
+        if cat == "rotation" then
             trackedSpells[spellID] = nil
         end
     end
-    -- Don't wipe localCooldowns here — defensives may still need them.
-    -- Stale non-defensive entries expire naturally via endTime.
+    -- Don't wipe localCooldowns here — other categories still need them.
+    -- Stale rotation entries expire naturally via endTime.
 end
 
 function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
@@ -429,8 +488,16 @@ function BlizzardAPI.IsSpellReady(spellID)
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cd then return true end
 
-    -- isOnGCD == true → on GCD only, spell is effectively ready
-    if cd.isOnGCD == true then return true end
+    -- isOnGCD == true → GCD only for unflagged spells.
+    -- However, unflagged spells with real CDs also show isOnGCD=true during
+    -- GCD (~1.5s). Check local tracking: if a real CD is ticking underneath,
+    -- don't short-circuit — the spell is NOT ready.
+    if cd.isOnGCD == true then
+        if not IsLocalCooldownActive(spellID) then
+            return true
+        end
+        -- Local CD active under the GCD — real CD is ticking, fall through
+    end
 
     -- isOnGCD == false → real cooldown running (definitive for flagged spells)
     if cd.isOnGCD == false then return false end
@@ -472,6 +539,91 @@ function BlizzardAPI.IsSpellReady(spellID)
 
     -- Fail-open: assume ready when we can't determine state
     return true
+end
+
+--------------------------------------------------------------------------------
+-- ACTION_USABLE_CHANGED CD Flip Detection (Phase 2)
+--------------------------------------------------------------------------------
+-- Reverse map: action slot → tracked spellID.
+-- Populated lazily on first CheckUsabilityFlips call, invalidated alongside
+-- slot caches (ACTIONBAR_SLOT_CHANGED, form change, etc.).
+local slotToTrackedSpell = {}
+local reverseMapValid = false
+
+local function BuildReverseSlotMap()
+    wipe(slotToTrackedSpell)
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    if not ABS or not ABS.GetSlotForSpell then
+        reverseMapValid = true
+        return
+    end
+    for spellID in pairs(trackedSpells) do
+        local slot = ABS.GetSlotForSpell(spellID)
+        if slot then
+            slotToTrackedSpell[slot] = spellID
+        end
+    end
+    reverseMapValid = true
+end
+
+--- Invalidate the reverse slot map (call on ACTIONBAR_SLOT_CHANGED, form change).
+function BlizzardAPI.InvalidateReverseSlotMap()
+    reverseMapValid = false
+end
+
+--- Seed a local cooldown entry for a spell if it's currently on CD (OOC only).
+--- Call after RegisterSpellForTracking to catch pre-existing CDs at login/spec-change.
+--- Without this, spells already on CD have no UNIT_SPELLCAST_SUCCEEDED event to
+--- start local tracking, so IsSpellReady fails-open for unflagged spells.
+function BlizzardAPI.SeedLocalCooldownIfActive(spellID)
+    if not spellID or spellID == 0 then return end
+    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    -- Skip if already tracked
+    if localCooldowns[spellID] then return end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return end
+    local duration = Unsecret(cd.duration)
+    local startTime = Unsecret(cd.startTime)
+    if duration and duration > 1.5 and startTime and startTime > 0 then
+        local endTime = startTime + duration
+        if endTime > GetTime() then
+            localCooldowns[spellID] = {
+                endTime = endTime,
+                duration = duration,
+                startTime = startTime,
+            }
+        end
+    end
+end
+
+--- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.
+--- When a slot becomes usable (or only resource-blocked), and the mapped spell
+--- has an active local CD, clear it immediately — the real CD has ended.
+--- @param changes table Array of {slot=luaIndex, usable=bool, noMana=bool}
+function BlizzardAPI.CheckUsabilityFlips(changes)
+    if not reverseMapValid then BuildReverseSlotMap() end
+
+    for _, change in ipairs(changes) do
+        -- usable=true → CD done. noMana=true → CD done but resource-blocked.
+        if change.usable or change.noMana then
+            local spellID = slotToTrackedSpell[change.slot]
+            if spellID then
+                -- Clear flat CD if active
+                local data = localCooldowns[spellID]
+                if data and GetTime() < data.endTime then
+                    localCooldowns[spellID] = nil
+                end
+                -- Advance charge recovery if charge spell at 0 charges
+                local chargeData = localCharges[spellID]
+                if chargeData and chargeData.current <= 0 then
+                    ProcessChargeRecovery(chargeData)
+                    if chargeData.current <= 0 then
+                        chargeData.current = 1
+                    end
+                end
+            end
+        end
+    end
 end
 
 
