@@ -322,34 +322,12 @@ function General.CreateTabArgs(addon)
                 desc = L["Interrupt Alert Sound desc"],
                 order = 24,
                 width = "double",
-                values = {
-                    none          = L["Disabled"],
-                    shing         = "Shing!",
-                    wham          = "Wham!",
-                    simonChime    = "Simon Chime",
-                    shortCircuit  = "Short Circuit",
-                    pvpFlag       = "PvP Flag",
-                    pvpFlagHorde  = "PvP Flag (Horde)",
-                    pvpAlliance   = "PvP Alliance",
-                    pvpHorde      = "PvP Horde",
-                    thunderCrack  = "Thunder Crack",
-                    warDrums      = "War Drums",
-                    dwarfHorn     = "Dwarf Horn",
-                    scourgeHorn   = "Scourge Horn",
-                    explosion     = "Explosion",
-                    cheer         = "Cheer",
-                    felPortal     = "Fel Portal",
-                    felNova       = "Fel Nova",
-                    humm          = "Humm",
-                    cartoonFX     = "Cartoon FX",
-                    rubberDucky   = "Rubber Ducky",
-                    pygmyDrums    = "Pygmy Drums",
-                    grimrailHorn  = "Grimrail Horn",
-                    squireHorn    = "Squire Horn",
-                    gruntlingHorn = "Gruntling Horn",
-                },
-                sorting = { "none", "shing", "wham", "simonChime", "shortCircuit", "pvpFlag", "pvpFlagHorde", "pvpAlliance", "pvpHorde", "thunderCrack", "warDrums", "dwarfHorn", "scourgeHorn", "explosion", "cheer", "felPortal", "felNova", "humm", "cartoonFX", "rubberDucky", "pygmyDrums", "grimrailHorn", "squireHorn", "gruntlingHorn" },
-                get = function() return addon.db.profile.interruptAlertSound or "none" end,
+                dialogControl = "LSM30_Sound",
+                values = function()
+                    local LSM = LibStub("LibSharedMedia-3.0", true)
+                    return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
+                end,
+                get = function() return addon.db.profile.interruptAlertSound or "None" end,
                 set = function(_, val) addon.db.profile.interruptAlertSound = val end,
                 disabled = function()
                     return (addon.db.profile.displayMode or "queue") == "disabled"
@@ -368,7 +346,7 @@ function General.CreateTabArgs(addon)
                 end,
                 disabled = function()
                     local s = addon.db.profile.interruptAlertSound
-                    return not s or s == "none" or (addon.db.profile.displayMode or "queue") == "disabled"
+                    return not s or s == "None" or (addon.db.profile.displayMode or "queue") == "disabled"
                 end,
             },
             -- OFFENSIVE QUEUE CONTENT (30-39)

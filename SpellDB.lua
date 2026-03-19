@@ -650,11 +650,11 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Class fallback (Frost/Unholy DPS): quick heal then big CDs
     DEATHKNIGHT   = {49998, 48792, 48707},                     -- Death Strike, Icebound Fortitude, Anti-Magic Shell
     -- Blood (tank): active mitigation first, Death Strike for heal, then big CDs
-    DEATHKNIGHT_1 = {49998, 55233, 194679, 48792, 48707},     -- Death Strike, Vampiric Blood, Rune Tap, IBF, AMS
+    DEATHKNIGHT_1 = {49998, 55233, 48792, 48707},              -- Death Strike, Vampiric Blood, IBF, AMS  (Rune Tap removed in 12.0)
 
     -- ── Demon Hunter ────────────────────────────────────────────────────────
-    -- Class fallback (Havoc DPS): Blur, then Netherwalk, Darkness
-    DEMONHUNTER   = {198589, 196555, 196718},                  -- Blur, Netherwalk, Darkness
+    -- Class fallback (Havoc DPS): Blur, then Darkness
+    DEMONHUNTER   = {198589, 196718},                           -- Blur, Darkness  (Netherwalk removed in 12.0)
     -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, then Blur
     DEMONHUNTER_2 = {228477, 203720, 204021, 198589, 263648},  -- Soul Cleave, Demon Spikes, Fiery Brand, Blur, Soul Barrier
 
@@ -664,11 +664,11 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Feral: Regrowth, Survival Instincts, Barkskin, Renewal
     DRUID_2       = {8936, 61336, 22812, 108238},              -- Regrowth, Survival Instincts, Barkskin, Renewal
     -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
-    DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
+    DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
-    -- Class fallback (all specs share similar defensives)
-    EVOKER        = {363916, 360995, 374348},                  -- Obsidian Scales, Verdant Embrace, Renewing Blaze
+    -- Class fallback (all specs — Renewing Blaze merged into Obsidian Scales in 12.0)
+    EVOKER        = {363916, 360995},                           -- Obsidian Scales, Verdant Embrace
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
@@ -677,13 +677,15 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Mage ────────────────────────────────────────────────────────────────
     -- Class fallback (spec-appropriate barrier is auto-learned; list all three so
     -- the one the player actually knows will be shown)
-    MAGE          = {11426, 235313, 235450, 45438, 110959},    -- Ice/Blazing/Prismatic Barrier, Ice Block, Greater Invis
+    MAGE          = {11426, 235313, 235450, 45438},            -- Ice/Blazing/Prismatic Barrier, Ice Block  (Greater Invis lost DR in 12.0)
 
     -- ── Monk ────────────────────────────────────────────────────────────────
-    -- Class fallback (Windwalker/Mistweaver): Expel Harm, Fortifying Brew, Diffuse Magic
+    -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Diffuse Magic
     MONK          = {322101, 115203, 122783},                  -- Expel Harm, Fortifying Brew, Diffuse Magic
-    -- Brewmaster (tank): Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm
-    MONK_1        = {322507, 322101, 120954, 122278},          -- Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm
+    -- Brewmaster (tank): Celestial Brew, Expel Harm, Fortifying Brew  (Dampen Harm removed in 12.0; Diffuse Magic merged into Fortifying Brew talent)
+    MONK_1        = {322507, 322101, 120954},                  -- Celestial Brew, Expel Harm, Fortifying Brew
+    -- Mistweaver: Fortifying Brew, Diffuse Magic  (Expel Harm removed in 12.0)
+    MONK_2        = {115203, 122783},                           -- Fortifying Brew, Diffuse Magic
     -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
     MONK_3        = {322101, 122470, 201318, 122783},          -- Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
 
@@ -715,8 +717,8 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Warrior ─────────────────────────────────────────────────────────────
     -- Class fallback (Arms/Fury DPS): Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
     WARRIOR       = {34428, 202168, 190456, 118038, 97462},    -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
-    -- Protection (tank): Ignore Pain, Shield Wall, Last Stand, Shield Block (via SotR), Rallying Cry, Spell Reflection
-    WARRIOR_3     = {190456, 871, 12975, 97462, 23920},        -- Ignore Pain, Shield Wall, Last Stand, Rallying Cry, Spell Reflection
+    -- Protection (tank): Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection  (Last Stand is now a passive talent in 12.0)
+    WARRIOR_3     = {190456, 871, 97462, 23920},               -- Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
 }
 
 -- Legacy tables (kept for migration from older versions)
@@ -738,11 +740,11 @@ SpellDB.CLASS_SELFHEAL_DEFAULTS = {
 
 SpellDB.CLASS_COOLDOWN_DEFAULTS = {
     DEATHKNIGHT = {48792, 48707},
-    DEMONHUNTER = {196555, 196718},
+    DEMONHUNTER = {196718},                                  -- Netherwalk removed in 12.0
     DRUID = {61336},
-    EVOKER = {374348},
+    EVOKER = {},                                             -- Renewing Blaze merged into Obsidian Scales in 12.0
     HUNTER = {186265, 388035},
-    MAGE = {45438, 110959},
+    MAGE = {45438},                                         -- Greater Invis lost DR in 12.0
     MONK = {115203, 122470, 122783},
     PALADIN = {642, 633},
     PRIEST = {47585, 586},
@@ -751,6 +753,8 @@ SpellDB.CLASS_COOLDOWN_DEFAULTS = {
     WARLOCK = {104773},
     WARRIOR = {871, 118038, 97462},
 }
+-- NOTE: Rune Tap (194679), Dampen Harm (122278), Last Stand (12975) removed/made passive in 12.0
+-- Netherwalk (196555), Renewing Blaze (374348) removed/merged in 12.0
 
 -- Pet rez/summon spells (shown when pet is dead or missing — reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {

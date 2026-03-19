@@ -13,6 +13,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - Handles spell transformations (talent overrides, combat morphs) with cached slot lookups
 - Supports gamepad/controller button icons (Xbox, PlayStation, Generic styles)
 - Supports Masque for icon skinning
+- Supports LibSharedMedia for custom interrupt alert sounds
 
 ## Features
 
@@ -120,6 +121,14 @@ Library versioning system. The glue that lets libraries coexist peacefully. Publ
 *Maintained by Nevcairiel and the Ace3 Team*  
 Clean event callback system without the boilerplate.
 
+**[LibSharedMedia-3.0](https://www.curseforge.com/wow/addons/libsharedmedia-3-0)**  
+*Created by Elkano, funkehdude*  
+Shared media library that lets addons share and access sound, font, statusbar, and border media. Enables user-expandable interrupt alert sounds via SharedMedia packs.
+
+**[AceGUI-3.0-SharedMediaWidgets](https://www.curseforge.com/wow/addons/ace-gui-3-0-shared-media-widgets)**  
+*Created by Yssaril*  
+AceGUI dropdown widgets for selecting LibSharedMedia-registered media in AceConfig options panels.
+
 ### Optional Integrations
 
 **[Masque](https://github.com/SFX-WoW/Masque)**  
@@ -196,6 +205,8 @@ The embedded Ace3 libraries retain their original licenses and are clearly marke
 Notable embedded library licenses:
 
 - **Ace3, LibStub, CallbackHandler** — Public domain / BSD-style
+- **LibSharedMedia-3.0** — Public domain
+- **AceGUI-3.0-SharedMediaWidgets** — GPL v2 or later
 
 ---
 

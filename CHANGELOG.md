@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [4.17.0] - 2026-03-18
+
+### Added
+- Per-spell **Proc Priority** toggle in Defensives options — uncheck to keep a procced spell in its configured list position instead of jumping to the front of the queue (it will still glow)
+- **LibSharedMedia-3.0** integration for interrupt alert sounds — users can select any sound from installed SharedMedia packs. 14 curated built-in alert sounds registered as "JAC: ..." entries.
+
+### Changed
+- Curated interrupt alert sounds from 23 down to 14, focused on alert utility. Added: Night Elf Bell, Raid Emote, Algalon Black Hole, Worgen Transform, Loatheb Aggro, Horseman Laugh. Removed novelty/ambient sounds (Rubber Ducky, Cartoon FX, etc.). Users with removed sounds are migrated to "None".
+- Updated defensive spell tables for Midnight 12.0 compatibility
+
 ## [4.16.0] - 2026-03-17
 
 ### Changed

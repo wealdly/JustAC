@@ -103,9 +103,10 @@ $libsDest = Join-Path $outputDir "Libs"
 Copy-Item (Join-Path $PSScriptRoot "Libs") $libsDest -Recurse -Force
 
 # Remove duplicate nested folders in Libs (cleanup)
+# AceGUI-3.0-SharedMediaWidgets has a legitimate same-named subfolder — skip it
 Get-ChildItem $libsDest -Directory | ForEach-Object {
     $nested = Join-Path $_.FullName $_.Name
-    if (Test-Path $nested) {
+    if ((Test-Path $nested) -and $_.Name -ne "AceGUI-3.0-SharedMediaWidgets") {
         Write-Host "  Removing duplicate: Libs/$($_.Name)/$($_.Name)" -ForegroundColor Yellow
         Remove-Item $nested -Recurse -Force
     }
