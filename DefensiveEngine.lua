@@ -483,8 +483,16 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                 local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
                     if isProcced then
-                        -- Procced: top priority (instant/free cast)
-                        proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                        -- Check per-spell proc-priority setting (default true)
+                        local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
+                        local procPriority = not spellSettings or spellSettings.procPriority ~= false
+                        if procPriority then
+                            -- Procced: top priority (instant/free cast)
+                            proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                        else
+                            -- Procced but priority disabled: keep in list order, still mark as procced for glow
+                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                        end
                     else
                         -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
                         -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
@@ -629,9 +637,14 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                     if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
                         local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
-                            results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
-                            alreadyAdded[resolvedID] = true
-                            alreadyAdded[spellID] = true  -- also mark original ID
+                            -- Skip proc injection for spells with proc-priority disabled
+                            local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
+                            local procPriority = not spellSettings or spellSettings.procPriority ~= false
+                            if procPriority then
+                                results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                                alreadyAdded[resolvedID] = true
+                                alreadyAdded[spellID] = true  -- also mark original ID
+                            end
                         end
                     end
                 end

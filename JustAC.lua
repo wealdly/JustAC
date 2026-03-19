@@ -47,7 +47,7 @@ local defaults = {
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "kickPrefer",      -- Interrupt reminder mode: "disabled", "kickOnly", "kickPrefer", "ccPrefer"
-        interruptAlertSound = "none",      -- Alert sound when interrupt icon first appears; see INTERRUPT_ALERT_SOUNDS in UIRenderer.lua
+        interruptAlertSound = "None",       -- Alert sound (LSM key); "None" = disabled
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
             hotkey = {
@@ -108,6 +108,7 @@ local defaults = {
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
             itemSettings = {},        -- Per-item settings: itemSettings[itemID] = {linkedAura=spellID, combatHide=bool}
+            spellSettings = {},       -- Per-spell settings: spellSettings[spellID] = {procPriority=bool}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
             detached = false,                                    -- Give defensives their own independent draggable frame
@@ -390,6 +391,25 @@ function JustAC:NormalizeSavedData()
     profile.ccRegularMobs = nil
     if profile.defensives then profile.defensives.showHotkeys = nil end
     if npo then npo.showInterrupt = nil; npo.ccRegularMobs = nil; npo.showHotkey = nil end
+    -- Migrate legacy interruptAlertSound key → LSM key (4.17.0)
+    local OLD_SOUND_TO_LSM = {
+        -- Kept sounds (old camelCase → new LSM key)
+        shing = "JAC: Shing!", wham = "JAC: Wham!", simonChime = "JAC: Simon Chime",
+        shortCircuit = "JAC: Short Circuit", pvpFlag = "JAC: PvP Flag",
+        dwarfHorn = "JAC: Dwarf Horn", grimrailHorn = "JAC: Grimrail Horn",
+        felNova = "JAC: Fel Nova",
+        -- Removed sounds → fall back to None
+        pvpFlagHorde = "None", pvpAlliance = "None", pvpHorde = "None",
+        thunderCrack = "None", warDrums = "None", scourgeHorn = "None",
+        explosion = "None", cheer = "None", felPortal = "None",
+        humm = "None", cartoonFX = "None", rubberDucky = "None",
+        pygmyDrums = "None", squireHorn = "None", gruntlingHorn = "None",
+        none = "None",
+    }
+    local oldSound = profile.interruptAlertSound
+    if oldSound and OLD_SOUND_TO_LSM[oldSound] then
+        profile.interruptAlertSound = OLD_SOUND_TO_LSM[oldSound]
+    end
 end
 
 function JustAC:OnInitialize()

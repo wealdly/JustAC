@@ -2,11 +2,11 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.16.0
+## Version: 4.17.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
-## OptionalDeps: Ace3, Masque
+## OptionalDeps: Ace3, Masque, LibSharedMedia-3.0
 
 ## X-Category: Combat
 ## X-Curse-Project-ID: 1289544
@@ -23,6 +23,8 @@ Libs\\AceDBOptions-3.0\\AceDBOptions-3.0.xml
 Libs\\AceGUI-3.0\\AceGUI-3.0.xml
 Libs\\AceConfig-3.0\\AceConfig-3.0.xml
 Libs\\AceLocale-3.0\\AceLocale-3.0.xml
+Libs\\LibSharedMedia-3.0\\lib.xml
+Libs\\AceGUI-3.0-SharedMediaWidgets\\widget.xml
 
 Locales\enUS.lua
 Locales\deDE.lua

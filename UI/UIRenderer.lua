@@ -64,33 +64,37 @@ local lastInterruptShownID  = nil
 local CC_APPLIED_SUPPRESS = 2.0
 local lastCCAppliedTime   = 0
 
--- Interrupt alert FileDataIDs (sourced from SilverDragon).
--- Shared across renderers; debounce prevents double-fire in "both" display mode.
-local INTERRUPT_ALERT_SOUNDS = {
-    shing        = 566240,  -- Shing!        — sharp metallic bling
-    wham         = 566946,  -- Wham!         — heavy thud, impossible to miss
-    simonChime   = 566076,  -- Simon Chime   — classic alert chime
-    shortCircuit = 568975,  -- Short Circuit — crisp electric snap
-    pvpFlag      = 569200,  -- PvP Flag      — PVP flag taken
-    pvpFlagHorde = 568165,  -- PvP Flag (H)  — Horde flag taken
-    pvpAlliance  = 568320,  -- PvP Alliance  — Alliance warning fanfare
-    pvpHorde     = 569112,  -- PvP Horde     — Horde warning fanfare
-    thunderCrack = 566202,  -- Thunder Crack — deep outdoor crack
-    warDrums     = 567275,  -- War Drums     — heavy tribal drums
-    dwarfHorn    = 566064,  -- Dwarf Horn    — short brass horn
-    scourgeHorn  = 567386,  -- Scourge Horn  — eerie undead horn
-    explosion    = 566982,  -- Explosion     — large boom
-    cheer        = 567283,  -- Cheer         — crowd cheer
-    felPortal    = 569215,  -- Fel Portal    — demonic portal open
-    felNova      = 568582,  -- Fel Nova      — arcane/fel pulse
-    humm         = 569518,  -- Humm          — soft ambient tone
-    cartoonFX    = 566543,  -- Cartoon FX    — light cartoon pop
-    rubberDucky  = 566121,  -- Rubber Ducky  — squeaky duck
-    pygmyDrums   = 566508,  -- Pygmy Drums   — quick drum rattle
-    grimrailHorn = 1023633, -- Grimrail Horn — train horn blast
-    squireHorn   = 598079,  -- Squire Horn   — mounted herald horn
-    gruntlingHorn= 598196,  -- Gruntling Horn— goblin herald horn
-}
+-- LibSharedMedia integration for user-expandable interrupt sounds.
+local LSM = LibStub("LibSharedMedia-3.0", true)
+
+-- Register built-in interrupt alert sounds with LSM.
+-- Curated for alert utility — short, distinctive, attention-grabbing.
+if LSM then
+    local BUILTIN_SOUNDS = {
+        -- Iconic WoW alerts
+        ["JAC: Night Elf Bell"]    = 566558,  -- DBM default raid warning
+        ["JAC: Raid Emote"]        = 876098,  -- Blizzard raid warning chime
+        ["JAC: Algalon Black Hole"]= 543587,  -- DBM special warning 2
+        ["JAC: PvP Flag"]          = 569200,  -- PVP flag taken
+        -- Crisp alert tones
+        ["JAC: Shing!"]            = 566240,  -- sharp metallic bling
+        ["JAC: Wham!"]             = 566946,  -- heavy thud
+        ["JAC: Simon Chime"]       = 566076,  -- classic alert chime
+        ["JAC: Short Circuit"]     = 568975,  -- electric snap
+        -- Dramatic stings
+        ["JAC: Worgen Transform"]  = 552035,  -- dramatic sting
+        ["JAC: Loatheb Aggro"]     = 554236,  -- eerie piercing
+        ["JAC: Horseman Laugh"]    = 551703,  -- unmistakable
+        -- Horns & blasts
+        ["JAC: Dwarf Horn"]        = 566064,  -- short brass horn
+        ["JAC: Grimrail Horn"]     = 1023633, -- train horn blast
+        ["JAC: Fel Nova"]          = 568582,  -- arcane pulse
+    }
+    for name, fileDataID in pairs(BUILTIN_SOUNDS) do
+        LSM:Register(LSM.MediaType.SOUND, name, fileDataID)
+    end
+end
+
 local PlaySoundFile = PlaySoundFile
 local lastInterruptSoundTime = 0
 local INTERRUPT_SOUND_DEBOUNCE = 0.5
@@ -1056,13 +1060,14 @@ end
 
 function UIRenderer.PlayInterruptAlertSound(profile)
     local alertSound = profile.interruptAlertSound
-    if not alertSound or alertSound == "none" then return end
-    local soundID = INTERRUPT_ALERT_SOUNDS[alertSound]
-    if not soundID then return end
+    if not alertSound or alertSound == "None" then return end
+    if not LSM then return end
+    local soundFile = LSM:Fetch(LSM.MediaType.SOUND, alertSound, true)
+    if not soundFile then return end
     local now = GetTime()
     if (now - lastInterruptSoundTime) < INTERRUPT_SOUND_DEBOUNCE then return end
     lastInterruptSoundTime = now
-    PlaySoundFile(soundID, "Master")
+    PlaySoundFile(soundFile, "Master")
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────

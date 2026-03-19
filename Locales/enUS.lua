@@ -147,6 +147,10 @@ L["Pet Heal Priority List"] = "Pet Heal Priority List"
 L["Pet Heal Priority desc"] = "Shown when pet health is low. Best-effort — pet health may be hidden in combat."
 L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
 
+-- Per-spell settings
+L["Proc Priority"] = "Proc Priority"
+L["Proc Priority desc"] = "When procced, move this spell to the front of the queue. Uncheck to keep it in its configured position (it will still glow)."
+
 -- Item settings (per-item aura link / combat hide)
 L["Link Aura..."] = "Link Aura..."
 L["Link Aura desc"] = "Link a buff aura (food, flask, potion, etc) to this item. The item is hidden from the queue while the buff is active."

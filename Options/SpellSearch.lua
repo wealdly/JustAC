@@ -387,12 +387,17 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     order = 3,
                     width = 0.5,
                     func = function()
+                        local profile = _addon:GetProfile()
                         -- Clean up item settings when removing an item entry
                         if isItemEntry then
                             local itemID = -entry
-                            local profile = _addon:GetProfile()
                             if profile and profile.defensives and profile.defensives.itemSettings then
                                 profile.defensives.itemSettings[itemID] = nil
+                            end
+                        else
+                            -- Clean up spell settings when removing a spell entry
+                            if profile and profile.defensives and profile.defensives.spellSettings then
+                                profile.defensives.spellSettings[entry] = nil
                             end
                         end
                         table.remove(spellList, i)
@@ -483,6 +488,33 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     if not profile.defensives.itemSettings then profile.defensives.itemSettings = {} end
                     if not profile.defensives.itemSettings[itemID] then profile.defensives.itemSettings[itemID] = {} end
                     profile.defensives.itemSettings[itemID].combatHide = val
+                end,
+            }
+        end
+
+        -- Per-spell controls: Proc Priority toggle (spells only, not items)
+        if not isItemEntry then
+            local spellID = entry
+            local entryArgs = defensivesArgs[listType .. "_" .. i].args
+
+            entryArgs.procPriority = {
+                type = "toggle",
+                order = 4,
+                width = 0.7,
+                name = L["Proc Priority"],
+                desc = L["Proc Priority desc"],
+                get = function()
+                    local profile = _addon:GetProfile()
+                    local settings = profile and profile.defensives and profile.defensives.spellSettings and profile.defensives.spellSettings[spellID]
+                    -- Default to true (procced spells jump to front by default)
+                    return not settings or settings.procPriority ~= false
+                end,
+                set = function(_, val)
+                    local profile = _addon:GetProfile()
+                    if not profile or not profile.defensives then return end
+                    if not profile.defensives.spellSettings then profile.defensives.spellSettings = {} end
+                    if not profile.defensives.spellSettings[spellID] then profile.defensives.spellSettings[spellID] = {} end
+                    profile.defensives.spellSettings[spellID].procPriority = val
                 end,
             }
         end
