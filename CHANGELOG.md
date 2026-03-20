@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.17.1] - 2026-03-19
+
+### Fixed
+- Fixed profile panel modifications (description cleanup, spec-switching controls) leaking into other addons' profile tabs via shared AceDBOptions args table
+
 ## [4.17.0] - 2026-03-18
 
 ### Added
