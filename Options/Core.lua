@@ -239,16 +239,22 @@ function Options.Initialize(addon)
         addon.optionsTable.args.profiles = AceDBOptions:GetOptionsTable(addon.db)
         addon.optionsTable.args.profiles.order = 6
 
-        -- Remove verbose AceDBOptions descriptions to save vertical space
-        local profileArgs = addon.optionsTable.args.profiles.args
-        if profileArgs then
-            if profileArgs.desc then profileArgs.desc.name = "" end
-            if profileArgs.descreset then profileArgs.descreset.name = "" end
-            if profileArgs.choosedesc then profileArgs.choosedesc.name = "" end
-            if profileArgs.copydesc then profileArgs.copydesc.name = "" end
-            if profileArgs.deldesc then profileArgs.deldesc.name = "" end
-            if profileArgs.resetdesc then profileArgs.resetdesc.name = "" end
+        -- AceDBOptions uses a shared args table across ALL addons.
+        -- Shallow-copy it so our modifications don't leak into BigWigs, DBM, etc.
+        local sharedArgs = addon.optionsTable.args.profiles.args
+        local localArgs = {}
+        for k, v in pairs(sharedArgs) do
+            localArgs[k] = v
         end
+        addon.optionsTable.args.profiles.args = localArgs
+
+        -- Remove verbose AceDBOptions descriptions to save vertical space
+        if localArgs.desc then localArgs.desc = { type = "description", name = "", order = localArgs.desc.order } end
+        if localArgs.descreset then localArgs.descreset = { type = "description", name = "", order = localArgs.descreset.order } end
+        if localArgs.choosedesc then localArgs.choosedesc = { type = "description", name = "", order = localArgs.choosedesc.order } end
+        if localArgs.copydesc then localArgs.copydesc = { type = "description", name = "", order = localArgs.copydesc.order } end
+        if localArgs.deldesc then localArgs.deldesc = { type = "description", name = "", order = localArgs.deldesc.order } end
+        if localArgs.resetdesc then localArgs.resetdesc = { type = "description", name = "", order = localArgs.resetdesc.order } end
 
         -- Add per-spec profile switching to the profiles section
         if not Profiles then Profiles = LibStub("JustAC-OptionsProfiles", true) end
