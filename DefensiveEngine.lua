@@ -302,6 +302,22 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
             end
         end
     end
+
+    -- Seed local CD entries for defensives already on cooldown at login/spec-change.
+    -- Without this, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event,
+    -- so IsSpellReady fails-open for unflagged spells. OOC-only (safe to call always).
+    if BlizzardAPI.SeedLocalCooldownIfActive then
+        for _, listType in ipairs(spellListTypes) do
+            local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
+            if spellList then
+                for _, entry in ipairs(spellList) do
+                    if entry and entry > 0 then
+                        BlizzardAPI.SeedLocalCooldownIfActive(entry)
+                    end
+                end
+            end
+        end
+    end
 end
 
 function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)

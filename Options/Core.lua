@@ -59,6 +59,14 @@ function Options.UpdateBurstInjectionOptions(addon)
     end
 end
 
+local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
+function Options.UpdateCustomQueueOptions(addon)
+    if not CustomQueue then CustomQueue = LibStub("JustAC-OptionsCustomQueue", true) end
+    if CustomQueue and CustomQueue.UpdateCustomQueueOptions then
+        CustomQueue.UpdateCustomQueueOptions(addon)
+    end
+end
+
 -------------------------------------------------------------------------------
 -- Assemble all tabs into one AceConfig options table
 -------------------------------------------------------------------------------
@@ -102,6 +110,7 @@ local function HandleSlashCommand(addon, input)
         Options.UpdateDefensivesOptions(addon)
         Options.UpdateGapCloserOptions(addon)
         Options.UpdateBurstInjectionOptions(addon)
+        Options.UpdateCustomQueueOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
         return
     end
@@ -121,6 +130,7 @@ local function HandleSlashCommand(addon, input)
         Options.UpdateDefensivesOptions(addon)
         Options.UpdateGapCloserOptions(addon)
         Options.UpdateBurstInjectionOptions(addon)
+        Options.UpdateCustomQueueOptions(addon)
         AceConfigDialog:Open("JustAssistedCombat")
 
     elseif command == "toggle" then

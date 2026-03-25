@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 39)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 40)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -267,27 +267,43 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
 
     for i = 1, #rotationList do
         local spellID = rotationList[i]
-        if spellID and not addedSpellIDs[spellID]
-           and not SpellQueue.IsSpellBlacklisted(spellID, blacklist) then
-            local displayID = ClaimSpellID(spellID, addedSpellIDs)
-            if displayID
-               and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
-               and PassesRotationFilters(displayID, profile) then
-                if not BlizzardAPI.IsSpellReady(displayID) then
-                    cooldownCount = cooldownCount + 1
-                    cooldownSpells[cooldownCount] = displayID
-                elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
-                    proccedCount = proccedCount + 1
-                    proccedSpells[proccedCount] = displayID
-                else
-                    normalCount = normalCount + 1
-                    normalSpells[normalCount] = displayID
+        if spellID and not addedSpellIDs[spellID] then
+            if spellID < 0 then
+                -- Item entry (negative ID): use item-specific APIs.
+                -- Items are only present via Custom Queue — skip spell filters.
+                local itemID = -spellID
+                addedSpellIDs[spellID] = true
+                local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID)
+                if hasItem then
+                    if onCooldown then
+                        cooldownCount = cooldownCount + 1
+                        cooldownSpells[cooldownCount] = spellID
+                    else
+                        normalCount = normalCount + 1
+                        normalSpells[normalCount] = spellID
+                    end
                 end
-            else
-                -- Undo claim if filters rejected
-                if displayID then
-                    addedSpellIDs[spellID] = nil
-                    addedSpellIDs[displayID] = nil
+            elseif not SpellQueue.IsSpellBlacklisted(spellID, blacklist) then
+                local displayID = ClaimSpellID(spellID, addedSpellIDs)
+                if displayID
+                   and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
+                   and PassesRotationFilters(displayID, profile) then
+                    if not BlizzardAPI.IsSpellReady(displayID) then
+                        cooldownCount = cooldownCount + 1
+                        cooldownSpells[cooldownCount] = displayID
+                    elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
+                        proccedCount = proccedCount + 1
+                        proccedSpells[proccedCount] = displayID
+                    else
+                        normalCount = normalCount + 1
+                        normalSpells[normalCount] = displayID
+                    end
+                else
+                    -- Undo claim if filters rejected
+                    if displayID then
+                        addedSpellIDs[spellID] = nil
+                        addedSpellIDs[displayID] = nil
+                    end
                 end
             end
         end
@@ -358,14 +374,14 @@ function SpellQueue.GetCurrentSpellQueue()
     local spellCount = 0
     local hideItems = profile.hideItemAbilities
 
-    -- Position 1: Blizzard's primary suggestion. Never filtered by default — hiding
-    -- it freezes the rotation. blacklistPosition1 optionally enables blacklist check.
+    -- Position 1: Blizzard's primary suggestion. Blacklist applies to all positions.
+    -- Hiding pos 1 can freeze the rotation — users are warned in the blacklist UI.
     local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
 
     if primarySpellID and primarySpellID > 0 then
         local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
         if displaySpellID
-           and not (profile.blacklistPosition1 and SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist)) then
+           and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist) then
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
         else
@@ -377,7 +393,7 @@ function SpellQueue.GetCurrentSpellQueue()
             -- Highlight-mode lookahead: if the blacklisted spell is hidden from
             -- action bars (removed or behind a modifier macro), Blizzard's
             -- visible-button-only mode may return the next rotation spell instead.
-            if profile.blacklistPosition1 and BlizzardAPI.GetHighlightCastSpell then
+            if BlizzardAPI.GetHighlightCastSpell then
                 local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
                 if hlSpellID and hlSpellID > 0
                    and hlSpellID ~= primarySpellID
@@ -455,16 +471,17 @@ function SpellQueue.GetCurrentSpellQueue()
             cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
         end
         if cachedBurstEngine and cachedBurstEngine.CheckTrigger and cachedAddon then
-            local burstPhase, triggerAtPos1 = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID)
-            -- Phase "pending": trigger CD is at position 1. Mark it as burst so
+            local burstPhase, triggerPosition = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID, recommendedSpells)
+            -- Phase "pending": trigger CD is visible in the queue. Mark it as burst so
             -- renderers can show the burst glow (signal to press it), but don't
             -- inject anything — let Blizzard's recommendation stand.
-            if burstPhase == "pending" and triggerAtPos1 and spellCount >= 1 then
-                local pos1Display = recommendedSpells[1]
-                if pos1Display then
-                    burstInjectedSpells[pos1Display] = true
+            if burstPhase == "pending" and triggerPosition and spellCount >= triggerPosition then
+                local triggerDisplay = recommendedSpells[triggerPosition]
+                if triggerDisplay then
+                    burstInjectedSpells[triggerDisplay] = true
                 end
-                if primarySpellID and primarySpellID ~= pos1Display then
+                -- Also mark underlying spell ID if different from display (talent overrides)
+                if triggerPosition == 1 and primarySpellID and primarySpellID ~= triggerDisplay then
                     burstInjectedSpells[primarySpellID] = true
                 end
             end
@@ -510,15 +527,50 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     -- Positions 2+: rotation spells, cached until InvalidateRotationCache().
-    if not cachedRotationList and BlizzardAPI.GetRotationSpells then
-        cachedRotationList = BlizzardAPI.GetRotationSpells()
+    -- Custom Queue: if enabled for this spec, use user-defined spell list instead.
+    if not cachedRotationList then
+        local useCustom = false
+        if not cachedAddon then
+            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+        end
+        if cachedAddon and cachedAddon.db and cachedAddon.db.profile then
+            local cqProfile = cachedAddon.db.profile.customQueue
+            local SpellDB = LibStub("JustAC-SpellDB", true)
+            local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+            if specKey and cqProfile and cqProfile[specKey]
+               and cqProfile[specKey].enabled and cqProfile[specKey].spells
+               and #cqProfile[specKey].spells > 0 then
+                -- Copy the user's custom spell list as the rotation source
+                cachedRotationList = {}
+                for i, sid in ipairs(cqProfile[specKey].spells) do
+                    cachedRotationList[i] = sid
+                end
+                useCustom = true
+            end
+        end
+        if not useCustom and BlizzardAPI.GetRotationSpells then
+            cachedRotationList = BlizzardAPI.GetRotationSpells()
+        end
         if cachedRotationList and BlizzardAPI.RegisterSpellForTracking then
             for i = 1, #cachedRotationList do
                 local sid = cachedRotationList[i]
-                if sid then
+                if sid and sid > 0 then
                     BlizzardAPI.RegisterSpellForTracking(sid, "rotation")
                     local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
                     if displaySid ~= sid then BlizzardAPI.RegisterSpellForTracking(displaySid, "rotation") end
+                end
+            end
+            -- Seed local CD entries for spells already on cooldown at login/spec-change.
+            -- Without this, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event,
+            -- so IsSpellReady fails-open for unflagged spells. OOC-only (safe to call always).
+            if BlizzardAPI.SeedLocalCooldownIfActive then
+                for i = 1, #cachedRotationList do
+                    local sid = cachedRotationList[i]
+                    if sid and sid > 0 then
+                        BlizzardAPI.SeedLocalCooldownIfActive(sid)
+                        local displaySid = BlizzardAPI.GetDisplaySpellID(sid)
+                        if displaySid ~= sid then BlizzardAPI.SeedLocalCooldownIfActive(displaySid) end
+                    end
                 end
             end
         end

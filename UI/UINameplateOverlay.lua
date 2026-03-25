@@ -1229,7 +1229,15 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
     for i, icon in ipairs(dpsIcons) do
         local spellID  = hasSpells and spellIDs[i] or nil
-        local spellInfo = spellID and GetCachedSpellInfo and GetCachedSpellInfo(spellID) or nil
+        local isItemEntry = spellID and spellID < 0
+        local itemID = isItemEntry and -spellID or nil
+        local spellInfo
+        if isItemEntry then
+            local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
+            if itemIcon then spellInfo = { iconID = itemIcon } end
+        else
+            spellInfo = spellID and GetCachedSpellInfo and GetCachedSpellInfo(spellID) or nil
+        end
 
         -- Position stabilization (positions 2+): hold the current spell for
         -- POSITION_HOLD_TIME before replacing. Prevents rapid position shuffling
@@ -1246,10 +1254,19 @@ function UINameplateOverlay.Render(addon, spellIDs)
                     end
                 end
                 if oldStillQueued then
-                    local oldInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
+                    local oldInfo
+                    if icon.spellID < 0 then
+                        local oldItemID = -icon.spellID
+                        local oldItemIcon = GetItemIcon and GetItemIcon(oldItemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(oldItemID))
+                        if oldItemIcon then oldInfo = { iconID = oldItemIcon } end
+                    else
+                        oldInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
+                    end
                     if oldInfo then
                         spellID = icon.spellID
                         spellInfo = oldInfo
+                        isItemEntry = spellID < 0
+                        itemID = isItemEntry and -spellID or nil
                     end
                 end
             end
@@ -1269,6 +1286,17 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.lastSpellSetTime = now
                 icon.iconTexture:SetTexture(spellInfo.iconID)
                 icon.iconTexture:Show()
+                -- Track item state for cooldowns and hotkey lookup.
+                if isItemEntry then
+                    icon.isItem = true
+                    icon.itemID = itemID
+                    local _, castSpellID = GetItemSpell(itemID)
+                    icon.itemCastSpellID = castSpellID
+                elseif icon.isItem then
+                    icon.isItem = nil
+                    icon.itemID = nil
+                    icon.itemCastSpellID = nil
+                end
                 -- Reset cooldown state for new spell
                 icon._cooldownShown       = false
                 icon._chargeCooldownShown = false
@@ -1278,7 +1306,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
             -- Wait label: Blizzard's "waiting for resources" placeholder (iconID 134377).
             if spellChanged then
-                icon.isWaitingSpell = spellInfo.iconID == 134377
+                icon.isWaitingSpell = not isItemEntry and spellInfo.iconID == 134377
             end
             if icon.centerText then
                 if icon.isWaitingSpell then
@@ -1377,7 +1405,12 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- Hotkey: look up on spell change or throttle interval; always track
             -- normalizedHotkey for flash matching even when display is off
             if spellChanged or shouldUpdateCooldowns or not icon.cachedHotkey then
-                local hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                local hotkey
+                if isItemEntry then
+                    hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(itemID, icon.itemCastSpellID) or ""
+                else
+                    hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                end
                 local hotkeyChanged = (icon.cachedHotkey ~= hotkey)
                 icon.cachedHotkey = hotkey
 
@@ -1402,13 +1435,23 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
 
             -- Range check: slot-based with spell fallback (shared helper).
-            local directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
+            local directSlot
+            if isItemEntry then
+                directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
+            else
+                directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
+            end
             local isOutOfRange = UIRenderer.CheckSpellRange(icon, spellID, directSlot)
             local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
             UIRenderer.UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
 
-            local isChanneledSpell, isCastedSpell = UIRenderer.MatchActiveCast(
-                spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+            local isChanneledSpell, isCastedSpell
+            if isItemEntry then
+                isChanneledSpell, isCastedSpell = false, false
+            else
+                isChanneledSpell, isCastedSpell = UIRenderer.MatchActiveCast(
+                    spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+            end
 
             local baseDesaturation = (i == 1) and 0 or npoDesaturation
             local hasVisibleHotkey = showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= ""

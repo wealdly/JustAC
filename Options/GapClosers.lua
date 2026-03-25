@@ -14,7 +14,7 @@ function GapClosers.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Gap-Closers"],
-        order = 2,
+        order = 3,
         args = {
             rangedSpecNote = {
                 type = "description",

@@ -10,6 +10,7 @@ local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function Offensive.CreateTabArgs(addon)
+    local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
     local GapClosers = LibStub("JustAC-OptionsGapClosers", true)
     local BurstInjection = LibStub("JustAC-OptionsBurstInjection", true)
     return {
@@ -18,6 +19,8 @@ function Offensive.CreateTabArgs(addon)
         order = 4,
         childGroups = "tab",
         args = {
+            -- Sub-tab 0: Custom Queue
+            customQueue = (CustomQueue and CustomQueue.CreateTabArgs) and CustomQueue.CreateTabArgs(addon) or nil,
             -- Sub-tab 1: Gap-Closers
             gapClosers = (GapClosers and GapClosers.CreateTabArgs) and GapClosers.CreateTabArgs(addon) or nil,
             -- Sub-tab 1.5: Burst Injection
@@ -26,7 +29,7 @@ function Offensive.CreateTabArgs(addon)
             blacklist = {
                 type = "group",
                 name = L["Blacklist"],
-                order = 3,
+                order = 2,
                 args = {
                     info = {
                         type = "description",
@@ -34,17 +37,11 @@ function Offensive.CreateTabArgs(addon)
                         order = 1,
                         fontSize = "medium"
                     },
-                    blacklistPosition1 = {
-                        type = "toggle",
-                        name = L["Blacklist Position 1"],
-                        desc = L["Blacklist Position 1 desc"],
-                        order = 1.5,
-                        width = "full",
-                        get = function() return addon.db.profile.blacklistPosition1 end,
-                        set = function(_, val)
-                            addon.db.profile.blacklistPosition1 = val
-                            addon:ForceUpdate()
-                        end,
+                    warning = {
+                        type = "description",
+                        name = L["Blacklist Warning"],
+                        order = 1.2,
+                        fontSize = "small",
                     },
                     -- Dynamic blacklist entries added by UpdateBlacklistOptions
                 },
@@ -67,7 +64,7 @@ function Offensive.UpdateBlacklistOptions(addon)
     -- Static keys to preserve (defined in CreateTabArgs)
     local staticKeys = {
         info = true,
-        blacklistPosition1 = true,
+        warning = true,
     }
 
     local keysToClear = {}

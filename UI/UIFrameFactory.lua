@@ -1596,7 +1596,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
             if self.spellID then
                 if IsShiftKeyDown() then
-                    addon:ToggleSpellBlacklist(self.spellID)
+                    addon:RemoveFromCustomQueue(self.spellID)
                 else
                     addon:OpenHotkeyOverrideDialog(self.spellID)
                 end
@@ -1646,12 +1646,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                 if not inCombat then
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
-                    local isBlacklisted = SpellQueue and SpellQueue.IsSpellBlacklisted and SpellQueue.IsSpellBlacklisted(self.spellID)
-                    if isBlacklisted then
-                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from blacklist|r")
-                    else
-                        GameTooltip:AddLine("|cffff6666Shift+Right-click: Add to blacklist (positions 2+ only)|r")
-                    end
+                    GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from queue|r")
                 end
 
                 GameTooltip:Show()
