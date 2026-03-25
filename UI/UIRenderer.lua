@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 22)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 23)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -34,8 +34,14 @@ local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_ActionBar_GetActionCooldown = C_ActionBar and C_ActionBar.GetActionCooldown
 local C_ActionBar_GetActionCharges = C_ActionBar and C_ActionBar.GetActionCharges
+local C_ActionBar_GetActionCooldownDuration = C_ActionBar and C_ActionBar.GetActionCooldownDuration
+local C_ActionBar_GetActionChargeDuration = C_ActionBar and C_ActionBar.GetActionChargeDuration
 local C_ActionBar_GetActionDisplayCount = C_ActionBar and C_ActionBar.GetActionDisplayCount
 local C_AssistedCombat_GetNextCastSpell = C_AssistedCombat and C_AssistedCombat.GetNextCastSpell
+local C_Spell_GetSpellCooldownDuration = C_Spell and C_Spell.GetSpellCooldownDuration
+local C_Spell_GetSpellChargeDuration = C_Spell and C_Spell.GetSpellChargeDuration
+local C_DurationUtil_CreateDuration = C_DurationUtil and C_DurationUtil.CreateDuration
+local IS_DURATION_COOLDOWNS = BlizzardAPI.IS_DURATION_COOLDOWNS
 
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
@@ -277,8 +283,8 @@ end
 -- Cooldown/charge display via Blizzard's ActionButton_ApplyCooldown (secret-safe passthrough).
 -- Display layer: pipe secret values straight to UI widgets (Blizzard renders them).
 -- Logic layer: all readiness decisions use cached OOC data (CooldownTracking).
-local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1 }
-local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0 }
+local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
+local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0, isActive = false }
 
 local function UpdateButtonCooldowns(button)
     if not button then return end
@@ -328,7 +334,8 @@ local function UpdateButtonCooldowns(button)
         chargeInfo = C_ActionBar_GetActionCharges and C_ActionBar_GetActionCharges(directSlot)
     elseif isItem then
         local start, duration = GetItemCooldown(id)
-        cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1 }
+        local active = (start or 0) > 0 and (duration or 0) > 0
+        cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1, isActive = active }
     elseif cooldownID then
         if C_Spell.GetSpellCooldown then
             local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
@@ -370,13 +377,59 @@ local function UpdateButtonCooldowns(button)
         chargeText = C_ActionBar_GetActionDisplayCount(directSlot)
     end
 
-    -- Apply cooldown swipe animation (handles secrets internally).
-    if ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
+    -- Apply cooldown swipe animation.
+    local ci = cooldownInfo or defaultCooldownInfo
+    local chi = chargeInfo or defaultChargeInfo
+    if IS_DURATION_COOLDOWNS and button.cooldown then
+        -- Build 66562+: DurationObject path (secret-safe in tainted execution).
+        local showNormal = ci.isActive
+        local showCharge = chi.isActive
+
+        -- Main cooldown swipe
+        if showNormal then
+            local durObj
+            if directSlot and C_ActionBar_GetActionCooldownDuration then
+                durObj = C_ActionBar_GetActionCooldownDuration(directSlot)
+            elseif isItem and C_DurationUtil_CreateDuration then
+                durObj = C_DurationUtil_CreateDuration()
+                if durObj then
+                    durObj:SetTimeFromStart(ci.startTime, ci.duration, ci.modRate)
+                end
+            elseif cooldownID and C_Spell_GetSpellCooldownDuration then
+                local ok, result = pcall(C_Spell_GetSpellCooldownDuration, cooldownID)
+                if ok then durObj = result end
+            end
+            if durObj then
+                button.cooldown:SetCooldownFromDurationObject(durObj)
+            else
+                button.cooldown:Clear()
+            end
+        else
+            button.cooldown:Clear()
+        end
+
+        -- Charge cooldown edge ring
+        if showCharge and button.chargeCooldown then
+            local chargeDurObj
+            if directSlot and C_ActionBar_GetActionChargeDuration then
+                chargeDurObj = C_ActionBar_GetActionChargeDuration(directSlot)
+            elseif cooldownID and C_Spell_GetSpellChargeDuration then
+                local ok, result = pcall(C_Spell_GetSpellChargeDuration, cooldownID)
+                if ok then chargeDurObj = result end
+            end
+            if chargeDurObj then
+                button.chargeCooldown:SetCooldownFromDurationObject(chargeDurObj)
+            else
+                button.chargeCooldown:Clear()
+            end
+        elseif button.chargeCooldown then
+            button.chargeCooldown:Clear()
+        end
+    elseif ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
+        -- Pre-66562 fallback: ActionButton_ApplyCooldown handles secrets internally.
         ActionButton_ApplyCooldown(
-            button.cooldown,
-            cooldownInfo or defaultCooldownInfo,
-            button.chargeCooldown,
-            chargeInfo or defaultChargeInfo,
+            button.cooldown, ci,
+            button.chargeCooldown, chi,
             nil, nil
         )
     end

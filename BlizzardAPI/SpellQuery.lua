@@ -118,6 +118,20 @@ function BlizzardAPI.GetNextCastSpell()
     return nil
 end
 
+--- Highlight-mode lookahead: always calls GetNextCastSpell(true) so the engine
+--- skips spells that have no visible action bar button. When a blacklisted spell
+--- is hidden from bars (removed or behind a modifier macro), this returns the
+--- next spell Blizzard would highlight instead.
+function BlizzardAPI.GetHighlightCastSpell()
+    if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
+
+    local success, result = pcall(C_AssistedCombat.GetNextCastSpell, true)
+    if success and result and type(result) == "number" and result > 0 then
+        return result
+    end
+    return nil
+end
+
 function BlizzardAPI.GetRotationSpells()
     if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then return nil end
 

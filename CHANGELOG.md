@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-03-24
+
+### Added
+- Highlight-mode lookahead for blacklisted position 1: when a blacklisted spell is also hidden from action bars (removed or placed behind a modifier macro), JustAC tries Blizzard's visible-button-only suggestion to substitute a better next-cast spell at position 1. Falls back to rotation list if highlight returns nil. (SpellQuery v1, SpellQueue v38)
+
+### Fixed
+- Fix cooldown swipe crash on build 66562+ (`ActionButton_ApplyCooldown` no longer accepts secret values from tainted execution). Uses new DurationObject-based rendering path: `C_ActionBar.GetActionCooldownDuration` / `C_Spell.GetSpellCooldownDuration` → `SetCooldownFromDurationObject`. Items use `C_DurationUtil.CreateDuration()`. Pre-66562 builds fall back to `ActionButton_ApplyCooldown`. (BlizzardAPI v35, UIRenderer v23)
+
 ## [4.17.1] - 2026-03-19
 
 ### Fixed
