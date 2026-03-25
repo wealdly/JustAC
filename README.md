@@ -84,7 +84,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 
 ## Installation
 
-1. Download from [CurseForge](https://www.curseforge.com/wow/addons/justac) or extract to `Interface\AddOns\JustAC`
+1. Download from [CurseForge](https://www.curseforge.com/wow/addons/just-assisted-combat) or extract to `Interface\AddOns\JustAC`
 2. Enable "Assisted Combat" in WoW's Game Menu → Edit Mode → Combat section
 3. `/jac` to access options
 
