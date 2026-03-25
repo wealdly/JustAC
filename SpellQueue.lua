@@ -374,6 +374,21 @@ function SpellQueue.GetCurrentSpellQueue()
                 addedSpellIDs[primarySpellID] = nil
                 addedSpellIDs[displaySpellID] = nil
             end
+            -- Highlight-mode lookahead: if the blacklisted spell is hidden from
+            -- action bars (removed or behind a modifier macro), Blizzard's
+            -- visible-button-only mode may return the next rotation spell instead.
+            if profile.blacklistPosition1 and BlizzardAPI.GetHighlightCastSpell then
+                local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
+                if hlSpellID and hlSpellID > 0
+                   and hlSpellID ~= primarySpellID
+                   and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist) then
+                    local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
+                    if hlDisplay then
+                        spellCount = spellCount + 1
+                        recommendedSpells[spellCount] = hlDisplay
+                    end
+                end
+            end
         end
     end
 

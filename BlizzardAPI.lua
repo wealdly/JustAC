@@ -3,15 +3,24 @@
 -- JustAC: Blizzard API Module - entry point, version detection and LibStub registration.
 -- Public functions are defined in the BlizzardAPI\ submodules, loaded immediately
 -- after this file in JustAC.toc: CooldownTracking, SecretValues, SpellQuery, StateHelpers.
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 34)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 35)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
 -- Version Detection
 --------------------------------------------------------------------------------
 local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
-BlizzardAPI.IS_MIDNIGHT_OR_LATER = CURRENT_VERSION >= 120000
-BlizzardAPI._interfaceVersion    = CURRENT_VERSION
+local _, CURRENT_BUILD = GetBuildInfo()
+CURRENT_BUILD = tonumber(CURRENT_BUILD) or 0
+BlizzardAPI.IS_MIDNIGHT_OR_LATER   = CURRENT_VERSION >= 120000
+BlizzardAPI._interfaceVersion      = CURRENT_VERSION
+
+-- Build 66562 (2026-03-24): ActionButton_ApplyCooldown no longer accepts secret
+-- values from addon (tainted) execution. New DurationObject-based cooldown APIs
+-- replace the old start/duration passthrough for swipe rendering.
+BlizzardAPI.IS_DURATION_COOLDOWNS  = CURRENT_VERSION >= 120000
+    and CURRENT_BUILD >= 66562
+    and C_ActionBar and C_ActionBar.GetActionCooldownDuration ~= nil
 
 --------------------------------------------------------------------------------
 -- Secret Value Primitives
