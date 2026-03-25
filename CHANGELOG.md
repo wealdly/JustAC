@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.19.1] - 2026-03-25
+
+### Fixed
+- **Burst injection ignoring cooldowns** — Injection spells (e.g., Lunar Beam, Convoke) could be suggested while on cooldown. Lazy-resolve path now seeds pre-existing cooldowns; removed false-positive usability cross-check that immediately cleared local CD timers for unflagged spells.
+- **Glow animations at combat exit** — Blue crawl could disappear and proc glow could freeze in the offensive queue, while defensive glows kept animating. Fixed pause/resume to cover both icon pools, use correct animation freeze, and guard the OOC pause timer against stale firing during combat re-entry.
+
 ## [4.19.0] - 2026-03-25
 
 ### Added

@@ -221,6 +221,12 @@ local function ResolveInjectionSpells(addon)
                 end
                 -- Pre-cache base CD while we're at it (no-op if already cached)
                 GetBaseCooldownSeconds(resolvedID)
+                -- Seed local CD if spell is already on cooldown (lazy-resolve may
+                -- run after a cache invalidation; without seeding, IsSpellReady
+                -- fails-open for unflagged spells that were cast before re-resolve).
+                if BlizzardAPI.SeedLocalCooldownIfActive then
+                    BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
+                end
             end
         end
     end
