@@ -348,7 +348,8 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- Charge count text: determine readable currentCharges for the text overlay.
-    -- Fetched once here, used for both the sweep fallback and the text display.
+    -- Spell API is the authoritative source for charge data. Slot-based chargeInfo
+    -- can be stale during modifier presses (macro resolves to a different spell).
     local chargeText = ""
     if not isItem and cooldownID and C_Spell_GetSpellCharges then
         local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
@@ -356,11 +357,10 @@ local function UpdateButtonCooldowns(button)
             local maxOk = not BlizzardAPI.IsSecretValue(result.maxCharges)
             local curOk = not BlizzardAPI.IsSecretValue(result.currentCharges)
             if maxOk and curOk then
-                -- OOC or race window: fields fully readable — use for sweep + text.
-                chargeInfo = chargeInfo or result
                 if result.maxCharges > 1 then
-                    local cur = result.currentCharges
-                    chargeText = (cur > 0 and cur < result.maxCharges) and cur or ""
+                    -- Prefer spell API over slot-based data (immune to modifier changes).
+                    chargeInfo = result
+                    chargeText = result.currentCharges
                 end
             elseif BlizzardAPI.GetCachedMaxCharges then
                 -- Combat: maxCharges from OOC cache, currentCharges via passthrough.
@@ -373,6 +373,7 @@ local function UpdateButtonCooldowns(button)
     end
 
     -- Slot-based fallback for charge text (NeverSecret, always readable).
+    -- Only used in combat when spell API charges are secret.
     if chargeText == "" and directSlot and C_ActionBar_GetActionDisplayCount then
         chargeText = C_ActionBar_GetActionDisplayCount(directSlot)
     end
