@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 14)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 15)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -323,7 +323,8 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
                 highlightFrame.Flipbook.Anim:Play()
             end
             C_Timer.After(0.05, function()
-                if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim then
+                if highlightFrame and highlightFrame.Flipbook and highlightFrame.Flipbook.Anim
+                    and pauseField and icon[pauseField] then
                     highlightFrame.Flipbook.Anim:Pause()
                 end
             end)
@@ -460,77 +461,112 @@ UpdateFlash = function(button, elapsed)
     end
 end
 
+local function HideIconGlows(icon)
+    if not icon then return end
+    StopAssistedGlow(icon)
+    StopDefensiveGlow(icon)
+    StopGapCloserGlow(icon)
+    StopBurstGlow(icon)
+    StopInterruptGlow(icon)
+    HideProcGlow(icon)
+end
+
 local function HideAllGlows(addon)
-    if not addon or not addon.spellIcons then return end
-    
-    for i = 1, #addon.spellIcons do
-        local icon = addon.spellIcons[i]
-        if icon then
-            StopAssistedGlow(icon)
-            StopDefensiveGlow(icon)
-            StopGapCloserGlow(icon)
-            StopBurstGlow(icon)
-            StopInterruptGlow(icon)
-            HideProcGlow(icon)
+    if not addon then return end
+
+    if addon.spellIcons then
+        for i = 1, #addon.spellIcons do
+            HideIconGlows(addon.spellIcons[i])
+        end
+    end
+    if addon.defensiveIcons then
+        for i = 1, #addon.defensiveIcons do
+            HideIconGlows(addon.defensiveIcons[i])
         end
     end
 end
 
+local function PauseIconGlows(icon)
+    if not icon then return end
+
+    -- Assisted glow: freeze at current frame
+    if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
+        if icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
+            icon.JustACAssistedGlow.Flipbook.Anim:Pause()
+        end
+        icon.assistedAnimPaused = true
+    end
+    -- Defensive glow: freeze at current frame
+    if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
+        if icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
+            icon.DefensiveHighlightFrame.Flipbook.Anim:Pause()
+        end
+        icon.defensiveAnimPaused = true
+    end
+    -- Proc glow: freeze animation (keep frame visible)
+    if icon.ProcGlowFrame and icon.ProcGlowFrame:IsShown() then
+        if icon.ProcGlowFrame.ProcLoop and icon.ProcGlowFrame.ProcLoop:IsPlaying() then
+            icon.ProcGlowFrame.ProcLoop:Pause()
+        end
+    end
+    -- Gap-closer/Interrupt/Burst glows deliberately excluded:
+    -- they always animate (even OOC) for emphasis.
+end
+
 local function PauseAllGlows(addon)
-    if not addon or not addon.spellIcons then return end
-    
-    for i = 1, #addon.spellIcons do
-        local icon = addon.spellIcons[i]
-        if icon then
-            -- Assisted glow: stop animation (keeps frame visible but frozen)
-            if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
-                if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
-                    icon.JustACAssistedGlow.Flipbook.Anim:Play()
-                end
-                icon.JustACAssistedGlow.Flipbook.Anim:Stop()
-            end
-            -- Defensive glow: stop animation
-            if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
-                if not icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
-                    icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
-                end
-                icon.DefensiveHighlightFrame.Flipbook.Anim:Stop()
-            end
-            -- Proc glow: hide entirely
-            if icon.ProcGlowFrame then
-                icon.ProcGlowFrame:Hide()
-                if icon.ProcGlowFrame.ProcLoop then
-                    icon.ProcGlowFrame.ProcLoop:Stop()
-                end
-            end
-            -- Gap-closer/Interrupt glows deliberately excluded:
-            -- they always animate (even OOC) for emphasis.
+    if not addon then return end
+
+    if addon.spellIcons then
+        for i = 1, #addon.spellIcons do
+            PauseIconGlows(addon.spellIcons[i])
+        end
+    end
+    if addon.defensiveIcons then
+        for i = 1, #addon.defensiveIcons do
+            PauseIconGlows(addon.defensiveIcons[i])
+        end
+    end
+end
+
+local function ResumeIconGlows(icon)
+    if not icon then return end
+
+    -- Assisted glow: resume animation
+    if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
+        if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
+            icon.JustACAssistedGlow.Flipbook.Anim:Play()
+        end
+        icon.assistedAnimPaused = false
+    end
+    -- Defensive glow: resume animation
+    if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
+        if not icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
+            icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
+        end
+        icon.defensiveAnimPaused = false
+    end
+    -- Proc glow: resume animation
+    if icon.ProcGlowFrame and icon.hasProcGlow then
+        if not icon.ProcGlowFrame:IsShown() then
+            icon.ProcGlowFrame:Show()
+        end
+        if icon.ProcGlowFrame.ProcLoop and not icon.ProcGlowFrame.ProcLoop:IsPlaying() then
+            icon.ProcGlowFrame.ProcLoop:Play()
         end
     end
 end
 
 local function ResumeAllGlows(addon)
-    if not addon or not addon.spellIcons then return end
-    
-    for i = 1, #addon.spellIcons do
-        local icon = addon.spellIcons[i]
-        if icon then
-            -- Assisted glow: resume animation
-            if icon.JustACAssistedGlow and icon.JustACAssistedGlow:IsShown() then
-                if not icon.JustACAssistedGlow.Flipbook.Anim:IsPlaying() then
-                    icon.JustACAssistedGlow.Flipbook.Anim:Play()
-                end
-            end
-            -- Defensive glow: resume animation
-            if icon.DefensiveHighlightFrame and icon.DefensiveHighlightFrame:IsShown() then
-                if not icon.DefensiveHighlightFrame.Flipbook.Anim:IsPlaying() then
-                    icon.DefensiveHighlightFrame.Flipbook.Anim:Play()
-                end
-            end
-            -- Proc glow: restore if icon still has proc state (frozen OOC)
-            if icon.ProcGlowFrame and icon.hasProcGlow then
-                ShowProcGlow(icon, false)
-            end
+    if not addon then return end
+
+    if addon.spellIcons then
+        for i = 1, #addon.spellIcons do
+            ResumeIconGlows(addon.spellIcons[i])
+        end
+    end
+    if addon.defensiveIcons then
+        for i = 1, #addon.defensiveIcons do
+            ResumeIconGlows(addon.defensiveIcons[i])
         end
     end
 end

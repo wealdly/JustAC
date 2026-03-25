@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 5)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 6)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -103,7 +103,13 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
 
     -- Cooldown check: don't suggest spells on CD
     -- Ensure spell is registered for local CD tracking (idempotent after first call)
-    if BlizzardAPI.RegisterSpellForTracking then BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser") end
+    if BlizzardAPI.RegisterSpellForTracking then
+        BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser")
+        -- Seed local CD on first registration so pre-existing CDs are detected
+        if BlizzardAPI.SeedLocalCooldownIfActive then
+            BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
+        end
+    end
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Range check: only when caller requests it AND we can find the slot.
@@ -269,6 +275,21 @@ function GapCloserEngine.InitializeGapClosers(addon)
                 profile.gapClosers.classSpells[specKey][i] = spellID
             end
             GapCloserEngine.InvalidateGapCloserCache()
+        end
+    end
+
+    -- Register gap-closer spells for local CD tracking and seed pre-existing CDs.
+    -- Mirrors DefensiveEngine.RegisterDefensivesForTracking pattern.
+    local spellList = profile.gapClosers.classSpells[specKey]
+    if spellList and BlizzardAPI.RegisterSpellForTracking then
+        for _, sid in ipairs(spellList) do
+            if sid and sid > 0 then
+                local resolvedID = BlizzardAPI.ResolveSpellID(sid)
+                BlizzardAPI.RegisterSpellForTracking(resolvedID, "gapcloser")
+                if BlizzardAPI.SeedLocalCooldownIfActive then
+                    BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
+                end
+            end
         end
     end
 end

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 8
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 9
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -298,10 +298,13 @@ local function TryClearViaCrossCheck(spellID)
 end
 
 --- Check tracked spells with active local cooldowns for early CD completion.
---- Called on SPELL_UPDATE_COOLDOWN. Two detection methods:
----   1. isOnGCD == true → GCD only, real CD has ended (flagged rotation spells)
----   2. isOnGCD == nil  → unflagged spell; cross-check via action bar usability
----      (NeverSecret). Catches CDR completion for major CDs (Divine Toll, etc.)
+--- Called on SPELL_UPDATE_COOLDOWN. Detection method:
+---   isOnGCD == true → GCD only, real CD has ended (flagged rotation spells).
+---   isOnGCD == false → real CD definitely running (no action needed).
+---   isOnGCD == nil → unflagged spell; cannot determine CD state from API alone.
+---     IsUsableAction returns true even on cooldown, so action bar cross-checks
+---     produce false positives. Trust the local CD timer instead — it expires
+---     naturally, and CDR edge cases self-correct at combat exit via ResyncLocalCooldowns.
 ---
 --- @param eventSpellID number|nil  spellID from SPELL_UPDATE_COOLDOWN payload.
 ---   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
@@ -318,10 +321,9 @@ local function CheckCooldownCompletions(eventSpellID)
             if ok and cd then
                 if cd.isOnGCD == true then
                     localCooldowns[eventSpellID] = nil
-                elseif cd.isOnGCD == nil then
-                    -- Unflagged spell: cross-check via action bar usability
-                    TryClearViaCrossCheck(eventSpellID)
                 end
+                -- isOnGCD == nil: unflagged spell — trust local timer.
+                -- isOnGCD == false: real CD running — no action needed.
             end
         end
         return
@@ -335,9 +337,8 @@ local function CheckCooldownCompletions(eventSpellID)
                 if cd.isOnGCD == true then
                     -- isOnGCD is NeverSecret: true = GCD only (real CD done)
                     localCooldowns[spellID] = nil
-                elseif cd.isOnGCD == nil then
-                    TryClearViaCrossCheck(spellID)
                 end
+                -- isOnGCD == nil: unflagged spell — trust local timer.
             end
         end
     end
