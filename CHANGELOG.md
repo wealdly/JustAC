@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.18.1] - 2026-03-24
+
+### Fixed
+- Fix charge count text disappearing on macro-bound spells during modifier key presses. Spell API charge data now takes priority over slot-based data (which can resolve to the wrong spell when a macro conditional changes). Charge count is now shown consistently, including at max charges.
+
 ## [4.18.0] - 2026-03-24
 
 ### Added
