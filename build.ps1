@@ -61,6 +61,7 @@ $coreFiles = @(
     "Options\General.lua",
     "Options\StandardQueue.lua",
     "Options\Offensive.lua",
+    "Options\CustomQueue.lua",
     "Options\Overlay.lua",
     "Options\Defensives.lua",
     "Options\GapClosers.lua",

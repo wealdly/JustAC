@@ -253,7 +253,11 @@ end
 -- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
 -- Multi-modifier combos are checked first to prevent partial prefix matches.
 -- Mouse abbreviations are reversed so matching uses WoW's raw binding names (BUTTON1-N).
+-- Results are cached by raw input string (hotkeys rarely change; new bindings produce new keys).
+local normalizeHotkeyCache = {}
 local function NormalizeHotkey(hotkey)
+    local cached = normalizeHotkeyCache[hotkey]
+    if cached then return cached end
     local n = hotkey:upper()
     -- Full-word modifier prefixes MUST come first so "SHIFT-2" isn't misread as
     -- the single-letter "S" prefix pattern below (which would produce "SHIFT-HIFT-2").
@@ -277,6 +281,7 @@ local function NormalizeHotkey(hotkey)
     n = n:gsub("MWU$", "MOUSEWHEELUP")
     n = n:gsub("MWD$", "MOUSEWHEELDOWN")
     n = n:gsub("M(%d+)$", "BUTTON%1")
+    normalizeHotkeyCache[hotkey] = n
     return n
 end
 
@@ -655,6 +660,9 @@ end
 --- @param icon table  Icon button
 local function ClearIconState(icon)
     icon.spellID = nil
+    icon.isItem = nil
+    icon.itemID = nil
+    icon.itemCastSpellID = nil
     icon.iconTexture:Hide()
     if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
     if icon.centerText then icon.centerText:Hide() end
@@ -1409,7 +1417,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         local icon = spellIconsRef[i]
         if icon then
             local spellID = hasSpells and spellIDs[i] or nil
-            local spellInfo = spellID and GetCachedSpellInfo(spellID)
+            local isItemEntry = spellID and spellID < 0
+            local itemID = isItemEntry and -spellID or nil
+            local spellInfo
+            if isItemEntry then
+                local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
+                if itemIcon then spellInfo = { iconID = itemIcon } end
+            else
+                spellInfo = spellID and GetCachedSpellInfo(spellID)
+            end
 
             -- Position stabilization (positions 2+): hold the current spell for
             -- POSITION_HOLD_TIME before replacing it. Prevents rapid position
@@ -1428,10 +1444,19 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         end
                     end
                     if oldStillQueued then
-                        local oldInfo = GetCachedSpellInfo(icon.spellID)
+                        local oldInfo
+                        if icon.spellID < 0 then
+                            local oldItemID = -icon.spellID
+                            local oldItemIcon = GetItemIcon and GetItemIcon(oldItemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(oldItemID))
+                            if oldItemIcon then oldInfo = { iconID = oldItemIcon } end
+                        else
+                            oldInfo = GetCachedSpellInfo(icon.spellID)
+                        end
                         if oldInfo then
                             spellID = icon.spellID
                             spellInfo = oldInfo
+                            isItemEntry = spellID < 0
+                            itemID = isItemEntry and -spellID or nil
                         end
                     end
                 end
@@ -1454,6 +1479,20 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
                 
                 icon.spellID = spellID
+
+                -- Track item state for UpdateButtonCooldowns and hotkey lookup.
+                if isItemEntry then
+                    icon.isItem = true
+                    icon.itemID = itemID
+                    if spellChanged then
+                        local _, castSpellID = GetItemSpell(itemID)
+                        icon.itemCastSpellID = castSpellID
+                    end
+                elseif icon.isItem then
+                    icon.isItem = nil
+                    icon.itemID = nil
+                    icon.itemCastSpellID = nil
+                end
                 
                 local iconTexture = icon.iconTexture
                 
@@ -1471,7 +1510,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- all "Waiting for [resource]" placeholder spells. File IDs are the
                 -- same across all locales, so this check is locale-safe.
                 if spellChanged then
-                    icon.isWaitingSpell = spellInfo.iconID == 134377
+                    icon.isWaitingSpell = not isItemEntry and spellInfo.iconID == 134377
                 end
                 local centerText = icon.centerText
                 if centerText then
@@ -1570,7 +1609,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 local hotkey
                 local hotkeyChanged = false
                 if hotkeysDirty or spellChanged or not icon.cachedHotkey or icon.cachedHotkey == "" then
-                    hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                    if isItemEntry then
+                        hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(itemID, icon.itemCastSpellID) or ""
+                    else
+                        hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
+                    end
                     if icon.cachedHotkey ~= hotkey then
                         hotkeyChanged = true
                     end
@@ -1599,14 +1642,24 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
 
                 -- Range check: slot-based with spell fallback.
-                local directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                local directSlot
+                if isItemEntry then
+                    directSlot = ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
+                else
+                    directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                end
                 local isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
                 local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
                 UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
                 
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
-                local isChanneledSpell, isCastedSpell = MatchActiveCast(
-                    spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+                local isChanneledSpell, isCastedSpell
+                if isItemEntry then
+                    isChanneledSpell, isCastedSpell = false, false
+                else
+                    isChanneledSpell, isCastedSpell = MatchActiveCast(
+                        spellID, isChanneling, channelSpellID, isCasting, castSpellID)
+                end
 
                 local hasVisibleHotkey = showHotkeys and hotkey ~= ""
                 local visualState = ResolveVisualState(icon, spellID,

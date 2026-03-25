@@ -14,7 +14,7 @@ function BurstInjection.CreateTabArgs(addon)
     return {
         type = "group",
         name = L["Burst Injection"] .. " |cFFFF8800(" .. L["Experimental"] .. ")|r",
-        order = 1.5,
+        order = 4,
         args = {
             experimentalBanner = {
                 type = "description",

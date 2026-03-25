@@ -14,7 +14,7 @@
 -- Trigger spells: curated per-spec major CDs (SpellDB.CLASS_BURST_TRIGGER_DEFAULTS)
 -- with optional user overrides.  Aura IDs resolved via SpellDB.GetTriggerAuraID().
 
-local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 4)
+local BurstInjectionEngine = LibStub:NewLibrary("JustAC-BurstInjectionEngine", 5)
 if not BurstInjectionEngine then return end
 
 -- Hot path cache
@@ -330,19 +330,29 @@ function BurstInjectionEngine.GetDetectedTriggers(addon)
     return result
 end
 
+--- Check if a spell ID is a trigger (raw or display variant).
+--- Returns true if spellID matches the trigger set.
+local function IsTriggerSpell(triggers, spellID)
+    if not spellID or spellID <= 0 then return false end
+    if triggers[spellID] then return true end
+    local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+    if displayID and displayID ~= spellID and triggers[displayID] then return true end
+    return false
+end
+
 --- Two-phase burst trigger check.
---- Returns: phase, isTriggerAtPos1
+--- Returns: phase, triggerPosition
 ---   phase = "active"  → trigger aura is on player, inject from injection list
----   phase = "pending" → Blizzard recommends trigger CD at pos 1 (show glow, don't inject)
+---   phase = "pending" → trigger CD visible in queue (show glow, don't inject)
 ---   phase = nil        → no burst condition detected
----   isTriggerAtPos1    → true when primarySpellID is itself a trigger (for glow)
-function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
-    if not addon or not addon.db or not addon.db.profile then return nil, false end
+---   triggerPosition    → 1-based queue index where trigger was found (or nil)
+function BurstInjectionEngine.CheckTrigger(addon, primarySpellID, recommendedSpells)
+    if not addon or not addon.db or not addon.db.profile then return nil, nil end
     local bi = addon.db.profile.burstInjection
-    if not bi or not bi.enabled then return nil, false end
+    if not bi or not bi.enabled then return nil, nil end
 
     local triggers = ResolveTriggerSpells(addon)
-    if not triggers then return nil, false end
+    if not triggers then return nil, nil end
 
     -- Phase 2a: is a trigger aura currently active on the player?
     -- Lazy-resolve RedundancyFilter (loaded later in TOC order)
@@ -368,30 +378,27 @@ function BurstInjectionEngine.CheckTrigger(addon, primarySpellID)
 
     if auraActive or timerActive then
         -- Check position-1 match for glow signal
-        local triggerAtPos1 = false
-        if primarySpellID and primarySpellID > 0 then
-            if triggers[primarySpellID] then
-                triggerAtPos1 = true
-            else
-                local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-                if displayID and displayID ~= primarySpellID and triggers[displayID] then
-                    triggerAtPos1 = true
-                end
+        if IsTriggerSpell(triggers, primarySpellID) then
+            return "active", 1
+        end
+        return "active", nil
+    end
+
+    -- Phase 1: is Blizzard recommending a trigger spell anywhere in the queue?
+    -- Check position 1 first (most common case).
+    if IsTriggerSpell(triggers, primarySpellID) then
+        return "pending", 1
+    end
+    -- Scan remaining positions for triggers that Blizzard never puts at pos 1.
+    if recommendedSpells then
+        for i = 2, #recommendedSpells do
+            if IsTriggerSpell(triggers, recommendedSpells[i]) then
+                return "pending", i
             end
         end
-        return "active", triggerAtPos1
     end
 
-    -- Phase 1: is Blizzard recommending a trigger spell at position 1?
-    if primarySpellID and primarySpellID > 0 then
-        if triggers[primarySpellID] then return "pending", true end
-        local displayID = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-        if displayID and displayID ~= primarySpellID and triggers[displayID] then
-            return "pending", true
-        end
-    end
-
-    return nil, false
+    return nil, nil
 end
 
 --- Returns true if a burst window is currently active (trigger aura on player

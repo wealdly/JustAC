@@ -37,7 +37,7 @@ local defaults = {
         showHealthBar = false,         -- Legacy (migrated to defensives.showHealthBar; cleared on load)
         showPetHealthBar = false,      -- Legacy (migrated to defensives.showPetHealthBar; cleared on load)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
-        blacklistPosition1 = false,    -- Apply blacklist to position 1 (Blizzard's primary suggestion)
+        blacklistPosition1 = true,     -- Apply blacklist to position 1 (Blizzard's primary suggestion)
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -746,6 +746,7 @@ function JustAC:RefreshConfig()
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
         if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
         if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
+        if Options.UpdateCustomQueueOptions then Options.UpdateCustomQueueOptions(self) end
     end
 end
 
@@ -788,6 +789,10 @@ function JustAC:InitializeDefensiveSpells()
     end
     if BurstInjectionEngine then
         BurstInjectionEngine.InitializeBurstInjection(self)
+    end
+    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
+    if CustomQueueOpts and CustomQueueOpts.EnsureInitialized then
+        CustomQueueOpts.EnsureInitialized(self)
     end
 end
 function JustAC:RestoreDefensiveDefaults(listType)
@@ -938,6 +943,22 @@ function JustAC:ToggleSpellBlacklist(spellID)
     end
 end
 
+function JustAC:RemoveFromCustomQueue(spellID)
+    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
+    if CustomQueueOpts and CustomQueueOpts.RemoveSpell then
+        local removed = CustomQueueOpts.RemoveSpell(self, spellID)
+        if removed then
+            local BlizzAPI = LibStub("JustAC-BlizzardAPI", true)
+            local spellInfo = BlizzAPI and BlizzAPI.GetCachedSpellInfo(spellID)
+            local spellName = spellInfo and spellInfo.name or tostring(spellID)
+            self:Print("Removed |cffff6666" .. spellName .. "|r from Custom Queue")
+        end
+        self:ForceUpdate()
+        return removed
+    end
+    return false
+end
+
 function JustAC:UpdateSpellQueue()
     if self.isDisabledMode then return end
     if not self.db or not self.db.profile or self.db.profile.isManualMode or not self.mainFrame or not SpellQueue or not UIRenderer then return end
@@ -1069,6 +1090,11 @@ function JustAC:OnCombatEvent(event)
         if BurstInjectionEngine and BurstInjectionEngine.PreCacheRotationCooldowns then
             BurstInjectionEngine.PreCacheRotationCooldowns()
         end
+        -- Check if custom queue is stale (rotation changed since last snapshot)
+        local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
+        if CustomQueueOpts and CustomQueueOpts.CheckStaleNotification then
+            CustomQueueOpts.CheckStaleNotification(self)
+        end
         -- Re-resolve interrupt spells if deferred from combat
         if self.interruptRefreshPending then
             self:RefreshInterruptSpells()
@@ -1122,6 +1148,16 @@ function JustAC:OnSpecChange()
     -- Populate burst injection defaults for the new spec if empty
     if BurstInjectionEngine and BurstInjectionEngine.InitializeBurstInjection then
         BurstInjectionEngine.InitializeBurstInjection(self)
+    end
+    -- Check if custom queue is stale for the new spec
+    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
+    if CustomQueueOpts then
+        if CustomQueueOpts.EnsureInitialized then
+            CustomQueueOpts.EnsureInitialized(self)
+        end
+        if CustomQueueOpts.CheckStaleNotification then
+            CustomQueueOpts.CheckStaleNotification(self)
+        end
     end
     -- Invalidate options spellbook cache so it rebuilds for the new spec
     local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
@@ -1424,6 +1460,7 @@ function JustAC:OpenOptionsPanel()
         if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
         if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
         if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
+        if Options.UpdateCustomQueueOptions then Options.UpdateCustomQueueOptions(self) end
     end
 
     if BlizzardAPI and BlizzardAPI.IsMidnightOrLater() then

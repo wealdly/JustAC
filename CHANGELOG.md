@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-03-25
+
+### Added
+- **Custom Queue** — Define a custom spell/item ordering for positions 2+ (Offensive > Custom Queue). Auto-seeds from Blizzard's rotation on first enable. Unavailable or on-cooldown entries collapse automatically. Per-spec, stored in profile.
+- **Custom Queue Item Support** — Trinkets and on-use items can be added to the Custom Queue alongside spells.
+- **Stale Queue Detection** — Warning banner when Blizzard's rotation changes (talent swap, patch). "Merge Changes" preserves custom ordering while syncing additions/removals; "Refresh from Rotation" fully resets.
+
+### Changed
+- **Burst Injection Pending Detection** — Trigger detection now scans all visible queue positions, not just position 1. Triggers at any position show burst glow. Active phase (aura-based injection) is unchanged.
+
 ## [4.18.1] - 2026-03-24
 
 ### Fixed
