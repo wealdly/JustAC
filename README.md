@@ -23,6 +23,22 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 - **Nameplate Overlay** — Icon cluster attached directly to the target nameplate. Mirrors the Standard Queue's sub-tab structure with independent settings. Falls back to the main panel when the nameplate isn't rendered.
 - Either or both surfaces can run simultaneously via the Display Mode setting.
 
+### Offensive Queue
+
+- Position 1 shows the currently recommended ability with your keybind — blacklisted spells auto-substitute via highlight-mode lookahead
+- Position 2+ displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
+- Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
+- Spells and on-use items (trinkets, potions) supported throughout the queue
+- Icons grey out during hardcasts and channels so you can see what's next at a glance
+- Configurable: font attributes, icon count, size, orientation, glow modes, charge counts, and more
+
+### Custom Queue
+
+- Define a custom spell/item ordering for positions 2+ (per spec, stored in profile)
+- Auto-seeds from Blizzard's rotation on first enable; unavailable or on-cooldown entries collapse automatically
+- Stale queue detection warns when Blizzard's rotation changes — "Merge Changes" preserves custom ordering while syncing additions/removals
+- Supports trinkets and on-use items alongside spells
+
 ### Smart Interrupt Reminders
 
 - Shows your interrupt ability before the DPS queue when the target is casting
@@ -50,7 +66,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 ### Burst Injection *(Experimental)*
 
 - Detects burst windows via aura tracking — when a trigger spell's self-buff is active on the player, configured burst spells inject at position 1 with a purple glow
-- Trigger spell at position 1 shows glow as a "press to start burst" signal before the window opens
+- Trigger detection scans all visible queue positions, not just position 1 — triggers at any position show burst glow
 - Timer fallback for triggers that don't create a self-buff (pet summons, target debuffs)
 - Per-spec trigger and injection spell lists with class-appropriate defaults
 - Configurable fallback window duration
@@ -68,7 +84,7 @@ JustAC reads Blizzard's built-in Combat Assistant suggestions (`C_AssistedCombat
 ### Intelligent Filtering
 
 - Hides redundant suggestions (buffs already active, current form, existing pet)
-- Per-spell blacklist (Shift+Right-click to toggle)
+- Per-spell blacklist (Shift+Right-click to toggle) — blacklisted position-1 spells auto-substitute via highlight-mode lookahead
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
 - Combat-safe aura tracking via `auraInstanceID` mapping — detects buff removal and reapply even when `spellId` is secret
@@ -97,7 +113,7 @@ Options are organized into 6 tabs:
 | **General** | Display mode, visibility rules, queue content toggles (3 sub-tabs: Settings, Icon Labels, Hotkeys) |
 | **Standard Queue** | Layout, offensive display, defensive display, appearance (4 sub-tabs) |
 | **Overlay** | Nameplate overlay layout, offensive display, defensive display (3 sub-tabs) |
-| **Offensive** | Blacklist, gap-closers, burst injection, interrupt mode |
+| **Offensive** | Blacklist, custom queue, gap-closers, burst injection, interrupt mode |
 | **Defensives** | Spell priority list, health thresholds, per-item aura linking |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
