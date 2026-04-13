@@ -499,15 +499,12 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                 local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
                     if isProcced then
-                        -- Check per-spell proc-priority setting (default true)
                         local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
                         local procPriority = not spellSettings or spellSettings.procPriority ~= false
-                        if procPriority then
-                            -- Procced: top priority (instant/free cast)
+                        if procPriority and BlizzardAPI.IsSpellReady(resolvedID) then
                             proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                         else
-                            -- Procced but priority disabled: keep in list order, still mark as procced for glow
-                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true, unusable = true}
                         end
                     else
                         -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
@@ -585,12 +582,17 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     if #results >= maxIcons then return end
     local spells = DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
     for _, entry in ipairs(spells) do
-        if not procsOnly or entry.isProcced then
+        if not procsOnly or (entry.isProcced and not entry.unusable) then
             results[#results + 1] = entry
+            alreadyAdded[entry.spellID] = true
+        elseif procsOnly and entry.isProcced and entry.unusable then
+            -- Mark as added so the unrestricted pass doesn't pick it up
             alreadyAdded[entry.spellID] = true
         end
     end
 end
+
+
 
 -- Display order: instant procs first, then unified defensive list in user priority order.
 -- overrides (optional table): displayMode, maxIcons, showProcs — override profile defaults for
@@ -653,13 +655,12 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                     if not alreadyAdded[spellID] and not alreadyAdded[resolvedID] then
                         local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
-                            -- Skip proc injection for spells with proc-priority disabled
                             local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
                             local procPriority = not spellSettings or spellSettings.procPriority ~= false
                             if procPriority then
                                 results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
                                 alreadyAdded[resolvedID] = true
-                                alreadyAdded[spellID] = true  -- also mark original ID
+                                alreadyAdded[spellID] = true
                             end
                         end
                     end
