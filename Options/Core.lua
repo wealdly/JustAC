@@ -208,6 +208,13 @@ local function HandleSlashCommand(addon, input)
             addon:Print("DebugCommands module not available")
         end
 
+    elseif command == "interrupts" or command == "int" then
+        if DebugCommands and DebugCommands.InterruptDiagnostics then
+            DebugCommands.InterruptDiagnostics(addon)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+
     elseif command == "burst" then
         if DebugCommands and DebugCommands.BurstDiagnostics then
             DebugCommands.BurstDiagnostics(addon)

@@ -1447,7 +1447,11 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
         -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
         -- will check if UnitIsCrowdControlled("target") became true.
-        if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget then
+        -- Guard: skip for pure interrupt spells (Kick, Wind Shear, etc.) — they apply a lockout
+        -- but no CC mechanic, so the failure check would always fire and permanently mark
+        -- the target as CC-immune, suppressing CC fallbacks (e.g. Blind after Kick).
+        if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget
+            and not (SpellDB and SpellDB.IsInterruptTypeSpell(spellID)) then
             BlizzardAPI.NotifyCCCastOnTarget()
         end
     end

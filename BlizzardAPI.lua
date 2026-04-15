@@ -69,7 +69,9 @@ function BlizzardAPI.OnActionUsableChanged(changes)
     for _, change in ipairs(changes) do
         slotUsabilityCache[change.slot] = change
     end
-    -- Detect CD completion via usability flips (Phase 2 CDR detection)
+    -- NOTE: CheckUsabilityFlips no longer clears flat localCooldowns:
+    -- IsUsableAction returns true even on cooldown, so usable=true is not a
+    -- reliable CD-expiry signal. It is still called for charge recovery hints.
     if BlizzardAPI.CheckUsabilityFlips then
         BlizzardAPI.CheckUsabilityFlips(changes)
     end

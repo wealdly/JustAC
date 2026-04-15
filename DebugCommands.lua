@@ -19,6 +19,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac find <spell> - Find spell on action bars")
     addon:Print("/jac testcd <spell> - Test cooldown APIs for a spell")
     addon:Print("/jac defensive - Diagnose defensive system")
+    addon:Print("/jac interrupts - Diagnose interrupt/CC queue CD state")
     addon:Print("/jac burst - Dump burst injection priority list")
     addon:Print("/jac poisons - Diagnose rogue poison detection")
     addon:Print("/jac help - Show this help")
@@ -490,8 +491,117 @@ function DebugCommands.TestCooldownAPIs(addon, spellName)
     end
 
     addon:Print("")
+
+    addon:Print("5. C_Spell.GetSpellCooldown (raw isOnGCD + local CD tracking):")
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
+        if ok and cd then
+            local isOnGCDSecret = BlizzardAPI.IsSecretValue(cd.isOnGCD)
+            local durSecret = BlizzardAPI.IsSecretValue(cd.duration)
+            local startSecret = BlizzardAPI.IsSecretValue(cd.startTime)
+
+            local isOnGCDStr
+            if isOnGCDSecret then
+                isOnGCDStr = "SECRET"
+            elseif cd.isOnGCD == nil then
+                isOnGCDStr = "nil (ambiguous — off CD OR unflagged CD running)"
+            elseif cd.isOnGCD == true then
+                isOnGCDStr = "true (GCD only — spell ready once GCD clears)"
+            elseif cd.isOnGCD == false then
+                isOnGCDStr = "false (real CD running — Blizzard-flagged spell)"
+            else
+                isOnGCDStr = tostring(cd.isOnGCD)
+            end
+            addon:Print("   isOnGCD: " .. isOnGCDStr)
+            addon:Print("   duration: " .. SafeFormat(cd.duration, durSecret) ..
+                (durSecret and " |cffff6600(SECRET)|r" or ""))
+            addon:Print("   startTime: " .. SafeFormat(cd.startTime, startSecret) ..
+                (startSecret and " |cffff6600(SECRET)|r" or ""))
+        else
+            addon:Print("   |cffff0000pcall failed or nil|r")
+        end
+    else
+        addon:Print("   |cffff0000C_Spell.GetSpellCooldown not available|r")
+    end
+
+    addon:Print("")
+    addon:Print("6. Local CD tracking (JustAC in-combat timer):")
+    if BlizzardAPI and BlizzardAPI.IsSpellOnLocalCooldown then
+        local localCD = BlizzardAPI.IsSpellOnLocalCooldown(spellID)
+        addon:Print("   IsSpellOnLocalCooldown: " .. (localCD and "|cffff6600true (CD active)|r" or "|cff00ff00false (no local CD)|r"))
+    else
+        addon:Print("   |cffff0000BlizzardAPI.IsSpellOnLocalCooldown not available|r")
+    end
+    if BlizzardAPI and BlizzardAPI.IsSpellReady then
+        local ready = BlizzardAPI.IsSpellReady(spellID)
+        addon:Print("   IsSpellReady: " .. (ready and "|cff00ff00true (ready)|r" or "|cffff6600false (on CD)|r"))
+    end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if SpellDB and SpellDB.IsInterruptOnCooldown then
+        local intCD = SpellDB.IsInterruptOnCooldown(spellID)
+        addon:Print("   IsInterruptOnCooldown: " .. (intCD and "|cffff6600true (blocked)|r" or "|cff00ff00false (usable)|r"))
+    end
+
+    addon:Print("")
     addon:Print("Cast the spell and run this command again to see cooldown behavior!")
     addon:Print("===========================================")
+end
+
+--------------------------------------------------------------------------------
+-- Interrupt Queue Diagnostics
+--------------------------------------------------------------------------------
+function DebugCommands.InterruptDiagnostics(addon)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+
+    addon:Print("=== Interrupt Queue Diagnostics ===")
+
+    local resolvedInts = addon and addon.resolvedInterrupts
+    if not resolvedInts or #resolvedInts == 0 then
+        addon:Print("|cffff6600No resolved interrupt spells. Try /reload or check spec.|r")
+        return
+    end
+
+    addon:Print("Resolved interrupt/CC list (" .. #resolvedInts .. " entries):")
+    for i, entry in ipairs(resolvedInts) do
+        local sid, stype = entry.spellID, entry.type
+        local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
+        local name = (spellInfo and spellInfo.name) or "?"
+
+        local localCD = BlizzardAPI and BlizzardAPI.IsSpellOnLocalCooldown and BlizzardAPI.IsSpellOnLocalCooldown(sid)
+        local ready = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(sid)
+        local intCD = SpellDB and SpellDB.IsInterruptOnCooldown and SpellDB.IsInterruptOnCooldown(sid)
+        local usable = BlizzardAPI and BlizzardAPI.IsSpellUsable and BlizzardAPI.IsSpellUsable(sid, stype ~= "cc")
+
+        local isOnGCD = nil
+        if C_Spell and C_Spell.GetSpellCooldown then
+            local ok, cd = pcall(C_Spell.GetSpellCooldown, sid)
+            if ok and cd then isOnGCD = cd.isOnGCD end
+        end
+
+        local isOnGCDStr = "nil"
+        if BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(isOnGCD) then
+            isOnGCDStr = "SECRET"
+        elseif isOnGCD == true then
+            isOnGCDStr = "|cffffff00true|r"
+        elseif isOnGCD == false then
+            isOnGCDStr = "|cffff6600false|r"
+        end
+
+        local cdColor = intCD and "|cffff6600" or "|cff00ff00"
+        local cdStr = intCD and "ON_CD" or "ready"
+        addon:Print(string.format("  %d. %s (%d) [%s]  %sIsIntOnCD=%s|r  localCD=%s  IsReady=%s  usable=%s  isOnGCD=%s",
+            i, name, sid, stype,
+            cdColor, cdStr,
+            tostring(localCD), tostring(ready), tostring(usable), isOnGCDStr))
+    end
+
+    addon:Print("")
+    addon:Print("Target interrupt-worthy: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetInterruptWorthy and BlizzardAPI.IsTargetInterruptWorthy()))
+    addon:Print("Target CC-immune: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetCCImmune and BlizzardAPI.IsTargetCCImmune()))
+    local interruptMode = addon.db and addon.db.profile and (addon.db.profile.interruptMode or "kickPrefer") or "n/a"
+    addon:Print("Interrupt mode: " .. interruptMode)
+    addon:Print("===================================")
 end
 
 --------------------------------------------------------------------------------
