@@ -131,6 +131,12 @@ local itemSlotCache = {}
 -- Self-limits to the number of unique keybinds (~30-60 typical). Cleared by ClearAllCaches().
 local abbreviatedKeyCache = {}
 
+-- PERFORMANCE: Pre-allocated search tables (wiped on each use to avoid per-call GC pressure)
+local EMPTY_MODIFIERS     = {}  -- sentinel: read-only empty modifiers for direct-match entries
+local scanCandidates      = {}  -- SearchSlots scratch list (sequential, non-re-entrant)
+local scanCurrentBarSlots = {}  -- FindSpellInActions current-bar slot set (wiped per call)
+local scanFallbackSlots   = {}  -- FindSpellInActions fallback slot set (wiped per call)
+
 -- PERFORMANCE: Rate-limit full hotkey lookups (FindSpellInActions is VERY expensive)
 -- When cache is invalid, we return stale value immediately and only refresh periodically
 local lastHotkeyRefreshTime = 0
@@ -396,7 +402,7 @@ local function GetOptimizedKeybind(slot)
 end
 
 local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
-    local candidates = {}
+    local candidates = wipe(scanCandidates)
     
     for slot in pairs(slotSet) do
         if not HasAction(slot) then
@@ -469,7 +475,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                         candidates[#candidates + 1] = {
                             slot = slot,
                             type = "direct",
-                            modifiers = {},
+                            modifiers = EMPTY_MODIFIERS,
                             priority = priority,
                             score = hasHotkey and 1000 or -500
                         }
@@ -483,7 +489,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                             candidates[#candidates + 1] = {
                                 slot = slot,
                                 type = "direct",
-                                modifiers = {},
+                                modifiers = EMPTY_MODIFIERS,
                                 priority = priority,
                                 score = hasHotkey and 1000 or -500
                             }
@@ -496,7 +502,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                             candidates[#candidates + 1] = {
                                 slot = slot,
                                 type = "macro_visible",
-                                modifiers = {},
+                                modifiers = EMPTY_MODIFIERS,
                                 priority = priority,
                                 score = hasHotkey and 900 or -600
                             }
@@ -510,7 +516,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                             candidates[#candidates + 1] = {
                                 slot = slot,
                                 type = "macro_conditional",
-                                modifiers = parsedEntry.modifiers or {},
+                                modifiers = parsedEntry.modifiers or EMPTY_MODIFIERS,
                                 priority = priority,
                                 score = hasHotkey and baseScore or (baseScore - 1000)
                             }
@@ -555,8 +561,8 @@ local function FindSpellInActions(spellID, spellName)
     local bonusOffset = cachedStateData.bonusOffset
     
     -- Form bars replace main bar visually; keybinds follow what's currently shown
-    local currentBarSlots = {}
-    local fallbackSlots = {}
+    local currentBarSlots = wipe(scanCurrentBarSlots)
+    local fallbackSlots = wipe(scanFallbackSlots)
 
     if bonusOffset > 0 then
         -- Form bar active: use form slots, keep base slots as fallback

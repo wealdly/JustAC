@@ -265,6 +265,20 @@ local function ScanCooldownDurations()
                 cachedDurations[spellID] = duration
             end
         end
+        -- Spell is ready (duration=0) but cachedDurations still nil after
+        -- ClearCachedDurations: populate via tooltip+GetSpellBaseCooldown so
+        -- RecordSpellCooldown has a duration available on the first cast.
+        if not (cachedDurations[spellID] and cachedDurations[spellID] > 0) then
+            local tooltipCD = ParseTooltipCooldown(spellID)
+            if tooltipCD and tooltipCD > 0 then
+                cachedDurations[spellID] = tooltipCD
+            else
+                local baseCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) or 0
+                if baseCdMs > 0 then
+                    cachedDurations[spellID] = baseCdMs / 1000
+                end
+            end
+        end
         -- Also cache maxCharges while we're at it
         CacheChargesForSpell(spellID)
     end

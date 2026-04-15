@@ -27,6 +27,8 @@ local defaults = {
         showUsabilityTint = true,         -- Tint icons by usability state (blue=no resources, gray=unavailable)
         showRangeTint = true,             -- Red tint icons when target is out of range
         showCastingHighlight = true,      -- White border on icon while its spell is actively being cast
+        greyOutWhileCasting = true,           -- Grey out icons while the player is casting a spell
+        greyOutWhileChanneling = true,        -- Grey out icons while the player is channeling a spell
         firstIconScale = 1.0,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
@@ -37,7 +39,6 @@ local defaults = {
         showHealthBar = false,         -- Legacy (migrated to defensives.showHealthBar; cleared on load)
         showPetHealthBar = false,      -- Legacy (migrated to defensives.showPetHealthBar; cleared on load)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
-        blacklistPosition1 = true,     -- Apply blacklist to position 1 (Blizzard's primary suggestion)
         panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -514,12 +515,20 @@ function JustAC:OnEnable()
     self:RegisterEvent("ACTION_USABLE_CHANGED", "OnActionUsableChanged")
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
-    self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED", "OnSpellcastSucceeded")
-    self:RegisterEvent("UNIT_ENTERED_VEHICLE",      "OnVehicleChanged")
-    self:RegisterEvent("UNIT_EXITED_VEHICLE",       "OnVehicleChanged")
+    self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED",    "OnSpellcastSucceeded")
+    self:RegisterEvent("UNIT_SPELLCAST_START",         "OnPlayerCastStart")
+    self:RegisterEvent("UNIT_SPELLCAST_STOP",          "OnPlayerCastStop")
+    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START", "OnPlayerChannelStart")
+    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP",  "OnPlayerChannelStop")
+    self:RegisterEvent("UNIT_ENTERED_VEHICLE",         "OnVehicleChanged")
+    self:RegisterEvent("UNIT_EXITED_VEHICLE",          "OnVehicleChanged")
     self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR",  "OnVehicleChanged")
     self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR", "OnOverrideBarChanged")
     self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
+    -- 12.0.5: aura instance IDs re-randomize at encounter/M+/PvP start — flush stale maps
+    self:RegisterEvent("ENCOUNTER_START",      "OnEncounterStart")
+    self:RegisterEvent("CHALLENGE_MODE_START", "OnEncounterStart")
+    self:RegisterEvent("PVP_MATCH_ACTIVE",     "OnEncounterStart")
 
     if EventRegistry then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
@@ -1049,6 +1058,10 @@ function JustAC:OnCombatEvent(event)
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(true)
         end
+        -- Force-refresh feature availability immediately (secrets become active on combat entry)
+        if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
+            BlizzardAPI.RefreshFeatureAvailability()
+        end
         if UIAnimations and UIAnimations.ResumeAllGlows then
             UIAnimations.ResumeAllGlows(self)
         end
@@ -1074,6 +1087,10 @@ function JustAC:OnCombatEvent(event)
         end
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(false)
+        end
+        -- Force-refresh feature availability immediately (secrets lifted on combat exit)
+        if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
+            BlizzardAPI.RefreshFeatureAvailability()
         end
         if UIAnimations and UIAnimations.PauseAllGlows then
             UIAnimations.PauseAllGlows(self)
@@ -1219,7 +1236,7 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     end
 
     local now = GetTime()
-    if now - (self.lastAuraInvalidation or 0) > 0.5 then
+    if now - (self.lastAuraInvalidation or 0) > 0.1 then
         self.lastAuraInvalidation = now
         self:InvalidateCaches({auras = true})
     end
@@ -1270,6 +1287,17 @@ function JustAC:OnPossessBarChanged()
         BlizzardAPI.InvalidateSlotUsabilityCache()
     end
     self:ForceUpdate()
+end
+
+--- WoW 12.0.5: aura instance IDs are re-randomized on encounter/M+ start.
+--- Flush all instance→spell maps so stale IDs don't cause IsSpellRedundant()
+--- to incorrectly suppress spells after the re-randomization.
+--- The maps are rebuilt immediately from the next UNIT_AURA addedAuras batch.
+function JustAC:OnEncounterStart()
+    if RedundancyFilter and RedundancyFilter.FlushInstanceMaps then
+        RedundancyFilter.FlushInstanceMaps()
+    end
+    self:MarkQueueDirty()
 end
 
 function JustAC:OnBindingsUpdated()
@@ -1428,6 +1456,28 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- No deferred timer needed; the natural OnUpdate cadence provides sufficient
     -- settle time (~30-50ms) for game state to update after the cast.
     self:ForceUpdateAll()
+end
+
+-- Event-driven cast/channel spell ID caching — avoids polling UnitCastingInfo/UnitChannelInfo
+-- every render frame. spellID from UNIT_SPELLCAST_* for "player" is NeverSecret.
+function JustAC:OnPlayerCastStart(event, unit, castGUID, spellID)
+    if unit ~= "player" then return end
+    if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(spellID) end
+end
+
+function JustAC:OnPlayerCastStop(event, unit)
+    if unit ~= "player" then return end
+    if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(nil) end
+end
+
+function JustAC:OnPlayerChannelStart(event, unit, castGUID, spellID)
+    if unit ~= "player" then return end
+    if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(spellID) end
+end
+
+function JustAC:OnPlayerChannelStop(event, unit)
+    if unit ~= "player" then return end
+    if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(nil) end
 end
 
 function JustAC:OnCooldownUpdate()

@@ -29,7 +29,7 @@ local featureAvailability = {
     procAccess = true,
     lastCheck = 0,
 }
-local FEATURE_CHECK_INTERVAL = 5.0
+local FEATURE_CHECK_INTERVAL = 30.0  -- Safety net only; events (PLAYER_REGEN_*) are the primary trigger
 
 -- UnitHealth("player") confirmed NOT secret as of 12.0 Alpha 6
 local function TestHealthAccess()
