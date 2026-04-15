@@ -450,7 +450,7 @@ function General.CreateTabArgs(addon)
                     p.greyOutWhileChanneling = true
                     p.gamepadIconStyle    = "xbox"
                     p.inputPreference     = "auto"
-                    p.interruptAlertSound = "none"
+                    p.interruptAlertSound = "None"
                     -- Offensive queue content
                     p.includeHiddenAbilities = true
                     p.showSpellbookProcs     = true

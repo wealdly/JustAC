@@ -3,6 +3,38 @@
 
 ## [Unreleased]
 
+## [4.19.2] - 2026-04-14
+
+### Fixed
+- **MacroParser v23 — OR-cascade multi-bracket evaluation**: Cascading bracket groups (`[spec:1][spec:2] Spell`, `[cond1][cond2][] Spell`) only evaluated the first group; all groups now iterated in OR-cascade order — first passing group wins, `[]` is unconditional fallback (`MacroParser.lua`)
+- **MacroParser v23 — `[stance:N]` / `[nostance:N]` aliases**: Warrior, DK, and Rogue macros using stance aliases instead of `[form:N]`/`[noform:N]` were silently ignored; now evaluated against `FormCache.GetActiveForm()` (`MacroParser.lua`)
+- **MacroParser v23 — bare `[form]` / `[noform]`**: Without `:N`, `[form]` always failed and `[noform]` always passed; both corrected. Same fix for `[stance]`/`[nostance]` (`MacroParser.lua`)
+- **MacroParser v23 — `/castsequence` detection**: Sequence spell lists were never split — `reset=N` prefixes now stripped, list split by comma; `[condition]` evaluated once and applied to all spells in sequence (`MacroParser.lua`)
+- **MacroParser v23 — quality score condition count**: Brackets counted across the entire cast line instead of only the matching clause, inflating scores for multi-clause lines (`MacroParser.lua`)
+- **MacroParser v23 — name prefix heuristic**: 2-char prefix match bonus caused false macro-name promotions; raised to 4-char minimum with plain-string matching (`MacroParser.lua`)
+- **CC interrupt-fallback list audit**: Evoker had wrong spell ID 357208 (Fire Breath, not Oppressing Roar) in both `CLASS_INTERRUPT_DEFAULTS` and `CROWD_CONTROL_SPELLS` — Fire Breath was excluded from DPS rotation suggestions; real Oppressing Roar (372048) extends CC duration but doesn't apply CC, removed as fallback. Shaman Sundering (197214) removed — incapacitate breaks from auto-attacks immediately. Priest CC order corrected: Psychic Horror (stun) before Mind Bomb before Psychic Scream (`SpellDB.lua`)
+- **Interrupt queue — Rogue CC fallback**: Blind (2094) added to `CLASS_INTERRUPT_DEFAULTS.ROGUE` before Kidney Shot — no combo points required, most reliably castable CC when Kick is on cooldown (`SpellDB.lua`)
+- **Interrupt queue — Kick CD not tracked after spec change**: `ScanCooldownDurations` now populates `cachedDurations` via tooltip + `GetSpellBaseCooldown` fallback for spells that are currently ready (`cd.duration=0`); previously a spec change wiped the cache and ready spells were skipped, so the first in-combat cast had no duration and local CD was never recorded (`BlizzardAPI/CooldownTracking.lua`)
+- **WoW 12.0.5 — aura instance ID re-randomization**: `auraInstanceID` values re-randomize on encounter/M+/PvP entry; `RedundancyFilter`'s instance maps were never flushed mid-session, causing stale IDs to incorrectly mark expired auras as active; `FlushInstanceMaps()` now called on `ENCOUNTER_START`, `CHALLENGE_MODE_START`, `PVP_MATCH_ACTIVE` (`RedundancyFilter.lua`, `JustAC.lua`)
+- Nameplate Overlay: DPS/defensive icons now anchor to `HealthBarsContainer` instead of the root nameplate frame, fixing vertical alignment (`UINameplateOverlay.lua`)
+- Nameplate Overlay: `NAMEPLATE_GAP` split into left=12 / right=14 to compensate for Blizzard's asymmetric health bar texture (`UINameplateOverlay.lua`)
+- Nameplate Overlay: `ClassificationFrame` and `RaidTargetFrame` repositioned to avoid collision with icon clusters; restored to defaults on overlay detach (`UINameplateOverlay.lua`)
+- Nameplate Overlay: inter-queue spacing floored at `BAR_SPACING` regardless of the `iconSpacing` setting; gap now uses `iconSpacing` directly (`UIFrameFactory.lua`, `UIHealthBar.lua`)
+- Nameplate Overlay: Masque `AddButton`/`RemoveButton` skipped in combat — `Button:GetSize()` returns secret on JustAC frames causing arithmetic crash; pending removals cleaned up on next out-of-combat `Destroy` (`UINameplateOverlay.lua`)
+- `BurstInjectionEngine`: injection candidates were not checked with `IsSpellUsable`; spells with insufficient resources no longer injected (`BurstInjectionEngine.lua`)
+- `UIAnimations`: `icon:GetWidth()` crashes in 12.0 combat on nameplate overlay icons; `cachedIconSize` stored at creation and used as NeverSecret fallback in glow scale calculations (`UIAnimations.lua`, `UIFrameFactory.lua`, `UINameplateOverlay.lua`)
+- `OnUnitAura` aura-cache invalidation throttle reduced from 500ms to 100ms (`JustAC.lua`)
+- Options > General > Reset to Defaults wrote `interruptAlertSound = "none"` (lowercase), mismatching schema default `"None"`; "Test Sound" button stayed permanently enabled
+- Options > Icon Labels > Nameplate Overlay: text color and anchor changes silently discarded on reload; setters now write to central `profile.textOverlays`
+- Schema: added `greyOutWhileCasting` / `greyOutWhileChanneling` to AceDB defaults; removed dead `blacklistPosition1` key
+
+### Performance
+- `UnitCastingInfo` / `UnitChannelInfo` removed from render hot-path; replaced with event-driven caching via `UNIT_SPELLCAST_START/STOP` / `UNIT_SPELLCAST_CHANNEL_START/STOP` (`UIRenderer.lua`, `UINameplateOverlay.lua`, `JustAC.lua`)
+- `GetQueueDesaturation()` call inlined in `RenderSpellQueue` hot-path (`UIRenderer.lua`)
+- `ActionBarScanner`: `currentBarSlots`, `fallbackSlots`, `candidates` hoisted to module-level pre-allocated tables; `modifiers = {}` replaced with shared `EMPTY_MODIFIERS` sentinel (`ActionBarScanner.lua`)
+- `RedundancyFilter.PruneExpiredActivations`: `IsRedundancyFilterAvailable()` hoisted out of per-spell loop (`RedundancyFilter.lua`)
+- `IsRedundancyFilterAvailable` / `IsProcFeatureAvailable`: force-refreshed on `PLAYER_REGEN_ENABLED` / `PLAYER_REGEN_DISABLED`; `FEATURE_CHECK_INTERVAL` raised from 5s to 30s (`JustAC.lua`, `BlizzardAPI/SecretValues.lua`)
+
 ## [4.19.1] - 2026-03-25
 
 ### Fixed

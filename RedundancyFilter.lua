@@ -267,6 +267,19 @@ function RedundancyFilter.ClearActivationTracking()
     wipe(pendingActivations)
 end
 
+--- Flush all four aura instance ID maps.
+--- Called on ENCOUNTER_START and CHALLENGE_MODE_START because WoW 12.0.5
+--- re-randomizes auraInstanceID values at encounter entry, invalidating any
+--- pre-built instance→spell mappings.  The maps are rebuilt immediately from
+--- the next batch of UNIT_AURA addedAuras events.
+function RedundancyFilter.FlushInstanceMaps()
+    wipe(instanceToSpellMap)
+    wipe(instanceToNameMap)
+    wipe(instanceToIconMap)
+    wipe(instanceToTimingMap)
+    lastAuraCheck = 0       -- force RefreshAuraCache on next out-of-combat tick
+end
+
 --------------------------------------------------------------------------------
 -- UNIT_AURA Incremental Update (12.0 Instance Map Maintenance)
 -- Called from JustAC:OnUnitAura with the updateInfo payload.
@@ -434,7 +447,10 @@ end
 -- Also checks non-aura detection methods (forms, stealth, pets) which work in combat
 function RedundancyFilter.PruneExpiredActivations()
     if not next(inCombatActivations) then return end
-    
+
+    -- Hoist outside the loop: same result for every iteration
+    local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
+
     -- Check each tracked activation
     for spellID, timestamp in pairs(inCombatActivations) do
         local shouldKeep = false
@@ -473,7 +489,6 @@ function RedundancyFilter.PruneExpiredActivations()
         
         -- Method 5: Aura API (only when accessible, not blocked by secrets)
         if not shouldKeep then
-            local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
             if auraAPIAvailable and RefreshAuraCache then
                 local auras = RefreshAuraCache()
                 if auras and auras.byID and not auras.hasSecrets then

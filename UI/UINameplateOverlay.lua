@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 9)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 10)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
@@ -38,8 +38,10 @@ local GetCVar            = GetCVar
 local SetCVar            = SetCVar
 
 -- Layout constants
-local ICON_SPACING   = 2   -- px between successive icons in the cluster
-local NAMEPLATE_GAP  = 2   -- px between nameplate edge and nearest element
+local ICON_SPACING       = 2   -- px between successive icons in the cluster
+local NAMEPLATE_GAP_LEFT  = 12  -- gap on LEFT side of health bar
+local NAMEPLATE_GAP_RIGHT = 13  -- gap on RIGHT side; slightly larger to compensate for Blizzard's
+                                -- asymmetric bgTexture (extends further past the right edge)
 local BAR_HEIGHT     = 5   -- overlay health bar (thinner than UIHealthBar.BAR_HEIGHT=6)
 local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPACING=3)
 
@@ -54,6 +56,7 @@ local GLOW_HOLD_TIME     = 0.10  -- 100ms before glow animation switches
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
 local defIcons         = {}   -- [1..N] defensive icon buttons
+local pendingMasqueRemoval = {} -- icons whose RemoveButton was skipped in combat; cleaned on next OOC Destroy
 local healthBar        = nil  -- player health StatusBar
 local petHealthBar     = nil  -- pet health StatusBar (warm yellow)
 local currentNameplate = nil  -- nameplate frame we're currently anchored to
@@ -323,12 +326,15 @@ local function CreateOverlayIcon(iconSize, profile)
 
     -- Tag for UIAnimations: use lower glow frame levels to stay behind addon UI
     button.isOverlayIcon = true
+    button.cachedIconSize = iconSize  -- NeverSecret fallback; GetWidth() is secret on nameplate-parented frames in combat
 
     button:SetAlpha(0)
     button:Hide()
 
-    -- Register with Masque for user-configurable skinning (parity with UIFrameFactory)
-    local MasqueGroup = GetMasqueOverlayGroup and GetMasqueOverlayGroup()
+    -- Register with Masque for user-configurable skinning (parity with UIFrameFactory).
+    -- Skip in combat: AddButton calls Button:GetSize() which returns a secret value (12.0 combat).
+    -- Icons created in combat use default Masque skin; next OOC Destroy+Create applies custom skin.
+    local MasqueGroup = (not InCombatLockdown()) and GetMasqueOverlayGroup and GetMasqueOverlayGroup()
     if MasqueGroup then
         MasqueGroup:AddButton(button, {
             Icon = button.iconTexture,
@@ -473,7 +479,7 @@ local function RestoreBlizzardCCAnchor(frame, healthBar)
     end)
 end
 
---- Restore all displaced CC frames to their original Blizzard anchoring.
+--- Restore all displaced CC/classification frames to their original Blizzard anchoring.
 local function RestoreCCFrames()
     if not savedCCAnchors then return end
     local healthBar = savedCCAnchors.healthBar
@@ -482,6 +488,21 @@ local function RestoreCCFrames()
     end
     if savedCCAnchors.locFrame then
         RestoreBlizzardCCAnchor(savedCCAnchors.locFrame, healthBar)
+    end
+    -- Restore elite/boss classification icon: default is RIGHT of RaidTargetFrame at scale 1
+    if savedCCAnchors.classificationFrame and savedCCAnchors.raidTargetFrame then
+        pcall(function()
+            savedCCAnchors.classificationFrame:ClearAllPoints()
+            savedCCAnchors.classificationFrame:SetPoint("RIGHT", savedCCAnchors.raidTargetFrame, "LEFT")
+            savedCCAnchors.classificationFrame:SetScale(1)
+        end)
+    end
+    -- Restore RaidTargetFrame: default is RIGHT of HealthBarsContainer.LEFT (center height)
+    if savedCCAnchors.raidTarget and savedCCAnchors.healthBar then
+        pcall(function()
+            savedCCAnchors.raidTarget:ClearAllPoints()
+            savedCCAnchors.raidTarget:SetPoint("RIGHT", savedCCAnchors.healthBar, "LEFT", 0, 0)
+        end)
     end
     savedCCAnchors = nil
 end
@@ -526,6 +547,40 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     savedCCAnchors = { healthBar = npHealthBar }
     if ccList   then savedCCAnchors.ccList   = ccList   end
     if locFrame then savedCCAnchors.locFrame = locFrame end
+
+    -- Displace ClassificationFrame (elite/boss/rare badge) when our defensive icons
+    -- occupy the LEFT side of the health bar — the badge's default position floats
+    -- to the LEFT of the bar center and collides with defIcons[1].
+    -- Fix: overlay the badge on the top-left corner of the health bar at 80% scale.
+    -- Covers default mode (DEF on left) and reversed anchor mode (DPS on left).
+    local defOnLeft = not isLeft and showDefensives and #defIcons > 0
+    if (defOnLeft or isLeft) and npHealthBar and uf.ClassificationFrame and uf.RaidTargetFrame then
+        local classFrame = uf.ClassificationFrame
+        local ok2 = pcall(function()
+            classFrame:ClearAllPoints()
+            classFrame:SetPoint("CENTER", npHealthBar, "TOPLEFT", 0, 0)
+            classFrame:SetScale(0.80)
+        end)
+        if ok2 then
+            savedCCAnchors.classificationFrame = classFrame
+            savedCCAnchors.raidTargetFrame     = uf.RaidTargetFrame
+        end
+    end
+
+    -- Displace RaidTargetFrame (skull/cross/star raid markers) — default anchor is
+    -- RIGHT of HealthBarsContainer.LEFT at center height, directly in front of our
+    -- left-side defensive cluster.
+    -- Fix: move it above the health bar, centered, so it clears both clusters.
+    if npHealthBar and uf.RaidTargetFrame then
+        local raidTarget = uf.RaidTargetFrame
+        local ok3 = pcall(function()
+            raidTarget:ClearAllPoints()
+            raidTarget:SetPoint("BOTTOM", npHealthBar, "TOP", 0, 2)
+        end)
+        if ok3 then
+            savedCCAnchors.raidTarget = raidTarget
+        end
+    end
 
     -- The topmost frame our CC should sit above / beside:
     -- If the right-side cluster has a health bar, CC goes above/beside the bar;
@@ -609,6 +664,10 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
     expansion         = expansion or "down"
     iconSpacing       = iconSpacing or ICON_SPACING
+    -- Anchor to HealthBarsContainer so icons center on the health bar strip,
+    -- not on the root nameplate frame (which also includes auras/name/castbar).
+    local uf          = nameplate.UnitFrame
+    local anchorFrame = (uf and uf.HealthBarsContainer) or nameplate
 
     local isLeft    = (anchor == "LEFT")
     -- Point on the icon that touches the nameplate / previous icon
@@ -617,9 +676,13 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     -- Nameplate edge each cluster attaches to
     local dpsEdge   = isLeft and "LEFT"  or "RIGHT"
     local defEdge   = isLeft and "RIGHT" or "LEFT"
-    -- X offset from the nameplate edge (including gap)
-    local dpsGapX   = isLeft and -NAMEPLATE_GAP or  NAMEPLATE_GAP
-    local defGapX   = isLeft and  NAMEPLATE_GAP or -NAMEPLATE_GAP
+    -- X offset from the health bar edge (including gap)
+    -- Right side uses a larger gap because Blizzard's bgTexture extends ~4px further
+    -- past the RIGHT edge of HealthBarsContainer than the LEFT edge.
+    local gapRight  = NAMEPLATE_GAP_RIGHT
+    local gapLeft   = NAMEPLATE_GAP_LEFT
+    local dpsGapX   = isLeft and -gapLeft  or  gapRight
+    local defGapX   = isLeft and  gapRight or -gapLeft
     -- X offset for horizontal chaining between icons
     local dpsChainX = isLeft and -iconSpacing or  iconSpacing
     local defChainX = isLeft and  iconSpacing or -iconSpacing
@@ -634,12 +697,12 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     end
 
     -- Helper: anchor one icon array to the nameplate then chain-anchor subsequent icons.
-    -- Closes over nameplate, expansion, and the chain params computed above.
+    -- Closes over anchorFrame, expansion, and the chain params computed above.
     local function AnchorRow(icons, firstPt, firstEdge, firstGapX, outChainPt, outChainEdge, outChainX)
         for i, icon in ipairs(icons) do
             icon:ClearAllPoints()
             if i == 1 then
-                icon:SetPoint(firstPt, nameplate, firstEdge, firstGapX, 0)
+                icon:SetPoint(firstPt, anchorFrame, firstEdge, firstGapX, 0)
             elseif expansion == "out" then
                 icon:SetPoint(outChainPt, icons[i-1], outChainEdge, outChainX, 0)
             else
@@ -671,8 +734,8 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
                 interruptIcon:SetPoint(chainRelPt, dpsIcons[1], chainPt, -chainOffX, -chainOffY)
             end
         else
-            -- Fallback: no DPS icons, anchor to nameplate directly
-            interruptIcon:SetPoint(dpsPt, nameplate, dpsEdge, dpsGapX, 0)
+            -- Fallback: no DPS icons, anchor to health bar frame directly
+            interruptIcon:SetPoint(dpsPt, anchorFrame, dpsEdge, dpsGapX, 0)
         end
         -- Re-anchor cast aura: sits on the opposite side of the interrupt
         -- from the queue (perpendicular pop-out).
@@ -841,19 +904,32 @@ function UINameplateOverlay.Destroy(addon)
         icon:SetParent(nil)
     end
 
-    -- Remove all overlay icons from Masque before cleanup
+    -- Remove all overlay icons from Masque before cleanup.
+    -- In combat, Masque's SkinButton calls Button:GetSize() which returns a secret value (12.0).
+    -- Skip RemoveButton in combat; track in pendingMasqueRemoval for cleanup on next OOC Destroy.
+    local inCombat = InCombatLockdown()
     local MasqueGroup = GetMasqueOverlayGroup and GetMasqueOverlayGroup()
+    if not inCombat and MasqueGroup and next(pendingMasqueRemoval) then
+        for icon in pairs(pendingMasqueRemoval) do MasqueGroup:RemoveButton(icon) end
+        wipe(pendingMasqueRemoval)
+    end
     for _, icon in ipairs(dpsIcons) do
-        if MasqueGroup then MasqueGroup:RemoveButton(icon) end
+        if MasqueGroup then
+            if inCombat then pendingMasqueRemoval[icon] = true else MasqueGroup:RemoveButton(icon) end
+        end
         CleanIcon(icon)
     end
     for _, icon in ipairs(defIcons) do
-        if MasqueGroup then MasqueGroup:RemoveButton(icon) end
+        if MasqueGroup then
+            if inCombat then pendingMasqueRemoval[icon] = true else MasqueGroup:RemoveButton(icon) end
+        end
         CleanIcon(icon)
     end
 
     if interruptIcon then
-        if MasqueGroup then MasqueGroup:RemoveButton(interruptIcon) end
+        if MasqueGroup then
+            if inCombat then pendingMasqueRemoval[interruptIcon] = true else MasqueGroup:RemoveButton(interruptIcon) end
+        end
         CleanIcon(interruptIcon)
         interruptIcon = nil
     end
@@ -1070,8 +1146,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local channelSpellID = nil
     if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
         isChanneling = true
-        local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
-        channelSpellID = chID
+        -- spellID cached from UNIT_SPELLCAST_CHANNEL_START (NeverSecret for player casts).
+        channelSpellID = UIRenderer.GetCachedChannelSpellID and UIRenderer.GetCachedChannelSpellID()
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
             isChanneling = false
@@ -1083,8 +1159,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local castSpellID = nil
     if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
         isCasting = true
-        local _, _, _, _, _, _, _, _, csID = UnitCastingInfo("player")
-        castSpellID = csID
+        -- spellID cached from UNIT_SPELLCAST_START (NeverSecret for player casts).
+        castSpellID = UIRenderer.GetCachedCastSpellID and UIRenderer.GetCachedCastSpellID()
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
             isCasting = false

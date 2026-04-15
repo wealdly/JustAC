@@ -469,9 +469,11 @@ end
 
 local isInCombat = false
 local isChanneling = false
-local channelSpellID = nil  -- Override spellID from UnitChannelInfo (for fill animation matching)
+local channelSpellID = nil  -- Override spellID (for fill animation matching)
 local isCasting = false
-local castSpellID = nil  -- Override spellID from UnitCastingInfo (for cast-fill matching)
+local castSpellID = nil  -- Override spellID (for cast-fill matching)
+local cachedChannelSpellID = nil  -- Set by UNIT_SPELLCAST_CHANNEL_START, cleared by _STOP
+local cachedCastSpellID    = nil  -- Set by UNIT_SPELLCAST_START, cleared by _STOP
 local CHANNEL_EARLY_UNGREY = 0.1  -- Stop greying out 100ms before channel/cast ends
 local hotkeysDirty = true
 local lastPanelLocked = nil
@@ -1186,7 +1188,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
     local showBurstGlow = showPrimaryGlow and profile.burstInjection and profile.burstInjection.showGlow == true
-    local queueDesaturation = GetQueueDesaturation()
+    local queueDesaturation = profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
     local showUsabilityTint = profile.showUsabilityTint ~= false
     local showRangeTint = profile.showRangeTint ~= false
     local showCastingHighlight = profile.showCastingHighlight ~= false
@@ -1200,10 +1202,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     channelSpellID = nil
     if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
         isChanneling = true
-        -- Get the channeled spellID for fill animation matching.
-        -- UnitChannelInfo returns the override spellID (e.g. 234153 for Drain Life base 689).
-        local _, _, _, _, _, _, _, chID = UnitChannelInfo("player")
-        channelSpellID = chID
+        -- spellID cached from UNIT_SPELLCAST_CHANNEL_START (NeverSecret for player casts).
+        channelSpellID = cachedChannelSpellID
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
             isChanneling = false
@@ -1215,8 +1215,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     castSpellID = nil
     if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
         isCasting = true
-        local _, _, _, _, _, _, _, _, csID = UnitCastingInfo("player")
-        castSpellID = csID
+        -- spellID cached from UNIT_SPELLCAST_START (NeverSecret for player casts).
+        castSpellID = cachedCastSpellID
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
             isCasting = false
@@ -1986,6 +1986,22 @@ end
 
 function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
+end
+
+function UIRenderer.SetCastSpellID(spellID)
+    cachedCastSpellID = spellID
+end
+
+function UIRenderer.SetChannelSpellID(spellID)
+    cachedChannelSpellID = spellID
+end
+
+function UIRenderer.GetCachedCastSpellID()
+    return cachedCastSpellID
+end
+
+function UIRenderer.GetCachedChannelSpellID()
+    return cachedChannelSpellID
 end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns

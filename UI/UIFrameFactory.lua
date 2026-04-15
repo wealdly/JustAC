@@ -201,6 +201,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     if not button then return nil end
 
     button:SetSize(size, size)
+    button.cachedIconSize = size  -- NeverSecret fallback for UIAnimations (GetWidth() is secret on nameplate-parented frames)
 
     if not isClickable then
         button:EnableMouse(false)
@@ -463,9 +464,11 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     else
         -- Attached mode: position relative to mainFrame based on queue orientation and defensive position
+        -- Use spacing directly so the queue-to-queue gap matches the icon-to-icon gap.
+        -- UIHealthBar.lua positions the health bar relative to the defensive icon edges (spacing + defIconSize + BAR_SPACING)
+        -- so the BAR_SPACING clearance above the defensive icons is preserved regardless of spacing value.
         local firstIconCenter = actualIconSize / 2
-        local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-        local effectiveSpacing = math.max(spacing, baseSpacing)
+        local effectiveSpacing = spacing
         local iconOffset = index * (actualIconSize + spacing)
 
         -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
@@ -1375,8 +1378,8 @@ local function CreateInterruptIcon(addon, profile)
     if not button then return end
 
     -- Position before slot 1 (opposite of queue growth direction)
-    local baseSpacing = UIHealthBar and UIHealthBar.BAR_SPACING or 3
-    local effectiveSpacing = math.max(spacing, baseSpacing)
+    -- No health bar is associated with the interrupt icon, so use spacing directly.
+    local effectiveSpacing = spacing
 
     -- For RIGHT/UP, icon 1 is shifted inward by grabTabReserve to make room for
     -- the grab tab at the same edge.  We mirror that shift here so the interrupt

@@ -109,7 +109,7 @@ local function ShowProcGlow(icon, isInCombat)
         procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
     end
     
-    local width = icon:GetWidth()
+    local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
     
     procFrame:SetAlpha(1.0)
@@ -155,7 +155,7 @@ local function ShowInterruptProcGlow(icon)
         procFrame.ProcLoopFlipbook:SetVertexColor(INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B, 1)
     end
 
-    local width = icon:GetWidth()
+    local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
 
     -- Set alpha on the frame itself; the internal Alpha animation forces
@@ -182,7 +182,7 @@ local function ShowBurstProcGlow(icon)
         procFrame.ProcLoopFlipbook:SetVertexColor(BURST_PROC_R, BURST_PROC_G, BURST_PROC_B, 1)
     end
 
-    local width = icon:GetWidth()
+    local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
     procFrame:SetAlpha(1.0)
     procFrame:Show()
@@ -298,7 +298,7 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
 
     -- Only do setup work if frame was just created or not yet shown
     if needsInit or not highlightFrame:IsShown() then
-        local width = icon:GetWidth()
+        local width = icon.cachedIconSize or icon:GetWidth()
         highlightFrame:SetScale((width / 45) * config.scaleMul)
         TintMarchingAnts(highlightFrame, config.r, config.g, config.b, config.desaturate)
         if config.scaleMul ~= 1.0 then

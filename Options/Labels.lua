@@ -107,10 +107,12 @@ local function BuildLabelInlineGroup(addon, key, groupName, order, defaultAlpha,
                     return (c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or defaultAlpha
                 end,
                 set = function(_, r, g, b, a)
-                    local blk = ensureBlock()
+                    -- color is central: shared across all surfaces (NormalizeSavedData strips npo copy)
+                    local blk = addon.db.profile.textOverlays[key]
                     if not blk.color then blk.color = {} end
                     blk.color.r, blk.color.g, blk.color.b, blk.color.a = r, g, b, a
-                    onSet()
+                    addon:UpdateFrameSize()
+                    rebuildNPO(addon)
                 end,
             },
             anchor = hasAnchor and {
@@ -131,9 +133,10 @@ local function BuildLabelInlineGroup(addon, key, groupName, order, defaultAlpha,
                     return a or defaultAnchor
                 end,
                 set = function(_, val)
-                    local blk = ensureBlock()
-                    blk.anchor = val
-                    onSet()
+                    -- anchor is central: shared across all surfaces (NormalizeSavedData strips npo copy)
+                    addon.db.profile.textOverlays[key].anchor = val
+                    addon:UpdateFrameSize()
+                    rebuildNPO(addon)
                 end,
             } or nil,
         },

@@ -313,9 +313,9 @@ local CROWD_CONTROL_SPELLS = {
     
     -- Evoker
     [351338] = true,  -- Quell (interrupt)
-    [357208] = true,  -- Oppressing Roar
-    [360806] = true,  -- Sleep Walk
-    [372048] = true,  -- Oppressing Roar
+    [360806] = true,  -- Sleep Walk (1.7s cast, incapacitate)
+    [372048] = true,  -- Oppressing Roar (CC duration extender)
+    -- Note: 357208 is Fire Breath (DPS ability), removed from this exclusion list
     
     -- Hunter
     [1513] = true,    -- Scare Beast
@@ -780,14 +780,14 @@ SpellDB.CLASS_INTERRUPT_DEFAULTS = {
     DEATHKNIGHT = {{47528,"interrupt"}, {108194,"cc"}, {221562,"cc"}, {207167,"cc"}, {47476,"cc"}}, -- Mind Freeze, Asphyxiate, Asphyxiate (Blood), Blinding Sleet, Strangulate
     DEMONHUNTER = {{183752,"interrupt"}, {179057,"cc"}, {211881,"cc"}},                     -- Disrupt, Chaos Nova, Fel Eruption
     DRUID       = {{106839,"interrupt"}, {78675,"interrupt"}, {5211,"cc"}, {99,"cc"}},      -- Skull Bash, Solar Beam, Mighty Bash, Incapacitating Roar
-    EVOKER      = {{351338,"interrupt"}, {357208,"cc"}},                                    -- Quell, Oppressing Roar
+    EVOKER      = {{351338,"interrupt"}},                                                  -- Quell (no reliable instant CC fallback: Oppressing Roar buffs CC duration but does not apply CC; Sleep Walk has 1.7s cast time)
     HUNTER      = {{147362,"interrupt"}, {187707,"interrupt"}, {24394,"cc"}},                -- Counter Shot, Muzzle, Intimidation
     MAGE        = {{2139,"interrupt"}, {31661,"cc"}},                                       -- Counterspell, Dragon's Breath
     MONK        = {{116705,"interrupt"}, {119381,"cc"}, {115078,"cc"}},                      -- Spear Hand Strike, Leg Sweep, Paralysis
     PALADIN     = {{96231,"interrupt"}, {31935,"interrupt"}, {853,"cc"}, {20066,"cc"}},      -- Rebuke, Avenger's Shield, Hammer of Justice, Repentance
-    PRIEST      = {{15487,"interrupt"}, {8122,"cc"}, {205369,"cc"}, {64044,"cc"}},           -- Silence, Psychic Scream, Mind Bomb, Psychic Horror
-    ROGUE       = {{1766,"interrupt"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},                -- Kick, Kidney Shot, Cheap Shot, Gouge
-    SHAMAN      = {{57994,"interrupt"}, {192058,"cc"}, {197214,"cc"}},                       -- Wind Shear, Capacitor Totem, Sundering
+    PRIEST      = {{15487,"interrupt"}, {64044,"cc"}, {205369,"cc"}, {8122,"cc"}},           -- Silence, Psychic Horror (stun, Shadow), Mind Bomb (silence+disorient), Psychic Scream (AoE fear)
+    ROGUE       = {{1766,"interrupt"}, {2094,"cc"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},   -- Kick, Blind, Kidney Shot, Cheap Shot, Gouge
+    SHAMAN      = {{57994,"interrupt"}, {192058,"cc"}},                                    -- Wind Shear, Capacitor Totem (Sundering removed: 2s incapacitate breaks from auto-attacks immediately)
     WARLOCK     = {{19647,"interrupt"}, {212619,"interrupt"}, {89766,"cc"}, {30283,"cc"}},   -- Spell Lock, Call Felhunter, Axe Toss, Shadowfury
     WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
 }

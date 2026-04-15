@@ -139,9 +139,9 @@ function UIHealthBar.CreateHealthBar(addon)
             end
             offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
 
-            -- Defensive icons sit at math.max(iconSpacing, BAR_SPACING) from mainFrame edge;
+            -- Defensive icons sit at iconSpacing from mainFrame edge (matches icon-to-icon spacing);
             -- bar floats BAR_SPACING beyond the outer edge of that cluster.
-            local defSpacing = math.max(iconSpacing, BAR_SPACING)
+            local defSpacing = iconSpacing
             local barDist    = defSpacing + defIconSize + BAR_SPACING
 
             if barIsHorizontal then
