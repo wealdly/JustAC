@@ -168,8 +168,8 @@ local function DoesSpellMatch(spellPart, targetSpells)
     
     local lowerSpellPart = GetLowercase(spellPart)
     
-    -- Strip target specifiers (@mouseover, @player, etc.) and trailing markers
-    local cleanSpellPart = lowerSpellPart:gsub("%s*@[%w]+%s*$", ""):gsub("%s*%(@[%w]+%)%s*$", "")
+    -- Strip leading ! (repeat-cast toggle), target specifiers (@mouseover, @player, etc.) and trailing markers
+    local cleanSpellPart = lowerSpellPart:gsub("^!", ""):gsub("%s*@[%w]+%s*$", ""):gsub("%s*%(@[%w]+%)%s*$", "")
     cleanSpellPart = cleanSpellPart:gsub("%s*%(.-%)%s*$", "")
     cleanSpellPart = cleanSpellPart:match("^%s*(.-)%s*$") or cleanSpellPart
     
@@ -329,7 +329,7 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
     end
 
     for condition in conditionString:gmatch("[^,]+") do
-        local trimmed = condition:match("^%s*(.-)%s*$")
+        local trimmed = GetLowercase(condition:match("^%s*(.-)%s*$"))
 
         if trimmed:match("^mod") then
             local modType = trimmed:match("^mod:?(.*)") or "any"
