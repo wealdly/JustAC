@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.19.3] - 2026-04-14
+
+### Fixed
+- **MacroParser — leading `!` prefix on spell names**: Macros using `!Spell` (repeat-cast toggle, e.g. `!Bear Form`, `!Stealth`) were never matched because `DoesSpellMatch` compared the raw `"!bear form"` against `"bear form"`; the `!` is now stripped before comparison (`MacroParser.lua`)
+- **MacroParser — condition tokens not lowercased**: `[MOD:SHIFT]`, `[Form:1]`, and `[ mod : shift ]` (spaces around `:`) were silently ignored because `EvaluateConditions` matched condition strings case-sensitively; tokens are now lowercased before pattern matching (`MacroParser.lua`)
+
 ## [4.19.2] - 2026-04-14
 
 ### Fixed
