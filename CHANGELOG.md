@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.19.4] - 2026-04-14
+
+### Fixed
+- **Interrupt/CC CD detection broken — Kick re-recommended while on cooldown**: `IsInterruptOnCooldown()` in `SpellDB.lua` was always fail-open. A file-scope `LibStub("JustAC-BlizzardAPI", true)` captured nil because `SpellDB.lua` loads before `BlizzardAPI.lua` in `JustAC.toc`. Every call hit the nil guard and returned false, making every spell appear ready regardless of actual cooldown state. Fixed with a lazy getter that resolves on first call after all libraries are loaded.
+- **`CheckCooldownCompletions` prematurely clearing interrupt/defensive CDs**: Was treating `isOnGCD == true` from `SPELL_UPDATE_COOLDOWN` as "real CD done" for all tracked categories. For unflagged spells (Kick, Blind, defensives etc.), `isOnGCD == true` fires during the GCD window after the cast — not as a CD-expiry signal. Restricted this clear to `"rotation"` category only (the only category that reliably uses Blizzard's flagged `nil → false → nil` CD state machine).
+- **`CheckUsabilityFlips` clearing local CDs via `ACTION_USABLE_CHANGED`**: Was wiping `localCooldowns[spellID]` whenever `usable=true` fired for a slot, assuming it meant the CD expired. `IsUsableAction` returns true even while a spell is on cooldown, so energy ticks and target changes were clearing active CDs. Removed flat `localCooldowns` clearing from this path; charge recovery hints preserved.
+- **CC-failure learning incorrectly triggered by interrupt spells**: Kick, Wind Shear, Counterspell, and other pure interrupts are in `CROWD_CONTROL_SPELLS` (for DPS rotation exclusion). This caused `NotifyCCCastOnTarget()` to fire on every successful interrupt cast. 0.4 s later `UnitIsCrowdControlled("target")` returns false (interrupts don't apply a CC mechanic), setting `ccFailureObserved = true` and marking the target as CC-immune for the rest of combat — suppressing Blind and all other CC fallbacks. Fixed: added `SpellDB.IsInterruptTypeSpell()` (lazy set from `CLASS_INTERRUPT_DEFAULTS` type="interrupt" entries) and guarded `NotifyCCCastOnTarget()` to skip pure interrupt spells.
+
+### Added
+- **`/jac interrupts` command**: Dumps the resolved interrupt/CC list with per-spell CD state (`IsInterruptOnCooldown`, `localCD`, `IsReady`, `usable`, `isOnGCD`), plus target interrupt-worthy, CC-immune, and current interrupt mode. Useful for diagnosing interrupt/CC queue issues in combat.
+- **`/jac testcd` extended**: Now includes `C_Spell.GetSpellCooldown` raw `isOnGCD` field, `IsSpellOnLocalCooldown`, `IsSpellReady`, and `IsInterruptOnCooldown` output (section 5 and 6).
+
 ## [4.19.3] - 2026-04-14
 
 ### Fixed

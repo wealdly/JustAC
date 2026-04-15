@@ -575,6 +575,28 @@ function SpellDB.IsCrowdControlSpell(spellID)
     return CROWD_CONTROL_SPELLS[spellID] == true
 end
 
+-- Lazily-built set of pure interrupt spells (type="interrupt" in CLASS_INTERRUPT_DEFAULTS).
+-- Interrupts apply a lockout but no CC mechanic — they must not trigger CC-failure learning.
+local interruptTypeSpellIDs = nil
+local function BuildInterruptTypeSpellIDs()
+    interruptTypeSpellIDs = {}
+    for _, entries in pairs(SpellDB.CLASS_INTERRUPT_DEFAULTS) do
+        for _, entry in ipairs(entries) do
+            if entry[2] == "interrupt" then
+                interruptTypeSpellIDs[entry[1]] = true
+            end
+        end
+    end
+end
+
+-- Returns true if spellID is a pure lockout interrupt (type="interrupt" in CLASS_INTERRUPT_DEFAULTS).
+-- Returns false for cc-type entries (stun, silence, incapacitate) even if also in CROWD_CONTROL_SPELLS.
+function SpellDB.IsInterruptTypeSpell(spellID)
+    if not spellID then return false end
+    if not interruptTypeSpellIDs then BuildInterruptTypeSpellIDs() end
+    return interruptTypeSpellIDs[spellID] == true
+end
+
 -- Check if a spell is utility (movement, rez, taunt, external, etc.)
 function SpellDB.IsUtilitySpell(spellID)
     if not spellID then return false end
@@ -786,7 +808,7 @@ SpellDB.CLASS_INTERRUPT_DEFAULTS = {
     MONK        = {{116705,"interrupt"}, {119381,"cc"}, {115078,"cc"}},                      -- Spear Hand Strike, Leg Sweep, Paralysis
     PALADIN     = {{96231,"interrupt"}, {31935,"interrupt"}, {853,"cc"}, {20066,"cc"}},      -- Rebuke, Avenger's Shield, Hammer of Justice, Repentance
     PRIEST      = {{15487,"interrupt"}, {64044,"cc"}, {205369,"cc"}, {8122,"cc"}},           -- Silence, Psychic Horror (stun, Shadow), Mind Bomb (silence+disorient), Psychic Scream (AoE fear)
-    ROGUE       = {{1766,"interrupt"}, {2094,"cc"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},   -- Kick, Blind, Kidney Shot, Cheap Shot, Gouge
+    ROGUE       = {{1766,"interrupt"}, {2094,"cc"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},   -- Kick, Blind, Kidney Shot, Cheap Shot (usable after Vanish/Shadow Dance), Gouge
     SHAMAN      = {{57994,"interrupt"}, {192058,"cc"}},                                    -- Wind Shear, Capacitor Totem (Sundering removed: 2s incapacitate breaks from auto-attacks immediately)
     WARLOCK     = {{19647,"interrupt"}, {212619,"interrupt"}, {89766,"cc"}, {30283,"cc"}},   -- Spell Lock, Call Felhunter, Axe Toss, Shadowfury
     WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
@@ -1129,7 +1151,16 @@ end
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
 local pcall = pcall
-local cachedBlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+-- NOTE: cachedBlizzardAPI intentionally resolved lazily inside IsInterruptOnCooldown.
+-- SpellDB.lua loads BEFORE BlizzardAPI.lua in JustAC.toc, so a file-scope
+-- LibStub("JustAC-BlizzardAPI", true) here would always return nil.
+local _cachedBlizzardAPIRef = nil
+local function GetBlizzardAPI()
+    if not _cachedBlizzardAPIRef then
+        _cachedBlizzardAPIRef = LibStub("JustAC-BlizzardAPI", true)
+    end
+    return _cachedBlizzardAPIRef
+end
 
 --- Check whether an interrupt/CC spell is on a real cooldown (not just GCD).
 --- Delegates to BlizzardAPI.IsSpellReady() which handles the full 12.0 fallback
@@ -1137,8 +1168,9 @@ local cachedBlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 --- Interrupt spells are registered for local CD tracking in ResolveInterruptSpells().
 --- Fail-open: returns false (spell ready) if anything errors.
 function SpellDB.IsInterruptOnCooldown(spellID)
-    if not cachedBlizzardAPI or not cachedBlizzardAPI.IsSpellReady then return false end
-    return not cachedBlizzardAPI.IsSpellReady(spellID)
+    local api = GetBlizzardAPI()
+    if not api or not api.IsSpellReady then return false end
+    return not api.IsSpellReady(spellID)
 end
 
 --- Resolve the current player's interrupt spell IDs (primary interrupt + CC backups).

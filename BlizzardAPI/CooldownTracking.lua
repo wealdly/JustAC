@@ -334,7 +334,16 @@ local function CheckCooldownCompletions(eventSpellID)
             local ok, cd = pcall(C_Spell_GetSpellCooldown, eventSpellID)
             if ok and cd then
                 if cd.isOnGCD == true then
-                    localCooldowns[eventSpellID] = nil
+                    -- isOnGCD=true means "GCD only, real CD done" — but ONLY for
+                    -- Blizzard-flagged rotation spells (nil→false→nil CD pattern).
+                    -- For unflagged interrupts/defensives/etc., isOnGCD=true fires
+                    -- during the GCD window right after casting (unflagged pattern:
+                    -- nil→true(GCD)→nil). Clearing here would wipe the local CD
+                    -- immediately, causing IsSpellReady to fail-open and show the
+                    -- spell as ready on the very next frame. Only clear for "rotation".
+                    if trackedSpells[eventSpellID] == "rotation" then
+                        localCooldowns[eventSpellID] = nil
+                    end
                 end
                 -- isOnGCD == nil: unflagged spell — trust local timer.
                 -- isOnGCD == false: real CD running — no action needed.
@@ -348,8 +357,9 @@ local function CheckCooldownCompletions(eventSpellID)
         if GetTime() < data.endTime then
             local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
             if ok and cd then
-                if cd.isOnGCD == true then
-                    -- isOnGCD is NeverSecret: true = GCD only (real CD done)
+                if cd.isOnGCD == true and trackedSpells[spellID] == "rotation" then
+                    -- See targeted-check comment above: only rotation-category spells
+                    -- are reliably Blizzard-flagged and use the nil→false→nil pattern.
                     localCooldowns[spellID] = nil
                 end
                 -- isOnGCD == nil: unflagged spell — trust local timer.
@@ -613,22 +623,30 @@ end
 
 --- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.
 --- When a slot becomes usable (or only resource-blocked), and the mapped spell
---- has an active local CD, clear it immediately — the real CD has ended.
+--- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.
+--- NOTE: IsUsableAction returns true even when a spell is on cooldown, so a
+--- usable=true transition does NOT mean the real CD expired — it fires on energy
+--- ticks, target changes, and other unrelated transitions. Any CD clearing here
+--- produces false positives that wipe still-active local CDs.
+--- The correct CD expiry signals are:
+---   - Local timer (endTime): expires naturally; reliable for all categories.
+---   - SPELL_UPDATE_COOLDOWN + isOnGCD==true: "rotation" category early-clear.
+---   - ResyncLocalCooldowns (PLAYER_REGEN_ENABLED): API resync at combat exit.
+--- Charge recovery is still advanced here (usable=true is a valid hint that
+--- at least one charge is available, consistent with the fail-open charge design).
 --- @param changes table Array of {slot=luaIndex, usable=bool, noMana=bool}
 function BlizzardAPI.CheckUsabilityFlips(changes)
     if not reverseMapValid then BuildReverseSlotMap() end
 
     for _, change in ipairs(changes) do
-        -- usable=true → CD done. noMana=true → CD done but resource-blocked.
         if change.usable or change.noMana then
             local spellID = slotToTrackedSpell[change.slot]
             if spellID then
-                -- Clear flat CD if active
-                local data = localCooldowns[spellID]
-                if data and GetTime() < data.endTime then
-                    localCooldowns[spellID] = nil
-                end
-                -- Advance charge recovery if charge spell at 0 charges
+                -- DO NOT clear flat localCooldowns here: IsUsableAction returns
+                -- true even on cooldown, so usable=true is not a CD-expired signal.
+
+                -- Advance charge recovery if charge spell at 0 charges.
+                -- usable=true is a valid hint that a charge has recharged.
                 local chargeData = localCharges[spellID]
                 if chargeData and chargeData.current <= 0 then
                     ProcessChargeRecovery(chargeData)
