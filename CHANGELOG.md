@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-04-16
+
+### Added
+- **Korean (koKR) locale**: Full translation of all UI strings.
+- **Locale sync**: All non-English locales (deDE, esES, esMX, frFR, ptBR, ruRU, zhCN, zhTW) updated with missing keys: Show Usability Tint, Show Range Tint, Show Casting Highlight, Queue Orientation detached desc, Proc Priority, updated Blacklist Info/Warning, Burst Injection section, Custom Queue section, Detached defensive frame section.
+
 ## [4.19.4] - 2026-04-14
 
 ### Fixed

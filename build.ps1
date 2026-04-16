@@ -36,6 +36,7 @@ $coreFiles = @(
     "Locales\ptBR.lua",
     "Locales\zhCN.lua",
     "Locales\zhTW.lua",
+    "Locales\koKR.lua",
     "SpellDB.lua",
     "BlizzardAPI.lua",
     "BlizzardAPI\CooldownTracking.lua",
