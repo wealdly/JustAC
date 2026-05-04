@@ -1366,10 +1366,16 @@ function JustAC:OnTargetChanged()
 end
 
 function JustAC:OnActionUsableChanged(_, changes)
+    -- Cache update is always immediate (used by GetActionBarUsability on next render).
     if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
         BlizzardAPI.OnActionUsableChanged(changes)
     end
-    self:ForceUpdateAll()
+    -- Same OOC throttle as OnCooldownUpdate: mark dirty but don't reset the idle timer.
+    spellQueueDirty = true
+    defensiveQueueDirty = true
+    if UnitAffectingCombat("player") and self.updateTimeLeft then
+        self.updateTimeLeft = 0
+    end
 end
 
 function JustAC:OnActionRangeUpdate(_, slot, isInRange, checksRange)
@@ -1492,9 +1498,15 @@ function JustAC:OnPlayerChannelStop(event, unit)
 end
 
 function JustAC:OnCooldownUpdate()
-    -- SPELL_UPDATE_COOLDOWN fires ~10x per cast (GCD cascade). ForceUpdateAll
-    -- is idempotent — repeated calls just set dirty flags that are already set.
-    self:ForceUpdateAll()
+    -- SPELL_UPDATE_COOLDOWN fires ~10x per cast in combat (GCD cascade), and also
+    -- fires OOC when abilities/items come off cooldown.  In combat, reset the timer
+    -- immediately for low-latency response.  OOC, only mark dirty and let the 0.5s
+    -- idle cycle handle the update — avoids waking the loop dozens of times per minute.
+    spellQueueDirty = true
+    defensiveQueueDirty = true
+    if UnitAffectingCombat("player") and self.updateTimeLeft then
+        self.updateTimeLeft = 0
+    end
 end
 
 --- Marks queues dirty and ensures the next OnUpdate tick processes immediately.

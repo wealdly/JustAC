@@ -199,9 +199,16 @@ function KPD.Create(addon)
     ---------------------------------------------------------------------------
     -- Mouse button detection (poll IsMouseButtonDown for down-transitions)
     -- OnKeyDown never fires for mouse buttons, so we detect state transitions
-    -- each frame. Cost: 3 IsMouseButtonDown calls + 3 boolean comparisons/frame.
+    -- each frame. Throttled to ~30Hz — max 33ms detection latency, which is
+    -- imperceptible for flash feedback (human reaction time ~150-300ms).
     ---------------------------------------------------------------------------
-    frame:SetScript("OnUpdate", function()
+    local mouseUpdateAccum = 0
+    local MOUSE_POLL_INTERVAL = 0.033  -- ~30Hz
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        mouseUpdateAccum = mouseUpdateAccum + elapsed
+        if mouseUpdateAccum < MOUSE_POLL_INTERVAL then return end
+        mouseUpdateAccum = 0
+
         if not addon or not StartFlash then return end
 
         for i, btn in ipairs(MOUSE_BUTTONS) do

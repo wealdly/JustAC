@@ -50,7 +50,7 @@ function GapClosers.CreateTabArgs(addon)
                     else
                         profile.gapClosers.enabled = val
                     end
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                 end,
             },
             showGlow = {
@@ -75,7 +75,7 @@ function GapClosers.CreateTabArgs(addon)
                     else
                         profile.gapClosers.showGlow = val
                     end
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                 end,
             },
             meleeRangeGroup = {
@@ -147,7 +147,7 @@ function GapClosers.CreateTabArgs(addon)
                                     profile.gapClosers.meleeRangeSpell = spellID
                                     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                                     if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
-                                    addon:ForceUpdateAll()
+                                    addon:ForceUpdate()
                                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                                 end,
                             })
@@ -164,7 +164,7 @@ function GapClosers.CreateTabArgs(addon)
                             profile.gapClosers.meleeRangeSpell = nil
                             local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                             if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                         disabled = function()
@@ -200,7 +200,7 @@ function GapClosers.CreateTabArgs(addon)
                     if GCE and GCE.InvalidateGapCloserCache then
                         GCE.InvalidateGapCloserCache()
                     end
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },

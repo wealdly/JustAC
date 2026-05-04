@@ -38,6 +38,10 @@ local proccedBuffer = {}    -- procced spells (highest priority)
 local nonProccedBuffer = {} -- castable non-procced spells in user list order
 local unusableBuffer = {}   -- on-CD or resource-starved spells (de-prioritized to end)
 
+-- Build counters (for /jac perf diagnostic)
+local defensiveBuildCount = 0
+local defensiveResetTime = GetTime()
+
 
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
@@ -599,6 +603,13 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
 
+    if profile.debugMode then
+        if defensiveBuildCount == 0 then
+            defensiveResetTime = GetTime()
+        end
+        defensiveBuildCount = defensiveBuildCount + 1
+    end
+
     local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 4
     local showProcs
     if overrides and overrides.showProcs ~= nil then
@@ -699,6 +710,18 @@ end
 
 -- Placeholder kept so external callers that haven't updated yet don't hard-error.
 function DefensiveEngine.InvalidatePotionCache()
+end
+
+function DefensiveEngine.GetBuildStats()
+    return {
+        buildCount = defensiveBuildCount,
+        resetTime = defensiveResetTime,
+    }
+end
+
+function DefensiveEngine.ResetBuildStats()
+    defensiveBuildCount = 0
+    defensiveResetTime = GetTime()
 end
 
 --------------------------------------------------------------------------------

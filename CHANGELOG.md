@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [4.21.0] - 2026-05-04
+
+### Performance
+- **Options/Overlay.lua**: Narrowed 7 over-broad `ForceUpdateAll()` → `ForceUpdate()` for display-only settings (overlay queue visibility, hide-when-mounted, opacity, offensive glow mode, offensive desaturation, offensive reset, defensive glow mode). Display settings don't require defensive queue rebuild. Two calls retained for `defensiveDisplayMode` change and defensive reset (may affect evaluation timing).
+- **Options/GapClosers.lua**: Narrowed all 5 `ForceUpdateAll()` → `ForceUpdate()`. Gap-closers only affect the offensive queue.
+- **Options/BurstInjection.lua**: Narrowed all 3 `ForceUpdateAll()` → `ForceUpdate()`. Burst injection only affects the offensive queue.
+- **UI/UIRenderer.lua**: Added `changed` guard for state-3 (normal) `SetVertexColor` in `ApplyVisualState()`. Eliminates redundant GPU vertex color calls on every frame for icons that haven't changed visual state.
+- **SpellQueue.lua**: Added debug-gated `spellQueueBuildCount` counter. Exposed via `GetBuildStats()` / `ResetBuildStats()`.
+- **DefensiveEngine.lua**: Added debug-gated `defensiveBuildCount` counter. Exposed via `GetBuildStats()` / `ResetBuildStats()`.
+- **DebugCommands.lua**: Added `/jac perf` command (debug-mode gated) showing offensive/defensive queue build counts and rates since last reset. `/jac perf reset` resets counters.
+- **JustAC.lua**: `OnCooldownUpdate` and `OnActionUsableChanged` no longer reset the update timer out of combat. Both events now only set dirty flags OOC, letting the 0.5s idle cycle handle them — previously they called `ForceUpdateAll()` which woke the loop immediately, causing ~2-5% idle CPU from ability cooldowns and usability transitions firing in cities. In combat, timer reset is unchanged for full responsiveness. Reduces OOC CPU usage from ~9-12% to ~7%.
+- **KeyPressDetector.lua**: Mouse button poll (`IsMouseButtonDown` × 3) throttled from every frame (~60-144Hz) to 30Hz. Detection latency capped at 33ms, imperceptible for flash feedback.
+
+### Visual
+- **UI/UIRenderer.lua**: Icon spell changes now fade in via the existing 100ms `fadeIn` animation instead of instant texture swap. Eliminates the visual pop when the queue shifts at combat start or during rotation.
+- **UI/UIFrameFactory.lua**: `POSITION_HOLD_TIME` increased from 150ms to 200ms. Reduces high-frequency queue shuffles causing icons at positions 2+ to flash.
+
 ## [4.20.2] - 2026-05-04
 
 ### Fixed

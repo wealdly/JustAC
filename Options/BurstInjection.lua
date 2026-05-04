@@ -49,7 +49,7 @@ function BurstInjection.CreateTabArgs(addon)
                     local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                     if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
                     BurstInjection.UpdateBurstInjectionOptions(addon)
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                 end,
             },
             showGlow = {
@@ -74,7 +74,7 @@ function BurstInjection.CreateTabArgs(addon)
                     else
                         profile.burstInjection.showGlow = val
                     end
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                 end,
             },
             fallbackDuration = {
@@ -132,7 +132,7 @@ function BurstInjection.CreateTabArgs(addon)
 
                     local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                     if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
-                    addon:ForceUpdateAll()
+                    addon:ForceUpdate()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },

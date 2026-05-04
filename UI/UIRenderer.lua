@@ -625,7 +625,7 @@ local function ApplyVisualState(icon, visualState, baseDesaturation, brightness,
         iconTexture:SetVertexColor(0.55, 0.35, 0.35)
     else
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
-        iconTexture:SetVertexColor(brightness, brightness, brightness, opacity)
+        if changed then iconTexture:SetVertexColor(brightness, brightness, brightness, opacity) end
     end
     icon.lastVisualState = visualState
     icon.lastBaseDesaturation = baseDesaturation
@@ -1496,9 +1496,22 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if spellChanged or not iconTexture:GetTexture() then
                     iconTexture:SetTexture(spellInfo.iconID)
                 end
-                
+
                 if not iconTexture:IsShown() then
                     iconTexture:Show()
+                end
+
+                -- Smooth spell-change transition: fade the button in when the spell
+                -- changes while the icon is already on screen.  Reuses the existing
+                -- 100ms fade-in animation — rapid churn within 100ms keeps restarting
+                -- the fade, masking the instability rather than exposing a raw pop.
+                if spellChanged and icon:IsShown() and icon.fadeIn then
+                    if icon.fadeOut and icon.fadeOut:IsPlaying() then
+                        icon.fadeOut:Stop()
+                    end
+                    icon.fadeIn:Stop()
+                    icon:SetAlpha(0)
+                    icon.fadeIn:Play()
                 end
                 
                 -- "Waiting for..." = Assisted Combat's resource-wait indicator.

@@ -52,7 +52,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.queueVisibility or "always" end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.queueVisibility = val
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -66,7 +66,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.hideWhenMounted end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.hideWhenMounted = val
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                     },
                     -- ICON LAYOUT (10-19)
@@ -150,7 +150,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.opacity or 1.0 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.opacity = val
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -243,7 +243,7 @@ function Overlay.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.glowMode = val
                             addon.db.profile.nameplateOverlay.showGlow = nil  -- clear legacy key
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -257,7 +257,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.queueIconDesaturation or 0 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.queueIconDesaturation = val
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -280,7 +280,7 @@ function Overlay.CreateTabArgs(addon)
                             npo.glowMode              = "all"
                             npo.showGlow              = nil  -- clear legacy key
                             npo.queueIconDesaturation = 0
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -388,7 +388,7 @@ function Overlay.CreateTabArgs(addon)
                         end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.defensiveGlowMode = val
-                            addon:ForceUpdateAll()
+                            addon:ForceUpdate()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)

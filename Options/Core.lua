@@ -198,6 +198,16 @@ local function HandleSlashCommand(addon, input)
             addon:Print("DebugCommands module not available")
         end
 
+    elseif command == "perf" or command == "stats" then
+        local subCommand = arg and arg:match("^%s*(.-)%s*$")
+        if subCommand == "" then subCommand = nil end
+        if subCommand then subCommand = subCommand:lower() end
+        if DebugCommands and DebugCommands.PerformanceDiagnostics then
+            DebugCommands.PerformanceDiagnostics(addon, subCommand)
+        else
+            addon:Print("DebugCommands module not available")
+        end
+
     elseif command == "help" then
         if DebugCommands and DebugCommands.ShowHelp then
             DebugCommands.ShowHelp(addon)
