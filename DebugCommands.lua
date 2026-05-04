@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2025 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 17)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 18)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -22,6 +22,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac interrupts - Diagnose interrupt/CC queue CD state")
     addon:Print("/jac burst - Dump burst injection priority list")
     addon:Print("/jac poisons - Diagnose rogue poison detection")
+    addon:Print("/jac perf - Queue build rate statistics")
+    addon:Print("/jac perf reset - Reset build counters")
     addon:Print("/jac help - Show this help")
 end
 
@@ -812,3 +814,66 @@ function DebugCommands.BurstDiagnostics(addon)
     addon:Print("==================================")
 end
 
+--------------------------------------------------------------------------------
+-- Performance Diagnostics
+--------------------------------------------------------------------------------
+function DebugCommands.PerformanceDiagnostics(addon, subCommand)
+    local SpellQueue    = LibStub("JustAC-SpellQueue", true)
+    local DefEngine     = LibStub("JustAC-DefensiveEngine", true)
+    local now = GetTime()
+
+    local profile = addon and addon.db and addon.db.profile
+    if not profile or not profile.debugMode then
+        addon:Print("|cffffff00Enable debug mode first: /jac debug|r")
+        return
+    end
+
+    local normalizedSub = type(subCommand) == "string" and subCommand:match("^%s*(%S+)")
+    if normalizedSub then normalizedSub = normalizedSub:lower() end
+
+    if normalizedSub == "reset" then
+        if SpellQueue and SpellQueue.ResetBuildStats then SpellQueue.ResetBuildStats() end
+        if DefEngine and DefEngine.ResetBuildStats then DefEngine.ResetBuildStats() end
+        addon:Print("|cff00ff00Build counters reset.|r")
+        return
+    end
+
+    addon:Print("=== JustAC Queue Build Statistics ===")
+
+    local sqStats = SpellQueue and SpellQueue.GetBuildStats and SpellQueue.GetBuildStats()
+    if sqStats then
+        local elapsed = sqStats.resetTime > 0 and (now - sqStats.resetTime) or now
+        local rate = elapsed > 0 and (sqStats.buildCount / elapsed) or 0
+        addon:Print(string.format("Offensive queue builds: |cffadd8e6%d|r (|cffadd8e6%.1f/s|r over %.0fs)",
+            sqStats.buildCount, rate, elapsed))
+    else
+        addon:Print("  SpellQueue stats: |cffff0000not available|r")
+    end
+
+    local defStats = DefEngine and DefEngine.GetBuildStats and DefEngine.GetBuildStats()
+    if defStats then
+        local elapsed = defStats.resetTime > 0 and (now - defStats.resetTime) or now
+        local rate = elapsed > 0 and (defStats.buildCount / elapsed) or 0
+        addon:Print(string.format("Defensive queue builds: |cffadd8e6%d|r (|cffadd8e6%.1f/s|r over %.0fs)",
+            defStats.buildCount, rate, elapsed))
+    else
+        addon:Print("  DefensiveEngine stats: |cffff0000not available|r")
+    end
+
+    local inCombat = UnitAffectingCombat("player")
+    addon:Print("In combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
+
+    if profile then
+        local updateCVar = GetCVar and GetCVar("assistedCombatIconUpdateRate")
+        if updateCVar then
+            addon:Print("Update CVar (assistedCombatIconUpdateRate): |cffffff00" .. updateCVar .. "s|r")
+        end
+        local maxIcons = profile.maxIcons or 4
+        addon:Print("Max icons (offensive): " .. maxIcons)
+        local defEnabled = profile.defensives and profile.defensives.enabled
+        addon:Print("Defensives enabled: " .. (defEnabled and "|cff00ff00YES|r" or "NO"))
+    end
+
+    addon:Print("|cff888888Use '/jac perf reset' to reset counters.|r")
+    addon:Print("======================================")
+end

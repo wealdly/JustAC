@@ -30,6 +30,10 @@ local cachedGapCloserEngine = nil
 local cachedBurstEngine = nil
 local cachedAddon = nil
 
+-- Build counters (for /jac perf diagnostic)
+local spellQueueBuildCount = 0
+local spellQueueResetTime = GetTime()
+
 -- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
 -- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
 local syntheticProcs = {}
@@ -355,6 +359,12 @@ function SpellQueue.GetCurrentSpellQueue()
     -- All visibility conditions passed: queue should be shown.
     lastShouldShowQueue = true
     lastQueueUpdate = now
+    if profile.debugMode then
+        if spellQueueBuildCount == 0 then
+            spellQueueResetTime = now
+        end
+        spellQueueBuildCount = spellQueueBuildCount + 1
+    end
 
     wipe(filterResultCache)
     wipe(rotationFilterCache)
@@ -655,5 +665,17 @@ function SpellQueue.InvalidateRotationCache()
     if BlizzardAPI and BlizzardAPI.ClearTrackedRotationSpells then
         BlizzardAPI.ClearTrackedRotationSpells()
     end
+end
+
+function SpellQueue.GetBuildStats()
+    return {
+        buildCount = spellQueueBuildCount,
+        resetTime = spellQueueResetTime,
+    }
+end
+
+function SpellQueue.ResetBuildStats()
+    spellQueueBuildCount = 0
+    spellQueueResetTime = GetTime()
 end
 

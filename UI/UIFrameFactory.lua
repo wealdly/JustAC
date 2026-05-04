@@ -27,7 +27,7 @@ UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
 UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
 UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
 UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
-UIFrameFactory.POSITION_HOLD_TIME  = 0.15  -- 150ms: min display time before positions 2+ can swap
+UIFrameFactory.POSITION_HOLD_TIME  = 0.20  -- 200ms: min display time before positions 2+ can swap
 UIFrameFactory.GLOW_HOLD_TIME      = 0.10  -- 100ms: glow hysteresis to prevent animation flicker
 
 -- Anchor presets for user-configurable text positions
