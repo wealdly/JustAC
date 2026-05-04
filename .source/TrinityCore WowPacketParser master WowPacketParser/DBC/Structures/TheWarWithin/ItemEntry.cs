@@ -1,0 +1,23 @@
+using DBCD.IO.Attributes;
+
+namespace WowPacketParser.DBC.Structures.TheWarWithin
+{
+    [DBFile("Item")]
+    public sealed class ItemEntry
+    {
+        [Index(true)]
+        public uint ID;
+        public int ClassID;
+        public byte SubclassID;
+        public byte Material;
+        public sbyte InventoryType;
+        public byte SheatheType;
+        public sbyte SoundOverrideSubclassID;
+        public int IconFileDataID;
+        public uint ItemGroupSoundsID;
+        public int ContentTuningID;
+        public int ModifiedCraftingReagentItemID;
+        public int CraftingQualityID;
+        public int ItemSquishEraID;
+    }
+}

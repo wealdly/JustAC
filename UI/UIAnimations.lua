@@ -140,73 +140,54 @@ local function HideProcGlow(icon)
     end
 end
 
--- Red-tinted, fainter proc glow for the interrupt icon
-local INTERRUPT_PROC_ALPHA = 1.0
-local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05
+-- Colored proc glow constants
+local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05  -- Red
+local BURST_PROC_R,     BURST_PROC_G,     BURST_PROC_B     = 0.7, 0.2,  1.0   -- Purple
 
-local function ShowInterruptProcGlow(icon)
+-- Shared helper: show a desaturated+tinted proc glow on a named frame key.
+-- Set alpha on the frame itself; the internal Alpha animation forces the
+-- texture alpha to 1 every loop iteration, so texture-level alpha would be
+-- overridden.  Frame-level alpha stacks and is not touched by animations.
+local function ShowColoredProcGlow(icon, frameKey, r, g, b)
     if not icon then return end
-
-    local procFrame = icon.InterruptProcGlowFrame
+    local procFrame = icon[frameKey]
     if not procFrame then
-        procFrame = CreateProcGlowFrame(icon, "InterruptProcGlowFrame")
-        -- Desaturate to greyscale then tint red
+        procFrame = CreateProcGlowFrame(icon, frameKey)
         procFrame.ProcLoopFlipbook:SetDesaturated(true)
-        procFrame.ProcLoopFlipbook:SetVertexColor(INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B, 1)
+        procFrame.ProcLoopFlipbook:SetVertexColor(r, g, b, 1)
     end
-
-    local width = icon.cachedIconSize or icon:GetWidth()
-    procFrame:SetScale(width / 45)
-
-    -- Set alpha on the frame itself; the internal Alpha animation forces
-    -- the texture alpha to 1 every loop iteration, so texture-level alpha
-    -- would be overridden.  Frame-level alpha stacks and is not touched.
-    procFrame:SetAlpha(INTERRUPT_PROC_ALPHA)
-    procFrame:Show()
-
-    if not procFrame.ProcLoop:IsPlaying() then
-        procFrame.ProcLoop:Play()
-    end
-end
-
--- Purple-tinted proc glow for burst injection icons
-local BURST_PROC_R, BURST_PROC_G, BURST_PROC_B = 0.7, 0.2, 1.0
-
-local function ShowBurstProcGlow(icon)
-    if not icon then return end
-
-    local procFrame = icon.BurstProcGlowFrame
-    if not procFrame then
-        procFrame = CreateProcGlowFrame(icon, "BurstProcGlowFrame")
-        procFrame.ProcLoopFlipbook:SetDesaturated(true)
-        procFrame.ProcLoopFlipbook:SetVertexColor(BURST_PROC_R, BURST_PROC_G, BURST_PROC_B, 1)
-    end
-
     local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
     procFrame:SetAlpha(1.0)
     procFrame:Show()
-
     if not procFrame.ProcLoop:IsPlaying() then
         procFrame.ProcLoop:Play()
     end
 end
 
-local function HideBurstProcGlow(icon)
-    if not icon or not icon.BurstProcGlowFrame then return end
-    icon.BurstProcGlowFrame:Hide()
-    if icon.BurstProcGlowFrame.ProcLoop:IsPlaying() then
-        icon.BurstProcGlowFrame.ProcLoop:Stop()
+-- Shared helper: hide a named proc glow frame.
+local function HideColoredProcGlow(icon, frameKey)
+    if not icon or not icon[frameKey] then return end
+    icon[frameKey]:Hide()
+    if icon[frameKey].ProcLoop:IsPlaying() then
+        icon[frameKey].ProcLoop:Stop()
     end
 end
 
-local function HideInterruptProcGlow(icon)
-    if not icon or not icon.InterruptProcGlowFrame then return end
+local function ShowInterruptProcGlow(icon)
+    ShowColoredProcGlow(icon, "InterruptProcGlowFrame", INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B)
+end
 
-    icon.InterruptProcGlowFrame:Hide()
-    if icon.InterruptProcGlowFrame.ProcLoop:IsPlaying() then
-        icon.InterruptProcGlowFrame.ProcLoop:Stop()
-    end
+local function HideInterruptProcGlow(icon)
+    HideColoredProcGlow(icon, "InterruptProcGlowFrame")
+end
+
+local function ShowBurstProcGlow(icon)
+    ShowColoredProcGlow(icon, "BurstProcGlowFrame", BURST_PROC_R, BURST_PROC_G, BURST_PROC_B)
+end
+
+local function HideBurstProcGlow(icon)
+    HideColoredProcGlow(icon, "BurstProcGlowFrame")
 end
 
 local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)

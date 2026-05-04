@@ -140,20 +140,14 @@ function JustAC:DebugPrint(msg)
     end
 end
 
--- SavedVariables serialize numeric keys as strings; normalize on load
-function JustAC:NormalizeSavedData()
-    local charData = self.db and self.db.char
-    if not charData then return end
-
-    local profile = self.db and self.db.profile
-    if not profile then return end
-
-    -- ── Blacklist migration: db.char → db.profile (per-spec keyed) ──────
-    -- Old storage: charData.blacklistedSpells = {[spellID] = true, ...}
-    -- New storage: profile.blacklistedSpells = {["CLASS_N"] = {[spellID] = true}, ...}
-    -- Migrate char data into the current spec's list (same pattern as hotkeyOverrides migration).
+-------------------------------------------------------------------------------
+-- Data migration helpers for NormalizeSavedData
+-- Each function is a no-op when nothing to migrate.
+-------------------------------------------------------------------------------
+local function MigrateBlacklist(profile, charData)
     if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
 
+    -- db.char.blacklistedSpells → db.profile.blacklistedSpells (per-spec keyed)
     if charData.blacklistedSpells and next(charData.blacklistedSpells) then
         local SpellDB = LibStub("JustAC-SpellDB", true)
         local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
@@ -171,8 +165,7 @@ function JustAC:NormalizeSavedData()
         end
     end
 
-    -- Handle ancient flat profile.blacklistedSpells format (pre-4.x: flat {[spellID]=true})
-    -- Detect by checking if any key is numeric (spec-keyed tables have string keys like "WARRIOR_1")
+    -- Flat profile.blacklistedSpells format (pre-4.x: {[spellID]=true}) → spec-keyed
     local hasNumericKey = false
     for key, _ in pairs(profile.blacklistedSpells) do
         if type(key) == "number" or (type(key) == "string" and tonumber(key)) then
@@ -219,49 +212,42 @@ function JustAC:NormalizeSavedData()
             profile.blacklistedSpells[specKey] = normalized
         end
     end
+end
 
-    -- ── Defensive classSpells migration: per-class → per-spec keying ────
-    -- Old storage: classSpells["WARRIOR"] = {defensiveSpells={...}, ...}
-    -- New storage: classSpells["WARRIOR_1"] = {defensiveSpells={...}, ...}
-    -- One-time: copy class-level data to all specs of that class, then remove
-    -- the class-level key.
-    if profile.defensives and profile.defensives.classSpells then
-        local _, playerClass = UnitClass("player")
-        if playerClass then
-            local cs = profile.defensives.classSpells
-            local classData = cs[playerClass]
-            if classData and type(classData) == "table" then
-                -- Check if any list has data (defensiveSpells, petHealSpells, petRezSpells)
-                local hasData = false
-                for _, v in pairs(classData) do
-                    if type(v) == "table" and #v > 0 then hasData = true; break end
-                end
-                if hasData then
-                    -- Copy to all specs (max 4) that don't already have data
-                    local numSpecs = GetNumSpecializations and GetNumSpecializations() or 4
-                    for i = 1, numSpecs do
-                        local specKey = playerClass .. "_" .. i
-                        if not cs[specKey] or not next(cs[specKey]) then
-                            cs[specKey] = {}
-                            for listKey, spellList in pairs(classData) do
-                                if type(spellList) == "table" then
-                                    cs[specKey][listKey] = {}
-                                    for idx, spellID in ipairs(spellList) do
-                                        cs[specKey][listKey][idx] = spellID
-                                    end
-                                end
-                            end
+local function MigrateDefensiveSpecKeys(profile)
+    -- Per-class → per-spec keying for defensive classSpells
+    if not (profile.defensives and profile.defensives.classSpells) then return end
+    local _, playerClass = UnitClass("player")
+    if not playerClass then return end
+    local cs = profile.defensives.classSpells
+    local classData = cs[playerClass]
+    if not (classData and type(classData) == "table") then return end
+    local hasData = false
+    for _, v in pairs(classData) do
+        if type(v) == "table" and #v > 0 then hasData = true; break end
+    end
+    if hasData then
+        local numSpecs = GetNumSpecializations and GetNumSpecializations() or 4
+        for i = 1, numSpecs do
+            local specKey = playerClass .. "_" .. i
+            if not cs[specKey] or not next(cs[specKey]) then
+                cs[specKey] = {}
+                for listKey, spellList in pairs(classData) do
+                    if type(spellList) == "table" then
+                        cs[specKey][listKey] = {}
+                        for idx, spellID in ipairs(spellList) do
+                            cs[specKey][listKey][idx] = spellID
                         end
                     end
                 end
-                -- Remove class-level key to prevent re-migration
-                cs[playerClass] = nil
             end
         end
     end
+    cs[playerClass] = nil
+end
 
-    -- ── Hotkey overrides normalization ───────────────────────────────────
-    -- Normalize profile.hotkeyOverrides (SavedVariables serialise numeric keys as strings)
+local function MigrateHotkeyOverrides(profile, charData)
+    -- Normalize profile.hotkeyOverrides (SavedVariables serialize numeric keys as strings)
     if profile.hotkeyOverrides then
         local normalized = {}
         for key, value in pairs(profile.hotkeyOverrides) do
@@ -284,8 +270,10 @@ function JustAC:NormalizeSavedData()
         end
         charData.hotkeyOverrides = {}  -- Clear after migration
     end
+end
 
-    -- ── Legacy setting migrations ───────────────────────────────────────
+local function MigrateLegacySettings(profile)
+    local npo = profile.nameplateOverlay
     -- Migrate panelLocked boolean → panelInteraction string
     if profile.panelLocked == true and (not profile.panelInteraction or profile.panelInteraction == "unlocked") then
         profile.panelInteraction = "locked"
@@ -302,7 +290,6 @@ function JustAC:NormalizeSavedData()
         end
     end
     -- Nameplate overlay: nameplateOverlay.showHotkey → nameplateOverlay.textOverlays.hotkey.show
-    local npo = profile.nameplateOverlay
     if npo and npo.textOverlays and npo.textOverlays.hotkey then
         if npo.showHotkey == false then
             npo.textOverlays.hotkey.show = false
@@ -327,7 +314,7 @@ function JustAC:NormalizeSavedData()
             npo.interruptMode = "kickPrefer"
         end
     end
-    -- Migrate ccShielded → kickPrefer (renamed mode, same behavior)
+    -- ccShielded → kickPrefer (renamed mode, same behavior)
     if profile.interruptMode == "ccShielded" then profile.interruptMode = "kickPrefer" end
     -- Centralization migration: per-surface settings → single central setting
     -- interruptMode: overlay had its own copy → use profile-level only
@@ -392,7 +379,10 @@ function JustAC:NormalizeSavedData()
     profile.ccRegularMobs = nil
     if profile.defensives then profile.defensives.showHotkeys = nil end
     if npo then npo.showInterrupt = nil; npo.ccRegularMobs = nil; npo.showHotkey = nil end
-    -- Migrate legacy interruptAlertSound key → LSM key (4.17.0)
+end
+
+local function MigrateSoundKeys(profile)
+    -- interruptAlertSound old camelCase keys → LSM keys (4.17.0)
     local OLD_SOUND_TO_LSM = {
         -- Kept sounds (old camelCase → new LSM key)
         shing = "JAC: Shing!", wham = "JAC: Wham!", simonChime = "JAC: Simon Chime",
@@ -411,6 +401,21 @@ function JustAC:NormalizeSavedData()
     if oldSound and OLD_SOUND_TO_LSM[oldSound] then
         profile.interruptAlertSound = OLD_SOUND_TO_LSM[oldSound]
     end
+end
+
+-- SavedVariables serialize numeric keys as strings; normalize on load.
+-- Calls migration helpers in dependency order; each is a no-op if already migrated.
+function JustAC:NormalizeSavedData()
+    local charData = self.db and self.db.char
+    if not charData then return end
+    local profile = self.db and self.db.profile
+    if not profile then return end
+
+    MigrateBlacklist(profile, charData)
+    MigrateDefensiveSpecKeys(profile)
+    MigrateHotkeyOverrides(profile, charData)
+    MigrateLegacySettings(profile)
+    MigrateSoundKeys(profile)
 end
 
 function JustAC:OnInitialize()
@@ -749,13 +754,8 @@ function JustAC:RefreshConfig()
     end
 
     -- Refresh options panel dynamic entries if it's been initialized
-    if Options then
-        if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
-        if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
-        if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
-        if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
-        if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
-        if Options.UpdateCustomQueueOptions then Options.UpdateCustomQueueOptions(self) end
+    if Options and Options.RefreshAllDynamic then
+        Options.RefreshAllDynamic(self)
     end
 end
 
@@ -916,32 +916,39 @@ end
 
 function JustAC:GetProfile() return self.db and self.db.profile end
 
--- Centralized cache invalidation with flags
-function JustAC:InvalidateCaches(flags)
-    flags = flags or {}
-    
-    if flags.spells or flags.all then
+-- Per-category cache invalidation callbacks. Defined once; called by InvalidateCaches.
+-- Closures capture the module upvalues by reference, so they see post-LoadModules values.
+local CACHE_INVALIDATORS = {
+    spells = function()
         if SpellQueue and SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
         if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
-    end
-    
-    if flags.macros or flags.all then
+    end,
+    macros = function()
         if MacroParser and MacroParser.InvalidateMacroCache then MacroParser.InvalidateMacroCache() end
-    end
-    
-    if flags.hotkeys or flags.all then
+    end,
+    hotkeys = function()
         if ActionBarScanner and ActionBarScanner.InvalidateHotkeyCache then ActionBarScanner.InvalidateHotkeyCache() end
         if UIRenderer and UIRenderer.InvalidateHotkeyCache then UIRenderer.InvalidateHotkeyCache() end
         if UINameplateOverlay and UINameplateOverlay.InvalidateHotkeyCache then UINameplateOverlay.InvalidateHotkeyCache() end
-    end
-    
-    if flags.forms or flags.all then
+    end,
+    forms = function()
         if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
         if FormCache and FormCache.InvalidateSpellMapping then FormCache.InvalidateSpellMapping() end
-    end
-    
-    if flags.auras or flags.all then
+    end,
+    auras = function()
         if RedundancyFilter and RedundancyFilter.InvalidateCache then RedundancyFilter.InvalidateCache() end
+    end,
+}
+
+-- Centralized cache invalidation with flags
+function JustAC:InvalidateCaches(flags)
+    flags = flags or {}
+    if flags.all then
+        for _, invalidate in pairs(CACHE_INVALIDATORS) do invalidate() end
+        return
+    end
+    for cat, invalidate in pairs(CACHE_INVALIDATORS) do
+        if flags[cat] then invalidate() end
     end
 end
 
@@ -1509,15 +1516,10 @@ function JustAC:OpenOptionsPanel()
         if self.InitializeDefensiveSpells then
             self:InitializeDefensiveSpells()
         end
-        if Options.UpdateBlacklistOptions then Options.UpdateBlacklistOptions(self) end
-        if Options.UpdateHotkeyOverrideOptions then Options.UpdateHotkeyOverrideOptions(self) end
-        if Options.UpdateDefensivesOptions then Options.UpdateDefensivesOptions(self) end
-        if Options.UpdateGapCloserOptions then Options.UpdateGapCloserOptions(self) end
-        if Options.UpdateBurstInjectionOptions then Options.UpdateBurstInjectionOptions(self) end
-        if Options.UpdateCustomQueueOptions then Options.UpdateCustomQueueOptions(self) end
+        if Options.RefreshAllDynamic then Options.RefreshAllDynamic(self) end
     end
 
-    if BlizzardAPI and BlizzardAPI.IsMidnightOrLater() then
+    if BlizzardAPI and BlizzardAPI.IS_MIDNIGHT_OR_LATER then
         local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)
         if AceConfigDialog then
             AceConfigDialog:Open("JustAssistedCombat")

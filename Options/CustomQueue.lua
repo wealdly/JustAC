@@ -335,15 +335,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
 
     local spellListArgs = spellListGroup.args
     local staticKeys = { spellListInfo = true }
-    local keysToClear = {}
-    for key, _ in pairs(spellListArgs) do
-        if not staticKeys[key] then
-            keysToClear[#keysToClear + 1] = key
-        end
-    end
-    for _, key in ipairs(keysToClear) do
-        spellListArgs[key] = nil
-    end
+    SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local specKey = GetSpecKey()
     if not specKey then return end

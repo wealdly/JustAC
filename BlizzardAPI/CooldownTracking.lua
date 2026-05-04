@@ -219,10 +219,13 @@ local function ClearCachedDurations()
 end
 
 --- Cache maxCharges and current charge state for a spell.
---- Call out of combat only — all GetSpellCharges fields are SECRET in combat.
+--- Call out of combat only — currentCharges, cooldownStartTime, cooldownDuration,
+--- chargeModRate are SECRET in combat. maxCharges and isActive are NeverSecret
+--- (source-verified), but this function still guards against combat as a conservative
+--- measure since the other fields it reads are secret.
 local function CacheChargesForSpell(spellID)
     if not spellID or not C_Spell_GetSpellCharges then return end
-    if InCombatLockdown() then return end  -- fields are ALL SECRET in combat
+    if InCombatLockdown() then return end  -- currentCharges/cooldownDuration are SECRET in combat
     local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
     if ok and chargeInfo then
         local maxCharges = Unsecret(chargeInfo.maxCharges)

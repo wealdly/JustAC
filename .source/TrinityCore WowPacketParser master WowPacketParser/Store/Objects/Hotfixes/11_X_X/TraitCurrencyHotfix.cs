@@ -1,0 +1,57 @@
+using WowPacketParser.Misc;
+using WowPacketParser.SQL;
+
+namespace WowPacketParser.Store.Objects
+{
+    [Hotfix]
+    [DBTableName("trait_currency")]
+    public sealed record TraitCurrencyHotfix1100: IDataModel
+    {
+        [DBFieldName("ID", true)]
+        public uint? ID;
+
+        [DBFieldName("Type")]
+        public int? Type;
+
+        [DBFieldName("CurrencyTypesID")]
+        public int? CurrencyTypesID;
+
+        [DBFieldName("Flags")]
+        public int? Flags;
+
+        [DBFieldName("Icon")]
+        public int? Icon;
+
+        [DBFieldName("VerifiedBuild")]
+        public int? VerifiedBuild = ClientVersion.BuildInt;
+    }
+
+    [Hotfix]
+    [DBTableName("trait_currency")]
+    public sealed record TraitCurrencyHotfix1125 : IDataModel
+    {
+        [DBFieldName("ID", true)]
+        public uint? ID;
+
+        [DBFieldName("Type")]
+        public int? Type;
+
+        [DBFieldName("CurrencyTypesID")]
+        public int? CurrencyTypesID;
+
+        [DBFieldName("Flags")]
+        public int? Flags;
+
+        [DBFieldName("Icon")]
+        public int? Icon;
+
+        [DBFieldName("PlayerDataElementAccountID")]
+        public int? PlayerDataElementAccountID;
+
+        [DBFieldName("PlayerDataElementCharacterID")]
+        public int? PlayerDataElementCharacterID;
+
+        [DBFieldName("VerifiedBuild")]
+        public int? VerifiedBuild = ClientVersion.BuildInt;
+    }
+}

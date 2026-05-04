@@ -95,7 +95,7 @@ function DebugCommands.ModuleDiagnostics(addon)
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI then
-        if BlizzardAPI.IsMidnightOrLater and BlizzardAPI.IsMidnightOrLater() then
+        if BlizzardAPI.IS_MIDNIGHT_OR_LATER then
             addon:Print("  WoW Version: |cffffff0012.0+ (Midnight)|r")
         end
         

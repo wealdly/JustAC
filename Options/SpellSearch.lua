@@ -264,6 +264,23 @@ function SpellSearch.GetFilteredPlayerAuras(filterText, excludeList)
 end
 
 -------------------------------------------------------------------------------
+-- Helper to clear dynamic (non-static) keys from an AceConfig args table.
+-- staticKeys: {key = true, ...} set of keys to preserve.
+-- Avoids allocating a per-call table by using a two-pass collect-then-nil pattern.
+-------------------------------------------------------------------------------
+function SpellSearch.ClearDynamicArgs(argsTable, staticKeys)
+    local keysToClear = {}
+    for key, _ in pairs(argsTable) do
+        if not staticKeys[key] then
+            keysToClear[#keysToClear + 1] = key
+        end
+    end
+    for _, key in ipairs(keysToClear) do
+        argsTable[key] = nil
+    end
+end
+
+-------------------------------------------------------------------------------
 -- Helper to add a spell or item to a list (used by both dropdown and manual input)
 -- Positive ID = spell, negative ID = item (stored as -itemID in the list)
 -------------------------------------------------------------------------------

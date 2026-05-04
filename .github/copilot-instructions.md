@@ -171,13 +171,17 @@ Two-tier health thresholds in `JustAC.lua`:
 - `timeUntilEndOfStartRecovery` — SECRET in combat. Counts down GCD remaining (unflagged spells) or total CD remaining (flagged spells). Display-only via UI pipeline. Note: despite the name suggesting "GCD recovery", it tracks total CD remaining for flagged spells (e.g. 28.2s of 30s Wake CD).
 - `auraInstanceID` — Stable numeric handle, same ID maps to same aura across combat. Use for tracking aura identity when `spellId`/`name` are secret.
 - `isHelpful` / `isHarmful` — Aura disposition (may be secret in some contexts, fail-open)
+- `SpellCooldownInfo.isActive` — **NeverSecret** bool (source-verified). `false` when cooldown is not active (startTime/duration are 0 or isEnabled false); `true` otherwise. Safe direct CD-active check without branching on secret `duration`.
+- `SpellCooldownInfo.isEnabled` — **NeverSecret** bool. `false` if cooldown is on hold (e.g. spell cancelled mid-cast); `true` otherwise. Static cooldown hold detection.
+- `SpellChargeInfo.isActive` — **NeverSecret** bool (source-verified). `false` when charge recharge is not active (at max charges, or startTime/duration are 0); `true` otherwise. Direct recharge-in-progress signal.
+- `SpellChargeInfo.maxCharges` — **NeverSecret** number. Max charge count. Cache this; `currentCharges` is SECRET.
 
 **NeverSecret Spell APIs (verified 2026-02-25):**
-- `C_Spell.IsSpellUsable(id)` — Real `bool, bool` in combat (usable + noMana). Verified NeverSecret on Ret Paladin.
+- `C_Spell.IsSpellUsable(id)` — Real `bool, bool` in combat (`isUsable`, `insufficientPower`). Verified NeverSecret on Ret Paladin.
 - `C_Spell.GetSpellPowerCost(id)` — ALL fields NeverSecret: `type`, `cost`, `minCost`, `costPercentOfMax`. Cacheable at registration. Use with IsUsableAction to distinguish CD vs resource issues.
 - `C_Spell.IsCurrentSpell(id)` — Real `bool` in combat. Active cast/channel detection at spell level.
 - `C_Spell.GetSpellInfo(id)` — `name`, `iconID` NeverSecret in combat. Display pipeline safe.
-- `C_Spell.GetSpellCharges(id)` — **ALL fields SECRET** (including maxCharges). Cache maxCharges out of combat.
+- `C_Spell.GetSpellCharges(id)` — **PARTIALLY SECRET**: `currentCharges` SECRET; `maxCharges`, `isActive` **NeverSecret**. Cache `maxCharges` at registration; use `isActive` for recharge detection in combat.
 
 **NeverSecret Power APIs (verified 2026-02-25):**
 - `UnitPowerType("player")` — NeverSecret. Returns primary power type enum (0=Mana, 1=Rage, 3=Energy, etc.).
@@ -208,11 +212,11 @@ Two-tier health thresholds in `JustAC.lua`:
 **NeverSecret Action Bar APIs (verified 2026-02-25):**
 - `C_ActionBar.IsActionInRange(slot, "target")` — Real `bool` in combat. Range check per action slot.
 - `C_ActionBar.IsInterruptAction(slot)` — Real `bool` in combat. Identifies interrupt spell slots.
-- `C_ActionBar.IsUsableAction(slot)` — Real `bool, bool` in combat. Usable + noMana.
+- `C_ActionBar.IsUsableAction(slot)` — Real `bool, bool` in combat. `isUsable`, `isLackingResources` (was `noMana` in pre-12.0 nomenclature; positional, code unaffected).
 - `C_ActionBar.IsAttackAction(slot)` — Real `bool` in combat. Auto-attack slot detection.
 - `C_ActionBar.IsCurrentAction(slot)` — Real `bool` in combat. Active cast/channel/toggle only (NOT melee swing).
 - `ACTION_RANGE_CHECK_UPDATE` event — Push-based per-slot range (`isInRange`, `checksRange`). Requires `EnableActionRangeCheck(slot, true)`.
-- `ACTION_USABLE_CHANGED` event — Batched `ActionUsableState[]` with per-slot `usable`/`noMana` bools.
+- `ACTION_USABLE_CHANGED` event — Batched `ActionUsableState[]` with per-slot `usable`/`noMana` bools. **Note:** the struct field is still named `noMana` in WoW 12.0.5 source (`ActionBarSharedDocumentation.lua`). `isLackingResources` is only the positional return name from `C_ActionBar.IsUsableAction()`, not the event payload field.
 - `C_Spell.IsExternalDefensive(spellID)` — Real `bool`. Static classification, always works.
 - `C_DamageMeter.GetSessionDurationSeconds(type)` — Real combat timer (seconds). No SecretWhen.
 
@@ -223,7 +227,14 @@ Two-tier health thresholds in `JustAC.lua`:
 
 **NeverSecret Spell Classification APIs (verified 2026-02-25):**
 - `C_CooldownViewer.GetCooldownViewerCategorySet(cat, false)` — Returns cooldownIDs per category (0=Essential, 1=Utility, 2=TrackedBuff, 3=TrackedBar). Non-secret in combat.
-- `C_CooldownViewer.GetCooldownViewerCooldownInfo(id)` — Returns static metadata (spellID, isKnown, category, flags). `hasAura` is static config flag, NOT live state.
+- `C_CooldownViewer.GetCooldownViewerCooldownInfo(id)` — Returns static metadata: `cooldownID`, `spellID`, `overrideSpellID`, `overrideTooltipSpellID`, `linkedSpellIDs[]`, `selfAura`, `hasAura`, `charges`, `isKnown`, `flags`, `category`. `hasAura` is static config flag, NOT live state. `COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED` event fires when `overrideSpellID` changes (payload: `baseSpellID`, `overrideSpellID`).
+- `C_Spell.IsSpellImportant(id)` — NeverSecret `bool`. True if spell is flagged important (e.g. lethal interrupt). Useful for prioritizing interrupt suggestions.
+- `C_Spell.IsSpellCrowdControl(id)` — NeverSecret `bool`. True if spell causes CC when cast on a valid target.
+- `C_Spell.IsSelfBuff(id)` — NeverSecret `bool`. True if aura only affects the caster (no target effects).
+- `C_UnitAuras.AuraIsBigDefensive(id)` — `SecretArguments=AllowedWhenTainted`. True if aura is a big defensive. Usable as a Blizzard-sourced defensive classifier.
+- `C_UnitAuras.AuraIsPrivate(id)` — `SecretArguments=AllowedWhenTainted`. True if aura is private (hidden from addons normally).
+- `C_Spell.IsClassTalentSpell(spellIdentifier)` — `AllowedWhenTainted`. True if spell originates from the Class Talent tree. Takes spellID (int) or spell name (string).
+- `C_AssistedCombat.GetActionSpell()` — Returns the fixed action-button spell ID (the spell placed on the AC action button), distinct from `GetNextCastSpell()`. No payload, no args.
 
 **NeverSecret LossOfControl fields (from source, untested in-game):**
 - `locType` — CC type string ("STUN", "SILENCE", "ROOT", "FEAR", etc.)
@@ -242,7 +253,8 @@ Fast boolean checks — avoid per-value `issecretvalue()` overhead:
 - `C_Secrets.ShouldUnitHealthMaxBeSecret(unit)` — `false` in combat (UnitHealthMax is NeverSecret)
 - `C_Secrets.ShouldUnitPowerBeSecret(unit[, powerType])` — no-arg=`true` (conservative); per-type is granular (Holy Power=`false`)
 - `C_Secrets.ShouldUnitThreatStateBeSecret(unit)` — `false` in combat (NeverSecret)
-- `C_RestrictedActions.IsAddOnRestrictionActive()` — addon restriction state
+- `C_Secrets.ShouldUnitAuraInstanceBeSecret(unit, auraInstanceID)` — per-instance aura secrecy check
+- `C_RestrictedActions.IsAddOnRestrictionActive(type)` — addon restriction state; `type` is `AddOnRestrictionType` enum: Combat=0, Encounter=1, ChallengeMode=2, PvPMatch=3, Map=4, Chat=5
 - See `Documentation/MIDNIGHT_POST_LAUNCH_RESEARCH.md` for full function list (25+ functions)
 
 **Secret Values (WoW 12.0+):**

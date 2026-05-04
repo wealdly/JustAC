@@ -9,6 +9,20 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
+--- Returns true when the player's class has pet rez/summon defaults.
+local function IsPetRezClass()
+    local _, pc = UnitClass("player")
+    local SDB = LibStub("JustAC-SpellDB", true)
+    return SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc]
+end
+
+--- Returns true when the player's class has pet heal defaults.
+local function IsPetHealClass()
+    local _, pc = UnitClass("player")
+    local SDB = LibStub("JustAC-SpellDB", true)
+    return SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]
+end
+
 function Defensives.CreateTabArgs(addon)
     return {
         type = "group",
@@ -59,22 +73,14 @@ function Defensives.CreateTabArgs(addon)
                         type = "header",
                         name = L["Pet Rez/Summon Priority List"],
                         order = 80,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetRezClass() end,
                     },
                     petRezInfo = {
                         type = "description",
                         name = L["Pet Rez/Summon Priority desc"],
                         order = 81,
                         fontSize = "small",
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetRezClass() end,
                     },
                     restorePetRezDefaults = {
                         type = "execute",
@@ -86,11 +92,7 @@ function Defensives.CreateTabArgs(addon)
                             addon:RestoreDefensiveDefaults("petrez")
                             Defensives.UpdateDefensivesOptions(addon)
                         end,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetRezClass() end,
                     },
                     -- Dynamic petRezSpells entries added by UpdateDefensivesOptions
                     -- PET HEAL PRIORITY LIST (110+, pet classes only)
@@ -98,22 +100,14 @@ function Defensives.CreateTabArgs(addon)
                         type = "header",
                         name = L["Pet Heal Priority List"],
                         order = 110,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetHealClass() end,
                     },
                     petHealInfo = {
                         type = "description",
                         name = L["Pet Heal Priority desc"],
                         order = 111,
                         fontSize = "small",
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetHealClass() end,
                     },
                     restorePetHealDefaults = {
                         type = "execute",
@@ -125,11 +119,7 @@ function Defensives.CreateTabArgs(addon)
                             addon:RestoreDefensiveDefaults("petheal")
                             Defensives.UpdateDefensivesOptions(addon)
                         end,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc])
-                        end,
+                        hidden = function() return not IsPetHealClass() end,
                     },
                     -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
                 },
@@ -152,16 +142,7 @@ function Defensives.UpdateDefensivesOptions(addon)
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }
-
-    local keysToClear = {}
-    for key, _ in pairs(spellListArgs) do
-        if not staticKeys[key] then
-            table.insert(keysToClear, key)
-        end
-    end
-    for _, key in ipairs(keysToClear) do
-        spellListArgs[key] = nil
-    end
+    SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local defensives = addon.db.profile.defensives
     if not defensives then return end

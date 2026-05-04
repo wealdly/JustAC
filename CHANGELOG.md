@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [4.20.1] - 2026-05-04
+
+### Internal
+- **Consistency / dead-code removal**
+  - `DebugCommands.lua`, `JustAC.lua`: Replaced `BlizzardAPI.IsMidnightOrLater()` runtime calls with the pre-computed `BlizzardAPI.IS_MIDNIGHT_OR_LATER` constant.
+  - `UI/UIFrameFactory.lua`: Exported `POSITION_HOLD_TIME` (150 ms) and `GLOW_HOLD_TIME` (100 ms) hysteresis constants; `UI/UIRenderer.lua` and `UI/UINameplateOverlay.lua` now read from those exports instead of local duplicates.
+- **Refactoring — no behaviour change**
+  - `JustAC.lua`: Split `NormalizeSavedData()` into five named migration helpers (`MigrateBlacklist`, `MigrateDefensiveSpecKeys`, `MigrateHotkeyOverrides`, `MigrateLegacySettings`, `MigrateSoundKeys`).
+  - `JustAC.lua`: `InvalidateCaches()` if-chain replaced with `CACHE_INVALIDATORS` closure table.
+  - `UI/UIAnimations.lua`: Extracted shared `ShowColoredProcGlow` / `HideColoredProcGlow` helpers; interrupt/burst glow functions reduced to one-line delegates.
+  - `Options/Core.lua`: Six `Options.UpdateX` wrappers replaced with `FORWARDERS` generation loop; added `Options.RefreshAllDynamic(addon)` batch helper; call sites consolidated.
+  - `Options/SpellSearch.lua`: Added `SpellSearch.ClearDynamicArgs(argsTable, staticKeys)` utility; used in `Options/Offensive.lua`, `Options/CustomQueue.lua`, `Options/Defensives.lua` to replace manual two-loop key-clearing.
+  - `Options/Defensives.lua`: Extracted `IsPetRezClass()` / `IsPetHealClass()` module-local helpers; six duplicate `hidden` closures reduced to one-line delegates.
+  - `UI/UIFrameFactory.lua`: Exported `CreateBaseIcon`; `UI/UINameplateOverlay.lua` replaced its 200-line duplicate icon-creation body with a ~60-line version delegating to `UIFrameFactory.CreateBaseIcon`.
+- **Bug fix — charge display in combat**
+  - `UI/UIRenderer.lua`: `GetSpellCharges().maxCharges` is NeverSecret (source-verified against WoW 12.0.5). Removed the `GetCachedMaxCharges` fallback that was treating it as secret — the cache could be nil after a spec-change cache wipe before combat started, silently suppressing charge count display. `chargeInfo = result` assignment remains OOC-only since `currentCharges`/`cooldownDuration`/`cooldownStartTime` are still SECRET in combat; `chargeText` now set unconditionally for spells with `maxCharges > 1` (secret value passes through `FontString:SetText` safely).
+
 ## [4.20.0] - 2026-04-16
 
 ### Added
@@ -1761,7 +1778,6 @@ Major update for full WoW 12.0 (Midnight) compatibility with comprehensive secre
 - **Version detection infrastructure**: Prepare for WoW 12.0 compatibility fixes
 - Added `BlizzardAPI.GetInterfaceVersion()` - Returns current WoW version (110207, 120000, etc.)
 - Added `BlizzardAPI.IsMidnightOrLater()` - Check if running 12.0+
-- Added `BlizzardAPI.VersionCall()` - Helper for version-aware function calls
 - Created `Documentation/VERSION_CONDITIONALS.md` - Patterns for adding version-specific code
 - Ready to accept 12.0 error reports and add conditional fixes
 

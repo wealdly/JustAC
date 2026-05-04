@@ -49,9 +49,9 @@ local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPAC
 local lastCooldownUpdate       = 0
 local COOLDOWN_UPDATE_INTERVAL = 0.08
 
--- Position stabilization / glow hysteresis (matches UIRenderer)
-local POSITION_HOLD_TIME = 0.15  -- 150ms before positions 2+ can swap spells
-local GLOW_HOLD_TIME     = 0.10  -- 100ms before glow animation switches
+-- Position stabilization / glow hysteresis (sourced from UIFrameFactory exports)
+local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms before positions 2+ can swap spells
+local GLOW_HOLD_TIME     = UIFrameFactory.GLOW_HOLD_TIME      -- 100ms before glow animation switches
 
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
@@ -127,228 +127,58 @@ local cachedDefensiveQueue = nil
 --   • JustAC:CreateKeyPressDetector     (key-press flash via normalizedHotkey)
 -- ─────────────────────────────────────────────────────────────────────────────
 local function CreateOverlayIcon(iconSize, profile)
-    local button = CreateFrame("Button", nil, UIParent)
+    -- Build the shared icon skeleton (textures, cooldowns, hotkey, animations).
+    -- isClickable=false (always click-through), isFirstIcon=true (uses HOTKEY_OFFSET_FIRST=-3).
+    local button = UIFrameFactory.CreateBaseIcon(UIParent, iconSize, false, true, nil)
+    if not button then return nil end
+
+    -- Nameplate-specific: BACKGROUND strata so icons sit under addon UI.
     button:SetFrameStrata("BACKGROUND")
-    button:SetSize(iconSize, iconSize)
-    button:EnableMouse(false)   -- always click-through; no tooltip, no drag
+    button.FlashFrame:SetFrameStrata("BACKGROUND")
+    button.cooldownContainer:SetFrameStrata("BACKGROUND")
+    button.cooldown:SetFrameStrata("BACKGROUND")
+    button.chargeCooldown:SetFrameStrata("BACKGROUND")
+    button.borderFrame:SetFrameStrata("BACKGROUND")
+    button.hotkeyFrame:SetFrameStrata("BACKGROUND")
 
-    -- Slot background (Blizzard depth effect)
-    local slotBackground = button:CreateTexture(nil, "BACKGROUND", nil, 0)
-    slotBackground:SetAllPoints(button)
-    slotBackground:SetAtlas("UI-HUD-ActionBar-IconFrame-Background")
-    button.SlotBackground = slotBackground
+    -- Nameplate-specific: tighter cooldown insets (3 px vs 4 px in base).
+    button.cooldown:ClearAllPoints()
+    button.cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
+    button.cooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
+    button.chargeCooldown:ClearAllPoints()
+    button.chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
+    button.chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
 
-    -- Spell icon texture
-    local iconTexture = button:CreateTexture(nil, "ARTWORK")
-    iconTexture:SetAllPoints(button)
-    iconTexture:Hide()
-    button.iconTexture = iconTexture
-
-    -- Bevelled corner mask
-    local maskPadding = math_floor(iconSize * 0.17)
-    local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("TOPLEFT",     button, "TOPLEFT",     -maskPadding,  maskPadding)
-    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT",  maskPadding, -maskPadding)
-    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
-    iconTexture:AddMaskTexture(iconMask)
-    slotBackground:AddMaskTexture(iconMask)
-
-    -- Flash overlay for key-press feedback (used by UIAnimations.StartFlash)
-    local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetFrameStrata("BACKGROUND")
-    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(iconSize + 2, iconSize + 2)
-    flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    flashTexture:SetAllPoints(flashFrame)
-    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
-    flashTexture:SetBlendMode("ADD")
-    flashTexture:Hide()
-    button.Flash     = flashTexture
-    button.FlashFrame = flashFrame
-    button.flashing  = 0
-    button.flashtime = 0
-
-    -- Cooldown container (clips swipe to button bounds)
-    local cooldownContainer = CreateFrame("Frame", nil, button)
-    cooldownContainer:SetFrameStrata("BACKGROUND")
-    cooldownContainer:SetAllPoints(button)
-    cooldownContainer:SetClipsChildren(true)
-
-    -- Main cooldown (spell CD / GCD)
-    local cooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    cooldown:SetFrameStrata("BACKGROUND")
-    cooldown:ClearAllPoints()   -- CooldownFrameTemplate uses setAllPoints="true"; clear before insetting
-    cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
-    cooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
-    cooldown:SetDrawEdge(false)
-    cooldown:SetDrawBling(false)   -- BlingTexture renders outside frame bounds
-    cooldown:SetDrawSwipe(true)
-    cooldown:SetReverse(false)
-    cooldown:SetSwipeColor(0, 0, 0, 0.6)
-    cooldown:Clear()
-    cooldown:Hide()
-    button.cooldown = cooldown
-    -- Store cooldown text region for ApplyTextOverlaySettings and per-frame show/hide
-    local cooldownText = cooldown:GetRegions()
-    button.cooldownText = (cooldownText and cooldownText.SetFont) and cooldownText or nil
-
-    -- Charge cooldown (multi-charge recharge)
-    local chargeCooldown = CreateFrame("Cooldown", nil, cooldownContainer, "CooldownFrameTemplate")
-    chargeCooldown:SetFrameStrata("BACKGROUND")
-    chargeCooldown:ClearAllPoints()
-    chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
-    chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
-    -- Blizzard 12.0: charge cooldowns use edge ring only (drawSwipe="false" in XML).
-    -- Swipe is a filled dark polygon that can bleed; edge ring is a thin border that stays contained.
-    chargeCooldown:SetDrawSwipe(false)
-    chargeCooldown:SetDrawEdge(true)
-    chargeCooldown:SetDrawBling(false)
-    chargeCooldown:SetHideCountdownNumbers(true)
-    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
-    chargeCooldown:Clear()
-    chargeCooldown:Hide()
-    button.chargeCooldown = chargeCooldown
-
-    -- Border frame: sits above cooldowns (L+3) so its opaque edges cover swipe corner overflow.
-    -- Mirrors the same fix applied to CreateBaseIcon in UIFrameFactory.
-    local borderFrame = CreateFrame("Frame", nil, button)
-    borderFrame:SetFrameStrata("BACKGROUND")
-    borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
-    borderFrame:SetAllPoints(button)
-    local normalTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    normalTexture:SetSize(iconSize, iconSize)
-    normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
-    button.NormalTexture = normalTexture
-    button.borderFrame   = borderFrame
-
-    -- Casting highlight (parity with UIFrameFactory.CreateBaseIcon)
-    local castingHighlight = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    castingHighlight:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    castingHighlight:SetSize(iconSize, iconSize)
-    castingHighlight:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    castingHighlight:SetVertexColor(1, 1, 1, 0.6)
-    castingHighlight:Hide()
-    button.castingHighlight = castingHighlight
-    button.castingHighlightShown = false
-
-    -- Hotkey text (top-right corner; display controlled by showHotkey setting)
-    local hotkeyFrame = CreateFrame("Frame", nil, button)
-    hotkeyFrame:SetFrameStrata("BACKGROUND")
-    hotkeyFrame:SetAllPoints(button)
-    hotkeyFrame:SetFrameLevel(button:GetFrameLevel() + 15)
-    local hotkeyText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    hotkeyText:SetFont(STANDARD_TEXT_FONT, math_max(8, math_floor(iconSize * 0.4)), "OUTLINE")
-    hotkeyText:SetTextColor(1, 1, 1, 1)
-    hotkeyText:SetJustifyH("RIGHT")
-    hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", -3, -3)
-    button.hotkeyFrame = hotkeyFrame
-    button.hotkeyText = hotkeyText
-
-    -- Charge count text (bottom-right; required by UpdateButtonCooldowns)
-    local chargeText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    chargeText:SetFont(STANDARD_TEXT_FONT, math_max(8, math_floor(iconSize * 0.26)), "OUTLINE")
-    chargeText:SetTextColor(1, 1, 1, 1)
-    chargeText:SetJustifyH("RIGHT")
-    chargeText:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3, 3)
-    chargeText:SetText("")
-    chargeText:Hide()
-    button.chargeText = chargeText
-
-    -- "WAIT" center indicator (parity with UIFrameFactory.CreateBaseIcon)
-    local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
-    centerText:SetFont(STANDARD_TEXT_FONT, math_max(9, math_floor(iconSize * 0.26)), "OUTLINE")
-    centerText:SetTextColor(1, 0.9, 0.2, 1)
-    centerText:SetJustifyH("CENTER")
-    centerText:SetJustifyV("MIDDLE")
-    centerText:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    centerText:SetText("")
-    centerText:Hide()
-    button.centerText = centerText
-
-    -- Fade-in / fade-out animations (required by UIRenderer.ShowDefensiveIcon /
-    -- HideDefensiveIcon; gracefully skipped if nil, but present for full parity)
-    local fadeIn      = button:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    fadeIn:SetScript("OnFinished", function()
-        -- Clamp to target opacity after fade-in completes (opacity < 1 support)
+    -- Nameplate-specific: fade-in clamps to overlayOpacity (not frameOpacity).
+    button.fadeIn:SetScript("OnFinished", function()
         local targetAlpha = button.overlayOpacity or 1
         if targetAlpha < 1 then button:SetAlpha(targetAlpha) end
     end)
-    button.fadeIn = fadeIn
 
-    local fadeOut      = button:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
-        button:Hide()
-        button:SetAlpha(0)
-    end)
-    button.fadeOut = fadeOut
-
-    -- State fields expected by UIRenderer.UpdateButtonCooldowns
-    button.spellID              = nil
-    button.itemID               = nil
-    button.isItem               = nil
-    button.currentID            = nil
-    button._cooldownShown       = false
-    button._chargeCooldownShown = false
-    button._cachedMaxCharges    = nil
-
-    -- Opacity support (set before ShowDefensiveIcon to drive OnFinished clamp)
-    button.overlayOpacity = 1
-
-    -- Hotkey tracking for CreateKeyPressDetector flash
-    button.normalizedHotkey         = nil
-    button.previousNormalizedHotkey = nil
-    button.hotkeyChangeTime         = nil
-    button.spellChangeTime          = nil
-    button.cachedHotkey             = nil
-
-    -- Glow state flags
-    button.hasAssistedGlow    = false
-    button.hasInterruptGlow   = false
-    button.hasProcGlow        = false
+    -- Nameplate-specific state fields.
+    button.isOverlayIcon      = true
+    button.overlayOpacity     = 1
     button.hasGapCloserGlow   = false
     button.hasBurstGlow       = false
-    button.hasDefensiveGlow   = false
 
-    -- Tag for UIAnimations: use lower glow frame levels to stay behind addon UI
-    button.isOverlayIcon = true
-    button.cachedIconSize = iconSize  -- NeverSecret fallback; GetWidth() is secret on nameplate-parented frames in combat
-
-    button:SetAlpha(0)
-    button:Hide()
-
-    -- Register with Masque for user-configurable skinning (parity with UIFrameFactory).
-    -- Skip in combat: AddButton calls Button:GetSize() which returns a secret value (12.0 combat).
-    -- Icons created in combat use default Masque skin; next OOC Destroy+Create applies custom skin.
+    -- Nameplate-specific Masque registration (overlay group; skip if InCombatLockdown
+    -- since GetSize() returns a secret value, causing Masque to misbehave).
+    -- Icons created in combat use the default Masque skin; next OOC Destroy+Create applies it.
     local MasqueGroup = (not InCombatLockdown()) and GetMasqueOverlayGroup and GetMasqueOverlayGroup()
     if MasqueGroup then
         MasqueGroup:AddButton(button, {
-            Icon = button.iconTexture,
-            Cooldown = button.cooldown,
+            Icon           = button.iconTexture,
+            Cooldown       = button.cooldown,
             ChargeCooldown = button.chargeCooldown,
-            HotKey = button.hotkeyText,
-            Count = button.chargeText,
-            Normal = button.NormalTexture,
+            HotKey         = button.hotkeyText,
+            Count          = button.chargeText,
+            Normal         = button.NormalTexture,
         })
     end
 
-    -- Apply central text overlay settings AFTER Masque so our anchor overrides
+    -- Apply overlay text overlay settings AFTER Masque so our anchor overrides
     -- the skin's HotKey position.
-    if UIFrameFactory and UIFrameFactory.ApplyTextOverlaySettings then
+    if UIFrameFactory.ApplyTextOverlaySettings then
         local mergedOverlays = UIFrameFactory.MergeOverlayTextOverlays(profile)
         UIFrameFactory.ApplyTextOverlaySettings(button, iconSize, mergedOverlays)
     end
