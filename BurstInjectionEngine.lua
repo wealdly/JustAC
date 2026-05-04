@@ -258,7 +258,7 @@ local function TryInjectionCandidate(spellID, addedSpellIDs)
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Resource check: don't inject spells the player can't afford
-    -- C_Spell.IsSpellUsable returns (isUsable, notEnoughResources) — both NeverSecret
+    -- C_Spell.IsSpellUsable returns (isUsable, insufficientPower) — both NeverSecret
     -- failOpen=true: if usability can't be determined, allow the spell through
     local _, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID, true)
     if notEnoughResources then return nil end

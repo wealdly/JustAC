@@ -66,16 +66,7 @@ function Offensive.UpdateBlacklistOptions(addon)
         info = true,
         warning = true,
     }
-
-    local keysToClear = {}
-    for key, _ in pairs(blacklistArgs) do
-        if not staticKeys[key] then
-            table.insert(keysToClear, key)
-        end
-    end
-    for _, key in ipairs(keysToClear) do
-        blacklistArgs[key] = nil
-    end
+    SpellSearch.ClearDynamicArgs(blacklistArgs, staticKeys)
 
     if not addon.db.profile.blacklistedSpells then
         addon.db.profile.blacklistedSpells = {}

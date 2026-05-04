@@ -23,47 +23,33 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 -------------------------------------------------------------------------------
 -- Forward Update functions so external code using Options.UpdateX still works
+-- and expose RefreshAllDynamic for batch refresh call sites.
 -------------------------------------------------------------------------------
-function Options.UpdateBlacklistOptions(addon)
-    if not Offensive then Offensive = LibStub("JustAC-OptionsOffensive", true) end
-    if Offensive and Offensive.UpdateBlacklistOptions then
-        Offensive.UpdateBlacklistOptions(addon)
+local FORWARDERS = {
+    { publicName = "UpdateBlacklistOptions",     libName = "JustAC-OptionsOffensive",       methodName = "UpdateBlacklistOptions"     },
+    { publicName = "UpdateHotkeyOverrideOptions", libName = "JustAC-OptionsHotkeys",         methodName = "UpdateHotkeyOverrideOptions" },
+    { publicName = "UpdateDefensivesOptions",     libName = "JustAC-OptionsDefensives",      methodName = "UpdateDefensivesOptions"    },
+    { publicName = "UpdateGapCloserOptions",      libName = "JustAC-OptionsGapClosers",      methodName = "UpdateGapCloserOptions"     },
+    { publicName = "UpdateBurstInjectionOptions", libName = "JustAC-OptionsBurstInjection",  methodName = "UpdateBurstInjectionOptions"},
+    { publicName = "UpdateCustomQueueOptions",    libName = "JustAC-OptionsCustomQueue",     methodName = "UpdateCustomQueueOptions"   },
+}
+
+for _, f in ipairs(FORWARDERS) do
+    Options[f.publicName] = function(addon)
+        local mod = LibStub(f.libName, true)
+        if mod and mod[f.methodName] then
+            mod[f.methodName](addon)
+        end
     end
 end
 
-function Options.UpdateHotkeyOverrideOptions(addon)
-    if not Hotkeys then Hotkeys = LibStub("JustAC-OptionsHotkeys", true) end
-    if Hotkeys and Hotkeys.UpdateHotkeyOverrideOptions then
-        Hotkeys.UpdateHotkeyOverrideOptions(addon)
-    end
-end
-
-function Options.UpdateDefensivesOptions(addon)
-    if not Defensives then Defensives = LibStub("JustAC-OptionsDefensives", true) end
-    if Defensives and Defensives.UpdateDefensivesOptions then
-        Defensives.UpdateDefensivesOptions(addon)
-    end
-end
-
-function Options.UpdateGapCloserOptions(addon)
-    if not GapClosers then GapClosers = LibStub("JustAC-OptionsGapClosers", true) end
-    if GapClosers and GapClosers.UpdateGapCloserOptions then
-        GapClosers.UpdateGapCloserOptions(addon)
-    end
-end
-
-function Options.UpdateBurstInjectionOptions(addon)
-    if not BurstInjection then BurstInjection = LibStub("JustAC-OptionsBurstInjection", true) end
-    if BurstInjection and BurstInjection.UpdateBurstInjectionOptions then
-        BurstInjection.UpdateBurstInjectionOptions(addon)
-    end
-end
-
-local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
-function Options.UpdateCustomQueueOptions(addon)
-    if not CustomQueue then CustomQueue = LibStub("JustAC-OptionsCustomQueue", true) end
-    if CustomQueue and CustomQueue.UpdateCustomQueueOptions then
-        CustomQueue.UpdateCustomQueueOptions(addon)
+-- Refresh all dynamic options lists in one call (used by JustAC.lua and slash handler).
+function Options.RefreshAllDynamic(addon)
+    for _, f in ipairs(FORWARDERS) do
+        local mod = LibStub(f.libName, true)
+        if mod and mod[f.methodName] then
+            mod[f.methodName](addon)
+        end
     end
 end
 
@@ -105,12 +91,7 @@ local function HandleSlashCommand(addon, input)
         if addon.InitializeDefensiveSpells then
             addon:InitializeDefensiveSpells()
         end
-        Options.UpdateBlacklistOptions(addon)
-        Options.UpdateHotkeyOverrideOptions(addon)
-        Options.UpdateDefensivesOptions(addon)
-        Options.UpdateGapCloserOptions(addon)
-        Options.UpdateBurstInjectionOptions(addon)
-        Options.UpdateCustomQueueOptions(addon)
+        Options.RefreshAllDynamic(addon)
         AceConfigDialog:Open("JustAssistedCombat")
         return
     end
@@ -125,12 +106,7 @@ local function HandleSlashCommand(addon, input)
         if addon.InitializeDefensiveSpells then
             addon:InitializeDefensiveSpells()
         end
-        Options.UpdateBlacklistOptions(addon)
-        Options.UpdateHotkeyOverrideOptions(addon)
-        Options.UpdateDefensivesOptions(addon)
-        Options.UpdateGapCloserOptions(addon)
-        Options.UpdateBurstInjectionOptions(addon)
-        Options.UpdateCustomQueueOptions(addon)
+        Options.RefreshAllDynamic(addon)
         AceConfigDialog:Open("JustAssistedCombat")
 
     elseif command == "toggle" then

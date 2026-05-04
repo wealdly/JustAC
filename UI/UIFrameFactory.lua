@@ -22,11 +22,13 @@ local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
 
--- Export constants for UIRenderer
+-- Export constants for UIRenderer and UINameplateOverlay
 UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
 UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
 UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
 UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
+UIFrameFactory.POSITION_HOLD_TIME  = 0.15  -- 150ms: min display time before positions 2+ can swap
+UIFrameFactory.GLOW_HOLD_TIME      = 0.10  -- 100ms: glow hysteresis to prevent animation flicker
 
 -- Anchor presets for user-configurable text positions
 -- Each preset: {ox=xOffset, oy=yOffset, jh=justifyH}
@@ -427,6 +429,8 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
 
     return button
 end
+-- Export for UINameplateOverlay (builds the shared skeleton; callers handle strata + Masque)
+UIFrameFactory.CreateBaseIcon = CreateBaseIcon
 
 -- Helper: Create a single defensive icon button at the specified index (0-based)
 -- Position offset is calculated based on index, orientation, and defensive position.

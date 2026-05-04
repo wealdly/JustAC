@@ -36,34 +36,14 @@ local function GetSpellData(spellID)
 end
 ```
 
-## Pattern 2: Version-Aware Function Wrapper
-
-Using `VersionCall()` helper for cleaner code:
-
-```lua
--- Define version-specific implementations
-local function GetAura_Pre12(unit, index)
-    return UnitAura(unit, index, "HELPFUL")
-end
-
-local function GetAura_Post12(unit, index)
-    return C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
-end
-
--- Call the appropriate version
-local function SafeGetAura(unit, index)
-    return BlizzardAPI.VersionCall(GetAura_Pre12, GetAura_Post12, unit, index)
-end
-```
-
-## Pattern 3: Hot Path Optimization
+## Pattern 2: Hot Path Optimization
 
 Cache version check result to avoid repeated lookups:
 
 ```lua
 -- At module load time (top of file)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-local IS_MIDNIGHT = BlizzardAPI and BlizzardAPI.IsMidnightOrLater() or false
+local IS_MIDNIGHT = BlizzardAPI and BlizzardAPI.IS_MIDNIGHT_OR_LATER or false
 
 -- In hot path function
 local function ProcessSpells(spells)

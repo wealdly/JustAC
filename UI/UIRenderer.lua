@@ -55,12 +55,12 @@ local math_floor = math.floor
 -- Position stabilization: minimum display time before a spell at positions 2+
 -- can be replaced. Prevents visual flicker from rapid proc/CD re-categorization
 -- in SpellQueue. Position 1 always passes through Blizzard's suggestion.
-local POSITION_HOLD_TIME = 0.15  -- 150ms
+local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms
 
 -- Glow hysteresis: require desired glow state to be stable for this duration
 -- before switching animations. Prevents jarring animation restarts when proc
 -- state toggles transiently (e.g. during GCD processing).
-local GLOW_HOLD_TIME = 0.10  -- 100ms
+local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 100ms
 
 -- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE = 1.0
@@ -359,26 +359,22 @@ local function UpdateButtonCooldowns(button)
     if not isItem and cooldownID and C_Spell_GetSpellCharges then
         local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
         if ok and result then
-            local maxOk = not BlizzardAPI.IsSecretValue(result.maxCharges)
+            -- maxCharges is NeverSecret (source-verified): safe to compare in combat.
+            -- currentCharges is SECRET in combat: use IsSecretValue to gate OOC-only logic.
             local curOk = not BlizzardAPI.IsSecretValue(result.currentCharges)
-            if maxOk and curOk then
-                if result.maxCharges > 1 then
-                    -- Prefer spell API over slot-based data (immune to modifier changes).
+            if result.maxCharges > 1 then
+                if curOk then
+                    -- Out of combat: prefer spell API over slot-based data (immune to modifier changes).
                     chargeInfo = result
-                    chargeText = result.currentCharges
                 end
-            elseif BlizzardAPI.GetCachedMaxCharges then
-                -- Combat: maxCharges from OOC cache, currentCharges via passthrough.
-                local cachedMax = BlizzardAPI.GetCachedMaxCharges(id)
-                if cachedMax and cachedMax > 1 and result.currentCharges ~= nil then
-                    chargeText = result.currentCharges  -- secret → SetText passthrough
-                end
+                -- currentCharges: NeverSecret OOC (direct use), SECRET in combat (SetText passthrough).
+                chargeText = result.currentCharges
             end
         end
     end
 
     -- Slot-based fallback for charge text (NeverSecret, always readable).
-    -- Only used in combat when spell API charges are secret.
+    -- Used when spell has no charges (maxCharges <= 1) or GetSpellCharges unavailable.
     if chargeText == "" and directSlot and C_ActionBar_GetActionDisplayCount then
         chargeText = C_ActionBar_GetActionDisplayCount(directSlot)
     end

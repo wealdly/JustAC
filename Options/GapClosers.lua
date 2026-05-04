@@ -281,16 +281,7 @@ function GapClosers.UpdateGapCloserOptions(addon)
     local staticKeys = {
         gcHeader = true, gcInfo = true, restoreGapCloserDefaults = true,
     }
-
-    local keysToClear = {}
-    for key, _ in pairs(spellListArgs) do
-        if not staticKeys[key] then
-            keysToClear[#keysToClear + 1] = key
-        end
-    end
-    for _, key in ipairs(keysToClear) do
-        spellListArgs[key] = nil
-    end
+    SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
     local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()

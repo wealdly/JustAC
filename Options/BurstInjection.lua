@@ -304,15 +304,7 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
         local triggerStatic = {
             triggerInfo = true, detectedTriggers = true, clearTriggerOverrides = true,
         }
-        local keysToClear = {}
-        for key, _ in pairs(triggerArgs) do
-            if not triggerStatic[key] then
-                keysToClear[#keysToClear + 1] = key
-            end
-        end
-        for _, key in ipairs(keysToClear) do
-            triggerArgs[key] = nil
-        end
+        SpellSearch.ClearDynamicArgs(triggerArgs, triggerStatic)
 
         local specKey = engine and engine.GetBurstSpecKey and engine.GetBurstSpecKey()
         if specKey then
@@ -358,15 +350,7 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
         local injectionStatic = {
             injectionInfo = true, restoreInjectionDefaults = true,
         }
-        local keysToClear = {}
-        for key, _ in pairs(injectionArgs) do
-            if not injectionStatic[key] then
-                keysToClear[#keysToClear + 1] = key
-            end
-        end
-        for _, key in ipairs(keysToClear) do
-            injectionArgs[key] = nil
-        end
+        SpellSearch.ClearDynamicArgs(injectionArgs, injectionStatic)
 
         local specKey = engine and engine.GetBurstSpecKey and engine.GetBurstSpecKey()
         if specKey then
