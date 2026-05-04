@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.20.2] - 2026-05-04
+
+### Fixed
+- **Stale hotkey display after rearranging action bars**: `ACTIONBAR_SLOT_CHANGED` invalidated `spellHotkeyCacheValid` but left stale entries in `spellHotkeyCache` and `spellSlotCache`. The per-spell stale-refresh throttle (0.25s) then returned the old hotkey text before the full rescan ran. `InvalidateHotkeyCache` now wipes all four caches so the first post-event lookup always does a fresh scan.
+- **Stale slot data on bonus bar change**: `InvalidateStateCache` (called on `UPDATE_BONUS_ACTIONBAR`) only wiped `spellHotkeyCache` and `slotMappingCache`, leaving `spellSlotCache`, `slotDirectCache`, and `itemSlotCache` with stale slot numbers from before the bonus bar appeared. `GetSlotForSpell` and the transform fast-path in `GetSpellHotkey` would use those stale slots and re-cache wrong hotkey bindings before a full action bar scan could run.
+
 ## [4.20.1] - 2026-05-04
 
 ### Internal

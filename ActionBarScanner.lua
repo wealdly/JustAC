@@ -390,6 +390,13 @@ local function InvalidateStateCache()
     wipe(slotMappingCache)
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
+    -- Also wipe spell→slot caches: bonus bar changes (UPDATE_BONUS_ACTIONBAR) move
+    -- spells to different slot numbers. Leaving spellSlotCache populated causes
+    -- GetSlotForSpell and the transform fast-path in GetSpellHotkey to use stale
+    -- slot indices and re-cache wrong hotkeys before the full bar scan runs.
+    wipe(spellSlotCache)
+    wipe(slotDirectCache)
+    wipe(itemSlotCache)
 end
 
 local function GetOptimizedKeybind(slot)
@@ -959,17 +966,16 @@ end
 
 -- Soft invalidation: mark invalid but keep values to prevent flicker
 function ActionBarScanner.InvalidateHotkeyCache()
+    -- Full wipe so stale slot→hotkey entries don't get returned via the
+    -- "return previous value while throttled" fast path in GetSpellHotkey.
+    -- Partial invalidation (spellHotkeyCacheValid=false only) left stale
+    -- spellHotkeyCache and spellSlotCache entries that ACTIONBAR_SLOT_CHANGED
+    -- would not clear, causing wrong keybinds after moving abilities on bars.
     spellHotkeyCacheValid = false
-    if next(spellHotkeyCache) then
-        local count = 0
-        for _ in pairs(spellHotkeyCache) do
-            count = count + 1
-            if count > 50 then
-                wipe(spellHotkeyCache)
-                break
-            end
-        end
-    end
+    wipe(spellHotkeyCache)
+    wipe(spellSlotCache)
+    wipe(slotDirectCache)
+    wipe(itemSlotCache)
 end
 
 function ActionBarScanner.RebuildKeybindCache()
