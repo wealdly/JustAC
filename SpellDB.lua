@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
 local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 9)
 if not SpellDB then return end
@@ -782,7 +782,7 @@ SpellDB.CLASS_COOLDOWN_DEFAULTS = {
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1
     WARLOCK = {688, 697, 712, 691, 30146},           -- Summon Imp/Voidwalker/Succubus/Felhunter/Felguard
-    DEATHKNIGHT = {46585},                           -- Raise Dead
+    DEATHKNIGHT_3 = {46585},                         -- Raise Dead (Unholy only — Blood/Frost ghoul is a Guardian, not a pet)
 }
 
 -- Pet heal spells (shown when PET health is low — OUT OF COMBAT ONLY)
