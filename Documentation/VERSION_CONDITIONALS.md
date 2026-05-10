@@ -143,7 +143,7 @@ end
 - Spell categorization (if flags change)
 - Proc detection (if overlay API changes)
 
-### UIManager.lua
+### UIRenderer.lua
 - Frame creation (if frame API changes)
 - Animation (if animation API changes)
 
@@ -151,22 +151,16 @@ end
 
 After adding version conditionals:
 
-1. **Test in 11.2.7** (current retail):
+1. **Test in 12.0** (current retail):
    ```
-   /jac test
-   /jac modules
-   ```
-
-2. **Test in 12.0** (beta):
-   ```
-   /jac test
-   /jac modules
+   /jac inspect modules
+   /jac inspect cooldown
    ```
 
-3. **Verify version detection**:
+2. **Verify version detection**:
    ```lua
-   /dump BlizzardAPI.GetInterfaceVersion()  -- Should show 110207 or 120000
-   /dump BlizzardAPI.IsMidnightOrLater()    -- Should show false or true
+   /dump BlizzardAPI.GetInterfaceVersion()  -- Should show 120000+
+   /dump BlizzardAPI.IsMidnightOrLater()    -- Should show true
    ```
 
 ## Commit Message Template

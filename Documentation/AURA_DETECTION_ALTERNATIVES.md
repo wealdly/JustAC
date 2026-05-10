@@ -98,7 +98,7 @@ Based on Blizzard API Documentation (`SecretPredicateAPIDocumentation.lua`):
 | **Spec** | `GetNumSpecializations()` | Number of specs - ALWAYS SAFE |
 | **Spell Info** | `C_Spell.GetSpellInfo(spellID)` | Name, icon, etc - ALWAYS SAFE |
 | **Spell Info** | `C_Spell.GetSpellName(spellID)` | Spell name only - ALWAYS SAFE |
-| **Spell Info** | `C_Spell.GetOverrideSpell(spellID)` | Override lookup - ALWAYS SAFE |
+| **Spell Info** | `C_Spell.GetOverrideSpell(spellID)` | **Removed in 12.0** — code guards with nil check, degrades gracefully |
 | **Spell Overlay** | `C_SpellActivationOverlay.IsSpellOverlayed(spellID)` | Proc glow detection |
 | **Weapon Enchants** | `GetWeaponEnchantInfo()` | Weapon imbues - ALWAYS SAFE |
 
@@ -115,7 +115,7 @@ Based on Blizzard API Documentation (`SecretPredicateAPIDocumentation.lua`):
 | **Health** | `UnitHealth(unit)` | SecretReturns (always potentially secret) |
 | **Health** | `UnitHealthMax(unit)` | SecretWhenUnitHealthMaxRestricted |
 | **Health** | `UnitHealthPercent(unit)` | SecretReturns + SecretWhenCurveSecret |
-| **Power** | `GetComboPoints(unit, target)` | SecretWhenUnitPowerRestricted |
+| **Power** | `GetComboPoints(unit, target)` | **NeverSecret for player** (verified on Rogue 2026-02-25). SecretWhenUnitPowerRestricted only applies to hostile target queries. |
 | **Casting** | `GetUnitEmpowerStageDuration()` | SecretWhenUnitSpellCastRestricted |
 
 ---
@@ -477,7 +477,7 @@ end
 - `GetShapeshiftFormInfo()` / `GetNumShapeshiftForms()` / `GetShapeshiftFormID()`
 - `GetSpecialization()` / `GetSpecializationInfo()`
 - `UnitExists()` / `UnitIsDead()` / `UnitIsDeadOrGhost()`
-- `C_Spell.GetSpellInfo()` / `C_Spell.GetSpellName()` / `C_Spell.GetOverrideSpell()`
+- `C_Spell.GetSpellInfo()` / `C_Spell.GetSpellName()` (`C_Spell.GetOverrideSpell` removed in 12.0 — guarded in code)
 - `C_SpellActivationOverlay.IsSpellOverlayed()`
 - `GetWeaponEnchantInfo()`
 - `GetActionInfo()` (action type/ID - but "assistedcombat" string needs filtering)
@@ -491,4 +491,4 @@ end
 ### ❌ OFTEN SECRET (use with caution)
 - `C_UnitAuras.GetAuraDataByIndex()` - bulk iteration most restricted
 - `UnitHealth("pet")` / `UnitHealthMax("pet")` - non-player health
-- `GetComboPoints()` when querying hostile targets
+- `GetComboPoints()` when querying hostile targets (NeverSecret for player, SecretWhenUnitPowerRestricted only for targets)

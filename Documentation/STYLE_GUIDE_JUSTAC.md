@@ -3,7 +3,7 @@
 **Version:** 2.6  
 **Format:** AI-optimized for quick parsing and rule extraction  
 **Addon:** WoW Assisted Combat Enhancement (JustAC)  
-**Last Updated:** 2026-02-22
+**Last Updated:** 2026-05-10
 
 ---
 
@@ -61,14 +61,14 @@ local ModuleName = LibStub:NewLibrary("JustAC-ModuleName", VERSION_NUMBER)
 if not ModuleName then return end
 
 -- Example from SpellQueue.lua
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 34)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 40)
 if not SpellQueue then return end
 ```
 
 **Version Numbers:**
 - Increment on breaking changes
 - Used by LibStub to prevent loading old versions
-- Current versions: BlizzardAPI=30, SpellQueue=34, ActionBarScanner=35, MacroParser=21, FormCache=11, RedundancyFilter=38, SpellDB=7, UIRenderer=14, UIFrameFactory=12, UIAnimations=4, UIHealthBar=5, UINameplateOverlay=1, DefensiveEngine=1, DebugCommands=15, Options=30
+- Current versions: BlizzardAPI=35, SpellQueue=40, ActionBarScanner=37, MacroParser=23, FormCache=11, RedundancyFilter=42, SpellDB=9, UIRenderer=23, UIFrameFactory=15, UIAnimations=15, UIHealthBar=8, UINameplateOverlay=10, GapCloserEngine=6, BurstInjectionEngine=5, DefensiveEngine=1, DebugCommands=19, KeyPressDetector=2, TargetFrameAnchor=1, Options=32
 
 ### Module Dependencies
 ```lua
@@ -180,9 +180,14 @@ function BlizzardAPI.GetNextCastSpell()
 "JustAC-UIFrameFactory"
 "JustAC-UIRenderer"
 "JustAC-UINameplateOverlay"
+"JustAC-GapCloserEngine"
+"JustAC-BurstInjectionEngine"
 "JustAC-DefensiveEngine"
 "JustAC-DebugCommands"
-"JustAC-Options"
+"JustAC-KeyPressDetector"
+"JustAC-TargetFrameAnchor"
+"JustAC-Options"  -- Options/Core.lua (assembly module)
+-- Options sub-modules use: JustAC-OptionsGeneral, JustAC-OptionsStandardQueue, etc.
 ```
 
 ---
@@ -707,11 +712,10 @@ end
 ### Verification Commands
 ```lua
 -- SHOULD: Add debug commands for complex systems
--- /jac test        -- Full API diagnostics
--- /jac modules     -- Module health check
--- /jac formcheck   -- Form detection debug
--- /jac raw         -- Show raw spell queue
--- /jac find <name> -- Locate spell on bars
+-- /jac inspect modules          -- Module health check
+-- /jac inspect cooldown [spell] -- Cooldown API diagnostics
+-- /jac inspect auras            -- Aura cache state
+-- /jac find [spell]             -- Locate spell on bars
 ```
 
 ---

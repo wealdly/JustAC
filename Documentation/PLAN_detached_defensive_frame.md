@@ -117,7 +117,7 @@ Add a `defensives.detached` toggle that gives the defensive icon cluster its own
 
 ## Verification
 
-1. `/jac modules` — All modules load with incremented versions (UIFrameFactory v13, UIHealthBar v8, StandardQueue v3)
+1. `/jac inspect modules` — All modules load with incremented versions (UIFrameFactory v13, UIHealthBar v8, StandardQueue v3)
 2. Toggle detached ON → defensive icons appear in a separate draggable frame with grab tab
 3. Toggle detached OFF → defensives reattach to mainFrame at SIDE1/SIDE2 position as before
 4. Set `displayMode = "overlay"` + `detached = true` → offensive queue hidden on standard panel, defensive frame visible and draggable, overlay shows offensives
