@@ -522,27 +522,24 @@ local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
     icon.lastOutOfRange = isOutOfRange
 end
 
+--- Check if spellID matches targetID directly or via C_Spell.GetOverrideSpell.
+--- @param spellID number  Spell to test
+--- @param targetID number  Active cast/channel spell
+--- @return boolean
+local function MatchesSpellOrOverride(spellID, targetID)
+    if spellID == targetID then return true end
+    if C_Spell_GetOverrideSpell then
+        local overrideID = C_Spell_GetOverrideSpell(spellID)
+        return overrideID and overrideID == targetID
+    end
+    return false
+end
+
 --- Determine whether this icon's spell matches the current cast/channel.
 --- @return boolean isChanneledSpell, boolean isCastedSpell
 local function MatchActiveCast(spellID, isChanneling, channelSpellID, isCasting, castSpellID)
-    local isChanneledSpell = false
-    if isChanneling and channelSpellID then
-        if spellID == channelSpellID then
-            isChanneledSpell = true
-        elseif C_Spell_GetOverrideSpell then
-            local overrideID = C_Spell_GetOverrideSpell(spellID)
-            isChanneledSpell = (overrideID and overrideID == channelSpellID)
-        end
-    end
-    local isCastedSpell = false
-    if isCasting and castSpellID then
-        if spellID == castSpellID then
-            isCastedSpell = true
-        elseif C_Spell_GetOverrideSpell then
-            local overrideID = C_Spell_GetOverrideSpell(spellID)
-            isCastedSpell = (overrideID and overrideID == castSpellID)
-        end
-    end
+    local isChanneledSpell = (isChanneling and channelSpellID and MatchesSpellOrOverride(spellID, channelSpellID)) or false
+    local isCastedSpell    = (isCasting    and castSpellID    and MatchesSpellOrOverride(spellID, castSpellID))    or false
     return isChanneledSpell, isCastedSpell
 end
 
@@ -725,19 +722,17 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or defensiveIcon.currentID
         if defID then
             if isChanneling and channelSpellID then
-                if defID == channelSpellID then
-                    isDefActiveSpell = true
-                elseif not defensiveIcon.isItem and C_Spell_GetOverrideSpell then
-                    local overrideID = C_Spell_GetOverrideSpell(defID)
-                    if overrideID and overrideID == channelSpellID then isDefActiveSpell = true end
+                if defensiveIcon.isItem then
+                    isDefActiveSpell = (defID == channelSpellID)
+                else
+                    isDefActiveSpell = MatchesSpellOrOverride(defID, channelSpellID)
                 end
             end
             if not isDefActiveSpell and isCasting and castSpellID then
-                if defID == castSpellID then
-                    isDefActiveSpell = true
-                elseif not defensiveIcon.isItem and C_Spell_GetOverrideSpell then
-                    local overrideID = C_Spell_GetOverrideSpell(defID)
-                    if overrideID and overrideID == castSpellID then isDefActiveSpell = true end
+                if defensiveIcon.isItem then
+                    isDefActiveSpell = (defID == castSpellID)
+                else
+                    isDefActiveSpell = MatchesSpellOrOverride(defID, castSpellID)
                 end
             end
         end
