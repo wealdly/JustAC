@@ -9,3 +9,4 @@
 - `UI/UIRenderer.lua`: `MatchesSpellOrOverride()` now uses `BlizzardAPI.GetDisplaySpellID()` (cached override resolution) and no longer calls `C_Spell.GetOverrideSpell` directly
 - `UI/UIRenderer.lua` + `UI/UINameplateOverlay.lua`: Extracted shared player cast/channel-state resolution (`ResolvePlayerCastState`) into UIRenderer and reused it from nameplate overlay to remove duplicate grey-out logic
 - `UI/UIFrameFactory.lua`: Standard queue Masque callback now uses `ApplyTextOverlaySettingsToIcons()` for defensive icons, removing the remaining duplicated icon-loop text-overlay block
+- Style consistency pass: normalized module/import declaration formatting in `UI/UINameplateOverlay.lua`, cleaned and simplified sub-module declaration/assembly formatting in `Options/Core.lua`, and tightened `build.ps1` TOC path filtering regex for clearer intent

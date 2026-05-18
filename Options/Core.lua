@@ -5,20 +5,15 @@ local Options = LibStub:NewLibrary("JustAC-Options", 32)
 if not Options then return end
 
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Sub-module references (resolved lazily)
 local General       = LibStub("JustAC-OptionsGeneral", true)
 local StandardQueue = LibStub("JustAC-OptionsStandardQueue", true)
 local Offensive     = LibStub("JustAC-OptionsOffensive", true)
-local Overlay     = LibStub("JustAC-OptionsOverlay", true)
-local Defensives  = LibStub("JustAC-OptionsDefensives", true)
-local GapClosers      = LibStub("JustAC-OptionsGapClosers", true)
-local BurstInjection  = LibStub("JustAC-OptionsBurstInjection", true)
-local Labels          = LibStub("JustAC-OptionsLabels", true)
-local Hotkeys     = LibStub("JustAC-OptionsHotkeys", true)
-local Profiles    = LibStub("JustAC-OptionsProfiles", true)
+local Overlay       = LibStub("JustAC-OptionsOverlay", true)
+local Defensives    = LibStub("JustAC-OptionsDefensives", true)
+local Profiles      = LibStub("JustAC-OptionsProfiles", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 -------------------------------------------------------------------------------
@@ -73,11 +68,21 @@ local function CreateOptionsTable(addon)
     local args = {}
 
     -- Each sub-module contributes its tab via CreateTabArgs
-    if General       then args.general          = General.CreateTabArgs(addon)       end
-    if StandardQueue then args.standardQueue    = StandardQueue.CreateTabArgs(addon)  end
-    if Overlay       then args.nameplateOverlay = Overlay.CreateTabArgs(addon)        end
-    if Offensive then args.offensive        = Offensive.CreateTabArgs(addon) end
-    if Defensives then args.defensives      = Defensives.CreateTabArgs(addon) end
+    if General then
+        args.general = General.CreateTabArgs(addon)
+    end
+    if StandardQueue then
+        args.standardQueue = StandardQueue.CreateTabArgs(addon)
+    end
+    if Overlay then
+        args.nameplateOverlay = Overlay.CreateTabArgs(addon)
+    end
+    if Offensive then
+        args.offensive = Offensive.CreateTabArgs(addon)
+    end
+    if Defensives then
+        args.defensives = Defensives.CreateTabArgs(addon)
+    end
 
     -- Profiles placeholder (replaced with AceDBOptions in Initialize)
     args.profiles = {

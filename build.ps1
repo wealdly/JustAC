@@ -26,7 +26,7 @@ Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 # Derive addon source files from JustAC.toc (single source of truth for load order).
 # Libs entries are excluded here — the Libs folder is copied as a directory below.
 $addonFiles = Get-Content "JustAC.toc" |
-    Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*$' -and $_ -notmatch '^Libs' } |
+    Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*$' -and $_ -notmatch '^Libs[\\/]' } |
     ForEach-Object { $_.Trim() }
 $coreFiles = @("JustAC.toc", "LICENSE", "README.md") + $addonFiles
 
