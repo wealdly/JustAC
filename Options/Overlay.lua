@@ -12,6 +12,10 @@ local wipe = wipe
 
 -- Shared disabled helper: overlay not active
 local function overlayDisabled(addon)
+    local Options = LibStub("JustAC-Options", true)
+    if Options and Options.IsOverlayDisabled then
+        return Options.IsOverlayDisabled(addon)
+    end
     local dm = addon.db.profile.displayMode or "queue"
     return dm ~= "overlay" and dm ~= "both"
 end
