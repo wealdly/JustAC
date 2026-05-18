@@ -28,7 +28,7 @@ end
 
 1. **NEVER guess WoW API behavior** — Verify with `/script` commands in-game or check `R:\WOW\00-SOURCE\WowUISource`
 2. **Propose before implementing** — Describe changes, ask "Should I proceed?"
-3. **Test with debug commands** — Use `/jac test`, `/jac modules`, `/jac formcheck` to validate changes
+3. **Test with debug commands** — Use `/jac inspect modules`, `/jac find`, `/jac inspect cooldown` to validate changes
 4. **DO NOT auto-increment versions** — Track changes in `UNRELEASED.md`, only bump version on explicit instruction
 5. **DO NOT auto-build or push** — Commit changes, let user build/push manually
 6. **NO AI attribution** — Never add `Co-Authored-By`, credits, acknowledgments, or any other reference to AI agents/models in commit messages, code comments, README, CHANGELOG, or any project file. All contributions are authored solely by the project owner.
@@ -75,7 +75,7 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v6 |
 | `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v1 |
 | `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()`, `InvalidateGapCloserCache()` | v3 |
-| `DebugCommands.lua` | In-game diagnostics | `/jac test`, `/jac modules` | v15 |
+| `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v19 |
 | **Options/** | **Modular options panel (11 files)** | | |
 | `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()` | v1 |
 | `Options/LiveSearchPopup.lua` | Persistent modal for spell/item selection | `Open()`, `Close()`, `IsOpen()` | v1 |
@@ -150,10 +150,14 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 ## Debug Commands
 
 ```
-/jac test       — API diagnostics
-/jac modules    — Module health check  
-/jac formcheck  — Form detection debug
-/jac find Name  — Locate spell on action bars
+/jac inspect modules          — Module health check
+/jac inspect cooldown [spell] — Cooldown API diagnostics (defaults to AC suggestion)
+/jac inspect defensives       — Defensive system state
+/jac inspect interrupts       — Interrupt/CC queue state
+/jac inspect burst            — Burst injection state
+/jac inspect auras            — Aura cache state
+/jac inspect perf             — Queue build rate statistics (requires debug mode)
+/jac find [spell]             — Locate spell on action bars (defaults to AC suggestion)
 ```
 
 ## Defensive Spell System
@@ -347,4 +351,4 @@ end
 
 **DO NOT auto-tag or auto-deploy to CurseForge** — Only tag and push tags when the user explicitly requests a release/deploy.
 
-**Before release:** Test with `/jac modules` + in-game rotation to verify all modules loaded.
+**Before release:** Test with `/jac inspect modules` + in-game rotation to verify all modules loaded.

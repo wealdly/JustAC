@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/General - Shared settings that apply to both display surfaces
 local General = LibStub:NewLibrary("JustAC-OptionsGeneral", 4)
 if not General then return end

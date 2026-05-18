@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
 local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 42)
 if not RedundancyFilter then return end
@@ -1307,7 +1307,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     local isKnownAuraSpell, isUniqueAura = IsAuraSpell(spellID)
     
     -- Removed noisy "Checking redundancy" debug logs to reduce spam
-    -- Use /jac test or /jac find for diagnostics instead
+    -- Use /jac find or /jac inspect modules for diagnostics instead
     
     -- 3. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window

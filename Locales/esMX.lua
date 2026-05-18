@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spanish - Mexico/Latin America (esMX)
 -- Uses same translations as esES; Mexican Spanish UI text is identical
 

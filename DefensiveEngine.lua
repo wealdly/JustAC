@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- DefensiveEngine.lua — Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
@@ -17,10 +17,10 @@ local math_min = math.min
 -- Module references (resolved at load time — DefensiveEngine loads after all deps in TOC)
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner  = LibStub("JustAC-ActionBarScanner", true)
-local SpellQueue        = LibStub("JustAC-SpellQueue", true)
-local SpellDB           = LibStub("JustAC-SpellDB", true)
-local UIRenderer        = LibStub("JustAC-UIRenderer", true)
-local UIHealthBar       = LibStub("JustAC-UIHealthBar", true)
+local SpellQueue         = LibStub("JustAC-SpellQueue", true)
+local SpellDB            = LibStub("JustAC-SpellDB", true)
+local UIRenderer         = LibStub("JustAC-UIRenderer", true)
+local UIHealthBar        = LibStub("JustAC-UIHealthBar", true)
 local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
 
 --------------------------------------------------------------------------------
@@ -29,6 +29,7 @@ local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
 
 local lastHealthUpdate = 0
 local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue updates
+
 local dpsQueueExclusions = {}
 local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)

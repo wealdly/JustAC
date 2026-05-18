@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Profiles - Per-spec profile switching (injected into AceDBOptions tab)
 local Profiles = LibStub:NewLibrary("JustAC-OptionsProfiles", 1)
 if not Profiles then return end

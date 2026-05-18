@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/BurstInjection - Burst Injection settings tab + spell list management
 local BurstInjection = LibStub:NewLibrary("JustAC-OptionsBurstInjection", 1)
 if not BurstInjection then return end

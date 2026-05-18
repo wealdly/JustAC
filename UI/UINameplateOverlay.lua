@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Nameplate Overlay Module
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from

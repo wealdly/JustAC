@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Info, Usability, Rotation API, Item Detection, Availability
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SecretValues.lua.
 local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SpellQuery", 2

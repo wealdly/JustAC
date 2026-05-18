@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 18)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 19)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -15,15 +15,15 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac reset - Reset frame position")
     addon:Print("/jac profile <name> - Switch profile")
     addon:Print("/jac profile list - List profiles")
-    addon:Print("/jac modules - Check module health")
-    addon:Print("/jac find <spell> - Find spell on action bars")
-    addon:Print("/jac testcd <spell> - Test cooldown APIs for a spell")
-    addon:Print("/jac defensive - Diagnose defensive system")
-    addon:Print("/jac interrupts - Diagnose interrupt/CC queue CD state")
-    addon:Print("/jac burst - Dump burst injection priority list")
-    addon:Print("/jac poisons - Diagnose rogue poison detection")
-    addon:Print("/jac perf - Queue build rate statistics")
-    addon:Print("/jac perf reset - Reset build counters")
+    addon:Print("/jac find [spell] - Find spell on action bars (defaults to AC suggestion)")
+    addon:Print("/jac inspect modules - Check module health")
+    addon:Print("/jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)")
+    addon:Print("/jac inspect defensives - Diagnose defensive system")
+    addon:Print("/jac inspect interrupts - Diagnose interrupt/CC queue state")
+    addon:Print("/jac inspect burst - Dump burst injection priority list")
+    addon:Print("/jac inspect auras - Diagnose aura cache state")
+    addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
+    addon:Print("/jac inspect perf reset - Reset build counters")
     addon:Print("/jac help - Show this help")
 end
 
@@ -125,10 +125,27 @@ end
 --------------------------------------------------------------------------------
 -- Find Spell on Action Bars
 --------------------------------------------------------------------------------
-function DebugCommands.FindSpell(addon, spellName)
-    if not spellName or spellName == "" then
-        addon:Print("Usage: /jac find <spell name>")
-        return
+function DebugCommands.FindSpell(addon, spellArg)
+    local spellName = type(spellArg) == "string" and spellArg:match("^%s*(.-)%s*$") or spellArg
+    if spellName == "" then spellName = nil end
+    local contextSpellID = nil  -- spell ID when using AC context default
+    if not spellName then
+        -- Context default: use AC next cast suggestion
+        if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
+            local ok, nextID = pcall(C_AssistedCombat.GetNextCastSpell)
+            if ok and nextID and type(nextID) == "number" then
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(nextID)
+                if info and info.name then
+                    spellName = info.name
+                    contextSpellID = nextID
+                end
+            end
+        end
+        if not spellName then
+            addon:Print("Usage: /jac find [spell]")
+            addon:Print("No active AC suggestion found. Specify a spell name to search.")
+            return
+        end
     end
     
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -136,7 +153,13 @@ function DebugCommands.FindSpell(addon, spellName)
     
     addon:Print("=== Searching for: " .. spellName .. " ===")
 
-    local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellName)
+    -- Re-use the ID we already have from the context path, or look it up by name
+    local spellInfo
+    if contextSpellID then
+        spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(contextSpellID)
+    else
+        spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellName)
+    end
     if spellInfo then
         addon:Print("Spell ID: " .. spellInfo.spellID .. " | Name: " .. spellInfo.name)
     else
@@ -335,48 +358,61 @@ end
 --------------------------------------------------------------------------------
 -- Cooldown API Testing (diagnose GCD vs spell cooldown issues)
 --------------------------------------------------------------------------------
-function DebugCommands.TestCooldownAPIs(addon, spellName)
-    if not spellName then
-        addon:Print("Usage: /jac testcd <spellname>")
-        addon:Print("Example: /jac testcd Sinister Strike")
-        addon:Print("")
-        addon:Print("This command shows what cooldown values different APIs return.")
-        addon:Print("Cast the spell right before running this to see GCD vs spell cooldown behavior.")
-        return
-    end
-
+function DebugCommands.TestCooldownAPIs(addon, spellArg)
     local spellID = nil
+    local spellName = nil
+    local normalizedArg = type(spellArg) == "string" and spellArg:match("^%s*(.-)%s*$") or spellArg
+    if normalizedArg == "" then normalizedArg = nil end
 
-    -- Spellbook search is more accurate than brute-force ID iteration
-    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
-        -- Iterate through player's spellbook slots
-        for i = 1, 1000 do
-            local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
-            if not spellInfo then
-                break -- End of spellbook
-            end
-            if spellInfo.name and spellInfo.name:lower() == spellName:lower() then
-                spellID = spellInfo.spellID
-                break
-            end
-        end
-    end
-
-    -- Fallback: brute-force ID search
-    if not spellID and C_Spell and C_Spell.GetSpellInfo then
-        for i = 1, 500000 do
-            local spellInfo = C_Spell.GetSpellInfo(i)
-            if spellInfo and spellInfo.name and spellInfo.name:lower() == spellName:lower() then
-                spellID = i
-                break
+    if not normalizedArg then
+        -- Context default: use AC next cast suggestion
+        if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
+            local ok, nextID = pcall(C_AssistedCombat.GetNextCastSpell)
+            if ok and nextID and type(nextID) == "number" then
+                spellID = nextID
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                spellName = (info and info.name) or ("ID:" .. spellID)
             end
         end
-    end
+        if not spellID then
+            addon:Print("Usage: /jac inspect cooldown [spell]")
+            addon:Print("No active AC suggestion found. Specify a spell name to inspect.")
+            return
+        end
+    else
+        spellName = normalizedArg
 
-    if not spellID then
-        addon:Print("|cffff0000Spell not found:|r " .. spellName)
-        addon:Print("Tip: Make sure the spell is in your spellbook or try the exact spell name")
-        return
+        -- Spellbook search is more accurate than brute-force ID iteration
+        if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+            -- Iterate through player's spellbook slots
+            for i = 1, 1000 do
+                local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+                if not spellInfo then
+                    break -- End of spellbook
+                end
+                if spellInfo.name and spellInfo.name:lower() == spellName:lower() then
+                    spellID = spellInfo.spellID
+                    break
+                end
+            end
+        end
+
+        -- Fallback: brute-force ID search
+        if not spellID and C_Spell and C_Spell.GetSpellInfo then
+            for i = 1, 500000 do
+                local spellInfo = C_Spell.GetSpellInfo(i)
+                if spellInfo and spellInfo.name and spellInfo.name:lower() == spellName:lower() then
+                    spellID = i
+                    break
+                end
+            end
+        end
+
+        if not spellID then
+            addon:Print("|cffff0000Spell not found:|r " .. spellName)
+            addon:Print("Tip: Make sure the spell is in your spellbook or try the exact spell name")
+            return
+        end
     end
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -607,10 +643,10 @@ function DebugCommands.InterruptDiagnostics(addon)
 end
 
 --------------------------------------------------------------------------------
--- Poison Diagnostics (Rogue)
+-- Aura Cache Diagnostics
 --------------------------------------------------------------------------------
-function DebugCommands.PoisonDiagnostics(addon)
-    addon:Print("=== Rogue Poison Diagnostics ===")
+function DebugCommands.AuraDiagnostics(addon)
+    addon:Print("=== Aura Cache Diagnostics ===")
 
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     if not RedundancyFilter then
@@ -643,35 +679,24 @@ function DebugCommands.PoisonDiagnostics(addon)
     addon:Print("  byID entries: " .. countTable(auras.byID))
     addon:Print("  byName entries: " .. countTable(auras.byName))
 
-    -- IDs from 12.0 Midnight Exclusion Whitelist
-    local POISON_BUFF_IDS = {
-        [2823] = "Deadly Poison",
-        [8679] = "Wound Poison",
-        [315584] = "Instant Poison",
-        [381637] = "Atrophic Poison",
-        [3408] = "Crippling Poison",
-        [5761] = "Numbing Poison",
-    }
-
     addon:Print("")
-    addon:Print("Checking poison BUFF IDs in aura cache:")
-    for spellID, name in pairs(POISON_BUFF_IDS) do
-        local found = auras.byID and auras.byID[spellID]
-        local status = found and "|cff00ff00FOUND|r" or "|cff888888not found|r"
-        addon:Print("  " .. spellID .. " (" .. name .. "): " .. status)
-    end
-
-    local POISON_NAMES = {
-        "Deadly Poison", "Wound Poison", "Instant Poison", "Atrophic Poison",
-        "Crippling Poison", "Numbing Poison"
-    }
-
-    addon:Print("")
-    addon:Print("Checking poison names in aura cache:")
-    for _, name in ipairs(POISON_NAMES) do
-        local found = auras.byName and auras.byName[name]
-        local status = found and "|cff00ff00FOUND|r" or "|cff888888not found|r"
-        addon:Print("  " .. name .. ": " .. status)
+    addon:Print("Cached auras by ID (first 20):")
+    if auras.byID then
+        local shown = 0
+        local total = countTable(auras.byID)
+        for spellID in pairs(auras.byID) do
+            if shown < 20 then
+                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+                local name = (spellInfo and spellInfo.name) or "?"
+                addon:Print("  " .. tostring(spellID) .. " (" .. name .. ")")
+                shown = shown + 1
+            end
+        end
+        if total > 20 then
+            addon:Print("  ... (" .. (total - 20) .. " more)")
+        end
+    else
+        addon:Print("  (empty)")
     end
 
     addon:Print("")
@@ -700,7 +725,7 @@ function DebugCommands.PoisonDiagnostics(addon)
     end
     addon:Print("  Total buffs: " .. count)
 
-    addon:Print("================================")
+    addon:Print("==============================")
 end
 
 --------------------------------------------------------------------------------
@@ -828,8 +853,18 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
         return
     end
 
-    local normalizedSub = type(subCommand) == "string" and subCommand:match("^%s*(%S+)")
-    if normalizedSub then normalizedSub = normalizedSub:lower() end
+    local normalizedSub = nil
+    if type(subCommand) == "string" then
+        normalizedSub = subCommand:match("^%s*(.-)%s*$")
+        if normalizedSub == "" then normalizedSub = nil end
+        if normalizedSub then normalizedSub = normalizedSub:lower() end
+    end
+
+    if normalizedSub and normalizedSub ~= "reset" then
+        addon:Print("|cffffff00Unknown subcommand:|r " .. normalizedSub)
+        addon:Print("Usage: /jac inspect perf [reset]")
+        return
+    end
 
     if normalizedSub == "reset" then
         if SpellQueue and SpellQueue.ResetBuildStats then SpellQueue.ResetBuildStats() end
@@ -874,6 +909,6 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
         addon:Print("Defensives enabled: " .. (defEnabled and "|cff00ff00YES|r" or "NO"))
     end
 
-    addon:Print("|cff888888Use '/jac perf reset' to reset counters.|r")
+    addon:Print("|cff888888Use '/jac inspect perf reset' to reset counters.|r")
     addon:Print("======================================")
 end

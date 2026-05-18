@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/StandardQueue - Standard Queue panel settings (sub-tabbed: Layout, Offensive Display, Defensive Display, Appearance)
 local StandardQueue = LibStub:NewLibrary("JustAC-OptionsStandardQueue", 4)
 if not StandardQueue then return end

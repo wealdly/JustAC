@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Blizzard API Module - entry point, version detection and LibStub registration.
 -- Public functions are defined in the BlizzardAPI\ submodules, loaded immediately
 -- after this file in JustAC.toc: CooldownTracking, SecretValues, SpellQuery, StateHelpers.

@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Defensives - Defensive queue settings tab + spell list management
 local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 1)
 if not Defensives then return end

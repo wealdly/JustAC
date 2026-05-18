@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: KeyPressDetector - Flash feedback when key/mouse press matches queued spell hotkey
 local KPD = LibStub:NewLibrary("JustAC-KeyPressDetector", 2)
 if not KPD then return end

@@ -1,4 +1,4 @@
-﻿local APPLICANT_COLUMN_INFO = {
+local APPLICANT_COLUMN_INFO = {
 	[1] = {
 		title = COMMUNITIES_ROSTER_COLUMN_TITLE_LEVEL,
 		width = 40,

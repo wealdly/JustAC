@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Offensive - Offensive queue settings tab + blacklist management
 local Offensive = LibStub:NewLibrary("JustAC-OptionsOffensive", 1)
 if not Offensive then return end

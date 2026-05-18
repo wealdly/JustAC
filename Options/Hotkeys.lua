@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Hotkeys - Hotkey override settings tab
 local Hotkeys = LibStub:NewLibrary("JustAC-OptionsHotkeys", 1)
 if not Hotkeys then return end

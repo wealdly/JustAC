@@ -1,4 +1,4 @@
-﻿-- Character-Customization-specific implementations of CustomizationUI mixins
+-- Character-Customization-specific implementations of CustomizationUI mixins
 
 CHAR_CUSTOMIZE_MAX_SCALE = 0.75;
 

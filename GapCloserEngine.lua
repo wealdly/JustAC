@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- GapCloserEngine.lua — Gap-closer system: melee range detection, spell prioritization
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).

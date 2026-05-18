@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Health Bar Module - Shows player health bar for low-health warning
 local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 8)
 if not UIHealthBar then return end

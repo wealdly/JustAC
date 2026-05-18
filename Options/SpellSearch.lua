@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/SpellSearch - Shared spellbook cache, search/filter, spell list management
 local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 1)
 if not SpellSearch then return end
