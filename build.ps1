@@ -23,59 +23,12 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
 Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 
-# Core addon files (explicit list for clarity)
-$coreFiles = @(
-    "JustAC.toc",
-    "JustAC.lua",
-    "Locales\enUS.lua",
-    "Locales\deDE.lua",
-    "Locales\frFR.lua",
-    "Locales\ruRU.lua",
-    "Locales\esES.lua",
-    "Locales\esMX.lua",
-    "Locales\ptBR.lua",
-    "Locales\zhCN.lua",
-    "Locales\zhTW.lua",
-    "Locales\koKR.lua",
-    "SpellDB.lua",
-    "BlizzardAPI.lua",
-    "BlizzardAPI\CooldownTracking.lua",
-    "BlizzardAPI\SecretValues.lua",
-    "BlizzardAPI\SpellQuery.lua",
-    "BlizzardAPI\StateHelpers.lua",
-    "FormCache.lua",
-    "MacroParser.lua",
-    "ActionBarScanner.lua",
-    "RedundancyFilter.lua",
-    "SpellQueue.lua",
-    "UI\UIHealthBar.lua",
-    "UI\UIAnimations.lua",
-    "UI\UIFrameFactory.lua",
-    "UI\UIRenderer.lua",
-    "UI\UINameplateOverlay.lua",
-    "DefensiveEngine.lua",
-    "GapCloserEngine.lua",
-    "BurstInjectionEngine.lua",
-    "DebugCommands.lua",
-    "Options\SpellSearch.lua",
-    "Options\LiveSearchPopup.lua",
-    "Options\General.lua",
-    "Options\StandardQueue.lua",
-    "Options\Offensive.lua",
-    "Options\CustomQueue.lua",
-    "Options\Overlay.lua",
-    "Options\Defensives.lua",
-    "Options\GapClosers.lua",
-    "Options\BurstInjection.lua",
-    "Options\Labels.lua",
-    "Options\Hotkeys.lua",
-    "Options\Profiles.lua",
-    "Options\Core.lua",
-    "TargetFrameAnchor.lua",
-    "KeyPressDetector.lua",
-    "LICENSE",
-    "README.md"
-)
+# Derive addon source files from JustAC.toc (single source of truth for load order).
+# Libs entries are excluded here — the Libs folder is copied as a directory below.
+$addonFiles = Get-Content "JustAC.toc" |
+    Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*$' -and $_ -notmatch '^Libs' } |
+    ForEach-Object { $_.Trim() }
+$coreFiles = @("JustAC.toc", "LICENSE", "README.md") + $addonFiles
 
 $missingFiles = @()
 foreach ($file in $coreFiles) {
