@@ -188,11 +188,7 @@ if Masque then
         end
         local defScale = profile.defensives and profile.defensives.iconScale or 1.0
         local defSz = profile.iconSize * defScale
-        for _, icon in ipairs(defensiveIcons) do
-            if icon then
-                UIFrameFactory.ApplyTextOverlaySettings(icon, defSz, overlays)
-            end
-        end
+        UIFrameFactory.ApplyTextOverlaySettingsToIcons(defensiveIcons, defSz, overlays)
     end
 
     MasqueGroup:RegisterCallback(OnStandardQueueSkinChanged)

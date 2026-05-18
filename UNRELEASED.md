@@ -7,3 +7,5 @@
 - `UI/UIFrameFactory.lua` + `UI/UINameplateOverlay.lua`: Added `ApplyTextOverlaySettingsToIcons()` and switched nameplate Masque skin callback to use it, removing duplicated icon-loop text-overlay application logic
 - `Options/Core.lua` + `Options/StandardQueue.lua` + `Options/Overlay.lua`: Centralized display-mode disabled predicates in Options/Core (`IsStandardQueueDisabled`, `IsOverlayDisabled`) and wired both tabs to reuse them with local fallback behavior
 - `UI/UIRenderer.lua`: `MatchesSpellOrOverride()` now uses `BlizzardAPI.GetDisplaySpellID()` (cached override resolution) and no longer calls `C_Spell.GetOverrideSpell` directly
+- `UI/UIRenderer.lua` + `UI/UINameplateOverlay.lua`: Extracted shared player cast/channel-state resolution (`ResolvePlayerCastState`) into UIRenderer and reused it from nameplate overlay to remove duplicate grey-out logic
+- `UI/UIFrameFactory.lua`: Standard queue Masque callback now uses `ApplyTextOverlaySettingsToIcons()` for defensive icons, removing the remaining duplicated icon-loop text-overlay block

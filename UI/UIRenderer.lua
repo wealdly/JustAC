@@ -542,6 +542,40 @@ local function MatchActiveCast(spellID, isChanneling, channelSpellID, isCasting,
     return isChanneledSpell, isCastedSpell
 end
 
+--- Resolve player cast/channel state for grey-out logic.
+--- Returns: isChanneling, channelSpellID, isCasting, castSpellID
+local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID)
+    local isChanneling = false
+    local channelSpellID = nil
+    local isCasting = false
+    local castSpellID = nil
+
+    -- Grey out all icons while channeling (optional, gated by profile toggle).
+    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
+    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
+    -- Early ungrey: stop greying out 100ms before channel ends.
+    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
+        isChanneling = true
+        channelSpellID = cachedChannelID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
+            isChanneling = false
+        end
+    end
+
+    -- Grey out during hardcasts (optional, gated by profile toggle).
+    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
+        isCasting = true
+        castSpellID = cachedCastID
+        local remaining = PlayerCastingBarFrame.value
+        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
+            isCasting = false
+        end
+    end
+
+    return isChanneling, channelSpellID, isCasting, castSpellID
+end
+
 --- Resolve the visual state for a DPS icon.
 --- States: 1=greyed (other casting), 2=no resources (blue), 3=normal,
 --- 4=active cast/channel, 5=unavailable (gray desat), 6=out of range (red),
@@ -1183,35 +1217,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showRangeTint = profile.showRangeTint ~= false
     local showCastingHighlight = profile.showCastingHighlight ~= false
     
-    -- Grey out all icons while channeling (optional, gated by profile toggle).
-    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
-    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
-    -- Early ungrey: stop greying out 100ms before channel ends so the player can
-    -- see what ability to press next as the channel finishes.
-    isChanneling = false
-    channelSpellID = nil
-    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
-        isChanneling = true
-        -- spellID cached from UNIT_SPELLCAST_CHANNEL_START (NeverSecret for player casts).
-        channelSpellID = cachedChannelSpellID
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
-            isChanneling = false
-        end
-    end
-
-    -- Grey out during hardcasts (optional, gated by profile toggle).
-    isCasting = false
-    castSpellID = nil
-    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
-        isCasting = true
-        -- spellID cached from UNIT_SPELLCAST_START (NeverSecret for player casts).
-        castSpellID = cachedCastSpellID
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
-            isCasting = false
-        end
-    end
+    -- Shared cast/channel state (used by both standard queue and nameplate overlay).
+    isChanneling, channelSpellID, isCasting, castSpellID = ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
 
     -- Cooldown throttle: shared by defensive and offensive icon updates below.
     local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -2005,6 +2012,10 @@ end
 
 function UIRenderer.GetCachedChannelSpellID()
     return cachedChannelSpellID
+end
+
+function UIRenderer.ResolvePlayerCastState(profile)
+    return ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
 end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns

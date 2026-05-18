@@ -966,33 +966,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
     local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
 
-    -- Grey out all icons while channeling (optional, gated by profile toggle).
-    -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
-    -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
-    -- Early ungrey: stop greying out 100ms before channel ends.
-    local isChanneling = false
-    local channelSpellID = nil
-    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
-        isChanneling = true
-        -- spellID cached from UNIT_SPELLCAST_CHANNEL_START (NeverSecret for player casts).
-        channelSpellID = UIRenderer.GetCachedChannelSpellID and UIRenderer.GetCachedChannelSpellID()
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
-            isChanneling = false
-        end
-    end
-
-    -- Check if player is hardcasting (optional grey-out, gated by profile toggle)
-    local isCasting = false
-    local castSpellID = nil
-    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true then
-        isCasting = true
-        -- spellID cached from UNIT_SPELLCAST_START (NeverSecret for player casts).
-        castSpellID = UIRenderer.GetCachedCastSpellID and UIRenderer.GetCachedCastSpellID()
-        local remaining = PlayerCastingBarFrame.value
-        if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < 0.1 then
-            isCasting = false
-        end
+    local isChanneling, channelSpellID, isCasting, castSpellID
+    if UIRenderer and UIRenderer.ResolvePlayerCastState then
+        isChanneling, channelSpellID, isCasting, castSpellID = UIRenderer.ResolvePlayerCastState(profile)
+    else
+        isChanneling, channelSpellID, isCasting, castSpellID = false, nil, false, nil
     end
 
     -- Update overlay defensive icon visual states every frame (channeling + usability),
