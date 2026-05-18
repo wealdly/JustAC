@@ -98,6 +98,17 @@ function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
     end
 end
 
+--- Apply text overlay settings to each icon in a list.
+--- Nil entries are skipped.
+function UIFrameFactory.ApplyTextOverlaySettingsToIcons(iconList, size, overlaysBlock)
+    if not iconList then return end
+    for _, icon in ipairs(iconList) do
+        if icon then
+            UIFrameFactory.ApplyTextOverlaySettings(icon, size, overlaysBlock)
+        end
+    end
+end
+
 --- Build a merged textOverlays block for the nameplate overlay.
 --- Central show from profile.textOverlays; overlay-specific fontScale, color,
 --- and anchor from nameplateOverlay.textOverlays with central fallback.
