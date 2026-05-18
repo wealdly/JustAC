@@ -91,11 +91,9 @@ if Masque then
         local npo = profile.nameplateOverlay
         local iconSize = npo.iconSize or 32
         local mergedOverlays = UIFrameFactory and UIFrameFactory.MergeOverlayTextOverlays and UIFrameFactory.MergeOverlayTextOverlays(profile)
-        for _, icon in ipairs(dpsIcons) do
-            if icon then UIFrameFactory.ApplyTextOverlaySettings(icon, iconSize, mergedOverlays) end
-        end
-        for _, icon in ipairs(defIcons) do
-            if icon then UIFrameFactory.ApplyTextOverlaySettings(icon, iconSize, mergedOverlays) end
+        if UIFrameFactory and UIFrameFactory.ApplyTextOverlaySettingsToIcons then
+            UIFrameFactory.ApplyTextOverlaySettingsToIcons(dpsIcons, iconSize, mergedOverlays)
+            UIFrameFactory.ApplyTextOverlaySettingsToIcons(defIcons, iconSize, mergedOverlays)
         end
         if interruptIcon then
             UIFrameFactory.ApplyTextOverlaySettings(interruptIcon, iconSize, mergedOverlays)
