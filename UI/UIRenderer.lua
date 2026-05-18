@@ -113,7 +113,6 @@ local C_NamePlate = C_NamePlate
 local UnitIsCrowdControlled = UnitIsCrowdControlled
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
-local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Cast bar discovery: Blizzard → Plater → ElvUI.
@@ -522,15 +521,15 @@ local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
     icon.lastOutOfRange = isOutOfRange
 end
 
---- Check if spellID matches targetID directly or via C_Spell.GetOverrideSpell.
+--- Check if spellID matches targetID directly or via BlizzardAPI.GetDisplaySpellID.
 --- @param spellID number  Spell to test
 --- @param targetID number  Active cast/channel spell
 --- @return boolean
 local function MatchesSpellOrOverride(spellID, targetID)
     if spellID == targetID then return true end
-    if C_Spell_GetOverrideSpell then
-        local overrideID = C_Spell_GetOverrideSpell(spellID)
-        return overrideID and overrideID == targetID
+    if BlizzardAPI and BlizzardAPI.GetDisplaySpellID then
+        local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+        return displayID and displayID == targetID
     end
     return false
 end
