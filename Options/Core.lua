@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Core - Assembles all option tabs, handles initialization & slash commands
 local Options = LibStub:NewLibrary("JustAC-Options", 32)
 if not Options then return end
@@ -96,20 +96,22 @@ local function HandleSlashCommand(addon, input)
         return
     end
 
-    local command, arg = input:match("^(%S+)%s*(.-)$")
+    local command, arg = input:match("^(%S+)%s*(.-)%s*$")
     if not command then return end
     command = command:lower()
+    if arg == "" then arg = nil end
 
     local DebugCommands = LibStub("JustAC-DebugCommands", true)
 
-    if command == "config" or command == "options" then
-        if addon.InitializeDefensiveSpells then
-            addon:InitializeDefensiveSpells()
+    local function CallDebug(methodName, ...)
+        if not DebugCommands or type(DebugCommands[methodName]) ~= "function" then
+            addon:Print("DebugCommands module not available")
+            return
         end
-        Options.RefreshAllDynamic(addon)
-        AceConfigDialog:Open("JustAssistedCombat")
+        DebugCommands[methodName](addon, ...)
+    end
 
-    elseif command == "toggle" then
+    if command == "toggle" then
         if addon.db and addon.db.profile then
             addon.db.profile.isManualMode = not addon.db.profile.isManualMode
             if addon.db.profile.isManualMode then
@@ -130,29 +132,6 @@ local function HandleSlashCommand(addon, input)
             addon:Print("Debug mode: " .. (addon.db.profile.debugMode and "ON" or "OFF"))
         end
 
-    elseif command == "modules" or command == "diag" then
-        if DebugCommands and DebugCommands.ModuleDiagnostics then
-            DebugCommands.ModuleDiagnostics(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-
-    elseif command == "find" then
-        local spellName = input:match("^find%s+(.+)")
-        if DebugCommands and DebugCommands.FindSpell then
-            DebugCommands.FindSpell(addon, spellName)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-
-    elseif command == "testcd" then
-        local spellName = input:match("^testcd%s+(.+)")
-        if DebugCommands and DebugCommands.TestCooldownAPIs then
-            DebugCommands.TestCooldownAPIs(addon, spellName)
-        else
-            addon:Print("DebugCommands module not available")
-        end
-
     elseif command == "reset" then
         if addon.mainFrame then
             addon.mainFrame:ClearAllPoints()
@@ -163,57 +142,48 @@ local function HandleSlashCommand(addon, input)
         end
 
     elseif command == "profile" then
-        local profileAction = input:match("^profile%s+(.+)")
-        if DebugCommands and DebugCommands.ManageProfile then
-            DebugCommands.ManageProfile(addon, profileAction)
-        else
-            addon:Print("DebugCommands module not available")
-        end
+        CallDebug("ManageProfile", arg)
 
-    elseif command == "defensive" or command == "def" then
-        if DebugCommands and DebugCommands.DefensiveDiagnostics then
-            DebugCommands.DefensiveDiagnostics(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
+    elseif command == "find" then
+        CallDebug("FindSpell", arg)
 
-    elseif command == "poisons" or command == "poison" then
-        if DebugCommands and DebugCommands.PoisonDiagnostics then
-            DebugCommands.PoisonDiagnostics(addon)
-        else
+    elseif command == "inspect" then
+        if not DebugCommands then
             addon:Print("DebugCommands module not available")
+            return
         end
-
-    elseif command == "interrupts" or command == "int" then
-        if DebugCommands and DebugCommands.InterruptDiagnostics then
-            DebugCommands.InterruptDiagnostics(addon)
-        else
-            addon:Print("DebugCommands module not available")
+        local topic, topicArg = nil, nil
+        if arg then
+            topic, topicArg = arg:match("^(%S+)%s*(.-)%s*$")
+            if topicArg == "" then topicArg = nil end
         end
-
-    elseif command == "burst" then
-        if DebugCommands and DebugCommands.BurstDiagnostics then
-            DebugCommands.BurstDiagnostics(addon)
-        else
-            addon:Print("DebugCommands module not available")
+        if not topic then
+            addon:Print("Usage: /jac inspect <topic>")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, perf [reset]")
+            return
         end
-
-    elseif command == "perf" or command == "stats" then
-        local subCommand = arg and arg:match("^%s*(.-)%s*$")
-        if subCommand == "" then subCommand = nil end
-        if subCommand then subCommand = subCommand:lower() end
-        if DebugCommands and DebugCommands.PerformanceDiagnostics then
-            DebugCommands.PerformanceDiagnostics(addon, subCommand)
+        topic = topic:lower()
+        if topic == "modules" then
+            CallDebug("ModuleDiagnostics")
+        elseif topic == "cooldown" then
+            CallDebug("TestCooldownAPIs", topicArg)
+        elseif topic == "defensives" then
+            CallDebug("DefensiveDiagnostics")
+        elseif topic == "interrupts" then
+            CallDebug("InterruptDiagnostics")
+        elseif topic == "burst" then
+            CallDebug("BurstDiagnostics")
+        elseif topic == "auras" then
+            CallDebug("AuraDiagnostics")
+        elseif topic == "perf" then
+            CallDebug("PerformanceDiagnostics", topicArg)
         else
-            addon:Print("DebugCommands module not available")
+            addon:Print("Unknown inspect topic: '" .. topic .. "'")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, perf [reset]")
         end
 
     elseif command == "help" then
-        if DebugCommands and DebugCommands.ShowHelp then
-            DebugCommands.ShowHelp(addon)
-        else
-            addon:Print("DebugCommands module not available")
-        end
+        CallDebug("ShowHelp")
 
     else
         addon:Print("Unknown command. Type '/jac help' for available commands.")

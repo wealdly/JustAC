@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/LiveSearchPopup - Persistent live-search popup for spell/item selection
 local LiveSearchPopup = LibStub:NewLibrary("JustAC-LiveSearchPopup", 1)
 if not LiveSearchPopup then return end

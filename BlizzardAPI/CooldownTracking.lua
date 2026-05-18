@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
 local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 9

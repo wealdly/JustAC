@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
 local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 40)
 if not SpellQueue then return end

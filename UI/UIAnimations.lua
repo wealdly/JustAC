@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
 local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 15)
 if not UIAnimations then return end

@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
 local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 37)
 if not ActionBarScanner then return end

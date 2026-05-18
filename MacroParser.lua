@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Macro Parser Module - Resolves macro conditionals to find actionable spells
 local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 23)
 if not MacroParser then return end

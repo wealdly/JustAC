@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: TargetFrameAnchor - Anchor main frame to Blizzard's TargetFrame
 local TFA = LibStub:NewLibrary("JustAC-TargetFrameAnchor", 1)
 if not TFA then return end

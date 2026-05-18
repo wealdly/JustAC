@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: Form Cache Module - Tracks current shapeshift form and available forms
 local FormCache = LibStub:NewLibrary("JustAC-FormCache", 11)
 if not FormCache then return end

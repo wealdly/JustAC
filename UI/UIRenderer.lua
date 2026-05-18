@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Copyright (C) 2024-2025 wealdly
+-- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Renderer Module
 local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 23)
 if not UIRenderer then return end
