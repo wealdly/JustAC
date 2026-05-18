@@ -7,35 +7,35 @@
 local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 10)
 if not UINameplateOverlay then return end
 
-local BlizzardAPI      = LibStub("JustAC-BlizzardAPI",      true)
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-local UIAnimations     = LibStub("JustAC-UIAnimations",    true)
-local UIRenderer       = LibStub("JustAC-UIRenderer",      true)
-local UIFrameFactory   = LibStub("JustAC-UIFrameFactory",  true)
-local SpellQueue       = LibStub("JustAC-SpellQueue",      true)
-local SpellDB          = LibStub("JustAC-SpellDB",         true)
+local UIAnimations = LibStub("JustAC-UIAnimations", true)
+local UIRenderer = LibStub("JustAC-UIRenderer", true)
+local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+local SpellQueue = LibStub("JustAC-SpellQueue", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 if not BlizzardAPI or not UIAnimations or not UIRenderer then return end
 
 -- Hot path cache
-local GetTime            = GetTime
-local pcall              = pcall
-local wipe               = wipe
+local GetTime = GetTime
+local pcall = pcall
+local wipe = wipe
 local UnitAffectingCombat = UnitAffectingCombat
-local UnitCanAttack      = UnitCanAttack
-local UnitHealth         = UnitHealth
-local UnitHealthMax      = UnitHealthMax
-local UnitExists         = UnitExists
-local UnitIsDead         = UnitIsDead
-local UnitChannelInfo    = UnitChannelInfo
-local UnitCastingInfo    = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
-local math_max           = math.max
-local math_min           = math.min
-local math_floor         = math.floor
-local ipairs             = ipairs
-local C_NamePlate        = C_NamePlate ---@diagnostic disable-line: undefined-global
-local GetCVar            = GetCVar
-local SetCVar            = SetCVar
+local UnitCanAttack = UnitCanAttack
+local UnitHealth = UnitHealth
+local UnitHealthMax = UnitHealthMax
+local UnitExists = UnitExists
+local UnitIsDead = UnitIsDead
+local UnitChannelInfo = UnitChannelInfo
+local UnitCastingInfo = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
+local math_max = math.max
+local math_min = math.min
+local math_floor = math.floor
+local ipairs = ipairs
+local C_NamePlate = C_NamePlate ---@diagnostic disable-line: undefined-global
+local GetCVar = GetCVar
+local SetCVar = SetCVar
 
 -- Layout constants
 local ICON_SPACING       = 2   -- px between successive icons in the cluster
