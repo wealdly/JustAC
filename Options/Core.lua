@@ -54,6 +54,19 @@ function Options.RefreshAllDynamic(addon)
 end
 
 -------------------------------------------------------------------------------
+-- Shared display-mode predicates used by options sub-modules
+-------------------------------------------------------------------------------
+function Options.IsStandardQueueDisabled(addon)
+    local dm = addon and addon.db and addon.db.profile and addon.db.profile.displayMode or "queue"
+    return dm == "disabled" or dm == "overlay"
+end
+
+function Options.IsOverlayDisabled(addon)
+    local dm = addon and addon.db and addon.db.profile and addon.db.profile.displayMode or "queue"
+    return dm ~= "overlay" and dm ~= "both"
+end
+
+-------------------------------------------------------------------------------
 -- Assemble all tabs into one AceConfig options table
 -------------------------------------------------------------------------------
 local function CreateOptionsTable(addon)

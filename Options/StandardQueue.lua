@@ -10,6 +10,10 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Shared disabled helper: standard panel not active
 local function panelDisabled(addon)
+    local Options = LibStub("JustAC-Options", true)
+    if Options and Options.IsStandardQueueDisabled then
+        return Options.IsStandardQueueDisabled(addon)
+    end
     local dm = addon.db.profile.displayMode or "queue"
     return dm == "disabled" or dm == "overlay"
 end
