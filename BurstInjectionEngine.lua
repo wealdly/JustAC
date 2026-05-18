@@ -27,6 +27,7 @@ local issecretvalue = issecretvalue ---@diagnostic disable-line: undefined-globa
 local BlizzardAPI        = LibStub("JustAC-BlizzardAPI", true)
 local SpellDB            = LibStub("JustAC-SpellDB", true)
 local RedundancyFilter   = LibStub("JustAC-RedundancyFilter", true)
+local SpellDBGetSpecKey  = SpellDB and SpellDB.GetSpecKey
 
 --------------------------------------------------------------------------------
 -- Cached state (wiped on spec/profile change)
@@ -52,14 +53,6 @@ local timerTriggerCastTime = 0      -- GetTime() when a trigger spell was last c
 --------------------------------------------------------------------------------
 -- Internal helpers
 --------------------------------------------------------------------------------
-
---- Build the spec key for the current player.
-local function GetSpecKey()
-    if SpellDB and SpellDB.GetSpecKey then
-        return SpellDB.GetSpecKey()
-    end
-    return nil
-end
 
 --- Return the base cooldown of a spell in seconds (cached).
 --- Uses GetSpellBaseCooldown (returns ms) with fallback to C_Spell.GetSpellCharges
@@ -123,7 +116,7 @@ end
 --- Priority: 1) user-configured explicit overrides, 2) SpellDB curated defaults.
 --- Returns a set { [spellID] = true } or nil.
 local function ResolveTriggerSpells(addon)
-    local specKey = GetSpecKey()
+    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey then return nil end
 
     if cachedTriggerSpells and cachedSpecKey == specKey then
@@ -179,7 +172,7 @@ end
 --- Dynamically registers all resolved spells for local CD tracking.
 --- Returns an ordered array of spell IDs, or nil.
 local function ResolveInjectionSpells(addon)
-    local specKey = GetSpecKey()
+    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey then return nil end
 
     if cachedInjectionSpells and cachedSpecKey == specKey then
@@ -272,14 +265,14 @@ end
 
 --- Get the spec key for the current player (exposed for Options).
 function BurstInjectionEngine.GetBurstSpecKey()
-    return GetSpecKey()
+    return SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
 end
 
 --- Return class default trigger spells for the current spec (ignores overrides).
 --- Shows all defaults regardless of talent status — for display in options panel.
 --- Returns: { {spellID=number, name=string, baseCd=number}, ... } or empty table.
 function BurstInjectionEngine.GetDefaultTriggers()
-    local specKey = GetSpecKey()
+    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey or not SpellDB or not SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then return {} end
     local defaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
     if not defaults then return {} end
@@ -312,7 +305,7 @@ function BurstInjectionEngine.GetDetectedTriggers(addon)
     local sourceList
     local profile = addon and addon.db and addon.db.profile
     local bi = profile and profile.burstInjection
-    local specKey = GetSpecKey()
+    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
 
     if cachedTriggerSource == "explicit" and bi and bi.triggerSpells and specKey then
         sourceList = bi.triggerSpells[specKey]
@@ -521,7 +514,7 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
         profile.burstInjection.injectionSpells = {}
     end
 
-    local specKey = GetSpecKey()
+    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey then return end
 
     -- Trigger spells: SpellDB curated defaults used automatically;
