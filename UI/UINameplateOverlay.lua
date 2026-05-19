@@ -662,17 +662,13 @@ function UINameplateOverlay.Create(addon)
         auraIcon:SetAllPoints(castAura)
         castAura.iconTexture = auraIcon
 
-        local auraMaskPadding = math_floor(auraSize * 0.17)
-        local auraMask = castAura:CreateMaskTexture(nil, "ARTWORK")
-        auraMask:SetPoint("TOPLEFT",     castAura, "TOPLEFT",     -auraMaskPadding,  auraMaskPadding)
-        auraMask:SetPoint("BOTTOMRIGHT", castAura, "BOTTOMRIGHT",  auraMaskPadding, -auraMaskPadding)
-        auraMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
-        auraIcon:AddMaskTexture(auraMask)
+        local auraMask = UIFrameFactory.CreateRoundedActionIconMask(castAura, auraSize, auraIcon)
+        castAura.IconMask = auraMask
 
         local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
-        auraBorder:SetPoint("CENTER", castAura, "CENTER", 0.5, -0.5)
-        auraBorder:SetSize(auraSize, auraSize)
+        UIFrameFactory.ApplyActionButtonBorderGeometry(auraBorder, castAura, auraSize)
         auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
+        castAura.Border = auraBorder
 
         castAura:Hide()
         interruptIcon.castAura = castAura

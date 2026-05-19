@@ -205,6 +205,29 @@ end
 --   size         - icon size in pixels
 --   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
 --   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
+local function CreateRoundedActionIconMask(parent, size, ...)
+    local maskSize = math_floor((size * 1.5) + 0.5)
+    local iconMask = parent:CreateMaskTexture(nil, "ARTWORK")
+    iconMask:SetPoint("CENTER", parent, "CENTER", 0, 0)
+    iconMask:SetSize(maskSize, maskSize)
+    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
+
+    for i = 1, select("#", ...) do
+        local texture = select(i, ...)
+        if texture then texture:AddMaskTexture(iconMask) end
+    end
+
+    return iconMask
+end
+
+local function ApplyActionButtonBorderGeometry(texture, parent, size)
+    texture:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    texture:SetSize(size + 1, size)
+end
+
+UIFrameFactory.CreateRoundedActionIconMask = CreateRoundedActionIconMask
+UIFrameFactory.ApplyActionButtonBorderGeometry = ApplyActionButtonBorderGeometry
+
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
@@ -227,15 +250,10 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     iconTexture:Hide()
     button.iconTexture = iconTexture
 
-    -- Mask texture to clip rounded corners on all icon layers
-    -- Applied to both slotBackground and iconTexture so neither bleeds outside the frame shape
-    local maskPadding = math_floor(size * 0.17)
-    local iconMask = button:CreateMaskTexture(nil, "ARTWORK")
-    iconMask:SetPoint("TOPLEFT",     button, "TOPLEFT",     -maskPadding,  maskPadding)
-    iconMask:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT",  maskPadding, -maskPadding)
-    iconMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
-    slotBackground:AddMaskTexture(iconMask)
-    iconTexture:AddMaskTexture(iconMask)
+    -- Match Blizzard action-button mask geometry. The mask needs to be larger than the
+    -- visible button; a smaller edge-anchored mask leaves the slot background visible at
+    -- the bottom when Masque is not skinning the icon.
+    local iconMask = CreateRoundedActionIconMask(button, size, slotBackground, iconTexture)
     button.IconMask = iconMask
 
     -- Flash overlay (slightly outside the border, hidden until proc triggers it)
@@ -310,8 +328,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     borderFrame:SetAllPoints(button)
 
     local normalTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    normalTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    normalTexture:SetSize(size, size)
+    ApplyActionButtonBorderGeometry(normalTexture, button, size)
     normalTexture:SetAtlas("UI-HUD-ActionBar-IconFrame")
     button.NormalTexture = normalTexture
     button.borderFrame = borderFrame
@@ -319,8 +336,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     -- Casting highlight: shown while IsCurrentSpell is true for the displayed spell.
     -- Sits above the border (sublayer 1) but below glow animations (L+4+).
     local castingHighlight = borderFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-    castingHighlight:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    castingHighlight:SetSize(size, size)
+    ApplyActionButtonBorderGeometry(castingHighlight, button, size)
     castingHighlight:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
     castingHighlight:SetVertexColor(1, 1, 1, 0.6)
     castingHighlight:Hide()
@@ -329,16 +345,14 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     if isClickable then
         -- Pushed texture
         local pushedTexture = borderFrame:CreateTexture(nil, "OVERLAY", nil, 2)
-        pushedTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-        pushedTexture:SetSize(size, size)
+        ApplyActionButtonBorderGeometry(pushedTexture, button, size)
         pushedTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Down")
         pushedTexture:Hide()
         button.PushedTexture = pushedTexture
 
         -- Highlight texture
         local highlightTexture = borderFrame:CreateTexture(nil, "HIGHLIGHT", nil, 0)
-        highlightTexture:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-        highlightTexture:SetSize(size, size)
+        ApplyActionButtonBorderGeometry(highlightTexture, button, size)
         highlightTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
         button.HighlightTexture = highlightTexture
     end
@@ -1508,18 +1522,13 @@ local function CreateInterruptIcon(addon, profile)
     auraIcon:SetAllPoints(castAura)
     castAura.iconTexture = auraIcon
 
-    -- Rounded corner mask (matches queue icon style)
-    local auraMaskPadding = math.floor(auraSize * 0.17)
-    local auraMask = castAura:CreateMaskTexture(nil, "ARTWORK")
-    auraMask:SetPoint("TOPLEFT",     castAura, "TOPLEFT",     -auraMaskPadding,  auraMaskPadding)
-    auraMask:SetPoint("BOTTOMRIGHT", castAura, "BOTTOMRIGHT",  auraMaskPadding, -auraMaskPadding)
-    auraMask:SetAtlas("UI-HUD-ActionBar-IconFrame-Mask", false)
-    auraIcon:AddMaskTexture(auraMask)
+    local auraMask = CreateRoundedActionIconMask(castAura, auraSize, auraIcon)
+    castAura.IconMask = auraMask
 
     local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
-    auraBorder:SetPoint("CENTER", castAura, "CENTER", 0.5, -0.5)
-    auraBorder:SetSize(auraSize, auraSize)
+    ApplyActionButtonBorderGeometry(auraBorder, castAura, auraSize)
     auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    castAura.Border = auraBorder
 
     castAura.spellID = nil
     castAura:Hide()

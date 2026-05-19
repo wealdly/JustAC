@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.22.1] - 2026-05-19
+
+### Fixed
+- Non-Masque queue icon framing: ability artwork now fills correctly without bottom gaps or right-edge bleed. Centralized mask and border geometry into shared `CreateRoundedActionIconMask` / `ApplyActionButtonBorderGeometry` helpers and applied them consistently to standard queue, defensive, interrupt, and nameplate overlay icons including interrupt cast-aura mini-icons.
+
 ## [4.22.0] - 2026-05-18
 
 ### Changed
