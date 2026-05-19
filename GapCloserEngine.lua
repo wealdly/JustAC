@@ -258,7 +258,7 @@ function GapCloserEngine.InitializeGapClosers(addon)
     if not profile then return end
 
     if not profile.gapClosers then
-        profile.gapClosers = { enabled = true, classSpells = {} }
+        profile.gapClosers = { enabled = false, classSpells = {} }
     end
     if not profile.gapClosers.classSpells then
         profile.gapClosers.classSpells = {}

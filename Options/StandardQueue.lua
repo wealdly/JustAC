@@ -532,8 +532,14 @@ function StandardQueue.CreateTabArgs(addon)
                         width = "full",
                         get = function() return addon.db.profile.defensives.enabled end,
                         set = function(_, val)
+                            local wasEnabled = addon.db.profile.defensives.enabled
                             addon.db.profile.defensives.enabled = val
+                            if val and not wasEnabled then
+                                addon:InvalidateCaches({spells = true})
+                                addon:OnHealthChanged(nil, "player")
+                            end
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return defensiveDisabled(addon) end,
                     },
@@ -584,6 +590,7 @@ function StandardQueue.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.maxIcons = val
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
@@ -600,6 +607,7 @@ function StandardQueue.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.iconScale = val
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
@@ -643,6 +651,7 @@ function StandardQueue.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.showHealthBar = val
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return defensiveDisabled(addon) end,
                     },
@@ -656,6 +665,7 @@ function StandardQueue.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.defensives.showPetHealthBar = val
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return defensiveDisabled(addon) end,
                         hidden = function()
@@ -692,6 +702,7 @@ function StandardQueue.CreateTabArgs(addon)
                             def.showOnlyInCombat    = nil
                             def.alwaysShowDefensive = nil
                             addon:UpdateFrameSize()
+                            addon:ForceUpdateAll()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                     },

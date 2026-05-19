@@ -345,10 +345,6 @@ local function UpdateButtonCooldowns(button)
             local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
             if ok and result then cooldownInfo = result end
         end
-        if C_Spell_GetSpellCharges then
-            local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
-            if ok and result then chargeInfo = result end
-        end
     end
 
     -- Charge count text: determine readable currentCharges for the text overlay.
@@ -358,6 +354,7 @@ local function UpdateButtonCooldowns(button)
     if not isItem and cooldownID and C_Spell_GetSpellCharges then
         local ok, result = pcall(C_Spell_GetSpellCharges, cooldownID)
         if ok and result then
+            chargeInfo = chargeInfo or result
             -- maxCharges is NeverSecret (source-verified): safe to compare in combat.
             -- currentCharges is SECRET in combat: use IsSecretValue to gate OOC-only logic.
             local curOk = not BlizzardAPI.IsSecretValue(result.currentCharges)
@@ -481,6 +478,7 @@ local lastFrameState = {
 -- Swipe animates smoothly once set; no need to update every frame.
 local lastCooldownUpdate = 0
 local COOLDOWN_UPDATE_INTERVAL = 0.08
+local USABILITY_UPDATE_INTERVAL = 0.08
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
@@ -596,7 +594,7 @@ end
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
                                   isChanneling, isCasting, isOutOfRange,
                                   showRangeTint, showUsabilityTint, inCombat, directSlot,
-                                  hasVisibleHotkey)
+                                  hasVisibleHotkey, currentTime)
     if isChanneledSpell or isCastedSpell then
         return 4
     elseif isChanneling or isCasting then
@@ -604,12 +602,22 @@ local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell
     elseif showRangeTint and isOutOfRange then
         return hasVisibleHotkey and 7 or 6
     elseif inCombat then
-        -- Usability check: prefer slot-based (NeverSecret), fallback to spell API
-        if directSlot and C_ActionBar_IsUsableAction then
-            icon.cachedIsUsable, icon.cachedNotEnoughResources = C_ActionBar_IsUsableAction(directSlot)
-        else
-            icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+        local now = currentTime or GetTime()
+        local shouldRefreshUsability = icon.cachedIsUsable == nil
+            or icon.cachedNotEnoughResources == nil
+            or not icon.lastUsabilityCheck
+            or (now - icon.lastUsabilityCheck) >= USABILITY_UPDATE_INTERVAL
+
+        if shouldRefreshUsability then
+            -- Usability check: prefer slot-based (NeverSecret), fallback to spell API
+            if directSlot and C_ActionBar_IsUsableAction then
+                icon.cachedIsUsable, icon.cachedNotEnoughResources = C_ActionBar_IsUsableAction(directSlot)
+            else
+                icon.cachedIsUsable, icon.cachedNotEnoughResources = BlizzardAPI.IsSpellUsable(spellID)
+            end
+            icon.lastUsabilityCheck = now
         end
+
         if not icon.cachedIsUsable then
             if icon.cachedNotEnoughResources then
                 return 2  -- no resources → blue tint
@@ -701,6 +709,7 @@ local function ClearIconState(icon)
     icon.cachedHotkey          = nil
     icon.cachedIsUsable        = nil
     icon.cachedNotEnoughResources = nil
+    icon.lastUsabilityCheck    = nil
     icon.isWaitingSpell        = nil
     icon.lastOutOfRange        = nil
     icon.lastVisualState       = nil
@@ -1473,6 +1482,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         end
                     end
                     icon.lastSpellSetTime = currentTime
+                    icon.cachedIsUsable = nil
+                    icon.cachedNotEnoughResources = nil
+                    icon.lastUsabilityCheck = nil
                 end
                 
                 icon.spellID = spellID
@@ -1651,16 +1663,28 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     icon.normalizedHotkey = nil
                 end
 
-                -- Range check: slot-based with spell fallback.
+                local hasVisibleHotkey = showHotkeys and hotkey ~= ""
+                local needRangeCheck = showRangeTint or hasVisibleHotkey
+                local needsDirectSlot = needRangeCheck or isInCombat
+
+                -- Range/usability support: slot-based with spell fallback.
                 local directSlot
-                if isItemEntry then
-                    directSlot = ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
-                else
-                    directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                if needsDirectSlot then
+                    if isItemEntry then
+                        directSlot = ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
+                    else
+                        directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
+                    end
                 end
-                local isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
-                local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
-                UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
+
+                local isOutOfRange = false
+                if needRangeCheck then
+                    isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
+                    if hasVisibleHotkey then
+                        local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
+                        UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
+                    end
+                end
                 
                 local baseDesaturation = (i > 1) and queueDesaturation or 0
                 local isChanneledSpell, isCastedSpell
@@ -1671,11 +1695,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         spellID, isChanneling, channelSpellID, isCasting, castSpellID)
                 end
 
-                local hasVisibleHotkey = showHotkeys and hotkey ~= ""
                 local visualState = ResolveVisualState(icon, spellID,
                     isChanneledSpell, isCastedSpell, isChanneling, isCasting,
                     isOutOfRange, showRangeTint, showUsabilityTint, isInCombat, directSlot,
-                    hasVisibleHotkey)
+                    hasVisibleHotkey, currentTime)
                 
                 local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
                 local qa = (i > 1) and QUEUE_ICON_OPACITY or 1

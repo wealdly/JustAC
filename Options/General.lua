@@ -51,6 +51,7 @@ function General.CreateTabArgs(addon)
                 sorting = { "disabled", "queue", "overlay", "both" },
                 get = function() return addon.db.profile.displayMode or "queue" end,
                 set = function(_, val)
+                    local previous = addon.db.profile.displayMode or "queue"
                     addon.db.profile.displayMode = val
                     local NPO = LibStub("JustAC-UINameplateOverlay", true)
                     if NPO then
@@ -59,7 +60,11 @@ function General.CreateTabArgs(addon)
                             NPO.Create(addon)
                         end
                     end
-                    addon:ForceUpdate()
+                    if previous == "disabled" and val ~= "disabled" then
+                        addon:InvalidateCaches({spells = true})
+                        addon:OnHealthChanged(nil, "player")
+                    end
+                    addon:ForceUpdateAll()
                     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },

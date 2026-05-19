@@ -71,7 +71,7 @@ function GapClosers.CreateTabArgs(addon)
                     local profile = addon:GetProfile()
                     if not profile then return end
                     if not profile.gapClosers then
-                        profile.gapClosers = { enabled = true, showGlow = val, classSpells = {} }
+                        profile.gapClosers = { enabled = false, showGlow = val, classSpells = {} }
                     else
                         profile.gapClosers.showGlow = val
                     end
@@ -142,7 +142,7 @@ function GapClosers.CreateTabArgs(addon)
                                     local profile = addon:GetProfile()
                                     if not profile then return end
                                     if not profile.gapClosers then
-                                        profile.gapClosers = { enabled = true, classSpells = {} }
+                                        profile.gapClosers = { enabled = false, classSpells = {} }
                                     end
                                     profile.gapClosers.meleeRangeSpell = spellID
                                     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
@@ -191,9 +191,9 @@ function GapClosers.CreateTabArgs(addon)
                     local profile = addon:GetProfile()
                     if not profile then return end
                     if not profile.gapClosers then
-                        profile.gapClosers = { enabled = true, classSpells = {} }
+                        profile.gapClosers = { enabled = false, classSpells = {} }
                     end
-                    profile.gapClosers.enabled = true
+                    profile.gapClosers.enabled = false
                     profile.gapClosers.showGlow = true  -- default: true (glow on by default)
                     profile.gapClosers.meleeRangeSpell = nil  -- default: nil (auto-detect)
                     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
@@ -292,7 +292,7 @@ function GapClosers.UpdateGapCloserOptions(addon)
 
     -- Ensure gapClosers structure exists
     if not profile.gapClosers then
-        profile.gapClosers = { enabled = true, classSpells = {} }
+        profile.gapClosers = { enabled = false, classSpells = {} }
     end
     if not profile.gapClosers.classSpells then
         profile.gapClosers.classSpells = {}

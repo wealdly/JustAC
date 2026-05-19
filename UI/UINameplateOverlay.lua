@@ -1184,6 +1184,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon._chargeCooldownShown = false
                 icon._cachedMaxCharges    = nil
                 icon.cachedHotkey         = nil
+                icon.cachedIsUsable       = nil
+                icon.cachedNotEnoughResources = nil
+                icon.lastUsabilityCheck   = nil
             end
 
             -- Wait label: Blizzard's "waiting for resources" placeholder (iconID 134377).
@@ -1316,16 +1319,27 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 end
             end
 
-            -- Range check: slot-based with spell fallback (shared helper).
+            local hasVisibleHotkey = showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= ""
+            local needRangeCheck = showRangeTint or hasVisibleHotkey
+            local needsDirectSlot = needRangeCheck or inCombat
+
+            -- Range/usability support: slot-based with spell fallback (shared helper).
             local directSlot
-            if isItemEntry then
-                directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
-            else
-                directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
+            if needsDirectSlot then
+                if isItemEntry then
+                    directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
+                else
+                    directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
+                end
             end
-            local isOutOfRange = UIRenderer.CheckSpellRange(icon, spellID, directSlot)
-            local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-            UIRenderer.UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
+            local isOutOfRange = false
+            if needRangeCheck then
+                isOutOfRange = UIRenderer.CheckSpellRange(icon, spellID, directSlot)
+                if hasVisibleHotkey then
+                    local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+                    UIRenderer.UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
+                end
+            end
 
             local isChanneledSpell, isCastedSpell
             if isItemEntry then
@@ -1336,11 +1350,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
 
             local baseDesaturation = (i == 1) and 0 or npoDesaturation
-            local hasVisibleHotkey = showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= ""
             local visualState = UIRenderer.ResolveVisualState(icon, spellID,
                 isChanneledSpell, isCastedSpell, isChanneling, isCasting,
                 isOutOfRange, showRangeTint, showUsabilityTint, inCombat, directSlot,
-                hasVisibleHotkey)
+                hasVisibleHotkey, now)
             UIRenderer.ApplyVisualState(icon, visualState, baseDesaturation, 1, 1)
 
             UIRenderer.UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)

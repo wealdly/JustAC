@@ -137,6 +137,9 @@ local function HandleSlashCommand(addon, input)
                 addon:Print("Display paused")
             else
                 addon:StartUpdates()
+                addon:InvalidateCaches({spells = true})
+                addon:OnHealthChanged(nil, "player")
+                addon:ForceUpdateAll()
                 addon:Print("Display resumed")
             end
         end
