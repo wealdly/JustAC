@@ -70,7 +70,7 @@ function BurstInjection.CreateTabArgs(addon)
                     local profile = addon:GetProfile()
                     if not profile then return end
                     if not profile.burstInjection then
-                        profile.burstInjection = { enabled = true, showGlow = val, triggerSpells = {}, injectionSpells = {} }
+                        profile.burstInjection = { enabled = false, showGlow = val, triggerSpells = {}, injectionSpells = {} }
                     else
                         profile.burstInjection.showGlow = val
                     end
@@ -102,10 +102,13 @@ function BurstInjection.CreateTabArgs(addon)
                     local profile = addon:GetProfile()
                     if not profile then return end
                     if not profile.burstInjection then
-                        profile.burstInjection = { enabled = true, showGlow = true, fallbackDuration = val, triggerSpells = {}, injectionSpells = {} }
+                        profile.burstInjection = { enabled = false, showGlow = true, fallbackDuration = val, triggerSpells = {}, injectionSpells = {} }
                     else
                         profile.burstInjection.fallbackDuration = val
                     end
+                    local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
+                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
+                    addon:ForceUpdate()
                 end,
             },
             -- RESET (990+)

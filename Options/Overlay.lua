@@ -56,7 +56,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.queueVisibility or "always" end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.queueVisibility = val
-                            addon:ForceUpdate()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -70,7 +70,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.hideWhenMounted end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.hideWhenMounted = val
-                            addon:ForceUpdate()
+                            addon:ForceUpdateAll()
                         end,
                     },
                     -- ICON LAYOUT (10-19)
@@ -90,6 +90,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.reverseAnchor = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -110,6 +111,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.expansion = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                         disabled = function() return overlayDisabled(addon) end,
@@ -126,6 +128,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.iconSize = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -141,6 +144,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.iconSpacing = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -154,7 +158,7 @@ function Overlay.CreateTabArgs(addon)
                         get = function() return addon.db.profile.nameplateOverlay.opacity or 1.0 end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.opacity = val
-                            addon:ForceUpdate()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function() return overlayDisabled(addon) end,
                     },
@@ -308,9 +312,15 @@ function Overlay.CreateTabArgs(addon)
                         width = "full",
                         get = function() return addon.db.profile.nameplateOverlay.showDefensives end,
                         set = function(_, val)
+                            local wasEnabled = addon.db.profile.nameplateOverlay.showDefensives
                             addon.db.profile.nameplateOverlay.showDefensives = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            if val and not wasEnabled then
+                                addon:InvalidateCaches({spells = true})
+                                addon:OnHealthChanged(nil, "player")
+                            end
+                            addon:ForceUpdateAll()
                             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                         end,
                         disabled = function() return overlayDisabled(addon) end,
@@ -349,6 +359,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.maxDefensiveIcons = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)
@@ -367,6 +378,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.defensiveIconScale = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)
@@ -392,7 +404,7 @@ function Overlay.CreateTabArgs(addon)
                         end,
                         set = function(_, val)
                             addon.db.profile.nameplateOverlay.defensiveGlowMode = val
-                            addon:ForceUpdate()
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)
@@ -410,6 +422,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.showHealthBar = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)
@@ -427,6 +440,7 @@ function Overlay.CreateTabArgs(addon)
                             addon.db.profile.nameplateOverlay.showPetHealthBar = val
                             local NPO = LibStub("JustAC-UINameplateOverlay", true)
                             if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+                            addon:ForceUpdateAll()
                         end,
                         disabled = function()
                             return overlayDisabled(addon)

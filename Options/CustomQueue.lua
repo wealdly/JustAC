@@ -397,8 +397,8 @@ function CustomQueue.CheckStaleNotification(addon)
     end
 end
 
---- Ensure the custom queue is initialized for the current spec.
---- Auto-enables and snapshots from Blizzard's rotation if not yet configured.
+--- Ensure custom queue data exists for the current spec.
+--- Default state is disabled; snapshot only when explicitly enabled.
 --- Called on spec change alongside gap-closer/burst injection init.
 function CustomQueue.EnsureInitialized(addon)
     local specKey = GetSpecKey()
@@ -409,18 +409,24 @@ function CustomQueue.EnsureInitialized(addon)
     if not profile.customQueue then profile.customQueue = {} end
 
     local cq = profile.customQueue[specKey]
-    -- Already initialized — has spells
-    if cq and cq.spells and #cq.spells > 0 then return end
-
-    -- Auto-enable and snapshot from Blizzard rotation
     if not cq then
-        profile.customQueue[specKey] = {}
+        profile.customQueue[specKey] = {
+            enabled = false,
+            spells = {},
+        }
         cq = profile.customQueue[specKey]
     end
-    cq.enabled = true
-    SnapshotRotation(addon, specKey)
 
-    InvalidateRotationCache()
+    -- Default off for existing profiles that don't have this flag yet.
+    if cq.enabled == nil then
+        cq.enabled = false
+    end
+
+    -- Backfill spell list if user previously enabled custom queue but has no snapshot.
+    if cq.enabled and (not cq.spells or #cq.spells == 0) then
+        SnapshotRotation(addon, specKey)
+        InvalidateRotationCache()
+    end
 end
 
 --- Remove a spell from the custom queue for the current spec.

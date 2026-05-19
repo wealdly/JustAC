@@ -118,8 +118,8 @@ local defaults = {
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
-            enabled = true,
-            showGlow = true,          -- Glow on gap-closer icons (on by default)
+            enabled = false,
+            showGlow = true,          -- Glow on gap-closer icons (when enabled)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {100, 6544}
         },
     },
@@ -716,6 +716,11 @@ function JustAC:ExitDisabledMode()
     -- Restore nameplate overlay if enabled
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
 
+    -- Re-enable warm start: clear any stale startup/disabled-period availability
+    -- cache entries before first target so defensives don't appear one cadence late.
+    self:InvalidateCaches({spells = true})
+    self:OnHealthChanged(nil, "player")
+
     self:ForceUpdateAll()
     self:DebugPrint("Exited disabled mode")
 end
@@ -1061,6 +1066,12 @@ end
 
 function JustAC:OnCombatEvent(event)
     if event == "PLAYER_REGEN_DISABLED" then
+        -- First-engage warmup: availability cache can contain startup false entries
+        -- (before spell APIs are fully ready), which suppresses defensives until
+        -- a later refresh. Clear on combat entry so first target evaluates fresh.
+        if SpellQueue and SpellQueue.ClearAvailabilityCache then
+            SpellQueue.ClearAvailabilityCache()
+        end
         -- Entering combat: animate glows
         if UIRenderer and UIRenderer.SetCombatState then
             UIRenderer.SetCombatState(true)
@@ -1190,7 +1201,7 @@ function JustAC:OnSpecChange()
     end
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
-    self:ForceUpdate()
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnSpellsChanged()
@@ -1219,6 +1230,7 @@ function JustAC:OnShapeshiftFormChanged()
         GapCloserEngine.InvalidateGapCloserCache()
         GapCloserEngine.ClearRangeState()
     end
+    if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
     self:InvalidateCaches({macros = true, hotkeys = true})
     self:ForceUpdate()
 end
@@ -1436,7 +1448,9 @@ function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
     if BlizzardAPI and BlizzardAPI.RefreshItemSpellCache then
         BlizzardAPI.RefreshItemSpellCache()
     end
-    self:ForceUpdate()
+    -- Equipment can change defensive item availability (trinkets/belt/gloves),
+    -- so refresh both queues immediately instead of waiting for defensive cadence.
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)

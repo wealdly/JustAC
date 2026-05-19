@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [4.22.0] - 2026-05-18
+
+### Changed
+- `Options/General.lua` + `Options/Overlay.lua`: Switched remaining display/overlay state setters that affect defensive visibility/layout to `ForceUpdateAll()` so offensive and defensive queues refresh on the same immediate tick after option changes
+- `JustAC.lua`: On `PLAYER_REGEN_DISABLED`, now clears spell availability cache before forcing updates to prevent first-engage defensive delay after reload/enable when startup false availability entries were cached
+- `JustAC.lua`: `OnSpecChange()` and `OnEquipmentChanged()` now use `ForceUpdateAll()` so defensive queue updates immediately when spec spell sets or equipped defensive items change
+- `JustAC.lua` + `Options/General.lua`: Added disabled->enabled warm-start priming (clear spell availability cache + immediate defensive health pass) in `ExitDisabledMode()` and global display-mode transitions from `disabled`, preventing first-target defensive lag after re-enabling
+- `Options/Core.lua`: `/jac toggle` resume path now performs warm-start priming (clear spell availability cache + immediate defensive health pass + `ForceUpdateAll`) so first-target defensives are immediate after unpausing
+- `Options/StandardQueue.lua` + `Options/Overlay.lua`: re-enabling defensive icon visibility now primes defensives immediately (spell availability cache clear + immediate health pass) before full refresh, preventing first-target delay after turning defensive displays back on
+- `build.ps1`: `$coreFiles` now derived from `JustAC.toc` at build time instead of a hardcoded list - new `.lua` files added to the TOC are automatically included in the distribution ZIP
+- `UI/UIRenderer.lua`: Extracted `MatchesSpellOrOverride()` helper from duplicated `C_Spell.GetOverrideSpell` check blocks in `MatchActiveCast` and the defensive-icon active-cast detection; no behaviour change
+- `BurstInjectionEngine.lua`: Removed the local `GetSpecKey()` wrapper and replaced it with a direct cached `SpellDB.GetSpecKey` function reference at all call sites (nil-safe), reducing indirection without changing behaviour
+- `UI/UIFrameFactory.lua` + `UI/UINameplateOverlay.lua`: Added `ApplyTextOverlaySettingsToIcons()` and switched nameplate Masque skin callback to use it, removing duplicated icon-loop text-overlay application logic
+- `Options/Core.lua` + `Options/StandardQueue.lua` + `Options/Overlay.lua`: Centralized display-mode disabled predicates in Options/Core (`IsStandardQueueDisabled`, `IsOverlayDisabled`) and wired both tabs to reuse them with local fallback behavior
+- `UI/UIRenderer.lua`: `MatchesSpellOrOverride()` now uses `BlizzardAPI.GetDisplaySpellID()` (cached override resolution) and no longer calls `C_Spell.GetOverrideSpell` directly
+- `UI/UIRenderer.lua` + `UI/UINameplateOverlay.lua`: Extracted shared player cast/channel-state resolution (`ResolvePlayerCastState`) into UIRenderer and reused it from nameplate overlay to remove duplicate grey-out logic
+- `UI/UIFrameFactory.lua`: Standard queue Masque callback now uses `ApplyTextOverlaySettingsToIcons()` for defensive icons, removing the remaining duplicated icon-loop text-overlay block
+- Style consistency pass: normalized module/import declaration formatting in `UI/UINameplateOverlay.lua`, cleaned and simplified sub-module declaration/assembly formatting in `Options/Core.lua`, and tightened `build.ps1` TOC path filtering regex for clearer intent
+
 ## [4.21.1] - 2026-05-10
 
 ### Fixed
