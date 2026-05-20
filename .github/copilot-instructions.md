@@ -2,6 +2,18 @@
 
 WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua + WoW API + Ace3.
 
+## Golden Setup Baseline (JustJunk)
+
+Treat **JustAC** as the canonical ("golden") setup for WoW addon development.
+
+When setting up **JustJunk**, mirror the same repository standards and workflows used here:
+- `.github/copilot-instructions.md` structure and engineering rules
+- Build packaging pattern in `build.ps1` (TOC-driven source-of-truth)
+- Release automation shape in `.github/workflows/release.yml`
+- Versioning flow with `UNRELEASED.md`, `CHANGELOG.md`, and addon TOC updates
+
+Only adjust addon-specific naming/branding while keeping the same development workflow.
+
 ## Version Detection & Compatibility
 
 **WoW 12.0 (Midnight) compatibility layer ready** - Use version conditionals for breaking API changes:
