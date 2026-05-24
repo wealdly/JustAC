@@ -185,7 +185,7 @@ function KPD.Create(addon)
     ---------------------------------------------------------------------------
     -- Keyboard detection (global via SetPropagateKeyboardInput)
     ---------------------------------------------------------------------------
-    frame:SetScript("OnKeyDown", function(_, key)
+    local function OnKeyboardEvent(_, key)
         if not addon or not StartFlash then return end
 
         -- Skip pure modifier keys early
@@ -194,7 +194,10 @@ function KPD.Create(addon)
         end
 
         MatchAndFlash(BuildModifierPrefix() .. key:upper())
-    end)
+    end
+
+    frame:SetScript("OnKeyDown", OnKeyboardEvent)
+    frame:SetScript("OnKeyUp", OnKeyboardEvent)
 
     ---------------------------------------------------------------------------
     -- Mouse button detection (poll IsMouseButtonDown for down-transitions)
