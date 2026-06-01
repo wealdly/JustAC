@@ -10,6 +10,7 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local CastInterruptTracker = LibStub("JustAC-CastInterruptTracker", true)
 
 if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations or not UIFrameFactory then
     return
@@ -46,6 +47,8 @@ local IS_DURATION_COOLDOWNS = BlizzardAPI.IS_DURATION_COOLDOWNS
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
 local C_Spell_IsCurrentSpell = C_Spell and C_Spell.IsCurrentSpell
+local UnitCastingInfo = UnitCastingInfo
+local UnitChannelInfo = UnitChannelInfo
 local pcall = pcall
 local pairs = pairs
 local ipairs = ipairs
@@ -63,186 +66,9 @@ local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms
 local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 100ms
 
 -- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
-local INTERRUPT_DEBOUNCE = 1.0
-local lastInterruptUsedTime = 0
-local lastInterruptShownID  = nil
--- 2s covers state-registration lag; short enough for back-to-back CCs to still work.
-local CC_APPLIED_SUPPRESS = 2.0
-local lastCCAppliedTime   = 0
-
--- LibSharedMedia integration for user-expandable interrupt sounds.
-local LSM = LibStub("LibSharedMedia-3.0", true)
-
--- Register built-in interrupt alert sounds with LSM.
--- Curated for alert utility — short, distinctive, attention-grabbing.
-if LSM then
-    local BUILTIN_SOUNDS = {
-        -- Iconic WoW alerts
-        ["JAC: Night Elf Bell"]    = 566558,  -- DBM default raid warning
-        ["JAC: Raid Emote"]        = 876098,  -- Blizzard raid warning chime
-        ["JAC: Algalon Black Hole"]= 543587,  -- DBM special warning 2
-        ["JAC: PvP Flag"]          = 569200,  -- PVP flag taken
-        -- Crisp alert tones
-        ["JAC: Shing!"]            = 566240,  -- sharp metallic bling
-        ["JAC: Wham!"]             = 566946,  -- heavy thud
-        ["JAC: Simon Chime"]       = 566076,  -- classic alert chime
-        ["JAC: Short Circuit"]     = 568975,  -- electric snap
-        -- Dramatic stings
-        ["JAC: Worgen Transform"]  = 552035,  -- dramatic sting
-        ["JAC: Loatheb Aggro"]     = 554236,  -- eerie piercing
-        ["JAC: Horseman Laugh"]    = 551703,  -- unmistakable
-        -- Horns & blasts
-        ["JAC: Dwarf Horn"]        = 566064,  -- short brass horn
-        ["JAC: Grimrail Horn"]     = 1023633, -- train horn blast
-        ["JAC: Fel Nova"]          = 568582,  -- arcane pulse
-    }
-    for name, fileDataID in pairs(BUILTIN_SOUNDS) do
-        LSM:Register(LSM.MediaType.SOUND, name, fileDataID)
-    end
-end
-
-local PlaySoundFile = PlaySoundFile
-local lastInterruptSoundTime = 0
-local INTERRUPT_SOUND_DEBOUNCE = 0.5
-
--- Shared between both renderers so interrupt debounce is unified.
-local lastInterruptEvalTime = -1
-local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, interruptMode = nil }
-
-local C_NamePlate = C_NamePlate
-local UnitIsCrowdControlled = UnitIsCrowdControlled
-local UnitCastingInfo = UnitCastingInfo
-local UnitChannelInfo = UnitChannelInfo
-
--- ─────────────────────────────────────────────────────────────────────────────
--- Cast bar discovery: Blizzard → Plater → ElvUI.
--- Source-verified paths (2026-03-01):
---   Blizzard : nameplate.UnitFrame.castBar  (capital U)
---   Plater   : nameplate.unitFrame.castBar  (lowercase u)
---   ElvUI    : nameplate child → .Castbar   (capital C, oUF element)
--- ─────────────────────────────────────────────────────────────────────────────
-local function FindVisibleCastBar(nameplate)
-    if not nameplate then return nil, nil end
-
-    local uf = nameplate.UnitFrame
-    if uf then
-        local bar = uf.castBar
-        if bar and bar.IsVisible and bar:IsVisible() then
-            return bar, "blizzard"
-        end
-    end
-
-    -- Plater: lowercase .unitFrame (Details! Framework)
-    local puf = nameplate.unitFrame
-    if puf and puf ~= uf then
-        local bar = puf.castBar
-        if bar and bar.IsShown and bar:IsShown() then
-            return bar, "plater"
-        end
-    end
-
-    -- ElvUI: oUF child .Castbar is not a named field, must enumerate children.
-    if nameplate.GetNumChildren then
-        local numKids = nameplate:GetNumChildren()
-        if numKids > 0 then
-            -- Avoid re-evaluating the GetChildren() vararg per iteration.
-            local children = { nameplate:GetChildren() }
-            for i = 1, numKids do
-                local child = children[i]
-                if child then
-                    local cb = child.Castbar
-                    if cb and cb.IsShown and cb:IsShown() then
-                        return cb, "elvui"
-                    end
-                end
-            end
-        end
-    end
-
-    return nil, nil
-end
-
--- ─────────────────────────────────────────────────────────────────────────────
--- Returns (isCasting, isInterruptible, castBar).
--- Cascades: event tracker → cast bar frame fields → API fallback → fail-open.
--- Only one pcall remains (notInterruptible may be a secret boolean in 12.0).
--- ─────────────────────────────────────────────────────────────────────────────
-local function IsTargetCastInterruptible(nameplate)
-    local evtActive, evtInterruptible, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
-    local bar, barSource = FindVisibleCastBar(nameplate)
-
-    -- No bar: confirm a cast via API (unless event tracker already says "no cast").
-    if not bar then
-        local spell
-        if evtActive or not evtKnown then
-            spell = UnitCastingInfo("target")
-            -- Spell name is secret in 12.0 combat; a secret value IS non-nil → cast exists.
-            if not BlizzardAPI.IsSecretValue(spell) and not spell then
-                spell = UnitChannelInfo("target")
-            end
-        end
-        if not BlizzardAPI.IsSecretValue(spell) and not spell then
-            return false, false, nil
-        end
-        barSource = "api"
-    end
-
-    -- Event tracker is definitive (real boolean, never secret).
-    if evtKnown then
-        return true, evtInterruptible, bar
-    end
-
-    if bar then
-        -- Every cast bar field/widget may propagate secret booleans in 12.0 combat.
-        -- Blizzard's CastingBarMixin does BorderShield:SetShown(self.notInterruptible),
-        -- so IsShown()/GetAlpha() on sub-widgets inherit the secrecy and crash on
-        -- boolean tests. Wrap each check in pcall; crash = skip to next check.
-
-        -- Direct field: notInterruptible (secret boolean in combat)
-        local niOk, ni = pcall(function() return bar.notInterruptible and true or false end)
-        if niOk and ni then return true, false, bar end
-
-        -- Icon hidden when not interruptible (IsShown inherits secret from SetShown)
-        local iconOk, iconHidden = pcall(function()
-            return bar.Icon and bar.HideIconWhenNotInterruptible and not bar.Icon:IsShown()
-        end)
-        if iconOk and iconHidden then return true, false, bar end
-
-        -- BorderShield visible = not interruptible (IsShown/GetAlpha inherit secret)
-        local shieldOk, shieldShown = pcall(function()
-            return bar.BorderShield and bar.BorderShield:IsShown() and (bar.BorderShield:GetAlpha() or 0) > 0.5
-        end)
-        if shieldOk and shieldShown then return true, false, bar end
-
-        -- ElvUI uses .Shield instead of .BorderShield
-        if barSource == "elvui" then
-            local elvOk, elvShown = pcall(function()
-                return bar.Shield and bar.Shield:IsShown() and (bar.Shield:GetAlpha() or 0) > 0.5
-            end)
-            if elvOk and elvShown then return true, false, bar end
-        end
-    end
-
-    -- API fallback when no cast bar frame is available (nameplates off + addon target frame).
-    if barSource == "api" then
-        local castName, notInt
-        castName, _, _, _, _, _, _, notInt = UnitCastingInfo("target")
-        -- Cast name is secret in 12.0 combat; secret non-nil = cast exists.
-        if not BlizzardAPI.IsSecretValue(castName) and not castName then
-            castName, _, _, _, _, _, notInt = UnitChannelInfo("target")
-        end
-        -- notInterruptible is a secret boolean in 12.0 — check before comparing.
-        if BlizzardAPI.IsSecretValue(notInt) then
-            return true, true, nil  -- secret → fail-open
-        end
-        if notInt ~= nil then
-            return true, not notInt, nil
-        end
-    end
-
-    -- Fail-open: no negative signal → assume interruptible.
-    return true, true, bar
-end
+-- Interrupt state is now owned by CastInterruptTracker; these upvalues kept for
+-- the local FindVisibleCastBar / IsTargetCastInterruptible helpers (removed).
+-- The module-level LSM registration and sound state also moved to CastInterruptTracker.
 
 -- Gap-closers have their own red crawl path; excluded here.
 local function IsSpellProcced(spellID)
@@ -480,6 +306,15 @@ local lastCooldownUpdate = 0
 local COOLDOWN_UPDATE_INTERVAL = 0.08
 local USABILITY_UPDATE_INTERVAL = 0.08
 
+-- ── Visual state constants (returned by ResolveVisualState, consumed by ApplyVisualState) ──
+local VS_GREYED        = 1  -- channeling/casting a different spell (full desat)
+local VS_NO_RESOURCES  = 2  -- usable but not enough resources (blue tint)
+local VS_NORMAL        = 3  -- ready and usable
+local VS_ACTIVE_CAST   = 4  -- this spell is currently being cast/channeled
+local VS_UNAVAILABLE   = 5  -- on cooldown or wrong form (gray desat)
+local VS_OUT_OF_RANGE  = 6  -- out of range, no hotkey visible (red tint)
+local VS_RANGE_HOTKEY  = 7  -- out of range, hotkey visible (muted warm; hotkey text carries the red)
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -575,9 +410,9 @@ local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID)
 end
 
 --- Resolve the visual state for a DPS icon.
---- States: 1=greyed (other casting), 2=no resources (blue), 3=normal,
---- 4=active cast/channel, 5=unavailable (gray desat), 6=out of range (red),
---- 7=out of range with hotkey text (slight desat, no red).
+--- States: VS_GREYED=1 (channeling other), VS_NO_RESOURCES=2 (blue), VS_NORMAL=3,
+--- VS_ACTIVE_CAST=4 (current cast/channel), VS_UNAVAILABLE=5 (gray desat),
+--- VS_OUT_OF_RANGE=6 (red tint), VS_RANGE_HOTKEY=7 (muted warm; hotkey shows red).
 --- @param icon table  Icon button (caches cachedIsUsable/cachedNotEnoughResources)
 --- @param spellID number
 --- @param isChanneledSpell boolean
@@ -596,11 +431,11 @@ local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell
                                   showRangeTint, showUsabilityTint, inCombat, directSlot,
                                   hasVisibleHotkey, currentTime)
     if isChanneledSpell or isCastedSpell then
-        return 4
+        return VS_ACTIVE_CAST
     elseif isChanneling or isCasting then
-        return 1
+        return VS_GREYED
     elseif showRangeTint and isOutOfRange then
-        return hasVisibleHotkey and 7 or 6
+        return hasVisibleHotkey and VS_RANGE_HOTKEY or VS_OUT_OF_RANGE
     elseif inCombat then
         local now = currentTime or GetTime()
         local shouldRefreshUsability = icon.cachedIsUsable == nil
@@ -620,13 +455,13 @@ local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell
 
         if not icon.cachedIsUsable then
             if icon.cachedNotEnoughResources then
-                return 2  -- no resources → blue tint
+                return VS_NO_RESOURCES   -- not enough resources → blue tint
             elseif showUsabilityTint then
-                return 5  -- unavailable (CD/wrong form) → gray desat
+                return VS_UNAVAILABLE    -- on CD / wrong form → gray desat
             end
         end
     end
-    return 3
+    return VS_NORMAL
 end
 
 --- Apply visual state colors/desaturation to an icon.
@@ -642,26 +477,26 @@ local function ApplyVisualState(icon, visualState, baseDesaturation, brightness,
     local prevState = icon.lastVisualState
     local prevDesat = icon.lastBaseDesaturation
     local changed = (prevState ~= visualState) or (prevDesat ~= baseDesaturation)
-    if visualState == 4 then
+    if visualState == VS_ACTIVE_CAST then
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         iconTexture:SetVertexColor(1, 1, 1)
-    elseif visualState == 1 then
-        if prevState ~= 1 then iconTexture:SetDesaturation(1.0) end
+    elseif visualState == VS_GREYED then
+        if prevState ~= VS_GREYED then iconTexture:SetDesaturation(1.0) end
         iconTexture:SetVertexColor(1, 1, 1)
-    elseif visualState == 2 then
-        if prevState ~= 2 then iconTexture:SetDesaturation(0) end
+    elseif visualState == VS_NO_RESOURCES then
+        if prevState ~= VS_NO_RESOURCES then iconTexture:SetDesaturation(0) end
         iconTexture:SetVertexColor(0.4, 0.4, 1.0)
-    elseif visualState == 5 then
-        if prevState ~= 5 then iconTexture:SetDesaturation(0.8) end
+    elseif visualState == VS_UNAVAILABLE then
+        if prevState ~= VS_UNAVAILABLE then iconTexture:SetDesaturation(0.8) end
         iconTexture:SetVertexColor(0.4, 0.4, 0.4)
-    elseif visualState == 6 then
+    elseif visualState == VS_OUT_OF_RANGE then
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         iconTexture:SetVertexColor(1.0, 0.2, 0.2)
-    elseif visualState == 7 then
+    elseif visualState == VS_RANGE_HOTKEY then
         -- Muted warm tint — hotkey text provides the red range feedback
-        if prevState ~= 7 then iconTexture:SetDesaturation(0) end
+        if prevState ~= VS_RANGE_HOTKEY then iconTexture:SetDesaturation(0) end
         iconTexture:SetVertexColor(0.55, 0.35, 0.35)
-    else
+    else  -- VS_NORMAL
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         if changed then iconTexture:SetVertexColor(brightness, brightness, brightness, opacity) end
     end
@@ -1156,15 +991,7 @@ function UIRenderer.HideInterruptIcon(intIcon)
 end
 
 function UIRenderer.PlayInterruptAlertSound(profile)
-    local alertSound = profile.interruptAlertSound
-    if not alertSound or alertSound == "None" then return end
-    if not LSM then return end
-    local soundFile = LSM:Fetch(LSM.MediaType.SOUND, alertSound, true)
-    if not soundFile then return end
-    local now = GetTime()
-    if (now - lastInterruptSoundTime) < INTERRUPT_SOUND_DEBOUNCE then return end
-    lastInterruptSoundTime = now
-    PlaySoundFile(soundFile, "Master")
+    if CastInterruptTracker then CastInterruptTracker.PlayInterruptAlertSound(profile) end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -1926,95 +1753,17 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
 end
 
 --- Cached per-frame (≤0.015 s); both renderers share the same answer and debounce timer.
+--- Delegates to CastInterruptTracker which owns all interrupt state.
 ---
 --- @param resolvedInts  table?   ordered {spellID, type} array from SpellDB.ResolveInterruptSpells
 --- @param interruptMode string   "kickOnly" | "ccPrefer"
 --- @param currentTime   number   GetTime() value from the caller
 --- @return table  { shouldShow, spellID, castBar } — reused each call; do NOT hold across frames
 function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
-    -- Keyed on time AND interruptMode so different renderer modes don't share stale results.
-    if (currentTime - lastInterruptEvalTime) < 0.015
-        and cachedIntResult.interruptMode == interruptMode then
-        return cachedIntResult
+    if CastInterruptTracker then
+        return CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
     end
-    lastInterruptEvalTime = currentTime
-    cachedIntResult.interruptMode = interruptMode
-
-    local shouldShow = false
-    local intSpellID = nil
-    local castBar    = nil
-
-    local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
-                        or (currentTime - lastCCAppliedTime)    < CC_APPLIED_SUPPRESS
-
-    if not debounceActive and resolvedInts and BlizzardAPI.IsTargetInterruptWorthy() then
-        local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
-
-        -- Unified interruptibility check: event tracker → cast bar fields → API fallback.
-        local isCasting, interruptible, bar = IsTargetCastInterruptible(nameplate)
-
-        if isCasting then
-            local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
-            local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
-            local canCC = not targetCCImmune and not targetAlreadyCC
-            -- kickPrefer / ccPrefer: when cast is shielded, only CC spells can stop it.
-            local ccOnly = not interruptible and canCC
-                and (interruptMode == "kickPrefer" or interruptMode == "ccPrefer")
-            local preferCC = interruptMode == "ccPrefer" and canCC
-
-            -- Uninterruptible + kickOnly → nothing useful to suggest.
-            if not interruptible and not ccOnly then
-                -- fall through to no-show
-            else
-                -- Single-pass spell selection: prefer CC when configured, otherwise first usable.
-                local fallbackID = nil
-                for _, entry in ipairs(resolvedInts) do
-                    local sid, stype = entry.spellID, entry.type
-                    -- In ccOnly mode, skip non-CC spells (kicks can't stop shielded casts).
-                    -- In kickOnly mode, skip CC spells entirely.
-                    if ccOnly and stype ~= "cc" then
-                        -- skip
-                    elseif interruptMode == "kickOnly" and stype == "cc" then
-                        -- skip
-                    elseif (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                        -- CC spells unusable on immune / already CC'd targets — skip.
-                    -- failOpen=true for kicks (short CD, always useful to remind);
-                    -- failOpen=false for CCs so we never recommend one we can't confirm is castable.
-                    elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
-                        if (preferCC or ccOnly) and stype == "cc" then
-                            intSpellID = sid; shouldShow = true; break
-                        elseif not fallbackID then
-                            fallbackID = sid
-                            if not preferCC and not ccOnly then break end
-                        end
-                    end
-                end
-                if not shouldShow and fallbackID then
-                    intSpellID = fallbackID; shouldShow = true
-                end
-            end
-            -- castBar is nil for API fallback; callers gracefully hide cast aura.
-            if shouldShow then castBar = bar end
-        end
-    end
-
-    -- Runs every frame: detects when suggested spell goes on CD (≈ was cast).
-    if lastInterruptShownID then
-        if SpellDB.IsInterruptOnCooldown(lastInterruptShownID) then
-            lastInterruptUsedTime = currentTime
-            lastInterruptShownID  = nil
-        elseif not shouldShow then
-            lastInterruptShownID = nil
-        end
-    end
-    if shouldShow and intSpellID then
-        lastInterruptShownID = intSpellID
-    end
-
-    cachedIntResult.shouldShow = shouldShow
-    cachedIntResult.spellID    = intSpellID
-    cachedIntResult.castBar    = castBar
-    return cachedIntResult
+    return { shouldShow = false, spellID = nil, castBar = nil, interruptMode = interruptMode }
 end
 
 function UIRenderer.SetCombatState(inCombat)
@@ -2054,5 +1803,5 @@ UIRenderer.WAIT_LABEL            = WAIT_LABEL
 
 -- Suppresses CC suggestions until the game registers the CC state on the target.
 function UIRenderer.NotifyCCApplied()
-    lastCCAppliedTime = GetTime()
+    if CastInterruptTracker then CastInterruptTracker.NotifyCCApplied() end
 end

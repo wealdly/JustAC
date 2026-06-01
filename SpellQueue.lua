@@ -47,7 +47,8 @@ local displacedPrimary = {}
 -- so UIRenderer can apply a distinct purple glow instead of the gap-closer gold.
 local burstInjectedSpells = {}
 
--- Reusable pooled tables (wiped at start of each queue build to avoid GC pressure)
+-- ── Reusable scratch buffers (wiped at start of each GetCurrentSpellQueue call) ────────────────
+-- These are NOT persistent state; they are pooled to avoid GC pressure on the hot path.
 local proccedSpells = {}
 local normalSpells = {}
 local cooldownSpells = {}
@@ -59,6 +60,7 @@ local recommendedSpells = {}
 local filterResultCache = {}
 -- Separate table for rotation-filter results (avoids string concat "r_"..spellID in the hot path)
 local rotationFilterCache = {}
+-- ─────────────────────────────────────────────────────────────────────────────────────────────
 
 -- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;

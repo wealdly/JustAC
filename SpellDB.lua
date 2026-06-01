@@ -1205,3 +1205,83 @@ function SpellDB.ResolveInterruptSpells()
     end
     return #result > 0 and result or nil
 end
+
+--------------------------------------------------------------------------------
+-- Static spell classification tables (shared with RedundancyFilter)
+-- Pure data — no dependency on filter state. Maintained here so other modules
+-- can reference them without depending on RedundancyFilter.
+--------------------------------------------------------------------------------
+
+-- Raid buff spell IDs (includes alternate IDs from 12.0 Midnight Exclusion Whitelist)
+SpellDB.RAID_BUFF_SPELLS = {
+    [1126] = true,    -- Mark of the Wild (Druid)
+    [264778] = true,  -- Mark of the Wild (alternate)
+    [21562] = true,   -- Power Word: Fortitude (Priest)
+    [264764] = true,  -- Power Word: Fortitude (alternate)
+    [6673] = true,    -- Battle Shout (Warrior)
+    [264761] = true,  -- Battle Shout (alternate)
+    [1459] = true,    -- Arcane Intellect (Mage)
+    [264760] = true,  -- Arcane Intellect (alternate)
+    [381732] = true,  -- Blessing of the Bronze (Evoker)
+}
+
+-- Pet summon spell IDs
+SpellDB.PET_SUMMON_SPELLS = {
+    -- Hunter
+    [883] = true,     -- Call Pet 1
+    [83242] = true,   -- Call Pet 2
+    [83243] = true,   -- Call Pet 3
+    [83244] = true,   -- Call Pet 4
+    [83245] = true,   -- Call Pet 5
+    -- Warlock
+    [688] = true,     -- Summon Imp
+    [697] = true,     -- Summon Voidwalker
+    [712] = true,     -- Summon Succubus
+    [691] = true,     -- Summon Felhunter
+    [30146] = true,   -- Summon Felguard
+    -- Death Knight
+    [46584] = true,   -- Raise Dead (permanent ghoul)
+    [46585] = true,   -- Raise Dead (temporary)
+    [42650] = true,   -- Army of the Dead
+    [49206] = true,   -- Summon Gargoyle
+    -- Mage
+    [31687] = true,   -- Summon Water Elemental
+    -- Shaman
+    [51533] = true,   -- Feral Spirit
+    [198103] = true,  -- Earth Elemental
+    [198067] = true,  -- Fire Elemental
+    [192249] = true,  -- Storm Elemental
+}
+
+-- Unique aura spell IDs: buffs that can only have one active instance at a time.
+-- These are filtered when already active (outside pandemic window).
+-- Raid buff IDs are merged in below so this table is the authoritative union.
+SpellDB.UNIQUE_AURA_SPELLS = {
+    -- Druid Forms
+    [768] = true,     -- Cat Form
+    [5487] = true,    -- Bear Form
+    [783] = true,     -- Travel Form
+    [24858] = true,   -- Moonkin Form
+    [197625] = true,  -- Moonkin Form (affinity)
+    [114282] = true,  -- Tree of Life
+    -- Warrior Stances
+    [386164] = true,  -- Battle Stance
+    [386208] = true,  -- Defensive Stance
+    -- Paladin Auras
+    [465] = true,     -- Devotion Aura
+    [183435] = true,  -- Retribution Aura
+    [32223] = true,   -- Crusader Aura
+    -- Rogue Stealth
+    [1784] = true,    -- Stealth
+    [115191] = true,  -- Stealth (Subterfuge)
+    -- Hunter Aspects
+    [5118] = true,    -- Aspect of the Cheetah
+    [186257] = true,  -- Aspect of the Cheetah
+    [186265] = true,  -- Aspect of the Turtle
+    [186289] = true,  -- Aspect of the Eagle
+}
+
+-- Raid buffs are also unique auras (can only have one active) — merge at load time.
+for spellID in pairs(SpellDB.RAID_BUFF_SPELLS) do
+    SpellDB.UNIQUE_AURA_SPELLS[spellID] = true
+end

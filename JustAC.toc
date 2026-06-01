@@ -49,6 +49,7 @@ RedundancyFilter.lua
 SpellQueue.lua
 UI\UIHealthBar.lua
 UI\UIAnimations.lua
+UI\CastInterruptTracker.lua
 UI\UIFrameFactory.lua
 UI\UIRenderer.lua
 UI\UINameplateOverlay.lua

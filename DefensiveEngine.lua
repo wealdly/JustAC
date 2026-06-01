@@ -250,15 +250,20 @@ end
 -- Initialization & registration
 --------------------------------------------------------------------------------
 
+--- Run all one-time defensive data migrations for the current character+spec.
+--- Called from JustAC:InitializeDefensiveSpells() before InitializeDefensiveSpells().
+--- Idempotent: each helper is a no-op when there is nothing to migrate.
+function DefensiveEngine.MigrateData(addon)
+    DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
+    -- Note: MigrateDefensiveSpellsToClassSpells already calls MergeLegacyDefensiveLists.
+end
+
 function DefensiveEngine.InitializeDefensiveSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
     local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
     if not playerClass then return end
-
-    -- Migrate legacy flat lists on first load
-    DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
 
     -- Determine target key: prefer spec key, fall back to class key for pre-spec data
     local targetKey = specKey or playerClass

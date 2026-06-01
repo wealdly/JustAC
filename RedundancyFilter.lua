@@ -6,6 +6,7 @@ if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Hot path cache
 local GetTime = GetTime
@@ -18,80 +19,11 @@ local table_remove = table.remove
 local C_Secrets = C_Secrets
 
 
--- Spell classification tables (manual, covers essential spells)
-
--- Raid buffs (includes alternate IDs from 12.0 Midnight Exclusion Whitelist)
-local RAID_BUFF_SPELLS = {
-    [1126] = true,    -- Mark of the Wild (Druid)
-    [264778] = true,  -- Mark of the Wild (alternate)
-    [21562] = true,   -- Power Word: Fortitude (Priest)
-    [264764] = true,  -- Power Word: Fortitude (alternate)
-    [6673] = true,    -- Battle Shout (Warrior)
-    [264761] = true,  -- Battle Shout (alternate)
-    [1459] = true,    -- Arcane Intellect (Mage)
-    [264760] = true,  -- Arcane Intellect (alternate)
-    [381732] = true,  -- Blessing of the Bronze (Evoker)
-}
-
--- Pet summon spells
-local PET_SUMMON_SPELLS = {
-    -- Hunter
-    [883] = true,     -- Call Pet 1
-    [83242] = true,   -- Call Pet 2
-    [83243] = true,   -- Call Pet 3
-    [83244] = true,   -- Call Pet 4
-    [83245] = true,   -- Call Pet 5
-    -- Warlock
-    [688] = true,     -- Summon Imp
-    [697] = true,     -- Summon Voidwalker
-    [712] = true,     -- Summon Succubus
-    [691] = true,     -- Summon Felhunter
-    [30146] = true,   -- Summon Felguard
-    -- Death Knight
-    [46584] = true,   -- Raise Dead (permanent ghoul)
-    [46585] = true,   -- Raise Dead (temporary)
-    [42650] = true,   -- Army of the Dead
-    [49206] = true,   -- Summon Gargoyle
-    -- Mage
-    [31687] = true,   -- Summon Water Elemental
-    -- Shaman
-    [51533] = true,   -- Feral Spirit
-    [198103] = true,  -- Earth Elemental
-    [198067] = true,  -- Fire Elemental
-    [192249] = true,  -- Storm Elemental
-}
-
--- Unique Aura Spells: Buffs that can only have one instance active
--- These should be filtered when already active (outside pandemic window)
-local UNIQUE_AURA_SPELLS = {
-    -- Druid Forms
-    [768] = true,     -- Cat Form
-    [5487] = true,    -- Bear Form
-    [783] = true,     -- Travel Form
-    [24858] = true,   -- Moonkin Form
-    [197625] = true,  -- Moonkin Form (affinity)
-    [114282] = true,  -- Tree of Life
-    -- Warrior Stances
-    [386164] = true,  -- Battle Stance
-    [386208] = true,  -- Defensive Stance
-    -- Paladin Auras
-    [465] = true,     -- Devotion Aura
-    [183435] = true,  -- Retribution Aura
-    [32223] = true,   -- Crusader Aura
-    -- Rogue Stealth
-    [1784] = true,    -- Stealth
-    [115191] = true,  -- Stealth (Subterfuge)
-    -- Hunter Aspects
-    [5118] = true,    -- Aspect of the Cheetah
-    [186257] = true,  -- Aspect of the Cheetah
-    [186265] = true,  -- Aspect of the Turtle
-    [186289] = true,  -- Aspect of the Eagle
-}
-
--- Raid buffs are also unique auras (can only have one active)
-for spellID in pairs(RAID_BUFF_SPELLS) do
-    UNIQUE_AURA_SPELLS[spellID] = true
-end
+-- Spell classification tables (static data maintained in SpellDB.lua)
+-- See SpellDB.RAID_BUFF_SPELLS / PET_SUMMON_SPELLS / UNIQUE_AURA_SPELLS for contents.
+local RAID_BUFF_SPELLS   = SpellDB and SpellDB.RAID_BUFF_SPELLS   or {}
+local PET_SUMMON_SPELLS  = SpellDB and SpellDB.PET_SUMMON_SPELLS  or {}
+local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
 
 --------------------------------------------------------------------------------
 -- NeverSecret Aura Whitelist (12.0+)

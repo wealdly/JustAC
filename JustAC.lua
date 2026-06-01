@@ -16,7 +16,6 @@ local defaults = {
         maxIcons = 4,
         iconSize = 42,
         iconSpacing = 1,
-        showOffensiveHotkeys = true, -- Legacy; migrated to textOverlays.hotkey.show on load
         gamepadIconStyle = "xbox",    -- Gamepad button icons: "generic", "xbox", "playstation"
         inputPreference = "auto",       -- Keybind input: "auto", "keyboard", "gamepad"
         debugMode = false,
@@ -36,10 +35,7 @@ local defaults = {
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
         requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
-        showHealthBar = false,         -- Legacy (migrated to defensives.showHealthBar; cleared on load)
-        showPetHealthBar = false,      -- Legacy (migrated to defensives.showPetHealthBar; cleared on load)
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
-        panelLocked = false,              -- Legacy (migrated to panelInteraction)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
@@ -484,52 +480,65 @@ function JustAC:OnEnable()
 
     -- Nameplate overlay (fully independent of main panel)
     if UINameplateOverlay then UINameplateOverlay.Create(self) end
+    -- ── Nameplate ────────────────────────────────────────────────────────────────────
     self:RegisterEvent("NAME_PLATE_UNIT_ADDED",   "OnNamePlateAdded")
     self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", "OnNamePlateRemoved")
 
+    -- ── Combat / character state ─────────────────────────────────────────────────
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnCombatEvent")
     self:RegisterEvent("PLAYER_REGEN_DISABLED", "OnCombatEvent")
     self:RegisterEvent("UNIT_HEALTH", "OnHealthChanged")
     self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "OnSpecChange")
     self:RegisterEvent("SPELLS_CHANGED", "OnSpellsChanged")
-    
+
+    -- ── Action bar + keybinds ───────────────────────────────────────────────────
     self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", "OnActionBarChanged")
     self:RegisterEvent("ACTIONBAR_PAGE_CHANGED", "OnActionBarChanged")
     self:RegisterEvent("UPDATE_BONUS_ACTIONBAR", "OnSpecialBarChanged")
-    
-    self:RegisterEvent("UPDATE_SHAPESHIFT_FORM", "OnShapeshiftFormChanged")
-    -- GetShapeshiftForm() returns nil until this fires
-    self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS", "OnShapeshiftFormsRebuilt")
-
-    -- Throttle to prevent flicker from buff-based spell overrides
-    self.lastAuraInvalidation = 0
-    self:RegisterEvent("UNIT_AURA", "OnUnitAura")
-    
     self:RegisterEvent("UPDATE_BINDINGS", "OnBindingsUpdated")
     self:RegisterEvent("GAME_PAD_CONNECTED", "OnGamePadChanged")
     self:RegisterEvent("GAME_PAD_DISCONNECTED", "OnGamePadChanged")
     self:RegisterEvent("SPELL_UPDATE_COOLDOWN", "OnCooldownUpdate")
     self:RegisterEvent("CVAR_UPDATE", "OnCVarUpdate")
+
+    -- ── Auras + form state ─────────────────────────────────────────────────────────
+    self:RegisterEvent("UPDATE_SHAPESHIFT_FORM", "OnShapeshiftFormChanged")
+    self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS", "OnShapeshiftFormsRebuilt")  -- GetShapeshiftForm() returns nil until this fires
+    -- Throttle to prevent flicker from buff-based spell overrides
+    self.lastAuraInvalidation = 0
+    self:RegisterEvent("UNIT_AURA", "OnUnitAura")
+
+    -- ── Assisted combat signals + proc glows ───────────────────────────────────────
     self:RegisterEvent("ASSISTED_COMBAT_ACTION_SPELL_CAST", "ForceUpdate")
     self:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "OnProcGlowChange")
     self:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "OnProcGlowChange")
     self:RegisterEvent("SPELL_UPDATE_ICON", "OnSpellIconChanged")
+
+    -- ── Target + range + usability ────────────────────────────────────────────────
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
     self:RegisterEvent("ACTION_RANGE_CHECK_UPDATE", "OnActionRangeUpdate")
     self:RegisterEvent("ACTION_USABLE_CHANGED", "OnActionUsableChanged")
-    self:RegisterEvent("UNIT_PET", "OnPetChanged")
-    self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
+
+    -- ── Cast tracking ─────────────────────────────────────────────────────────────────
     self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED",    "OnSpellcastSucceeded")
     self:RegisterEvent("UNIT_SPELLCAST_START",         "OnPlayerCastStart")
     self:RegisterEvent("UNIT_SPELLCAST_STOP",          "OnPlayerCastStop")
     self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START", "OnPlayerChannelStart")
     self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP",  "OnPlayerChannelStop")
+
+    -- ── Pet + equipment ────────────────────────────────────────────────────────────
+    self:RegisterEvent("UNIT_PET", "OnPetChanged")
+    self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
+
+    -- ── Vehicle + override bars ──────────────────────────────────────────────────
     self:RegisterEvent("UNIT_ENTERED_VEHICLE",         "OnVehicleChanged")
     self:RegisterEvent("UNIT_EXITED_VEHICLE",          "OnVehicleChanged")
     self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR",  "OnVehicleChanged")
     self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR", "OnOverrideBarChanged")
     self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
+
+    -- ── Encounter / instance ──────────────────────────────────────────────────────
     -- 12.0.5: aura instance IDs re-randomize at encounter/M+/PvP start — flush stale maps
     self:RegisterEvent("ENCOUNTER_START",      "OnEncounterStart")
     self:RegisterEvent("CHALLENGE_MODE_START", "OnEncounterStart")
@@ -796,6 +805,7 @@ function JustAC:OnHealthChanged(event, unit)
 end
 function JustAC:InitializeDefensiveSpells()
     if DefensiveEngine then
+        DefensiveEngine.MigrateData(self)
         DefensiveEngine.InitializeDefensiveSpells(self)
     end
     if GapCloserEngine then
@@ -837,6 +847,9 @@ function JustAC:UpdateDefensiveCooldowns()
 end
 
 function JustAC:LoadModules()
+    -- Each module already resolved its own inter-module deps at load time.
+    -- This function resolves them into JustAC.lua's own local upvalues,
+    -- which can't be done at file-load time because JustAC.lua loads last.
     UIRenderer = LibStub("JustAC-UIRenderer", true)
     UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
     UIAnimations = LibStub("JustAC-UIAnimations", true)
