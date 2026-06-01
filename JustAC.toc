@@ -26,6 +26,7 @@ Libs\\AceLocale-3.0\\AceLocale-3.0.xml
 Libs\\LibSharedMedia-3.0\\lib.xml
 Libs\\AceGUI-3.0-SharedMediaWidgets\\widget.xml
 
+# Locales
 Locales\enUS.lua
 Locales\deDE.lua
 Locales\frFR.lua
@@ -36,27 +37,37 @@ Locales\ptBR.lua
 Locales\zhCN.lua
 Locales\zhTW.lua
 Locales\koKR.lua
+
+# Core Data  (no inter-module deps)
 SpellDB.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua
 BlizzardAPI\SpellQuery.lua
 BlizzardAPI\StateHelpers.lua
+
+# State / Cache  (BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter → SpellQueue)
 FormCache.lua
 MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
 SpellQueue.lua
-UI\UIHealthBar.lua
+
+# UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UIRenderer → UINameplateOverlay)
 UI\UIAnimations.lua
+UI\UIHealthBar.lua
 UI\CastInterruptTracker.lua
 UI\UIFrameFactory.lua
 UI\UIRenderer.lua
 UI\UINameplateOverlay.lua
+
+# Engines  (depend on full UI stack)
 DefensiveEngine.lua
 GapCloserEngine.lua
 BurstInjectionEngine.lua
 DebugCommands.lua
+
+# Options
 Options\SpellSearch.lua
 Options\LiveSearchPopup.lua
 Options\General.lua
@@ -71,6 +82,8 @@ Options\Labels.lua
 Options\Hotkeys.lua
 Options\Profiles.lua
 Options\Core.lua
+
+# Entry Point
 TargetFrameAnchor.lua
 KeyPressDetector.lua
 JustAC.lua
