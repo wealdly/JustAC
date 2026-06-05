@@ -362,3 +362,5 @@ L["Reset Defensive Frame Position"] = "위치 초기화"
 L["Performance"] = "성능"
 L["Disable Blizzard Highlight"] = "Blizzard 액션 바 강조 비활성화"
 L["Disable Blizzard Highlight desc"] = "Blizzard의 프레임당 액션 바 발광 스캔을 비활성화합니다 (JustAC와 중복). 성능을 향상시키고 애드온 부하가 높을 때 '실행 시간 제한' 오류를 방지합니다."
+
+L["WAIT"] = "대기"

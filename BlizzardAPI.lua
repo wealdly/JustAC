@@ -3,6 +3,12 @@
 -- JustAC: Blizzard API Module - entry point, version detection and LibStub registration.
 -- Public functions are defined in the BlizzardAPI\ submodules, loaded immediately
 -- after this file in JustAC.toc: CooldownTracking, SecretValues, SpellQuery, StateHelpers.
+--
+-- Key functions added by each submodule:
+--   SpellQuery.lua        → GetAddon, GetProfile, GetDebugMode, GetSpellInfo, IsSpellUsable
+--   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
+--   SecretValues.lua      → IsMidnightOrLater, IsRedundancyFilterAvailable
+--   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
 local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 35)
 if not BlizzardAPI then return end
 

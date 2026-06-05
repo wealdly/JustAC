@@ -360,3 +360,5 @@ L["Performance"] = "性能"
 L["Disable Blizzard Highlight"] = "禁用暴雪动作条高亮"
 L["Disable Blizzard Highlight desc"] = "禁用暴雪动作条高亮扫描（与JustAC重复）。提高性能，防止插件负载较重时出现「脚本执行时间超限」错误。"
 
+
+L["WAIT"] = "等待"

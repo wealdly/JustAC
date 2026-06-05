@@ -56,7 +56,7 @@ local SPELL_LIST_CONFIG = {
     { listKey = "petRezSpells",    restoreKey = "petrez",    defaultsKey = "CLASS_PET_REZ_DEFAULTS" },
 }
 
--- Copy a source spell list into dest[listKey], used by init/migrate/restore.
+-- Copy a source spell list into dest[listKey], used by init/restore.
 local function CopySpellList(dest, listKey, source)
     dest[listKey] = {}
     for i, spellID in ipairs(source) do
@@ -152,111 +152,9 @@ function DefensiveEngine.GetDefensiveSpecKey()
     return nil, nil
 end
 
--- Migrate pre-3.25 flat spell lists (selfHealSpells/cooldownSpells/petHealSpells)
--- into the new per-spec classSpells structure. Safe to call multiple times.
-function DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
-    local profile = addon:GetProfile()
-    if not profile or not profile.defensives then return end
-
-    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
-    if not playerClass then return end
-    -- Need spec key for per-spec storage; fall back to class key if spec unavailable
-    local targetKey = specKey or playerClass
-
-    local def = profile.defensives
-    local hasFlatData = (def.selfHealSpells and #def.selfHealSpells > 0)
-        or (def.cooldownSpells and #def.cooldownSpells > 0)
-        or (def.petHealSpells and #def.petHealSpells > 0)
-
-    if hasFlatData then
-        -- Ensure classSpells table exists
-        if not def.classSpells then def.classSpells = {} end
-        if not def.classSpells[targetKey] then def.classSpells[targetKey] = {} end
-        local cs = def.classSpells[targetKey]
-
-        -- Move flat lists into per-spec structure (don't overwrite existing)
-        -- Note: uses legacy keys selfHealSpells/cooldownSpells for this migration path
-        local legacyKeys = { "selfHealSpells", "cooldownSpells", "petHealSpells" }
-        for _, listKey in ipairs(legacyKeys) do
-            local flatList = def[listKey]
-            if flatList and #flatList > 0 and (not cs[listKey] or #cs[listKey] == 0) then
-                CopySpellList(cs, listKey, flatList)
-            end
-        end
-
-        -- Clear flat keys so migration won't re-trigger
-        def.selfHealSpells = nil
-        def.cooldownSpells = nil
-        def.petHealSpells = nil
-
-        addon:DebugPrint("Migrated flat defensive spells to classSpells[" .. targetKey .. "]")
-    end
-
-    -- Merge selfHealSpells + cooldownSpells → defensiveSpells (unified list migration).
-    -- Runs after flat→classSpells migration so both paths feed into the merge.
-    DefensiveEngine.MergeLegacyDefensiveLists(addon)
-end
-
--- Merge legacy per-spec selfHealSpells + cooldownSpells into the unified defensiveSpells
--- list.  Self-heals come first (natural priority), then cooldowns.  Deduplicates.
--- Idempotent: skips if defensiveSpells already exists.  Old keys are preserved for
--- safe downgrade to older addon versions.
-function DefensiveEngine.MergeLegacyDefensiveLists(addon)
-    local profile = addon:GetProfile()
-    if not profile or not profile.defensives then return end
-
-    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
-    if not playerClass then return end
-    local targetKey = specKey or playerClass
-
-    local def = profile.defensives
-    if not def.classSpells or not def.classSpells[targetKey] then return end
-    local cs = def.classSpells[targetKey]
-
-    -- Already merged — skip
-    if cs.defensiveSpells and #cs.defensiveSpells > 0 then return end
-
-    local selfHeals  = cs.selfHealSpells
-    local cooldowns  = cs.cooldownSpells
-    if (not selfHeals or #selfHeals == 0) and (not cooldowns or #cooldowns == 0) then return end
-
-    -- Concatenate: self-heals first, then cooldowns, deduplicating
-    local merged = {}
-    local seen = {}
-    if selfHeals then
-        for _, id in ipairs(selfHeals) do
-            if not seen[id] then
-                merged[#merged + 1] = id
-                seen[id] = true
-            end
-        end
-    end
-    if cooldowns then
-        for _, id in ipairs(cooldowns) do
-            if not seen[id] then
-                merged[#merged + 1] = id
-                seen[id] = true
-            end
-        end
-    end
-
-    cs.defensiveSpells = merged
-    -- Keep selfHealSpells/cooldownSpells for safe downgrade — do NOT wipe them.
-
-    addon:DebugPrint("Merged selfHealSpells+cooldownSpells → defensiveSpells[" .. targetKey .. "] (" .. #merged .. " spells)")
-end
-
 --------------------------------------------------------------------------------
 -- Initialization & registration
 --------------------------------------------------------------------------------
-
---- Run all one-time defensive data migrations for the current character+spec.
---- Called from JustAC:InitializeDefensiveSpells() before InitializeDefensiveSpells().
---- Idempotent: each helper is a no-op when there is nothing to migrate.
-function DefensiveEngine.MigrateData(addon)
-    DefensiveEngine.MigrateDefensiveSpellsToClassSpells(addon)
-    -- Note: MigrateDefensiveSpellsToClassSpells already calls MergeLegacyDefensiveLists.
-end
 
 function DefensiveEngine.InitializeDefensiveSpells(addon)
     local profile = addon:GetProfile()
@@ -429,18 +327,17 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
 
     -- Main panel defensive queue (gated by defensives.enabled)
     if def and def.enabled then
-        local defensiveQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
+        local defensiveQueue, mainAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 4
 
         -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
-        -- Uses defensiveAlreadyAdded from GetDefensiveSpellQueue to avoid duplicates
         if petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), maxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), maxIcons, mainAddedSet)
         end
 
         -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
         if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), maxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), maxIcons, mainAddedSet)
         end
 
         ApplyMainPanelQueue(addon, defensiveQueue)
@@ -451,19 +348,18 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     end
 
     -- Nameplate overlay defensive queue — independent of defensives.enabled.
-    -- Uses its own display mode and icon count settings. GetDefensiveSpellQueue wipes
-    -- defensiveAlreadyAdded at the start of each call, so no bleed from the main panel path.
+    -- Uses its own display mode and icon count settings.
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "always"
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
-        local npoQueue = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
+        local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
 
         -- Pet rez/heal: parity with main panel (same priority order)
         if petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), npoMaxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), npoMaxIcons, npoAddedSet)
         end
         if petNeedsHeal and not petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), npoMaxIcons, defensiveAlreadyAdded)
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), npoMaxIcons, npoAddedSet)
         end
 
         ApplyOverlayQueue(addon, npoQueue)
@@ -686,7 +582,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     end
 
     -- Early exit: proc injection already filled the queue
-    if #results >= maxIcons then return results end
+    if #results >= maxIcons then return results, alreadyAdded end
 
     -- Unified defensive spell list (user-ordered priority)
     local defensiveSpells = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
@@ -695,10 +591,10 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, true)
 
     -- Early exit: proc passes filled the queue
-    if #results >= maxIcons then return results end
+    if #results >= maxIcons then return results, alreadyAdded end
 
     if displayMode == "combatOnly" and not inCombat then
-        return results
+        return results, alreadyAdded
     end
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
@@ -706,16 +602,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded)
     end
 
-    return results
-end
-
---------------------------------------------------------------------------------
--- (Healing potion subsystem removed — users add health items manually via the
---  defensive spell list, which searches spellbook + inventory by keyword.)
---------------------------------------------------------------------------------
-
--- Placeholder kept so external callers that haven't updated yet don't hard-error.
-function DefensiveEngine.InvalidatePotionCache()
+    return results, alreadyAdded
 end
 
 function DefensiveEngine.GetBuildStats()

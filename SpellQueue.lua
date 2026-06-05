@@ -7,6 +7,7 @@ if not SpellQueue then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Hot path cache
 local GetTime = GetTime
@@ -85,7 +86,6 @@ local function GetBlacklistTable()
     local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     if not profile then return nil, nil end
     if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
-    local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return nil, nil end
     return profile.blacklistedSpells[specKey], specKey
@@ -111,7 +111,6 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
     if not profile then return end
     if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
 
-    local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return end
 
@@ -386,6 +385,11 @@ function SpellQueue.GetCurrentSpellQueue()
     local spellCount = 0
     local hideItems = profile.hideItemAbilities
 
+    -- Resolve late-bound engine refs (load after SpellQueue in TOC; resolved once, then cached).
+    if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
+    if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
+    if not cachedBurstEngine then cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true) end
+
     -- Position 1: Blizzard's primary suggestion. Blacklist applies to all positions.
     -- Hiding pos 1 can freeze the rotation — users are warned in the blacklist UI.
     local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
@@ -421,14 +425,7 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     -- Gap-closer injection: promote to position 1 when target is out of melee range.
-    -- GapCloserEngine loads after SpellQueue, so we resolve it lazily.
     if spellCount < maxIcons then
-        if not cachedGapCloserEngine then
-            cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
-        end
-        if not cachedAddon then
-            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-        end
         if cachedGapCloserEngine and cachedGapCloserEngine.GetGapCloserSpell and cachedAddon then
             local pos1Display = recommendedSpells[1]
             local pos1IsGapCloser = false
@@ -474,14 +471,7 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Burst injection: inject priority spell at position 1 when burst window is active.
     -- Two-phase: "pending" = trigger CD at pos 1 (glow only, no injection),
     --            "active"  = trigger aura on player (inject from injection list).
-    -- BurstInjectionEngine loads after SpellQueue, so we resolve it lazily.
     if spellCount < maxIcons then
-        if not cachedBurstEngine then
-            cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true)
-        end
-        if not cachedAddon then
-            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-        end
         if cachedBurstEngine and cachedBurstEngine.CheckTrigger and cachedAddon then
             local burstPhase, triggerPosition = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID, recommendedSpells)
             -- Phase "pending": trigger CD is visible in the queue. Mark it as burst so
@@ -542,12 +532,8 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Custom Queue: if enabled for this spec, use user-defined spell list instead.
     if not cachedRotationList then
         local useCustom = false
-        if not cachedAddon then
-            cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
-        end
         if cachedAddon and cachedAddon.db and cachedAddon.db.profile then
             local cqProfile = cachedAddon.db.profile.customQueue
-            local SpellDB = LibStub("JustAC-SpellDB", true)
             local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
             if specKey and cqProfile and cqProfile[specKey]
                and cqProfile[specKey].enabled and cqProfile[specKey].spells
@@ -650,6 +636,10 @@ function SpellQueue.IsGapCloserSpell(spellID)
 end
 
 function SpellQueue.OnSpecChange()
+    -- Eagerly resolve late-bound refs; by spec-change time all engines are loaded.
+    if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
+    if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
+    if not cachedBurstEngine then cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true) end
     SpellQueue.ClearSpellCache()
     SpellQueue.ForceUpdate()
 end

@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.22.2] - 2026-06-05
+
+### Added
+- Localized `WAIT` overlay label in supported locales so resource-wait messaging is translated consistently.
+
+### Changed
+- Hotkey normalization and keypress matching are now more consistent across modifier formats, improving flash/match reliability for standard, defensive, interrupt, and nameplate icons.
+
+### Fixed
+- Defensive queue deduplication for pet rez/heal suggestions now correctly reuses per-pass tracking in both main and nameplate defensive paths.
+- Removed duplicated locale `WAIT` entries that were introduced during localization updates.
+
 ## [4.22.1] - 2026-05-19
 
 ### Fixed

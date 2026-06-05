@@ -14,6 +14,8 @@ local IsMouseButtonDown = IsMouseButtonDown
 local wipe = wipe
 local GetTime = GetTime
 local ipairs = ipairs
+local string_sub = string.sub
+local string_match = string.match
 
 -- Pooled table for key press flash matching (avoids GC pressure on every key press)
 local iconsToFlash = {}
@@ -34,6 +36,33 @@ local MOUSE_BUTTONS = {
     { api = "Button5",      binding = "BUTTON5" },
 }
 local prevMouseDown = {}
+
+local function IsAnyModifierDown()
+    return IsShiftKeyDown() or IsControlKeyDown() or IsAltKeyDown()
+end
+
+local function HotkeyMatches(boundHotkey, pressedHotkey, hasAnyModifier)
+    if not boundHotkey or not pressedHotkey then return false end
+    if boundHotkey == pressedHotkey then return true end
+
+    -- "+X" binds normalize to MOD-X (any modifier + key).
+    -- Match when a modifier is held and the key portion matches.
+    if hasAnyModifier and string_sub(boundHotkey, 1, 4) == "MOD-" then
+        local pressedBase = string_match(pressedHotkey, "^[A-Z%-]+%-(.+)$")
+        return pressedBase and string_sub(boundHotkey, 5) == pressedBase
+    end
+
+    return false
+end
+
+local function AddMatchedIcons(out, iconList, normalizedKey, hasAnyModifier)
+    if not iconList then return end
+    for _, icon in ipairs(iconList) do
+        if icon and icon:IsShown() and HotkeyMatches(icon.normalizedHotkey, normalizedKey, hasAnyModifier) then
+            out[#out + 1] = icon
+        end
+    end
+end
 
 -------------------------------------------------------------------------------
 -- Build modifier key prefix from current keyboard state
@@ -75,7 +104,7 @@ function KPD.Create(addon)
     ---------------------------------------------------------------------------
     -- Shared: match normalizedKey against all icon groups and flash matches
     ---------------------------------------------------------------------------
-    local function MatchAndFlash(normalizedKey)
+    local function MatchAndFlash(normalizedKey, hasAnyModifier)
         if not addon or not StartFlash then return end
 
         -- Reuse pooled table to avoid GC pressure
@@ -99,11 +128,11 @@ function KPD.Create(addon)
                 end
 
                 -- Match: current hotkey, previous hotkey, OR any match during grace period
-                local matched = icon1.normalizedHotkey == normalizedKey
+                local matched = HotkeyMatches(icon1.normalizedHotkey, normalizedKey, hasAnyModifier)
                 if not matched and inGracePeriod then
                     -- During grace period, also accept previous hotkey
                     -- (user pressed key for the spell that just got cast)
-                    matched = icon1.previousNormalizedHotkey == normalizedKey
+                    matched = HotkeyMatches(icon1.previousNormalizedHotkey, normalizedKey, hasAnyModifier)
                 end
                 if matched then
                     iconsToFlash[#iconsToFlash + 1] = icon1
@@ -115,7 +144,7 @@ function KPD.Create(addon)
                 local icon = spellIcons[i]
                 if icon and icon:IsShown() and icon.spellID then
                     -- Inline match check
-                    local matched = icon.normalizedHotkey == normalizedKey
+                    local matched = HotkeyMatches(icon.normalizedHotkey, normalizedKey, hasAnyModifier)
 
                     -- Skip if same spell that was in slot 1 (just moved)
                     if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
@@ -129,51 +158,27 @@ function KPD.Create(addon)
             end
         end
 
-        -- Check defensive icons (flash uses central profile.showFlash)
         local showFlash = not profile or profile.showFlash ~= false
+
+        -- Check defensive icons (flash uses central profile.showFlash)
         if showFlash then
-            local defIcons = addon.defensiveIcons
-            if defIcons then
-                for _, defIcon in ipairs(defIcons) do
-                    if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
-                        iconsToFlash[#iconsToFlash + 1] = defIcon
-                    end
-                end
-            end
+            AddMatchedIcons(iconsToFlash, addon.defensiveIcons, normalizedKey, hasAnyModifier)
 
             -- Legacy single defensive icon
             local defIcon = addon.defensiveIcon
-            if defIcon and defIcon:IsShown() and defIcon.normalizedHotkey == normalizedKey then
+            if defIcon and defIcon:IsShown() and HotkeyMatches(defIcon.normalizedHotkey, normalizedKey, hasAnyModifier) then
                 iconsToFlash[#iconsToFlash + 1] = defIcon
             end
+
+            -- Nameplate overlay icons
+            AddMatchedIcons(iconsToFlash, addon.nameplateIcons, normalizedKey, hasAnyModifier)
+            AddMatchedIcons(iconsToFlash, addon.nameplateDefIcons, normalizedKey, hasAnyModifier)
         end
 
-        -- Check standard queue interrupt icon
+        -- Standard queue interrupt icon is always eligible
         local intIcon = addon.interruptIcon
-        if intIcon and intIcon:IsShown() and intIcon.normalizedHotkey == normalizedKey then
+        if intIcon and intIcon:IsShown() and HotkeyMatches(intIcon.normalizedHotkey, normalizedKey, hasAnyModifier) then
             iconsToFlash[#iconsToFlash + 1] = intIcon
-        end
-
-        -- Check nameplate DPS overlay icons (flash uses central profile.showFlash)
-        local npIcons = addon.nameplateIcons
-        if npIcons and showFlash then
-            for _, npIcon in ipairs(npIcons) do
-                if npIcon and npIcon:IsShown() and npIcon.normalizedHotkey == normalizedKey then
-                    iconsToFlash[#iconsToFlash + 1] = npIcon
-                end
-            end
-        end
-
-        -- Check nameplate defensive overlay icons
-        if showFlash then
-            local npDefIcons = addon.nameplateDefIcons
-            if npDefIcons then
-                for _, npDefIcon in ipairs(npDefIcons) do
-                    if npDefIcon and npDefIcon:IsShown() and npDefIcon.normalizedHotkey == normalizedKey then
-                        iconsToFlash[#iconsToFlash + 1] = npDefIcon
-                    end
-                end
-            end
         end
 
         -- Flash all matched icons
@@ -193,7 +198,7 @@ function KPD.Create(addon)
             return
         end
 
-        MatchAndFlash(BuildModifierPrefix() .. key:upper())
+        MatchAndFlash(BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
     end)
 
     ---------------------------------------------------------------------------
@@ -214,7 +219,7 @@ function KPD.Create(addon)
         for i, btn in ipairs(MOUSE_BUTTONS) do
             local down = IsMouseButtonDown(btn.api)
             if down and not prevMouseDown[i] then
-                MatchAndFlash(BuildModifierPrefix() .. btn.binding)
+                MatchAndFlash(BuildModifierPrefix() .. btn.binding, IsAnyModifierDown())
             end
             prevMouseDown[i] = down
         end

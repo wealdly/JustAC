@@ -38,8 +38,8 @@ local trackedSpells = {}
 -- cast events + cached recharge duration for lazy recovery evaluation.
 local localCharges = {}
 
--- Minimum base cooldown (ms) to track — ignore GCD-only spells
-local MIN_TRACKABLE_CD_MS = 3000
+-- Minimum base cooldown to track — ignore GCD-only spells
+local MIN_TRACKABLE_CD_SECS = 3
 
 -- Hidden tooltip for parsing traited cooldown values
 local probeTooltip = nil
@@ -158,7 +158,7 @@ local function RecordSpellCooldown(spellID)
         local cd = C_Spell_GetSpellCooldown(spellID)
         if cd and cd.duration and not IsSecretValue(cd.duration) and cd.duration > 0 then
             -- Only cache if it's a real cooldown (> 3s), not a GCD read
-            if cd.duration > MIN_TRACKABLE_CD_MS / 1000 then
+            if cd.duration > MIN_TRACKABLE_CD_SECS then
                 duration = cd.duration
                 cachedDurations[spellID] = duration
             end
@@ -264,7 +264,7 @@ local function ScanCooldownDurations()
         local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
         if ok and cd then
             local duration = Unsecret(cd.duration)
-            if duration and duration > 0 and duration > MIN_TRACKABLE_CD_MS / 1000 then
+            if duration and duration > 0 and duration > MIN_TRACKABLE_CD_SECS then
                 cachedDurations[spellID] = duration
             end
         end
@@ -438,7 +438,7 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
     -- Only "rotation" category has the CD duration gate
     if category == "rotation" then
         local effectiveCdMs = (cachedDurations[spellID] or 0) * 1000
-        if effectiveCdMs < MIN_TRACKABLE_CD_MS then return end
+        if effectiveCdMs < MIN_TRACKABLE_CD_SECS * 1000 then return end
     end
 
     trackedSpells[spellID] = category or "rotation"
@@ -446,16 +446,6 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
     if not cooldownEventFrame then
         InitCooldownTracking()
     end
-end
-
---- Legacy wrapper: register a defensive spell for tracking.
-function BlizzardAPI.RegisterDefensiveSpell(spellID)
-    BlizzardAPI.RegisterSpellForTracking(spellID, "defensive")
-end
-
---- Legacy wrapper: register a rotation spell for tracking (CD > 3s gate).
-function BlizzardAPI.RegisterRotationSpell(spellID)
-    BlizzardAPI.RegisterSpellForTracking(spellID, "rotation")
 end
 
 function BlizzardAPI.ClearTrackedDefensives()

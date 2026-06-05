@@ -365,3 +365,5 @@ L["Performance"] = "Leistung"
 L["Disable Blizzard Highlight"] = "Blizzard-Aktionsleisten-Hervorhebung deaktivieren"
 L["Disable Blizzard Highlight desc"] = "Blizzards Aktionsleisten-Leuchteffekt deaktivieren (redundant mit JustAC). Verbessert die Leistung und verhindert ‚Skript-Ausführungszeitlimit'-Fehler bei hoher Addon-Last."
 
+
+L["WAIT"] = "WART"

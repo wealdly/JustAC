@@ -366,3 +366,5 @@ L["Performance"] = "Rendimiento"
 L["Disable Blizzard Highlight"] = "Desactivar resaltado de barra de acción de Blizzard"
 L["Disable Blizzard Highlight desc"] = "Desactivar el brillo de Blizzard en la barra de acción (redundante con JustAC). Mejora el rendimiento y previene errores de 'límite de tiempo de ejecución' con muchos addons."
 
+
+L["WAIT"] = "ESPE"

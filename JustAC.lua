@@ -4,7 +4,30 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch
+
+-- Hot path cache for OnUpdateTick (upvalued at file scope so all methods share them)
+local UnitAffectingCombat = UnitAffectingCombat
+local GetTime = GetTime
+local GetCVar = GetCVar
+local math_max = math.max
+
+-- Update loop state (declared at file scope so event handlers defined anywhere in this
+-- file can set the flags; the OnUpdateTick closure reads the same upvalues).
+local spellQueueDirty = true
+local defensiveQueueDirty = true
+local lastFullUpdate = 0
+local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
+
+-- CVar cache (only needed by OnUpdateTick, but kept here for co-location with the rest)
+local cachedUpdateRate = nil
+local lastCVarCheck = 0
+local CVAR_CHECK_INTERVAL = 5.0  -- Only re-check CVar every 5 seconds
+
+local function NotifyOptionsChange()
+    local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+end
 
 local defaults = {
     profile = {
@@ -31,10 +54,11 @@ local defaults = {
         firstIconScale = 1.0,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
-        hideQueueOutOfCombat = false,  -- Hide the entire queue when out of combat
+        hideQueueOutOfCombat = false,  -- Legacy: superseded by queueVisibility (kept for migration detection)
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
-        requireHostileTarget = false,  -- Only show queue when targeting a hostile unit
+        requireHostileTarget = false,  -- Legacy: superseded by queueVisibility (kept for migration detection)
+        queueVisibility = "always",    -- "always", "combatOnly", or "requireHostile"
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
@@ -139,13 +163,15 @@ end
 -------------------------------------------------------------------------------
 -- Data migration helpers for NormalizeSavedData
 -- Each function is a no-op when nothing to migrate.
+-- Entry point: NormalizeSavedData() below.  Addon startup: OnInitialize() below.
 -------------------------------------------------------------------------------
 local function MigrateBlacklist(profile, charData)
     if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
 
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+
     -- db.char.blacklistedSpells → db.profile.blacklistedSpells (per-spec keyed)
     if charData.blacklistedSpells and next(charData.blacklistedSpells) then
-        local SpellDB = LibStub("JustAC-SpellDB", true)
         local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
         if specKey then
             if not profile.blacklistedSpells[specKey] then
@@ -170,7 +196,6 @@ local function MigrateBlacklist(profile, charData)
         end
     end
     if hasNumericKey then
-        local SpellDB = LibStub("JustAC-SpellDB", true)
         local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
         if specKey then
             local oldFlat = {}
@@ -208,38 +233,6 @@ local function MigrateBlacklist(profile, charData)
             profile.blacklistedSpells[specKey] = normalized
         end
     end
-end
-
-local function MigrateDefensiveSpecKeys(profile)
-    -- Per-class → per-spec keying for defensive classSpells
-    if not (profile.defensives and profile.defensives.classSpells) then return end
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return end
-    local cs = profile.defensives.classSpells
-    local classData = cs[playerClass]
-    if not (classData and type(classData) == "table") then return end
-    local hasData = false
-    for _, v in pairs(classData) do
-        if type(v) == "table" and #v > 0 then hasData = true; break end
-    end
-    if hasData then
-        local numSpecs = GetNumSpecializations and GetNumSpecializations() or 4
-        for i = 1, numSpecs do
-            local specKey = playerClass .. "_" .. i
-            if not cs[specKey] or not next(cs[specKey]) then
-                cs[specKey] = {}
-                for listKey, spellList in pairs(classData) do
-                    if type(spellList) == "table" then
-                        cs[specKey][listKey] = {}
-                        for idx, spellID in ipairs(spellList) do
-                            cs[specKey][listKey][idx] = spellID
-                        end
-                    end
-                end
-            end
-        end
-    end
-    cs[playerClass] = nil
 end
 
 local function MigrateHotkeyOverrides(profile, charData)
@@ -399,6 +392,23 @@ local function MigrateSoundKeys(profile)
     end
 end
 
+-- Migrate legacy hideQueueOutOfCombat / requireHostileTarget bools to the unified
+-- queueVisibility key.  Safe to call multiple times; no-op when already migrated.
+local function MigrateQueueVisibility(profile)
+    -- If the new key is still at the default "always" but a legacy bool is set,
+    -- the user previously configured combat-only or hostile-target gating.
+    if profile.queueVisibility == "always" then
+        if profile.hideQueueOutOfCombat then
+            profile.queueVisibility = "combatOnly"
+        elseif profile.requireHostileTarget then
+            profile.queueVisibility = "requireHostile"
+        end
+    end
+    -- Clear legacy keys regardless (they are superseded by queueVisibility)
+    profile.hideQueueOutOfCombat = nil
+    profile.requireHostileTarget = nil
+end
+
 -- SavedVariables serialize numeric keys as strings; normalize on load.
 -- Calls migration helpers in dependency order; each is a no-op if already migrated.
 function JustAC:NormalizeSavedData()
@@ -408,10 +418,10 @@ function JustAC:NormalizeSavedData()
     if not profile then return end
 
     MigrateBlacklist(profile, charData)
-    MigrateDefensiveSpecKeys(profile)
     MigrateHotkeyOverrides(profile, charData)
     MigrateLegacySettings(profile)
     MigrateSoundKeys(profile)
+    MigrateQueueVisibility(profile)
 end
 
 function JustAC:OnInitialize()
@@ -794,8 +804,7 @@ function JustAC:OnProfileDeleted(event, db, deletedName)
     end
     if changed then
         self:DebugPrint("Cleared spec-profile mappings for deleted profile: " .. tostring(deletedName))
-        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        NotifyOptionsChange()
     end
 end
 
@@ -805,7 +814,6 @@ function JustAC:OnHealthChanged(event, unit)
 end
 function JustAC:InitializeDefensiveSpells()
     if DefensiveEngine then
-        DefensiveEngine.MigrateData(self)
         DefensiveEngine.InitializeDefensiveSpells(self)
     end
     if GapCloserEngine then
@@ -814,7 +822,6 @@ function JustAC:InitializeDefensiveSpells()
     if BurstInjectionEngine then
         BurstInjectionEngine.InitializeBurstInjection(self)
     end
-    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
     if CustomQueueOpts and CustomQueueOpts.EnsureInitialized then
         CustomQueueOpts.EnsureInitialized(self)
     end
@@ -862,6 +869,8 @@ function JustAC:LoadModules()
     MacroParser = LibStub("JustAC-MacroParser", true)
     RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     SpellDB = LibStub("JustAC-SpellDB", true)
+    CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
+    SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     
     if not UIRenderer then self:Print("Error: UIRenderer module not found"); self:Disable(); return end
     if not UIFrameFactory then self:Print("Error: UIFrameFactory module not found"); self:Disable(); return end
@@ -978,12 +987,10 @@ function JustAC:ToggleSpellBlacklist(spellID)
 end
 
 function JustAC:RemoveFromCustomQueue(spellID)
-    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
     if CustomQueueOpts and CustomQueueOpts.RemoveSpell then
         local removed = CustomQueueOpts.RemoveSpell(self, spellID)
         if removed then
-            local BlizzAPI = LibStub("JustAC-BlizzardAPI", true)
-            local spellInfo = BlizzAPI and BlizzAPI.GetCachedSpellInfo(spellID)
+            local spellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(spellID)
             local spellName = spellInfo and spellInfo.name or tostring(spellID)
             self:Print("Removed |cffff6666" .. spellName .. "|r from Custom Queue")
         end
@@ -1097,8 +1104,7 @@ function JustAC:OnCombatEvent(event)
             UIAnimations.ResumeAllGlows(self)
         end
         self:ForceUpdateAll()  -- Update both combat and defensive queues
-        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        NotifyOptionsChange()
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Backfill instance CC cache: if a CC failed on a target whose NPC ID
         -- wasn't known during combat (tab-targeted mid-fight), BackfillCCImmunity
@@ -1139,7 +1145,6 @@ function JustAC:OnCombatEvent(event)
             BurstInjectionEngine.PreCacheRotationCooldowns()
         end
         -- Check if custom queue is stale (rotation changed since last snapshot)
-        local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
         if CustomQueueOpts and CustomQueueOpts.CheckStaleNotification then
             CustomQueueOpts.CheckStaleNotification(self)
         end
@@ -1156,8 +1161,7 @@ function JustAC:OnCombatEvent(event)
             if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
             self:ForceUpdateAll()
         end
-        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        NotifyOptionsChange()
     end
 end
 
@@ -1198,7 +1202,6 @@ function JustAC:OnSpecChange()
         BurstInjectionEngine.InitializeBurstInjection(self)
     end
     -- Check if custom queue is stale for the new spec
-    local CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
     if CustomQueueOpts then
         if CustomQueueOpts.EnsureInitialized then
             CustomQueueOpts.EnsureInitialized(self)
@@ -1208,7 +1211,6 @@ function JustAC:OnSpecChange()
         end
     end
     -- Invalidate options spellbook cache so it rebuilds for the new spec
-    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then
         SpellSearch.InvalidateSpellbookCache()
     end
@@ -1220,7 +1222,6 @@ end
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
     -- Invalidate options spellbook cache so new/removed spells appear in search
-    local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then
         SpellSearch.InvalidateSpellbookCache()
     end
@@ -1290,35 +1291,28 @@ function JustAC:OnSpecialBarChanged()
     self:ForceUpdate()
 end
 
-function JustAC:OnVehicleChanged(event, unit)
-    if unit ~= "player" then return end
-
+local function HandleAlternateControlChange(self)
     self:UpdateAlternateControlState()
     self:InvalidateCaches({macros = true, hotkeys = true})
     if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
         BlizzardAPI.InvalidateSlotUsabilityCache()
     end
     self:ForceUpdate()
+end
+
+function JustAC:OnVehicleChanged(event, unit)
+    if unit ~= "player" then return end
+    HandleAlternateControlChange(self)
 end
 
 function JustAC:OnOverrideBarChanged()
     -- Fires when an override action bar appears or disappears (quest vehicles, NPC control).
-    self:UpdateAlternateControlState()
-    self:InvalidateCaches({macros = true, hotkeys = true})
-    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
-        BlizzardAPI.InvalidateSlotUsabilityCache()
-    end
-    self:ForceUpdate()
+    HandleAlternateControlChange(self)
 end
 
 function JustAC:OnPossessBarChanged()
     -- Fires when Mind Control / possess effects begin or end.
-    self:UpdateAlternateControlState()
-    self:InvalidateCaches({macros = true, hotkeys = true})
-    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
-        BlizzardAPI.InvalidateSlotUsabilityCache()
-    end
-    self:ForceUpdate()
+    HandleAlternateControlChange(self)
 end
 
 --- WoW 12.0.5: aura instance IDs are re-randomized on encounter/M+ start.
@@ -1585,17 +1579,80 @@ end
 -- so the next frame processes. Multiple calls per frame are idempotent.
 --------------------------------------------------------------------------------
 
--- Dirty flags for event-driven optimization
--- When set, next OnUpdate will process; cleared after processing
-local spellQueueDirty = true
-local defensiveQueueDirty = true
-local lastFullUpdate = 0
-local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
+-- Extracted from StartUpdates so the update body is readable independently of its
+-- registration boilerplate.  Upvalues: JustAC (addon), SpellQueue, and the
+-- update-loop state vars declared at the top of this file.
+local function OnUpdateTick(_, elapsed)
+    local timeLeft = (JustAC.updateTimeLeft or 0) - elapsed
+    JustAC.updateTimeLeft = timeLeft
 
--- Cache expensive CVar lookup (rarely changes, no need to query every frame)
-local cachedUpdateRate = nil
-local lastCVarCheck = 0
-local CVAR_CHECK_INTERVAL = 5.0  -- Only re-check CVar every 5 seconds
+    -- Fast path: skip all work if not time to update yet
+    -- This is the most common case - exit as early as possible
+    if timeLeft > 0 then
+        return
+    end
+
+    -- Freeze updates while the frame is being dragged (smooth drag, no wasted work)
+    if JustAC.isDragging then
+        JustAC.updateTimeLeft = 0.1
+        return
+    end
+
+    -- Early exit: skip all work if UI is completely hidden (saves CPU when mounted, etc.)
+    local mainFrame = JustAC.mainFrame
+    local mainHidden = not mainFrame or not mainFrame:IsShown()
+    local defIcons = JustAC.defensiveIcons
+    local defHidden = (not defIcons or #defIcons == 0)
+        and (not JustAC.defensiveFrame or not JustAC.defensiveFrame:IsShown())
+    local npHidden = not JustAC.nameplateIcons or #JustAC.nameplateIcons == 0
+    if mainHidden and defHidden and npHidden
+            and not spellQueueDirty then
+        JustAC.updateTimeLeft = IDLE_CHECK_INTERVAL
+        return
+    end
+
+    local inCombat = UnitAffectingCombat("player")
+
+    -- Cache CVar lookup (expensive string operation + registry lookup)
+    local now = GetTime()
+    if not cachedUpdateRate or (now - lastCVarCheck) > CVAR_CHECK_INTERVAL then
+        cachedUpdateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0.05
+        lastCVarCheck = now
+    end
+
+    local updateRate
+    if inCombat then
+        updateRate = math_max(cachedUpdateRate, 0.03)
+    else
+        -- Out of combat: idle when clean, near-combat rate when dirty
+        if not spellQueueDirty and not defensiveQueueDirty then
+            updateRate = IDLE_CHECK_INTERVAL
+        else
+            updateRate = math_max(cachedUpdateRate, 0.05)
+        end
+    end
+
+    JustAC.updateTimeLeft = updateRate
+
+    -- Always update spell queue (Blizzard doesn't provide events for rotation changes)
+    -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
+    -- get the same low-latency path as explicit ForceUpdate() calls.
+    if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
+        SpellQueue.ForceUpdate()
+    end
+    JustAC:UpdateSpellQueue()
+    spellQueueDirty = false
+
+    -- Only update defensive cooldowns if dirty or periodic check
+    if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
+        -- Full queue rebuild: nil event bypasses DefensiveEngine throttle.
+        -- Always rebuild (not just cooldown swipes) so "always" and "combatOnly"
+        -- modes surface new icons promptly when cooldowns expire.
+        JustAC:OnHealthChanged(nil, "player")
+        defensiveQueueDirty = false
+        lastFullUpdate = now
+    end
+end
 
 function JustAC:MarkQueueDirty()
     spellQueueDirty = true
@@ -1610,84 +1667,7 @@ function JustAC:StartUpdates()
 
     self.updateFrame = CreateFrame("Frame")
     self.updateTimeLeft = 0
-
-    -- Pre-cache references to avoid table lookups in hot path
-    local UnitAffectingCombat = UnitAffectingCombat
-    local GetTime = GetTime
-    local GetCVar = GetCVar
-    local math_max = math.max
-
-    self.updateFrame:SetScript("OnUpdate", function(_, elapsed)
-        local timeLeft = (self.updateTimeLeft or 0) - elapsed
-        self.updateTimeLeft = timeLeft
-
-        -- Fast path: skip all work if not time to update yet
-        -- This is the most common case - exit as early as possible
-        if timeLeft > 0 then
-            return
-        end
-
-        -- Freeze updates while the frame is being dragged (smooth drag, no wasted work)
-        if self.isDragging then
-            self.updateTimeLeft = 0.1
-            return
-        end
-
-        -- Early exit: skip all work if UI is completely hidden (saves CPU when mounted, etc.)
-        local mainFrame = self.mainFrame
-        local mainHidden = not mainFrame or not mainFrame:IsShown()
-        local defIcons = self.defensiveIcons
-        local defHidden = (not defIcons or #defIcons == 0)
-            and (not self.defensiveFrame or not self.defensiveFrame:IsShown())
-        local npHidden = not self.nameplateIcons or #self.nameplateIcons == 0
-        if mainHidden and defHidden and npHidden
-                and not spellQueueDirty then
-            self.updateTimeLeft = IDLE_CHECK_INTERVAL
-            return
-        end
-
-        local inCombat = UnitAffectingCombat("player")
-
-        -- Cache CVar lookup (expensive string operation + registry lookup)
-        local now = GetTime()
-        if not cachedUpdateRate or (now - lastCVarCheck) > CVAR_CHECK_INTERVAL then
-            cachedUpdateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0.05
-            lastCVarCheck = now
-        end
-
-        local updateRate
-        if inCombat then
-            updateRate = math_max(cachedUpdateRate, 0.03)
-        else
-            -- Out of combat: idle when clean, near-combat rate when dirty
-            if not spellQueueDirty and not defensiveQueueDirty then
-                updateRate = IDLE_CHECK_INTERVAL
-            else
-                updateRate = math_max(cachedUpdateRate, 0.05)
-            end
-        end
-
-        self.updateTimeLeft = updateRate
-
-        -- Always update spell queue (Blizzard doesn't provide events for rotation changes)
-        -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
-        -- get the same low-latency path as explicit ForceUpdate() calls.
-        if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
-            SpellQueue.ForceUpdate()
-        end
-        self:UpdateSpellQueue()
-        spellQueueDirty = false
-
-        -- Only update defensive cooldowns if dirty or periodic check
-        if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
-            -- Full queue rebuild: nil event bypasses DefensiveEngine throttle.
-            -- Always rebuild (not just cooldown swipes) so "always" and "combatOnly"
-            -- modes surface new icons promptly when cooldowns expire.
-            self:OnHealthChanged(nil, "player")
-            defensiveQueueDirty = false
-            lastFullUpdate = now
-        end
-    end)
+    self.updateFrame:SetScript("OnUpdate", OnUpdateTick)
 end
 
 function JustAC:StopUpdates()

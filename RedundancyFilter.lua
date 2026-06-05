@@ -14,6 +14,7 @@ local pcall = pcall
 local wipe = wipe
 local pairs = pairs
 local ipairs = ipairs
+local math_max = math.max
 local UnitAffectingCombat = UnitAffectingCombat
 local table_remove = table.remove
 local C_Secrets = C_Secrets
@@ -851,7 +852,7 @@ local function IsInPandemicWindow(spellID)
     -- The auraInstanceID → timing mapping (instanceToTimingMap) carries this value into combat
     -- even when the aura API returns secret values for expirationTime directly.
     if duration >= LONG_BUFF_DURATION_CUTOFF then
-        pandemicTime = math.max(pandemicTime, PRE_COMBAT_REFRESH_THRESHOLD)
+        pandemicTime = math_max(pandemicTime, PRE_COMBAT_REFRESH_THRESHOLD)
     end
 
     return remaining <= pandemicTime
@@ -1237,10 +1238,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     
     local spellName = spellInfo.name
     local isKnownAuraSpell, isUniqueAura = IsAuraSpell(spellID)
-    
-    -- Removed noisy "Checking redundancy" debug logs to reduce spam
-    -- Use /jac find or /jac inspect modules for diagnostics instead
-    
+
     -- 3. AURA SPELL REDUNDANCY
     -- IMPORTANT: Only filter auras that are UNIQUE (can't stack) and not in pandemic window
     -- Many abilities can stack (Immolation Aura, etc.) - trust Assisted Combat's judgment
@@ -1345,7 +1343,6 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
     
-    -- Removed noisy "NOT REDUNDANT" debug logs to reduce spam
     return false
 end
 

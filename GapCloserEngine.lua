@@ -16,7 +16,7 @@ local UnitCanAttack = UnitCanAttack
 local UnitGUID = UnitGUID
 local GetSpecialization = GetSpecialization
 local IsStealthed = IsStealthed
-local IsActionInRange = IsActionInRange
+local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
 local C_Spell = C_Spell
 local ipairs = ipairs
 
@@ -117,7 +117,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     -- the == false gate.  No slot → skip range check (spell is still valid).
     if checkRange then
         local slot = FindSlotForSpell(spellID)
-        if slot and IsActionInRange(slot) == false then return nil end
+        if slot and C_ActionBar_IsActionInRange and C_ActionBar_IsActionInRange(slot) == false then return nil end
     end
 
     return resolvedID, spellID
@@ -425,7 +425,7 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
     end
 
     -- Check range using the (possibly backup) melee reference slot
-    local inRange = IsActionInRange(activeRefSlot)
+    local inRange = C_ActionBar_IsActionInRange and C_ActionBar_IsActionInRange(activeRefSlot)
     local outOfRange = (inRange == false)  -- false=out of range, nil=no range check, true=in range
     local now = GetTime()
 

@@ -1026,15 +1026,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
             if spellChanged or shouldUpdateCooldowns or not interruptIcon.cachedHotkey then
                 local hotkey = GetSpellHotkey and GetSpellHotkey(intSpellID) or ""
                 interruptIcon.cachedHotkey = hotkey
-                local displayHotkey = showHotkey and hotkey or ""
-                if (interruptIcon.hotkeyText:GetText() or "") ~= displayHotkey then
-                    interruptIcon.hotkeyText:SetText(displayHotkey)
-                end
-                if hotkey ~= "" then
-                    interruptIcon.normalizedHotkey = UIRenderer.NormalizeHotkey and UIRenderer.NormalizeHotkey(hotkey) or nil
-                else
-                    interruptIcon.normalizedHotkey = nil
-                end
+                UIRenderer.SetIconHotkeyText(interruptIcon, hotkey, showHotkey)
+                UIRenderer.SetIconNormalizedHotkey(interruptIcon, hotkey, nil, false)
             end
 
             -- Out-of-range: per-frame (IsSpellInRange is cheap NeverSecret).
@@ -1295,23 +1288,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 local hotkeyChanged = (icon.cachedHotkey ~= hotkey)
                 icon.cachedHotkey = hotkey
 
-                local displayHotkey = showHotkey and hotkey or ""
-                if (icon.hotkeyText:GetText() or "") ~= displayHotkey then
-                    icon.hotkeyText:SetText(displayHotkey)
-                end
+                UIRenderer.SetIconHotkeyText(icon, hotkey, showHotkey)
 
                 -- Only re-normalize when hotkey actually changed (mirrors UIRenderer optimization)
                 if hotkeyChanged then
-                    if hotkey ~= "" then
-                        local n = UIRenderer.NormalizeHotkey(hotkey)
-                        if icon.normalizedHotkey ~= n then
-                            icon.previousNormalizedHotkey = icon.normalizedHotkey
-                            icon.hotkeyChangeTime         = now
-                        end
-                        icon.normalizedHotkey = n
-                    else
-                        icon.normalizedHotkey = nil
-                    end
+                    UIRenderer.SetIconNormalizedHotkey(icon, hotkey, now, true)
                 end
             end
 

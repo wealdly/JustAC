@@ -21,7 +21,6 @@ if not BurstInjectionEngine then return end
 local GetSpellBaseCooldown = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 local GetTime = GetTime
 local ipairs = ipairs
-local issecretvalue = issecretvalue ---@diagnostic disable-line: undefined-global
 
 -- Module references (resolved at load time)
 local BlizzardAPI        = LibStub("JustAC-BlizzardAPI", true)
@@ -67,7 +66,7 @@ local function GetBaseCooldownSeconds(spellID)
 
     -- Try GetSpellBaseCooldown first (returns ms)
     local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    if ms and not (issecretvalue and issecretvalue(ms)) and ms > 0 then
+    if ms and not BlizzardAPI.IsSecretValue(ms) and ms > 0 then
         sec = ms / 1000
     end
 
@@ -76,7 +75,7 @@ local function GetBaseCooldownSeconds(spellID)
         local ok, charges = pcall(C_Spell.GetSpellCharges, spellID)
         if ok and charges then
             local dur = charges.cooldownDuration
-            if dur and not (issecretvalue and issecretvalue(dur)) and dur > 0 then
+            if dur and not BlizzardAPI.IsSecretValue(dur) and dur > 0 then
                 sec = dur
             end
         end

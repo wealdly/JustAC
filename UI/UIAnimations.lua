@@ -348,8 +348,6 @@ end
 
 StopAssistedGlow = function(icon)
     StopMarchingAntsGlow(icon, GLOW_CONFIG.ASSISTED)
-    -- Legacy field: some callers check activeGlowStyle
-    if icon then icon.activeGlowStyle = nil end
 end
 
 local function StartDefensiveGlow(icon, isInCombat)

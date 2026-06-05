@@ -359,3 +359,5 @@ L["Reset Defensive Frame Position"] = "Reset Position"
 L["Performance"] = "Performance"
 L["Disable Blizzard Highlight"] = "Disable Blizzard Action Bar Highlight"
 L["Disable Blizzard Highlight desc"] = "Disable Blizzard's per-frame action bar glow scan (redundant with JustAC). Improves performance and prevents 'execution time limit' errors under heavy addon load."
+
+L["WAIT"] = "WAIT"

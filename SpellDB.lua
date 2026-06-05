@@ -743,41 +743,6 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     WARRIOR_3     = {190456, 871, 97462, 23920},               -- Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
 }
 
--- Legacy tables (kept for migration from older versions)
-SpellDB.CLASS_SELFHEAL_DEFAULTS = {
-    DEATHKNIGHT = {49998},
-    DEMONHUNTER = {198589, 228477},
-    DRUID = {8936, 22842, 108238, 22812},
-    EVOKER = {363916, 360995},
-    HUNTER = {109304},
-    MAGE = {11426, 235313, 235450},
-    MONK = {322101},
-    PALADIN = {85673, 403876},
-    PRIEST = {19236, 17},
-    ROGUE = {185311, 1966},
-    SHAMAN = {108271, 8004},
-    WARLOCK = {108416, 234153},
-    WARRIOR = {34428, 202168, 190456},
-}
-
-SpellDB.CLASS_COOLDOWN_DEFAULTS = {
-    DEATHKNIGHT = {48792, 48707},
-    DEMONHUNTER = {196718},                                  -- Netherwalk removed in 12.0
-    DRUID = {61336},
-    EVOKER = {},                                             -- Renewing Blaze merged into Obsidian Scales in 12.0
-    HUNTER = {186265, 388035},
-    MAGE = {45438},                                         -- Greater Invis lost DR in 12.0
-    MONK = {115203, 122470, 122783},
-    PALADIN = {642, 633},
-    PRIEST = {47585, 586},
-    ROGUE = {31224, 5277},
-    SHAMAN = {198103},
-    WARLOCK = {104773},
-    WARRIOR = {871, 118038, 97462},
-}
--- NOTE: Rune Tap (194679), Dampen Harm (122278), Last Stand (12975) removed/made passive in 12.0
--- Netherwalk (196555), Renewing Blaze (374348) removed/merged in 12.0
-
 -- Pet rez/summon spells (shown when pet is dead or missing — reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1

@@ -11,23 +11,14 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local CastInterruptTracker = LibStub("JustAC-CastInterruptTracker", true)
+local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat", true)
 
 if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations or not UIFrameFactory then
     return
 end
 
 -- Localized label shown on the overlay when Assisted Combat is waiting for resources.
-local WAIT_LABEL = ({
-    enUS = "WAIT", enGB = "WAIT",
-    deDE = "WART",
-    frFR = "ATT.",
-    esES = "ESPE", esMX = "ESPE",
-    ptBR = "AGRD",
-    ruRU = "ЖДЁМ",
-    koKR = "대기",
-    zhCN = "等待", zhTW = "等待",
-    itIT = "ASPT",
-})[GetLocale()] or "WAIT"
+local WAIT_LABEL = (L and L["WAIT"]) or "WAIT"
 
 -- Hot path cache
 local GetTime = GetTime
@@ -65,11 +56,6 @@ local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms
 -- state toggles transiently (e.g. during GCD processing).
 local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 100ms
 
--- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
--- Interrupt state is now owned by CastInterruptTracker; these upvalues kept for
--- the local FindVisibleCastBar / IsTargetCastInterruptible helpers (removed).
--- The module-level LSM registration and sound state also moved to CastInterruptTracker.
-
 -- Gap-closers have their own red crawl path; excluded here.
 local function IsSpellProcced(spellID)
     return BlizzardAPI.IsSpellProcced(spellID)
@@ -80,34 +66,85 @@ end
 -- Mouse abbreviations are reversed so matching uses WoW's raw binding names (BUTTON1-N).
 -- Results are cached by raw input string (hotkeys rarely change; new bindings produce new keys).
 local normalizeHotkeyCache = {}
+local HOTKEY_NORMALIZE_PATTERNS = {
+    { "^CTRL%-SHIFT%-(.+)$", "CTRL-SHIFT-" },
+    { "^CTRL%-ALT%-(.+)$",   "CTRL-ALT-" },
+    { "^SHIFT%-ALT%-(.+)$",  "SHIFT-ALT-" },
+    { "^SHIFT%-(.+)$",       "SHIFT-" },
+    { "^CTRL%-(.+)$",        "CTRL-" },
+    { "^ALT%-(.+)$",         "ALT-" },
+    { "^MOD%-(.+)$",         "MOD-" },
+
+    { "^CTRL%-SHIFT[%-%+](.+)$", "CTRL-SHIFT-" },
+    { "^CTRL%-ALT[%-%+](.+)$",   "CTRL-ALT-" },
+    { "^SHIFT%-ALT[%-%+](.+)$",  "SHIFT-ALT-" },
+    { "^SHIFT[%-%+](.+)$",       "SHIFT-" },
+    { "^CTRL[%-%+](.+)$",        "CTRL-" },
+    { "^ALT[%-%+](.+)$",         "ALT-" },
+
+    { "^CS%-(.+)$", "CTRL-SHIFT-" },
+    { "^CA%-(.+)$", "CTRL-ALT-" },
+    { "^SA%-(.+)$", "SHIFT-ALT-" },
+    { "^S%-(.+)$",  "SHIFT-" },
+    { "^C%-(.+)$",  "CTRL-" },
+    { "^A%-(.+)$",  "ALT-" },
+
+    { "^CS(.+)$", "CTRL-SHIFT-" },
+    { "^CA(.+)$", "CTRL-ALT-" },
+    { "^SA(.+)$", "SHIFT-ALT-" },
+    { "^S(.+)$",  "SHIFT-" },
+    { "^C(.+)$",  "CTRL-" },
+    { "^A(.+)$",  "ALT-" },
+
+    { "^%+(.+)$", "MOD-" },
+}
+
 local function NormalizeHotkey(hotkey)
     local cached = normalizeHotkeyCache[hotkey]
     if cached then return cached end
     local n = hotkey:upper()
-    -- Full-word modifier prefixes MUST come first so "SHIFT-2" isn't misread as
-    -- the single-letter "S" prefix pattern below (which would produce "SHIFT-HIFT-2").
-    -- Accept both "-" and "+" separators so user-typed "Shift+2" and "Shift-2" both work.
-    n = n:gsub("^CTRL%-ALT[%-%+](.+)",   "CTRL-ALT-%1")
-    n = n:gsub("^CTRL%-SHIFT[%-%+](.+)", "CTRL-SHIFT-%1")
-    n = n:gsub("^SHIFT%-ALT[%-%+](.+)",  "SHIFT-ALT-%1")
-    n = n:gsub("^SHIFT[%-%+](.+)",       "SHIFT-%1")
-    n = n:gsub("^CTRL[%-%+](.+)",        "CTRL-%1")
-    n = n:gsub("^ALT[%-%+](.+)",         "ALT-%1")
-    -- Abbreviated prefixes from AbbreviateKeybind: S-X, C-X, A-X, CA-X, CS-X, SA-X.
-    -- Require the hyphen (%-) not optional: "^S%-?" would match the "S" in "SHIFT-..."
-    -- after the full-word patterns above have already run, corrupting any remaining input.
-    n = n:gsub("^CA%-(.+)",  "CTRL-ALT-%1")
-    n = n:gsub("^CS%-(.+)",  "CTRL-SHIFT-%1")
-    n = n:gsub("^SA%-(.+)",  "SHIFT-ALT-%1")
-    n = n:gsub("^S%-(.+)",   "SHIFT-%1")
-    n = n:gsub("^C%-(.+)",   "CTRL-%1")
-    n = n:gsub("^A%-(.+)",   "ALT-%1")
-    n = n:gsub("^%+(.+)",    "MOD-%1")
+
+    -- Deterministic prefix parsing (first match wins):
+    -- 1) already-normalized full forms
+    -- 2) full-word forms with +/- separators
+    -- 3) abbreviated forms with hyphen
+    -- 4) compact abbreviated forms (no hyphen)
+    -- 5) any-modifier form (+KEY)
+    for _, rule in ipairs(HOTKEY_NORMALIZE_PATTERNS) do
+        local suffix = n:match(rule[1])
+        if suffix then
+            n = rule[2] .. suffix
+            break
+        end
+    end
+
     n = n:gsub("MWU$", "MOUSEWHEELUP")
     n = n:gsub("MWD$", "MOUSEWHEELDOWN")
     n = n:gsub("M(%d+)$", "BUTTON%1")
     normalizeHotkeyCache[hotkey] = n
     return n
+end
+
+local function SetIconHotkeyText(icon, hotkey, showHotkeys)
+    if not icon or not icon.hotkeyText then return end
+    local displayHotkey = showHotkeys and hotkey or ""
+    if (icon.hotkeyText:GetText() or "") ~= displayHotkey then
+        icon.hotkeyText:SetText(displayHotkey)
+    end
+end
+
+local function SetIconNormalizedHotkey(icon, hotkey, now, trackPrevious)
+    if not icon then return end
+    if hotkey and hotkey ~= "" then
+        local normalized = NormalizeHotkey(hotkey)
+        if trackPrevious and icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
+            icon.previousNormalizedHotkey = icon.normalizedHotkey
+            icon.hotkeyChangeTime = now or GetTime()
+        end
+        icon.normalizedHotkey = normalized
+    else
+        icon.normalizedHotkey = nil
+    end
 end
 
 -- Cooldown/charge display via Blizzard's ActionButton_ApplyCooldown (secret-safe passthrough).
@@ -167,8 +204,8 @@ local function UpdateButtonCooldowns(button)
         local active = (start or 0) > 0 and (duration or 0) > 0
         cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1, isActive = active }
     elseif cooldownID then
-        if C_Spell.GetSpellCooldown then
-            local ok, result = pcall(C_Spell.GetSpellCooldown, cooldownID)
+        if C_Spell_GetSpellCooldown then
+            local ok, result = pcall(C_Spell_GetSpellCooldown, cooldownID)
             if ok and result then cooldownInfo = result end
         end
     end
@@ -314,6 +351,13 @@ local VS_ACTIVE_CAST   = 4  -- this spell is currently being cast/channeled
 local VS_UNAVAILABLE   = 5  -- on cooldown or wrong form (gray desat)
 local VS_OUT_OF_RANGE  = 6  -- out of range, no hotkey visible (red tint)
 local VS_RANGE_HOTKEY  = 7  -- out of range, hotkey visible (muted warm; hotkey text carries the red)
+
+-- ── Defensive visual state constants (used by UpdateDefensiveVisualState) ──
+local DVS_CHANNELING    = 1  -- channeling/casting a different spell (full desat)
+local DVS_NO_RESOURCES  = 2  -- usable but not enough resources (blue tint)
+local DVS_NORMAL        = 3  -- ready and usable
+local DVS_ON_COOLDOWN   = 4  -- on cooldown or unavailable (gray desat)
+local DVS_ACTIVE_CAST   = 5  -- this spell is currently being cast/channeled
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
@@ -574,7 +618,7 @@ end
 -- Stale atlas markup can appear if cached hotkeys survive a binding change.
 function UIRenderer.InvalidateHotkeyCache()
     hotkeysDirty = true
-    local addon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    local addon = BlizzardAPI.GetAddon()
     if addon and addon.spellIcons then
         for i = 1, #addon.spellIcons do
             local icon = addon.spellIcons[i]
@@ -586,7 +630,6 @@ function UIRenderer.InvalidateHotkeyCache()
 end
 
 -- Per-frame defensive visual state: channeling, usability, cooldown tinting.
--- States: 1=channeling, 2=no resources, 3=normal, 4=on cooldown, 5=casting THIS.
 function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     if not defensiveIcon or not defensiveIcon.iconTexture then return end
 
@@ -594,30 +637,28 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     if not id then return end
 
     -- Items use itemCastSpellID for channel/cast matching.
+    local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
     local isDefActiveSpell = false
-    if defensiveIcon.currentID then
-        local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or defensiveIcon.currentID
-        if defID then
-            if isChanneling and channelSpellID then
-                if defensiveIcon.isItem then
-                    isDefActiveSpell = (defID == channelSpellID)
-                else
-                    isDefActiveSpell = MatchesSpellOrOverride(defID, channelSpellID)
-                end
+    if defID then
+        if isChanneling and channelSpellID then
+            if defensiveIcon.isItem then
+                isDefActiveSpell = (defID == channelSpellID)
+            else
+                isDefActiveSpell = MatchesSpellOrOverride(defID, channelSpellID)
             end
-            if not isDefActiveSpell and isCasting and castSpellID then
-                if defensiveIcon.isItem then
-                    isDefActiveSpell = (defID == castSpellID)
-                else
-                    isDefActiveSpell = MatchesSpellOrOverride(defID, castSpellID)
-                end
+        end
+        if not isDefActiveSpell and isCasting and castSpellID then
+            if defensiveIcon.isItem then
+                isDefActiveSpell = (defID == castSpellID)
+            else
+                isDefActiveSpell = MatchesSpellOrOverride(defID, castSpellID)
             end
         end
     end
 
     local isGreyingOut = (isChanneling or isCasting) and not isDefActiveSpell
-    local defVisualState = isGreyingOut and 1 or 3
-    if isDefActiveSpell then defVisualState = 5 end
+    local defVisualState = isGreyingOut and DVS_CHANNELING or DVS_NORMAL
+    if isDefActiveSpell then defVisualState = DVS_ACTIVE_CAST end
 
     local now = GetTime()
     if forceCheck or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
@@ -645,29 +686,29 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         end
     end
 
-    if defVisualState ~= 1 and not defensiveIcon.cachedDefUsable then
+    if defVisualState ~= DVS_CHANNELING and not defensiveIcon.cachedDefUsable then
         if defensiveIcon.cachedDefNoResource then
-            defVisualState = 2  -- no resources → blue tint
+            defVisualState = DVS_NO_RESOURCES
         else
-            defVisualState = 4  -- on cooldown → desaturated
+            defVisualState = DVS_ON_COOLDOWN
         end
     end
 
     if defensiveIcon.lastDefVisualState ~= defVisualState
        or isChanneling or isCasting then
-        if defVisualState == 5 then
+        if defVisualState == DVS_ACTIVE_CAST then
             defensiveIcon.iconTexture:SetDesaturation(0)
             defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        elseif defVisualState == 1 then
+        elseif defVisualState == DVS_CHANNELING then
             defensiveIcon.iconTexture:SetDesaturation(1.0)
             defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        elseif defVisualState == 2 then
+        elseif defVisualState == DVS_NO_RESOURCES then
             defensiveIcon.iconTexture:SetDesaturation(0)
             defensiveIcon.iconTexture:SetVertexColor(0.4, 0.4, 1.0)
-        elseif defVisualState == 4 then
+        elseif defVisualState == DVS_ON_COOLDOWN then
             defensiveIcon.iconTexture:SetDesaturation(0.8)
             defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
-        else
+        else  -- DVS_NORMAL
             defensiveIcon.iconTexture:SetDesaturation(0)
             defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
         end
@@ -793,23 +834,9 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         end
     end
     
-    -- When showHotkeys is off, keep hotkey for flash matching but clear display text.
-    local displayHotkey = showHotkeys and hotkey or ""
-    local currentHotkey = defensiveIcon.hotkeyText:GetText() or ""
-    if currentHotkey ~= displayHotkey then
-        defensiveIcon.hotkeyText:SetText(displayHotkey)
-    end
-
-    if hotkey ~= "" then
-        local normalized = NormalizeHotkey(hotkey)
-        if defensiveIcon.normalizedHotkey and defensiveIcon.normalizedHotkey ~= normalized then
-            defensiveIcon.previousNormalizedHotkey = defensiveIcon.normalizedHotkey
-            defensiveIcon.hotkeyChangeTime = GetTime()
-        end
-        defensiveIcon.normalizedHotkey = normalized
-    else
-        defensiveIcon.normalizedHotkey = nil
-    end
+    -- When showHotkeys is off, keep normalized hotkey for flash matching.
+    SetIconHotkeyText(defensiveIcon, hotkey, showHotkeys)
+    SetIconNormalizedHotkey(defensiveIcon, hotkey, GetTime(), true)
 
     UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
 
@@ -1081,20 +1108,12 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         else
                             defHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(defID) or ""
                         end
+                        local defShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
                         if defIcon.cachedHotkey ~= defHotkey then
                             defIcon.cachedHotkey = defHotkey
-                            local defShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
-                            local displayDefHotkey = defShowHotkeys and defHotkey or ""
-                            defIcon.hotkeyText:SetText(displayDefHotkey)
-                            if defHotkey ~= "" then
-                                local normalized = NormalizeHotkey(defHotkey)
-                                if defIcon.normalizedHotkey and defIcon.normalizedHotkey ~= normalized then
-                                    defIcon.previousNormalizedHotkey = defIcon.normalizedHotkey
-                                    defIcon.hotkeyChangeTime = currentTime
-                                end
-                                defIcon.normalizedHotkey = normalized
-                            end
+                            SetIconNormalizedHotkey(defIcon, defHotkey, currentTime, true)
                         end
+                        SetIconHotkeyText(defIcon, defHotkey, defShowHotkeys)
                     end
                 end
                 -- Throttled cooldown widget refresh.
@@ -1169,15 +1188,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             if spellChanged or shouldUpdateCooldowns or not intIcon.cachedHotkey then
                 local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
                 intIcon.cachedHotkey = hotkey
-                local displayHotkey = intShowHotkeys and hotkey or ""
-                if (intIcon.hotkeyText:GetText() or "") ~= displayHotkey then
-                    intIcon.hotkeyText:SetText(displayHotkey)
-                end
-                if hotkey ~= "" then
-                    intIcon.normalizedHotkey = NormalizeHotkey(hotkey)
-                else
-                    intIcon.normalizedHotkey = nil
-                end
+                SetIconHotkeyText(intIcon, hotkey, intShowHotkeys)
+                SetIconNormalizedHotkey(intIcon, hotkey, nil, false)
             end
 
             -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
@@ -1471,23 +1483,10 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     hotkey = icon.cachedHotkey
                 end
                 
-                -- When showHotkeys is off, keep hotkey for flash matching but clear display text.
-                local displayHotkey = showHotkeys and hotkey or ""
-                local currentHotkey = icon.hotkeyText:GetText() or ""
-                if currentHotkey ~= displayHotkey then
-                    icon.hotkeyText:SetText(displayHotkey)
-                end
-
-                if hotkeyChanged and hotkey ~= "" then
-                    local normalized = NormalizeHotkey(hotkey)
-                    -- Track previous hotkey for grace period (spell position changes)
-                    if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
-                        icon.previousNormalizedHotkey = icon.normalizedHotkey
-                        icon.hotkeyChangeTime = currentTime
-                    end
-                    icon.normalizedHotkey = normalized
-                elseif hotkeyChanged then
-                    icon.normalizedHotkey = nil
+                -- When showHotkeys is off, keep normalized hotkey for flash matching.
+                SetIconHotkeyText(icon, hotkey, showHotkeys)
+                if hotkeyChanged then
+                    SetIconNormalizedHotkey(icon, hotkey, currentTime, true)
                 end
 
                 local hasVisibleHotkey = showHotkeys and hotkey ~= ""
@@ -1792,6 +1791,8 @@ end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.NormalizeHotkey       = NormalizeHotkey
+UIRenderer.SetIconHotkeyText     = SetIconHotkeyText
+UIRenderer.SetIconNormalizedHotkey = SetIconNormalizedHotkey
 UIRenderer.CheckSpellRange       = CheckSpellRange
 UIRenderer.UpdateRangeHotkeyColor = UpdateRangeHotkeyColor
 UIRenderer.MatchActiveCast       = MatchActiveCast

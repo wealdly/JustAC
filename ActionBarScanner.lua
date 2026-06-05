@@ -364,6 +364,16 @@ local function ValidateAndBuildKeybindCache()
     keybindCacheValid = true
 end
 
+-- Cache invalidation hierarchy:
+--   InvalidateKeybindCache()  → wipes keybind/spell→slot/hotkey caches
+--                               Called by InvalidateBindingCache and InvalidateStateCache.
+--   InvalidateBindingCache()  → wipes raw binding key cache, then calls InvalidateKeybindCache.
+--                               Use when keybind strings change (UPDATE_BINDINGS).
+--   InvalidateStateCache()    → wipes slot mapping + spell/hotkey caches on bar/form changes.
+--                               Use for UPDATE_BONUS_ACTIONBAR, UPDATE_SHAPESHIFT_FORM, etc.
+-- Public façades:
+--   ActionBarScanner.InvalidateHotkeyCache()   — partial wipe (spell/slot/hotkey only)
+--   ActionBarScanner.InvalidateKeybindCache()  — delegates to local InvalidateKeybindCache
 local function InvalidateKeybindCache()
     keybindCacheValid = false
     lastValidatedStateHash = 0

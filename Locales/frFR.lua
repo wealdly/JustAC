@@ -365,3 +365,5 @@ L["Performance"] = "Performance"
 L["Disable Blizzard Highlight"] = "Désactiver le surlignage Blizzard"
 L["Disable Blizzard Highlight desc"] = "Désactiver le scan lumineux de Blizzard sur la barre d'action (redondant avec JustAC). Améliore les performances et empêche les erreurs « limite de temps d'exécution » sous forte charge d'addons."
 
+
+L["WAIT"] = "ATT."
