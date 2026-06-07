@@ -1214,6 +1214,13 @@ function JustAC:OnSpecChange()
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then
         SpellSearch.InvalidateSpellbookCache()
     end
+
+    -- Keep dynamic options panels in sync with current spec when users are
+    -- browsing Blizzard Settings (not only slash-open path).
+    if Options and Options.RefreshAllDynamic then
+        Options.RefreshAllDynamic(self)
+    end
+
     self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
     self:RefreshInterruptSpells()
     self:ForceUpdateAll()

@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.22.3] - 2026-06-06
+
+### Fixed
+- Blizzard Settings now correctly repopulates the Defensives Priority List after relog/restart instead of showing only the "Restore Class Defaults" control block.
+- Dynamic options lists now refresh on specialization change while Blizzard Settings is open, so spec-specific Defensives/Offensive sub-lists stay in sync without needing to close and reopen the panel.
+
 ## [4.22.2] - 2026-06-05
 
 ### Added

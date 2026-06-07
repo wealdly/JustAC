@@ -261,6 +261,10 @@ function Options.Initialize(addon)
     -- Store the category for version-aware opening
     addon.optionsCategoryID = AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
 
+    -- Populate dynamic lists at startup so Blizzard Settings has full content
+    -- even before the slash command path calls RefreshAllDynamic.
+    Options.RefreshAllDynamic(addon)
+
     addon:RegisterChatCommand("justac", function(input) HandleSlashCommand(addon, input) end)
     addon:RegisterChatCommand("jac", function(input) HandleSlashCommand(addon, input) end)
 end
