@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 9
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 10
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -40,6 +40,64 @@ local localCharges = {}
 
 -- Minimum base cooldown to track — ignore GCD-only spells
 local MIN_TRACKABLE_CD_SECS = 3
+
+-- GCD startRecoveryCategory value (NeverSecret, verified 2026-02-25)
+local GCD_CATEGORY = 133
+
+-- Off-GCD spell cache: spells that do NOT trigger the global cooldown.
+-- Pre-populated with known off-GCD defensives as of 12.0.7; self-learning fills the
+-- rest via SPELL_UPDATE_COOLDOWN startRecoveryCategory (NeverSecret) for registered spells.
+-- Default (unknown) is "on GCD" — fail-closed means no spurious GCD swipe.
+local offGCDCache = {
+    -- Death Knight
+    [48707]  = true, -- Anti-Magic Shell
+    [51052]  = true, -- Anti-Magic Zone
+    [48792]  = true, -- Icebound Fortitude
+    -- Demon Hunter
+    [196718] = true, -- Darkness
+    [198589] = true, -- Blur
+    [196555] = true, -- Netherwalk
+    -- Druid
+    [22812]  = true, -- Barkskin
+    [61336]  = true, -- Survival Instincts
+    -- Evoker
+    [363916] = true, -- Obsidian Scales
+    [374348] = true, -- Zephyr
+    -- Hunter
+    [109304] = true, -- Exhilaration
+    [186265] = true, -- Aspect of the Turtle
+    -- Mage
+    [45438]  = true, -- Ice Block
+    -- Monk
+    [115203] = true, -- Fortifying Brew
+    [122278] = true, -- Dampen Harm
+    [122783] = true, -- Diffuse Magic
+    -- Paladin
+    [498]    = true, -- Divine Protection
+    [633]    = true, -- Lay on Hands
+    [642]    = true, -- Divine Shield
+    [1022]   = true, -- Blessing of Protection
+    [6940]   = true, -- Blessing of Sacrifice
+    -- Priest
+    [19236]  = true, -- Desperate Prayer
+    [33206]  = true, -- Pain Suppression
+    [47788]  = true, -- Guardian Spirit
+    -- Rogue
+    [5277]   = true, -- Evasion
+    [31224]  = true, -- Cloak of Shadows
+    -- Shaman
+    [108271] = true, -- Astral Shift
+    -- Warlock
+    [104773] = true, -- Unending Resolve
+    [108416] = true, -- Dark Pact
+    -- Warrior
+    [871]    = true, -- Shield Wall
+    [12975]  = true, -- Last Stand
+    [23920]  = true, -- Spell Reflection
+    [97462]  = true, -- Rallying Cry
+    [118038] = true, -- Die by the Sword
+    [184364] = true, -- Enraged Regeneration
+}
 
 -- Hidden tooltip for parsing traited cooldown values
 local probeTooltip = nil
@@ -392,7 +450,18 @@ local function InitCooldownTracking()
             end
         elseif event == "SPELL_UPDATE_COOLDOWN" then
             -- spellID payload is NeverSecret in combat (verified 2026-02-25)
-            local spellID = ...
+            -- startRecoveryCategory=133 means spell triggers GCD (NeverSecret, static per spell)
+            local spellID, baseSpellID, category, startRecoveryCategory = ...
+            -- Self-learn GCD status for registered spells (bounded to tracked set)
+            if spellID and startRecoveryCategory ~= nil and trackedSpells[spellID] then
+                if startRecoveryCategory ~= GCD_CATEGORY then
+                    offGCDCache[spellID] = true
+                    if baseSpellID and baseSpellID ~= spellID then offGCDCache[baseSpellID] = true end
+                else
+                    offGCDCache[spellID] = nil
+                    if baseSpellID and baseSpellID ~= spellID then offGCDCache[baseSpellID] = nil end
+                end
+            end
             CheckCooldownCompletions(spellID)
         elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
             ClearLocalCooldowns()
@@ -499,8 +568,16 @@ end
 ---   false → real cooldown running (only for spells Blizzard flags internally;
 ---           typically short-CD rotation spells like Judgment, Blade of Justice)
 ---   nil   → absent (spell off CD OR unflagged spell on CD — ambiguous)
---- When isOnGCD is nil in combat, fall back to local cooldown tracking
---- and action bar usability to detect real cooldowns.
+--- When isOnGCD is nil in combat, SpellCooldownInfo.isActive (NeverSecret) is
+--- used as ground truth: true → real unflagged CD running; false → spell ready.
+--- Returns true if the spell is known to NOT trigger the global cooldown.
+--- Pre-populated at module load; self-learned from SPELL_UPDATE_COOLDOWN for registered spells.
+--- Default (unknown): false — fail-closed, no spurious GCD swipe.
+function BlizzardAPI.IsSpellOffGCD(spellID)
+    if not spellID then return false end
+    return offGCDCache[spellID] == true
+end
+
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
@@ -530,33 +607,20 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- Spell is either off cooldown OR on CD but unflagged (major CDs like
     -- Divine Toll, Execution Sentence, Shadow Blades) — use fallback chain
 
-    -- Local cooldown tracking (timer from UNIT_SPELLCAST_SUCCEEDED)
-    -- IsUsableAction returns true even on cooldown — cannot cross-check with
-    -- action bar usability. CDR corrections are handled by CheckCooldownCompletions
-    -- via SPELL_UPDATE_COOLDOWN events and by ClearLocalCooldowns on combat exit.
-    if IsLocalCooldownActive(spellID) then
-        return false
-    end
-
-    -- Charge-based: use local charge tracking (lazy recovery evaluation)
-    local cached = cachedMaxCharges[spellID]
-    if cached and cached > 1 then
-        local data = localCharges[spellID]
-        if data then
-            ProcessChargeRecovery(data)
-            return data.current > 0
-        end
-        -- No local charge data — fall through to action bar fallback
-    end
-
-    -- Action bar usability: can only detect "not usable for non-resource reasons"
-    -- (wrong form, etc). IsUsableAction returns true even on cooldown, so
-    -- actionUsable == true is no better than the fail-open default below.
-    local actionUsable, notEnoughMana = BlizzardAPI.GetActionBarUsability(spellID)
-    if actionUsable == false and not notEnoughMana then return false end
-
-    -- Fail-open: assume ready when we can't determine state
-    return true
+    -- SpellCooldownInfo.isActive is NeverSecret (source-verified).
+    -- At this point isOnGCD is nil and duration is secret (combat) — both the
+    -- isOnGCD true and false cases already exited above, and Unsecret(duration)
+    -- returned nil (OOC path already exited). We are definitively in combat.
+    --
+    -- isOnGCD == nil + isActive == true  → real unflagged CD running (Cloak of
+    --   Shadows, Shadow Blades, Execution Sentence, etc. — long CDs Blizzard
+    --   doesn't flag, so isOnGCD never transitions to false).
+    -- isOnGCD == nil + isActive == false → no CD timer running; spell is ready.
+    --
+    -- isActive is ground truth from Blizzard's state machine; no further
+    -- fallback chain needed — local tracking / charge tracking / usability
+    -- checks would all be redundant here.
+    return not cd.isActive
 end
 
 --------------------------------------------------------------------------------

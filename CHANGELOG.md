@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [4.23.0] - 2026-06-17
+
+### Fixed
+- Defensive queue icons behind modifier-key macros now correctly show the GCD swipe animation. The fix uses the macro slot's action bar cooldown data (all slots share the global GCD timer) when no direct slot is available.
+- Off-GCD defensive abilities (Barkskin, Ice Block, Evasion, Cloak of Shadows, etc.) no longer show a spurious GCD swipe. A pre-populated table of 30+ known off-GCD spells as of 12.0.7 is included; the table self-corrects via `SPELL_UPDATE_COOLDOWN` on first cast.
+- Defensive spells with long unflagged cooldowns (e.g. Cloak of Shadows, Shadow Blades) could appear ready in the defensive bar in combat. Readiness check now uses `SpellCooldownInfo.isActive` (NeverSecret) as ground truth for the in-combat case.
+
+### Changed
+- Interface version updated for WoW 12.0.7 (build 120007).
+
 ## [4.22.3] - 2026-06-06
 
 ### Fixed

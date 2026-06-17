@@ -178,6 +178,8 @@ local function UpdateButtonCooldowns(button)
 
     -- Find the best action bar slot for this spell/item.
     -- Priority: direct slot > assisted combat slot (pos1 off-bar spells).
+    -- cdSlot also includes modifier-macro slots (not safe for IsActionInRange, but
+    -- valid for cooldown queries — all slots carry the same global GCD timer).
     local directSlot
     if isItem then
         directSlot = ActionBarScanner.GetDirectSlotForItem(id)
@@ -190,15 +192,26 @@ local function UpdateButtonCooldowns(button)
             end
         end
     end
+    -- For modifier-gated spells (directSlot=nil), the macro slot still carries the
+    -- GCD timer. Use it for cooldown queries so the GCD swipe shows even when
+    -- another spell triggered the GCD (ci.isActive would be false via spell API alone).
+    local cdSlot = directSlot
+    if not cdSlot and not isItem then
+        -- Only use the macro slot for cooldown queries when the spell is on GCD (or unknown).
+        -- Off-GCD spells: the macro slot carries the GCD timer, unrelated to the spell's own CD.
+        if not (BlizzardAPI.IsSpellOffGCD and BlizzardAPI.IsSpellOffGCD(id)) then
+            cdSlot = ActionBarScanner.GetSlotForSpell(id)
+        end
+    end
 
     -- Fetch cooldown + charge data for the swipe animation.
     -- Slot-based APIs handle secrets via passthrough; spell APIs return secret
     -- structs that ActionButton_ApplyCooldown also renders correctly.
     local cooldownInfo, chargeInfo
 
-    if directSlot and C_ActionBar_GetActionCooldown then
-        cooldownInfo = C_ActionBar_GetActionCooldown(directSlot)
-        chargeInfo = C_ActionBar_GetActionCharges and C_ActionBar_GetActionCharges(directSlot)
+    if cdSlot and C_ActionBar_GetActionCooldown then
+        cooldownInfo = C_ActionBar_GetActionCooldown(cdSlot)
+        chargeInfo = C_ActionBar_GetActionCharges and C_ActionBar_GetActionCharges(cdSlot)
     elseif isItem then
         local start, duration = GetItemCooldown(id)
         local active = (start or 0) > 0 and (duration or 0) > 0
@@ -249,8 +262,8 @@ local function UpdateButtonCooldowns(button)
         -- Main cooldown swipe
         if showNormal then
             local durObj
-            if directSlot and C_ActionBar_GetActionCooldownDuration then
-                durObj = C_ActionBar_GetActionCooldownDuration(directSlot)
+            if cdSlot and C_ActionBar_GetActionCooldownDuration then
+                durObj = C_ActionBar_GetActionCooldownDuration(cdSlot)
             elseif isItem and C_DurationUtil_CreateDuration then
                 durObj = C_DurationUtil_CreateDuration()
                 if durObj then
@@ -272,8 +285,8 @@ local function UpdateButtonCooldowns(button)
         -- Charge cooldown edge ring
         if showCharge and button.chargeCooldown then
             local chargeDurObj
-            if directSlot and C_ActionBar_GetActionChargeDuration then
-                chargeDurObj = C_ActionBar_GetActionChargeDuration(directSlot)
+            if cdSlot and C_ActionBar_GetActionChargeDuration then
+                chargeDurObj = C_ActionBar_GetActionChargeDuration(cdSlot)
             elseif cooldownID and C_Spell_GetSpellChargeDuration then
                 local ok, result = pcall(C_Spell_GetSpellChargeDuration, cooldownID)
                 if ok then chargeDurObj = result end
@@ -1277,8 +1290,15 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             -- shuffling when SpellQueue re-categorizes spells (proc gained/lost,
             -- CD expired). If the old spell is no longer anywhere in the queue
             -- (consumed/cast), allow immediate replacement.
-            -- Position 1 always passes through the Blizzard assistant suggestion.
-            if i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+            -- Position 1: hold display briefly after a confirmed keypress so the
+            -- icon doesn't change right as the player commits to it.
+            if i == 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+                if icon.lastPressTime and (currentTime - icon.lastPressTime) < POSITION_HOLD_TIME then
+                    spellID = icon.spellID
+                    spellInfo = GetCachedSpellInfo(icon.spellID)
+                    if not spellInfo then spellID = nil end
+                end
+            elseif i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
                 local holdElapsed = currentTime - (icon.lastSpellSetTime or 0)
                 if holdElapsed < POSITION_HOLD_TIME then
                     local oldStillQueued = false

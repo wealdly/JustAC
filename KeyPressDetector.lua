@@ -22,7 +22,7 @@ local iconsToFlash = {}
 
 -- Grace period: accept previous hotkey briefly after spell changes
 -- (user pressed key for the spell that just got cast, slot shifted)
-local HOTKEY_GRACE_PERIOD = 0.15
+local HOTKEY_GRACE_PERIOD = 0.20
 
 -- Mouse button polling: detect down-transitions for flash matching.
 -- OnKeyDown doesn't fire for mouse buttons, so we poll IsMouseButtonDown each frame.
@@ -181,9 +181,15 @@ function KPD.Create(addon)
             iconsToFlash[#iconsToFlash + 1] = intIcon
         end
 
-        -- Flash all matched icons
+        -- Flash all matched icons; stamp lastPressTime on pos1 so UIRenderer
+        -- can hold its display briefly after a confirmed keypress (prevents the
+        -- icon from visually changing right as the player commits to it).
+        local now2 = GetTime()
         for _, icon in ipairs(iconsToFlash) do
             StartFlash(icon)
+            if icon == (spellIcons and spellIcons[1]) then
+                icon.lastPressTime = now2
+            end
         end
     end
 
