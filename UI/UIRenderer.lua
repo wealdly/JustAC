@@ -49,12 +49,12 @@ local math_floor = math.floor
 -- Position stabilization: minimum display time before a spell at positions 2+
 -- can be replaced. Prevents visual flicker from rapid proc/CD re-categorization
 -- in SpellQueue. Position 1 always passes through Blizzard's suggestion.
-local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms
+local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 50ms
 
 -- Glow hysteresis: require desired glow state to be stable for this duration
 -- before switching animations. Prevents jarring animation restarts when proc
 -- state toggles transiently (e.g. during GCD processing).
-local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 100ms
+local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 50ms
 
 -- Gap-closers have their own red crawl path; excluded here.
 local function IsSpellProcced(spellID)
@@ -171,15 +171,16 @@ local function UpdateButtonCooldowns(button)
         if button.cooldown then button.cooldown:Clear() end
         if button.chargeCooldown then button.chargeCooldown:Clear(); button.chargeCooldown:Hide() end
         button._lastCooldownID = id
+        button._cdStart, button._cdDuration = nil, nil  -- new spell: force swipe re-apply
     end
 
     -- Resolve display spellID once (spell overrides, e.g. Pyroblast → Hot Streak).
     local cooldownID = not isItem and BlizzardAPI.GetDisplaySpellID(id) or nil
 
-    -- Find the best action bar slot for this spell/item.
-    -- Priority: direct slot > assisted combat slot (pos1 off-bar spells).
-    -- cdSlot also includes modifier-macro slots (not safe for IsActionInRange, but
-    -- valid for cooldown queries — all slots carry the same global GCD timer).
+    -- Find the direct action bar slot for this spell/item (one where this exact
+    -- spell is the visible action). Priority: direct slot > assisted combat slot
+    -- (pos1 off-bar spells). Modifier-macro slots are deliberately excluded — see
+    -- the cdSlot note below.
     local directSlot
     if isItem then
         directSlot = ActionBarScanner.GetDirectSlotForItem(id)
@@ -192,22 +193,25 @@ local function UpdateButtonCooldowns(button)
             end
         end
     end
-    -- For modifier-gated spells (directSlot=nil), the macro slot still carries the
-    -- GCD timer. Use it for cooldown queries so the GCD swipe shows even when
-    -- another spell triggered the GCD (ci.isActive would be false via spell API alone).
+    -- Cooldown queries use ONLY a direct slot — one where this exact spell is the
+    -- currently-visible action. We must NOT fall back to a modifier-macro slot here:
+    -- that slot reflects whatever the macro resolves to *right now* (the base spell
+    -- when the modifier isn't held), so its cooldown is the wrong spell's. The symptom
+    -- is a real cooldown that only appears while the modifier is held and vanishes on
+    -- release. When there's no direct slot we fall through to the spell API below, which
+    -- reads THIS spell's own cooldown and persists regardless of modifier state.
+    -- (Trade-off: a GCD-only swipe won't show on a modifier-gated icon while the
+    -- modifier is up — acceptable; correct real-CD display matters more.)
     local cdSlot = directSlot
-    if not cdSlot and not isItem then
-        -- Only use the macro slot for cooldown queries when the spell is on GCD (or unknown).
-        -- Off-GCD spells: the macro slot carries the GCD timer, unrelated to the spell's own CD.
-        if not (BlizzardAPI.IsSpellOffGCD and BlizzardAPI.IsSpellOffGCD(id)) then
-            cdSlot = ActionBarScanner.GetSlotForSpell(id)
-        end
-    end
 
     -- Fetch cooldown + charge data for the swipe animation.
     -- Slot-based APIs handle secrets via passthrough; spell APIs return secret
     -- structs that ActionButton_ApplyCooldown also renders correctly.
     local cooldownInfo, chargeInfo
+    -- True when cooldownInfo carries our own non-secret start/duration numbers
+    -- (item or local-cache source) rather than a secret/slot struct — drives the
+    -- duration-object construction below.
+    local ciFromNumbers = false
 
     if cdSlot and C_ActionBar_GetActionCooldown then
         cooldownInfo = C_ActionBar_GetActionCooldown(cdSlot)
@@ -216,8 +220,20 @@ local function UpdateButtonCooldowns(button)
         local start, duration = GetItemCooldown(id)
         local active = (start or 0) > 0 and (duration or 0) > 0
         cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1, isActive = active }
+        ciFromNumbers = true
     elseif cooldownID then
-        if C_Spell_GetSpellCooldown then
+        -- No direct slot (modifier-macro / off-bar): source the swipe from our own
+        -- non-secret local cooldown tracking. These numbers are modifier-independent
+        -- and readable in combat, so the swipe persists after the modifier is released
+        -- instead of flickering. Fall back to the spell API only when the spell isn't
+        -- locally tracked (best-effort; isActive is NeverSecret, duration renders via
+        -- the secret-safe duration object below).
+        local lStart, lDuration = BlizzardAPI.GetLocalCooldown(cooldownID)
+        if not lStart then lStart, lDuration = BlizzardAPI.GetLocalCooldown(id) end
+        if lStart and lDuration and lDuration > 0 then
+            cooldownInfo = { startTime = lStart, duration = lDuration, isEnabled = 1, modRate = 1, isActive = true }
+            ciFromNumbers = true
+        elseif C_Spell_GetSpellCooldown then
             local ok, result = pcall(C_Spell_GetSpellCooldown, cooldownID)
             if ok and result then cooldownInfo = result end
         end
@@ -259,31 +275,70 @@ local function UpdateButtonCooldowns(button)
         local showNormal = ci.isActive
         local showCharge = chi.isActive
 
-        -- Main cooldown swipe
-        if showNormal then
-            local durObj
-            if cdSlot and C_ActionBar_GetActionCooldownDuration then
-                durObj = C_ActionBar_GetActionCooldownDuration(cdSlot)
-            elseif isItem and C_DurationUtil_CreateDuration then
-                durObj = C_DurationUtil_CreateDuration()
+        -- Charge spells at 0 charges: the action-bar/spell MAIN cooldown API doesn't
+        -- report the recharge (it lives in the charge layer / edge ring), so the dark
+        -- "greyout" swipe Blizzard shows at 0 charges is otherwise missing from our
+        -- queue. Detect 0 charges via non-secret local charge tracking and promote the
+        -- recharge to the main swipe (which owns the clipped dark sweep; our charge
+        -- widget is edge-only). The edge ring is suppressed below when depleted.
+        local chargeDepleted = not isItem and cooldownID
+            and BlizzardAPI.IsChargeSpellOnCooldown and BlizzardAPI.IsChargeSpellOnCooldown(cooldownID)
+
+        -- Main cooldown swipe. Priority: the direct action-bar slot (most accurate,
+        -- secret-safe passthrough). When that slot disappears — a modifier press/release
+        -- hides the ability from the bar — we transition to the non-secret local-cache
+        -- numbers and apply them ONCE; the swipe is already animating, so we then leave
+        -- it alone (no per-tick duration-object rebuild) for a seamless, efficient hold.
+        if showNormal or chargeDepleted then
+            if chargeDepleted and cdSlot and C_ActionBar_GetActionChargeDuration then
+                -- 0 charges with a visible slot: the next charge's recharge is the swipe.
+                local durObj = C_ActionBar_GetActionChargeDuration(cdSlot)
                 if durObj then
-                    durObj:SetTimeFromStart(ci.startTime, ci.duration, ci.modRate)
+                    button.cooldown:SetCooldownFromDurationObject(durObj)
+                else
+                    button.cooldown:Clear()
+                end
+                button._cdStart, button._cdDuration = nil, nil
+            elseif cdSlot and C_ActionBar_GetActionCooldownDuration then
+                local durObj = C_ActionBar_GetActionCooldownDuration(cdSlot)
+                if durObj then
+                    button.cooldown:SetCooldownFromDurationObject(durObj)
+                else
+                    button.cooldown:Clear()
+                end
+                -- Slot is authoritative this tick; force the numeric fallback to
+                -- re-apply fresh if/when it next takes over.
+                button._cdStart, button._cdDuration = nil, nil
+            elseif ciFromNumbers then
+                -- Item / local-cache numbers: re-apply only when the timing changes, so
+                -- the swipe set while the slot existed continues across the modifier
+                -- transition instead of being rebuilt (and restarted) every tick.
+                if button._cdStart ~= ci.startTime or button._cdDuration ~= ci.duration then
+                    if C_DurationUtil_CreateDuration then
+                        local durObj = C_DurationUtil_CreateDuration()
+                        if durObj then
+                            durObj:SetTimeFromStart(ci.startTime, ci.duration, ci.modRate)
+                            button.cooldown:SetCooldownFromDurationObject(durObj)
+                        end
+                    end
+                    button._cdStart, button._cdDuration = ci.startTime, ci.duration
                 end
             elseif cooldownID and C_Spell_GetSpellCooldownDuration then
-                local ok, result = pcall(C_Spell_GetSpellCooldownDuration, cooldownID)
-                if ok then durObj = result end
-            end
-            if durObj then
-                button.cooldown:SetCooldownFromDurationObject(durObj)
+                local ok, durObj = pcall(C_Spell_GetSpellCooldownDuration, cooldownID)
+                if ok and durObj then button.cooldown:SetCooldownFromDurationObject(durObj) end
+                button._cdStart, button._cdDuration = nil, nil
             else
                 button.cooldown:Clear()
+                button._cdStart, button._cdDuration = nil, nil
             end
         else
             button.cooldown:Clear()
+            button._cdStart, button._cdDuration = nil, nil
         end
 
-        -- Charge cooldown edge ring
-        if showCharge and button.chargeCooldown then
+        -- Charge cooldown edge ring (only while charges remain — at 0 charges the
+        -- recharge is shown as the main swipe above to match the action bar).
+        if showCharge and not chargeDepleted and button.chargeCooldown then
             local chargeDurObj
             if cdSlot and C_ActionBar_GetActionChargeDuration then
                 chargeDurObj = C_ActionBar_GetActionChargeDuration(cdSlot)
@@ -353,8 +408,8 @@ local lastFrameState = {
 
 -- Swipe animates smoothly once set; no need to update every frame.
 local lastCooldownUpdate = 0
-local COOLDOWN_UPDATE_INTERVAL = 0.08
-local USABILITY_UPDATE_INTERVAL = 0.08
+local COOLDOWN_UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL
+local USABILITY_UPDATE_INTERVAL = UIFrameFactory.USABILITY_UPDATE_INTERVAL
 
 -- ── Visual state constants (returned by ResolveVisualState, consumed by ApplyVisualState) ──
 local VS_GREYED        = 1  -- channeling/casting a different spell (full desat)

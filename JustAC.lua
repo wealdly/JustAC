@@ -409,6 +409,36 @@ local function MigrateQueueVisibility(profile)
     profile.requireHostileTarget = nil
 end
 
+-- Migrate legacy defensives.showOnlyInCombat / alwaysShowDefensive bools → the
+-- unified defensives.displayMode key. Uses the "still at default" heuristic
+-- (mirrors MigrateQueueVisibility): the AceDB default "always" shadows the raw
+-- key, so a legacy bool only counts when displayMode is still at that default.
+local function MigrateDefensiveDisplayMode(profile)
+    local def = profile.defensives
+    if not def then return end
+    if def.displayMode == "always" then
+        if def.showOnlyInCombat then
+            def.displayMode = "combatOnly"
+        elseif def.alwaysShowDefensive == false then
+            def.displayMode = "healthBased"
+        end
+        -- alwaysShowDefensive true (or unset) → leave at the "always" default
+    end
+    def.showOnlyInCombat = nil
+    def.alwaysShowDefensive = nil
+end
+
+-- Migrate legacy nameplateOverlay.showGlow bool → nameplateOverlay.glowMode.
+-- "all" is the default; only a saved showGlow=false changes it (to "none").
+local function MigrateOverlayGlowMode(profile)
+    local npo = profile.nameplateOverlay
+    if not npo then return end
+    if npo.glowMode == "all" and npo.showGlow == false then
+        npo.glowMode = "none"
+    end
+    npo.showGlow = nil
+end
+
 -- SavedVariables serialize numeric keys as strings; normalize on load.
 -- Calls migration helpers in dependency order; each is a no-op if already migrated.
 function JustAC:NormalizeSavedData()
@@ -422,6 +452,8 @@ function JustAC:NormalizeSavedData()
     MigrateLegacySettings(profile)
     MigrateSoundKeys(profile)
     MigrateQueueVisibility(profile)
+    MigrateDefensiveDisplayMode(profile)
+    MigrateOverlayGlowMode(profile)
 end
 
 function JustAC:OnInitialize()
@@ -1279,6 +1311,12 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     if now - (self.lastAuraInvalidation or 0) > 0.1 then
         self.lastAuraInvalidation = now
         self:InvalidateCaches({auras = true})
+        -- Reset update timer in combat so proc-driven AC changes surface promptly
+        -- instead of waiting for the next CVar-rate poll.  Throttled to 10x/sec
+        -- by lastAuraInvalidation — safe even in heavy multi-aura combat.
+        if UnitAffectingCombat("player") and self.updateTimeLeft then
+            self.updateTimeLeft = 0
+        end
     end
 end
 
@@ -1623,13 +1661,21 @@ local function OnUpdateTick(_, elapsed)
     -- Cache CVar lookup (expensive string operation + registry lookup)
     local now = GetTime()
     if not cachedUpdateRate or (now - lastCVarCheck) > CVAR_CHECK_INTERVAL then
-        cachedUpdateRate = tonumber(GetCVar("assistedCombatIconUpdateRate")) or 0.05
+        local rawRate = tonumber(GetCVar("assistedCombatIconUpdateRate"))
+        cachedUpdateRate = rawRate ~= nil and rawRate or 0.05
         lastCVarCheck = now
     end
 
     local updateRate
     if inCombat then
-        updateRate = math_max(cachedUpdateRate, 0.03)
+        -- Clamp to [0.03, 0.05] (33–20Hz). GetNextCastSpell is queried live each
+        -- tick, so a faster poll is always fresher than Blizzard's CVar-gated cache.
+        -- Ceiling decouples us from assistedCombatIconUpdateRate, whose default
+        -- Blizzard can raise across patches (Clamp 0–1) and which would otherwise
+        -- bottleneck the queue and make ability updates feel sluggish.
+        updateRate = cachedUpdateRate
+        if updateRate < 0.03 then updateRate = 0.03
+        elseif updateRate > 0.05 then updateRate = 0.05 end
     else
         -- Out of combat: idle when clean, near-combat rate when dirty
         if not spellQueueDirty and not defensiveQueueDirty then

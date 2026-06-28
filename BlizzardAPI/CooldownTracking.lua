@@ -83,6 +83,7 @@ local offGCDCache = {
     [33206]  = true, -- Pain Suppression
     [47788]  = true, -- Guardian Spirit
     -- Rogue
+    [1966]   = true, -- Feint
     [5277]   = true, -- Evasion
     [31224]  = true, -- Cloak of Shadows
     -- Shaman
@@ -540,6 +541,34 @@ function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
     return IsLocalCooldownActive(spellID)
 end
 
+--- Non-secret locally-tracked cooldown timing for the swipe display.
+--- Returns startTime, duration (our own numbers — NeverSecret, readable in combat),
+--- or nil when the spell isn't tracked or its cooldown has elapsed. Used for the
+--- cooldown swipe on modifier-macro / off-bar icons, where the action-bar slot
+--- can't be trusted (it reflects the macro's current resolution) and the spell
+--- API's start/duration are secret in combat. Because these are stable, modifier-
+--- independent numbers, the swipe set from them keeps running after the modifier
+--- is released instead of flickering away.
+function BlizzardAPI.GetLocalCooldown(spellID)
+    local data = localCooldowns[spellID]
+    if data and GetTime() < data.endTime then
+        return data.startTime, data.duration
+    end
+    -- Charge spells are tracked separately (localCharges), not as a flat cooldown.
+    -- Only when down to 0 charges is the ability fully unavailable — then the next
+    -- charge's recharge is effectively the spell's cooldown, so surface it for the
+    -- main swipe. With charges in hand we return nil (the ability is usable; the
+    -- recharge shows on the charge edge ring, not the full swipe).
+    local cdata = localCharges[spellID]
+    if cdata then
+        ProcessChargeRecovery(cdata)
+        if cdata.current <= 0 and cdata.rechargeDuration > 0 and cdata.rechargeEndTime > 0 then
+            return cdata.rechargeEndTime - cdata.rechargeDuration, cdata.rechargeDuration
+        end
+    end
+    return nil
+end
+
 --- Get cached maxCharges for a spell. Returns nil if unknown.
 --- Populated at spell registration (out of combat) and refreshed on combat exit.
 --- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25).
@@ -580,6 +609,21 @@ end
 
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
+
+    -- Charge-based spells are "ready" while any charge remains, even with a charge
+    -- recharging underneath (C_Spell.GetSpellCooldown reflects that recharge and
+    -- would otherwise misreport the spell as on cooldown). Use the non-secret local
+    -- charge tracking — readable in combat. Only 0 charges counts as not ready.
+    -- Spells without tracked charge data fall through to the cooldown logic below.
+    local maxCharges = cachedMaxCharges[spellID]
+    if maxCharges and maxCharges > 1 then
+        local cdata = localCharges[spellID]
+        if cdata then
+            ProcessChargeRecovery(cdata)
+            return cdata.current >= 1
+        end
+    end
+
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cd then return true end
 

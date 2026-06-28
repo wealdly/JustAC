@@ -5,8 +5,8 @@
 local Labels = LibStub:NewLibrary("JustAC-OptionsLabels", 4)
 if not Labels then return end
 
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+local W = LibStub("JustAC-OptionsWidgets")
 
 -- ─── Helpers ─────────────────────────────────────────────────────────────────
 local HOTKEY_ANCHORS = {"TOPRIGHT", "TOPLEFT", "TOP", "CENTER", "BOTTOMRIGHT", "BOTTOMLEFT"}
@@ -191,7 +191,7 @@ function Labels.CreateTabArgs(addon)
                                 charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
                             }
                             addon:UpdateFrameSize()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            W.NotifyChange()
                         end,
                     },
                 },
@@ -229,7 +229,7 @@ function Labels.CreateTabArgs(addon)
                                 }
                             end
                             rebuildNPO(addon)
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            W.NotifyChange()
                         end,
                     },
                 },

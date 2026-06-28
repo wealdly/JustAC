@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.23.0
+## Version: 4.24.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -40,6 +40,8 @@ Locales\koKR.lua
 
 # Core Data  (no inter-module deps)
 SpellDB.lua
+Data\SpellCategories.lua
+Data\SpellArchetypes.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua
@@ -68,6 +70,7 @@ BurstInjectionEngine.lua
 DebugCommands.lua
 
 # Options
+Options\Widgets.lua
 Options\SpellSearch.lua
 Options\LiveSearchPopup.lua
 Options\General.lua

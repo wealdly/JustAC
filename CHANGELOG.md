@@ -3,6 +3,29 @@
 
 ## [Unreleased]
 
+## [4.24.0] - 2026-06-28
+
+### Fixed
+- Cooldown swipes on abilities behind modifier-key macros no longer flicker away when the modifier is released. The direct action-bar slot is used while the ability is visible (most accurate); when a modifier hides it, the swipe falls back to JustAC's own cooldown tracking and holds seamlessly. Applies to all icon types (standard, overlay, defensive, interrupt).
+- Charge-based abilities now read correctly: ready while any charge remains, greyed out at 0 charges, and at 0 charges the recharge shows the full dark swipe (matching the action bar) instead of only the thin charge ring. Fixes directly-visible spells like Feint showing just the ring.
+- Corrected 6 stale entries in the curated defensive/healing/crowd-control lists (audited against current spell data): re-IDed Rage of the Sleeper, Between the Eyes, and Essence Font, and removed three deleted spells (Greater Fade, Cloudburst Totem, Mind Bomb).
+- Type-restricted crowd control is no longer suggested against creature types it can't affect — e.g. Repentance won't be offered to interrupt a casting Beast, Elemental, or Mechanical. Fails open when the type is unknown (still suggested); universal stuns/silences are unaffected.
+- When only crowd control can stop an uninterruptible cast, a stun-class CC (stops anything) is preferred over a silence-class CC like Strangulate (stops only spellcasting), since the cast may be a physical channel. The silence is still offered if no stun-class CC is available.
+
+### Added
+- Queue positions 2+ re-prioritize by combat context: matching the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's position-1 pick. An AOE pull lifts AOE/cleave spells and sinks single-target ones; melee abilities sink when you're out of range. Range is a hard constraint, archetype a soft preference. Applies to the Custom Queue too, backed by a DB2-generated archetype table covering all classes.
+- The player health bar pulses below the ~35% low-health threshold (the only health level readable in combat). Fill color is unchanged for contrast; the pulse is the cue.
+
+### Changed
+- Faster suggestions: position-hold and glow-hysteresis cut from 200 ms / 100 ms to 50 ms (worst-case latency ~230 ms → ~80 ms).
+- The in-combat update loop is clamped to 20–33 Hz independently of the `assistedCombatIconUpdateRate` CVar, so a slower Blizzard default can't throttle the queue.
+
+### Internal
+- Centralized per-frame cooldown/usability refresh throttles into `UIFrameFactory` so one tune applies to all queues.
+- Added `Options/Widgets.lua` AceConfig builders and a shared `NotifyChange()` wrapper; migrated the General, Standard Queue, and Nameplate Overlay panels onto them (~150 closures removed). No behavior change.
+- Moved inline legacy-key migrations (`defensives` display mode, overlay glow mode) into load-time `NormalizeSavedData`.
+- Separated data from logic: curated category tables → `Data/SpellCategories.lua`, generated archetype table → `Data/SpellArchetypes.lua`, with `SpellDB` keeping registration/logic. Added DB2→Lua generator and audit scripts under `tools/` (not shipped) to regenerate per patch.
+
 ## [4.23.0] - 2026-06-17
 
 ### Fixed

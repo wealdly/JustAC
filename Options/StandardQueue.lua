@@ -4,9 +4,8 @@
 local StandardQueue = LibStub:NewLibrary("JustAC-OptionsStandardQueue", 4)
 if not StandardQueue then return end
 
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
-local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+local W = LibStub("JustAC-OptionsWidgets")
 
 -- Shared disabled helper: standard panel not active
 local function panelDisabled(addon)
@@ -26,6 +25,18 @@ local function defensiveDisabled(addon)
         return false
     end
     return panelDisabled(addon)
+end
+
+-- Layout controls (size/spacing/orientation) lock while anchored to the target
+-- frame in combat — protected frames can't be resized mid-fight.
+local function layoutDisabled(addon)
+    if panelDisabled(addon) then return true end
+    return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
+end
+
+-- Defensive sub-options gate on the panel being active AND defensives enabled.
+local function defEnabledDisabled(addon)
+    return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
 end
 
 function StandardQueue.CreateTabArgs(addon)
@@ -49,89 +60,44 @@ function StandardQueue.CreateTabArgs(addon)
                         name = L["Visibility"],
                         order = 1,
                     },
-                    queueVisibility = {
-                        type = "select",
-                        name = L["Queue Visibility"],
-                        desc = L["Queue Visibility desc"],
-                        order = 2,
-                        width = "double",
+                    -- Legacy keys (hideQueueOutOfCombat/requireHostileTarget) are migrated
+                    -- to queueVisibility once at load by MigrateQueueVisibility.
+                    queueVisibility = W.select(addon, "queueVisibility", {
+                        name = L["Queue Visibility"], desc = L["Queue Visibility desc"],
+                        order = 2, width = "double", default = "always",
                         values = {
                             always         = L["Always"],
                             combatOnly     = L["In Combat Only"],
                             requireHostile = L["Require Hostile Target"],
                         },
                         sorting = { "always", "combatOnly", "requireHostile" },
-                        get = function()
-                            local p = addon.db.profile
-                            if p.queueVisibility then return p.queueVisibility end
-                            -- Migrate legacy keys
-                            if p.hideQueueOutOfCombat then return "combatOnly" end
-                            if p.requireHostileTarget  then return "requireHostile" end
-                            return "always"
-                        end,
-                        set = function(_, val)
-                            local p = addon.db.profile
-                            p.queueVisibility      = val
-                            -- Clear legacy keys
-                            p.hideQueueOutOfCombat = nil
-                            p.requireHostileTarget = nil
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    hideQueueWhenMounted = {
-                        type = "toggle",
-                        name = L["Hide When Mounted"],
-                        desc = L["Hide When Mounted desc"],
-                        order = 3,
-                        width = "full",
-                        disabled = function() return panelDisabled(addon) end,
-                        get = function() return addon.db.profile.hideQueueWhenMounted end,
-                        set = function(_, val)
-                            addon.db.profile.hideQueueWhenMounted = val
-                            addon:ForceUpdate()
-                        end,
-                    },
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
+                    hideQueueWhenMounted = W.toggle(addon, "hideQueueWhenMounted", {
+                        name = L["Hide When Mounted"], desc = L["Hide When Mounted desc"],
+                        order = 3, width = "full",
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
                     -- ICON LAYOUT (10-19)
                     iconLayoutHeader = {
                         type = "header",
                         name = L["Icon Layout"],
                         order = 10,
                     },
-                    iconSize = {
-                        type = "range",
-                        name = L["Icon Size"],
-                        desc = L["Icon Size desc"],
-                        min = 20, max = 64, step = 2,
-                        order = 11,
-                        width = "normal",
-                        get = function() return addon.db.profile.iconSize or 42 end,
-                        set = function(_, val)
-                            addon.db.profile.iconSize = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function()
-                            if panelDisabled(addon) then return true end
-                            return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
-                        end,
-                    },
-                    iconSpacing = {
-                        type = "range",
-                        name = L["Spacing"],
-                        desc = L["Spacing desc"],
-                        min = 0, max = 10, step = 1,
-                        order = 12,
-                        width = "normal",
-                        get = function() return addon.db.profile.iconSpacing or 1 end,
-                        set = function(_, val)
-                            addon.db.profile.iconSpacing = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function()
-                            if panelDisabled(addon) then return true end
-                            return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
-                        end,
-                    },
+                    iconSize = W.range(addon, "iconSize", {
+                        name = L["Icon Size"], desc = L["Icon Size desc"],
+                        min = 20, max = 64, step = 2, order = 11, width = "normal", default = 42,
+                        onSet = function() addon:UpdateFrameSize() end,
+                        disabled = layoutDisabled,
+                    }),
+                    iconSpacing = W.range(addon, "iconSpacing", {
+                        name = L["Spacing"], desc = L["Spacing desc"],
+                        min = 0, max = 10, step = 1, order = 12, width = "normal", default = 1,
+                        onSet = function() addon:UpdateFrameSize() end,
+                        disabled = layoutDisabled,
+                    }),
                     queueOrientation = {
                         type = "select",
                         name = L["Queue Orientation"],
@@ -317,72 +283,38 @@ function StandardQueue.CreateTabArgs(addon)
                         name = L["Appearance"],
                         order = 20,
                     },
-                    frameOpacity = {
-                        type = "range",
-                        name = L["Frame Opacity"],
-                        desc = L["Frame Opacity desc"],
-                        min = 0.1, max = 1.0, step = 0.05,
-                        order = 21,
-                        width = "normal",
-                        get = function() return addon.db.profile.frameOpacity or 1.0 end,
-                        set = function(_, val)
-                            addon.db.profile.frameOpacity = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    tooltipMode = {
-                        type = "select",
-                        name = L["Tooltips"],
-                        desc = L["Tooltips desc"],
-                        order = 22,
-                        width = "normal",
+                    frameOpacity = W.range(addon, "frameOpacity", {
+                        name = L["Frame Opacity"], desc = L["Frame Opacity desc"],
+                        min = 0.1, max = 1.0, step = 0.05, order = 21, width = "normal", default = 1.0,
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
+                    -- Legacy tooltip keys (showTooltips/tooltipsInCombat) are migrated to
+                    -- tooltipMode once at load by MigrateLegacySettings.
+                    tooltipMode = W.select(addon, "tooltipMode", {
+                        name = L["Tooltips"], desc = L["Tooltips desc"],
+                        order = 22, width = "normal", default = "always",
                         values = {
                             never       = L["Never"],
                             outOfCombat = L["Out of Combat Only"],
                             always      = L["Always"],
                         },
                         sorting = {"never", "outOfCombat", "always"},
-                        get = function()
-                            if addon.db.profile.tooltipMode then
-                                return addon.db.profile.tooltipMode
-                            end
-                            if addon.db.profile.showTooltips == false then
-                                return "never"
-                            elseif addon.db.profile.tooltipsInCombat then
-                                return "always"
-                            else
-                                return "outOfCombat"
-                            end
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.tooltipMode = val
-                            addon.db.profile.showTooltips = nil
-                            addon.db.profile.tooltipsInCombat = nil
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    panelInteraction = {
-                        type = "select",
-                        name = L["Panel Interaction"],
-                        desc = L["Panel Interaction desc"],
-                        order = 23,
-                        width = "normal",
+                        disabled = panelDisabled,
+                    }),
+                    -- Legacy panelLocked bool is migrated to panelInteraction once at
+                    -- load by MigrateLegacySettings.
+                    panelInteraction = W.select(addon, "panelInteraction", {
+                        name = L["Panel Interaction"], desc = L["Panel Interaction desc"],
+                        order = 23, width = "normal", default = "unlocked",
                         values = {
                             unlocked     = L["Unlocked"],
                             locked       = L["Locked"],
                             clickthrough = L["Click Through"],
                         },
                         sorting = { "unlocked", "locked", "clickthrough" },
-                        get = function()
-                            local profile = addon.db.profile
-                            return profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.panelInteraction = val
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
+                        disabled = panelDisabled,
+                    }),
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -416,7 +348,7 @@ function StandardQueue.CreateTabArgs(addon)
                             p.tooltipsInCombat = nil
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            W.NotifyChange()
                         end,
                     },
                 },
@@ -429,40 +361,21 @@ function StandardQueue.CreateTabArgs(addon)
                 name = L["Offensive Display"],
                 order = 2,
                 args = {
-                    maxIcons = {
-                        type = "range",
-                        name = L["Max Icons"],
-                        desc = L["Max Icons desc"],
-                        min = 1, max = 7, step = 1,
-                        order = 1,
-                        width = "normal",
-                        get = function() return addon.db.profile.maxIcons or 4 end,
-                        set = function(_, val)
-                            addon.db.profile.maxIcons = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    firstIconScale = {
-                        type = "range",
-                        name = L["Primary Spell Scale"],
-                        desc = L["Primary Spell Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
-                        order = 2,
-                        width = "normal",
-                        get = function() return addon.db.profile.firstIconScale or 1.0 end,
-                        set = function(_, val)
-                            addon.db.profile.firstIconScale = val
-                            addon:UpdateFrameSize()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    glowMode = {
-                        type = "select",
-                        name = L["Highlight Mode"],
-                        desc = L["Highlight Mode desc"],
-                        order = 3,
-                        width = "normal",
+                    maxIcons = W.range(addon, "maxIcons", {
+                        name = L["Max Icons"], desc = L["Max Icons desc"],
+                        min = 1, max = 7, step = 1, order = 1, width = "normal", default = 4,
+                        onSet = function() addon:UpdateFrameSize() end,
+                        disabled = panelDisabled,
+                    }),
+                    firstIconScale = W.range(addon, "firstIconScale", {
+                        name = L["Primary Spell Scale"], desc = L["Primary Spell Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1, order = 2, width = "normal", default = 1.0,
+                        onSet = function() addon:UpdateFrameSize() end,
+                        disabled = panelDisabled,
+                    }),
+                    glowMode = W.select(addon, "glowMode", {
+                        name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
+                        order = 3, width = "normal", default = "all",
                         values = {
                             all = L["All Glows"],
                             primaryOnly = L["Primary Only"],
@@ -470,27 +383,15 @@ function StandardQueue.CreateTabArgs(addon)
                             none = L["No Glows"],
                         },
                         sorting = {"all", "primaryOnly", "procOnly", "none"},
-                        get = function() return addon.db.profile.glowMode or "all" end,
-                        set = function(_, val)
-                            addon.db.profile.glowMode = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
-                    queueDesaturation = {
-                        type = "range",
-                        name = L["Queue Icon Fade"],
-                        desc = L["Queue Icon Fade desc"],
-                        min = 0, max = 1.0, step = 0.05,
-                        order = 4,
-                        width = "normal",
-                        get = function() return addon.db.profile.queueIconDesaturation or 0 end,
-                        set = function(_, val)
-                            addon.db.profile.queueIconDesaturation = val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function() return panelDisabled(addon) end,
-                    },
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
+                    queueDesaturation = W.range(addon, "queueIconDesaturation", {
+                        name = L["Queue Icon Fade"], desc = L["Queue Icon Fade desc"],
+                        min = 0, max = 1.0, step = 0.05, order = 4, width = "normal", default = 0,
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -511,7 +412,7 @@ function StandardQueue.CreateTabArgs(addon)
                             p.queueIconDesaturation = 0
                             addon:UpdateFrameSize()
                             addon:ForceUpdate()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            W.NotifyChange()
                         end,
                     },
                 },
@@ -543,82 +444,35 @@ function StandardQueue.CreateTabArgs(addon)
                         end,
                         disabled = function() return defensiveDisabled(addon) end,
                     },
-                    displayMode = {
-                        type = "select",
-                        name = L["Defensive Display Mode"],
-                        desc = L["Defensive Display Mode desc"],
-                        order = 2,
-                        width = "double",
+                    -- Legacy keys (showOnlyInCombat/alwaysShowDefensive) are migrated to
+                    -- defensives.displayMode once at load by MigrateDefensiveDisplayMode.
+                    displayMode = W.select(addon, "defensives.displayMode", {
+                        name = L["Defensive Display Mode"], desc = L["Defensive Display Mode desc"],
+                        order = 2, width = "double", default = "always",
                         values = {
                             healthBased = L["When Health Low"],
                             combatOnly = L["In Combat Only"],
                             always = L["Always"],
                         },
                         sorting = {"healthBased", "combatOnly", "always"},
-                        get = function()
-                            if addon.db.profile.defensives.displayMode then
-                                return addon.db.profile.defensives.displayMode
-                            end
-                            local showOnlyInCombat = addon.db.profile.defensives.showOnlyInCombat
-                            local alwaysShow = addon.db.profile.defensives.alwaysShowDefensive
-                            if alwaysShow and showOnlyInCombat then
-                                return "combatOnly"
-                            elseif alwaysShow then
-                                return "always"
-                            else
-                                return "healthBased"
-                            end
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.displayMode = val
-                            addon.db.profile.defensives.showOnlyInCombat = nil
-                            addon.db.profile.defensives.alwaysShowDefensive = nil
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function()
-                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
-                        end,
-                    },
-                    maxIcons = {
-                        type = "range",
-                        name = L["Defensive Max Icons"],
-                        desc = L["Defensive Max Icons desc"],
-                        min = 1, max = 7, step = 1,
-                        order = 3,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.maxIcons or 4 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.maxIcons = val
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function()
-                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
-                        end,
-                    },
-                    iconScale = {
-                        type = "range",
-                        name = L["Defensive Icon Scale"],
-                        desc = L["Defensive Icon Scale desc"],
-                        min = 0.5, max = 2.0, step = 0.1,
-                        order = 4,
-                        width = "normal",
-                        get = function() return addon.db.profile.defensives.iconScale or 1.0 end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.iconScale = val
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function()
-                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
-                        end,
-                    },
-                    glowMode = {
-                        type = "select",
-                        name = L["Highlight Mode"],
-                        desc = L["Highlight Mode desc"],
-                        order = 5,
-                        width = "normal",
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = defEnabledDisabled,
+                    }),
+                    maxIcons = W.range(addon, "defensives.maxIcons", {
+                        name = L["Defensive Max Icons"], desc = L["Defensive Max Icons desc"],
+                        min = 1, max = 7, step = 1, order = 3, width = "normal", default = 4,
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defEnabledDisabled,
+                    }),
+                    iconScale = W.range(addon, "defensives.iconScale", {
+                        name = L["Defensive Icon Scale"], desc = L["Defensive Icon Scale desc"],
+                        min = 0.5, max = 2.0, step = 0.1, order = 4, width = "normal", default = 1.0,
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defEnabledDisabled,
+                    }),
+                    glowMode = W.select(addon, "defensives.glowMode", {
+                        name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
+                        order = 5, width = "normal", default = "all",
                         values = {
                             all         = L["All Glows"],
                             primaryOnly = L["Primary Only"],
@@ -626,57 +480,34 @@ function StandardQueue.CreateTabArgs(addon)
                             none        = L["No Glows"],
                         },
                         sorting = {"all", "primaryOnly", "procOnly", "none"},
-                        get = function() return addon.db.profile.defensives.glowMode or "all" end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.glowMode = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function()
-                            return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
-                        end,
-                    },
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = defEnabledDisabled,
+                    }),
                     -- HEALTH BARS (10-19)
                     healthBarHeader = {
                         type = "header",
                         name = L["Show Health Bars"],
                         order = 10,
                     },
-                    showHealthBar = {
-                        type = "toggle",
-                        name = L["Show Health Bars"],
-                        desc = L["Show Health Bars desc"],
-                        order = 11,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.showHealthBar end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.showHealthBar = val
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return defensiveDisabled(addon) end,
-                    },
-                    showPetHealthBar = {
-                        type = "toggle",
-                        name = L["Show Pet Health Bar"],
-                        desc = L["Show Pet Health Bar desc"],
-                        order = 12,
-                        width = "full",
-                        get = function() return addon.db.profile.defensives.showPetHealthBar end,
-                        set = function(_, val)
-                            addon.db.profile.defensives.showPetHealthBar = val
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return defensiveDisabled(addon) end,
+                    showHealthBar = W.toggle(addon, "defensives.showHealthBar", {
+                        name = L["Show Health Bars"], desc = L["Show Health Bars desc"],
+                        order = 11, width = "full",
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defensiveDisabled,
+                    }),
+                    showPetHealthBar = W.toggle(addon, "defensives.showPetHealthBar", {
+                        name = L["Show Pet Health Bar"], desc = L["Show Pet Health Bar desc"],
+                        order = 12, width = "full",
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defensiveDisabled,
                         hidden = function()
                             local _, pc = UnitClass("player")
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
                             local SDB = LibStub("JustAC-SpellDB", true)
                             if not SDB or not pc then return true end
                             return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
                                 or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
                         end,
-                    },
+                    }),
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -703,7 +534,7 @@ function StandardQueue.CreateTabArgs(addon)
                             def.alwaysShowDefensive = nil
                             addon:UpdateFrameSize()
                             addon:ForceUpdateAll()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            W.NotifyChange()
                         end,
                     },
                 },

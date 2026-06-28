@@ -48,6 +48,13 @@ function Options.RefreshAllDynamic(addon)
     end
 end
 
+-- Shared NotifyChange wrapper — guards the registry lookup in one place so
+-- panels and the Widgets builders don't each re-inline the nil check.
+local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+function Options.NotifyChange()
+    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+end
+
 -------------------------------------------------------------------------------
 -- Shared display-mode predicates used by options sub-modules
 -------------------------------------------------------------------------------

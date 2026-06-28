@@ -287,6 +287,17 @@ function UIHealthBar.CreateHealthBar(addon)
         shR2:SetWidth(1)
     end
 
+    -- Low-health pulse: gently throbs the bar when GetLowHealthState() (~35% binary)
+    -- crosses. Stopped by default; driven by Update on state transitions only.
+    local pulse = statusBar:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local pulseAlpha = pulse:CreateAnimation("Alpha")
+    pulseAlpha:SetFromAlpha(1.0)
+    pulseAlpha:SetToAlpha(0.65)   -- shallow: stays clearly visible; the throb is the cue
+    pulseAlpha:SetDuration(0.45)
+    pulseAlpha:SetSmoothing("IN_OUT")
+    statusBar.lowHealthPulse = pulse
+
     frame.statusBar = statusBar
     frame.background = bg
     frame.useDefensiveDims = useDefensiveDims
@@ -321,6 +332,22 @@ function UIHealthBar.Update(addon)
     -- The bar renders correctly even when values are secret
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
+
+    -- Low-health cue via the non-secret ~35% binary. Keep the green fill (high contrast
+    -- against the red background) and let a gentle pulse be the signal. Applied only on
+    -- state transition; the pulse animates independently.
+    local isLow = (BlizzardAPI and BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState()) or false
+    if isLow ~= healthBarFrame.isLowHealth then
+        healthBarFrame.isLowHealth = isLow
+        if statusBar.lowHealthPulse then
+            if isLow then
+                statusBar.lowHealthPulse:Play()
+            else
+                statusBar.lowHealthPulse:Stop()
+                statusBar:SetAlpha(1)
+            end
+        end
+    end
 end
 
 -- Show the health bar

@@ -7,6 +7,21 @@ dist/
 .vscode/
 *.code-workspace
 
+# Stray tool/temp output
+gh_tmp.json
+*.tmp.json
+
+# Office lock/temp files (Word leaves ~$ files while a doc is open)
+~$*
+
+# CurseForge description is maintained as Markdown (CurseForge_JustAC.md);
+# the .docx is a local working copy, not version-controlled
+*.docx
+
+# Raw DB2 exports (regenerated per patch from wago.tools; only the generated
+# Lua output is committed, not these multi-MB source CSVs)
+Documentation/wow_spell_csv/
+
 # Duplicate nested Ace3 lib folders (packaging artifact)
 Libs/AceAddon-3.0/AceAddon-3.0/
 Libs/AceConsole-3.0/AceConsole-3.0/

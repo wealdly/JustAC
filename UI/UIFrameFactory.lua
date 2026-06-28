@@ -27,8 +27,13 @@ UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
 UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
 UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
 UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
-UIFrameFactory.POSITION_HOLD_TIME  = 0.20  -- 200ms: min display time before positions 2+ can swap
-UIFrameFactory.GLOW_HOLD_TIME      = 0.10  -- 100ms: glow hysteresis to prevent animation flicker
+UIFrameFactory.POSITION_HOLD_TIME  = 0.05  -- 50ms: min display time before positions 2+ can swap
+UIFrameFactory.GLOW_HOLD_TIME      = 0.05  -- 50ms: glow hysteresis to prevent animation flicker
+-- Per-frame refresh throttles for CD-swipe widgets and usability tint. Centralized
+-- here so a single tune applies equally to every queue (standard, overlay, defensive)
+-- instead of drifting between per-file copies.
+UIFrameFactory.COOLDOWN_UPDATE_INTERVAL  = 0.08  -- ~12.5Hz: CD swipe / charge widget refresh
+UIFrameFactory.USABILITY_UPDATE_INTERVAL = 0.08  -- ~12.5Hz: usability/resource tint refresh
 
 -- Anchor presets for user-configurable text positions
 -- Each preset: {ox=xOffset, oy=yOffset, jh=justifyH}
