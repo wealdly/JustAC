@@ -45,13 +45,13 @@ local NAMEPLATE_GAP_RIGHT = 13  -- gap on RIGHT side; slightly larger to compens
 local BAR_HEIGHT     = 5   -- overlay health bar (thinner than UIHealthBar.BAR_HEIGHT=6)
 local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPACING=3)
 
--- Cooldown update throttle (matches UIRenderer)
+-- Cooldown update throttle (shared source with UIRenderer via UIFrameFactory export)
 local lastCooldownUpdate       = 0
-local COOLDOWN_UPDATE_INTERVAL = 0.08
+local COOLDOWN_UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL
 
 -- Position stabilization / glow hysteresis (sourced from UIFrameFactory exports)
-local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 150ms before positions 2+ can swap spells
-local GLOW_HOLD_TIME     = UIFrameFactory.GLOW_HOLD_TIME      -- 100ms before glow animation switches
+local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 50ms before positions 2+ can swap spells
+local GLOW_HOLD_TIME     = UIFrameFactory.GLOW_HOLD_TIME      -- 50ms before glow animation switches
 
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons

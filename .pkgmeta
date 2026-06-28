@@ -16,6 +16,8 @@ ignore:
     - Documentation
     - "*.code-workspace"
     - build.ps1
+    - release.ps1
+    - tools
 
 # Externals: fetch libraries from their official sources (optional - remove if bundling manually)
 # externals:

@@ -55,6 +55,9 @@ local normalSpells = {}
 local cooldownSpells = {}
 local addedSpellIDs = {}
 local recommendedSpells = {}
+-- Parallel context-rank buffers for the fixed-queue archetype/range bias.
+local proccedRank = {}
+local normalRank = {}
 
 -- Per-update cache for spell filter results (cleared at start of each GetCurrentSpellQueue call)
 -- Prevents re-checking the same spell multiple times per update cycle
@@ -263,11 +266,53 @@ local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedS
     return spellCount
 end
 
+--- Context rank for the fixed-queue bias (positions 2+). Lower = higher priority
+--- within its bucket: 0 = archetype matches position-1's context (boost),
+--- 2 = melee spell while the context is ranged / out of melee (soft-demote),
+--- 1 = neutral. Untagged spells and absent context both yield 1 (no reordering).
+local function ContextRank(spellID, ctxArch, ctxRange)
+    local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(spellID)
+    local rng  = SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID)
+    if not arch and not rng then return 1 end
+    -- Range is the HARD axis (castability): a melee spell is unusable when we're out
+    -- of melee (context is ranged), so it sinks below everything regardless of archetype.
+    if ctxRange == "ranged" and rng == "melee" then return 3 end
+    -- Archetype is the SOFT axis (preference) among castable spells. ST and multi-target
+    -- are mirror classes; aoe and cleave are one "multi" class. Matching the context's
+    -- class boosts (ST↔ST or multi↔multi), the opposite soft-demotes — both directions.
+    if ctxArch and arch then
+        local ctxMulti   = (ctxArch == "aoe" or ctxArch == "cleave")
+        local spellMulti = (arch == "aoe" or arch == "cleave")
+        return (ctxMulti == spellMulti) and 0 or 2
+    end
+    return 1
+end
+
+--- Append a bucket's entries to recommendedSpells in context-rank order
+--- (boost → neutral → demote), stable within each rank. Returns the new spellCount.
+local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
+    for rank = 0, 3 do
+        for i = 1, count do
+            if spellCount >= maxIcons then return spellCount end
+            if ranks[i] == rank then
+                spellCount = spellCount + 1
+                recommendedSpells[spellCount] = bucket[i]
+            end
+        end
+    end
+    return spellCount
+end
+
 --- Categorize rotation spells into procced/normal/cooldown buckets and assemble
---- in priority order: proc > normal > on-cooldown.
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs)
+--- in priority order: proc > normal > on-cooldown. Within the proc and normal
+--- buckets, entries are ordered by ContextRank so the spell matching position-1's
+--- archetype/range context surfaces first (e.g. the AOE proc wins slot 2 when
+--- position 1 is AOE). ctxArch/ctxRange are nil when position 1 is untagged → no reorder.
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange)
     wipe(proccedSpells)
     wipe(normalSpells)
+    wipe(proccedRank)
+    wipe(normalRank)
     local proccedCount, normalCount, cooldownCount = 0, 0, 0
 
     for i = 1, #rotationList do
@@ -286,6 +331,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = spellID
+                        normalRank[normalCount] = 1  -- items: neutral
                     end
                 end
             elseif not SpellQueue.IsSpellBlacklisted(spellID, blacklist) then
@@ -299,9 +345,11 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
+                        proccedRank[proccedCount] = ContextRank(spellID, ctxArch, ctxRange)
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
+                        normalRank[normalCount] = ContextRank(spellID, ctxArch, ctxRange)
                     end
                 else
                     -- Undo claim if filters rejected
@@ -314,16 +362,10 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
         end
     end
 
-    for i = 1, proccedCount do
-        if spellCount >= maxIcons then break end
-        spellCount = spellCount + 1
-        recommendedSpells[spellCount] = proccedSpells[i]
-    end
-    for i = 1, normalCount do
-        if spellCount >= maxIcons then break end
-        spellCount = spellCount + 1
-        recommendedSpells[spellCount] = normalSpells[i]
-    end
+    -- Procs stay the highest-priority bucket; normal follows; both ordered by context
+    -- rank. Cooldown (not-ready) spells trail, unranked.
+    spellCount = AppendRankedBucket(proccedSpells, proccedRank, proccedCount, recommendedSpells, spellCount, maxIcons)
+    spellCount = AppendRankedBucket(normalSpells, normalRank, normalCount, recommendedSpells, spellCount, maxIcons)
     for i = 1, cooldownCount do
         if spellCount >= maxIcons then break end
         spellCount = spellCount + 1
@@ -573,8 +615,15 @@ function SpellQueue.GetCurrentSpellQueue()
             end
         end
     end
+    -- Fixed-queue context: bias positions 2+ by the archetype/range of Blizzard's
+    -- position-1 pick (the original recommendation, before any gap-closer/burst injection).
+    local ctxArch, ctxRange
+    if primarySpellID and SpellDB then
+        ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
+        ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
+    end
     if cachedRotationList then
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs)
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange)
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but

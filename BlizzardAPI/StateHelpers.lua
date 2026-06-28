@@ -195,9 +195,48 @@ end
 --   CC-able). This is intentional — showing a CC suggestion on a Mechanical mob
 --   is a minor UX annoyance; suppressing CC on a valid target would be harmful.
 --
--- DO NOT attempt to replace this with GUID lookup or any other in-combat API
--- read. All such approaches are blocked by Blizzard's secret value system.
-local cachedTargetCreatureType = nil
+-- UPDATE (in-game verified 2026-06-28, build 12.0.7): UnitCreatureType("target") is
+-- in fact READABLE in combat for resolved targets — targeting resolves the unit, so
+-- the type reads back mid-combat (the Feb-2026 finding no longer holds for the target).
+-- UnitName is likewise readable in combat. The secret system is volatile (it loosened
+-- since Feb 2026), so as a hedge we cache the type keyed by the readable UnitName
+-- whenever it's available — a pre-warmed fallback if Blizzard ever re-secrets it.
+-- Resolution order (BlizzardAPI.GetTargetCreatureTypeID below): live read -> name
+-- cache -> fail-open (assume CC-able).
+
+-- Persistent, bounded name->creatureTypeID cache (account-wide via JustACGlobal).
+-- Flat numeric values; hard cap that wipes + re-warms so it never grows without bound.
+local NAME_TYPE_CACHE_CAP = 1500
+
+-- Localized creature-type name -> numeric ID, built once from C_CreatureInfo
+-- (locale-correct — no hardcoded type strings).
+local creatureTypeByName = nil
+local function BuildCreatureTypeMap()
+    if creatureTypeByName then return end
+    creatureTypeByName = {}
+    if C_CreatureInfo and C_CreatureInfo.GetCreatureTypeIDs and C_CreatureInfo.GetCreatureTypeInfo then
+        for _, tid in ipairs(C_CreatureInfo.GetCreatureTypeIDs()) do
+            local info = C_CreatureInfo.GetCreatureTypeInfo(tid)
+            if info and info.name then creatureTypeByName[info.name] = tid end
+        end
+    end
+end
+
+local function StoreNameType(name, typeID)
+    if not name or not typeID then return end
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    local c = g.creatureTypeCache
+    if not c then c = {}; g.creatureTypeCache = c; g.creatureTypeCacheN = 0 end
+    if c[name] == typeID then return end
+    if c[name] == nil then
+        if (g.creatureTypeCacheN or 0) >= NAME_TYPE_CACHE_CAP then
+            wipe(c); g.creatureTypeCacheN = 0   -- bounded: wipe and re-warm
+        end
+        g.creatureTypeCacheN = (g.creatureTypeCacheN or 0) + 1
+    end
+    c[name] = typeID
+end
 
 -- Instance-level CC immunity cache (keyed by NPC ID from GUID).
 -- UnitGUID() is SECRET in combat, so NPC ID is only populated when a target is
@@ -231,10 +270,7 @@ local ccFailureObserved = false     -- true = current target resisted/immune
 local ccFailureChecked  = false     -- true = we already checked this cast
 
 function BlizzardAPI.RefreshTargetCreatureType()
-    -- Always clear first. A stale value from the PREVIOUS target is worse than nil:
-    -- nil causes IsTargetCCImmune to fail-open (assume CC-able), which is the safe
-    -- default. Keeping the wrong type would suppress CC on a valid target.
-    cachedTargetCreatureType = nil
+    -- Clear per-target state first; a stale NPC ID is worse than nil (nil fails open).
     currentTargetNPCID = nil
     -- Also reset CC-failure learning on target switch — the new target might
     -- be CC-able even if the previous one wasn't.
@@ -242,10 +278,14 @@ function BlizzardAPI.RefreshTargetCreatureType()
     ccFailureObserved = false
     ccFailureChecked  = false
     local ct = UnitCreatureType and UnitCreatureType("target")
-    -- UnitCreatureType() returns a secret string in combat; leave cache nil
-    -- so IsTargetCCImmune fails-open rather than using wrong data.
-    if not IsSecretValue(ct) then
-        cachedTargetCreatureType = ct
+    if ct and not IsSecretValue(ct) then
+        -- Pre-warm the persistent name->type cache while the type is readable, keyed
+        -- by the (also-readable) UnitName — insurance if the type is ever re-secreted.
+        BuildCreatureTypeMap()
+        local name = UnitName and UnitName("target")
+        if name and not IsSecretValue(name) then
+            StoreNameType(name, creatureTypeByName[ct])
+        end
     end
     -- Extract NPC ID from GUID (only readable out of combat; secret in combat).
     -- Used to persist CC immunity per mob TYPE across pulls within an instance.
@@ -253,6 +293,51 @@ function BlizzardAPI.RefreshTargetCreatureType()
     if guid and not IsSecretValue(guid) then
         currentTargetNPCID = ExtractNPCID(guid)
     end
+end
+
+--- Resolve the current target's creature type ID (numeric, locale-independent), or nil.
+--- Order: live UnitCreatureType when readable (resolved targets, even in combat — and
+--- caches it by name); else the persistent name cache (UnitName stays readable when the
+--- type is secret); else nil so the caller fails open. See the creature-type notes above.
+function BlizzardAPI.GetTargetCreatureTypeID()
+    local ct = UnitCreatureType and UnitCreatureType("target")
+    if ct and not IsSecretValue(ct) then
+        BuildCreatureTypeMap()
+        local id = creatureTypeByName[ct]
+        if id then
+            local name = UnitName and UnitName("target")
+            if name and not IsSecretValue(name) then StoreNameType(name, id) end
+        end
+        return id
+    end
+    -- Type secret/unavailable: fall back to the name cache.
+    local name = UnitName and UnitName("target")
+    if name and not IsSecretValue(name) then
+        local g = _G.JustACGlobal
+        if g and g.creatureTypeCache then return g.creatureTypeCache[name] end
+    end
+    return nil
+end
+
+-- spellID -> allowed-creature-type bitmask (bit (typeID-1) set = type allowed), from
+-- SpellTargetRestrictions.TargetCreatureType. Only the type-restricted subset of the CC
+-- spells we actually suggest; every other suggested CC is a universal stun (no entry =
+-- no restriction). Regenerate per patch by intersecting CLASS_INTERRUPT_DEFAULTS cc
+-- spells with non-zero TargetCreatureType. Verified: 118 = Dragonkin/Demon/Giant/Undead/
+-- Humanoid (blocks Beast/Elemental/Mechanical/Critter).
+local CC_TYPE_MASK = {
+    [20066] = 118,   -- Repentance
+}
+
+--- True unless the target's creature type is KNOWN and the CC spell's type restriction
+--- excludes it. Fail-open (unknown type or unrestricted spell -> true) so we never
+--- suppress a CC we can't prove is invalid.
+function BlizzardAPI.IsCCSpellTypeValid(spellID)
+    local mask = CC_TYPE_MASK[spellID]
+    if not mask then return true end
+    local tid = BlizzardAPI.GetTargetCreatureTypeID()
+    if not tid then return true end
+    return bit.band(mask, bit.lshift(1, tid - 1)) ~= 0
 end
 
 --- Called when the player successfully casts a CC spell on the current target.

@@ -1,0 +1,9 @@
+# Accumulated GetRotationSpells() dumps, one spec block per section.
+# To add a spec: in-game run
+#   /run for _,id in ipairs(C_AssistedCombat.GetRotationSpells()) do print(id, C_Spell.GetSpellName(id)) end
+# paste the IDs below (any format — only integers are read; names/comments ignored),
+# then re-run tools/gen_archetypes.sh. Non-damage entries (poisons, pure cooldowns)
+# classify to nothing and are simply omitted from the generated table.
+
+# Rogue / Subtlety (ROGUE_3)
+53 114014 185438 196819 197835 319175 280719 426591 3408 5761 8679 315584 381637 185313

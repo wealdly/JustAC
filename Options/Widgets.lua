@@ -1,0 +1,142 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2026 wealdly
+-- JustAC: Options/Widgets - AceConfig entry builders.
+--
+-- Collapses the ~280 hand-written get/set/disabled closures that were duplicated
+-- across the option panels into a handful of builders. Each builder takes the
+-- addon, a profile path ("iconSize" or "nameplateOverlay.iconSize" — dots mean
+-- nested, auto nil-guarded on write), and an opts table.
+--
+-- opts fields:
+--   name, desc, order, width, values, sorting, min, max, step, ...  → passed through
+--   default   → returned by get when the stored value is nil
+--   onSet     → function(addon, val) run after the value is written
+--   notify    → true to call AceConfigRegistry:NotifyChange afterwards
+--   disabled  → function(addon) → bool  (wrapped so AceConfig calls it with addon)
+--   hidden    → function(addon) → bool  (same)
+--
+-- Entries with exotic get/set logic (migrations, multi-field writes, frame
+-- rebuilds) stay raw — the builders are opt-in, not mandatory.
+local W = LibStub:NewLibrary("JustAC-OptionsWidgets", 1)
+if not W then return end
+
+local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
+
+local function notifyChange()
+    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+end
+W.NotifyChange = notifyChange
+
+-- Keys consumed by the builders; everything else in opts is copied to the entry.
+local CONTROL = {
+    default = true, onSet = true, notify = true,
+    disabled = true, hidden = true, get = true, set = true, path = true,
+}
+
+-- Split "a.b.c" → {"a","b","c"} once at build time (paths are constant strings).
+local function compilePath(path)
+    local segs = {}
+    for seg in string.gmatch(path, "[^.]+") do
+        segs[#segs + 1] = seg
+    end
+    return segs
+end
+
+-- Read profile[seg1][seg2]...; returns nil if any intermediate is missing.
+local function pathGet(profile, segs)
+    local t = profile
+    for i = 1, #segs - 1 do
+        t = t[segs[i]]
+        if type(t) ~= "table" then return nil end
+    end
+    return t[segs[#segs]]
+end
+
+-- Return the parent table of the final segment, creating intermediates as needed.
+local function pathEnsureParent(profile, segs)
+    local t = profile
+    for i = 1, #segs - 1 do
+        if type(t[segs[i]]) ~= "table" then t[segs[i]] = {} end
+        t = t[segs[i]]
+    end
+    return t
+end
+
+-- Copy passthrough fields and normalize the disabled/hidden predicates.
+local function buildBase(addon, wtype, opts)
+    local entry = {}
+    for k, v in pairs(opts) do
+        if not CONTROL[k] then entry[k] = v end
+    end
+    entry.type = wtype
+    if opts.disabled ~= nil then
+        if type(opts.disabled) == "function" then
+            entry.disabled = function() return opts.disabled(addon) end
+        else
+            entry.disabled = opts.disabled
+        end
+    end
+    if opts.hidden ~= nil then
+        if type(opts.hidden) == "function" then
+            entry.hidden = function() return opts.hidden(addon) end
+        else
+            entry.hidden = opts.hidden
+        end
+    end
+    return entry
+end
+
+-- Standard scalar widget (toggle/range/select/etc.): get returns the stored value
+-- or the default; set writes it, runs onSet, optionally notifies.
+local function scalar(addon, wtype, path, opts)
+    local segs = compilePath(path)
+    local lastKey = segs[#segs]
+    local default = opts.default
+    local onSet = opts.onSet
+    local notify = opts.notify
+    local entry = buildBase(addon, wtype, opts)
+    entry.get = function()
+        local v = pathGet(addon.db.profile, segs)
+        if v == nil then return default end
+        return v
+    end
+    entry.set = function(_, val)
+        local parent = pathEnsureParent(addon.db.profile, segs)
+        parent[lastKey] = val
+        if onSet then onSet(addon, val) end
+        if notify then notifyChange() end
+    end
+    return entry
+end
+
+function W.toggle(addon, path, opts) return scalar(addon, "toggle", path, opts) end
+function W.range(addon, path, opts)  return scalar(addon, "range",  path, opts) end
+function W.select(addon, path, opts) return scalar(addon, "select", path, opts) end
+function W.input(addon, path, opts)  return scalar(addon, "input",  path, opts) end
+
+-- Color widget: stored as {r,g,b,a}; get/set fan the components in and out.
+function W.color(addon, path, opts)
+    local segs = compilePath(path)
+    local lastKey = segs[#segs]
+    local default = opts.default
+    local hasAlpha = opts.hasAlpha
+    local onSet = opts.onSet
+    local notify = opts.notify
+    local entry = buildBase(addon, "color", opts)
+    entry.get = function()
+        local c = pathGet(addon.db.profile, segs) or default or {}
+        return c.r or 1, c.g or 1, c.b or 1, (hasAlpha and (c.a or 1)) or 1
+    end
+    entry.set = function(_, r, g, b, a)
+        local parent = pathEnsureParent(addon.db.profile, segs)
+        local c = parent[lastKey]
+        if type(c) ~= "table" then c = {}; parent[lastKey] = c end
+        c.r, c.g, c.b = r, g, b
+        if hasAlpha then c.a = a end
+        if onSet then onSet(addon, c) end
+        if notify then notifyChange() end
+    end
+    return entry
+end
+
+return W

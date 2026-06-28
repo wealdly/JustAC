@@ -240,6 +240,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
             else
                 -- Single-pass spell selection: prefer CC when configured, otherwise first usable.
                 local fallbackID = nil
+                local silenceFallbackID = nil   -- ccOnly: silence-class CC, used only if no stun-class CC found
                 for _, entry in ipairs(resolvedInts) do
                     local sid, stype = entry.spellID, entry.type
                     -- In ccOnly mode, skip non-CC spells (kicks can't stop shielded casts).
@@ -250,19 +251,29 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                         -- skip
                     elseif (stype == "cc" and targetCCImmune) or targetAlreadyCC then
                         -- CC spells unusable on immune / already CC'd targets — skip.
+                    elseif stype == "cc" and not BlizzardAPI.IsCCSpellTypeValid(sid) then
+                        -- Type-restricted CC (e.g. Repentance) on an incompatible creature type — skip.
                     -- failOpen=true for kicks (short CD, always useful to remind);
                     -- failOpen=false for CCs so we never recommend one we can't confirm is castable.
                     elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
                         if (preferCC or ccOnly) and stype == "cc" then
-                            intSpellID = sid; shouldShow = true; break
+                            if ccOnly and SpellDB.IsSilenceClassCC(sid) then
+                                -- A silence only stops magic casts; an uninterruptible cast
+                                -- may be physical. Defer it and keep looking for a stun-class
+                                -- CC that stops anything; use it only if nothing else turns up.
+                                if not silenceFallbackID then silenceFallbackID = sid end
+                            else
+                                intSpellID = sid; shouldShow = true; break
+                            end
                         elseif not fallbackID then
                             fallbackID = sid
                             if not preferCC and not ccOnly then break end
                         end
                     end
                 end
-                if not shouldShow and fallbackID then
-                    intSpellID = fallbackID; shouldShow = true
+                if not shouldShow then
+                    intSpellID = silenceFallbackID or fallbackID
+                    if intSpellID then shouldShow = true end
                 end
             end
             -- castBar is nil for API fallback; callers gracefully hide cast aura.
