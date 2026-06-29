@@ -498,6 +498,23 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     end
 end
 
+-- Reorder a defensive list by emergency tier (1 bubble → 2 big heal → 3 rest), stable
+-- within each tier so the user's configured order is preserved as the tiebreaker. Returns
+-- a fresh table; used only below the low-health threshold. ponytail: builds one small
+-- table per low-health rebuild — fine, rebuilds are cached/throttled.
+local emergencyOrderBuf = {}
+local function OrderByEmergencyTier(list)
+    wipe(emergencyOrderBuf)
+    for tier = 1, 3 do
+        for _, sid in ipairs(list) do
+            if (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid) or 3) == tier then
+                emergencyOrderBuf[#emergencyOrderBuf + 1] = sid
+            end
+        end
+    end
+    return emergencyOrderBuf
+end
+
 -- Display order: instant procs first, then unified defensive list in user priority order.
 -- overrides (optional table): displayMode, maxIcons, showProcs — override profile defaults for
 -- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
@@ -599,7 +616,14 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
     if showAllAvailable or isLow then
-        AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded)
+        -- Below ~35%, float survival buttons (immunity bubbles, then big instant heals)
+        -- above mitigation/fillers. Procs were already placed on top by the pass above;
+        -- on-CD spells still sink. Above the threshold, list order (filler-first) stands.
+        local listToShow = defensiveSpells
+        if isLow and defensiveSpells then
+            listToShow = OrderByEmergencyTier(defensiveSpells)
+        end
+        AppendUsableSpells(addon, results, listToShow, maxIcons, alreadyAdded)
     end
 
     return results, alreadyAdded

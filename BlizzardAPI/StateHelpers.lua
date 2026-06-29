@@ -600,21 +600,21 @@ local UnitCastingInfo  = UnitCastingInfo  ---@diagnostic disable-line: undefined
 local UnitChannelInfo  = UnitChannelInfo  ---@diagnostic disable-line: undefined-global
 local castEventFrame = nil
 
--- Resolve a secret notInterruptible boolean by reading Blizzard's target frame
--- spellbar. CastingBarMixin runs in privileged context and resolves the secret
--- via GetEffectiveType() before our handler fires (registered first at UI load).
--- IsInterruptable() returns a plain boolean from the already-resolved barType.
+-- Resolve a notInterruptible flag. In 12.0 combat this is genuinely UNRESOLVABLE: every
+-- candidate signal is a secret value or silent. Verified via /jac inspect castdiag (12.0.7):
+--   • UnitCastingInfo notInterruptible / cast barType — secret (IsInterruptable() errors
+--     when compared under our taint, on Blizzard's own frames too)
+--   • the cast spellID from UNIT_SPELLCAST_START — secret (so no spell-keyed lookup)
+--   • CastingBar BorderShield:IsShown() — returns a secret boolean (display state sealed too)
+--   • UNIT_SPELLCAST_INTERRUPTIBLE / NOT_INTERRUPTIBLE — fire only on mid-cast transitions,
+--     not at cast start, so they don't establish the initial state
+-- This is the secret-value system, not a UI-addon issue. For a secret value we return nil
+-- and the caller fails open (assume interruptible). A plain boolean (out of combat / pre-12.0)
+-- is returned as-is. The transition events above are still consumed where they do fire.
 local function ResolveSecretBool(val)
     if val == nil then return nil end
     if not IsSecretValue(val) then return val end
-    local sb = TargetFrame and TargetFrame.spellbar
-    if sb and sb.IsInterruptable then
-        local ok, inter = pcall(sb.IsInterruptable, sb)
-        if ok and inter ~= nil and not IsSecretValue(inter) then
-            return not inter  -- IsInterruptable()=true → notInterruptible=false
-        end
-    end
-    return nil
+    return nil  -- secret in combat: unresolvable, caller fails open
 end
 
 --- Probe the current target for an in-progress cast/channel and resolve its

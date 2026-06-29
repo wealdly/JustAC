@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.25.0] - 2026-06-28
+
+### Changed
+- Below the ~35% low-health threshold, the defensive queue now leads with survival buttons — immunity bubbles first (Divine Shield, Ice Block, Aspect of the Turtle, Cloak of Shadows), then big instant heals (Lay on Hands, Death Strike, Renewal, etc.) — ahead of mitigation and small fillers. Above the threshold the order is unchanged: fast/free fillers and procs stay first for routine HP upkeep. Procced spells remain top priority in both cases.
+
+### Internal
+- Mapped and documented in-combat interrupt detection (added a `/jac inspect castdiag` diagnostic). The only readable signal is Blizzard's cast-bar icon-hiding on non-interruptible casts, and only on an untainted, Blizzard-driven cast bar; the interruptible flag/barType, cast spellID, shield state, and interruptible/uninterruptible events are all secret or never fire. Removed a dead secret-resolution fallback that could never succeed in combat (no behavior change). Known limitation unchanged and fundamental: addons that replace or skin the cast bar (Plater, ElvUI, Masque) leave no readable signal, so interrupt suggestions fail open there.
+
 ## [4.24.0] - 2026-06-28
 
 ### Fixed

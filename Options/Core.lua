@@ -205,9 +205,11 @@ local function HandleSlashCommand(addon, input)
             CallDebug("AuraDiagnostics")
         elseif topic == "perf" then
             CallDebug("PerformanceDiagnostics", topicArg)
+        elseif topic == "castdiag" then
+            CallDebug("CastDiagnostics")
         else
             addon:Print("Unknown inspect topic: '" .. topic .. "'")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, perf [reset]")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, perf [reset], castdiag")
         end
 
     elseif command == "help" then
