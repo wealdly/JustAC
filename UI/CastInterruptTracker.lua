@@ -115,11 +115,43 @@ local function FindVisibleCastBar(nameplate)
     return nil, nil
 end
 
--- ─────────────────────────────────────────────────────────────────────────────
--- Returns (isCasting, isInterruptible, castBar).
--- Cascades: event tracker → cast bar frame fields → API fallback → fail-open.
--- Only one pcall remains (notInterruptible may be a secret boolean in 12.0).
--- ─────────────────────────────────────────────────────────────────────────────
+-- ═════════════════════════════════════════════════════════════════════════════
+-- INTERRUPT DETECTION — what's secret, what works (verified 2026-06-28 via
+-- /jac inspect castdiag; READ THIS before concluding interruptibility is "sealed").
+--
+-- WHAT ACTUALLY WORKS (the decider): the "icon-hidden" check below. Blizzard hides
+--   the cast bar's spell Icon on a non-interruptible cast, and bar.Icon:IsShown() is a
+--   CONCRETE, non-secret boolean — so `not bar.Icon:IsShown()` cleanly means "can't
+--   interrupt." Confirmed: interruptible=false on shielded casts, true on kickable ones,
+--   and the Kick icon shows/hides to match. Requires a Blizzard cast bar with .Icon and
+--   .HideIconWhenNotInterruptible (FindVisibleCastBar).
+--
+-- WHAT IS SECRET / DOES NOT WORK (red herrings — do NOT re-derive "sealed" from these):
+--   • bar.notInterruptible field  — reads as a coerced/secret value, NOT reliable
+--   • bar:IsInterruptable() / barType — secret string; comparing it errors under our taint
+--   • BorderShield:IsShown()       — secret (it's SetShown(notInterruptible) directly)
+--   • cast bar fill atlas / color  — secret;  the cast spellID — secret
+--   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events — do NOT fire for these casts, on the
+--     "target" token OR any "nameplateN" token (the event tracker is a no-op here)
+--
+-- LIMITATION — fundamental, NOT fixable by us. The icon-hidden signal only exists because
+--   Blizzard's UNTAINTED, privileged code resolved the secret (its IsInterruptable()/barType
+--   comparison ran in a clean stack) and hid the icon. The moment that bar's update stack is
+--   tainted or the bar isn't driven, there is no signal:
+--     • Plater REPLACES the nameplate cast bar → Blizzard's bar isn't driven → icon never hides
+--     • Masque (or any skinner) TAINTS the target-frame spellbar → its UpdateIconShown →
+--       IsInterruptable() THROWS on the secret barType → icon never hides
+--     • a private CastingBarFrame we create runs in OUR taint → IsInterruptable() coerces wrong
+--     • setting HideIconWhenNotInterruptible on a tainted bar makes it THROW — do not do it
+--   So with Plater/ElvUI/Masque the cast bars are replaced or tainted and detection fail-opens
+--   (kick suggested on a non-interruptible cast). This is irreducible: the only non-secret
+--   interruptibility signal is a side-effect of untainted Blizzard execution we cannot run,
+--   replicate, or read once an addon has touched it. Verified exhaustively 2026-06-28.
+--
+-- Returns (isCasting, isInterruptible, castBar). Cascade: event tracker (no-op for these
+-- casts) → cast bar fields (icon-hidden is the one that works, on an untainted Blizzard bar)
+-- → API fallback → fail-open.
+-- ═════════════════════════════════════════════════════════════════════════════
 local function IsTargetCastInterruptible(nameplate)
     local evtActive, evtInterruptible, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
     local bar, barSource = FindVisibleCastBar(nameplate)
@@ -195,6 +227,31 @@ local function IsTargetCastInterruptible(nameplate)
 
     -- Fail-open: no negative signal → assume interruptible.
     return true, true, bar
+end
+
+-- Diagnostic hook (/jac inspect castdiag): the live verdict the addon actually computes for
+-- the current target, plus WHICH cascade check flagged "not interruptible" — so we read the
+-- decision and its source instead of guessing from raw fields.
+function CastInterruptTracker.DebugInterruptState()
+    local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+    local isCasting, interruptible = IsTargetCastInterruptible(nameplate)
+    local _, _, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
+    local src = "fail-open(none)"
+    if evtKnown then
+        src = "event-tracker"
+    else
+        local b = FindVisibleCastBar(nameplate)
+        if not b then src = "no-bar/api" else
+            local niOk, ni = pcall(function() return b.notInterruptible and true or false end)
+            local icOk, icHid = pcall(function() return b.Icon and b.HideIconWhenNotInterruptible and not b.Icon:IsShown() end)
+            local shOk, shShown = pcall(function() return b.BorderShield and b.BorderShield:IsShown() and (b.BorderShield:GetAlpha() or 0) > 0.5 end)
+            if niOk and ni then src = "notInterruptible-field"
+            elseif icOk and icHid then src = "icon-hidden"
+            elseif shOk and shShown then src = "borderShield"
+            else src = "fail-open(checks-passed)" end
+        end
+    end
+    return isCasting, interruptible, src
 end
 
 --- Cached per-frame (≤0.015 s); both renderers share the same answer and debounce timer.

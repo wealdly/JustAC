@@ -24,6 +24,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect auras - Diagnose aura cache state")
     addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
     addon:Print("/jac inspect perf reset - Reset build counters")
+    addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac help - Show this help")
 end
 
@@ -911,4 +912,221 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
 
     addon:Print("|cff888888Use '/jac inspect perf reset' to reset counters.|r")
     addon:Print("======================================")
+end
+
+-- One-shot cast-interruptibility diagnostic. Settles two assumptions the interrupt
+-- tracker is built on: (Q1) do INTERRUPTIBLE/NOT_INTERRUPTIBLE events fire at cast
+-- START, or only on a mid-cast transition? (Q2) does an addon-created CastingBar
+-- resolve the secret notInterruptible? Arm it, then target a caster — ideally one whose
+-- cast is non-interruptible from the start (the hard case).
+function DebugCommands.CastDiagnostics(addon)
+    if DebugCommands._castDiag then
+        addon:Print("|cffffff00castdiag already armed — target a caster (or /reload to cancel).|r")
+        return
+    end
+    local f = CreateFrame("Frame")
+    DebugCommands._castDiag = f
+    local armT = GetTime()
+    local log, started, startedT, probed = {}, false, 0, false
+    local castSpellID, probeLines = nil, {}
+
+    addon:Print("|cff00ff00=== castdiag ARMED ===|r Target a caster. Reads .notInterruptible MID-cast.")
+    -- NOTE: do NOT set HideIconWhenNotInterruptible on a cast bar — if that bar is tainted
+    -- (Masque skins the target frame; Plater the nameplate) the resulting IsInterruptable()
+    -- call throws on the secret barType. The icon-hidden signal only works on an UNtainted,
+    -- Blizzard-driven bar, which addons remove. Verified 2026-06-28.
+
+    local function stamp(label) log[#log + 1] = string.format("%+.3fs %s", GetTime() - armT, label) end
+
+    -- Convert any value to a print-safe string. Returns "<secret>" for secret values,
+    -- secret-tainted strings, or anything tostring can't handle — never lets a secret
+    -- reach AceConsole's concat (which errors on secrets).
+    local function safe(v)
+        if v == nil then return "nil" end
+        -- IsSecretValue misses event-arg secrets, so don't trust it. Instead force the value
+        -- through the operations a secret throws on (compare + concat) and catch the error.
+        local ok, s = pcall(function()
+            local str = tostring(v)
+            local _ = (str == "")  -- comparison throws if str is a secret string
+            return str .. ""       -- concat throws if secret; returns a clean copy otherwise
+        end)
+        if ok and type(s) == "string" then return s end
+        return "<secret>"
+    end
+
+    -- Capture .notInterruptible DURING the cast. The field is only valid while casting;
+    -- reading it after STOP (as the old report did) always came back false. THIS is the
+    -- value CastInterruptTracker line 155 uses to suppress the kick.
+    local function captureProbes()
+        if probed then return end
+        probed = true
+        local function probeBar(label, bar)
+            if not bar then probeLines[#probeLines + 1] = label .. ": absent"; return end
+            local niOk, ni = pcall(function() return bar.notInterruptible and true or false end)
+            probeLines[#probeLines + 1] = string.format("%s .notInterruptible (MID-cast): ok=%s value=%s  <- true=can't interrupt",
+                label, tostring(niOk), niOk and safe(ni) or "-")
+        end
+        local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+        probeBar("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
+        probeBar("nameplate.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- THE ROCK-SOLID TEST: read the icon-hidden check on the BLIZZARD bars DIRECTLY,
+        -- even though Plater hides them and shows its own. If the hidden Blizzard bar still
+        -- reports notInterruptible=true on a shielded cast, Plater keeps it DRIVEN and we can
+        -- read it regardless of Plater. hasIcon/flag must be present for the check to work.
+        local function probeIconHidden(label, bar)
+            if not bar then probeLines[#probeLines + 1] = "  " .. label .. ": absent"; return end
+            local hasIcon = bar.Icon ~= nil
+            local flag = bar.HideIconWhenNotInterruptible
+            local sOk, shown = pcall(function() return bar.Icon and bar.Icon:IsShown() and true or false end)
+            local cOk, chk = pcall(function() return (bar.Icon and bar.HideIconWhenNotInterruptible and not bar.Icon:IsShown()) and true or false end)
+            probeLines[#probeLines + 1] = string.format("  %s icon-hidden: hasIcon=%s flag=%s iconShown=%s => notInterruptible=%s",
+                label, tostring(hasIcon), tostring(flag), sOk and safe(shown) or "?", cOk and safe(chk) or "?")
+        end
+        probeIconHidden("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
+        probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- The AUTHORITATIVE verdict: what the addon's own IsTargetCastInterruptible returns.
+        local CIT = LibStub and LibStub("JustAC-CastInterruptTracker", true)
+        if CIT and CIT.DebugInterruptState then
+            local okc, isCasting, interruptible, src = pcall(CIT.DebugInterruptState)
+            probeLines[#probeLines + 1] = string.format("IsTargetCastInterruptible(): isCasting=%s interruptible=%s  via=%s",
+                okc and safe(isCasting) or "ERR", okc and safe(interruptible) or "-", okc and safe(src) or "-")
+        end
+        local worthy = BlizzardAPI and BlizzardAPI.IsTargetInterruptWorthy and BlizzardAPI.IsTargetInterruptWorthy()
+        probeLines[#probeLines + 1] = "IsTargetInterruptWorthy(): " .. tostring(worthy)
+        local ic = addon.interruptIcon
+        local sOk, shown = pcall(function() return ic and ic:IsShown() and true or false end)
+        probeLines[#probeLines + 1] = "JustAC Kick icon shown (MID-cast): " .. (sOk and tostring(shown) or "?")
+        addon:Print(string.format("|cff888888[castdiag captured mid-cast at +%.2fs; full result on cast end]|r", GetTime() - startedT))
+    end
+
+    local function report()
+        if DebugCommands._castDiag ~= f then return end
+        -- Clean up FIRST so any print error cannot re-fire every frame.
+        f:UnregisterAllEvents(); f:SetScript("OnEvent", nil); f:SetScript("OnUpdate", nil)
+        DebugCommands._castDiag = nil
+        local pok, perr = pcall(function()
+            addon:Print("|cff00ff00=== castdiag RESULT ===|r")
+            for _, line in ipairs(log) do addon:Print("  " .. line) end
+            local sawInterEvt = false
+            for _, line in ipairs(log) do if line:find("INTERRUPTIBLE") then sawInterEvt = true break end end
+            addon:Print("  Q1 interruptible event this cast: " ..
+                (sawInterEvt and "|cff00ff00YES — events may suffice|r" or "|cffff6600NO — initial state needs secret resolution|r"))
+            if #probeLines > 0 then
+                addon:Print("  |cffffd100--- MID-CAST reads (what the addon actually uses) ---|r")
+                for _, l in ipairs(probeLines) do addon:Print("  " .. l) end
+            else
+                addon:Print("  |cffff6600(no mid-cast capture — cast ended in <0.3s)|r")
+            end
+            -- Q2: the cast's spellID from the event — if readable, a spell-keyed lookup is viable.
+            local idStr = safe(castSpellID)
+            addon:Print("  Q2 event spellID: " .. idStr ..
+                (idStr == "<secret>" and " |cffff6600(secret -> spell-DB approach dead)|r"
+                 or " |cff00ff00(readable -> spell-DB approach viable)|r"))
+            -- Q3: BorderShield:IsShown() — Blizzard's display derivation. shown=true would
+            -- mean non-interruptible if it reads as a concrete (non-secret) boolean.
+            addon:Print("  Q3 cast-bar BorderShield IsShown (true expected on a shielded cast):")
+            local function probeShield(label, bar)
+                if not bar then addon:Print("    " .. label .. ": |cff888888absent|r"); return end
+                -- (post-STOP read — kept only for the BorderShield secret check; the meaningful
+                -- .notInterruptible value is the MID-CAST capture printed above.)
+                local shield = bar.BorderShield or bar.Shield
+                if shield and shield.IsShown then
+                    local ok, shown = pcall(shield.IsShown, shield)
+                    addon:Print(string.format("    %s BorderShield IsShown (post-cast): ok=%s shown=%s", label, tostring(ok), ok and safe(shown) or "-"))
+                end
+            end
+            probeShield("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
+            local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+            probeShield("nameplate.UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+            -- Q4: cast-bar color. If Blizzard sets it by branching on the secret (a plain
+            -- constant result), GetStatusBarColor() is NON-secret -> we can read interruptibility
+            -- directly (yellow ~ interruptible, grey ~ not). If it reads <secret>, it's piped.
+            -- base StatusBarColor was white; the grey/yellow lives on the fill texture's
+            -- ATLAS or vertex color. If either is a readable constant that differs by
+            -- interruptibility, that's the full fix.
+            addon:Print("  Q4 cast-bar fill appearance (readable + differs by cast = full fix):")
+            local function probeColor(label, bar)
+                if not bar then addon:Print("    " .. label .. ": |cff888888absent|r"); return end
+                local _, r, g, b = pcall(bar.GetStatusBarColor, bar)
+                local tex = bar.GetStatusBarTexture and bar:GetStatusBarTexture()
+                local atlas, vr, vg, vb = "n/a", nil, nil, nil
+                if tex then
+                    local aok, a = pcall(tex.GetAtlas, tex); if aok then atlas = a end
+                    local vok, x, y, z = pcall(tex.GetVertexColor, tex); if vok then vr, vg, vb = x, y, z end
+                end
+                addon:Print(string.format("    %s: barColor=%s/%s/%s vertex=%s/%s/%s",
+                    label, safe(r), safe(g), safe(b), safe(vr), safe(vg), safe(vb)))
+                addon:Print("      atlas=" .. safe(atlas))
+            end
+            probeColor("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
+            probeColor("nameplate.UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+            -- Q5: can we PASS the secret shield state into display sinks without reading it?
+            -- SetDesaturated greys the icon (non-occluding — keybind stays visible); SetShown
+            -- drives a non-covering border/badge. ok = that cue is viable.
+            -- Which secret-accepting sinks can drive a cue? ok = that visual is usable.
+            -- VertexColor (color tint) is the most obvious; Alpha (fade) next; Desaturated
+            -- (grey) is the subtle baseline; Shown is known-rejected. The secret bool is
+            -- forwarded to each, never read.
+            addon:Print("  Q5 secret-passthrough sinks (ok = that cue is usable):")
+            local function probePass(label, bar)
+                local shield = bar and (bar.BorderShield or bar.Shield)
+                if not (shield and shield.IsShown) then addon:Print("    " .. label .. ": |cff888888no shield|r"); return end
+                if not DebugCommands._probeTex then
+                    DebugCommands._probeTex = UIParent:CreateTexture(nil, "OVERLAY"); DebugCommands._probeTex:Hide()
+                end
+                local tex = DebugCommands._probeTex
+                local s = shield:IsShown()  -- secret bool; forwarded to sinks, never read
+                local function t(fn) return pcall(fn) and "|cff00ff00ok|r" or "|cffff6600REJECT|r" end
+                addon:Print(string.format("    %s: VertexColor=%s Alpha=%s Desaturated=%s Shown=%s", label,
+                    t(function() tex:SetVertexColor(1, s, s) end),
+                    t(function() tex:SetAlpha(s) end),
+                    t(function() tex:SetDesaturated(s) end),
+                    t(function() tex:SetShown(s) end)))
+            end
+            probePass("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
+        end)
+        if not pok then addon:Print("|cffff0000castdiag error (handled):|r " .. safe(perr)) end
+    end
+
+    f:RegisterUnitEvent("UNIT_SPELLCAST_START", "target")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "target")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "target")
+    -- Interruptible events registered BROADLY (no unit filter): the game may fire them with
+    -- a "nameplateN" token instead of "target", which a target-filtered registration misses.
+    -- We match back to the current target via UnitIsUnit (non-secret).
+    f:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
+    f:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
+
+    f:SetScript("OnEvent", function(_, event, unit, _, spellID)
+        if event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
+            -- Log only if it pertains to the current target, whatever token the game used.
+            if unit and UnitIsUnit and UnitIsUnit(unit, "target") then
+                stamp(event:gsub("UNIT_SPELLCAST_", "") .. " (target via " .. tostring(unit) .. ")")
+            end
+            return
+        end
+        stamp((event:gsub("UNIT_SPELLCAST_", "")))
+        if (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START") and not started then
+            started = true
+            startedT = GetTime()
+            castSpellID = spellID  -- raw; safe() converts at print time (may be secret)
+        elseif (event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP") and started then
+            report()
+        end
+    end)
+
+    f:SetScript("OnUpdate", function()
+        local now = GetTime()
+        if not started then
+            if now - armT > 30 then
+                addon:Print("|cffff6600castdiag timed out (no cast in 30s). Disarmed.|r")
+                f:UnregisterAllEvents(); f:SetScript("OnUpdate", nil); f:SetScript("OnEvent", nil)
+                DebugCommands._castDiag = nil
+            end
+            return
+        end
+        if not probed and (now - startedT) >= 0.3 then captureProbes() end  -- read .notInterruptible MID-cast
+        if (now - startedT) > 8 then report() end                          -- long/channel cast with no STOP
+    end)
 end

@@ -271,6 +271,44 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     WARRIOR_3     = {190456, 871, 97462, 23920},               -- Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
 }
 
+-- Emergency tier for the <35% defensive reorder. Tier 1 = immunity bubble (survives any
+-- hit), tier 2 = big instant heal (restores a large chunk now). Untagged = tier 3
+-- (mitigation / small filler / cast-time heal), left in the normal filler-first order.
+-- Used only when below the low-health threshold to float survival buttons above fillers;
+-- above the threshold, list order (filler-first) and proc-priority already do the right thing.
+--
+-- Hand-curated over CLASS_DEFENSIVE_DEFAULTS: DB2 SpellEffect cleanly tags only the
+-- direct-aura bubbles (39/40 + broad school mask) and %-heals (Effect 136/67); the
+-- indirect-aura immunities (Turtle, Cloak) and flat/SP-scaled heals (Death Strike, Word
+-- of Glory, Regrowth) are verified by hand. Tier 2 is "big instant heal" only — small
+-- top-offs (Crimson Vial, Expel Harm) and cast-time heals (Healing Surge) stay tier 3.
+-- Regenerate the candidate set per patch from SpellEffect; hand-verify the misses.
+local DEFENSE_TIER = {
+    -- Tier 1 — immunity bubbles
+    [642]    = 1,  -- Divine Shield (Paladin)
+    [45438]  = 1,  -- Ice Block (Mage)
+    [186265] = 1,  -- Aspect of the Turtle (Hunter)
+    [31224]  = 1,  -- Cloak of Shadows (Rogue, magic immunity)
+    -- Tier 2 — big instant heals
+    [633]    = 2,  -- Lay on Hands (Paladin, 100%)
+    [19236]  = 2,  -- Desperate Prayer (Priest, 25%)
+    [108238] = 2,  -- Renewal (Druid, 30%)
+    [109304] = 2,  -- Exhilaration (Hunter, 30%)
+    [34428]  = 2,  -- Victory Rush (Warrior)
+    [202168] = 2,  -- Impending Victory (Warrior)
+    [49998]  = 2,  -- Death Strike (Death Knight)
+    [8936]   = 2,  -- Regrowth (Druid; instant when procced)
+    [85673]  = 2,  -- Word of Glory (Paladin)
+    [360995] = 2,  -- Verdant Embrace (Evoker)
+}
+
+--- Emergency tier for the low-health defensive reorder: 1 = bubble, 2 = big instant heal,
+--- 3 = everything else. Looks up the base list ID (talent overrides resolve to the same tool).
+function SpellDB.GetDefenseTier(spellID)
+    if not spellID then return 3 end
+    return DEFENSE_TIER[spellID] or 3
+end
+
 -- Pet rez/summon spells (shown when pet is dead or missing — reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1

@@ -1310,6 +1310,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 end
             end
 
+
             if not intIcon:IsShown() then
                 UIRenderer.PlayInterruptAlertSound(profile)
                 intIcon:Show()

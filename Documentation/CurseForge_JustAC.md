@@ -1,41 +1,36 @@
-**JustAC — Assisted Combat, in your line of sight.**
+**JustAC — play any spec like you've mained it for years.**
 
-JustAC shows Blizzard's Assisted Combat recommendations as a compact queue labeled with your real keybinds, so you can follow the rotation without looking away from the fight. It keeps Blizzard's recommendation flow — just easier to read and act on.
+Blizzard's Assisted Combat tells you what to press. JustAC turns that into something you can actually play from: a clean queue of your next abilities, with *your* keybinds, right where you're already looking. No rotation guides to memorize, no WeakAura spaghetti to import, no eyes glued to your hotbar.
 
-**The queue**
-- Position 1 mirrors Blizzard's current recommended spell.
-- Follow-up positions show priority next-casts, filtered for cooldowns and redundant picks.
-- Follow-ups adapt to the fight: they match the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's current pick, so an AOE pull lifts your AOE tools and a ranged pull sinks the melee ones.
-- Dynamic inserts for procs, gap-closers, burst windows, and interrupts.
-- Optional custom spell and item ordering, per spec.
+## Why you'll want it
 
-**Responsive and accurate**
-- Tuned for low input-to-display latency, so the queue keeps pace with fast rotations.
-- Correct cooldown and charge swipes — including abilities behind modifier-key macros, with the full recharge swipe shown at zero charges.
+- **Perform instantly on anything.** Jump on a fresh alt, a rusty main, or a spec you've never touched and hold your own. The next button is right there — and so are the three after it.
+- **Watch the fight, not your bars.** Your rotation sits in your line of sight, labeled with the keys you actually press. Eyes up means faster reactions, fewer avoidable hits, cleaner mechanics.
+- **Track one thing, not ten.** Rotation, defensives, interrupts, crowd control, gap-closers, and burst windows all surface in the same place — the moment they matter.
+- **Stay alive.** When you drop low, JustAC leads with the button that *saves* you — an immunity bubble or a big instant heal — not a token mitigation, and it pulls your defensives forward exactly when you need them.
+- **It just works in 12.0.** The patch that hid cooldowns and health in combat broke a lot of overlays. JustAC tracks them itself, so your cooldowns stay accurate — even abilities tucked behind modifier-key macros.
 
-**Defensives**
-- Configurable defensive priority lists.
-- Self-heals, major defensives, healthstones, and potions.
-- Built around 12.0 combat-data limits using safe health signals, with a low-health pulse cue.
+## More than the bare glow
 
-**Interrupts and CC**
-- Detects enemy casts and surfaces your interrupt with keybind context.
-- Multiple interrupt modes, including important-cast focus.
-- Smarter CC filtering: skips immune targets, respects creature-type restrictions (no Polymorph-style CC on the wrong mob), and prefers a stun over a silence when only CC can stop a cast.
+Blizzard shows one dim suggestion on your action bar. Simpler addons just echo it with a hotkey. JustAC adds the judgment a good player brings:
 
-**Display and input**
-- Standard queue frame, nameplate overlay, or both.
-- Full layout controls (size, count, orientation, labels, glow styles).
-- Smart hotkey detection from bars and macros, plus manual overrides.
-- Keyboard and gamepad support (Xbox, PlayStation, generic styles).
-- Masque support.
+- It **re-ranks your follow-ups to the pull** — an AOE pack lifts your AOE tools, a ranged pull sinks the melee ones — instead of replaying a fixed list.
+- It **won't waste a suggestion**: no CC on an immune target, no melee ability when you're out of range, nothing already covered by a proc or cooldown.
+- It's an **assist, not a bot** — it rides Blizzard's own sanctioned recommendation flow, so there's nothing to script and nothing to get banned for.
 
-**Localization and profiles**
-- Per-spec profiles.
-- Localized: EN, DE, FR, RU, ES (ES/MX), PT-BR, KO, ZH (CN/TW).
+## What's in the box
 
-**Known limitation in 12.0**
-If a nameplate addon fully replaces Blizzard cast bars, interruptibility detection can fail open and treat casts as interruptible. Best results come from Blizzard nameplates, or addons that preserve Blizzard cast-bar behavior.
+**The queue** — Position 1 mirrors Blizzard's pick; follow-ups show your priority next-casts, context-ranked and filtered for cooldowns and redundancy. Optional custom spell/item ordering, per spec. Dynamic inserts for procs, gap-closers, and burst windows.
+
+**Defensives, interrupts & CC** — Configurable defensive priorities (self-heals, major cooldowns, healthstones, potions) with low-health emergency ordering. Interrupt detection with keybind context and multiple modes. Crowd control that respects immune targets, creature-type restrictions, and stun-vs-silence.
+
+**Display & input** — Standard frame, nameplate overlay, or both. Full layout controls (size, count, orientation, labels, glow styles). Smart hotkey detection from bars and macros, plus manual overrides. Keyboard and gamepad support (Xbox, PlayStation, generic). Masque support.
+
+**Localization & profiles** — Per-spec profiles. Localized: EN, DE, FR, RU, ES (ES/MX), PT-BR, KO, ZH (CN/TW).
+
+## Known limitation in 12.0
+
+In combat, whether an enemy's cast can be interrupted is only reliably detectable from Blizzard's own cast bar. With the default Blizzard cast bars, JustAC correctly hides the interrupt on a cast you can't kick. But addons that **replace or reskin the cast bar — Plater, ElvUI, Masque** — remove that signal, so on those setups the interrupt may still be suggested on a cast that can't actually be interrupted. This is a restriction of 12.0's "secret value" system, not specific to JustAC; best results come from leaving the Blizzard cast bars intact.
 
 ---
 
