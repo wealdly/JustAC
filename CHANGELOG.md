@@ -3,13 +3,21 @@
 
 ## [Unreleased]
 
+## [4.25.1] - 2026-06-28
+
+### Fixed
+- The interrupt suggestion is now correctly hidden on casts that can't be interrupted, on **any** UI setup. Previously, if a cast-bar / nameplate / unit-frame addon replaced or reskinned the Blizzard cast bar, the kick could be wrongly suggested on a non-interruptible (shielded) cast. The icon's visibility is now driven straight from the cast's protected interruptible flag through a display-only path that needs no cast bar, so it works regardless of your UI. (One edge remains: *substituting* a crowd-control ability for a kick on a non-interruptible cast still needs the default cast bar — with a replaced cast bar you simply get no suggestion there instead of a CC, never a wrong kick.)
+
+### Internal
+- Added `BlizzardAPI.SetAlphaFromSecretBool` / `ApplyInterruptIconAlpha` helpers wrapping the secret-aware `SetAlphaFromBoolean` display sink, and routed both the standard-queue and nameplate-overlay interrupt icons through them. Documented the interrupt-detection layers at the top of `UI/CastInterruptTracker.lua`; `/jac inspect castdiag` re-validates them.
+
 ## [4.25.0] - 2026-06-28
 
 ### Changed
 - Below the ~35% low-health threshold, the defensive queue now leads with survival buttons — immunity bubbles first (Divine Shield, Ice Block, Aspect of the Turtle, Cloak of Shadows), then big instant heals (Lay on Hands, Death Strike, Renewal, etc.) — ahead of mitigation and small fillers. Above the threshold the order is unchanged: fast/free fillers and procs stay first for routine HP upkeep. Procced spells remain top priority in both cases.
 
 ### Internal
-- Mapped and documented in-combat interrupt detection (added a `/jac inspect castdiag` diagnostic). The only readable signal is Blizzard's cast-bar icon-hiding on non-interruptible casts, and only on an untainted, Blizzard-driven cast bar; the interruptible flag/barType, cast spellID, shield state, and interruptible/uninterruptible events are all secret or never fire. Removed a dead secret-resolution fallback that could never succeed in combat (no behavior change). Known limitation unchanged and fundamental: addons that replace or skin the cast bar (Plater, ElvUI, Masque) leave no readable signal, so interrupt suggestions fail open there.
+- Mapped and documented in-combat interrupt detection (added a `/jac inspect castdiag` diagnostic). The only readable signal is Blizzard's cast-bar icon-hiding on non-interruptible casts, and only on an untainted, Blizzard-driven cast bar; the interruptible flag/barType, cast spellID, shield state, and interruptible/uninterruptible events are all secret or never fire. Removed a dead secret-resolution fallback that could never succeed in combat (no behavior change). Known limitation unchanged: cast-bar / nameplate / unit-frame addons that replace or reskin the cast bar leave no readable signal, so the interrupt logic falls back to fail-open there.
 
 ## [4.24.0] - 2026-06-28
 

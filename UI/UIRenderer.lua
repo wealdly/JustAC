@@ -1316,7 +1316,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 intIcon:Show()
             end
             local frameOpacity = profile.frameOpacity or 1.0
-            intIcon:SetAlpha(frameOpacity)
+            -- Hide a KICK suggestion on a non-interruptible cast via the secret-aware alpha
+            -- sink (works under any cast-bar addon; never reads the secret). A CC suggestion
+            -- stays visible — CC is the correct call on a non-interruptible cast.
+            if SpellDB and SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(intSpellID) then
+                BlizzardAPI.ApplyInterruptIconAlpha(intIcon, frameOpacity)
+            else
+                intIcon:SetAlpha(frameOpacity)
+            end
         else
             if intIcon.spellID or intIcon:IsShown() then
                 UIRenderer.HideInterruptIcon(intIcon)

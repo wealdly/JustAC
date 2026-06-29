@@ -7,6 +7,9 @@ dist/
 .vscode/
 *.code-workspace
 
+# Local-only agent instruction file (references agents/tooling; never published)
+CLAUDE.md
+
 # Stray tool/temp output
 gh_tmp.json
 *.tmp.json

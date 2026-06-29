@@ -568,8 +568,8 @@ end
 --------------------------------------------------------------------------------
 -- Target cast interruptibility tracking (event-driven, NeverSecret)
 --------------------------------------------------------------------------------
--- Three sources, combined for maximum compatibility with third-party addons
--- (Platynator, Plater, ElvUI, etc.) that may hide/replace Blizzard cast bars:
+-- Three sources, combined for maximum compatibility with third-party cast-bar /
+-- nameplate / unit-frame addons that may hide or replace the Blizzard cast bars:
 --
 --  1. UNIT_SPELLCAST_INTERRUPTIBLE / UNIT_SPELLCAST_NOT_INTERRUPTIBLE events
 --     fire for mid-cast transitions (e.g. boss becoming immune). Event name
@@ -583,11 +583,6 @@ end
 --
 --  3. Cast bar visual inspection in UIRenderer (BorderShield / .Shield) as
 --     a final fallback when the above are inconclusive.
---
--- Pattern learned from:
---   oUF (ElvUI): derives notInterruptible from event name string
---   DetailsFramework (Plater): events replace secret value with real boolean
---   SUF (NoSelph): events drive overlay SetAlphaFromBoolean
 --
 -- Reset on: PLAYER_TARGET_CHANGED, UNIT_SPELLCAST_STOP, CHANNEL_STOP,
 --           UNIT_SPELLCAST_FAILED, UNIT_SPELLCAST_INTERRUPTED
@@ -659,7 +654,7 @@ local function InitTargetCastTracking()
 
     castEventFrame:SetScript("OnEvent", function(_, event)
         if event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
-            -- Event name IS the data (oUF pattern) — never secret
+            -- Event name IS the data (the event itself carries it) — never secret
             targetCastInterruptible = true
             targetCastInterruptKnown = true
         elseif event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
@@ -714,6 +709,55 @@ end
 ---                   (false = initial cast start, event hasn't fired yet)
 function BlizzardAPI.GetTargetCastInterruptState()
     return targetCastActive, targetCastInterruptible, targetCastInterruptKnown
+end
+
+--------------------------------------------------------------------------------
+-- Secret-aware display sinks (12.0)
+--------------------------------------------------------------------------------
+-- These FORWARD a possibly-secret value into a Blizzard widget method that consumes it
+-- for display without revealing it to us (the method is marked SecretArguments =
+-- "AllowedWhenTainted"). We never read or branch on the value — the engine renders it.
+-- The complete set of such sinks: SetAlphaFromBoolean / SetVertexColorFromBoolean (secret
+-- booleans) and SetCooldownFromDurationObject (secret durations). This is how the addon can
+-- reflect a secret bool visually (interruptibility, range, usability) without resolving it.
+
+--- Drive region:SetAlphaFromBoolean from a (possibly secret) boolean, safely.
+---   secret bool → forwarded to the sink (pcall-guarded; falls back to nilAlpha on error)
+---   plain bool  → forwarded to the sink
+---   nil         → region:SetAlpha(nilAlpha)
+--- @param trueAlpha number   alpha when the boolean is true
+--- @param falseAlpha number  alpha when the boolean is false
+--- @param nilAlpha number|nil alpha when value is nil/unavailable (default falseAlpha)
+function BlizzardAPI.SetAlphaFromSecretBool(region, value, trueAlpha, falseAlpha, nilAlpha)
+    nilAlpha = nilAlpha or falseAlpha or 1
+    if not (region and region.SetAlphaFromBoolean) then
+        if region and region.SetAlpha then region:SetAlpha(nilAlpha) end
+        return
+    end
+    if IsSecretValue(value) then
+        if not pcall(region.SetAlphaFromBoolean, region, value, trueAlpha, falseAlpha) then
+            region:SetAlpha(nilAlpha)
+        end
+    elseif value == nil then
+        region:SetAlpha(nilAlpha)
+    else
+        region:SetAlphaFromBoolean(value, trueAlpha, falseAlpha)
+    end
+end
+
+--- Drive an interrupt icon's alpha from the target cast's secret notInterruptible:
+--- non-interruptible (or no active cast) → alpha 0; interruptible → shownAlpha. Works
+--- regardless of cast-bar / nameplate / unit-frame addons — no cast-bar dependency, never
+--- reads the secret. See the INTERRUPT DETECTION notes in CastInterruptTracker for why this is the
+--- only robust path. Caller should apply this only to a KICK suggestion (a CC is the correct
+--- call on a non-interruptible cast and must stay visible).
+function BlizzardAPI.ApplyInterruptIconAlpha(icon, shownAlpha)
+    local notInt = select(8, UnitCastingInfo("target"))
+    if not IsSecretValue(notInt) and notInt == nil then
+        notInt = select(7, UnitChannelInfo("target"))  -- channels: notInterruptible is 7th
+    end
+    -- true (can't interrupt) → 0 ; false (interruptible) → shownAlpha ; nil (no cast) → 0
+    BlizzardAPI.SetAlphaFromSecretBool(icon, notInt, 0, shownAlpha, 0)
 end
 
 --- Reset target cast tracking. Called from JustAC:OnTargetChanged and

@@ -62,7 +62,7 @@ end
 local standardTargetFrameStatus = nil
 
 -- Whitelist check: is the genuine Blizzard TargetFrame active?
--- Returns false if a unit-frame addon (ElvUI, SUF, oUF, Pitbull, etc.) replaced it.
+-- Returns false if a third-party unit-frame addon replaced it.
 -- Cached per session — invalidated on PLAYER_ENTERING_WORLD / reload.
 function TFA.IsStandardTargetFrame(addon)
     if standardTargetFrameStatus ~= nil then

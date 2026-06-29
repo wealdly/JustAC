@@ -1087,7 +1087,13 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 UIRenderer.PlayInterruptAlertSound(profile)
                 interruptIcon:Show()
             end
-            interruptIcon:SetAlpha(opacity)
+            -- Hide a KICK suggestion on a non-interruptible cast via the secret-aware alpha
+            -- sink (works under any cast-bar addon; never reads the secret). CC stays visible.
+            if SpellDB and SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(intSpellID) then
+                BlizzardAPI.ApplyInterruptIconAlpha(interruptIcon, opacity)
+            else
+                interruptIcon:SetAlpha(opacity)
+            end
         else
             UIRenderer.HideInterruptIcon(interruptIcon)
         end

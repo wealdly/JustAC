@@ -931,10 +931,10 @@ function DebugCommands.CastDiagnostics(addon)
     local castSpellID, probeLines = nil, {}
 
     addon:Print("|cff00ff00=== castdiag ARMED ===|r Target a caster. Reads .notInterruptible MID-cast.")
-    -- NOTE: do NOT set HideIconWhenNotInterruptible on a cast bar — if that bar is tainted
-    -- (Masque skins the target frame; Plater the nameplate) the resulting IsInterruptable()
-    -- call throws on the secret barType. The icon-hidden signal only works on an UNtainted,
-    -- Blizzard-driven bar, which addons remove. Verified 2026-06-28.
+    -- NOTE: do NOT set HideIconWhenNotInterruptible on a cast bar — if that bar has been
+    -- tainted by any third-party addon (skinning the target frame, replacing the nameplate),
+    -- the resulting IsInterruptable() call throws on the secret barType. The icon-hidden
+    -- signal only works on an UNtainted, Blizzard-driven bar. Verified 2026-06-28.
 
     local function stamp(label) log[#log + 1] = string.format("%+.3fs %s", GetTime() - armT, label) end
 
@@ -969,10 +969,10 @@ function DebugCommands.CastDiagnostics(addon)
         local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
         probeBar("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
         probeBar("nameplate.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
-        -- THE ROCK-SOLID TEST: read the icon-hidden check on the BLIZZARD bars DIRECTLY,
-        -- even though Plater hides them and shows its own. If the hidden Blizzard bar still
-        -- reports notInterruptible=true on a shielded cast, Plater keeps it DRIVEN and we can
-        -- read it regardless of Plater. hasIcon/flag must be present for the check to work.
+        -- Read the icon-hidden check on the BLIZZARD bars DIRECTLY, even if a third-party addon
+        -- hides them and shows its own. If a hidden Blizzard bar still reports
+        -- notInterruptible=true on a shielded cast, it is still Blizzard-DRIVEN and readable.
+        -- hasIcon/flag must be present for the check to work.
         local function probeIconHidden(label, bar)
             if not bar then probeLines[#probeLines + 1] = "  " .. label .. ": absent"; return end
             local hasIcon = bar.Icon ~= nil
@@ -984,6 +984,25 @@ function DebugCommands.CastDiagnostics(addon)
         end
         probeIconHidden("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
         probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- BYPASS PROBE: does a replacing cast-bar addon expose its OWN interruptibility on its
+        -- bar? Such bars commonly live at nameplate.unitFrame.castBar (lowercase). If a field
+        -- reads a clean boolean matching the actual cast (and its shield is visually correct),
+        -- we could read its answer instead of Blizzard's. Compare to what its bar shows.
+        local puf = np and np.unitFrame
+        local pcb = puf and puf.castBar
+        if pcb then
+            local function rd(field)
+                local ok, v = pcall(function() return pcb[field] end)
+                return ok and safe(v) or "ERR"
+            end
+            probeLines[#probeLines + 1] = string.format("3rd-party castBar fields: canInterrupt=%s notInterruptible=%s IsInterruptible=%s",
+                rd("canInterrupt"), rd("notInterruptible"), rd("IsInterruptible"))
+            local sOk, sh = pcall(function() return pcb.Icon and pcb.Icon:IsShown() and true or false end)
+            probeLines[#probeLines + 1] = "3rd-party castBar: hasIcon=" .. tostring(pcb.Icon ~= nil) ..
+                " iconShown=" .. (sOk and safe(sh) or "?") .. " HideIconFlag=" .. tostring(pcb.HideIconWhenNotInterruptible)
+        else
+            probeLines[#probeLines + 1] = "3rd-party castBar: not found (nameplate.unitFrame.castBar absent)"
+        end
         -- The AUTHORITATIVE verdict: what the addon's own IsTargetCastInterruptible returns.
         local CIT = LibStub and LibStub("JustAC-CastInterruptTracker", true)
         if CIT and CIT.DebugInterruptState then
@@ -995,7 +1014,9 @@ function DebugCommands.CastDiagnostics(addon)
         probeLines[#probeLines + 1] = "IsTargetInterruptWorthy(): " .. tostring(worthy)
         local ic = addon.interruptIcon
         local sOk, shown = pcall(function() return ic and ic:IsShown() and true or false end)
-        probeLines[#probeLines + 1] = "JustAC Kick icon shown (MID-cast): " .. (sOk and tostring(shown) or "?")
+        local aOk, alpha = pcall(function() return ic and ic:GetAlpha() end)
+        probeLines[#probeLines + 1] = "JustAC Kick icon: shown=" .. (sOk and tostring(shown) or "?") ..
+            " alpha=" .. (aOk and safe(alpha) or "?") .. "  (alpha 0 on a non-kickable cast = SetAlphaFromBoolean works)"
         addon:Print(string.format("|cff888888[castdiag captured mid-cast at +%.2fs; full result on cast end]|r", GetTime() - startedT))
     end
 

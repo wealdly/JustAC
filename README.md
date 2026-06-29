@@ -14,6 +14,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 - Position 1 shows the currently recommended ability with your keybind — blacklisted spells auto-substitute via highlight-mode lookahead
 - Position 2+ displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
+- **Context-aware ranking** — positions 2+ re-rank to match the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's position-1 pick, so an AOE pull lifts your AOE/cleave tools and a ranged pull sinks the melee ones. Range is a hard constraint, archetype a soft preference; applies to the Custom Queue too. Backed by a DB2-generated archetype table covering all classes
 - Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
@@ -30,13 +31,16 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 - Shows your interrupt ability before the DPS queue when the target is casting
 - **Important Only** mode filters to lethal/must-interrupt casts (`C_Spell.IsSpellImportant`)
-- **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts
+- **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts; prefers a stun over a silence when only CC can stop an uninterruptible cast (a silence can't stop a physical channel)
+- **Creature-type-aware CC** — won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
 - Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
-- Third-party nameplate support — auto-discovers cast bars from Plater, ElvUI, and Blizzard nameplates
+- The interrupt is correctly hidden on casts that can't be interrupted — driven straight from the cast's secret interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use (see Known Issues for the one remaining edge)
+- Third-party nameplate support — auto-discovers cast bars from supported nameplate addons and the Blizzard default nameplate
 
 ### Defensive Suggestions
 
 - Unified priority list: self-heals and major cooldowns combined with configurable per-class ordering
+- **Low-health emergency ordering** — below the ~35% threshold the queue leads with immunity bubbles, then big instant heals, ahead of mitigation and small fillers; above the threshold fast/free fillers and procs stay first for routine upkeep
 - Procced defensives (Victory Rush, free heals) shown at any health level
 - Usability-aware visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate on cooldown
 - Pet rez/summon and pet heal support for Hunter, Warlock, Death Knight
@@ -150,13 +154,11 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Known Issues
 
-### Non-interruptible cast detection with nameplate replacement addons
+### Crowd-control substitution on casts that can't be interrupted
 
-Addons that replace or heavily modify Blizzard's nameplate cast bars (e.g. Platynator) can break JustAC's ability to distinguish interruptible from non-interruptible casts. When this happens, interrupt/CC abilities may be suggested on uninterruptible (shielded) casts.
+The interrupt icon is correctly hidden on a cast that can't be interrupted, on **any** UI setup — JustAC forwards the cast's secret interruptible flag straight into the icon's alpha through a display-only path that never reads the value, so it doesn't depend on the cast bar at all.
 
-**Why:** In WoW 12.0, the `notInterruptible` field from `UnitCastingInfo()` is a secret value in combat — addons cannot read it directly. JustAC's only reliable signal is the Blizzard nameplate cast bar's icon visibility (`HideIconWhenNotInterruptible`), which Blizzard resolves internally. Addons that disable or replace that cast bar remove the only working signal.
-
-**Workaround:** Use Blizzard default nameplates, or a nameplate addon that preserves the Blizzard cast bar frame (Plater and ElvUI work correctly). If you use a nameplate addon that fully replaces the cast bar, interrupt suggestions will fail-open (assume interruptible).
+The one residual: deciding to substitute a *crowd-control* ability for a kick on a non-interruptible cast requires branching on interruptibility, which a secret value doesn't allow. That substitution only works when the readable cast-bar signal is present — the Blizzard default cast bar, undisturbed. With a cast-bar / nameplate / unit-frame addon that replaces or reskins the cast bar, you simply get no suggestion on a non-interruptible cast instead of a CC — never a wrongly-shown kick. The detection path and which signals are secret vs. usable are documented at the top of `UI/CastInterruptTracker.lua`; re-check live with `/jac inspect castdiag`.
 
 ### Burst injection cooldown detection
 
@@ -189,6 +191,7 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 /jac inspect auras            - Diagnose aura cache state
 /jac inspect perf             - Queue build rate statistics (requires /jac debug)
 /jac inspect perf reset       - Reset build counters
+/jac inspect castdiag         - Diagnose in-combat interrupt detection (one-shot probe)
 /jac help                     - Show all commands in-game
 ```
 

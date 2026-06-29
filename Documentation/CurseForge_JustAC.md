@@ -28,9 +28,9 @@ Blizzard shows one dim suggestion on your action bar. Simpler addons just echo i
 
 **Localization & profiles** — Per-spec profiles. Localized: EN, DE, FR, RU, ES (ES/MX), PT-BR, KO, ZH (CN/TW).
 
-## Known limitation in 12.0
+## Note on interrupts in 12.0
 
-In combat, whether an enemy's cast can be interrupted is only reliably detectable from Blizzard's own cast bar. With the default Blizzard cast bars, JustAC correctly hides the interrupt on a cast you can't kick. But addons that **replace or reskin the cast bar — Plater, ElvUI, Masque** — remove that signal, so on those setups the interrupt may still be suggested on a cast that can't actually be interrupted. This is a restriction of 12.0's "secret value" system, not specific to JustAC; best results come from leaving the Blizzard cast bars intact.
+The interrupt is correctly hidden on casts that can't be interrupted, on any UI setup — it's driven straight from the cast's protected interruptible flag through a display-only path. The only thing that needs the Blizzard default cast bar is *substituting* a crowd-control ability for a kick on a non-interruptible cast; with a cast-bar/nameplate addon that replaces the cast bar you simply get no suggestion there instead of a CC — never a wrongly-shown kick.
 
 ---
 

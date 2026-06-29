@@ -68,11 +68,11 @@ local lastInterruptEvalTime = -1
 local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, interruptMode = nil }
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Cast bar discovery: Blizzard → Plater → ElvUI.
--- Source-verified paths (2026-03-01):
---   Blizzard : nameplate.UnitFrame.castBar  (capital U)
---   Plater   : nameplate.unitFrame.castBar  (lowercase u)
---   ElvUI    : nameplate child → .Castbar   (capital C, oUF element)
+-- Cast bar discovery. Source-verified frame paths (2026-03-01) covering the Blizzard
+-- default and the common third-party cast-bar / nameplate addons:
+--   "blizzard"     : nameplate.UnitFrame.castBar  (capital U)
+--   "lowercaseUF"  : nameplate.unitFrame.castBar  (lowercase u)
+--   "childCastbar" : a nameplate child's .Castbar  (oUF-style element)
 -- ─────────────────────────────────────────────────────────────────────────────
 local function FindVisibleCastBar(nameplate)
     if not nameplate then return nil, nil end
@@ -85,16 +85,16 @@ local function FindVisibleCastBar(nameplate)
         end
     end
 
-    -- Plater: lowercase .unitFrame (Details! Framework)
+    -- lowercase .unitFrame (used by some cast-bar frameworks)
     local puf = nameplate.unitFrame
     if puf and puf ~= uf then
         local bar = puf.castBar
         if bar and bar.IsShown and bar:IsShown() then
-            return bar, "plater"
+            return bar, "lowercaseUF"
         end
     end
 
-    -- ElvUI: oUF child .Castbar is not a named field, must enumerate children.
+    -- child-element .Castbar is not a named field, must enumerate children.
     if nameplate.GetNumChildren then
         local numKids = nameplate:GetNumChildren()
         if numKids > 0 then
@@ -105,7 +105,7 @@ local function FindVisibleCastBar(nameplate)
                 if child then
                     local cb = child.Castbar
                     if cb and cb.IsShown and cb:IsShown() then
-                        return cb, "elvui"
+                        return cb, "childCastbar"
                     end
                 end
             end
@@ -118,35 +118,36 @@ end
 -- ═════════════════════════════════════════════════════════════════════════════
 -- INTERRUPT DETECTION — what's secret, what works (verified 2026-06-28 via
 -- /jac inspect castdiag; READ THIS before concluding interruptibility is "sealed").
+-- In 12.0 an enemy cast's interruptibility is a secret value in combat. It is handled
+-- in two layers:
 --
--- WHAT ACTUALLY WORKS (the decider): the "icon-hidden" check below. Blizzard hides
---   the cast bar's spell Icon on a non-interruptible cast, and bar.Icon:IsShown() is a
---   CONCRETE, non-secret boolean — so `not bar.Icon:IsShown()` cleanly means "can't
---   interrupt." Confirmed: interruptible=false on shielded casts, true on kickable ones,
---   and the Kick icon shows/hides to match. Requires a Blizzard cast bar with .Icon and
---   .HideIconWhenNotInterruptible (FindVisibleCastBar).
+-- 1. VISUAL suppression (universal) — in UIRenderer / UINameplateOverlay via
+--    BlizzardAPI.ApplyInterruptIconAlpha. We forward UnitCastingInfo's secret
+--    notInterruptible straight into the icon's SetAlphaFromBoolean — a secret-aware sink
+--    (SecretArguments = AllowedWhenTainted) — so the engine sets the kick icon's alpha to 0
+--    on a non-interruptible cast WITHOUT us ever reading the value. No cast-bar dependency,
+--    so the kick is correctly hidden regardless of any cast-bar / nameplate / unit-frame
+--    addon. (This is the same display mechanism Blizzard's own cast bars use for the shield.)
+--
+-- 2. LOGIC (kick-vs-CC substitution) — this function. Substituting a CC for a kick on a
+--    non-interruptible cast requires BRANCHING on interruptibility, which a secret can't do.
+--    The only readable signal is the "icon-hidden" check below: Blizzard hides the cast bar's
+--    spell Icon on a non-interruptible cast, and bar.Icon:IsShown() is a CONCRETE, non-secret
+--    boolean — but only when that bar's update ran in Blizzard's UNTAINTED, privileged stack.
+--    A cast-bar addon that replaces or reskins (taints) the bar removes this signal.
 --
 -- WHAT IS SECRET / DOES NOT WORK (red herrings — do NOT re-derive "sealed" from these):
---   • bar.notInterruptible field  — reads as a coerced/secret value, NOT reliable
---   • bar:IsInterruptable() / barType — secret string; comparing it errors under our taint
---   • BorderShield:IsShown()       — secret (it's SetShown(notInterruptible) directly)
---   • cast bar fill atlas / color  — secret;  the cast spellID — secret
---   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events — do NOT fire for these casts, on the
---     "target" token OR any "nameplateN" token (the event tracker is a no-op here)
+--   • bar.notInterruptible field    — coerced/secret, NOT reliable
+--   • bar:IsInterruptable()/barType  — secret string; comparing it errors under our taint
+--   • BorderShield:IsShown()         — secret (SetShown(notInterruptible) directly)
+--   • cast bar fill atlas / color    — secret;  the cast spellID — secret
+--   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events — do NOT fire for these casts (any unit token)
+--   • a private CastingBarFrame we create — runs in OUR taint → IsInterruptable() coerces wrong
+--   • setting HideIconWhenNotInterruptible on a tainted bar — makes it THROW; do not do it
 --
--- LIMITATION — fundamental, NOT fixable by us. The icon-hidden signal only exists because
---   Blizzard's UNTAINTED, privileged code resolved the secret (its IsInterruptable()/barType
---   comparison ran in a clean stack) and hid the icon. The moment that bar's update stack is
---   tainted or the bar isn't driven, there is no signal:
---     • Plater REPLACES the nameplate cast bar → Blizzard's bar isn't driven → icon never hides
---     • Masque (or any skinner) TAINTS the target-frame spellbar → its UpdateIconShown →
---       IsInterruptable() THROWS on the secret barType → icon never hides
---     • a private CastingBarFrame we create runs in OUR taint → IsInterruptable() coerces wrong
---     • setting HideIconWhenNotInterruptible on a tainted bar makes it THROW — do not do it
---   So with Plater/ElvUI/Masque the cast bars are replaced or tainted and detection fail-opens
---   (kick suggested on a non-interruptible cast). This is irreducible: the only non-secret
---   interruptibility signal is a side-effect of untainted Blizzard execution we cannot run,
---   replicate, or read once an addon has touched it. Verified exhaustively 2026-06-28.
+-- NET: the kick is correctly hidden everywhere (layer 1). Only the CC-substitution LOGIC
+-- (layer 2) degrades when a cast-bar addon replaces/reskins the bar — there you get no
+-- suggestion instead of a CC, never a wrongly-shown kick.
 --
 -- Returns (isCasting, isInterruptible, castBar). Cascade: event tracker (no-op for these
 -- casts) → cast bar fields (icon-hidden is the one that works, on an untainted Blizzard bar)
@@ -199,12 +200,12 @@ local function IsTargetCastInterruptible(nameplate)
         end)
         if shieldOk and shieldShown then return true, false, bar end
 
-        -- ElvUI uses .Shield instead of .BorderShield
-        if barSource == "elvui" then
-            local elvOk, elvShown = pcall(function()
+        -- child-element cast bars use .Shield instead of .BorderShield
+        if barSource == "childCastbar" then
+            local altOk, altShown = pcall(function()
                 return bar.Shield and bar.Shield:IsShown() and (bar.Shield:GetAlpha() or 0) > 0.5
             end)
-            if elvOk and elvShown then return true, false, bar end
+            if altOk and altShown then return true, false, bar end
         end
     end
 
