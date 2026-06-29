@@ -34,7 +34,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts; prefers a stun over a silence when only CC can stop an uninterruptible cast (a silence can't stop a physical channel)
 - **Creature-type-aware CC** — won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
 - Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
-- The interrupt is correctly hidden on casts that can't be interrupted — driven straight from the cast's secret interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use (see Known Issues for the one remaining edge)
+- The interrupt is correctly hidden on casts that can't be interrupted — driven straight from the cast's protected interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use. (Auto-substituting a CC for a kick on a non-interruptible cast still needs the Blizzard default cast bar; with a replaced cast bar you simply get no suggestion there instead of a CC — never a wrongly-shown kick)
 - Third-party nameplate support — auto-discovers cast bars from supported nameplate addons and the Blizzard default nameplate
 
 ### Defensive Suggestions
@@ -154,12 +154,6 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Known Issues
 
-### Crowd-control substitution on casts that can't be interrupted
-
-The interrupt icon is correctly hidden on a cast that can't be interrupted, on **any** UI setup — JustAC forwards the cast's secret interruptible flag straight into the icon's alpha through a display-only path that never reads the value, so it doesn't depend on the cast bar at all.
-
-The one residual: deciding to substitute a *crowd-control* ability for a kick on a non-interruptible cast requires branching on interruptibility, which a secret value doesn't allow. That substitution only works when the readable cast-bar signal is present — the Blizzard default cast bar, undisturbed. With a cast-bar / nameplate / unit-frame addon that replaces or reskins the cast bar, you simply get no suggestion on a non-interruptible cast instead of a CC — never a wrongly-shown kick. The detection path and which signals are secret vs. usable are documented at the top of `UI/CastInterruptTracker.lua`; re-check live with `/jac inspect castdiag`.
-
 ### Burst injection cooldown detection
 
 See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Major cooldown tracking in WoW 12.0 combat relies on local timer estimates which may drift or miss cooldown reduction effects.
@@ -169,8 +163,9 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 ## Technical Notes
 
 - **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
-- **No External Spell Databases** — Native spell classification (SpellDB) replaces LibPlayerSpells
-- **Modular Architecture** — 47 Lua files across 4 subdirectories (BlizzardAPI, UI, Options, Locales) plus library dependencies with clear dependency order
+- **Secret-safe visuals** — Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
+- **No External Spell Databases** — Native spell classification (`SpellDB` + generated `Data/` tables) replaces LibPlayerSpells
+- **Modular Architecture** — Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
 - **Event-Driven** — Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
 - **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)
 
