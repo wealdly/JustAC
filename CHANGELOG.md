@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [4.27.0] - 2026-06-28
+
+### Pet classes
+
+- Pet rez/summon reminders no longer nag specs that intentionally run without a
+  pet (Marksmanship with Lone Wolf, Warlock with a sacrificed pet).
+- Pet summon/revive now shows a single icon instead of stacking multiple summon
+  buttons — Warlocks see one resummon prompt rather than every demon at once.
+- Demonology Warlocks now see Felguard as the suggested resummon.
+- Unholy Death Knight ghoul reminder corrected to the permanent-ghoul Raise Dead.
+
+### Fixes
+
+- Fixed an error when running the defensive diagnostic in combat.
+
 ## [4.26.0] - 2026-06-28
 
 ### Added

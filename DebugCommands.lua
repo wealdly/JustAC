@@ -237,6 +237,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
     end
     
     local defSettings = profile.defensives or {}
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
     addon:Print("Settings:")
     addon:Print("  Enabled: " .. (defSettings.enabled and "|cff00ff00YES|r" or "|cffff0000NO|r"))
@@ -263,7 +264,10 @@ function DebugCommands.DefensiveDiagnostics(addon)
                 addon:Print("      DrawEdge: " .. tostring(icon.cooldown:GetDrawEdge()))
 
                 local cdStart, cdDuration = icon.cooldown:GetCooldownTimes()
-                if cdStart and cdDuration then
+                if cdStart and cdDuration and BlizzardAPI and (BlizzardAPI.IsSecretValue(cdStart) or BlizzardAPI.IsSecretValue(cdDuration)) then
+                    -- In combat GetCooldownTimes() returns secret numbers; arithmetic would taint.
+                    addon:Print("      CD Active: |cffff6600SECRET|r (combat)")
+                elseif cdStart and cdDuration then
                     cdStart = cdStart / 1000  -- Convert from ms
                     cdDuration = cdDuration / 1000
                     if cdDuration > 0 then
@@ -281,7 +285,6 @@ function DebugCommands.DefensiveDiagnostics(addon)
         end
     end
 
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     addon:Print("")
     addon:Print("Health API:")
     if BlizzardAPI then

@@ -311,9 +311,12 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
     local petNeedsHeal = petHealthPercent and petHealthPercent <= 50
 
-    -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat
+    -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat.
+    -- Suppress when the player is petless on purpose (Lone Wolf / sacrificed pet) so
+    -- those specs aren't nagged to summon a pet they intentionally don't run.
     local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
-    local petNeedsRez = (petStatus == "dead" or petStatus == "missing")
+    local petlessByChoice = BlizzardAPI and BlizzardAPI.IsPetlessByChoice and BlizzardAPI.IsPetlessByChoice()
+    local petNeedsRez = (petStatus == "dead" or petStatus == "missing") and not petlessByChoice
 
     -- DPS exclusions shared by both paths (reuse pooled table)
     wipe(dpsQueueExclusions)
@@ -330,14 +333,15 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local defensiveQueue, mainAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 4
 
-        -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat)
+        -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat).
+        -- Cap at one icon: getting the pet back is a single action, not a queue.
         if petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), maxIcons, mainAddedSet)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #defensiveQueue + 1, mainAddedSet)
         end
 
         -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
         if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), maxIcons, mainAddedSet)
+            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), #defensiveQueue + 1, mainAddedSet)
         end
 
         ApplyMainPanelQueue(addon, defensiveQueue)
@@ -354,12 +358,12 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
         local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
 
-        -- Pet rez/heal: parity with main panel (same priority order)
+        -- Pet rez/heal: parity with main panel (same priority order, capped at one icon)
         if petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), npoMaxIcons, npoAddedSet)
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #npoQueue + 1, npoAddedSet)
         end
         if petNeedsHeal and not petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), npoMaxIcons, npoAddedSet)
+            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), #npoQueue + 1, npoAddedSet)
         end
 
         ApplyOverlayQueue(addon, npoQueue)

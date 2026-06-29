@@ -313,7 +313,8 @@ end
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1
     WARLOCK = {688, 697, 712, 691, 30146},           -- Summon Imp/Voidwalker/Succubus/Felhunter/Felguard
-    DEATHKNIGHT_3 = {46585},                         -- Raise Dead (Unholy only — Blood/Frost ghoul is a Guardian, not a pet)
+    WARLOCK_2 = {30146, 688, 697, 712, 691},         -- Demonology: Felguard first (its mandatory pet), others as fallback
+    DEATHKNIGHT_3 = {46584, 46585},                  -- Raise Dead (Unholy only — permanent ghoul 46584; 46585 covers the temporary variant. Blood/Frost ghoul is a Guardian, not a pet)
 }
 
 -- Pet heal spells (shown when PET health is low — OUT OF COMBAT ONLY)

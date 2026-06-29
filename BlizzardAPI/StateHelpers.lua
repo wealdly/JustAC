@@ -524,6 +524,19 @@ function BlizzardAPI.GetPetStatus()
     return "alive"
 end
 
+-- Auras meaning the player has intentionally chosen a petless playstyle.
+-- While any is active, "missing pet" is by design — suppress rez/summon reminders.
+local PETLESS_BY_CHOICE_AURAS = {
+    155228,  -- Lone Wolf (Marksmanship Hunter running without a pet)
+    196099,  -- Demonic Power (Warlock with pet sacrificed for a damage buff)
+}
+function BlizzardAPI.IsPetlessByChoice()
+    for _, auraID in ipairs(PETLESS_BY_CHOICE_AURAS) do
+        if BlizzardAPI.IsAuraActive("player", auraID) then return true end
+    end
+    return false
+end
+
 -- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.
 -- In combat UnitHealth() is secret — only the LowHealthFrame binary (~35% threshold)
 -- is reliable. Health percentages above 35% are indistinguishable in combat.
