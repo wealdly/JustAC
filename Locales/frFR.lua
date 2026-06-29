@@ -179,7 +179,7 @@ L["Right"] = "Droite"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "Définir un raccourci personnalisé.\n\n|cff00ff00Clic droit|r pour définir un raccourci."
-L["Blacklist Info"] = "Masquer des sorts de la file.\n\n|cffff6666Maj+Clic droit|r pour basculer."
+L["Blacklist Info"] = "Masque un sort ou objet de toutes les positions — file principale, overlay de plaque, et injection d'élan/d'approche.\n\n|cffff6666Maj+Clic droit|r sur une icône de file pour la mettre directement en liste noire. (L'onglet File fixe ne modifie que les positions 2+.)"
 L["Restore Class Defaults name"] = "Restaurer les valeurs par défaut"
 
 -- Spell search UI
@@ -334,23 +334,23 @@ L["Restore Burst Injection Defaults desc"] = "Réinitialiser la liste d'injectio
 L["No Burst Injection Spells"] = "Aucun sort d'injection configuré."
 
 -- Custom Queue
-L["Custom Queue"] = "File personnalisée"
-L["Custom Queue Info"] = "Votre file de rotation (positions 2+). Réordonner, ajouter ou supprimer des entrées pour personnaliser les capacités affichées. Les entrées en recharge sont masquées.\n\n|cffff6666Maj+Clic droit|r sur une entrée pour la supprimer."
-L["Custom Queue Blacklist Note"] = "Pour masquer définitivement de toutes les positions (dont la position 1), utiliser l'onglet Liste noire."
-L["Enable Custom Queue"] = "Activer la file personnalisée"
-L["Enable Custom Queue desc"] = "Quand activé, votre liste personnalisée est utilisée pour les positions 2+. Désactiver pour revenir à la rotation par défaut de Blizzard."
+L["Custom Queue"] = "File fixe"
+L["Custom Queue Info"] = "Choisissez quelles capacités peuvent apparaître aux positions 2+ (la position 1 est toujours le choix de Blizzard). Votre ordre départage les égalités — JustAC fait quand même remonter en premier les procs et les capacités adaptées à la situation (AoE / cible unique, portée), et descend les capacités en recharge.\n\nPour masquer une capacité partout, mettez-la en liste noire (|cffff6666Maj+Clic droit|r sur son icône de file)."
+L["Custom Queue Blacklist Note"] = "Supprimer ici n'affecte que les positions 2+. Pour masquer un sort de toutes les positions (y compris la 1), mettez-le en liste noire : |cffff6666Maj+Clic droit|r sur son icône de file, ou utilisez l'onglet Liste noire."
+L["Enable Custom Queue"] = "Activer la File fixe"
+L["Enable Custom Queue desc"] = "Quand activé, votre liste définit les positions 2+. Désactiver pour utiliser la rotation par défaut de Blizzard."
 L["Custom Queue Spells"] = "Entrées de file"
 L["Custom Queue Spells desc"] = "Liste ordonnée — les entrées en recharge ou non disponibles sont masquées."
 L["Custom Queue Empty"] = "Aucune entrée dans la file. Cliquer 'Ajouter' ci-dessous ou utiliser 'Actualiser depuis la rotation'."
 L["Custom Queue Stale Warning"] = "La rotation de Blizzard a changé"
-L["Custom Queue Stale Chat"] = "La file personnalisée peut être obsolète —"
+L["Custom Queue Stale Chat"] = "La File fixe peut être obsolète —"
 L["spells added"] = "sort(s) ajouté(s)"
 L["spells removed"] = "sort(s) supprimé(s)"
 L["Merge New Spells"] = "Fusionner les changements"
 L["Merge New Spells desc"] = "Ajouter les nouveaux sorts de rotation à votre file et supprimer ceux qui n'existent plus. Votre ordre personnalisé est conservé."
 L["Refresh from Rotation"] = "Actualiser depuis la rotation"
-L["Refresh from Rotation desc"] = "Remplacer toute votre file personnalisée par la liste de rotation actuelle de Blizzard."
-L["Refresh from Rotation confirm"] = "Cela remplacera votre file personnalisée par la rotation actuelle de Blizzard. Votre ordre personnalisé sera perdu. Continuer ?"
+L["Refresh from Rotation desc"] = "Remplacer toute votre File fixe par la liste de rotation actuelle de Blizzard."
+L["Refresh from Rotation confirm"] = "Cela remplacera votre File fixe par la rotation actuelle de Blizzard. Votre ordre personnalisé sera perdu. Continuer ?"
 
 -- Detached defensive frame
 L["Down"] = "Bas"

@@ -179,8 +179,8 @@ L["Right"] = "右側"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "當自動偵測失敗時設定自訂快捷鍵文字。\n\n|cff00ff00右鍵點擊|r法術圖示設定快捷鍵。"
-L["Blacklist Info"] = "從所有位置永久隱藏法術或物品，包括名牌板疊加層和注入。僅從 2+ 位置移除請使用「自訂佇列」標籤。"
-L["Blacklist Warning"] = "|cFFFF4444注意：|r 將 Blizzard 主要建議（位置 1）加入黑名單可能導致循環卡頓——系統將等待該法術被施放。"
+L["Blacklist Info"] = "從所有位置隱藏法術或物品——主佇列、名條覆蓋層，以及爆發/衝鋒注入。\n\n|cffff6666Shift+右鍵點擊|r任意佇列圖示即可直接將其加入黑名單。（固定佇列標籤僅編輯位置 2+。）"
+L["Blacklist Warning"] = "|cFFFF4444注意：|r 將位置 1（暴雪的主要建議）加入黑名單可能導致循環卡頓——系統會等待該法術後才繼續。"
 L["Restore Class Defaults name"] = "恢復職業預設"
 
 -- Spell search UI
@@ -335,23 +335,23 @@ L["Restore Burst Injection Defaults desc"] = "將注入清單重設為職業/專
 L["No Burst Injection Spells"] = "未設定注入法術。"
 
 -- Custom Queue
-L["Custom Queue"] = "自訂佇列"
-L["Custom Queue Info"] = "您的循環佇列（位置 2+）。重新排序、新增或删除條目以自訂顯示的技能。冷却中的條目將被隱藏。\n\n|cffff6666Shift+右鍵點擊|r一個條目將其删除。"
-L["Custom Queue Blacklist Note"] = "要從所有位置（包括位置 1）永久隱藏條目，請使用「黑名單」標籤。"
-L["Enable Custom Queue"] = "啟用自訂佇列"
-L["Enable Custom Queue desc"] = "啟用後，您的自訂清單將用於位置 2+。停用將恢復暴雪預設循環。"
+L["Custom Queue"] = "固定佇列"
+L["Custom Queue Info"] = "選擇哪些技能可以出現在位置 2+（位置 1 永遠是暴雪的選擇）。您的順序用於決勝——JustAC 仍會優先呈現觸發效果與符合情境的技能（範圍/單體、距離），並將冷卻中的技能下沉。\n\n要在所有位置隱藏某個技能，請將其加入黑名單（|cffff6666Shift+右鍵點擊|r其佇列圖示）。"
+L["Custom Queue Blacklist Note"] = "在此移除僅影響位置 2+。要從所有位置（包括位置 1）隱藏法術，請將其加入黑名單：|cffff6666Shift+右鍵點擊|r其佇列圖示，或使用「黑名單」標籤。"
+L["Enable Custom Queue"] = "啟用固定佇列"
+L["Enable Custom Queue desc"] = "啟用後，您的清單將設定位置 2+。停用則使用暴雪的預設循環。"
 L["Custom Queue Spells"] = "佇列條目"
 L["Custom Queue Spells desc"] = "有序清單——冷卻中或不可用的條目將被隱藏。"
 L["Custom Queue Empty"] = "佇列中無條目。點擊下方「新增」或使用「從輪換刷新」。"
 L["Custom Queue Stale Warning"] = "暴雪循環已更改"
-L["Custom Queue Stale Chat"] = "自訂佇列可能已過期——"
+L["Custom Queue Stale Chat"] = "固定佇列可能已過期——"
 L["spells added"] = "個法術已新增"
 L["spells removed"] = "個法術已移除"
 L["Merge New Spells"] = "合併更改"
 L["Merge New Spells desc"] = "將新的循環法術新增至佇列並移除不再存在的法術。您的自訂順序將被保留。"
 L["Refresh from Rotation"] = "從輪換刷新"
-L["Refresh from Rotation desc"] = "將您的整個自訂佇列替換為暴雪當前循環清單。"
-L["Refresh from Rotation confirm"] = "這將把您的自訂佇列替換為暴雪當前循環。您的自訂順序將丟失。繼續？"
+L["Refresh from Rotation desc"] = "將您的整個固定佇列替換為暴雪當前循環清單。"
+L["Refresh from Rotation confirm"] = "這將把您的固定佇列替換為暴雪當前循環。您的自訂順序將丟失。繼續？"
 
 -- Detached defensive frame
 L["Down"] = "向下"

@@ -361,7 +361,7 @@ SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
     DEATHKNIGHT_3 = {49576},                         -- Unholy: Death Grip
 
     -- Demon Hunter: Havoc is melee (spec 1), Vengeance is melee tank (spec 2)
-    DEMONHUNTER_1 = {195072},                        -- Havoc: Fel Rush
+    DEMONHUNTER_1 = {195072, 232893},                -- Havoc: Fel Rush, Felblade (charge-to-target backup)
     -- REMOVED: Vengeful Retreat (198793) - jumps backward, not a gap closer
     DEMONHUNTER_2 = {189110},                        -- Vengeance: Infernal Strike
 
@@ -372,7 +372,7 @@ SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
     -- Evoker: Augmentation (3) is mid-range, not truly melee — omit all
 
     -- Hunter: Survival (3) is melee
-    HUNTER_3 = {186270},                             -- Survival: Harpoon
+    HUNTER_3 = {190925},                             -- Survival: Harpoon (190925; 186270 is Raptor Strike, a melee attack — not a gap closer)
 
     -- Monk: Windwalker (3) is melee, Brewmaster (1) is melee tank
     MONK_1 = {109132, 115008},                       -- Brewmaster: Roll, Chi Torpedo
@@ -409,7 +409,7 @@ SpellDB.MELEE_RANGE_REFERENCE_SPELLS = {
     -- Death Knight
     DEATHKNIGHT_1 = {49998, 206930},  -- Blood: Death Strike, Heart Strike
     DEATHKNIGHT_2 = {49020, 49998},   -- Frost: Obliterate, Death Strike
-    DEATHKNIGHT_3 = {55090, 49998},   -- Unholy: Scourge Strike, Death Strike
+    DEATHKNIGHT_3 = {85948, 49998},   -- Unholy: Festering Strike, Death Strike (avoid Scourge Strike — talents to Clawing Shadows, a 30yd ranged spell that breaks melee detection)
 
     -- Demon Hunter
     DEMONHUNTER_1 = {162794, 232893}, -- Havoc: Chaos Strike, Felblade
@@ -518,6 +518,7 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
     MAGE_3  = {12472},                               -- Frost: Icy Veins (180s)
 
     -- Monk
+    MONK_1  = {387184},                              -- Brewmaster: Weapons of Order (120s)
     MONK_3  = {137639},                              -- Windwalker: Storm, Earth, and Fire (90s)
 
     -- Paladin
@@ -556,6 +557,8 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
 --------------------------------------------------------------------------------
 SpellDB.BURST_TRIGGER_AURA_OVERRIDES = {
     [191427] = 162264,   -- Havoc DH: Metamorphosis cast → Meta buff
+    [228260] = 194249,   -- Shadow Priest: Void Eruption cast → Voidform buff
+    [391109] = 194249,   -- Shadow Priest: Dark Ascension cast → Voidform buff
 }
 
 --- Return the aura spell ID to scan for a given trigger spell.
@@ -579,7 +582,7 @@ SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
 
     -- Demon Hunter
     DEMONHUNTER_1 = {370965},                        -- Havoc: The Hunt (90s)
-    DEMONHUNTER_2 = {187827},                        -- Vengeance: Metamorphosis (180s)
+    DEMONHUNTER_2 = {370965},                        -- Vengeance: The Hunt (90s)
 
     -- Druid
     DRUID_1 = {391528},                              -- Balance: Convoke the Spirits (120s)
@@ -588,7 +591,7 @@ SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
 
     -- Evoker
     EVOKER_1 = {357210},                             -- Devastation: Deep Breath (120s)
-    EVOKER_3 = {403631},                             -- Augmentation: Breath of Eons (120s)
+    -- EVOKER_3 (Augmentation): Breath of Eons is the trigger; no distinct secondary burst CD to force
 
     -- Hunter
     HUNTER_1 = {359844, 321530},                     -- Beast Mastery: Call of the Wild (120s), Bloodshed (60s)
@@ -605,19 +608,19 @@ SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
     MONK_3  = {123904},                              -- Windwalker: Invoke Xuen, the White Tiger (120s)
 
     -- Paladin
-    PALADIN_1 = {387174},                            -- Protection: Eye of Tyr (60s)
+    PALADIN_2 = {387174},                            -- Protection: Eye of Tyr (60s)
     PALADIN_3 = {255937},                            -- Retribution: Wake of Ashes (45s)
 
     -- Priest
     PRIEST_3 = {263165},                             -- Shadow: Void Torrent (45s)
 
     -- Rogue
-    ROGUE_1 = {360194},                              -- Assassination: Deathmark (120s)
+    ROGUE_1 = {385627},                              -- Assassination: Kingsbane (60s)
     ROGUE_2 = {51690},                               -- Outlaw: Killing Spree (120s)
     ROGUE_3 = {280719},                              -- Subtlety: Secret Technique (45s)
 
     -- Shaman
-    SHAMAN_1 = {114050},                             -- Elemental: Ascendance (180s)
+    -- SHAMAN_1 (Elemental): Ascendance is the trigger; no distinct secondary burst CD to force
     SHAMAN_2 = {384352},                             -- Enhancement: Doom Winds (60s)
 
     -- Warlock

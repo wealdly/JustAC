@@ -179,7 +179,7 @@ L["Right"] = "Rechts"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "Benutzerdefinierten Tastentext festlegen.\n\n|cff00ff00Rechtsklick|r um Hotkey festzulegen."
-L["Blacklist Info"] = "Zauber aus der Warteschlange ausblenden.\n\n|cffff6666Umschalt+Rechtsklick|r zum Umschalten."
+L["Blacklist Info"] = "Blendet einen Zauber oder Gegenstand an jeder Position aus — Haupt-Warteschlange, Namensplaketten-Overlay und Stoß-/Annäherungs-Injektion.\n\n|cffff6666Umschalt+Rechtsklick|r auf ein beliebiges Warteschlangen-Symbol, um es direkt zu sperren. (Der Tab Feste Warteschlange bearbeitet nur Positionen 2+.)"
 L["Restore Class Defaults name"] = "Klassen-Standardwerte wiederherstellen"
 
 -- Spell search UI
@@ -334,23 +334,23 @@ L["Restore Burst Injection Defaults desc"] = "Injektionsliste auf Klassen-/Spezi
 L["No Burst Injection Spells"] = "Keine Injektionszauber konfiguriert."
 
 -- Custom Queue
-L["Custom Queue"] = "Benutzerdefinierte Warteschlange"
-L["Custom Queue Info"] = "Ihre Rotationswarteschlange (Positionen 2+). Neuanordnen, hinzufügen oder entfernen um anzupassen, welche Fähigkeiten angezeigt werden. Einträge auf Abklingzeit werden ausgeblendet.\n\n|cffff6666Umschalt+Rechtsklick|r auf einen Eintrag zum Entfernen."
-L["Custom Queue Blacklist Note"] = "Zum dauerhaften Ausblenden aus allen Positionen (einschließlich Position 1) den Tab Sperrliste verwenden."
-L["Enable Custom Queue"] = "Benutzerdefinierte Warteschlange aktivieren"
-L["Enable Custom Queue desc"] = "Wenn aktiviert, wird Ihre benutzerdefinierte Liste für Positionen 2+ verwendet. Deaktivieren um zu Blizzards Standardrotation zurückzukehren."
+L["Custom Queue"] = "Feste Warteschlange"
+L["Custom Queue Info"] = "Wähle, welche Fähigkeiten an Positionen 2+ erscheinen können (Position 1 ist immer Blizzards Wahl). Deine Reihenfolge entscheidet bei Gleichstand — JustAC zeigt trotzdem Procs und situationspassende Fähigkeiten (AoE / Einzelziel, Reichweite) zuerst und reiht Fähigkeiten auf Abklingzeit nach hinten.\n\nUm eine Fähigkeit überall auszublenden, sperre sie (|cffff6666Umschalt+Rechtsklick|r auf ihr Warteschlangen-Symbol)."
+L["Custom Queue Blacklist Note"] = "Das Entfernen hier betrifft nur Positionen 2+. Um einen Zauber an jeder Position auszublenden (einschließlich Position 1), sperre ihn: |cffff6666Umschalt+Rechtsklick|r auf sein Warteschlangen-Symbol oder verwende den Tab Sperrliste."
+L["Enable Custom Queue"] = "Feste Warteschlange aktivieren"
+L["Enable Custom Queue desc"] = "Wenn aktiviert, legt deine Liste die Positionen 2+ fest. Deaktivieren, um Blizzards Standardrotation zu verwenden."
 L["Custom Queue Spells"] = "Warteschlangeneinträge"
 L["Custom Queue Spells desc"] = "Geordnete Liste — Einträge auf Abklingzeit oder nicht verfügbar werden ausgeblendet."
 L["Custom Queue Empty"] = "Keine Einträge in Warteschlange. Unten 'Hinzufügen' klicken oder 'Aus Rotation aktualisieren' verwenden."
 L["Custom Queue Stale Warning"] = "Blizzards Rotation hat sich geändert"
-L["Custom Queue Stale Chat"] = "Benutzerdefinierte Warteschlange könnte veraltet sein —"
+L["Custom Queue Stale Chat"] = "Feste Warteschlange könnte veraltet sein —"
 L["spells added"] = "Zauber hinzugefügt"
 L["spells removed"] = "Zauber entfernt"
 L["Merge New Spells"] = "Änderungen zusammenführen"
 L["Merge New Spells desc"] = "Neue Rotationszauber an Ihre Warteschlange anhängen und nicht mehr vorhandene entfernen. Ihre benutzerdefinierte Reihenfolge bleibt erhalten."
 L["Refresh from Rotation"] = "Aus Rotation aktualisieren"
-L["Refresh from Rotation desc"] = "Ihre gesamte benutzerdefinierte Warteschlange durch Blizzards aktuelle Rotationsliste ersetzen."
-L["Refresh from Rotation confirm"] = "Dies wird Ihre benutzerdefinierte Warteschlange durch Blizzards aktuelle Rotation ersetzen. Ihre benutzerdefinierte Reihenfolge geht verloren. Fortfahren?"
+L["Refresh from Rotation desc"] = "Ersetze deine gesamte Feste Warteschlange durch Blizzards aktuelle Rotationsliste."
+L["Refresh from Rotation confirm"] = "Dies ersetzt deine Feste Warteschlange durch Blizzards aktuelle Rotation. Deine benutzerdefinierte Reihenfolge geht verloren. Fortfahren?"
 
 -- Detached defensive frame
 L["Down"] = "Runter"

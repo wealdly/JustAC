@@ -220,14 +220,16 @@ local function MigrateBlacklist(profile, charData)
         end
     end
 
-    -- Normalize per-spec blacklist tables (string keys → numeric keys)
+    -- Normalize per-spec blacklist tables (SavedVariables may load numeric keys as strings).
+    -- Preserve the entry value as-is — `true` (all positions) or `{ fixedQueue = true }`
+    -- (positions 2+ only) — and keep both spells (positive IDs) and items (negative IDs).
     for specKey, spellTable in pairs(profile.blacklistedSpells) do
         if type(spellTable) == "table" then
             local normalized = {}
             for key, value in pairs(spellTable) do
-                local spellID = tonumber(key)
-                if spellID and spellID > 0 and value then
-                    normalized[spellID] = true
+                local id = tonumber(key)
+                if id and id ~= 0 and value then
+                    normalized[id] = value
                 end
             end
             profile.blacklistedSpells[specKey] = normalized
@@ -1018,19 +1020,6 @@ function JustAC:ToggleSpellBlacklist(spellID)
     end
 end
 
-function JustAC:RemoveFromCustomQueue(spellID)
-    if CustomQueueOpts and CustomQueueOpts.RemoveSpell then
-        local removed = CustomQueueOpts.RemoveSpell(self, spellID)
-        if removed then
-            local spellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(spellID)
-            local spellName = spellInfo and spellInfo.name or tostring(spellID)
-            self:Print("Removed |cffff6666" .. spellName .. "|r from Custom Queue")
-        end
-        self:ForceUpdate()
-        return removed
-    end
-    return false
-end
 
 function JustAC:UpdateSpellQueue()
     if self.isDisabledMode then return end

@@ -26,6 +26,7 @@ local ipairs = ipairs
 local BlizzardAPI        = LibStub("JustAC-BlizzardAPI", true)
 local SpellDB            = LibStub("JustAC-SpellDB", true)
 local RedundancyFilter   = LibStub("JustAC-RedundancyFilter", true)
+local SpellQueue         = LibStub("JustAC-SpellQueue", true)
 local SpellDBGetSpecKey  = SpellDB and SpellDB.GetSpecKey
 
 --------------------------------------------------------------------------------
@@ -240,6 +241,16 @@ local function TryInjectionCandidate(spellID, addedSpellIDs)
 
     -- Known check: filter out spells the player doesn't have
     if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
+
+    -- Blacklist: suppress entries the user has hidden from all positions.
+    -- Check both the curated base ID and the talent-resolved ID — the user may
+    -- have blacklisted either form (IsSpellBlacklisted expands each via display override).
+    if not SpellQueue then SpellQueue = LibStub("JustAC-SpellQueue", true) end
+    if SpellQueue and SpellQueue.IsSpellBlacklisted
+       and (SpellQueue.IsSpellBlacklisted(spellID)
+            or (resolvedID ~= spellID and SpellQueue.IsSpellBlacklisted(resolvedID))) then
+        return nil
+    end
 
     -- Register for local CD tracking (idempotent)
     if BlizzardAPI.RegisterSpellForTracking then

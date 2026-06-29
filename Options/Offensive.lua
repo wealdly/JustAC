@@ -194,29 +194,48 @@ function Offensive.UpdateBlacklistOptions(addon)
                 and ("|cff888888ID: " .. entry.id .. "|r")
                 or  ("|cff888888item:" .. (-entry.id) .. "|r")
 
+            local groupArgs = {
+                entryInfo = {
+                    type = "description",
+                    name = idStr,
+                    order = 1,
+                    width = "double",
+                },
+                remove = {
+                    type = "execute",
+                    name = L["Remove"],
+                    order = 3,
+                    func = function()
+                        blacklistedSpells[entry.id] = nil
+                        addon:ForceUpdate()
+                        Offensive.UpdateBlacklistOptions(addon)
+                    end
+                }
+            }
+
+            -- Position-1 scope toggle (spells only — items never appear at position 1).
+            -- On (value == true): hidden everywhere. Off ({fixedQueue=true}): hidden from
+            -- positions 2+ only, so Blizzard's position-1 recommendation can't stall.
+            if entry.id > 0 then
+                groupArgs.pos1 = {
+                    type = "toggle",
+                    name = L["Blacklist Position 1"],
+                    desc = L["Blacklist Position 1 desc"],
+                    order = 2,
+                    get = function() return blacklistedSpells[entry.id] == true end,
+                    set = function(_, val)
+                        blacklistedSpells[entry.id] = val and true or { fixedQueue = true }
+                        addon:ForceUpdate()
+                    end,
+                }
+            end
+
             blacklistArgs[idKey] = {
                 type = "group",
                 name = "|T" .. entry.icon .. ":16:16:0:0|t " .. entry.name,
                 inline = true,
                 order = i + 23,
-                args = {
-                    entryInfo = {
-                        type = "description",
-                        name = idStr,
-                        order = 1,
-                        width = "double",
-                    },
-                    remove = {
-                        type = "execute",
-                        name = L["Remove"],
-                        order = 2,
-                        func = function()
-                            blacklistedSpells[entry.id] = nil
-                            addon:ForceUpdate()
-                            Offensive.UpdateBlacklistOptions(addon)
-                        end
-                    }
-                }
+                args = groupArgs,
             }
         end
     end

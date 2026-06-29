@@ -1624,7 +1624,9 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
             if self.spellID then
                 if IsShiftKeyDown() then
-                    addon:RemoveFromCustomQueue(self.spellID)
+                    -- Blacklist: hides the spell from every position (incl. position 1).
+                    -- Reordering the fixed queue (positions 2+) is done in the options tab.
+                    addon:ToggleSpellBlacklist(self.spellID)
                 else
                     addon:OpenHotkeyOverrideDialog(self.spellID)
                 end
@@ -1674,7 +1676,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                 if not inCombat then
                     GameTooltip:AddLine(" ")
                     GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
-                    GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from queue|r")
+                    GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from queue (blacklist)|r")
                 end
 
                 GameTooltip:Show()

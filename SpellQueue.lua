@@ -94,18 +94,27 @@ local function GetBlacklistTable()
     return profile.blacklistedSpells[specKey], specKey
 end
 
-local function IsBlacklistedEntry(value)
-    return value == true or (type(value) == "table" and value.fixedQueue == true)
+-- A blacklist entry is `true` (hidden at every position) or `{ fixedQueue = true }`
+-- (hidden from positions 2+ only — still shown at Blizzard's position-1 pick so its
+-- dynamic recommendation keeps advancing instead of stalling on a spell we hide).
+-- isPrimary marks the position-1 slot.
+local function IsBlacklistedEntry(value, isPrimary)
+    if value == true then return true end
+    if type(value) == "table" and value.fixedQueue == true then
+        return not isPrimary
+    end
+    return false
 end
 
 -- Checks both base ID and its display/override ID against the blacklist.
-function SpellQueue.IsSpellBlacklisted(spellID, blacklist)
+-- isPrimary: true when testing Blizzard's position-1 pick (exempts 2+-only entries).
+function SpellQueue.IsSpellBlacklisted(spellID, blacklist, isPrimary)
     if not spellID then return false end
     if not blacklist then blacklist = GetBlacklistTable() end
     if not blacklist then return false end
-    if IsBlacklistedEntry(blacklist[spellID]) then return true end
+    if IsBlacklistedEntry(blacklist[spellID], isPrimary) then return true end
     local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
-    return displayID ~= spellID and IsBlacklistedEntry(blacklist[displayID])
+    return displayID ~= spellID and IsBlacklistedEntry(blacklist[displayID], isPrimary)
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
@@ -432,14 +441,15 @@ function SpellQueue.GetCurrentSpellQueue()
     if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
     if not cachedBurstEngine then cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true) end
 
-    -- Position 1: Blizzard's primary suggestion. Blacklist applies to all positions.
-    -- Hiding pos 1 can freeze the rotation — users are warned in the blacklist UI.
+    -- Position 1: Blizzard's primary suggestion. A full blacklist entry hides it here too
+    -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
+    -- position 1 (isPrimary=true) so the rotation keeps advancing.
     local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
 
     if primarySpellID and primarySpellID > 0 then
         local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
         if displaySpellID
-           and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist) then
+           and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist, true) then
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
         else
@@ -455,7 +465,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
                 if hlSpellID and hlSpellID > 0
                    and hlSpellID ~= primarySpellID
-                   and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist) then
+                   and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist, true) then
                     local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
                     if hlDisplay then
                         spellCount = spellCount + 1

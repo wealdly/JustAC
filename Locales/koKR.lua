@@ -208,8 +208,8 @@ L["Right"] = "오른쪽"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "자동 감지 실패 시 사용자 지정 단축키 텍스트를 설정합니다.\n\n주문 아이콘을 |cff00ff00우클릭|r하여 단축키를 설정하세요."
-L["Blacklist Info"] = "명찰 오버레이 및 버스트 주입을 포함한 모든 위치에서 주문 또는 아이템을 영구적으로 숨깁니다. 위치 2+에서만 항목을 제거하려면 사용자 지정 대기열 탭을 사용하세요."
-L["Blacklist Warning"] = "|cFFFF4444주의:|r Blizzard의 주요 추천(위치 1)을 블랙리스트에 추가하면 로테이션이 중단될 수 있습니다 — 해당 주문이 시전될 때까지 대기합니다."
+L["Blacklist Info"] = "메인 대기열, 명찰 오버레이, 버스트/갭 클로저 주입 등 모든 위치에서 주문 또는 아이템을 숨깁니다.\n\n대기열 아이콘을 |cffff6666Shift+우클릭|r하면 바로 블랙리스트에 추가할 수 있습니다. (고정 대기열 탭은 위치 2+만 편집합니다.)"
+L["Blacklist Warning"] = "|cFFFF4444주의:|r 위치 1(Blizzard의 주요 추천)을 블랙리스트에 추가하면 로테이션이 멈출 수 있습니다 — 해당 주문이 시전될 때까지 진행을 기다립니다."
 L["Blacklist Position 1"] = "위치 1에 적용" -- Deprecated: kept for locale completeness
 L["Blacklist Position 1 desc"] = "블랙리스트를 위치 1(Blizzard 주요 추천)에도 적용합니다." -- Deprecated
 L["Restore Class Defaults name"] = "직업 기본값 복원"
@@ -270,23 +270,23 @@ L["Restore Burst Injection Defaults desc"] = "주입 목록을 직업/특성 기
 L["No Burst Injection Spells"] = "주입 주문이 설정되지 않았습니다."
 
 -- Custom Queue
-L["Custom Queue"] = "사용자 지정 대기열"
-L["Custom Queue Info"] = "로테이션 대기열 (위치 2+). 표시할 기술을 사용자 지정하기 위해 항목을 재정렬, 추가 또는 제거하세요. 재사용 대기 중인 항목은 숨겨지고 대기열이 축소됩니다.\n\n대기열의 항목을 |cffff6666Shift+우클릭|r하여 제거하세요."
-L["Custom Queue Blacklist Note"] = "모든 위치(위치 1 포함)에서 항목을 영구적으로 숨기려면 블랙리스트 탭을 사용하세요."
-L["Enable Custom Queue"] = "사용자 지정 대기열 활성화"
-L["Enable Custom Queue desc"] = "활성화하면 사용자 지정 목록이 위치 2+에 사용됩니다. 비활성화하면 Blizzard 기본 로테이션으로 되돌아갑니다."
+L["Custom Queue"] = "고정 대기열"
+L["Custom Queue Info"] = "위치 2+에 나타날 수 있는 기술을 선택합니다 (위치 1은 항상 Blizzard의 추천입니다). 순서는 동점일 때 우선순위를 정합니다 — JustAC는 발동된 기술과 상황에 맞는 기술(광역/단일 대상, 사거리)을 먼저 표시하고 재사용 대기 중인 기술은 뒤로 보냅니다.\n\n기술을 모든 곳에서 숨기려면 블랙리스트에 추가하세요 (대기열 아이콘을 |cffff6666Shift+우클릭|r)."
+L["Custom Queue Blacklist Note"] = "여기서 제거하면 위치 2+에만 영향을 줍니다. 주문을 모든 위치(위치 1 포함)에서 숨기려면 블랙리스트에 추가하세요: 대기열 아이콘을 |cffff6666Shift+우클릭|r하거나 블랙리스트 탭을 사용하세요."
+L["Enable Custom Queue"] = "고정 대기열 활성화"
+L["Enable Custom Queue desc"] = "활성화하면 목록이 위치 2+를 설정합니다. 비활성화하면 Blizzard 기본 로테이션을 사용합니다."
 L["Custom Queue Spells"] = "대기열 항목"
 L["Custom Queue Spells desc"] = "정렬된 목록 — 재사용 대기 중이거나 사용 불가한 항목은 숨겨집니다."
 L["Custom Queue Empty"] = "대기열에 항목이 없습니다. 아래 '추가'를 클릭하거나 '로테이션으로 새로 고침'을 사용하세요."
 L["Custom Queue Stale Warning"] = "Blizzard 로테이션이 변경됨"
-L["Custom Queue Stale Chat"] = "사용자 지정 대기열이 오래되었을 수 있습니다 —"
+L["Custom Queue Stale Chat"] = "고정 대기열이 오래되었을 수 있습니다 —"
 L["spells added"] = "주문 추가됨"
 L["spells removed"] = "주문 제거됨"
 L["Merge New Spells"] = "변경 사항 병합"
 L["Merge New Spells desc"] = "새 로테이션 주문을 대기열에 추가하고 더 이상 존재하지 않는 주문을 제거합니다. 사용자 지정 순서는 유지됩니다."
 L["Refresh from Rotation"] = "로테이션으로 새로 고침"
-L["Refresh from Rotation desc"] = "전체 사용자 지정 대기열을 Blizzard의 현재 로테이션 목록으로 교체합니다."
-L["Refresh from Rotation confirm"] = "사용자 지정 대기열을 Blizzard의 현재 로테이션으로 교체합니다. 사용자 지정 순서가 손실됩니다. 계속하시겠습니까?"
+L["Refresh from Rotation desc"] = "전체 고정 대기열을 Blizzard의 현재 로테이션 목록으로 교체합니다."
+L["Refresh from Rotation confirm"] = "고정 대기열을 Blizzard의 현재 로테이션으로 교체합니다. 사용자 지정 순서가 손실됩니다. 계속하시겠습니까?"
 
 L["Melee Range Reference"] = "근접 범위 기준"
 L["Melee Range Spell desc"] = "이 기술이 범위 밖에 있을 때 갭 클로저가 트리거됩니다. 액션 바에 있어야 합니다."

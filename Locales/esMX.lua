@@ -180,7 +180,7 @@ L["Right"] = "Derecha"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "Atajos personalizados para hechizos.\n|cff00ff00Clic derecho|r para establecer."
-L["Blacklist Info"] = "Ocultar hechizos de la cola.\n|cffff6666Shift+Clic derecho|r para alternar."
+L["Blacklist Info"] = "Oculta un hechizo u objeto de todas las posiciones — cola principal, superposición de placa e inyección de ráfaga/acercamiento.\n\n|cffff6666Shift+Clic derecho|r en cualquier icono de la cola para añadirlo a la lista negra directamente. (La pestaña Cola fija solo edita las posiciones 2+.)"
 L["Restore Class Defaults name"] = "Restablecer valores predeterminados de clase"
 
 -- Spell search UI
@@ -335,23 +335,23 @@ L["Restore Burst Injection Defaults desc"] = "Restablecer lista de inyección a 
 L["No Burst Injection Spells"] = "No hay hechizos de inyección configurados."
 
 -- Custom Queue
-L["Custom Queue"] = "Cola personalizada"
-L["Custom Queue Info"] = "Tu cola de rotación (posiciones 2+). Reordena, agrega o elimina entradas para personalizar qué habilidades se muestran. Las entradas en recarga se ocultan.\n\n|cffff6666Shift+Clic derecho|r en una entrada de la cola para eliminarla."
-L["Custom Queue Blacklist Note"] = "Para ocultar permanentemente de todas las posiciones (incluida la posición 1), usa la pestaña Lista negra."
-L["Enable Custom Queue"] = "Activar cola personalizada"
-L["Enable Custom Queue desc"] = "Cuando esté activado, se usa tu lista personalizada para posiciones 2+. Desactiva para volver a la rotación predeterminada de Blizzard."
+L["Custom Queue"] = "Cola fija"
+L["Custom Queue Info"] = "Elige qué habilidades pueden aparecer en las posiciones 2+ (la posición 1 siempre es la elección de Blizzard). Tu orden desempata — JustAC sigue mostrando primero los procs y las habilidades acordes a la situación (AoE / objetivo único, alcance), y hunde las habilidades en recarga.\n\nPara ocultar una habilidad en todas partes, añádela a la lista negra (|cffff6666Shift+Clic derecho|r en su icono de la cola)."
+L["Custom Queue Blacklist Note"] = "Eliminar aquí solo afecta a las posiciones 2+. Para ocultar un hechizo de todas las posiciones (incluida la 1), añádelo a la lista negra: |cffff6666Shift+Clic derecho|r en su icono de la cola, o usa la pestaña Lista negra."
+L["Enable Custom Queue"] = "Activar cola fija"
+L["Enable Custom Queue desc"] = "Cuando esté activado, tu lista define las posiciones 2+. Desactiva para usar la rotación predeterminada de Blizzard."
 L["Custom Queue Spells"] = "Entradas de cola"
 L["Custom Queue Spells desc"] = "Lista ordenada — las entradas en recarga o no disponibles se ocultan."
 L["Custom Queue Empty"] = "No hay entradas en la cola. Haz clic en 'Agregar' abajo o usa 'Actualizar desde rotación'."
 L["Custom Queue Stale Warning"] = "La rotación de Blizzard ha cambiado"
-L["Custom Queue Stale Chat"] = "La cola personalizada puede estar desactualizada —"
+L["Custom Queue Stale Chat"] = "La cola fija puede estar desactualizada —"
 L["spells added"] = "hechizo(s) agregado(s)"
 L["spells removed"] = "hechizo(s) eliminado(s)"
 L["Merge New Spells"] = "Combinar cambios"
 L["Merge New Spells desc"] = "Añadir nuevos hechizos de rotación a tu cola y eliminar los que ya no existen. Tu orden personalizado se conserva."
 L["Refresh from Rotation"] = "Actualizar desde rotación"
-L["Refresh from Rotation desc"] = "Reemplazar toda tu cola personalizada con la lista de rotación actual de Blizzard."
-L["Refresh from Rotation confirm"] = "Esto reemplazará tu cola personalizada con la rotación actual de Blizzard. Tu orden personalizado se perderá. ¿Continuar?"
+L["Refresh from Rotation desc"] = "Reemplazar toda tu Cola fija con la lista de rotación actual de Blizzard."
+L["Refresh from Rotation confirm"] = "Esto reemplazará tu Cola fija con la rotación actual de Blizzard. Tu orden personalizado se perderá. ¿Continuar?"
 
 -- Detached defensive frame
 L["Down"] = "Abajo"

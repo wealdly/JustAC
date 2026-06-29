@@ -24,6 +24,7 @@ local ipairs = ipairs
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner  = LibStub("JustAC-ActionBarScanner", true)
 local SpellDB           = LibStub("JustAC-SpellDB", true)
+local SpellQueue        = LibStub("JustAC-SpellQueue", true)
 
 --------------------------------------------------------------------------------
 -- Constants
@@ -100,6 +101,16 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
 
     -- Known check: filter out spells the player doesn't have (untalented defaults)
     if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
+
+    -- Blacklist: suppress entries the user has hidden from all positions.
+    -- Check both the curated base ID and the talent-resolved ID — the user may
+    -- have blacklisted either form (IsSpellBlacklisted expands each via display override).
+    if not SpellQueue then SpellQueue = LibStub("JustAC-SpellQueue", true) end
+    if SpellQueue and SpellQueue.IsSpellBlacklisted
+       and (SpellQueue.IsSpellBlacklisted(spellID)
+            or (resolvedID ~= spellID and SpellQueue.IsSpellBlacklisted(resolvedID))) then
+        return nil
+    end
 
     -- Cooldown check: don't suggest spells on CD
     -- Ensure spell is registered for local CD tracking (idempotent after first call)

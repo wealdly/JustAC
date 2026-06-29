@@ -175,8 +175,8 @@ L["Right"] = "右侧"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "当自动检测失败时设置自定义快捷键文字。\n\n|cff00ff00右键点击|r法术图标设置快捷键。"
-L["Blacklist Info"] = "从所有位置永久隐藏法术或物品，包括姓名板叠加层和注入。仅从 2+ 位置删除请使用「自定义队列」标签。"
-L["Blacklist Warning"] = "|cFFFF4444注意：|r 将 Blizzard 主要建议（位置 1）加入黑名单可能导致循环卡顿——系统将等待该法术被施放。"
+L["Blacklist Info"] = "从所有位置隐藏法术或物品——主队列、姓名板叠加层以及爆发/冲锋注入。\n\n|cffff6666Shift+右键点击|r任意队列图标可直接将其加入黑名单。（固定队列标签仅编辑位置 2+。）"
+L["Blacklist Warning"] = "|cFFFF4444注意：|r 将位置 1（Blizzard 的主要建议）加入黑名单可能导致循环卡顿——系统会等待该法术施放后才继续。"
 L["Restore Class Defaults name"] = "恢复职业默认"
 
 -- Spell search UI
@@ -330,23 +330,23 @@ L["Restore Burst Injection Defaults desc"] = "将注入列表重置为职业/专
 L["No Burst Injection Spells"] = "未配置注入法术。"
 
 -- Custom Queue
-L["Custom Queue"] = "自定义队列"
-L["Custom Queue Info"] = "您的循环队列（位置 2+）。重新排序、添加或删除条目以自定义显示的技能。冷却中的条目将被隐藏。\n\n|cffff6666Shift+右键点击|r一个条目将其删除。"
-L["Custom Queue Blacklist Note"] = "要从所有位置（包括位置 1）永久隐藏条目，请使用「黑名单」标签。"
-L["Enable Custom Queue"] = "启用自定义队列"
-L["Enable Custom Queue desc"] = "启用后，您的自定义列表将用于位置 2+。禁用将恢复暗州默认循环。"
+L["Custom Queue"] = "固定队列"
+L["Custom Queue Info"] = "选择哪些技能可以出现在位置 2+（位置 1 始终为 Blizzard 的建议）。您的顺序用于打破平局——JustAC 仍会优先呈现触发效果和符合当前形势的技能（群体/单体、距离），并将冷却中的技能下沉。\n\n要在所有位置隐藏某个技能，请将其加入黑名单（|cffff6666Shift+右键点击|r其队列图标）。"
+L["Custom Queue Blacklist Note"] = "在此处删除仅影响位置 2+。要从所有位置（包括位置 1）隐藏法术，请将其加入黑名单：|cffff6666Shift+右键点击|r其队列图标，或使用黑名单标签。"
+L["Enable Custom Queue"] = "启用固定队列"
+L["Enable Custom Queue desc"] = "启用后，您的列表将设置位置 2+。禁用将使用 Blizzard 的默认循环。"
 L["Custom Queue Spells"] = "队列条目"
 L["Custom Queue Spells desc"] = "有序列表—冷却中或不可用的条目将被隐藏。"
 L["Custom Queue Empty"] = "队列中无条目。单击下方「添加」或使用「从循环刷新」。"
-L["Custom Queue Stale Warning"] = "暗州循环已更改"
-L["Custom Queue Stale Chat"] = "自定义队列可能已过时—"
+L["Custom Queue Stale Warning"] = "暴雪循环已更改"
+L["Custom Queue Stale Chat"] = "固定队列可能已过时—"
 L["spells added"] = "个法术已添加"
 L["spells removed"] = "个法术已删除"
 L["Merge New Spells"] = "合并更改"
 L["Merge New Spells desc"] = "将新的循环法术添加到队列并删除不再存在的法术。您的自定义顺序将被保留。"
 L["Refresh from Rotation"] = "从循环刷新"
-L["Refresh from Rotation desc"] = "将您的整个自定义队列替换为暗州当前循环列表。"
-L["Refresh from Rotation confirm"] = "这将把您的自定义队列替换为暗州当前循环。您的自定义顺序将丢失。继续？"
+L["Refresh from Rotation desc"] = "将您的整个固定队列替换为暴雪当前循环列表。"
+L["Refresh from Rotation confirm"] = "这将把您的固定队列替换为暴雪当前循环。您的自定义顺序将丢失。继续？"
 
 -- Detached defensive frame
 L["Down"] = "向下"

@@ -179,7 +179,7 @@ L["Right"] = "Direita"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "Atalhos personalizados para magias.\n|cff00ff00Clique direito|r para definir."
-L["Blacklist Info"] = "Ocultar magias da fila.\n|cffff6666Shift+Clique direito|r para alternar."
+L["Blacklist Info"] = "Oculta uma magia ou item de todas as posições — fila principal, overlay de placa e injeção de rajada/aproximação.\n\n|cffff6666Shift+Clique direito|r em qualquer ícone da fila para colocá-lo na lista negra diretamente. (A aba Fila fixa edita apenas as posições 2+.)"
 L["Restore Class Defaults name"] = "Restaurar padrões da classe"
 
 -- Spell search UI
@@ -334,23 +334,23 @@ L["Restore Burst Injection Defaults desc"] = "Redefinir lista de injeção para 
 L["No Burst Injection Spells"] = "Nenhuma magia de injeção configurada."
 
 -- Custom Queue
-L["Custom Queue"] = "Fila personalizada"
-L["Custom Queue Info"] = "Sua fila de rotação (posições 2+). Reordene, adicione ou remova entradas para personalizar quais habilidades são mostradas. Entradas em recarga ficam ocultas.\n\n|cffff6666Shift+Clique direito|r em uma entrada da fila para removê-la."
-L["Custom Queue Blacklist Note"] = "Para ocultar permanentemente de todas as posições (incluindo posição 1), use a aba Lista negra."
-L["Enable Custom Queue"] = "Ativar fila personalizada"
-L["Enable Custom Queue desc"] = "Quando ativado, sua lista personalizada é usada para posições 2+. Desative para reverter à rotação padrão da Blizzard."
+L["Custom Queue"] = "Fila fixa"
+L["Custom Queue Info"] = "Escolha quais habilidades podem aparecer nas posições 2+ (a posição 1 é sempre a escolha da Blizzard). Sua ordem desempata — o JustAC ainda prioriza procs e habilidades adequadas à situação (AoE / alvo único, alcance) primeiro, e afunda habilidades em recarga.\n\nPara ocultar uma habilidade de todos os lugares, coloque-a na lista negra (|cffff6666shift+clique direito|r no ícone da fila)."
+L["Custom Queue Blacklist Note"] = "Remover aqui afeta apenas as posições 2+. Para ocultar uma magia de todas as posições (incluindo a 1), coloque-a na lista negra: |cffff6666shift+clique direito|r no ícone da fila, ou use a aba Lista negra."
+L["Enable Custom Queue"] = "Ativar fila fixa"
+L["Enable Custom Queue desc"] = "Quando ativado, sua lista define as posições 2+. Desative para usar a rotação padrão da Blizzard."
 L["Custom Queue Spells"] = "Entradas da fila"
 L["Custom Queue Spells desc"] = "Lista ordenada — entradas em recarga ou indisponíveis ficam ocultas."
 L["Custom Queue Empty"] = "Sem entradas na fila. Clique em 'Adicionar' abaixo ou use 'Atualizar da rotação'."
 L["Custom Queue Stale Warning"] = "A rotação da Blizzard mudou"
-L["Custom Queue Stale Chat"] = "Fila personalizada pode estar desatualizada —"
+L["Custom Queue Stale Chat"] = "Fila fixa pode estar desatualizada —"
 L["spells added"] = "magia(s) adicionada(s)"
 L["spells removed"] = "magia(s) removida(s)"
 L["Merge New Spells"] = "Mesclar mudanças"
 L["Merge New Spells desc"] = "Adicionar novas magias de rotação à sua fila e remover as que não existem mais. Sua ordem personalizada é preservada."
 L["Refresh from Rotation"] = "Atualizar da rotação"
-L["Refresh from Rotation desc"] = "Substituir toda a sua fila personalizada pela lista de rotação atual da Blizzard."
-L["Refresh from Rotation confirm"] = "Isso substituirá sua fila personalizada pela rotação atual da Blizzard. Sua ordem personalizada será perdida. Continuar?"
+L["Refresh from Rotation desc"] = "Substituir toda a sua fila fixa pela lista de rotação atual da Blizzard."
+L["Refresh from Rotation confirm"] = "Isso substituirá sua fila fixa pela rotação atual da Blizzard. Sua ordem personalizada será perdida. Continuar?"
 
 -- Detached defensive frame
 L["Down"] = "Baixo"

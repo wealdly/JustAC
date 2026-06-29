@@ -205,10 +205,10 @@ L["Right"] = "Right"
 
 -- Additional UI strings
 L["Hotkey Overrides Info"] = "Set custom hotkey text when auto-detection fails.\n\n|cff00ff00Right-click|r a spell to set a hotkey."
-L["Blacklist Info"] = "Permanently hide spells or items from all positions, including the nameplate overlay and burst injection. Use the Blacklist to completely suppress an entry. To remove an entry only from positions 2+, use the Custom Queue tab instead."
-L["Blacklist Warning"] = "|cFFFF4444Caution:|r Blacklisting Blizzard's primary suggestion (position 1) can stall the rotation — it will wait for that spell to be cast before advancing."
-L["Blacklist Position 1"] = "Apply to Position 1" -- Deprecated: kept for locale completeness
-L["Blacklist Position 1 desc"] = "Apply the blacklist to position 1 (Blizzard's primary suggestion)." -- Deprecated
+L["Blacklist Info"] = "Hides a spell or item from every position — main queue, nameplate overlay, and burst/gap-closer injection.\n\n|cffff6666Shift+Right-click|r any queue icon to blacklist it directly. (The Fixed Queue tab only edits positions 2+.)"
+L["Blacklist Warning"] = "|cFFFF4444Caution:|r Blacklisting position 1 (Blizzard's top pick) can stall the rotation. Turn off |cffFFAA00Apply to Position 1|r on an entry to hide it from positions 2+ only and keep the rotation flowing."
+L["Blacklist Position 1"] = "Apply to Position 1"
+L["Blacklist Position 1 desc"] = "Also hide this ability at position 1 (Blizzard's primary suggestion). |cffFFAA00Turn off|r to hide it only from positions 2+ — position 1 keeps showing it, so Blizzard's rotation doesn't stall."
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 
 -- Spell search UI (used in multiple panels)
@@ -267,23 +267,23 @@ L["Restore Burst Injection Defaults desc"] = "Reset injection list to class/spec
 L["No Burst Injection Spells"] = "No injection spells configured."
 
 -- Custom Queue
-L["Custom Queue"] = "Custom Queue"
-L["Custom Queue Info"] = "Your rotation queue (positions 2+). Reorder, add, or remove entries to customize which abilities are shown. Entries on cooldown are hidden and the queue collapses.\n\n|cffff6666Shift+Right-click|r an entry in the queue to remove it."
-L["Custom Queue Blacklist Note"] = "To permanently hide an entry from all positions (including position 1), use the Blacklist tab."
-L["Enable Custom Queue"] = "Enable Custom Queue"
-L["Enable Custom Queue desc"] = "When enabled, your custom list is used for positions 2+. Disable to revert to Blizzard's default rotation."
+L["Custom Queue"] = "Fixed Queue"
+L["Custom Queue Info"] = "Pick which abilities can appear in positions 2+ (position 1 is always Blizzard's pick). Your order breaks ties — JustAC still surfaces procs and situation-matching abilities (AoE / single-target, range) first, and sinks abilities on cooldown.\n\nTo hide an ability everywhere, blacklist it (|cffff6666shift+right-click|r its queue icon)."
+L["Custom Queue Blacklist Note"] = "Removing here affects positions 2+ only. To hide a spell from every position (including 1), blacklist it: |cffff6666shift+right-click|r its queue icon, or use the Blacklist tab."
+L["Enable Custom Queue"] = "Enable Fixed Queue"
+L["Enable Custom Queue desc"] = "When enabled, your list sets positions 2+. Disable to use Blizzard's default rotation."
 L["Custom Queue Spells"] = "Queue Entries"
 L["Custom Queue Spells desc"] = "Ordered list — entries on cooldown or unavailable are hidden."
 L["Custom Queue Empty"] = "No entries in queue. Click 'Add' below or use 'Refresh from Rotation' to populate."
 L["Custom Queue Stale Warning"] = "Blizzard's rotation has changed"
-L["Custom Queue Stale Chat"] = "Custom Queue may be outdated —"
+L["Custom Queue Stale Chat"] = "Fixed Queue may be outdated —"
 L["spells added"] = "spell(s) added"
 L["spells removed"] = "spell(s) removed"
 L["Merge New Spells"] = "Merge Changes"
 L["Merge New Spells desc"] = "Append new rotation spells to your queue and remove spells that no longer exist. Your custom ordering is preserved."
 L["Refresh from Rotation"] = "Refresh from Rotation"
-L["Refresh from Rotation desc"] = "Replace your entire custom queue with Blizzard's current rotation list."
-L["Refresh from Rotation confirm"] = "This will replace your custom queue with Blizzard's current rotation. Your custom ordering will be lost. Continue?"
+L["Refresh from Rotation desc"] = "Replace your entire Fixed Queue with Blizzard's current rotation list."
+L["Refresh from Rotation confirm"] = "This will replace your Fixed Queue with Blizzard's current rotation. Your custom ordering will be lost. Continue?"
 
 L["Melee Range Reference"] = "Melee Range Reference"
 L["Melee Range Spell desc"] = "Gap-closers trigger when this ability is out of range. Must be on your action bar."

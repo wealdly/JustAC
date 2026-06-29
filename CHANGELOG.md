@@ -3,6 +3,28 @@
 
 ## [Unreleased]
 
+## [4.26.0] - 2026-06-28
+
+### Added
+- Each blacklist entry now has an **Apply to Position 1** toggle. Leave it on (default) to hide the ability everywhere. Turn it off to hide it from positions 2+ only — the ability still shows at position 1 when Blizzard recommends it, so blacklisting a spell Blizzard wants *right now* no longer stalls the rotation.
+
+### Changed
+- **Shift+right-click a queue icon to blacklist** that ability — it's hidden from every position, including position 1 and the nameplate overlay. This matches the icon's "remove from queue" tooltip. (Reordering or removing abilities from positions 2+ is still done in the options tab.)
+- Renamed the **Custom Queue** tab to **Fixed Queue**, with a clearer explainer: you choose which abilities can appear in positions 2+, while JustAC still orders them live — procs and abilities matching the moment (AOE / single-target / range) surface first, and abilities on cooldown drop to the back. Your manual order breaks ties. Position 1 is always Blizzard's live pick.
+
+### Fixed
+- Corrected burst-injection defaults on several specs so the feature actually fires:
+  - Protection Paladin's injected cooldown was attached to the wrong spec and never appeared — now restored.
+  - Brewmaster Monk had an injection spell but no burst trigger, so its window never opened — added the missing trigger.
+  - Vengeance Demon Hunter, Assassination Rogue, Augmentation Evoker, and Elemental Shaman were each set to "inject" the very cooldown that opens the window (always on cooldown, so nothing happened). The first three now inject a real secondary cooldown; Elemental and Augmentation are left to user choice rather than shipping a no-op.
+  - Shadow Priest burst windows now track correctly from Void Eruption and Dark Ascension.
+- A blacklisted ability is now also suppressed when it would otherwise be injected at position 1 during a burst window or as a gap-closer (e.g. a stealth gap-closer). Previously the blacklist could be bypassed on those injected suggestions.
+- Corrected gap-closer defaults on a few melee specs:
+  - Survival Hunter's default gap closer pointed at a melee attack instead of the actual leap-to-target ability, so it never suggested one — now fixed.
+  - Unholy Death Knight's out-of-melee-range detection could misfire when talented into a ranged attack; it now reads from a reliable melee ability instead.
+  - Havoc Demon Hunter gains a charge-to-target backup gap closer when the default mobility dash isn't available.
+- Localization fixes: a Russian color tag that failed to render, and a mistranslated vendor name in Simplified Chinese.
+
 ## [4.25.1] - 2026-06-28
 
 ### Fixed
