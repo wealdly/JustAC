@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+## [4.28.1] - 2026-06-29
+
+### Responsiveness
+- Ability icons now swap instantly instead of fading, so the rotation queue and
+  defensive reminders feel noticeably snappier. The whole-bar fade in/out when the
+  UI shows or hides is unchanged.
+
 ## [4.28.0] - 2026-06-29
 
 ### Rotation

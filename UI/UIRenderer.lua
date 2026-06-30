@@ -933,18 +933,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     end
     
     if not defensiveIcon:IsShown() then
-        if defensiveIcon.fadeOut and defensiveIcon.fadeOut:IsPlaying() then
-            defensiveIcon.fadeOut:Stop()
-        end
         defensiveIcon:Show()
-        if addon.defensiveFrame and addon.defensiveFrame.skipNextFade then
-            defensiveIcon:SetAlpha(1)
-        elseif defensiveIcon.fadeIn then
-            defensiveIcon:SetAlpha(0)
-            defensiveIcon.fadeIn:Play()
-        else
-            defensiveIcon:SetAlpha(1)
-        end
+        -- Per-icon fades are disabled everywhere; appear instantly. Nameplate callers
+        -- set their overlay opacity right after this returns.
+        defensiveIcon:SetAlpha(1)
     end
 end
 
@@ -986,15 +978,9 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
             defensiveIcon.chargeText:Hide()
         end
         
-        if defensiveIcon.fadeOut and not defensiveIcon.fadeOut:IsPlaying() then
-            if defensiveIcon.fadeIn and defensiveIcon.fadeIn:IsPlaying() then
-                defensiveIcon.fadeIn:Stop()
-            end
-            defensiveIcon.fadeOut:Play()
-        else
-            defensiveIcon:Hide()
-            defensiveIcon:SetAlpha(0)
-        end
+        -- Per-icon fades are disabled everywhere; hide instantly.
+        defensiveIcon:Hide()
+        defensiveIcon:SetAlpha(0)
     end
 end
 
@@ -1013,11 +999,6 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         else
             UIRenderer.HideDefensiveIcon(icon)
         end
-    end
-
-    -- Consume the rebuild flag - icons are now at full alpha, future shows should fade in normally.
-    if addon.defensiveFrame then
-        addon.defensiveFrame.skipNextFade = nil
     end
 
     -- Show/hide the detached container frame on state transitions only.
@@ -1436,18 +1417,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     iconTexture:Show()
                 end
 
-                -- Smooth spell-change transition: fade the button in when the spell
-                -- changes while the icon is already on screen.  Reuses the existing
-                -- 100ms fade-in animation - rapid churn within 100ms keeps restarting
-                -- the fade, masking the instability rather than exposing a raw pop.
-                if spellChanged and icon:IsShown() and icon.fadeIn then
-                    if icon.fadeOut and icon.fadeOut:IsPlaying() then
-                        icon.fadeOut:Stop()
-                    end
-                    icon.fadeIn:Stop()
-                    icon:SetAlpha(0)
-                    icon.fadeIn:Play()
-                end
+                -- Spell-change is an instant swap (no fade). The per-icon fade-in felt
+                -- sluggish and masked rapid churn rather than smoothing it.
                 
                 -- "Waiting for..." = Assisted Combat's resource-wait indicator.
                 -- Detected by iconID 134377, the shared timer icon Blizzard uses for
@@ -1769,11 +1740,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     elseif addon.defensiveIcons then
         for _, defIcon in ipairs(addon.defensiveIcons) do
             if defIcon then
-                local isFading = (defIcon.fadeIn and defIcon.fadeIn:IsPlaying()) or
-                                 (defIcon.fadeOut and defIcon.fadeOut:IsPlaying())
-                if not isFading then
-                    defIcon:SetAlpha(frameOpacity)
-                end
+                defIcon:SetAlpha(frameOpacity)
             end
         end
     end

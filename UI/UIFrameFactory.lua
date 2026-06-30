@@ -399,29 +399,6 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     chargeText:Hide()
     button.chargeText = chargeText
 
-    -- Fade-in / fade-out animations
-    local fadeIn = button:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.1)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    button.fadeIn = fadeIn
-
-    local fadeOut = button:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.1)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
-        button:Hide()
-        button:SetAlpha(0)
-    end)
-    button.fadeOut = fadeOut
-
     -- State tracking fields
     button.spellID = nil
     button.itemID = nil
@@ -1067,10 +1044,6 @@ local function CreateDefensiveIcons(addon, profile)
     if isDetached then
         UIFrameFactory.UpdateDefensiveFrameSize(addon)
         CreateDefensiveGrabTab(addon)
-        -- Skip fade-in on first show after a rebuild so icons appear instantly.
-        if addon.defensiveFrame then
-            addon.defensiveFrame.skipNextFade = true
-        end
     end
 
     local UIRenderer = LibStub("JustAC-UIRenderer", true)

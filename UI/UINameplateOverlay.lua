@@ -147,12 +147,6 @@ local function CreateOverlayIcon(iconSize, profile)
     button.chargeCooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
     button.chargeCooldown:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -3,  3)
 
-    -- Nameplate-specific: fade-in clamps to overlayOpacity (not frameOpacity).
-    button.fadeIn:SetScript("OnFinished", function()
-        local targetAlpha = button.overlayOpacity or 1
-        if targetAlpha < 1 then button:SetAlpha(targetAlpha) end
-    end)
-
     -- Nameplate-specific state fields.
     button.isOverlayIcon      = true
     button.overlayOpacity     = 1
@@ -1391,12 +1385,6 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     -- showFlash is centralized in profile (no longer per-surface)
     local showFlash      = profile.showFlash ~= false
 
-    -- "always" mode: icons are permanently visible, so instant show/hide
-    -- feels snappier (parity with DPS icons). State-driven modes ("combatOnly",
-    -- "healthBased") trigger on transitions where the fade-in is warranted.
-    local npoDisplayMode = npo.defensiveDisplayMode or "always"
-    local instantShow = (npoDisplayMode == "always")
-
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
         local entry = defensiveQueue and defensiveQueue[i]
@@ -1404,29 +1392,10 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             icon.overlayOpacity = opacity
             if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
-            if instantShow then
-                -- "always" mode: no fade-in. Stop unconditionally - IsPlaying() may not
-                -- return true synchronously after Play(), so the IsPlaying guard is unreliable.
-                if icon.fadeIn then icon.fadeIn:Stop() end
-                icon:SetAlpha(opacity)
-            elseif icon:IsShown() and not (icon.fadeIn and icon.fadeIn:IsPlaying()) then
-                -- Apply opacity to already-shown icons (fade-in handles newly-shown via OnFinished)
-                icon:SetAlpha(opacity)
-            end
+            icon:SetAlpha(opacity)
             visibleCount = visibleCount + 1
         else
-            if instantShow then
-                -- Skip fade-out: hide immediately for "always" mode
-                if icon:IsShown() or icon.currentID then
-                    if icon.fadeIn and icon.fadeIn:IsPlaying() then icon.fadeIn:Stop() end
-                    if icon.fadeOut and icon.fadeOut:IsPlaying() then icon.fadeOut:Stop() end
-                    UIRenderer.HideDefensiveIcon(icon)
-                    icon:Hide()
-                    icon:SetAlpha(0)
-                end
-            else
-                UIRenderer.HideDefensiveIcon(icon)
-            end
+            UIRenderer.HideDefensiveIcon(icon)
         end
     end
 
