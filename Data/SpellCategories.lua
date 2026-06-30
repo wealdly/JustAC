@@ -103,7 +103,7 @@ local DEFENSIVE_SPELLS = {
     -- REMOVED: Spirit Shell (109964) - removed from game in Dragonflight
     [108968] = true,  -- Void Shift
     [586] = true,     -- Fade
-    -- REMOVED: Greater Fade (213602) — spell deleted from game (audit; verified nil in-game)
+    -- REMOVED: Greater Fade (213602) - spell deleted from game (audit; verified nil in-game)
     [271466] = true,  -- Luminous Barrier
     [372760] = true,  -- Divine Word
     [421453] = true,  -- Ultimate Penitence
@@ -257,7 +257,7 @@ local HEALING_SPELLS = {
     [77472] = true,   -- Healing Wave
     [8004] = true,    -- Healing Surge
     [108280] = true,  -- Healing Tide Totem
-    -- REMOVED: Cloudburst Totem (157153) — spell deleted from game (audit; verified nil in-game)
+    -- REMOVED: Cloudburst Totem (157153) - spell deleted from game (audit; verified nil in-game)
     [197995] = true,  -- Wellspring
     [198838] = true,  -- Earthen Wall Totem
     [207778] = true,  -- Downpour
@@ -376,7 +376,7 @@ local CROWD_CONTROL_SPELLS = {
     [15487] = true,   -- Silence
     [64044] = true,   -- Psychic Horror
     [88625] = true,   -- Holy Word: Chastise (incapacitate)
-    -- REMOVED: Mind Bomb (205369) — spell deleted from game (audit; verified nil in-game)
+    -- REMOVED: Mind Bomb (205369) - spell deleted from game (audit; verified nil in-game)
     [605] = true,     -- Mind Control
     
     -- Rogue

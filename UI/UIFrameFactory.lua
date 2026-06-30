@@ -300,7 +300,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
-    -- Cooldown countdown text — stored for per-frame show/hide and ApplyTextOverlaySettings
+    -- Cooldown countdown text - stored for per-frame show/hide and ApplyTextOverlaySettings
     local cooldownText = cooldown:GetRegions()
     button.cooldownText = (cooldownText and cooldownText.SetFont) and cooldownText or nil
 
@@ -445,7 +445,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
     button.hasProcGlow      = false
     button.hasDefensiveGlow = false
 
-    -- Do NOT set alpha to 0 here — defensive icons set it before showing via ShowDefensiveIcon,
+    -- Do NOT set alpha to 0 here - defensive icons set it before showing via ShowDefensiveIcon,
     -- and DPS icons are shown directly via icon:Show() without a fadeIn:Play() call.
     button:Hide()
 
@@ -824,7 +824,7 @@ local function CreateDefensiveGrabTab(addon)
         self:SetAlpha(1)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
-        GameTooltip:AddLine("Defensive Panel — Drag to move", 1, 1, 1)
+        GameTooltip:AddLine("Defensive Panel - Drag to move", 1, 1, 1)
         GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
         GameTooltip:Show()
     end)
@@ -1269,7 +1269,7 @@ function UIFrameFactory.CreateGrabTab(addon)
     addon.grabTab:SetScript("OnDragStop", function(self)
         addon.mainFrame:StopMovingOrSizing()
 
-        -- User manually dragged — auto-disable target frame anchor so it doesn't snap back
+        -- User manually dragged - auto-disable target frame anchor so it doesn't snap back
         local profile = addon:GetProfile()
         if profile and profile.targetFrameAnchor and profile.targetFrameAnchor ~= "DISABLED" then
             profile.targetFrameAnchor = "DISABLED"
@@ -1771,7 +1771,7 @@ function UIFrameFactory.SavePosition(addon)
     local profile = addon:GetProfile()
     if not profile then return end
     
-    -- Guard: don't save while anchored to TargetFrame — GetPoint() would return
+    -- Guard: don't save while anchored to TargetFrame - GetPoint() would return
     -- TargetFrame-relative offsets which are meaningless as a saved position.
     if addon.targetframe_anchored then return end
     

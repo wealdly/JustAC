@@ -28,7 +28,7 @@ local function defensiveDisabled(addon)
 end
 
 -- Layout controls (size/spacing/orientation) lock while anchored to the target
--- frame in combat — protected frames can't be resized mid-fight.
+-- frame in combat - protected frames can't be resized mid-fight.
 local function layoutDisabled(addon)
     if panelDisabled(addon) then return true end
     return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
@@ -491,13 +491,13 @@ function StandardQueue.CreateTabArgs(addon)
                     },
                     showHealthBar = W.toggle(addon, "defensives.showHealthBar", {
                         name = L["Show Health Bars"], desc = L["Show Health Bars desc"],
-                        order = 11, width = "full",
+                        order = 11, width = "normal",
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
                     }),
                     showPetHealthBar = W.toggle(addon, "defensives.showPetHealthBar", {
                         name = L["Show Pet Health Bar"], desc = L["Show Pet Health Bar desc"],
-                        order = 12, width = "full",
+                        order = 12, width = "normal",
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
                         hidden = function()

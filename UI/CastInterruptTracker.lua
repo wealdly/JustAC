@@ -19,6 +19,7 @@ local C_NamePlate           = C_NamePlate
 local UnitIsCrowdControlled = UnitIsCrowdControlled
 local UnitCastingInfo       = UnitCastingInfo
 local UnitChannelInfo       = UnitChannelInfo
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 
 -- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE    = 1.0
@@ -32,7 +33,7 @@ local lastCCAppliedTime   = 0
 local LSM = LibStub("LibSharedMedia-3.0", true)
 
 -- Register built-in interrupt alert sounds with LSM.
--- Curated for alert utility — short, distinctive, attention-grabbing.
+-- Curated for alert utility - short, distinctive, attention-grabbing.
 if LSM then
     local BUILTIN_SOUNDS = {
         -- Iconic WoW alerts
@@ -116,37 +117,37 @@ local function FindVisibleCastBar(nameplate)
 end
 
 -- ═════════════════════════════════════════════════════════════════════════════
--- INTERRUPT DETECTION — what's secret, what works (verified 2026-06-28 via
+-- INTERRUPT DETECTION - what's secret, what works (verified 2026-06-28 via
 -- /jac inspect castdiag; READ THIS before concluding interruptibility is "sealed").
 -- In 12.0 an enemy cast's interruptibility is a secret value in combat. It is handled
 -- in two layers:
 --
--- 1. VISUAL suppression (universal) — in UIRenderer / UINameplateOverlay via
+-- 1. VISUAL suppression (universal) - in UIRenderer / UINameplateOverlay via
 --    BlizzardAPI.ApplyInterruptIconAlpha. We forward UnitCastingInfo's secret
---    notInterruptible straight into the icon's SetAlphaFromBoolean — a secret-aware sink
---    (SecretArguments = AllowedWhenTainted) — so the engine sets the kick icon's alpha to 0
+--    notInterruptible straight into the icon's SetAlphaFromBoolean - a secret-aware sink
+--    (SecretArguments = AllowedWhenTainted) - so the engine sets the kick icon's alpha to 0
 --    on a non-interruptible cast WITHOUT us ever reading the value. No cast-bar dependency,
 --    so the kick is correctly hidden regardless of any cast-bar / nameplate / unit-frame
 --    addon. (This is the same display mechanism Blizzard's own cast bars use for the shield.)
 --
--- 2. LOGIC (kick-vs-CC substitution) — this function. Substituting a CC for a kick on a
+-- 2. LOGIC (kick-vs-CC substitution) - this function. Substituting a CC for a kick on a
 --    non-interruptible cast requires BRANCHING on interruptibility, which a secret can't do.
 --    The only readable signal is the "icon-hidden" check below: Blizzard hides the cast bar's
 --    spell Icon on a non-interruptible cast, and bar.Icon:IsShown() is a CONCRETE, non-secret
---    boolean — but only when that bar's update ran in Blizzard's UNTAINTED, privileged stack.
+--    boolean - but only when that bar's update ran in Blizzard's UNTAINTED, privileged stack.
 --    A cast-bar addon that replaces or reskins (taints) the bar removes this signal.
 --
--- WHAT IS SECRET / DOES NOT WORK (red herrings — do NOT re-derive "sealed" from these):
---   • bar.notInterruptible field    — coerced/secret, NOT reliable
---   • bar:IsInterruptable()/barType  — secret string; comparing it errors under our taint
---   • BorderShield:IsShown()         — secret (SetShown(notInterruptible) directly)
---   • cast bar fill atlas / color    — secret;  the cast spellID — secret
---   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events — do NOT fire for these casts (any unit token)
---   • a private CastingBarFrame we create — runs in OUR taint → IsInterruptable() coerces wrong
---   • setting HideIconWhenNotInterruptible on a tainted bar — makes it THROW; do not do it
+-- WHAT IS SECRET / DOES NOT WORK (red herrings - do NOT re-derive "sealed" from these):
+--   • bar.notInterruptible field    - coerced/secret, NOT reliable
+--   • bar:IsInterruptable()/barType  - secret string; comparing it errors under our taint
+--   • BorderShield:IsShown()         - secret (SetShown(notInterruptible) directly)
+--   • cast bar fill atlas / color    - secret;  the cast spellID - secret
+--   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events - do NOT fire for these casts (any unit token)
+--   • a private CastingBarFrame we create - runs in OUR taint → IsInterruptable() coerces wrong
+--   • setting HideIconWhenNotInterruptible on a tainted bar - makes it THROW; do not do it
 --
 -- NET: the kick is correctly hidden everywhere (layer 1). Only the CC-substitution LOGIC
--- (layer 2) degrades when a cast-bar addon replaces/reskins the bar — there you get no
+-- (layer 2) degrades when a cast-bar addon replaces/reskins the bar - there you get no
 -- suggestion instead of a CC, never a wrongly-shown kick.
 --
 -- Returns (isCasting, isInterruptible, castBar). Cascade: event tracker (no-op for these
@@ -217,7 +218,7 @@ local function IsTargetCastInterruptible(nameplate)
         if not BlizzardAPI.IsSecretValue(castName) and not castName then
             castName, _, _, _, _, _, notInt = UnitChannelInfo("target")
         end
-        -- notInterruptible is a secret boolean in 12.0 — check before comparing.
+        -- notInterruptible is a secret boolean in 12.0 - check before comparing.
         if BlizzardAPI.IsSecretValue(notInt) then
             return true, true, nil  -- secret → fail-open
         end
@@ -231,7 +232,7 @@ local function IsTargetCastInterruptible(nameplate)
 end
 
 -- Diagnostic hook (/jac inspect castdiag): the live verdict the addon actually computes for
--- the current target, plus WHICH cascade check flagged "not interruptible" — so we read the
+-- the current target, plus WHICH cascade check flagged "not interruptible" - so we read the
 -- decision and its source instead of guessing from raw fields.
 function CastInterruptTracker.DebugInterruptState()
     local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
@@ -255,12 +256,30 @@ function CastInterruptTracker.DebugInterruptState()
     return isCasting, interruptible, src
 end
 
+--- Can the suggested ability actually hit the current target right now?
+--- Ranged CCs/kicks: exact via IsSpellInRange. Player-centered AoE (reach="pbaoe"):
+--- IsSpellInRange returns nil for self-centered spells and no API exposes radius-vs-distance,
+--- so it FAILS OPEN. ponytail: PBAoE reach needs a distance signal we don't have; the melee-
+--- range proxy (gap-closer, melee specs only) is the upgrade path if it proves worth it.
+local function IsReachable(entry)
+    if entry.reach == "pbaoe" then
+        -- Self-centered AoE: reach = radius, and IsSpellInRange is nil for it. Use the
+        -- range-probe bracket instead. nil (no probe / can't tell) → fail-open (never hide).
+        local within = SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius or 8)
+        if within == nil then return true end
+        return within
+    end
+    local r = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(entry.spellID)
+    if r == nil or BlizzardAPI.IsSecretValue(r) then return true end  -- unknown → assume reachable
+    return r ~= false
+end
+
 --- Cached per-frame (≤0.015 s); both renderers share the same answer and debounce timer.
 ---
 --- @param resolvedInts  table?   ordered {spellID, type} array from SpellDB.ResolveInterruptSpells
 --- @param interruptMode string   "kickOnly" | "ccPrefer"
 --- @param currentTime   number   GetTime() value from the caller
---- @return table  { shouldShow, spellID, castBar } — reused each call; do NOT hold across frames
+--- @return table  { shouldShow, spellID, castBar } - reused each call; do NOT hold across frames
 function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
     -- Keyed on time AND interruptMode so different renderer modes don't share stale results.
     if (currentTime - lastInterruptEvalTime) < 0.015
@@ -273,6 +292,11 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
     local shouldShow = false
     local intSpellID = nil
     local castBar    = nil
+
+    -- Fears scatter packs and break on damage; excluded from suggestions by default.
+    -- nil profile → exclude (fail-safe to the default-off behavior).
+    local profile = BlizzardAPI.GetProfile()
+    local includeFears = profile and profile.includeFears
 
     local debounceActive = (currentTime - lastInterruptUsedTime) < INTERRUPT_DEBOUNCE
                         or (currentTime - lastCCAppliedTime)    < CC_APPLIED_SUPPRESS
@@ -299,6 +323,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                 -- Single-pass spell selection: prefer CC when configured, otherwise first usable.
                 local fallbackID = nil
                 local silenceFallbackID = nil   -- ccOnly: silence-class CC, used only if no stun-class CC found
+                local outOfRangeFallbackID = nil -- usable but can't reach target; last resort (renderer flags out-of-range)
                 for _, entry in ipairs(resolvedInts) do
                     local sid, stype = entry.spellID, entry.type
                     -- In ccOnly mode, skip non-CC spells (kicks can't stop shielded casts).
@@ -308,14 +333,20 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                     elseif interruptMode == "kickOnly" and stype == "cc" then
                         -- skip
                     elseif (stype == "cc" and targetCCImmune) or targetAlreadyCC then
-                        -- CC spells unusable on immune / already CC'd targets — skip.
+                        -- CC spells unusable on immune / already CC'd targets - skip.
                     elseif stype == "cc" and not BlizzardAPI.IsCCSpellTypeValid(sid) then
-                        -- Type-restricted CC (e.g. Repentance) on an incompatible creature type — skip.
+                        -- Type-restricted CC (e.g. Repentance) on an incompatible creature type - skip.
+                    elseif stype == "cc" and not includeFears and entry.mech == 5 then
+                        -- Fear-class CC: scatters packs / breaks on damage - skip unless opted in.
                     -- failOpen=true for kicks (short CD, always useful to remind);
                     -- failOpen=false for CCs so we never recommend one we can't confirm is castable.
                     elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
-                        if (preferCC or ccOnly) and stype == "cc" then
-                            if ccOnly and SpellDB.IsSilenceClassCC(sid) then
+                        if not IsReachable(entry) then
+                            -- Usable but can't hit the target now (e.g. a ranged CC out of range).
+                            -- Keep only as a last resort; prefer any reachable option found below.
+                            if not outOfRangeFallbackID then outOfRangeFallbackID = sid end
+                        elseif (preferCC or ccOnly) and stype == "cc" then
+                            if ccOnly and entry.mech == 9 then
                                 -- A silence only stops magic casts; an uninterruptible cast
                                 -- may be physical. Defer it and keep looking for a stun-class
                                 -- CC that stops anything; use it only if nothing else turns up.
@@ -330,7 +361,7 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                     end
                 end
                 if not shouldShow then
-                    intSpellID = silenceFallbackID or fallbackID
+                    intSpellID = silenceFallbackID or fallbackID or outOfRangeFallbackID
                     if intSpellID then shouldShow = true end
                 end
             end

@@ -228,7 +228,7 @@ function UIHealthBar.CreateHealthBar(addon)
 
     -- 4-strip tube bevel on OVERLAY so the engine never clobbers them.
     -- Horizontal: symmetric alphas (bright band dead-centre on 6 px bar).
-    -- Vertical:   asymmetric (near-queue heavier) — bar is wide enough.
+    -- Vertical:   asymmetric (near-queue heavier) - bar is wide enough.
     if barIsHorizontal then
         local shBot1 = statusBar:CreateTexture(nil, "OVERLAY")
         shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -398,7 +398,7 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
 
     local isDetached = profile.defensives and profile.defensives.detached
     if isDetached then
-        -- Detached: no offensive fallback — just hide when no icons visible.
+        -- Detached: no offensive fallback - just hide when no icons visible.
         if visibleCount <= 0 then
             healthBarFrame:Hide()
             return
@@ -555,7 +555,7 @@ end
 --------------------------------------------------------------------------------
 -- Pet Health Bar (mirrors player health bar, independently controlled)
 -- UnitHealth("pet") is secret in combat but StatusBar:SetValue() accepts secrets
--- UnitExists/UnitIsDead are NOT secret — used for visibility/dead state
+-- UnitExists/UnitIsDead are NOT secret - used for visibility/dead state
 --------------------------------------------------------------------------------
 
 -- Create the pet health bar frame.
@@ -851,7 +851,7 @@ function UIHealthBar.UpdatePet(addon)
     end
 
     local ok, isDead = pcall(UnitIsDead, "pet")
-    -- UnitIsDead is NOT secret in 12.0 — safe to compare directly
+    -- UnitIsDead is NOT secret in 12.0 - safe to compare directly
     if ok and isDead and not BlizzardAPI.IsSecretValue(isDead) then
         -- Pet is dead: show empty bar with red overlay
         if petHealthBarFrame.statusBar then
@@ -869,7 +869,7 @@ function UIHealthBar.UpdatePet(addon)
 
     -- UnitHealth("pet") is secret in 12.0 combat, but StatusBar:SetValue()
     -- accepts secret values and renders correctly (Blizzard handles internally).
-    -- The bar will show, just with unknown fill level — better than hiding it.
+    -- The bar will show, just with unknown fill level - better than hiding it.
     local health = UnitHealth("pet")
     local maxHealth = UnitHealthMax("pet")
 
@@ -910,7 +910,7 @@ end
 function UIHealthBar.ResizePetToCount(addon, visibleCount)
     if not petHealthBarFrame then return end
 
-    -- Standalone mode spans the offensive queue — no per-count resize needed
+    -- Standalone mode spans the offensive queue - no per-count resize needed
     if not petHealthBarFrame.useDefensiveDims then return end
 
     -- Cache check: skip expensive recalc when count hasn't changed
@@ -922,7 +922,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
 
     local isDetached = profile.defensives and profile.defensives.detached
     if isDetached then
-        -- Detached: no offensive fallback — just hide when no icons visible.
+        -- Detached: no offensive fallback - just hide when no icons visible.
         if visibleCount <= 0 then
             petHealthBarFrame:Hide()
             return

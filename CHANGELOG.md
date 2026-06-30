@@ -3,6 +3,48 @@
 
 ## [Unreleased]
 
+## [4.28.0] - 2026-06-29
+
+### Rotation
+- Renamed the **Fixed Queue** tab to **Rotation**. Position 1 is always Blizzard's
+  pick; everything on the tab controls positions 2+ (the abilities shown as coming
+  up next).
+- New master **Ordering** toggles — **Procs first**, **Context aware**, and
+  **Cooldowns last** — apply to positions 2+ of both Blizzard's rotation and your
+  Custom Rotation. All on by default; turn them off to show positions 2+ in exact
+  source order.
+- With **Procs first** on, the per-ability **Proc Priority** toggle now affects the
+  main queue: uncheck it to keep a procced ability in place instead of jumping it
+  forward (it still glows).
+
+### Interrupts & CC
+- Interrupt settings moved to their own **Interrupt** section above Shared Behavior.
+- Crowd-control suggestions now draw from a much larger auto-filtered list —
+  interrupt-capable hybrid abilities, racials, and pet stuns included — showing only
+  what your character actually has.
+- Suggestions are now range- and context-aware: a self-centered AoE stun is skipped
+  when the target is out of range, and single-target CC is preferred when Blizzard is
+  recommending single-target attacks.
+- New **Include Fears** toggle (off by default) — fears scatter mobs and break in
+  groups, so they're hidden unless you opt in.
+
+### Gap-closer
+- Melee-range detection is now reliable across every class, spec, and form
+  (including druid forms), read straight from your spellbook rather than your action
+  bars.
+- The gap-closer appears the moment your target leaves melee and clears promptly when
+  you close in, with less flicker on the move.
+
+### Options panel
+- Checkbox-heavy sections (General behavior, display options) now lay out in two
+  columns.
+- Cleaned up option labels. Queue-content toggles read as a set: **Include
+  Macro-Hidden**, **Include Spellbook Procs**, **Include Item Abilities**, and
+  **Include Procced Defensives**.
+- Fixed two checkboxes that shared the name "Insert Procced Abilities"; the offensive
+  and defensive proc options are now distinct.
+- Standardized position-1 wording to "Blizzard's pick" across the panel.
+
 ## [4.27.0] - 2026-06-28
 
 ### Pet classes
@@ -10,7 +52,7 @@
 - Pet rez/summon reminders no longer nag specs that intentionally run without a
   pet (Marksmanship with Lone Wolf, Warlock with a sacrificed pet).
 - Pet summon/revive now shows a single icon instead of stacking multiple summon
-  buttons — Warlocks see one resummon prompt rather than every demon at once.
+  buttons - Warlocks see one resummon prompt rather than every demon at once.
 - Demonology Warlocks now see Felguard as the suggested resummon.
 - Unholy Death Knight ghoul reminder corrected to the permanent-ghoul Raise Dead.
 
@@ -21,21 +63,21 @@
 ## [4.26.0] - 2026-06-28
 
 ### Added
-- Each blacklist entry now has an **Apply to Position 1** toggle. Leave it on (default) to hide the ability everywhere. Turn it off to hide it from positions 2+ only — the ability still shows at position 1 when Blizzard recommends it, so blacklisting a spell Blizzard wants *right now* no longer stalls the rotation.
+- Each blacklist entry now has an **Apply to Position 1** toggle. Leave it on (default) to hide the ability everywhere. Turn it off to hide it from positions 2+ only - the ability still shows at position 1 when Blizzard recommends it, so blacklisting a spell Blizzard wants *right now* no longer stalls the rotation.
 
 ### Changed
-- **Shift+right-click a queue icon to blacklist** that ability — it's hidden from every position, including position 1 and the nameplate overlay. This matches the icon's "remove from queue" tooltip. (Reordering or removing abilities from positions 2+ is still done in the options tab.)
-- Renamed the **Custom Queue** tab to **Fixed Queue**, with a clearer explainer: you choose which abilities can appear in positions 2+, while JustAC still orders them live — procs and abilities matching the moment (AOE / single-target / range) surface first, and abilities on cooldown drop to the back. Your manual order breaks ties. Position 1 is always Blizzard's live pick.
+- **Shift+right-click a queue icon to blacklist** that ability - it's hidden from every position, including position 1 and the nameplate overlay. This matches the icon's "remove from queue" tooltip. (Reordering or removing abilities from positions 2+ is still done in the options tab.)
+- Renamed the **Custom Queue** tab to **Fixed Queue**, with a clearer explainer: you choose which abilities can appear in positions 2+, while JustAC still orders them live - procs and abilities matching the moment (AOE / single-target / range) surface first, and abilities on cooldown drop to the back. Your manual order breaks ties. Position 1 is always Blizzard's live pick.
 
 ### Fixed
 - Corrected burst-injection defaults on several specs so the feature actually fires:
-  - Protection Paladin's injected cooldown was attached to the wrong spec and never appeared — now restored.
-  - Brewmaster Monk had an injection spell but no burst trigger, so its window never opened — added the missing trigger.
+  - Protection Paladin's injected cooldown was attached to the wrong spec and never appeared - now restored.
+  - Brewmaster Monk had an injection spell but no burst trigger, so its window never opened - added the missing trigger.
   - Vengeance Demon Hunter, Assassination Rogue, Augmentation Evoker, and Elemental Shaman were each set to "inject" the very cooldown that opens the window (always on cooldown, so nothing happened). The first three now inject a real secondary cooldown; Elemental and Augmentation are left to user choice rather than shipping a no-op.
   - Shadow Priest burst windows now track correctly from Void Eruption and Dark Ascension.
 - A blacklisted ability is now also suppressed when it would otherwise be injected at position 1 during a burst window or as a gap-closer (e.g. a stealth gap-closer). Previously the blacklist could be bypassed on those injected suggestions.
 - Corrected gap-closer defaults on a few melee specs:
-  - Survival Hunter's default gap closer pointed at a melee attack instead of the actual leap-to-target ability, so it never suggested one — now fixed.
+  - Survival Hunter's default gap closer pointed at a melee attack instead of the actual leap-to-target ability, so it never suggested one - now fixed.
   - Unholy Death Knight's out-of-melee-range detection could misfire when talented into a ranged attack; it now reads from a reliable melee ability instead.
   - Havoc Demon Hunter gains a charge-to-target backup gap closer when the default mobility dash isn't available.
 - Localization fixes: a Russian color tag that failed to render, and a mistranslated vendor name in Simplified Chinese.
@@ -43,7 +85,7 @@
 ## [4.25.1] - 2026-06-28
 
 ### Fixed
-- The interrupt suggestion is now correctly hidden on casts that can't be interrupted, on **any** UI setup. Previously, if a cast-bar / nameplate / unit-frame addon replaced or reskinned the Blizzard cast bar, the kick could be wrongly suggested on a non-interruptible (shielded) cast. The icon's visibility is now driven straight from the cast's protected interruptible flag through a display-only path that needs no cast bar, so it works regardless of your UI. (One edge remains: *substituting* a crowd-control ability for a kick on a non-interruptible cast still needs the default cast bar — with a replaced cast bar you simply get no suggestion there instead of a CC, never a wrong kick.)
+- The interrupt suggestion is now correctly hidden on casts that can't be interrupted, on **any** UI setup. Previously, if a cast-bar / nameplate / unit-frame addon replaced or reskinned the Blizzard cast bar, the kick could be wrongly suggested on a non-interruptible (shielded) cast. The icon's visibility is now driven straight from the cast's protected interruptible flag through a display-only path that needs no cast bar, so it works regardless of your UI. (One edge remains: *substituting* a crowd-control ability for a kick on a non-interruptible cast still needs the default cast bar - with a replaced cast bar you simply get no suggestion there instead of a CC, never a wrong kick.)
 
 ### Internal
 - Added `BlizzardAPI.SetAlphaFromSecretBool` / `ApplyInterruptIconAlpha` helpers wrapping the secret-aware `SetAlphaFromBoolean` display sink, and routed both the standard-queue and nameplate-overlay interrupt icons through them. Documented the interrupt-detection layers at the top of `UI/CastInterruptTracker.lua`; `/jac inspect castdiag` re-validates them.
@@ -51,7 +93,7 @@
 ## [4.25.0] - 2026-06-28
 
 ### Changed
-- Below the ~35% low-health threshold, the defensive queue now leads with survival buttons — immunity bubbles first (Divine Shield, Ice Block, Aspect of the Turtle, Cloak of Shadows), then big instant heals (Lay on Hands, Death Strike, Renewal, etc.) — ahead of mitigation and small fillers. Above the threshold the order is unchanged: fast/free fillers and procs stay first for routine HP upkeep. Procced spells remain top priority in both cases.
+- Below the ~35% low-health threshold, the defensive queue now leads with survival buttons - immunity bubbles first (Divine Shield, Ice Block, Aspect of the Turtle, Cloak of Shadows), then big instant heals (Lay on Hands, Death Strike, Renewal, etc.) - ahead of mitigation and small fillers. Above the threshold the order is unchanged: fast/free fillers and procs stay first for routine HP upkeep. Procced spells remain top priority in both cases.
 
 ### Internal
 - Mapped and documented in-combat interrupt detection (added a `/jac inspect castdiag` diagnostic). The only readable signal is Blizzard's cast-bar icon-hiding on non-interruptible casts, and only on an untainted, Blizzard-driven cast bar; the interruptible flag/barType, cast spellID, shield state, and interruptible/uninterruptible events are all secret or never fire. Removed a dead secret-resolution fallback that could never succeed in combat (no behavior change). Known limitation unchanged: cast-bar / nameplate / unit-frame addons that replace or reskin the cast bar leave no readable signal, so the interrupt logic falls back to fail-open there.
@@ -62,7 +104,7 @@
 - Cooldown swipes on abilities behind modifier-key macros no longer flicker away when the modifier is released. The direct action-bar slot is used while the ability is visible (most accurate); when a modifier hides it, the swipe falls back to JustAC's own cooldown tracking and holds seamlessly. Applies to all icon types (standard, overlay, defensive, interrupt).
 - Charge-based abilities now read correctly: ready while any charge remains, greyed out at 0 charges, and at 0 charges the recharge shows the full dark swipe (matching the action bar) instead of only the thin charge ring. Fixes directly-visible spells like Feint showing just the ring.
 - Corrected 6 stale entries in the curated defensive/healing/crowd-control lists (audited against current spell data): re-IDed Rage of the Sleeper, Between the Eyes, and Essence Font, and removed three deleted spells (Greater Fade, Cloudburst Totem, Mind Bomb).
-- Type-restricted crowd control is no longer suggested against creature types it can't affect — e.g. Repentance won't be offered to interrupt a casting Beast, Elemental, or Mechanical. Fails open when the type is unknown (still suggested); universal stuns/silences are unaffected.
+- Type-restricted crowd control is no longer suggested against creature types it can't affect - e.g. Repentance won't be offered to interrupt a casting Beast, Elemental, or Mechanical. Fails open when the type is unknown (still suggested); universal stuns/silences are unaffected.
 - When only crowd control can stop an uninterruptible cast, a stun-class CC (stops anything) is preferred over a silence-class CC like Strangulate (stops only spellcasting), since the cast may be a physical channel. The silence is still offered if no stun-class CC is available.
 
 ### Added
@@ -165,7 +207,7 @@
 - **SpellQueue.lua**: Added debug-gated `spellQueueBuildCount` counter. Exposed via `GetBuildStats()` / `ResetBuildStats()`.
 - **DefensiveEngine.lua**: Added debug-gated `defensiveBuildCount` counter. Exposed via `GetBuildStats()` / `ResetBuildStats()`.
 - **DebugCommands.lua**: Added `/jac perf` command (debug-mode gated) showing offensive/defensive queue build counts and rates since last reset. `/jac perf reset` resets counters.
-- **JustAC.lua**: `OnCooldownUpdate` and `OnActionUsableChanged` no longer reset the update timer out of combat. Both events now only set dirty flags OOC, letting the 0.5s idle cycle handle them — previously they called `ForceUpdateAll()` which woke the loop immediately, causing ~2-5% idle CPU from ability cooldowns and usability transitions firing in cities. In combat, timer reset is unchanged for full responsiveness. Reduces OOC CPU usage from ~9-12% to ~7%.
+- **JustAC.lua**: `OnCooldownUpdate` and `OnActionUsableChanged` no longer reset the update timer out of combat. Both events now only set dirty flags OOC, letting the 0.5s idle cycle handle them - previously they called `ForceUpdateAll()` which woke the loop immediately, causing ~2-5% idle CPU from ability cooldowns and usability transitions firing in cities. In combat, timer reset is unchanged for full responsiveness. Reduces OOC CPU usage from ~9-12% to ~7%.
 - **KeyPressDetector.lua**: Mouse button poll (`IsMouseButtonDown` × 3) throttled from every frame (~60-144Hz) to 30Hz. Detection latency capped at 33ms, imperceptible for flash feedback.
 
 ### Visual
@@ -184,7 +226,7 @@
 - **Consistency / dead-code removal**
   - `DebugCommands.lua`, `JustAC.lua`: Replaced `BlizzardAPI.IsMidnightOrLater()` runtime calls with the pre-computed `BlizzardAPI.IS_MIDNIGHT_OR_LATER` constant.
   - `UI/UIFrameFactory.lua`: Exported `POSITION_HOLD_TIME` (150 ms) and `GLOW_HOLD_TIME` (100 ms) hysteresis constants; `UI/UIRenderer.lua` and `UI/UINameplateOverlay.lua` now read from those exports instead of local duplicates.
-- **Refactoring — no behaviour change**
+- **Refactoring - no behaviour change**
   - `JustAC.lua`: Split `NormalizeSavedData()` into five named migration helpers (`MigrateBlacklist`, `MigrateDefensiveSpecKeys`, `MigrateHotkeyOverrides`, `MigrateLegacySettings`, `MigrateSoundKeys`).
   - `JustAC.lua`: `InvalidateCaches()` if-chain replaced with `CACHE_INVALIDATORS` closure table.
   - `UI/UIAnimations.lua`: Extracted shared `ShowColoredProcGlow` / `HideColoredProcGlow` helpers; interrupt/burst glow functions reduced to one-line delegates.
@@ -192,8 +234,8 @@
   - `Options/SpellSearch.lua`: Added `SpellSearch.ClearDynamicArgs(argsTable, staticKeys)` utility; used in `Options/Offensive.lua`, `Options/CustomQueue.lua`, `Options/Defensives.lua` to replace manual two-loop key-clearing.
   - `Options/Defensives.lua`: Extracted `IsPetRezClass()` / `IsPetHealClass()` module-local helpers; six duplicate `hidden` closures reduced to one-line delegates.
   - `UI/UIFrameFactory.lua`: Exported `CreateBaseIcon`; `UI/UINameplateOverlay.lua` replaced its 200-line duplicate icon-creation body with a ~60-line version delegating to `UIFrameFactory.CreateBaseIcon`.
-- **Bug fix — charge display in combat**
-  - `UI/UIRenderer.lua`: `GetSpellCharges().maxCharges` is NeverSecret (source-verified against WoW 12.0.5). Removed the `GetCachedMaxCharges` fallback that was treating it as secret — the cache could be nil after a spec-change cache wipe before combat started, silently suppressing charge count display. `chargeInfo = result` assignment remains OOC-only since `currentCharges`/`cooldownDuration`/`cooldownStartTime` are still SECRET in combat; `chargeText` now set unconditionally for spells with `maxCharges > 1` (secret value passes through `FontString:SetText` safely).
+- **Bug fix - charge display in combat**
+  - `UI/UIRenderer.lua`: `GetSpellCharges().maxCharges` is NeverSecret (source-verified against WoW 12.0.5). Removed the `GetCachedMaxCharges` fallback that was treating it as secret - the cache could be nil after a spec-change cache wipe before combat started, silently suppressing charge count display. `chargeInfo = result` assignment remains OOC-only since `currentCharges`/`cooldownDuration`/`cooldownStartTime` are still SECRET in combat; `chargeText` now set unconditionally for spells with `maxCharges > 1` (secret value passes through `FontString:SetText` safely).
 
 ## [4.20.0] - 2026-04-16
 
@@ -204,10 +246,10 @@
 ## [4.19.4] - 2026-04-14
 
 ### Fixed
-- **Interrupt/CC CD detection broken — Kick re-recommended while on cooldown**: `IsInterruptOnCooldown()` in `SpellDB.lua` was always fail-open. A file-scope `LibStub("JustAC-BlizzardAPI", true)` captured nil because `SpellDB.lua` loads before `BlizzardAPI.lua` in `JustAC.toc`. Every call hit the nil guard and returned false, making every spell appear ready regardless of actual cooldown state. Fixed with a lazy getter that resolves on first call after all libraries are loaded.
-- **`CheckCooldownCompletions` prematurely clearing interrupt/defensive CDs**: Was treating `isOnGCD == true` from `SPELL_UPDATE_COOLDOWN` as "real CD done" for all tracked categories. For unflagged spells (Kick, Blind, defensives etc.), `isOnGCD == true` fires during the GCD window after the cast — not as a CD-expiry signal. Restricted this clear to `"rotation"` category only (the only category that reliably uses Blizzard's flagged `nil → false → nil` CD state machine).
+- **Interrupt/CC CD detection broken - Kick re-recommended while on cooldown**: `IsInterruptOnCooldown()` in `SpellDB.lua` was always fail-open. A file-scope `LibStub("JustAC-BlizzardAPI", true)` captured nil because `SpellDB.lua` loads before `BlizzardAPI.lua` in `JustAC.toc`. Every call hit the nil guard and returned false, making every spell appear ready regardless of actual cooldown state. Fixed with a lazy getter that resolves on first call after all libraries are loaded.
+- **`CheckCooldownCompletions` prematurely clearing interrupt/defensive CDs**: Was treating `isOnGCD == true` from `SPELL_UPDATE_COOLDOWN` as "real CD done" for all tracked categories. For unflagged spells (Kick, Blind, defensives etc.), `isOnGCD == true` fires during the GCD window after the cast - not as a CD-expiry signal. Restricted this clear to `"rotation"` category only (the only category that reliably uses Blizzard's flagged `nil → false → nil` CD state machine).
 - **`CheckUsabilityFlips` clearing local CDs via `ACTION_USABLE_CHANGED`**: Was wiping `localCooldowns[spellID]` whenever `usable=true` fired for a slot, assuming it meant the CD expired. `IsUsableAction` returns true even while a spell is on cooldown, so energy ticks and target changes were clearing active CDs. Removed flat `localCooldowns` clearing from this path; charge recovery hints preserved.
-- **CC-failure learning incorrectly triggered by interrupt spells**: Kick, Wind Shear, Counterspell, and other pure interrupts are in `CROWD_CONTROL_SPELLS` (for DPS rotation exclusion). This caused `NotifyCCCastOnTarget()` to fire on every successful interrupt cast. 0.4 s later `UnitIsCrowdControlled("target")` returns false (interrupts don't apply a CC mechanic), setting `ccFailureObserved = true` and marking the target as CC-immune for the rest of combat — suppressing Blind and all other CC fallbacks. Fixed: added `SpellDB.IsInterruptTypeSpell()` (lazy set from `CLASS_INTERRUPT_DEFAULTS` type="interrupt" entries) and guarded `NotifyCCCastOnTarget()` to skip pure interrupt spells.
+- **CC-failure learning incorrectly triggered by interrupt spells**: Kick, Wind Shear, Counterspell, and other pure interrupts are in `CROWD_CONTROL_SPELLS` (for DPS rotation exclusion). This caused `NotifyCCCastOnTarget()` to fire on every successful interrupt cast. 0.4 s later `UnitIsCrowdControlled("target")` returns false (interrupts don't apply a CC mechanic), setting `ccFailureObserved = true` and marking the target as CC-immune for the rest of combat - suppressing Blind and all other CC fallbacks. Fixed: added `SpellDB.IsInterruptTypeSpell()` (lazy set from `CLASS_INTERRUPT_DEFAULTS` type="interrupt" entries) and guarded `NotifyCCCastOnTarget()` to skip pure interrupt spells.
 
 ### Added
 - **`/jac interrupts` command**: Dumps the resolved interrupt/CC list with per-spell CD state (`IsInterruptOnCooldown`, `localCD`, `IsReady`, `usable`, `isOnGCD`), plus target interrupt-worthy, CC-immune, and current interrupt mode. Useful for diagnosing interrupt/CC queue issues in combat.
@@ -216,27 +258,27 @@
 ## [4.19.3] - 2026-04-14
 
 ### Fixed
-- **MacroParser — leading `!` prefix on spell names**: Macros using `!Spell` (repeat-cast toggle, e.g. `!Bear Form`, `!Stealth`) were never matched because `DoesSpellMatch` compared the raw `"!bear form"` against `"bear form"`; the `!` is now stripped before comparison (`MacroParser.lua`)
-- **MacroParser — condition tokens not lowercased**: `[MOD:SHIFT]`, `[Form:1]`, and `[ mod : shift ]` (spaces around `:`) were silently ignored because `EvaluateConditions` matched condition strings case-sensitively; tokens are now lowercased before pattern matching (`MacroParser.lua`)
+- **MacroParser - leading `!` prefix on spell names**: Macros using `!Spell` (repeat-cast toggle, e.g. `!Bear Form`, `!Stealth`) were never matched because `DoesSpellMatch` compared the raw `"!bear form"` against `"bear form"`; the `!` is now stripped before comparison (`MacroParser.lua`)
+- **MacroParser - condition tokens not lowercased**: `[MOD:SHIFT]`, `[Form:1]`, and `[ mod : shift ]` (spaces around `:`) were silently ignored because `EvaluateConditions` matched condition strings case-sensitively; tokens are now lowercased before pattern matching (`MacroParser.lua`)
 
 ## [4.19.2] - 2026-04-14
 
 ### Fixed
-- **MacroParser v23 — OR-cascade multi-bracket evaluation**: Cascading bracket groups (`[spec:1][spec:2] Spell`, `[cond1][cond2][] Spell`) only evaluated the first group; all groups now iterated in OR-cascade order — first passing group wins, `[]` is unconditional fallback (`MacroParser.lua`)
-- **MacroParser v23 — `[stance:N]` / `[nostance:N]` aliases**: Warrior, DK, and Rogue macros using stance aliases instead of `[form:N]`/`[noform:N]` were silently ignored; now evaluated against `FormCache.GetActiveForm()` (`MacroParser.lua`)
-- **MacroParser v23 — bare `[form]` / `[noform]`**: Without `:N`, `[form]` always failed and `[noform]` always passed; both corrected. Same fix for `[stance]`/`[nostance]` (`MacroParser.lua`)
-- **MacroParser v23 — `/castsequence` detection**: Sequence spell lists were never split — `reset=N` prefixes now stripped, list split by comma; `[condition]` evaluated once and applied to all spells in sequence (`MacroParser.lua`)
-- **MacroParser v23 — quality score condition count**: Brackets counted across the entire cast line instead of only the matching clause, inflating scores for multi-clause lines (`MacroParser.lua`)
-- **MacroParser v23 — name prefix heuristic**: 2-char prefix match bonus caused false macro-name promotions; raised to 4-char minimum with plain-string matching (`MacroParser.lua`)
-- **CC interrupt-fallback list audit**: Evoker had wrong spell ID 357208 (Fire Breath, not Oppressing Roar) in both `CLASS_INTERRUPT_DEFAULTS` and `CROWD_CONTROL_SPELLS` — Fire Breath was excluded from DPS rotation suggestions; real Oppressing Roar (372048) extends CC duration but doesn't apply CC, removed as fallback. Shaman Sundering (197214) removed — incapacitate breaks from auto-attacks immediately. Priest CC order corrected: Psychic Horror (stun) before Mind Bomb before Psychic Scream (`SpellDB.lua`)
-- **Interrupt queue — Rogue CC fallback**: Blind (2094) added to `CLASS_INTERRUPT_DEFAULTS.ROGUE` before Kidney Shot — no combo points required, most reliably castable CC when Kick is on cooldown (`SpellDB.lua`)
-- **Interrupt queue — Kick CD not tracked after spec change**: `ScanCooldownDurations` now populates `cachedDurations` via tooltip + `GetSpellBaseCooldown` fallback for spells that are currently ready (`cd.duration=0`); previously a spec change wiped the cache and ready spells were skipped, so the first in-combat cast had no duration and local CD was never recorded (`BlizzardAPI/CooldownTracking.lua`)
-- **WoW 12.0.5 — aura instance ID re-randomization**: `auraInstanceID` values re-randomize on encounter/M+/PvP entry; `RedundancyFilter`'s instance maps were never flushed mid-session, causing stale IDs to incorrectly mark expired auras as active; `FlushInstanceMaps()` now called on `ENCOUNTER_START`, `CHALLENGE_MODE_START`, `PVP_MATCH_ACTIVE` (`RedundancyFilter.lua`, `JustAC.lua`)
+- **MacroParser v23 - OR-cascade multi-bracket evaluation**: Cascading bracket groups (`[spec:1][spec:2] Spell`, `[cond1][cond2][] Spell`) only evaluated the first group; all groups now iterated in OR-cascade order - first passing group wins, `[]` is unconditional fallback (`MacroParser.lua`)
+- **MacroParser v23 - `[stance:N]` / `[nostance:N]` aliases**: Warrior, DK, and Rogue macros using stance aliases instead of `[form:N]`/`[noform:N]` were silently ignored; now evaluated against `FormCache.GetActiveForm()` (`MacroParser.lua`)
+- **MacroParser v23 - bare `[form]` / `[noform]`**: Without `:N`, `[form]` always failed and `[noform]` always passed; both corrected. Same fix for `[stance]`/`[nostance]` (`MacroParser.lua`)
+- **MacroParser v23 - `/castsequence` detection**: Sequence spell lists were never split - `reset=N` prefixes now stripped, list split by comma; `[condition]` evaluated once and applied to all spells in sequence (`MacroParser.lua`)
+- **MacroParser v23 - quality score condition count**: Brackets counted across the entire cast line instead of only the matching clause, inflating scores for multi-clause lines (`MacroParser.lua`)
+- **MacroParser v23 - name prefix heuristic**: 2-char prefix match bonus caused false macro-name promotions; raised to 4-char minimum with plain-string matching (`MacroParser.lua`)
+- **CC interrupt-fallback list audit**: Evoker had wrong spell ID 357208 (Fire Breath, not Oppressing Roar) in both `CLASS_INTERRUPT_DEFAULTS` and `CROWD_CONTROL_SPELLS` - Fire Breath was excluded from DPS rotation suggestions; real Oppressing Roar (372048) extends CC duration but doesn't apply CC, removed as fallback. Shaman Sundering (197214) removed - incapacitate breaks from auto-attacks immediately. Priest CC order corrected: Psychic Horror (stun) before Mind Bomb before Psychic Scream (`SpellDB.lua`)
+- **Interrupt queue - Rogue CC fallback**: Blind (2094) added to `CLASS_INTERRUPT_DEFAULTS.ROGUE` before Kidney Shot - no combo points required, most reliably castable CC when Kick is on cooldown (`SpellDB.lua`)
+- **Interrupt queue - Kick CD not tracked after spec change**: `ScanCooldownDurations` now populates `cachedDurations` via tooltip + `GetSpellBaseCooldown` fallback for spells that are currently ready (`cd.duration=0`); previously a spec change wiped the cache and ready spells were skipped, so the first in-combat cast had no duration and local CD was never recorded (`BlizzardAPI/CooldownTracking.lua`)
+- **WoW 12.0.5 - aura instance ID re-randomization**: `auraInstanceID` values re-randomize on encounter/M+/PvP entry; `RedundancyFilter`'s instance maps were never flushed mid-session, causing stale IDs to incorrectly mark expired auras as active; `FlushInstanceMaps()` now called on `ENCOUNTER_START`, `CHALLENGE_MODE_START`, `PVP_MATCH_ACTIVE` (`RedundancyFilter.lua`, `JustAC.lua`)
 - Nameplate Overlay: DPS/defensive icons now anchor to `HealthBarsContainer` instead of the root nameplate frame, fixing vertical alignment (`UINameplateOverlay.lua`)
 - Nameplate Overlay: `NAMEPLATE_GAP` split into left=12 / right=14 to compensate for Blizzard's asymmetric health bar texture (`UINameplateOverlay.lua`)
 - Nameplate Overlay: `ClassificationFrame` and `RaidTargetFrame` repositioned to avoid collision with icon clusters; restored to defaults on overlay detach (`UINameplateOverlay.lua`)
 - Nameplate Overlay: inter-queue spacing floored at `BAR_SPACING` regardless of the `iconSpacing` setting; gap now uses `iconSpacing` directly (`UIFrameFactory.lua`, `UIHealthBar.lua`)
-- Nameplate Overlay: Masque `AddButton`/`RemoveButton` skipped in combat — `Button:GetSize()` returns secret on JustAC frames causing arithmetic crash; pending removals cleaned up on next out-of-combat `Destroy` (`UINameplateOverlay.lua`)
+- Nameplate Overlay: Masque `AddButton`/`RemoveButton` skipped in combat - `Button:GetSize()` returns secret on JustAC frames causing arithmetic crash; pending removals cleaned up on next out-of-combat `Destroy` (`UINameplateOverlay.lua`)
 - `BurstInjectionEngine`: injection candidates were not checked with `IsSpellUsable`; spells with insufficient resources no longer injected (`BurstInjectionEngine.lua`)
 - `UIAnimations`: `icon:GetWidth()` crashes in 12.0 combat on nameplate overlay icons; `cachedIconSize` stored at creation and used as NeverSecret fallback in glow scale calculations (`UIAnimations.lua`, `UIFrameFactory.lua`, `UINameplateOverlay.lua`)
 - `OnUnitAura` aura-cache invalidation throttle reduced from 500ms to 100ms (`JustAC.lua`)
@@ -254,18 +296,18 @@
 ## [4.19.1] - 2026-03-25
 
 ### Fixed
-- **Burst injection ignoring cooldowns** — Injection spells (e.g., Lunar Beam, Convoke) could be suggested while on cooldown. Lazy-resolve path now seeds pre-existing cooldowns; removed false-positive usability cross-check that immediately cleared local CD timers for unflagged spells.
-- **Glow animations at combat exit** — Blue crawl could disappear and proc glow could freeze in the offensive queue, while defensive glows kept animating. Fixed pause/resume to cover both icon pools, use correct animation freeze, and guard the OOC pause timer against stale firing during combat re-entry.
+- **Burst injection ignoring cooldowns** - Injection spells (e.g., Lunar Beam, Convoke) could be suggested while on cooldown. Lazy-resolve path now seeds pre-existing cooldowns; removed false-positive usability cross-check that immediately cleared local CD timers for unflagged spells.
+- **Glow animations at combat exit** - Blue crawl could disappear and proc glow could freeze in the offensive queue, while defensive glows kept animating. Fixed pause/resume to cover both icon pools, use correct animation freeze, and guard the OOC pause timer against stale firing during combat re-entry.
 
 ## [4.19.0] - 2026-03-25
 
 ### Added
-- **Custom Queue** — Define a custom spell/item ordering for positions 2+ (Offensive > Custom Queue). Auto-seeds from Blizzard's rotation on first enable. Unavailable or on-cooldown entries collapse automatically. Per-spec, stored in profile.
-- **Custom Queue Item Support** — Trinkets and on-use items can be added to the Custom Queue alongside spells.
-- **Stale Queue Detection** — Warning banner when Blizzard's rotation changes (talent swap, patch). "Merge Changes" preserves custom ordering while syncing additions/removals; "Refresh from Rotation" fully resets.
+- **Custom Queue** - Define a custom spell/item ordering for positions 2+ (Offensive > Custom Queue). Auto-seeds from Blizzard's rotation on first enable. Unavailable or on-cooldown entries collapse automatically. Per-spec, stored in profile.
+- **Custom Queue Item Support** - Trinkets and on-use items can be added to the Custom Queue alongside spells.
+- **Stale Queue Detection** - Warning banner when Blizzard's rotation changes (talent swap, patch). "Merge Changes" preserves custom ordering while syncing additions/removals; "Refresh from Rotation" fully resets.
 
 ### Changed
-- **Burst Injection Pending Detection** — Trigger detection now scans all visible queue positions, not just position 1. Triggers at any position show burst glow. Active phase (aura-based injection) is unchanged.
+- **Burst Injection Pending Detection** - Trigger detection now scans all visible queue positions, not just position 1. Triggers at any position show burst glow. Active phase (aura-based injection) is unchanged.
 
 ## [4.18.1] - 2026-03-24
 
@@ -288,8 +330,8 @@
 ## [4.17.0] - 2026-03-18
 
 ### Added
-- Per-spell **Proc Priority** toggle in Defensives options — uncheck to keep a procced spell in its configured list position instead of jumping to the front of the queue (it will still glow)
-- **LibSharedMedia-3.0** integration for interrupt alert sounds — users can select any sound from installed SharedMedia packs. 14 curated built-in alert sounds registered as "JAC: ..." entries.
+- Per-spell **Proc Priority** toggle in Defensives options - uncheck to keep a procced spell in its configured list position instead of jumping to the front of the queue (it will still glow)
+- **LibSharedMedia-3.0** integration for interrupt alert sounds - users can select any sound from installed SharedMedia packs. 14 curated built-in alert sounds registered as "JAC: ..." entries.
 
 ### Changed
 - Curated interrupt alert sounds from 23 down to 14, focused on alert utility. Added: Night Elf Bell, Raid Emote, Algalon Black Hole, Worgen Transform, Loatheb Aggro, Horseman Laugh. Removed novelty/ambient sounds (Rubber Ducky, Cartoon FX, etc.). Users with removed sounds are migrated to "None".
@@ -298,14 +340,14 @@
 ## [4.16.0] - 2026-03-17
 
 ### Changed
-- **Aura-based burst windows** — Burst injection now activates when the trigger spell's self-buff aura is active on the player (e.g., the full 20s of Avenging Wrath), not just while Blizzard recommends the CD at position 1. Window ends when the aura expires or all injection spells are on cooldown. Trigger spell at position 1 now shows burst glow as a "press to start burst" signal without injecting.
-- **Timer fallback for non-aura triggers** — Triggers that don't create a player self-buff (pet summons, target debuffs) fall back to a fixed-duration burst window based on per-spec defaults.
+- **Aura-based burst windows** - Burst injection now activates when the trigger spell's self-buff aura is active on the player (e.g., the full 20s of Avenging Wrath), not just while Blizzard recommends the CD at position 1. Window ends when the aura expires or all injection spells are on cooldown. Trigger spell at position 1 now shows burst glow as a "press to start burst" signal without injecting.
+- **Timer fallback for non-aura triggers** - Triggers that don't create a player self-buff (pet summons, target debuffs) fall back to a fixed-duration burst window based on per-spec defaults.
 - Removed obsolete Burst Trigger Threshold slider from options (replaced by aura-based detection).
-- Cleaned up Burst Injection panel labels — removed verbose/outdated text, removed redundant headers, class defaults now always visible.
+- Cleaned up Burst Injection panel labels - removed verbose/outdated text, removed redundant headers, class defaults now always visible.
 
 ### Added
 - `/jac burst` now shows aura-based burst window status (active/inactive).
-- Fallback Window Duration slider — controls burst window length when the trigger doesn't create a self-buff.
+- Fallback Window Duration slider - controls burst window length when the trigger doesn't create a self-buff.
 
 ## [4.15.1] - 2026-03-17
 
@@ -318,18 +360,18 @@
 ## [4.15.0] - 2026-03-17
 
 ### Added
-- **Burst Injection Engine** — Detects burst windows and injects off-cooldown burst abilities at position 1 with purple glow. Curated per-spec trigger defaults with dynamic cooldown tracking.
-- **Per-item defensive settings** — Items can be linked to a buff aura and/or hidden during combat. "Hide in Combat" defaults to on when linking an aura.
-- **Off-bar spell display** — Cooldown swipes, charge counts, and usability checks now work for spells not on action bars via assisted combat slot fallback.
-- **CC/interrupt spell completeness (SpellDB v9)** — Added Strangulate, Typhoon, Bursting Shot, Polymorph variants to CC lists; Strangulate as DK interrupt fallback.
+- **Burst Injection Engine** - Detects burst windows and injects off-cooldown burst abilities at position 1 with purple glow. Curated per-spec trigger defaults with dynamic cooldown tracking.
+- **Per-item defensive settings** - Items can be linked to a buff aura and/or hidden during combat. "Hide in Combat" defaults to on when linking an aura.
+- **Off-bar spell display** - Cooldown swipes, charge counts, and usability checks now work for spells not on action bars via assisted combat slot fallback.
+- **CC/interrupt spell completeness (SpellDB v9)** - Added Strangulate, Typhoon, Bursting Shot, Polymorph variants to CC lists; Strangulate as DK interrupt fallback.
 
 ### Changed
-- **Cooldown display consolidation** — Single-pass slot resolution, single charge query, unified charge text. Removed redundant API calls and duplicated fallback branches.
-- **Improved CDR detection** — Local cooldown timers detect early CD completion via action bar usability cross-checks and `ACTION_USABLE_CHANGED` flip detection. Fixes 5-30s drift after CDR procs.
+- **Cooldown display consolidation** - Single-pass slot resolution, single charge query, unified charge text. Removed redundant API calls and duplicated fallback branches.
+- **Improved CDR detection** - Local cooldown timers detect early CD completion via action bar usability cross-checks and `ACTION_USABLE_CHANGED` flip detection. Fixes 5-30s drift after CDR procs.
 
 ### Fixed
-- Fixed burst injection showing on-cooldown spells — cooldown tracking registrations for burst/gapcloser/interrupt categories no longer wiped on target switch; pre-existing CDs seeded at login/spec-change
-- Fixed unselected choice-node talents (e.g. Incarnation vs Convoke) passing spell availability checks — `IsSpellAvailable` now checks `IsSpellKnown`/`IsPlayerSpell` before the spellbook API, which incorrectly returns true for all options in a talent choice row
+- Fixed burst injection showing on-cooldown spells - cooldown tracking registrations for burst/gapcloser/interrupt categories no longer wiped on target switch; pre-existing CDs seeded at login/spec-change
+- Fixed unselected choice-node talents (e.g. Incarnation vs Convoke) passing spell availability checks - `IsSpellAvailable` now checks `IsSpellKnown`/`IsPlayerSpell` before the spellbook API, which incorrectly returns true for all options in a talent choice row
 - Fixed interrupt icon showing kick on cooldown instead of falling back to CC spells
 - Fixed "Require Hostile Target" hiding queue when target is out of range
 - Fixed rotation cache not invalidating on target change
@@ -338,20 +380,20 @@
 
 ### Changed
 - Range tint: out-of-range now shows red hotkey text + slight icon desaturation when hotkey text is visible; full icon red tint reserved for spells with no keybind
-- Burst injection: removed time-based window — injection now only occurs while the trigger spell is in position 1; window duration slider removed from options
+- Burst injection: removed time-based window - injection now only occurs while the trigger spell is in position 1; window duration slider removed from options
 - Options: moved Queue Visibility and Hide When Mounted above the tabs in Standard Queue and Nameplate Overlay sections
 - Options: consistent spec indicators on spell list headers (class-colored) across Blacklist, Gap-Closers, and Burst Injection tabs; fixed unlocalized "Gap-Closers" string
-- Cooldown tracking: unified `RegisterSpellForTracking(spellID, category)` API replaces `RegisterDefensiveSpell`/`RegisterRotationSpell` — explicit categories (`"defensive"`, `"rotation"`, `"burst"`, `"gapcloser"`, `"interrupt"`) determine behavior; only `"rotation"` has the 3s CD gate; duration always cached regardless of category; old APIs kept as legacy wrappers
+- Cooldown tracking: unified `RegisterSpellForTracking(spellID, category)` API replaces `RegisterDefensiveSpell`/`RegisterRotationSpell` - explicit categories (`"defensive"`, `"rotation"`, `"burst"`, `"gapcloser"`, `"interrupt"`) determine behavior; only `"rotation"` has the 3s CD gate; duration always cached regardless of category; old APIs kept as legacy wrappers
 
 ### Fixed
-- SpellDB: Guardian Druid burst injection default was Strength of the Wild (236716, PvP ability) instead of Berserk/Incarnation/Convoke — replaced with {50334, 102558, 391528}
+- SpellDB: Guardian Druid burst injection default was Strength of the Wild (236716, PvP ability) instead of Berserk/Incarnation/Convoke - replaced with {50334, 102558, 391528}
 - SpellDB: Guardian Druid defensive list referenced removed spell 106922 (Might of Ursoc) instead of Rage of the Sleeper (200851)
-- Burst injection: secret values from `GetSpellBaseCooldown` in combat caused threshold comparisons to always pass — now detected and rejected, with base cooldowns pre-cached out of combat
-- Burst injection: injection spells now registered for local CD tracking at initialization (OOC) — previously only registered in combat where `RegisterRotationSpell` silently failed
-- Cooldown detection: removed CDR cross-check in `IsSpellReady` that cleared local CD timers when `IsUsableAction` returned `true` — `IsUsableAction` returns true even on cooldown, causing local timers to be immediately cleared on every query
-- Cooldown detection: removed deceptive `actionUsable == true → return true` fallback from `IsSpellReady` — `IsUsableAction` returns true even on cooldown, so this was indistinguishable from the fail-open default
-- Burst injection: Options panel showed empty spell lists when opened via grab tab — `OpenOptionsPanel()` was missing `UpdateBurstInjectionOptions`
-- Cooldown detection: SpellQueue and DefensiveEngine now use `IsSpellReady()` — gains `isOnGCD` early-return, CDR cross-check, charge spell handling, and action bar usability fallback
+- Burst injection: secret values from `GetSpellBaseCooldown` in combat caused threshold comparisons to always pass - now detected and rejected, with base cooldowns pre-cached out of combat
+- Burst injection: injection spells now registered for local CD tracking at initialization (OOC) - previously only registered in combat where `RegisterRotationSpell` silently failed
+- Cooldown detection: removed CDR cross-check in `IsSpellReady` that cleared local CD timers when `IsUsableAction` returned `true` - `IsUsableAction` returns true even on cooldown, causing local timers to be immediately cleared on every query
+- Cooldown detection: removed deceptive `actionUsable == true → return true` fallback from `IsSpellReady` - `IsUsableAction` returns true even on cooldown, so this was indistinguishable from the fail-open default
+- Burst injection: Options panel showed empty spell lists when opened via grab tab - `OpenOptionsPanel()` was missing `UpdateBurstInjectionOptions`
+- Cooldown detection: SpellQueue and DefensiveEngine now use `IsSpellReady()` - gains `isOnGCD` early-return, CDR cross-check, charge spell handling, and action bar usability fallback
 
 ## [4.14.0] - 2026-03-15
 
@@ -367,7 +409,7 @@
 - Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
 
 ### Known Issues
-- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones — kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
+- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones - kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
 
 ## [4.13.1] - 2026-03-15
 
@@ -376,20 +418,20 @@
 - Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
 
 ### Known Issues
-- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones — kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
+- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones - kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
 
 ## [4.13.0] - 2026-03-15
 
 ### Fixed
-- Interrupt detection now works correctly with all nameplate addons (Platynator, Plater, ElvUI, etc.) — no longer depends on visible cast bar frames to determine interruptibility
+- Interrupt detection now works correctly with all nameplate addons (Platynator, Plater, ElvUI, etc.) - no longer depends on visible cast bar frames to determine interruptibility
 - Fixed non-interruptible casts being treated as interruptible when switching targets mid-cast with third-party nameplate addons installed
 - Secret `notInterruptible` values (12.0 combat) resolved through `SetAlphaFromBoolean` opaque pipeline instead of `SetShown` (which rejects secrets from addon code); falls back to existing cast bar cascade when probe fails
-- **Fixed interrupt cooldown detection for unflagged spells (Kick, Pummel, etc.)** — `isOnGCD` stays `nil` for most interrupt spells even when on cooldown, so the old `isOnGCD == false` check never detected them as on-CD. Now delegates to `BlizzardAPI.IsSpellReady()` (local cooldown tracking via `UNIT_SPELLCAST_SUCCEEDED`). Interrupt spells are registered for local CD tracking at resolve time. This fixes Kick Priority mode not suggesting CC as fallback when the kick is on cooldown.
-- **Fixed gap-closer cooldown detection** — Gap-closer spells (Charge, Shadowstep, Fel Rush, etc.) now registered for local cooldown tracking so `IsSpellReady()` can detect their CD state in combat when `isOnGCD` is `nil`.
-- **Fixed local CD tracker ignoring cooldown reduction effects** — When passive CDR (Blade of Justice → Wake of Ashes, Anger Management, etc.) shortened a real cooldown below the local timer estimate, `IsSpellReady()` returned false too long because the local timer blocked the action bar usability fallback. Now cross-checks: if the local timer says "on CD" but the action bar shows usable, clears the stale timer and returns ready.
+- **Fixed interrupt cooldown detection for unflagged spells (Kick, Pummel, etc.)** - `isOnGCD` stays `nil` for most interrupt spells even when on cooldown, so the old `isOnGCD == false` check never detected them as on-CD. Now delegates to `BlizzardAPI.IsSpellReady()` (local cooldown tracking via `UNIT_SPELLCAST_SUCCEEDED`). Interrupt spells are registered for local CD tracking at resolve time. This fixes Kick Priority mode not suggesting CC as fallback when the kick is on cooldown.
+- **Fixed gap-closer cooldown detection** - Gap-closer spells (Charge, Shadowstep, Fel Rush, etc.) now registered for local cooldown tracking so `IsSpellReady()` can detect their CD state in combat when `isOnGCD` is `nil`.
+- **Fixed local CD tracker ignoring cooldown reduction effects** - When passive CDR (Blade of Justice → Wake of Ashes, Anger Management, etc.) shortened a real cooldown below the local timer estimate, `IsSpellReady()` returned false too long because the local timer blocked the action bar usability fallback. Now cross-checks: if the local timer says "on CD" but the action bar shows usable, clears the stale timer and returns ready.
 
 ### Changed
-- **Interrupt mode rework** — Renamed `Kick + CC` → `Kick Priority` (new default) and `Prefer CC` → `CC Priority` (now includes disclaimer about wasting CC cooldowns). `Kick Priority` kicks interruptible casts first, falls back to CC when kick is on cooldown, and uses CC on shielded (non-interruptible) casts. Previous `ccShielded` saved data automatically migrated.
+- **Interrupt mode rework** - Renamed `Kick + CC` → `Kick Priority` (new default) and `Prefer CC` → `CC Priority` (now includes disclaimer about wasting CC cooldowns). `Kick Priority` kicks interruptible casts first, falls back to CC when kick is on cooldown, and uses CC on shielded (non-interruptible) casts. Previous `ccShielded` saved data automatically migrated.
 - Cache `profile.textOverlays` once per render cycle in UIRenderer instead of re-reading 5-8 times per frame
 
 ## [4.12.0] - 2026-03-15
@@ -410,14 +452,14 @@
 ## [4.11.0] - 2026-03-14
 
 ### Added
-- **ACTION_USABLE_CHANGED event integration** — Event-driven slot usability cache in BlizzardAPI, populated by the batched `ACTION_USABLE_CHANGED` event (NeverSecret per-slot `usable`/`noMana` bools). `GetActionBarUsability()` now checks the event cache before falling back to the live `C_ActionBar.IsUsableAction()` API. Macro modifier effects are handled correctly: the C engine re-fires the event when a modifier key changes the effective spell on a slot, keeping the cache in sync. Cache is invalidated on slot content changes (`ACTIONBAR_SLOT_CHANGED`, page changes, vehicle/possess/override transitions).
+- **ACTION_USABLE_CHANGED event integration** - Event-driven slot usability cache in BlizzardAPI, populated by the batched `ACTION_USABLE_CHANGED` event (NeverSecret per-slot `usable`/`noMana` bools). `GetActionBarUsability()` now checks the event cache before falling back to the live `C_ActionBar.IsUsableAction()` API. Macro modifier effects are handled correctly: the C engine re-fires the event when a modifier key changes the effective spell on a slot, keeping the cache in sync. Cache is invalidated on slot content changes (`ACTIONBAR_SLOT_CHANGED`, page changes, vehicle/possess/override transitions).
 
 ### Fixed
 - Charge counts no longer disappear from queue icons when the related ability is hidden from the action bar (e.g. by a modifier-conditional macro). Charge text now uses `C_Spell.GetSpellCharges` directly (validated against secret values) for accuracy, falling back to the slot-based `GetActionDisplayCount` in combat.
 - Local cooldown duration cache now re-scans on `PLAYER_ENTERING_WORLD` and after talent/specialization changes, in addition to combat exit. This prevents first-combat edge cases where un-talented base cooldowns were used for spells whose durations are modified by talents.
 
 ### Changed
-- Click-Through mode: grab tabs are now fully hidden, eliminating all dead zones. Hold Alt for 0.4 s to enter icon-drag mode — any queue or defensive icon becomes a drag handle. Brief Alt presses (modifier macros) are ignored by the hold threshold. Releasing Alt or finishing a drag exits icon-drag mode and restores full click-through.
+- Click-Through mode: grab tabs are now fully hidden, eliminating all dead zones. Hold Alt for 0.4 s to enter icon-drag mode - any queue or defensive icon becomes a drag handle. Brief Alt presses (modifier macros) are ignored by the hold threshold. Releasing Alt or finishing a drag exits icon-drag mode and restores full click-through.
 
 ## [4.10.3] - 2026-03-13
 
@@ -443,7 +485,7 @@
 ## [4.10.0] - 2026-03-11
 
 ### Added
-- **Independent defensive frame** — defensives can now be detached from the main queue into their own draggable frame anchored to UIParent
+- **Independent defensive frame** - defensives can now be detached from the main queue into their own draggable frame anchored to UIParent
   - Toggle in General options: "Independent Positioning"
   - Configurable growth direction (Left / Right / Up / Down) via "Detached Orientation" selector
   - Drag handle (grab tab) appears at the trailing edge of the icon cluster; right-click opens options
@@ -451,9 +493,9 @@
   - Detached frame stays visible regardless of Display Mode setting; fades in/out as icons appear and disappear
 
 ### Fixed
-- Interrupt reminder now correctly suppresses CC suggestions in "Kick Only" mode — previously a CC spell could appear as a fallback when the kick was on cooldown
-- CC spells in the interrupt reminder now use fail-closed usability checks — previously a CC on cooldown could appear usable in 12.0 combat due to secret value fail-open behaviour
-- Defensive icons no longer flash during rebuilds — first-show now skips the fade-in animation
+- Interrupt reminder now correctly suppresses CC suggestions in "Kick Only" mode - previously a CC spell could appear as a fallback when the kick was on cooldown
+- CC spells in the interrupt reminder now use fail-closed usability checks - previously a CC on cooldown could appear usable in 12.0 combat due to secret value fail-open behaviour
+- Defensive icons no longer flash during rebuilds - first-show now skips the fade-in animation
 - Detached defensive frame and its grab tab now receive mouse input correctly (were not registering clicks)
 
 ### Improved
@@ -472,7 +514,7 @@
 
 ### Improved
 - Cooldown sweeps, charge rings, and usability tinting now use Blizzard's native action bar pipeline for more accurate display
-- Items in the defensive queue (potions, healthstones, etc.) now fully integrate with the same icon rendering as spells — cooldowns, hotkeys, tooltips, and proc glows all work consistently
+- Items in the defensive queue (potions, healthstones, etc.) now fully integrate with the same icon rendering as spells - cooldowns, hotkeys, tooltips, and proc glows all work consistently
 - Internal code consolidation across several modules for better performance and maintainability
 
 ### Fixed
@@ -491,17 +533,17 @@
 - Hotkey Overrides search now includes items from equipped gear, action bars, and bags (was spells-only)
 
 ### Fixed
-- Fixed cooldown sweep stuck at 12 o'clock when spell comes off cooldown in combat — `GetSpellCooldownDuration()` returns nil (no active CD) but the legacy `SetCooldown` fallback receives blanket-secreted zeros that addon code cannot evaluate; now handles nil DurationObject explicitly by clearing the sweep
+- Fixed cooldown sweep stuck at 12 o'clock when spell comes off cooldown in combat - `GetSpellCooldownDuration()` returns nil (no active CD) but the legacy `SetCooldown` fallback receives blanket-secreted zeros that addon code cannot evaluate; now handles nil DurationObject explicitly by clearing the sweep
 - Same nil-DurationObject fix applied to charge cooldown ring (`GetActionChargeDuration` returning nil)
 - Legacy `SetCooldown` path now uses NeverSecret `IsSpellReady()` fallback chain when startTime/duration are secret, instead of assuming the cooldown is active
-- Fixed resource darkening (blue/purple tint) on standard queue icons only showing for one frame — vertex color now managed entirely by the visual state machine
-- Fixed defensive priority list add/remove/reorder not updating the queue until reload — `updateFunc` now calls `ForceUpdateAll()`
-- Fixed gap-closer list add/remove/reorder not updating until next combat event — `updateFunc` now calls `ForceUpdate()` after invalidating engine cache
-- Fixed items on cooldown in defensive queue being dropped entirely instead of shown greyed out — `CheckDefensiveItemState` now returns all 3 values and on-CD items route to `unusableBuffer`
-- Fixed defensive item icons showing blank/duplicate — `C_Item.GetItemInfo` was treated as returning a table; now uses proper tuple unpacking + `C_Item.GetItemIconByID`
-- Fixed item hotkey text showing raw binding (e.g. "3") instead of formatted key (e.g. "+3") — new `GetItemHotkey()` in ActionBarScanner uses proper `GetOptimizedKeybind` + `AbbreviateKeybind` pipeline with macro modifier support
-- Fixed item hotkey lookup using wrong binding names for multi-bar slots (`ACTIONBUTTON73` doesn't exist) — now uses cached slot mapping
-- Fixed defensive item icon tooltip showing hotkey from wrong pipeline (spell-based `GetSpellHotkey` on cast spell ID) — now uses `GetItemHotkey` with override detection
+- Fixed resource darkening (blue/purple tint) on standard queue icons only showing for one frame - vertex color now managed entirely by the visual state machine
+- Fixed defensive priority list add/remove/reorder not updating the queue until reload - `updateFunc` now calls `ForceUpdateAll()`
+- Fixed gap-closer list add/remove/reorder not updating until next combat event - `updateFunc` now calls `ForceUpdate()` after invalidating engine cache
+- Fixed items on cooldown in defensive queue being dropped entirely instead of shown greyed out - `CheckDefensiveItemState` now returns all 3 values and on-CD items route to `unusableBuffer`
+- Fixed defensive item icons showing blank/duplicate - `C_Item.GetItemInfo` was treated as returning a table; now uses proper tuple unpacking + `C_Item.GetItemIconByID`
+- Fixed item hotkey text showing raw binding (e.g. "3") instead of formatted key (e.g. "+3") - new `GetItemHotkey()` in ActionBarScanner uses proper `GetOptimizedKeybind` + `AbbreviateKeybind` pipeline with macro modifier support
+- Fixed item hotkey lookup using wrong binding names for multi-bar slots (`ACTIONBUTTON73` doesn't exist) - now uses cached slot mapping
+- Fixed defensive item icon tooltip showing hotkey from wrong pipeline (spell-based `GetSpellHotkey` on cast spell ID) - now uses `GetItemHotkey` with override detection
 
 ### Changed
 - "Charge Count" label renamed to "Count (Charges / Qty)" to reflect dual purpose
@@ -515,16 +557,16 @@
 ## [4.8.7] - 2026-03-09
 
 ### Fixed
-- Gap-closer (e.g. Shadowstep) now recommended consistently at all distances outside melee range — removed `pos1InRange` gate in SpellQueue that incorrectly suppressed gap-closer injection when Blizzard's primary recommendation was a ranged filler (Shuriken Toss, etc.) castable at range
-- Overlay queue: gap-closer glow now respects the glow mode setting — was bypassing `glowMode` entirely and could show the gold crawl even with glows disabled
+- Gap-closer (e.g. Shadowstep) now recommended consistently at all distances outside melee range - removed `pos1InRange` gate in SpellQueue that incorrectly suppressed gap-closer injection when Blizzard's primary recommendation was a ranged filler (Shuriken Toss, etc.) castable at range
+- Overlay queue: gap-closer glow now respects the glow mode setting - was bypassing `glowMode` entirely and could show the gold crawl even with glows disabled
 - Overlay queue: gap-closer glow now takes priority over proc glow, matching standard queue behaviour
 - Overlay queue: spell displaced from position 1 to position 2 by a gap-closer injection now shows the blue assisted glow (standard queue already did this)
-- Overlay queue: queue icon desaturation slider now applies immediately when changed — was only re-applying on visual-state transitions, not on slider moves
+- Overlay queue: queue icon desaturation slider now applies immediately when changed - was only re-applying on visual-state transitions, not on slider moves
 
 ## [4.8.6] - 2026-03-09
 
 ### Fixed
-- RedundancyFilter, FormCache, UIRenderer, SpellQuery: Replace all hardcoded English spell/aura name matches with locale-safe equivalents — addon now works correctly on non-English clients
+- RedundancyFilter, FormCache, UIRenderer, SpellQuery: Replace all hardcoded English spell/aura name matches with locale-safe equivalents - addon now works correctly on non-English clients
   - `IsPetReviveSpell`: name pattern → spell ID lookup (`{982, 55709}`)
   - `IsStealthSpell`: name pattern → spell ID lookup (`{1784, 1856, 5215, 58984}`); Vanish added
   - `IsPetSummonSpell`: removed; call sites use `IsPetSpell(spellID)` table lookup
@@ -538,17 +580,17 @@
   - `ScanSpellbookForFormSpells`: name pattern pre-filter removed; detection uses only `GetShapeshiftFormInfo`
   - `DetermineSpellFormTarget`: cancel-form name patterns removed; unmapped spells return nil and fail-open
   - "Waiting for resource" overlay: `name:find("^Waiting for")` → `spellInfo.iconID == 134377` (file IDs are locale-invariant)
-- UIRenderer: "Waiting for resource" overlay label localised — displays `WAIT/WART/ATT./ESPE/AGRD/ЖДЁМ/대기/等待/ASPT` per client locale instead of hardcoded English `WAIT`
+- UIRenderer: "Waiting for resource" overlay label localised - displays `WAIT/WART/ATT./ESPE/AGRD/ЖДЁМ/대기/等待/ASPT` per client locale instead of hardcoded English `WAIT`
 
 ### Performance
-- FormCache: `ScanSpellbookForFormSpells` reduced from O(numSpells × numForms) to O(numForms + numSpells) — build form-set once, then do O(1) membership checks per spellbook entry
+- FormCache: `ScanSpellbookForFormSpells` reduced from O(numSpells × numForms) to O(numForms + numSpells) - build form-set once, then do O(1) membership checks per spellbook entry
 - FormCache: `GetFormIDBySpellID` now stores a negative cache sentinel for non-form spells, short-circuiting the full fallback chain on repeated calls
 
 ## [4.8.5] - 2026-03-08
 
 ### Fixed
 - RedundancyFilter: Poisons with <10 min remaining were still being filtered out of combat (FALLBACK 2 by-name check bypassed the expiry threshold)
-- RedundancyFilter: Maintenance buffs (poisons, imbues, raid buffs, rites) now always filtered in combat — DPS takes priority
+- RedundancyFilter: Maintenance buffs (poisons, imbues, raid buffs, rites) now always filtered in combat - DPS takes priority
 
 ### Performance
 - RedundancyFilter: Skip full aura scan in combat using `C_Secrets.ShouldAurasBeSecret()` pre-check (avoids 40 pcall iterations when all fields are known secret)
@@ -558,34 +600,34 @@
 ## [4.8.4] - 2026-03-08
 
 ### Fixed
-- Charge-based abilities no longer show a stationary yellow cooldown sweep — `SetCooldown` with `duration==0` or an already-expired cooldown (stale `startTime+duration` from the last GCD/recharge) parks the sweep at 12 o'clock; both cases now call `Clear()` instead
+- Charge-based abilities no longer show a stationary yellow cooldown sweep - `SetCooldown` with `duration==0` or an already-expired cooldown (stale `startTime+duration` from the last GCD/recharge) parks the sweep at 12 o'clock; both cases now call `Clear()` instead
 - Same expiry check applied to the charge-recharge ring (`chargeCooldown` widget)
 - Both fixes guard against 12.0 secret values: opaque `startTime`/`duration` are passed through to `SetCooldown` (which handles them internally) rather than being compared
-- Fixed cooldown sweep (yellow) getting stuck at 12 o'clock when spell comes off cooldown out of combat — now uses `dur:IsZero()` to detect finished cooldowns and calls `Clear()` instead of `SetCooldownFromDurationObject` with a zero-duration object (applies to both main and charge cooldown paths)
-- Fixed `IsZero()` crash in combat — `IsZero()` is secret in combat; gate with `HasSecretValues()` (NeverSecret) to only call `IsZero()` when duration object has no secrets
-- Fixed cooldown sweeps bleeding onto wrong icons during queue re-ordering (e.g. combat exit) — proactively `Clear()` stale cooldown widget when the spell identity on a button changes
-- Fixed nameplate overlay showing yellow gap-closer crawl instead of blue assisted crawl when Blizzard recommends a gap-closer spell at position 1 — overlay now matches standard queue behavior (only synthetically injected spells get gap-closer glow)
-- Fixed gap-closer priority not iterating to lower-tier spells when a higher-tier gap closer is out of range — all gap-closer candidates now validate range so out-of-range spells fall through (e.g. Shadowstep out of 25yd range → Sprint)
-- Fixed gap-closer spells in macros (e.g. Sprint in `/use [mod]Item;Sprint`) never being suggested — simplified TryGapCloserCandidate to known + cooldown + range only; removed action-bar-slot gate and fail-closed usability check that rejected valid spells (especially in combat with secret values)
-- Fixed gap-closer injection overriding Blizzard's #1 recommendation when the primary spell is already in range (e.g. AoE abilities with no range check) — now checks IsActionInRange on the primary spell's slot before injecting
+- Fixed cooldown sweep (yellow) getting stuck at 12 o'clock when spell comes off cooldown out of combat - now uses `dur:IsZero()` to detect finished cooldowns and calls `Clear()` instead of `SetCooldownFromDurationObject` with a zero-duration object (applies to both main and charge cooldown paths)
+- Fixed `IsZero()` crash in combat - `IsZero()` is secret in combat; gate with `HasSecretValues()` (NeverSecret) to only call `IsZero()` when duration object has no secrets
+- Fixed cooldown sweeps bleeding onto wrong icons during queue re-ordering (e.g. combat exit) - proactively `Clear()` stale cooldown widget when the spell identity on a button changes
+- Fixed nameplate overlay showing yellow gap-closer crawl instead of blue assisted crawl when Blizzard recommends a gap-closer spell at position 1 - overlay now matches standard queue behavior (only synthetically injected spells get gap-closer glow)
+- Fixed gap-closer priority not iterating to lower-tier spells when a higher-tier gap closer is out of range - all gap-closer candidates now validate range so out-of-range spells fall through (e.g. Shadowstep out of 25yd range → Sprint)
+- Fixed gap-closer spells in macros (e.g. Sprint in `/use [mod]Item;Sprint`) never being suggested - simplified TryGapCloserCandidate to known + cooldown + range only; removed action-bar-slot gate and fail-closed usability check that rejected valid spells (especially in combat with secret values)
+- Fixed gap-closer injection overriding Blizzard's #1 recommendation when the primary spell is already in range (e.g. AoE abilities with no range check) - now checks IsActionInRange on the primary spell's slot before injecting
 
 ## [4.8.3] - 2026-03-08
 
 ### Added
-- Live-search popup (persistent floating frame) for all spell/item selection panels — replaces the broken AceConfig `input+select` pattern that lost EditBox focus on every keystroke
+- Live-search popup (persistent floating frame) for all spell/item selection panels - replaces the broken AceConfig `input+select` pattern that lost EditBox focus on every keystroke
 - Items (trinkets, on-use gear, bag items) now searchable in the Offensive blacklist, consistent with defensive spell lists
 - Spellbook cache invalidated automatically on specialization change and `SPELLS_CHANGED`
 
 ### Changed
-- Spellbook cache pre-computes `nameLower` and `idStr` at build time — eliminates per-keystroke string allocations during search
+- Spellbook cache pre-computes `nameLower` and `idStr` at build time - eliminates per-keystroke string allocations during search
 - Search popup uses `TOOLTIP` frame strata to always render above the WoW Settings panel
-- Shared spell-search logic extracted into a private helper — `GetFilteredResults` and `GetFilteredSpellbookSpells` no longer duplicate the scan loop
+- Shared spell-search logic extracted into a private helper - `GetFilteredResults` and `GetFilteredSpellbookSpells` no longer duplicate the scan loop
 - Removed dead options code: `filterState` table, unused `previewState` entries, `LookupSpellByName`, `CreateAddSpellInput`, orphaned `AceConfigRegistry` reference in SpellSearch
 
 ## [4.8.2] - 2026-03-07
 
 ### Added
-- Sound Test button next to the Interrupt Alert sound dropdown — preview the selected sound without leaving the options panel
+- Sound Test button next to the Interrupt Alert sound dropdown - preview the selected sound without leaving the options panel
 
 ## [4.8.1] - 2026-03-07
 
@@ -633,93 +675,93 @@
 ## [4.7.4] - 2026-03-07
 
 ### Added
-- **Grey Out While Casting** option (General tab, on by default) — queue icons desaturate during hardcasts. The spell being cast stays full color. Applies to both standard queue and nameplate overlay.
-- **Grey Out While Channeling** option (General tab, on by default) — the previously hardcoded channeling grey-out is now toggleable. The channeled spell stays full color with a fill animation.
+- **Grey Out While Casting** option (General tab, on by default) - queue icons desaturate during hardcasts. The spell being cast stays full color. Applies to both standard queue and nameplate overlay.
+- **Grey Out While Channeling** option (General tab, on by default) - the previously hardcoded channeling grey-out is now toggleable. The channeled spell stays full color with a fill animation.
 
 ### Changed
-- Early ungrey threshold reduced from 200ms to 100ms — icons regain color closer to the end of a cast/channel for tighter timing.
+- Early ungrey threshold reduced from 200ms to 100ms - icons regain color closer to the end of a cast/channel for tighter timing.
 
 ## [4.7.3] - 2026-03-07
 
 ### Fixed
 - Interrupt reminder now works correctly when third-party nameplate/target frame addons (Platynator, etc.) hide or replace the Blizzard cast bar. Previously, non-interruptible casts could incorrectly show the interrupt icon because the interruptibility check depended on visually inspecting the Blizzard cast bar's shield widget. The event tracker now reads `notInterruptible` directly from the API at cast start, making it self-sufficient.
 - Cast aura icon on interrupt reminder now falls back to UnitCastingInfo/UnitChannelInfo when the Blizzard cast bar is hidden by third-party addons (both standard queue and overlay).
-- Overlay interrupt icon in horizontal mode no longer overlaps the nameplate — now pops out above the first DPS icon instead of inline.
+- Overlay interrupt icon in horizontal mode no longer overlaps the nameplate - now pops out above the first DPS icon instead of inline.
 - Overlay defensive queue now rebuilds on periodic checks (every 0.5s) instead of only updating cooldown swipes. Icons for "always" and "combatOnly" display modes now appear promptly when cooldowns expire.
 - Overlay defensive queue now includes pet rez/summon and pet heal spells (parity with main panel).
 - Overlay hotkey caches now invalidate on binding changes (parity with main panel).
 - Overlay defensive icons in "always" mode now appear and disappear instantly (no fade animation), matching DPS icon behavior. State-driven modes ("combatOnly", "healthBased") retain the fade-in/out for smooth transitions.
-- Overlay health bar no longer re-anchors every tick — only repositions when the visible defensive icon count changes, eliminating visual flicker in vertical orientations.
-- Overlay health bar in vertical expansion modes no longer starts at the wrong position (above icons) and jumps to the correct side position — it now always appears at the correct expansion-aware position immediately.
-- Overlay health bar now shows immediately with correct health values when a nameplate appears — no longer requires a subsequent update tick to fill in.
+- Overlay health bar no longer re-anchors every tick - only repositions when the visible defensive icon count changes, eliminating visual flicker in vertical orientations.
+- Overlay health bar in vertical expansion modes no longer starts at the wrong position (above icons) and jumps to the correct side position - it now always appears at the correct expansion-aware position immediately.
+- Overlay health bar now shows immediately with correct health values when a nameplate appears - no longer requires a subsequent update tick to fill in.
 - Overlay defensive icons in "always" mode no longer appear ~500ms later than DPS icons when targeting a mob out of combat for the first time.
-- Overlay defensive icons no longer lag behind DPS icons by 1+ frames — defensive overlay now refreshes on the same update tick as the offensive overlay.
+- Overlay defensive icons no longer lag behind DPS icons by 1+ frames - defensive overlay now refreshes on the same update tick as the offensive overlay.
 
 ### Added
 - Nameplate Overlay **Offensive Display** tab now includes a **Queue Visibility** dropdown ("Always", "In Combat Only", "Require Hostile Target") and a **Hide When Mounted** toggle. These settings are independent from the Standard Queue visibility options.
 
 ### Changed
 - Unified update cycle architecture: all rendering now flows through a single OnUpdate loop. `ForceUpdate()`/`ForceUpdateAll()` set dirty flags instead of rendering synchronously, eliminating redundant mid-event renders.
-- Removed redundant dual-path rendering in `OnProcGlowChange`, `OnTargetChanged`, `OnSpellcastSucceeded`, and `OnCooldownUpdate` — each now uses a single `ForceUpdateAll()` call.
+- Removed redundant dual-path rendering in `OnProcGlowChange`, `OnTargetChanged`, `OnSpellcastSucceeded`, and `OnCooldownUpdate` - each now uses a single `ForceUpdateAll()` call.
 - SpellQueue internal throttle aligned with main loop minimums (combat: 0.03s, OOC: 0.05s) so it never bottlenecks CVar-driven update rates.
 - CVar `assistedCombatIconUpdateRate` changes now take effect immediately (invalidate cached rate on CVAR_UPDATE).
 
 ## [4.7.2] - 2026-03-06
 
 ### Fixed
-- **Defensive queue hidden on first load after update** — Defensive icons were invisible until the user toggled the setting off/on. Two causes: (1) `SPELLS_CHANGED` didn't mark the defensive queue dirty, so even after spell APIs became available the defensive queue was never rebuilt; (2) the delayed 1-second `ForceUpdateAll` on `PLAYER_ENTERING_WORLD` reused stale spell availability cache entries (spells cached as unavailable during initial load when APIs weren't ready yet). Now `OnSpellsChanged` marks the defensive queue dirty, and the delayed timer clears the availability cache before rebuilding.
+- **Defensive queue hidden on first load after update** - Defensive icons were invisible until the user toggled the setting off/on. Two causes: (1) `SPELLS_CHANGED` didn't mark the defensive queue dirty, so even after spell APIs became available the defensive queue was never rebuilt; (2) the delayed 1-second `ForceUpdateAll` on `PLAYER_ENTERING_WORLD` reused stale spell availability cache entries (spells cached as unavailable during initial load when APIs weren't ready yet). Now `OnSpellsChanged` marks the defensive queue dirty, and the delayed timer clears the availability cache before rebuilding.
 
 ## [4.7.1] - 2026-03-05
 
 ### Fixed
-- **Channeling detection fixed for 12.0** — `PlayerChannelBarFrame` was removed in the Dragonflight UI rework; replaced with `PlayerCastingBarFrame.channeling` (plain Lua boolean on CastingBarMixin). Icons now properly grey out during channeling.
-- **Defensive icon visual parity with offensive queue** — Extracted `UIRenderer.UpdateDefensiveVisualState()` — a shared function handling channeling + usability states (channeling/no-resources/on-cooldown/normal). Called per-frame from both `RenderSpellQueue` and `UINameplateOverlay.Render`, giving defensives the same instant responsiveness as offensive queue icons. Previously defensives updated on a 0.5s timer, causing visible lag.
-- **Overlay queue icons show no-resource blue tint** — Nameplate overlay queue icons now show the blue tint for insufficient resources (matching the standard queue), in addition to channeling grey-out.
-- **Interrupt icon stays fully colored during channeling** — Interrupts are urgent actions the player may want to cancel a channel to use. Removed channeling desaturation from interrupt icons on both standard queue and overlay.
-- **Early ungrey 200ms before channel ends** — Icons ungrey ~200ms before a channel finishes, letting the player see their next ability before the GCD unlocks. Uses `PlayerCastingBarFrame.value` (NeverSecret countdown timer) with secret-value safety guard.
-- **Channeling fill animation on active spell** — When the player is channeling, the queue icon matching the channeled spell shows Blizzard's channel-fill animation (sliding atlas texture, same as action bar buttons) instead of desaturation. Identified via `UnitChannelInfo` spellID + `C_Spell.GetOverrideSpell` matching (resolves base→override spellID chain, e.g. Drain Life 689→234153). Works on both offensive and defensive queue icons. Other icons still grey out.
+- **Channeling detection fixed for 12.0** - `PlayerChannelBarFrame` was removed in the Dragonflight UI rework; replaced with `PlayerCastingBarFrame.channeling` (plain Lua boolean on CastingBarMixin). Icons now properly grey out during channeling.
+- **Defensive icon visual parity with offensive queue** - Extracted `UIRenderer.UpdateDefensiveVisualState()` - a shared function handling channeling + usability states (channeling/no-resources/on-cooldown/normal). Called per-frame from both `RenderSpellQueue` and `UINameplateOverlay.Render`, giving defensives the same instant responsiveness as offensive queue icons. Previously defensives updated on a 0.5s timer, causing visible lag.
+- **Overlay queue icons show no-resource blue tint** - Nameplate overlay queue icons now show the blue tint for insufficient resources (matching the standard queue), in addition to channeling grey-out.
+- **Interrupt icon stays fully colored during channeling** - Interrupts are urgent actions the player may want to cancel a channel to use. Removed channeling desaturation from interrupt icons on both standard queue and overlay.
+- **Early ungrey 200ms before channel ends** - Icons ungrey ~200ms before a channel finishes, letting the player see their next ability before the GCD unlocks. Uses `PlayerCastingBarFrame.value` (NeverSecret countdown timer) with secret-value safety guard.
+- **Channeling fill animation on active spell** - When the player is channeling, the queue icon matching the channeled spell shows Blizzard's channel-fill animation (sliding atlas texture, same as action bar buttons) instead of desaturation. Identified via `UnitChannelInfo` spellID + `C_Spell.GetOverrideSpell` matching (resolves base→override spellID chain, e.g. Drain Life 689→234153). Works on both offensive and defensive queue icons. Other icons still grey out.
 
 ## [4.7.0] - 2026-03-05
 
 ### Fixed
-- **Defensive defaults restore fixed** — "Restore Class Defaults" in the defensives panel did nothing and defensive spell lists were empty after profile reset. Root cause: Lua's `and` operator truncates multiple return values, so `return SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()` dropped the second return value (`playerClass`), making it always `nil`. Every function that needed `playerClass` (RestoreDefensiveDefaults, InitializeDefensiveSpells, MigrateDefensiveSpellsToClassSpells, GetClassSpellList) bailed out early. Fixed `DefensiveEngine.GetDefensiveSpecKey()` and `GapCloserEngine.ResolveMeleeReference()` to use `if/then/return` pattern that preserves both return values.
+- **Defensive defaults restore fixed** - "Restore Class Defaults" in the defensives panel did nothing and defensive spell lists were empty after profile reset. Root cause: Lua's `and` operator truncates multiple return values, so `return SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()` dropped the second return value (`playerClass`), making it always `nil`. Every function that needed `playerClass` (RestoreDefensiveDefaults, InitializeDefensiveSpells, MigrateDefensiveSpellsToClassSpells, GetClassSpellList) bailed out early. Fixed `DefensiveEngine.GetDefensiveSpecKey()` and `GapCloserEngine.ResolveMeleeReference()` to use `if/then/return` pattern that preserves both return values.
 
 ### Changed
-- **Gap-closer glow now on by default** — New profiles and "Reset Gap-Closer Settings" now enable the glow overlay on gap-closer icons, so users can immediately see when the addon recommends a movement ability.
+- **Gap-closer glow now on by default** - New profiles and "Reset Gap-Closer Settings" now enable the glow overlay on gap-closer icons, so users can immediately see when the addon recommends a movement ability.
 
 ### Code Cleanup & Consolidation
 
 #### Dead Code Removal
-- **Remove 7 dead `CLASS_*_DEFAULTS` assignments** — `CLASS_SELFHEAL_DEFAULTS` and `CLASS_COOLDOWN_DEFAULTS` tables were populated but never read after SpellDB took over spell list management. Removed assignments and stale header comment from `JustAC.lua`.
-- **Remove 3 unused BlizzardAPI functions** — `GetCharData()`, `GetSpellCooldownValues()`, and `IsSpellOnGCD()` in `SpellQuery.lua` had zero callers. Removed ~63 lines.
-- **Remove 2 dead addon wrappers** — `JustAC:IsSpellBlacklisted()` and `JustAC:GetBlacklistedSpells()` forwarded to SpellQueue but were never called. Removed from `JustAC.lua`.
-- **Remove `verboseDebugMode` dead flag** — `MacroParser.lua` and `ActionBarScanner.lua` each had a `local verboseDebugMode = false` that was never set to `true`. Removed the variables and all guarded debug-print blocks (~20 lines in ActionBarScanner).
-- **Remove unused `_interfaceVersion` local** — `SecretValues.lua` cached `BlizzardAPI._interfaceVersion` but never used it. Removed.
-- **Remove `PERSONAL_AURA_SPELLS` table** — `RedundancyFilter.lua` maintained a 12-entry spell ID table that was only consumed by the third return value of `IsAuraSpell()`. No caller used the third value. Removed the table and simplified `IsAuraSpell()` to return 2 values `(isAura, isUniqueAura)`.
-- **Remove unused `GetDebugMode` wrapper** — `FormCache.lua` defined a `GetDebugMode()` function that was never called. Removed.
-- **Remove redundant `defensiveIcon` (singular) checks** — `self.defensiveIcon` was a backward-compat alias for `self.defensiveIcons[1]` (set/cleared together in UIFrameFactory). Three uses in `JustAC.lua` were redundant with the plural array loop or already covered by `defHidden` logic. Removed.
+- **Remove 7 dead `CLASS_*_DEFAULTS` assignments** - `CLASS_SELFHEAL_DEFAULTS` and `CLASS_COOLDOWN_DEFAULTS` tables were populated but never read after SpellDB took over spell list management. Removed assignments and stale header comment from `JustAC.lua`.
+- **Remove 3 unused BlizzardAPI functions** - `GetCharData()`, `GetSpellCooldownValues()`, and `IsSpellOnGCD()` in `SpellQuery.lua` had zero callers. Removed ~63 lines.
+- **Remove 2 dead addon wrappers** - `JustAC:IsSpellBlacklisted()` and `JustAC:GetBlacklistedSpells()` forwarded to SpellQueue but were never called. Removed from `JustAC.lua`.
+- **Remove `verboseDebugMode` dead flag** - `MacroParser.lua` and `ActionBarScanner.lua` each had a `local verboseDebugMode = false` that was never set to `true`. Removed the variables and all guarded debug-print blocks (~20 lines in ActionBarScanner).
+- **Remove unused `_interfaceVersion` local** - `SecretValues.lua` cached `BlizzardAPI._interfaceVersion` but never used it. Removed.
+- **Remove `PERSONAL_AURA_SPELLS` table** - `RedundancyFilter.lua` maintained a 12-entry spell ID table that was only consumed by the third return value of `IsAuraSpell()`. No caller used the third value. Removed the table and simplified `IsAuraSpell()` to return 2 values `(isAura, isUniqueAura)`.
+- **Remove unused `GetDebugMode` wrapper** - `FormCache.lua` defined a `GetDebugMode()` function that was never called. Removed.
+- **Remove redundant `defensiveIcon` (singular) checks** - `self.defensiveIcon` was a backward-compat alias for `self.defensiveIcons[1]` (set/cleared together in UIFrameFactory). Three uses in `JustAC.lua` were redundant with the plural array loop or already covered by `defHidden` logic. Removed.
 
 #### Wrapper Consolidation
-- **Consolidate spec key computation** — `GapCloserEngine.GetGapCloserSpecKey()` and `DefensiveEngine.GetDefensiveSpecKey()` each reimplemented `UnitClass + GetSpecialization + concat`. Both now delegate to `SpellDB.GetSpecKey()`. Inline computations in `ResolveMeleeReference()` and `ResolveGapCloserSpells()` also replaced.
-- **Consolidate `GetCachedSpellInfo` access** — `SpellQueue.GetCachedSpellInfo()` and `RedundancyFilter.GetCachedSpellInfo()` were thin wrappers around `BlizzardAPI.GetCachedSpellInfo()`. Removed both; all callers (SpellQueue, UIRenderer, UINameplateOverlay) now reference `BlizzardAPI.GetCachedSpellInfo` directly.
-- **Fix `GetDebugMode` in MacroParser** — Was returning a dead `false` local instead of delegating to `BlizzardAPI.GetDebugMode()`. Now correctly returns the live debug mode state.
-- **Extract shared `GetActionBarUsability` helper** — `SpellQuery.IsSpellUsable()` and `SecretValues.IsSpellReady()` both had identical 6-line inline patterns for action bar usability fallback. Extracted to `BlizzardAPI.GetActionBarUsability(spellID)` in `BlizzardAPI.lua`; both callers now delegate.
-- **Consolidate tooltipMode migration** — Three `OnEnter` handlers in `UIFrameFactory.lua` each had an 8-line inline migration block converting legacy `showTooltips`/`tooltipsInCombat` to `tooltipMode`. Migration now runs once in `NormalizeSavedData()`; handlers read `profile.tooltipMode` directly.
+- **Consolidate spec key computation** - `GapCloserEngine.GetGapCloserSpecKey()` and `DefensiveEngine.GetDefensiveSpecKey()` each reimplemented `UnitClass + GetSpecialization + concat`. Both now delegate to `SpellDB.GetSpecKey()`. Inline computations in `ResolveMeleeReference()` and `ResolveGapCloserSpells()` also replaced.
+- **Consolidate `GetCachedSpellInfo` access** - `SpellQueue.GetCachedSpellInfo()` and `RedundancyFilter.GetCachedSpellInfo()` were thin wrappers around `BlizzardAPI.GetCachedSpellInfo()`. Removed both; all callers (SpellQueue, UIRenderer, UINameplateOverlay) now reference `BlizzardAPI.GetCachedSpellInfo` directly.
+- **Fix `GetDebugMode` in MacroParser** - Was returning a dead `false` local instead of delegating to `BlizzardAPI.GetDebugMode()`. Now correctly returns the live debug mode state.
+- **Extract shared `GetActionBarUsability` helper** - `SpellQuery.IsSpellUsable()` and `SecretValues.IsSpellReady()` both had identical 6-line inline patterns for action bar usability fallback. Extracted to `BlizzardAPI.GetActionBarUsability(spellID)` in `BlizzardAPI.lua`; both callers now delegate.
+- **Consolidate tooltipMode migration** - Three `OnEnter` handlers in `UIFrameFactory.lua` each had an 8-line inline migration block converting legacy `showTooltips`/`tooltipsInCombat` to `tooltipMode`. Migration now runs once in `NormalizeSavedData()`; handlers read `profile.tooltipMode` directly.
 
 #### Simplification
-- **Simplify `CheckDefensiveSpellState` return values** — Was returning 5 values `(isUsable, isKnown, isRedundant, onCooldown, isProcced)` where `isKnown` was only used to gate `isUsable` (already encoded) and `onCooldown` was always `false`. Now returns 3 values `(isUsable, isRedundant, isProcced)`. Both callers in `DefensiveEngine.lua` updated.
-- **Cache LibStub module references** — `JustAC.lua` had 11 inline `LibStub("JustAC-*")` re-fetches for modules already cached as upvalues in `LoadModules()`. Added `SpellDB` to upvalue list and `LoadModules()`; replaced all re-fetches with upvalue references. Also removed 2 unnecessary `LibStub and LibStub(...)` guards (LibStub is always available).
-- **Remove duplicate `FormCache.OnPlayerLogin()` call** — `PLAYER_ENTERING_WORLD` called `FormCache.OnPlayerLogin()` immediately after `InitializeCaches()`, which already calls it. Removed the duplicate.
+- **Simplify `CheckDefensiveSpellState` return values** - Was returning 5 values `(isUsable, isKnown, isRedundant, onCooldown, isProcced)` where `isKnown` was only used to gate `isUsable` (already encoded) and `onCooldown` was always `false`. Now returns 3 values `(isUsable, isRedundant, isProcced)`. Both callers in `DefensiveEngine.lua` updated.
+- **Cache LibStub module references** - `JustAC.lua` had 11 inline `LibStub("JustAC-*")` re-fetches for modules already cached as upvalues in `LoadModules()`. Added `SpellDB` to upvalue list and `LoadModules()`; replaced all re-fetches with upvalue references. Also removed 2 unnecessary `LibStub and LibStub(...)` guards (LibStub is always available).
+- **Remove duplicate `FormCache.OnPlayerLogin()` call** - `PLAYER_ENTERING_WORLD` called `FormCache.OnPlayerLogin()` immediately after `InitializeCaches()`, which already calls it. Removed the duplicate.
 
 #### Module Separation & Consistency
-- **Move `IsSpellReady()` from SecretValues → CooldownTracking** — Core cooldown readiness evaluator (46 lines) was in the wrong submodule. Now lives alongside the local cooldown tracking state it depends on (`IsLocalCooldownActive`, `cachedMaxCharges`), eliminating a backward dependency. Uses local references instead of `BlizzardAPI.*` for same-module state.
-- **Move health/pet functions from SpellQuery → StateHelpers** — `GetPlayerHealthPercent()`, `GetPetHealthPercent()`, and `GetPetStatus()` moved to consolidate all health-related queries with `GetPlayerHealthPercentSafe()` and `GetLowHealthState()`.
-- **Fix duplicate `GetAddon` in SecretValues** — `RefreshFeatureAvailability()` was calling `LibStub("AceAddon-3.0"):GetAddon(...)` directly instead of the cached `BlizzardAPI.GetAddon()`.
-- **Standardize LibStub declaration style** — Convert 4 files using `MAJOR/MINOR` variable pattern to inline style (`LibStub:NewLibrary("name", N)`), matching the 22 other files: DefensiveEngine, GapCloserEngine, Options/Overlay, Options/Labels.
-- **Standardize hot path cache labels** — All modules now use `-- Hot path cache` consistently. Changed from `-- Cached globals` (UIFrameFactory, DefensiveEngine, TargetFrameAnchor), `-- Hot path cached globals` (KeyPressDetector), and unlabeled (UINameplateOverlay).
-- **Fix UIFrameFactory mixed profile access** — 5 occurrences of `addon.db.profile` converted to `addon:GetProfile()`, matching the file's other 13 uses. Eliminates mixed access pattern within the same file.
-- **Consolidate `ForceUpdate`/`ForceUpdateAll`** — `ForceUpdate(includeDefensives)` is now the single implementation; `ForceUpdateAll()` delegates to `ForceUpdate(true)`. Eliminates 3 duplicate lines.
-- **Clarify UINameplateOverlay bar constants** — Comment `BAR_HEIGHT` and `BAR_SPACING` to document they intentionally differ from `UIHealthBar` equivalents (5 vs 6, 2 vs 3).
+- **Move `IsSpellReady()` from SecretValues → CooldownTracking** - Core cooldown readiness evaluator (46 lines) was in the wrong submodule. Now lives alongside the local cooldown tracking state it depends on (`IsLocalCooldownActive`, `cachedMaxCharges`), eliminating a backward dependency. Uses local references instead of `BlizzardAPI.*` for same-module state.
+- **Move health/pet functions from SpellQuery → StateHelpers** - `GetPlayerHealthPercent()`, `GetPetHealthPercent()`, and `GetPetStatus()` moved to consolidate all health-related queries with `GetPlayerHealthPercentSafe()` and `GetLowHealthState()`.
+- **Fix duplicate `GetAddon` in SecretValues** - `RefreshFeatureAvailability()` was calling `LibStub("AceAddon-3.0"):GetAddon(...)` directly instead of the cached `BlizzardAPI.GetAddon()`.
+- **Standardize LibStub declaration style** - Convert 4 files using `MAJOR/MINOR` variable pattern to inline style (`LibStub:NewLibrary("name", N)`), matching the 22 other files: DefensiveEngine, GapCloserEngine, Options/Overlay, Options/Labels.
+- **Standardize hot path cache labels** - All modules now use `-- Hot path cache` consistently. Changed from `-- Cached globals` (UIFrameFactory, DefensiveEngine, TargetFrameAnchor), `-- Hot path cached globals` (KeyPressDetector), and unlabeled (UINameplateOverlay).
+- **Fix UIFrameFactory mixed profile access** - 5 occurrences of `addon.db.profile` converted to `addon:GetProfile()`, matching the file's other 13 uses. Eliminates mixed access pattern within the same file.
+- **Consolidate `ForceUpdate`/`ForceUpdateAll`** - `ForceUpdate(includeDefensives)` is now the single implementation; `ForceUpdateAll()` delegates to `ForceUpdate(true)`. Eliminates 3 duplicate lines.
+- **Clarify UINameplateOverlay bar constants** - Comment `BAR_HEIGHT` and `BAR_SPACING` to document they intentionally differ from `UIHealthBar` equivalents (5 vs 6, 2 vs 3).
 
 ## [4.6.1] - 2026-03-05
 
@@ -738,7 +780,7 @@
 ## [4.5.8] - 2026-03-04
 
 ### Added
-- **Input Preference setting** — New "Input Preference" dropdown (Auto-Detect / Keyboard / Gamepad) in General options. When both keyboard and controller bindings exist for the same action, the addon now selects the appropriate one based on this setting. "Auto-Detect" (default) uses controller glyphs when a gamepad is connected and keyboard text when disconnected. Handles `GAME_PAD_CONNECTED` / `GAME_PAD_DISCONNECTED` events for live hot-plug switching.
+- **Input Preference setting** - New "Input Preference" dropdown (Auto-Detect / Keyboard / Gamepad) in General options. When both keyboard and controller bindings exist for the same action, the addon now selects the appropriate one based on this setting. "Auto-Detect" (default) uses controller glyphs when a gamepad is connected and keyboard text when disconnected. Handles `GAME_PAD_CONNECTED` / `GAME_PAD_DISCONNECTED` events for live hot-plug switching.
 
 ### Fixed
 - Fixed keybind display always showing keyboard bindings even when a controller was connected, because `GetBindingKey()` returns multiple values but only the first was captured.
@@ -757,7 +799,7 @@
 - **Replace Quest Indicator** (Overlay): Suppresses the engine-rendered quest exclamation mark (`!`) on nameplates and renders our own version above the nameplate center, preventing overlap with the icon queue. Uses `UnitIsQuestBoss()` for detection and `SetCVar("ShowQuestUnitCircles", "0")` for suppression. Original CVar restored on disable/unload. Enabled by default; toggle in Overlay → Layout.
 
 ### Fixed
-- **RedundancyFilter v40**: NeverSecret aura timing data (duration, expirationTime) was always zero in combat. `GetAuraTiming` used `Unsecret()` which trusts `issecretvalue()` — returns `true` even for NeverSecret fields (generic marking). Switched to pcall arithmetic bypass (`auraData.duration + 0`) matching the pattern already used for spellId. Fixes long-duration buff expiration reminders (raid buffs, rogue poisons) not appearing when buffs near expiry.
+- **RedundancyFilter v40**: NeverSecret aura timing data (duration, expirationTime) was always zero in combat. `GetAuraTiming` used `Unsecret()` which trusts `issecretvalue()` - returns `true` even for NeverSecret fields (generic marking). Switched to pcall arithmetic bypass (`auraData.duration + 0`) matching the pattern already used for spellId. Fixes long-duration buff expiration reminders (raid buffs, rogue poisons) not appearing when buffs near expiry.
 
 ## [4.5.5] - 2026-03-03
 
@@ -773,29 +815,29 @@
   - **Defensives** tab renamed its settings sub-tab to "Queue Content" (only content settings remain: `showProcs`, `allowItems`, `autoInsertPotions`).
   - Tab order updated: General(1) → Standard Queue(2) → Overlay(3) → Offensive(4) → Defensives(5) → Labels(6) → Hotkeys(7) → Profiles(8).
 - **Overlay defensive display mode**: Added "When Health Low" (`healthBased`) option for feature parity with the standard queue panel.
-- **Overlay restructured into sub-tabs**: Layout, Offensive Display, Defensive Display — matching the Standard Queue's organization. Each sub-tab has its own scoped reset button.
+- **Overlay restructured into sub-tabs**: Layout, Offensive Display, Defensive Display - matching the Standard Queue's organization. Each sub-tab has its own scoped reset button.
 - **Overlay glow modes split**: Offensive and defensive overlay icons now have independent Highlight Mode settings (`npo.glowMode` for offensive, `npo.defensiveGlowMode` for defensive), matching Standard Queue parity. Existing users' offensive glow setting is preserved; defensive defaults to "All Glows".
 
 ### Fixed
 - **Overlay respects shared `showProcs` setting**: The nameplate overlay defensive queue previously hardcoded `showProcs=true`, ignoring the user's "Insert Procced Defensives" setting. Now correctly reads `profile.defensives.showProcs`.
 - **Overlay-only fallback**: When `displayMode` is set to "Overlay Only" and the target's nameplate is not rendered (too far, culled by stacking limits, hidden by nameplate addon), the main panel now shows as a fallback so users never lose their combat queue. Applies to both the offensive queue (UIRenderer) and the defensive queue (DefensiveEngine). As soon as the nameplate reappears, the overlay takes over and the main panel hides again.
 - **Disabled-function corrections** (7 settings):
-  - `includeHiddenAbilities`, `showSpellbookProcs`, `hideItemAbilities` — No longer grayed out in overlay-only mode (SpellQueue feeds both surfaces).
-  - `glowMode` (offensive) — Now correctly grayed out in overlay-only mode (only UIRenderer uses it).
-  - `defensives.showProcs`, `defensives.allowItems`, `defensives.autoInsertPotions` — Now available when either surface's defensives are enabled (standard panel or overlay), not just the standard panel.
+  - `includeHiddenAbilities`, `showSpellbookProcs`, `hideItemAbilities` - No longer grayed out in overlay-only mode (SpellQueue feeds both surfaces).
+  - `glowMode` (offensive) - Now correctly grayed out in overlay-only mode (only UIRenderer uses it).
+  - `defensives.showProcs`, `defensives.allowItems`, `defensives.autoInsertPotions` - Now available when either surface's defensives are enabled (standard panel or overlay), not just the standard panel.
 
 ## [4.5.4] - 2026-03-03
 
 ### Changed
 - **UIRenderer v17**: Cooldown display now uses `SetCooldownFromDurationObject` (12.0+ opaque pipeline) when available. Bypasses secret value handling entirely for cooldown sweep animations. Falls back to legacy `SetCooldown` on pre-12.0 clients. Charge cooldowns also use `GetActionChargeDuration` → `SetCooldownFromDurationObject` when an action bar slot is resolved.
-- **RedundancyFilter v39**: Added NeverSecret aura whitelist (Meorawr/Blizzard hotfix data, ~50 spells). Auras gained during combat that are on the whitelist can be resolved directly via pcall without instance-map lookup — covers raid buffs, rogue poisons, shaman imbues, exhaustion debuffs, and more.
+- **RedundancyFilter v39**: Added NeverSecret aura whitelist (Meorawr/Blizzard hotfix data, ~50 spells). Auras gained during combat that are on the whitelist can be resolved directly via pcall without instance-map lookup - covers raid buffs, rogue poisons, shaman imbues, exhaustion debuffs, and more.
 - **RedundancyFilter v39**: Wrapped `GetAuraDataByIndex` loop in pcall for crash resilience. If the API throws (compound token issues, hotfix changes), the loop breaks gracefully and falls back to the trusted out-of-combat cache.
 - **GapCloserEngine v2**: Uses `C_ActionBar.EnableActionRangeCheck(slot, true)` to opt the melee reference slot into push-based `ACTION_RANGE_CHECK_UPDATE` events. Properly disables range check on old slots when the reference changes or the cache is invalidated.
 
 ## [4.5.3] - 2026-03-02
 
 ### Fixed
-- "When Health Low" defensive display mode now works correctly in combat — was showing defensives at all health levels because secret-health fallback bypassed the threshold check. LowHealthFrame (~35%) is NeverSecret and properly gates the queue.
+- "When Health Low" defensive display mode now works correctly in combat - was showing defensives at all health levels because secret-health fallback bypassed the threshold check. LowHealthFrame (~35%) is NeverSecret and properly gates the queue.
 
 ## [4.5.2] - 2026-03-02
 
@@ -806,23 +848,23 @@
 
 ### Fixed
 - Defensive spells on cooldown (e.g. Crimson Vial) now deprioritized to end of queue instead of showing at full priority.
-- Charge-based spells (e.g. Crimson Vial with 2 charges) excluded from local cooldown tracking — `IsSpellUsable` handles charge depletion correctly.
+- Charge-based spells (e.g. Crimson Vial with 2 charges) excluded from local cooldown tracking - `IsSpellUsable` handles charge depletion correctly.
 - `UpdateButtonCooldowns` wrapped in pcall; charge display no longer flickers off when `GetSpellCharges` returns nil in combat.
 
 ## [4.5.1] - 2026-03-02
 
 ### Fixed
-- Keybind not showing on primary icon when a spell procs (e.g. Infernal Bolt, Ruination for Demo Lock) — empty hotkey cache was never retried due to Lua truthiness of empty string
+- Keybind not showing on primary icon when a spell procs (e.g. Infernal Bolt, Ruination for Demo Lock) - empty hotkey cache was never retried due to Lua truthiness of empty string
 - Gap-closer glow on nameplate overlay defaulted to ON instead of matching main panel (OFF by default)
 - DefensiveEngine `showProcs` override precedence (Lua and/or short-circuit with false values)
 
 ### Changed
 - **Centralized shared settings across Standard Queue and Nameplate Overlay:**
-  - **Interrupt Mode** — now a single setting in the Offensive tab, applied to both surfaces
-  - **Key Press Flash** — now a single toggle in the Offensive tab, applied to both surfaces
-  - **Highlight Mode** — offensive and defensive queues now share one `glowMode` (overlay keeps its own)
-  - **Icon Labels** — show toggle is shared; font scale, color, and anchor are independently configurable per surface via mirrored sub-groups within each label type
-  - **Health Bars** — removed confusing fallback toggles from the General tab; the Defensives tab is now the sole owner
+  - **Interrupt Mode** - now a single setting in the Offensive tab, applied to both surfaces
+  - **Key Press Flash** - now a single toggle in the Offensive tab, applied to both surfaces
+  - **Highlight Mode** - offensive and defensive queues now share one `glowMode` (overlay keeps its own)
+  - **Icon Labels** - show toggle is shared; font scale, color, and anchor are independently configurable per surface via mirrored sub-groups within each label type
+  - **Health Bars** - removed confusing fallback toggles from the General tab; the Defensives tab is now the sole owner
 - Reduced update pipeline latency for faster rotation display after casting (debounce timers halved across SpellQueue, UIRenderer, UINameplateOverlay, and OnUpdate)
 - Shortened interrupt mode dropdown labels across all locales
 - Defensive health thresholds in combat (12.0 secret health adaptation):
@@ -849,14 +891,14 @@
 - **Unified `IsTargetCastInterruptible()` replaces three functions:** `IsCastBarInterruptible()`, `IsTargetCastingFallback()`, and redundant `GetTargetCastInterruptState()` calls merged into a single `IsTargetCastInterruptible(nameplate)` → `(isCasting, isInterruptible, castBar)`. Event tracker queried once instead of independently in two functions.
 - **Single-pass spell selection in `EvaluateInterrupt()`:** Two separate loops (CC-prefer pass + fallback pass) merged into one loop with inline `fallbackID` tracking. Fewer iterations when `preferCC` is false (immediate break on first usable).
 - **Dead `importantOnly` interrupt mode removed:** `ImportantCastIndicator` pcall chain and `importantOnly` mode guard were entirely unreachable (all signals SECRET in 12.0, mode retired). ~12 lines removed from `EvaluateInterrupt()`.
-- **Comment cleanup — "why not how":** ~180 lines of "how" comments removed or shortened across UIRenderer.lua. Retained all gotcha/safety comments (secret values, case sensitivity, race conditions, ordering constraints). Deduplicated repeated "widget handles secret values" explanations (was 6×, now once at function header).
+- **Comment cleanup - "why not how":** ~180 lines of "how" comments removed or shortened across UIRenderer.lua. Retained all gotcha/safety comments (secret values, case sensitivity, race conditions, ordering constraints). Deduplicated repeated "widget handles secret values" explanations (was 6×, now once at function header).
 
 ### Refactor
 - Split `BlizzardAPI.lua` (1 719 lines) into four cohesive submodules under `BlizzardAPI\`:
-  - `CooldownTracking.lua` — local CD event frame, tooltip probe, charge cache
-  - `SecretValues.lua` — feature availability, secret value utilities, secrecy API wrappers, C_Secrets namespace
-  - `SpellQuery.lua` — addon access, spell info/usability/proc cache, rotation API, item detection, availability, health helpers
-  - `StateHelpers.lua` — defensive/item state helpers, LowHealthFrame detection, target CC immunity, shapeshift form wrappers
+  - `CooldownTracking.lua` - local CD event frame, tooltip probe, charge cache
+  - `SecretValues.lua` - feature availability, secret value utilities, secrecy API wrappers, C_Secrets namespace
+  - `SpellQuery.lua` - addon access, spell info/usability/proc cache, rotation API, item detection, availability, health helpers
+  - `StateHelpers.lua` - defensive/item state helpers, LowHealthFrame detection, target CC immunity, shapeshift form wrappers
 - Root `BlizzardAPI.lua` reduced to 14 lines (LibStub registration + version constants); public API surface unchanged for all 17 consumers
 - Each submodule uses its own LibStub identity (`JustAC-BlizzardAPI-*`) for reload safety
 - Extracted `ResolveSpellID` from `DefensiveEngine` and `GapCloserEngine` into `BlizzardAPI.ResolveSpellID` (single canonical implementation)
@@ -874,18 +916,18 @@
 ## [4.4.6] - 2026-02-27
 
 ### Fixed
-- **Proc glow lingering on empty offensive slot:** When a procced spell left a slot, the slot-clear path set `hasProcGlow = false` and wiped state but forgot to call `UIAnimations.HideProcGlow()` — the animation frame stayed visible until another spell filled the slot. Now calls `HideProcGlow` alongside `StopAssistedGlow` and `StopGapCloserGlow` in the empty-slot branch.
+- **Proc glow lingering on empty offensive slot:** When a procced spell left a slot, the slot-clear path set `hasProcGlow = false` and wiped state but forgot to call `UIAnimations.HideProcGlow()` - the animation frame stayed visible until another spell filled the slot. Now calls `HideProcGlow` alongside `StopAssistedGlow` and `StopGapCloserGlow` in the empty-slot branch.
 - **`HideDefensiveIcon` left `normalizedHotkey` populated:** After a defensive slot was hidden, `normalizedHotkey` and `previousNormalizedHotkey` retained the previous spell's hotkey. Harmless (gated by `IsShown()`), but inconsistent with the offensive-slot clear path which always nils both fields. Now cleared in `HideDefensiveIcon`.
 - **`isWaitingSpell` could be `nil` instead of `false`:** `spellInfo.name and name:find(…) or false` returns `nil` when `spellInfo.name` is `nil` (Lua `and`/`or` semantics). Changed to explicit `~= nil` comparisons so the flag is always a proper boolean.
-- **`GetCurrentSpellQueue` returned pooled table on full build (SpellQueue v37):** The full-build code path `return recommendedSpells` returned the pooled table that is `wipe()`d at the start of every queue build — any caller holding the reference across frames would see an empty table. Early-exit paths correctly returned the stable `lastSpellIDs` copy; the full-build path now matches them. Callers can safely hold the returned reference.
-- **Duplicate interrupt debounce state between UIRenderer and UINameplateOverlay:** Both renderers maintained separate `lastInterruptUsedTime` / `lastInterruptShownID` / `lastCCAppliedTime` debounce locals. When the player used an interrupt, only the evaluating renderer debounced; the other could fire a redundant suggestion on the same frame. Interrupt evaluation is now consolidated in `UIRenderer.EvaluateInterrupt()`, cached per 0.015 s and keyed on `interruptMode`, called by both renderers — one player, one debounce timer. `UINameplateOverlay.NotifyCCApplied()` now delegates to `UIRenderer.NotifyCCApplied()` and `JustAC.lua` no longer needs a second call.
+- **`GetCurrentSpellQueue` returned pooled table on full build (SpellQueue v37):** The full-build code path `return recommendedSpells` returned the pooled table that is `wipe()`d at the start of every queue build - any caller holding the reference across frames would see an empty table. Early-exit paths correctly returned the stable `lastSpellIDs` copy; the full-build path now matches them. Callers can safely hold the returned reference.
+- **Duplicate interrupt debounce state between UIRenderer and UINameplateOverlay:** Both renderers maintained separate `lastInterruptUsedTime` / `lastInterruptShownID` / `lastCCAppliedTime` debounce locals. When the player used an interrupt, only the evaluating renderer debounced; the other could fire a redundant suggestion on the same frame. Interrupt evaluation is now consolidated in `UIRenderer.EvaluateInterrupt()`, cached per 0.015 s and keyed on `interruptMode`, called by both renderers - one player, one debounce timer. `UINameplateOverlay.NotifyCCApplied()` now delegates to `UIRenderer.NotifyCCApplied()` and `JustAC.lua` no longer needs a second call.
 
 ### Changed
-- **`rotationFilterCache` split from `filterResultCache` (SpellQueue):** `PassesRotationFilters()` was keying its cache with `"r_" .. spellID` — a string concatenation on every rotation-spell evaluation in the hot path. Now uses a dedicated `rotationFilterCache` table keyed by the plain integer `spellID`. Both tables are wiped together at the start of each queue build. No behaviour change; eliminates ~N string allocations per update cycle where N = rotation list length.
-- **Dead `cachedNormalizedHotkey` field removed (UIRenderer):** The field was assigned in three places (hotkey normalized, hotkey cleared, slot emptied) but never read anywhere — `normalizedHotkey` (the live field read by `KeyPressDetector`) was always set alongside it. All three assignments removed.
-- **Visibility predicate unified via `SpellQueue.ShouldShowQueue()` (SpellQueue v37, UIRenderer v15):** UIRenderer previously re-evaluated all four visibility conditions (out-of-combat, healer spec, mounted, hostile target) every render frame, duplicating the logic already in `SpellQueue.GetCurrentSpellQueue()`. `GetCurrentSpellQueue()` now caches the final verdict in `lastShouldShowQueue` and exposes it via `SpellQueue.ShouldShowQueue()`. UIRenderer reads the cached result — one evaluation per queue build instead of one per render frame.
-- **Glow state resolved via `ResolveGlowState()` enum (UIRenderer v15):** Six cascading boolean locals (`isSyntheticProc`, `isGapCloser`, `isRealProc`, `wantProcGlow`, `wantGapCloserGlow`, `shouldShowAssisted`) per icon per frame replaced with a single `ResolveGlowState(position, spellID, …)` call returning a `GLOW_NONE / GLOW_ASSISTED / GLOW_PROC / GLOW_GAP_CLOSER` integer. Application uses a clear 4-branch structure — easier to extend with new glow types.
-- **`UnitAffectingCombat` call count reduced in hot path:** `GetQueueThrottleInterval()` function removed; `inCombat` is now computed once at the top of `GetCurrentSpellQueue()` and reused for both the throttle interval and all four visibility checks. `ShowDefensiveIcon` no longer calls `UnitAffectingCombat` per icon per update — uses the module-level `isInCombat` maintained by `SetCombatState()` on PLAYER_REGEN events. Net reduction: ~2 + N redundant calls per update cycle (N = visible defensive icons).
+- **`rotationFilterCache` split from `filterResultCache` (SpellQueue):** `PassesRotationFilters()` was keying its cache with `"r_" .. spellID` - a string concatenation on every rotation-spell evaluation in the hot path. Now uses a dedicated `rotationFilterCache` table keyed by the plain integer `spellID`. Both tables are wiped together at the start of each queue build. No behaviour change; eliminates ~N string allocations per update cycle where N = rotation list length.
+- **Dead `cachedNormalizedHotkey` field removed (UIRenderer):** The field was assigned in three places (hotkey normalized, hotkey cleared, slot emptied) but never read anywhere - `normalizedHotkey` (the live field read by `KeyPressDetector`) was always set alongside it. All three assignments removed.
+- **Visibility predicate unified via `SpellQueue.ShouldShowQueue()` (SpellQueue v37, UIRenderer v15):** UIRenderer previously re-evaluated all four visibility conditions (out-of-combat, healer spec, mounted, hostile target) every render frame, duplicating the logic already in `SpellQueue.GetCurrentSpellQueue()`. `GetCurrentSpellQueue()` now caches the final verdict in `lastShouldShowQueue` and exposes it via `SpellQueue.ShouldShowQueue()`. UIRenderer reads the cached result - one evaluation per queue build instead of one per render frame.
+- **Glow state resolved via `ResolveGlowState()` enum (UIRenderer v15):** Six cascading boolean locals (`isSyntheticProc`, `isGapCloser`, `isRealProc`, `wantProcGlow`, `wantGapCloserGlow`, `shouldShowAssisted`) per icon per frame replaced with a single `ResolveGlowState(position, spellID, …)` call returning a `GLOW_NONE / GLOW_ASSISTED / GLOW_PROC / GLOW_GAP_CLOSER` integer. Application uses a clear 4-branch structure - easier to extend with new glow types.
+- **`UnitAffectingCombat` call count reduced in hot path:** `GetQueueThrottleInterval()` function removed; `inCombat` is now computed once at the top of `GetCurrentSpellQueue()` and reused for both the throttle interval and all four visibility checks. `ShowDefensiveIcon` no longer calls `UnitAffectingCombat` per icon per update - uses the module-level `isInCombat` maintained by `SetCombatState()` on PLAYER_REGEN events. Net reduction: ~2 + N redundant calls per update cycle (N = visible defensive icons).
 
 ## [4.4.5] - 2026-02-27
 
@@ -896,25 +938,25 @@
 ## [4.4.4] - 2026-02-25
 
 ### Changed
-- **Interrupt Reminder dropdown** — The old `Show Interrupt Reminder` toggle + `Prefer CC on Regular Mobs` toggle have been consolidated into a single `Interrupt Reminder` dropdown with three modes:
-  - **Disabled** — No interrupt reminders
-  - **Interrupt Only** — Shows on all interruptible casts, always suggests your interrupt
-  - **Prefer CC on Trash** — Shows on all interruptible casts, prefers crowd control on non-boss mobs (previous default behavior)
-- **Important Casts Only mode reserved** — `importantOnly` option removed from UI. All important-cast detection signals (`isHighlightedImportantCast`, `C_Spell.IsSpellImportant()`, `ImportantCastIndicator:IsShown()`, `IsPlaying()`) return secret booleans in 12.0 — unusable for branching logic. Detection code kept in place for future re-enablement. Stale saved data gracefully falls back to `kickOnly`.
-- **Interruptibility detection hardened** — Uses `castBar.Icon:IsShown()` (NeverSecret, verified 2026-02-25) on nameplate castbars with `HideIconWhenNotInterruptible=true`. Falls back to `BorderShield:IsShown()` on castbars without icon hiding.
-- **Settings migration** — `showInterrupt=true` + `ccRegularMobs=true` → `"ccPrefer"`, `showInterrupt=true` + `ccRegularMobs=false` → `"kickOnly"`, `showInterrupt=false` → `"disabled"`. Legacy keys cleaned from saved data after migration.
+- **Interrupt Reminder dropdown** - The old `Show Interrupt Reminder` toggle + `Prefer CC on Regular Mobs` toggle have been consolidated into a single `Interrupt Reminder` dropdown with three modes:
+  - **Disabled** - No interrupt reminders
+  - **Interrupt Only** - Shows on all interruptible casts, always suggests your interrupt
+  - **Prefer CC on Trash** - Shows on all interruptible casts, prefers crowd control on non-boss mobs (previous default behavior)
+- **Important Casts Only mode reserved** - `importantOnly` option removed from UI. All important-cast detection signals (`isHighlightedImportantCast`, `C_Spell.IsSpellImportant()`, `ImportantCastIndicator:IsShown()`, `IsPlaying()`) return secret booleans in 12.0 - unusable for branching logic. Detection code kept in place for future re-enablement. Stale saved data gracefully falls back to `kickOnly`.
+- **Interruptibility detection hardened** - Uses `castBar.Icon:IsShown()` (NeverSecret, verified 2026-02-25) on nameplate castbars with `HideIconWhenNotInterruptible=true`. Falls back to `BorderShield:IsShown()` on castbars without icon hiding.
+- **Settings migration** - `showInterrupt=true` + `ccRegularMobs=true` → `"ccPrefer"`, `showInterrupt=true` + `ccRegularMobs=false` → `"kickOnly"`, `showInterrupt=false` → `"disabled"`. Legacy keys cleaned from saved data after migration.
 
 ## [4.4.3] - 2026-02-25
 
 ### Changed
-- **Extracted GapCloserEngine from DefensiveEngine** — Gap-closer system moved to its own `GapCloserEngine.lua` module. Gap closers inject into the offensive queue and had no coupling with defensive spell evaluation. DefensiveEngine reduced to its actual scope: health-based defensive queue, proc detection, potions.
+- **Extracted GapCloserEngine from DefensiveEngine** - Gap-closer system moved to its own `GapCloserEngine.lua` module. Gap closers inject into the offensive queue and had no coupling with defensive spell evaluation. DefensiveEngine reduced to its actual scope: health-based defensive queue, proc detection, potions.
 
 ## [4.4.2] - 2026-02-25
 
 ### Fixed
 - **Gap-closer glow missing after leaving combat:** `PauseAllGlows` (fired on `PLAYER_REGEN_ENABLED`) hid the gap-closer crawl frame and stopped its animation, but did not reset the renderer's `hasGapCloserGlow` tracking flag. Removed gap-closer glow from `PauseAllGlows`; added stale-flag guard in UIRenderer as defensive fallback.
 - **Shadowstrike gap-closer not suggesting in stealth:** Shadowstrike (185438) was not in Sub Rogue gap-closer defaults, and the melee range reference (Backstab) transforms to Shadowstrike on the action bar in stealth, changing range from 5yd to 25yd. Added Shadowstrike as first entry; stealth-only gap closers now evaluate before the melee range gate using their own slot range.
-- **Melee range reference stability audit (Rogue):** Fixed unstable backup references — `ROGUE_2` changed from Between the Eyes (20yd ranged) to Kidney Shot (5yd melee); `ROGUE_3` changed from Shadowstrike (25yd) to Kidney Shot. All other class/spec references verified stable.
+- **Melee range reference stability audit (Rogue):** Fixed unstable backup references - `ROGUE_2` changed from Between the Eyes (20yd ranged) to Kidney Shot (5yd melee); `ROGUE_3` changed from Shadowstrike (25yd) to Kidney Shot. All other class/spec references verified stable.
 - **Druid gap-closer disabled after form change:** `OnShapeshiftFormChanged` did not invalidate the melee range reference cache. Now invalidates gap closer cache + range state on `UPDATE_SHAPESHIFT_FORM`.
 - **IsSpellReady() cooldown detection in 12.0 combat:** Now uses full `isOnGCD` three-state: `true`=GCD only (ready), `false`=real CD (flagged spells), `nil`=ambiguous (falls back to local CD tracking + charge checks + action bar usability). Fixes DefensiveEngine suggesting spells on cooldown.
 - **GetSpellCooldownValues() `isOnRealCooldown`:** Now checks `isOnGCD == false` (definitive for flagged spells), then local CD tracking for unflagged spells. Returns `nil` (unknown) instead of `false` when ambiguous.
@@ -925,25 +967,25 @@
 ### Changed
 - Updated all `isOnGCD` documentation to reflect verified three-state behavior
 - Updated `UnitHealth("player")` documentation: confirmed SECRET in open world combat
-- Updated `UnitPower("player")` documentation: per-type secrecy — continuous resources SECRET, discrete resources NeverSecret
+- Updated `UnitPower("player")` documentation: per-type secrecy - continuous resources SECRET, discrete resources NeverSecret
 - Corrected `GetComboPoints()` from SECRET to NeverSecret
 - Added `isEnabled`, `modRate`, `activeCategory` fields to cooldown signal reference (all SECRET)
 - Documented `LuaDurationObject` API, `C_Secrets.ShouldSpellCooldownBeSecret()`, `SecrecyLevel` enum
-- **CheckCooldownCompletions() now uses SPELL_UPDATE_COOLDOWN spellID payload** — O(1) lookup when event fires with non-nil spellID; falls back to full scan on nil
-- **PassesRotationFilters() comment corrected** — accurately documents isOnGCD three-state behavior
-- **Central maxCharges cache in BlizzardAPI** — `GetCachedMaxCharges(spellID)` replaces per-button state; proactive scan on combat exit
-- **UIRenderer per-button `_cachedMaxCharges` removed** — replaced with central `BlizzardAPI.GetCachedMaxCharges()` lookups
+- **CheckCooldownCompletions() now uses SPELL_UPDATE_COOLDOWN spellID payload** - O(1) lookup when event fires with non-nil spellID; falls back to full scan on nil
+- **PassesRotationFilters() comment corrected** - accurately documents isOnGCD three-state behavior
+- **Central maxCharges cache in BlizzardAPI** - `GetCachedMaxCharges(spellID)` replaces per-button state; proactive scan on combat exit
+- **UIRenderer per-button `_cachedMaxCharges` removed** - replaced with central `BlizzardAPI.GetCachedMaxCharges()` lookups
 
 ### Added
 - **New combat-safe signals discovered and verified:** `C_ActionBar.IsActionInRange()`, `IsInterruptAction()`, `C_Spell.IsExternalDefensive()`, `C_CooldownViewer` category/info APIs, `C_UnitAuras.GetCooldownAuraBySpellID()`, `ACTION_RANGE_CHECK_UPDATE`, `ACTION_USABLE_CHANGED`, `IsAttackAction()`, `IsCurrentAction()`, `GetSessionDurationSeconds()`
-- **SPELL_UPDATE_COOLDOWN spellID is NeverSecret** — per-spell CD state change events with `startRecoveryCategory` (133=GCD, 0=own CD)
-- **UnitPower secrecy mapped per-type** — continuous primary resources SECRET, discrete secondary resources NeverSecret, `UnitPowerMax`/`UnitPowerType` always NeverSecret
+- **SPELL_UPDATE_COOLDOWN spellID is NeverSecret** - per-spell CD state change events with `startRecoveryCategory` (133=GCD, 0=own CD)
+- **UnitPower secrecy mapped per-type** - continuous primary resources SECRET, discrete secondary resources NeverSecret, `UnitPowerMax`/`UnitPowerType` always NeverSecret
 - **C_Spell.IsSpellUsable, GetSpellPowerCost, IsCurrentSpell verified NeverSecret** in combat
-- **C_Spell.GetSpellCharges ALL SECRET** (including maxCharges) — must cache out of combat
-- **C_Spell.IsSpellInRange verified NeverSecret** — existing range check code confirmed correct
-- **LossOfControl API documented from source** — `locType`, `priority`, `displayType`, `auraInstanceID` NeverSecret
-- **DB2 tables catalogued** — `CooldownSet`/`CooldownSetSpell`, `SpellActivationOverlay`, `AssistedCombat`/`AssistedCombatRule`/`AssistedCombatStep`, `LossOfControlType`
-- **Event-driven CD tracking potential identified** — `SPELL_UPDATE_COOLDOWN` spellID + `isOnGCD` state machine could replace timer-based local CD tracking
+- **C_Spell.GetSpellCharges ALL SECRET** (including maxCharges) - must cache out of combat
+- **C_Spell.IsSpellInRange verified NeverSecret** - existing range check code confirmed correct
+- **LossOfControl API documented from source** - `locType`, `priority`, `displayType`, `auraInstanceID` NeverSecret
+- **DB2 tables catalogued** - `CooldownSet`/`CooldownSetSpell`, `SpellActivationOverlay`, `AssistedCombat`/`AssistedCombatRule`/`AssistedCombatStep`, `LossOfControlType`
+- **Event-driven CD tracking potential identified** - `SPELL_UPDATE_COOLDOWN` spellID + `isOnGCD` state machine could replace timer-based local CD tracking
 
 ### Documentation
 - Updated `Documentation/12.0_COMPATIBILITY.md` combat-safe signal reference with all Session 2/2b/2c/2d findings
@@ -956,86 +998,86 @@
 - Inlined range check in `GetGapCloserSpell` to reuse the already-resolved slot from `ResolveMeleeReference`
 
 ### UI
-- Removed dead "Bar Position" (healthBarPosition) dropdown from Overlay tab — setting was stored and read but never applied to health bar anchoring
+- Removed dead "Bar Position" (healthBarPosition) dropdown from Overlay tab - setting was stored and read but never applied to health bar anchoring
 - Gap-Closers options tab: show soft notice for non-melee specs ("No default gap-closers for this specialization") instead of hiding controls
-- **Show Pet Health Bar** — New standalone toggle in General tab, mirrors "Show Health Bar". Lets users show a pet health bar (offensive queue width) even when the Defensive Queue is disabled. When defensives are enabled, the existing defensive-section toggle takes over. UIHealthBar v7.
-- **Overlay pet health bar** — "Show Health Bars" toggle in Overlay tab now creates both player and pet health bars above the defensive cluster. Pet bar uses warm yellow color, auto-hides when no pet exists. Both bars gated by "Show Defensive Icons". UINameplateOverlay v2.
-- **Cross-section naming consistency** — Aligned option labels across all tabs: Overlay "Offensive Slots"/"Defensive Slots" → "Max Icons" (matches Standard Queue), Defensives "Display Mode" → "Defensive Visibility" (matches Overlay, avoids collision with General "Display Mode"), "Key Press Flash" → "Show Key Press Flash" (matches all other "Show X" toggles). Added 6 missing `desc` tooltips to Overlay controls. Removed dead `L["Nameplate Show Health Bar"]` singular keys from all 9 locale files. Updated all 8 translations.
+- **Show Pet Health Bar** - New standalone toggle in General tab, mirrors "Show Health Bar". Lets users show a pet health bar (offensive queue width) even when the Defensive Queue is disabled. When defensives are enabled, the existing defensive-section toggle takes over. UIHealthBar v7.
+- **Overlay pet health bar** - "Show Health Bars" toggle in Overlay tab now creates both player and pet health bars above the defensive cluster. Pet bar uses warm yellow color, auto-hides when no pet exists. Both bars gated by "Show Defensive Icons". UINameplateOverlay v2.
+- **Cross-section naming consistency** - Aligned option labels across all tabs: Overlay "Offensive Slots"/"Defensive Slots" → "Max Icons" (matches Standard Queue), Defensives "Display Mode" → "Defensive Visibility" (matches Overlay, avoids collision with General "Display Mode"), "Key Press Flash" → "Show Key Press Flash" (matches all other "Show X" toggles). Added 6 missing `desc` tooltips to Overlay controls. Removed dead `L["Nameplate Show Health Bar"]` singular keys from all 9 locale files. Updated all 8 translations.
 
 ### Investigated
-- **Rotation queue cooldown filtering** — `isOnGCD` returns `nil` (not `false`) for real cooldowns outside `SPELL_UPDATE_COOLDOWN` events; `GetActionCooldown` start/duration fully secreted in 12.0 combat; `C_ActionBar.GetActionCharges` also secreted; `IsUsableAction` returns true even on cooldown; `cooldown:IsShown()` includes GCD (can't distinguish)
+- **Rotation queue cooldown filtering** - `isOnGCD` returns `nil` (not `false`) for real cooldowns outside `SPELL_UPDATE_COOLDOWN` events; `GetActionCooldown` start/duration fully secreted in 12.0 combat; `C_ActionBar.GetActionCharges` also secreted; `IsUsableAction` returns true even on cooldown; `cooldown:IsShown()` includes GCD (can't distinguish)
 
 ### Changed
-- **Rotation queue cooldown de-prioritization** — Spells with base CD > 3s are tracked locally via `UNIT_SPELLCAST_SUCCEEDED` + `GetSpellBaseCooldown()` (not secret). On-cooldown spells are moved to the end of the queue (below procced and normal spells) rather than filtered out. Fail-open: untracked spells show normally.
-- **Tooltip cooldown parsing** — `RegisterRotationSpell()` now scans the spell tooltip for talent-modified cooldown values (e.g., "30 sec cooldown" for Bestial Wrath with Beast Within). Falls back to `GetSpellBaseCooldown` only if tooltip parsing fails. Tooltip is re-scanned on talent/spec changes via natural re-registration flow.
-- **Blacklist position 1 option** — New toggle in Offensive > Blacklist: "Apply to Position 1". Off by default. When enabled, blacklisted spells are also hidden from position 1 (Blizzard's primary suggestion). Warning in tooltip about rotation stalling.
+- **Rotation queue cooldown de-prioritization** - Spells with base CD > 3s are tracked locally via `UNIT_SPELLCAST_SUCCEEDED` + `GetSpellBaseCooldown()` (not secret). On-cooldown spells are moved to the end of the queue (below procced and normal spells) rather than filtered out. Fail-open: untracked spells show normally.
+- **Tooltip cooldown parsing** - `RegisterRotationSpell()` now scans the spell tooltip for talent-modified cooldown values (e.g., "30 sec cooldown" for Bestial Wrath with Beast Within). Falls back to `GetSpellBaseCooldown` only if tooltip parsing fails. Tooltip is re-scanned on talent/spec changes via natural re-registration flow.
+- **Blacklist position 1 option** - New toggle in Offensive > Blacklist: "Apply to Position 1". Off by default. When enabled, blacklisted spells are also hidden from position 1 (Blizzard's primary suggestion). Warning in tooltip about rotation stalling.
 - **BlizzardAPI v32**: Added `ParseTooltipCooldown()` for traited cooldown detection; `GetBestCooldownDuration()` now uses 3-tier fallback (observed cast → tooltip → base API); `RegisterRotationSpell()` pre-caches traited duration
 - **SpellQueue v36**: Three-tier rotation sort (procced → normal → on-cooldown), auto-registers rotation spells on list fetch, clears registrations on cache invalidation
 
 ## [4.4.0] - 2026-02-24
 
 ### Fixed
-- **SpellDB audit** — full classification review of all spell IDs (SpellDB v7→v8)
-  - **CRITICAL:** Removed Storm Elemental (192249) from defensives — DPS cooldown for Elemental Shaman
-  - **CRITICAL:** Removed Deathbolt (264106) from defensives — offensive damage ability
-  - **CRITICAL:** Removed Mirror Image (55342) from defensives — DPS cooldown for Fire/Frost
+- **SpellDB audit** - full classification review of all spell IDs (SpellDB v7→v8)
+  - **CRITICAL:** Removed Storm Elemental (192249) from defensives - DPS cooldown for Elemental Shaman
+  - **CRITICAL:** Removed Deathbolt (264106) from defensives - offensive damage ability
+  - **CRITICAL:** Removed Mirror Image (55342) from defensives - DPS cooldown for Fire/Frost
   - **CRITICAL:** Moved Holy Word: Chastise (88625) from healing → crowd control (damage + incapacitate)
   - Moved Wind Rush Totem (192077), Mana Tide Totem (16191), Ice Floes (108839) from defensives → utility
   - Moved Wild Charge (102401) from healing → utility (movement ability)
   - Moved Cleanse Toxins (213644) from healing → utility (dispel, consistent with other class dispels)
   - Moved Blistering Scales (360827) from healing → defensive (shield + thorns, not a heal)
   - Removed stale entries: Hand of the Protector (213652, merged into WoG), Greater Heal (289666, not learnable), Soul Harvester (386997, hero talent tree name not a spell), Earthwarden (203974, passive talent), Feral Charge (16979, removed from game)
-- **Gap-closer audit** — fixed spell lists and added usability check
+- **Gap-closer audit** - fixed spell lists and added usability check
   - Removed Vengeful Retreat from DH Havoc (jumps backward, not a gap closer)
   - Added Shadowstrike (185438) as priority 1 for Sub Rogue (teleport gap closer in stealth)
   - Added Grappling Hook (195457) for Outlaw Rogue between Shadowstep and Sprint
   - Added `IsSpellUsable` check to gap-closer evaluation so stealth-only spells only show when actually usable
   - Added action bar slot check to gap-closer evaluation: spells not on any bar (e.g. Shadowstrike out of stealth) are skipped, falling through to the next candidate (e.g. Shadowstep)
-- **Melee range detection overhaul** — replaced broad per-slot `slotRangeState` tracking with a fixed per-spec melee reference spell
+- **Melee range detection overhaul** - replaced broad per-slot `slotRangeState` tracking with a fixed per-spec melee reference spell
   - Old system tracked all 120 action bar slots; any out-of-range event (including ranged abilities) could trigger false-positive gap-closer insertion
   - New system uses a priority chain: user override → SpellDB default[1] → SpellDB default[2]; first spell found on the action bar wins
   - Two hardcoded candidates per spec (e.g. Backstab + Shadowstrike for Sub Rogue); primary shown in options, backup is hidden
   - New **Melee Range Reference** group in Gap-Closers options: shows current default, allows user override via spell ID input
   - `OnActionRangeUpdate` now only triggers queue rebuilds when the melee reference slot changes range (not every slot)
-  - `SeedRangeState()` loop over 120 slots eliminated — replaced by direct `IsActionInRange(slot)` check on the single reference slot
-- **Gap-closer OOC visibility** — fixed gap closer not always appearing out of combat
+  - `SeedRangeState()` loop over 120 slots eliminated - replaced by direct `IsActionInRange(slot)` check on the single reference slot
+- **Gap-closer OOC visibility** - fixed gap closer not always appearing out of combat
   - `IsPrimarySpellOutOfRange` replaced by `IsMeleeTargetOutOfRange` (uses fixed reference spell instead of queue position 1)
   - `OnActionRangeUpdate` now calls `SpellQueue.ForceUpdate()` on melee reference slot range transitions so the queue rebuilds immediately
-- **Gap-closer position-1 dedup** — when Blizzard's Assisted Combat suggests a gap closer (e.g. Charge) as the primary spell at position 1, JustAC no longer injects a second gap closer at position 2
+- **Gap-closer position-1 dedup** - when Blizzard's Assisted Combat suggests a gap closer (e.g. Charge) as the primary spell at position 1, JustAC no longer injects a second gap closer at position 2
   - New `DefensiveEngine.IsGapCloserSpell()` checks both base IDs and talent overrides
-- **SpellQueue dead code cleanup** (v34→v35) — removed dead stabilization code, fixed `lastSpellIDs` aliasing bug, removed unused functions/variables
+- **SpellQueue dead code cleanup** (v34→v35) - removed dead stabilization code, fixed `lastSpellIDs` aliasing bug, removed unused functions/variables
 
 ### Added
-- **Gap-Closer System** — suggests gap-closing abilities (Charge, Shadowstep, Fel Rush, etc.) when the target is out of melee range
+- **Gap-Closer System** - suggests gap-closing abilities (Charge, Shadowstep, Fel Rush, etc.) when the target is out of melee range
   - Appears at position 2, before spellbook procs (highest priority after Blizzard's primary suggestion)
-  - Uses `ACTION_RANGE_CHECK_UPDATE` (NeverSecret) for range detection via a fixed per-spec melee reference spell — fully combat-safe under 12.0 secret value system
+  - Uses `ACTION_RANGE_CHECK_UPDATE` (NeverSecret) for range detection via a fixed per-spec melee reference spell - fully combat-safe under 12.0 secret value system
   - Uses `isOnGCD` (NeverSecret) for cooldown readiness checks
   - 150ms debounce on hide path to prevent flicker during kiting; show path is instant
   - Spec-aware defaults for all melee specs (Warrior, Rogue, DK, DH, Feral/Guardian Druid, Survival Hunter, WW/BM Monk, Ret/Prot Paladin, Enhancement Shaman)
   - Per-spec spell list stored in profile (`gapClosers.classSpells[CLASS_SPECINDEX]`)
   - New **Gap-Closers** options tab with priority list management, restore defaults, and spell search
   - Red emphasis glow (same tint as interrupts) on gap-closer icons, with independent toggle (`showGlow`) separate from the proc glow dropdown
-  - Gap-closer and interrupt icons now use red-tinted marching ants crawl instead of red proc glow — proc glow is reserved for actual spell procs
+  - Gap-closer and interrupt icons now use red-tinted marching ants crawl instead of red proc glow - proc glow is reserved for actual spell procs
   - Gap-closer crawl animates even out of combat (unlike other crawls which pause OOC)
-- `BlizzardAPI.IsTargetInterruptWorthy()` — combat-safe check to suppress interrupt/CC suggestions on trivial targets
-  - `"minus"` classification mobs (swarm adds, Explosive orbs) — not worth a kick CD
-  - `UnitIsMinion()` targets (pets, totems, treants, guardians) — combat-safe replacement for secreted `UnitCreatureType()` Mechanical/Totem check
-- Interrupt guard in both UIRenderer and UINameplateOverlay — skips cast bar processing entirely for unworthy targets
+- `BlizzardAPI.IsTargetInterruptWorthy()` - combat-safe check to suppress interrupt/CC suggestions on trivial targets
+  - `"minus"` classification mobs (swarm adds, Explosive orbs) - not worth a kick CD
+  - `UnitIsMinion()` targets (pets, totems, treants, guardians) - combat-safe replacement for secreted `UnitCreatureType()` Mechanical/Totem check
+- Interrupt guard in both UIRenderer and UINameplateOverlay - skips cast bar processing entirely for unworthy targets
 
 ### Documentation
-- New "Combat-Safe Signal Reference" section in `Documentation/12.0_COMPATIBILITY.md` — authoritative matrix of all APIs tested in 12.0 combat with verification dates
+- New "Combat-Safe Signal Reference" section in `Documentation/12.0_COMPATIBILITY.md` - authoritative matrix of all APIs tested in 12.0 combat with verification dates
 - Updated `copilot-instructions.md` NeverSecret section with newly verified target APIs
 
 ## [4.3.1] - 2026-02-24
 
 ### Fixed
-- **Standard queue cast aura ("to interrupt" icon) not showing:** `castBar` variable was scoped inside the debounce block, making it nil when the cast aura rendering code ran — hoisted to outer scope in both UIRenderer and UINameplateOverlay
-- **Nameplate overlay interrupt icon shifted entire DPS queue:** Interrupt icon now positions perpendicular to icon 1 (above for horizontal queues, outside for vertical) instead of displacing it inline — dpsIcons[1] stays fixed
+- **Standard queue cast aura ("to interrupt" icon) not showing:** `castBar` variable was scoped inside the debounce block, making it nil when the cast aura rendering code ran - hoisted to outer scope in both UIRenderer and UINameplateOverlay
+- **Nameplate overlay interrupt icon shifted entire DPS queue:** Interrupt icon now positions perpendicular to icon 1 (above for horizontal queues, outside for vertical) instead of displacing it inline - dpsIcons[1] stays fixed
 - **Standard queue cast aura overlapped icon 1 in UP orientation:** Aura now anchors below the interrupt icon when queue grows upward (away from queue) instead of always above
 
 ### Changed
-- Nameplate overlay interrupt icon now includes cast aura (enemy spell icon), consistent with standard queue — always positioned above the interrupt icon
-- Removed redundant dpsIcons[1] re-anchor dance in nameplate overlay Render() — no longer needed since interrupt is perpendicular to queue
+- Nameplate overlay interrupt icon now includes cast aura (enemy spell icon), consistent with standard queue - always positioned above the interrupt icon
+- Removed redundant dpsIcons[1] re-anchor dance in nameplate overlay Render() - no longer needed since interrupt is perpendicular to queue
 
 ## [4.3.0] - 2026-02-24
 
@@ -1057,10 +1099,10 @@
 ## [4.2.1] - 2026-02-23
 
 ### Added
-- Text overlays (hotkey, cooldown timer, charge count) are now individually configurable — toggle each on/off, adjust font scale, color, and anchor position. Settings apply across all icon types: main queue, nameplate overlay, defensives, and interrupt icon
-- Long-duration buffs (poisons, Mark of the Wild, weapon imbues) now show a recast suggestion when less than 5 minutes remain — previously they were suppressed as "active" right up until expiry, leaving queue slot 1 stuck at the start of combat
+- Text overlays (hotkey, cooldown timer, charge count) are now individually configurable - toggle each on/off, adjust font scale, color, and anchor position. Settings apply across all icon types: main queue, nameplate overlay, defensives, and interrupt icon
+- Long-duration buffs (poisons, Mark of the Wild, weapon imbues) now show a recast suggestion when less than 5 minutes remain - previously they were suppressed as "active" right up until expiry, leaving queue slot 1 stuck at the start of combat
 - 4-second hold after a CC lands before suggesting another, giving the game time to register the target's crowd-controlled state
-- Spell queue and defensive icons now hidden when controlling a vehicle or possessing an NPC (Mind Control, siege engines, questline vehicles) — your normal action bars are replaced in these states
+- Spell queue and defensive icons now hidden when controlling a vehicle or possessing an NPC (Mind Control, siege engines, questline vehicles) - your normal action bars are replaced in these states
 
 ### Changed
 - Mechanical and Totem mob types now recognized as CC-immune (in addition to worldbosses and dungeon bosses)
@@ -1072,38 +1114,38 @@
 
 ### Added
 - Cast aura indicator above interrupt icon: shows the enemy's casting spell icon so you can see what you're interrupting (standard queue + nameplate overlay)
-- Nameplate overlay: channeling grey-out — interrupt and DPS icons now desaturate when the player is mid-channel, matching the main panel behavior
-- Nameplate overlay: out-of-range detection — interrupt and DPS hotkey text turns red when the target is beyond spell range, matching the main panel behavior
+- Nameplate overlay: channeling grey-out - interrupt and DPS icons now desaturate when the player is mid-channel, matching the main panel behavior
+- Nameplate overlay: out-of-range detection - interrupt and DPS hotkey text turns red when the target is beyond spell range, matching the main panel behavior
 
 ### Changed
-- **Interrupt options consolidated into single dropdown** — replaced separate "Interrupt Mode" dropdown + "CC Non-Important Casts" checkbox with one 5-option dropdown: Off, Important Only, Important + CC, All + Smart CC, All Casts. Existing saved settings are preserved automatically.
+- **Interrupt options consolidated into single dropdown** - replaced separate "Interrupt Mode" dropdown + "CC Non-Important Casts" checkbox with one 5-option dropdown: Off, Important Only, Important + CC, All + Smart CC, All Casts. Existing saved settings are preserved automatically.
 - Interrupt/CC reminders now only trigger on casts with 0.8s+ duration (important/dangerous casts bypass the filter and trigger immediately); when cast duration is a secret value (12.0 combat), falls back to elapsed-time measurement
-- **"All + Smart CC" mode falls back to kick** — non-important casts prefer CC but fall back to your interrupt if no CC is available; "Important + CC" intentionally does NOT fall back (saves interrupt lockout for dangerous casts)
+- **"All + Smart CC" mode falls back to kick** - non-important casts prefer CC but fall back to your interrupt if no CC is available; "Important + CC" intentionally does NOT fall back (saves interrupt lockout for dangerous casts)
 
 ### Fixed
 - Interrupt icon for RIGHT/UP orientations now anchors adjacent to icon 1 instead of beyond the grab tab (was causing ~17px gap vs expected ~3px)
 - Standalone health bar for UP/DOWN orientations now goes to the side of the queue (perpendicular) instead of above it, matching how horizontal bars are perpendicular to horizontal queues
-- **CC/interrupt spells now correctly detected as off-cooldown in combat** — WoW 12.0 blanket-secrets `duration`/`startTime` from `C_Spell.GetSpellCooldown()` even when zero; now uses `isOnGCD` (NeverSecret) three-state field: `true`=GCD only (ready), `false`=real cooldown, `nil`=no cooldown (ready)
-- **Aura detection now works in combat via auraInstanceID mapping** — WoW 12.0 secrets `spellId`/`name` in combat but `auraInstanceID` is NeverSecret and stable; builds instanceID→spellID map out of combat, resolves auras in combat using the map; UNIT_AURA addedAuras/removedAuraInstanceIDs keep the map current; trustedOutOfCombatCache used as fallback only for truly unmapped auras (RedundancyFilter v37→v38)
-- **Buff removal now detected in combat** — removing a buff (e.g., right-clicking MOW off) now immediately shows the spell in queue; tracks removed spellIDs via `combatRemovedSpellIDs` to prevent trusted cache merge from re-adding them; non-DPS filter gate now uses `hasSecrets` (instance-map-aware) instead of raw `auraAPIBlocked`
-- **Buff recast in combat now correctly filtered** — recasting a buff (e.g., MOW) after removal in combat is now hidden from the queue again; IsInPandemicWindow returns false when inCombatActivations shows a fresh cast with no timing data
-- **Multi-cycle remove/reapply tracking in combat** — pending activation queue bridges UNIT_SPELLCAST_SUCCEEDED → UNIT_AURA addedAuras (2s FIFO window) to map new aura instance IDs when spellId is secret; supports unlimited remove/recast cycles within a single combat; filters harmful auras (debuffs) from consuming pending activation entries
-- **Interrupt list now refreshes on spec/talent changes** — `resolvedInterrupts` was only built during frame creation; now re-resolved in `OnSpellsChanged` and `OnSpecChange` so talent-gated CC/interrupt spells appear immediately; deferred to out-of-combat to prevent `IsSpellAvailable()` secret restrictions from wiping the list
-- **Channeling check now secret-safe** — replaced `UnitChannelInfo("player") ~= nil` with `PlayerChannelBarFrame:IsShown()` (NeverSecret visual frame) to avoid potential taint from secret return values
-- **Elapsed-time fallback now secret-safe** — the short-cast duration filter's `castBar.spellID` comparison is now pcall-wrapped; in PvP contexts where spellID is secret, prevents taint crash from secret boolean in control flow
+- **CC/interrupt spells now correctly detected as off-cooldown in combat** - WoW 12.0 blanket-secrets `duration`/`startTime` from `C_Spell.GetSpellCooldown()` even when zero; now uses `isOnGCD` (NeverSecret) three-state field: `true`=GCD only (ready), `false`=real cooldown, `nil`=no cooldown (ready)
+- **Aura detection now works in combat via auraInstanceID mapping** - WoW 12.0 secrets `spellId`/`name` in combat but `auraInstanceID` is NeverSecret and stable; builds instanceID→spellID map out of combat, resolves auras in combat using the map; UNIT_AURA addedAuras/removedAuraInstanceIDs keep the map current; trustedOutOfCombatCache used as fallback only for truly unmapped auras (RedundancyFilter v37→v38)
+- **Buff removal now detected in combat** - removing a buff (e.g., right-clicking MOW off) now immediately shows the spell in queue; tracks removed spellIDs via `combatRemovedSpellIDs` to prevent trusted cache merge from re-adding them; non-DPS filter gate now uses `hasSecrets` (instance-map-aware) instead of raw `auraAPIBlocked`
+- **Buff recast in combat now correctly filtered** - recasting a buff (e.g., MOW) after removal in combat is now hidden from the queue again; IsInPandemicWindow returns false when inCombatActivations shows a fresh cast with no timing data
+- **Multi-cycle remove/reapply tracking in combat** - pending activation queue bridges UNIT_SPELLCAST_SUCCEEDED → UNIT_AURA addedAuras (2s FIFO window) to map new aura instance IDs when spellId is secret; supports unlimited remove/recast cycles within a single combat; filters harmful auras (debuffs) from consuming pending activation entries
+- **Interrupt list now refreshes on spec/talent changes** - `resolvedInterrupts` was only built during frame creation; now re-resolved in `OnSpellsChanged` and `OnSpecChange` so talent-gated CC/interrupt spells appear immediately; deferred to out-of-combat to prevent `IsSpellAvailable()` secret restrictions from wiping the list
+- **Channeling check now secret-safe** - replaced `UnitChannelInfo("player") ~= nil` with `PlayerChannelBarFrame:IsShown()` (NeverSecret visual frame) to avoid potential taint from secret return values
+- **Elapsed-time fallback now secret-safe** - the short-cast duration filter's `castBar.spellID` comparison is now pcall-wrapped; in PvP contexts where spellID is secret, prevents taint crash from secret boolean in control flow
 
 ## [4.1.1] - 2026-02-22
 
 ### Changed
-- Default `targetFrameAnchor` changed from `"TOP"` to `"DISABLED"` — new/reset profiles no longer snap to the target frame by default
+- Default `targetFrameAnchor` changed from `"TOP"` to `"DISABLED"` - new/reset profiles no longer snap to the target frame by default
 - Dragging the panel now auto-disables the target frame anchor so the frame stays where you put it
-- Frame is now only draggable via the grab tab — prevents accidental repositioning when interacting with icons
+- Frame is now only draggable via the grab tab - prevents accidental repositioning when interacting with icons
 
 ### Fixed
 - Fixed frame snapping to right side of screen after update or profile reset (target frame anchor was re-applied on every drag stop)
-- Fixed inability to reposition the panel when target frame anchor was enabled — dragging would immediately snap the frame back
-- Added detection for unavailable/replaced TargetFrame (ElvUI, SUF, etc.) — anchoring gracefully falls back to saved position
-- Added off-screen safety check on load — if saved position is outside screen bounds (resolution/scale change), frame resets to center
+- Fixed inability to reposition the panel when target frame anchor was enabled - dragging would immediately snap the frame back
+- Added detection for unavailable/replaced TargetFrame (ElvUI, SUF, etc.) - anchoring gracefully falls back to saved position
+- Added off-screen safety check on load - if saved position is outside screen bounds (resolution/scale change), frame resets to center
 - Fixed update-freeze-during-drag not working (`isDragging` was set on grab tab but checked on addon object)
 - Fixed SavePosition saving garbage coordinates when frame was anchored to TargetFrame (now skips save when anchored)
 - Removed unnecessary ForceUpdate from SavePosition (saving coords shouldn't rebuild spell queue)
@@ -1111,12 +1153,12 @@
 ## [4.1.0] - 2026-02-21
 
 ### Added
-- **DefensiveEngine module**: Extracted ~855 lines of defensive spell logic from JustAC.lua into `DefensiveEngine.lua` (LibStub `JustAC-DefensiveEngine` v1) — health-based queue, proc detection, potion subsystem, cooldown polling. JustAC.lua retains thin wrapper methods that delegate to the new module.
+- **DefensiveEngine module**: Extracted ~855 lines of defensive spell logic from JustAC.lua into `DefensiveEngine.lua` (LibStub `JustAC-DefensiveEngine` v1) - health-based queue, proc detection, potion subsystem, cooldown polling. JustAC.lua retains thin wrapper methods that delegate to the new module.
 - **CC Non-Important Casts option**: New toggle under Interrupt Reminder (both standard queue and nameplate overlay). When enabled, uses crowd-control abilities (stuns, incapacitates) to interrupt non-important casts on CC-able (non-boss) mobs, while saving true interrupt lockout for important/lethal casts. Ideal for open-world combat efficiency.
 
 ### Changed
 - **Frame rebuild consistency**: All frame-affecting settings now route through a single `UpdateFrameSize()` path
-  - `UpdateFrameSize()` now calls `ForceUpdateAll()` instead of `ForceUpdate()`, ensuring `OnHealthChanged` fires and `ResizeToCount` runs immediately after any frame rebuild — fixes health bar width not shrinking until next `UNIT_HEALTH` event
+  - `UpdateFrameSize()` now calls `ForceUpdateAll()` instead of `ForceUpdate()`, ensuring `OnHealthChanged` fires and `ResizeToCount` runs immediately after any frame rebuild - fixes health bar width not shrinking until next `UNIT_HEALTH` event
   - Removed redundant trailing `ForceUpdate()` from `RefreshConfig` (already handled by `UpdateFrameSize`)
   - Simplified 4 defensive Options setters (enabled, maxIcons, iconScale, position) from inline `CreateSpellIcons + UpdateSize + UpdatePetSize + ForceUpdateAll` to single `UpdateFrameSize()` call
   - Simplified defensive health bar toggle setters (showHealthBar, showPetHealthBar) from inline destroy/create to `UpdateFrameSize()`
@@ -1133,12 +1175,12 @@
 ### Fixed
 - **Health bars not scaling after reset**: `UpdateFrameSize` now triggers `OnHealthChanged` → `ResizeToCount`, so health bar width matches actual visible defensive icon count immediately after any configuration change or profile reset
 - **Dynamic transform hotkeys missing** (e.g. Templar Strike → Templar Slash): ActionBarScanner v35
-  - Pass `onlyKnown=false` to `C_Spell.GetOverrideSpell()` — default `true` filtered out aura-driven combat transforms that aren't in the spellbook
+  - Pass `onlyKnown=false` to `C_Spell.GetOverrideSpell()` - default `true` filtered out aura-driven combat transforms that aren't in the spellbook
   - Added `FindSpellOverrideByID` fallback in `SearchSlots` for talent/aura overrides that `C_Spell.GetOverrideSpell` may miss (separate native lookup path)
   - Empty hotkey cache results (`""`) no longer use the fast-path, falling through to 0.25s stale-refresh so transforms self-correct within frames
-  - Added forward override scan in `GetSpellHotkey` — checks if any previously-cached slot's spell currently overrides to the target, catching dynamic transforms where `FindBaseSpellByID` returns nil
+  - Added forward override scan in `GetSpellHotkey` - checks if any previously-cached slot's spell currently overrides to the target, catching dynamic transforms where `FindBaseSpellByID` returns nil
 - **Interrupt icon missing tooltip & click handlers**: `CreateInterruptIcon` was passing `isClickable=false` to `CreateBaseIcon`, disabling mouse input entirely. Now passes `true` and adds full interactive behavior matching DPS/defensive icons:
-  - Tooltip (`OnEnter`/`OnLeave`): spell info, hotkey display, custom hotkey hint — respects `tooltipMode` setting
+  - Tooltip (`OnEnter`/`OnLeave`): spell info, hotkey display, custom hotkey hint - respects `tooltipMode` setting
   - Right-click: opens hotkey override dialog
   - Drag to move: repositions the frame (delegates to mainFrame, same as DPS icons)
   - Masque skinning: registered with MasqueGroup so interrupt icon matches custom button skins
@@ -1150,7 +1192,7 @@
 
 ### Added
 
-- **Interrupt Reminder System** — Detects interruptible casts on your target via nameplate cast bar state and shows your best available interrupt as a "position 0" icon before the DPS queue. Works in both Standard Queue and Nameplate Overlay modes.
+- **Interrupt Reminder System** - Detects interruptible casts on your target via nameplate cast bar state and shows your best available interrupt as a "position 0" icon before the DPS queue. Works in both Standard Queue and Nameplate Overlay modes.
   - **Interrupt Mode** dropdown: Important Only (shows for lethal/must-interrupt casts via `C_Spell.IsSpellImportant`), All Casts (any interruptible cast), or Off
   - **CC Non-Important Casts** toggle (on by default): Uses stuns/incapacitates to interrupt non-important casts on CC-able (non-boss) mobs, saving your true interrupt lockout for dangerous casts
   - Per-class interrupt + CC spell lists in SpellDB with automatic override resolution
@@ -1158,40 +1200,40 @@
   - De-duplication: interrupt icon hidden when it matches DPS queue position 1
   - Secret-safe: all cast bar visibility checks wrapped in pcall for 12.0 combat taint
   - Red interrupt glow distinguishes from normal DPS/proc glows
-- **Nameplate Overlay: Icon Spacing** — New "Spacing" slider (0–10 px, default 2) controls the gap between successive icons in the cluster for both DPS and defensive rows. Applies to horizontal and vertical expansion modes. Replaces the hardcoded 2 px constant.
-- **Nameplate Overlay: Opacity** — New "Frame Opacity" slider (0.1–1.0) for the overlay cluster. Applies to DPS icons, defensive icons (respects fade-in animation), and the health bar independently of the main panel opacity.
-- **Nameplate Overlay: Show Key Press Flash** — New toggle to enable/disable key-press flash feedback on overlay DPS icons, independently of the main panel flash setting.
-- **Nameplate Overlay: Options reorganized** — Overlay tab now structured in three logical sections: shared settings at top (anchor, expansion, health bar position, icon size, spacing, opacity, highlight mode, hotkeys, flash), then an "Offensive Queue" section (offensive slots), then a "Defensive Suggestions" section (enable, visibility, defensive slots, health bar).
-- **DefensiveEngine module** — Extracted ~855 lines of defensive spell logic from JustAC.lua into `DefensiveEngine.lua` (LibStub `JustAC-DefensiveEngine` v1) for maintainability. Core addon retains thin wrapper methods.
+- **Nameplate Overlay: Icon Spacing** - New "Spacing" slider (0–10 px, default 2) controls the gap between successive icons in the cluster for both DPS and defensive rows. Applies to horizontal and vertical expansion modes. Replaces the hardcoded 2 px constant.
+- **Nameplate Overlay: Opacity** - New "Frame Opacity" slider (0.1–1.0) for the overlay cluster. Applies to DPS icons, defensive icons (respects fade-in animation), and the health bar independently of the main panel opacity.
+- **Nameplate Overlay: Show Key Press Flash** - New toggle to enable/disable key-press flash feedback on overlay DPS icons, independently of the main panel flash setting.
+- **Nameplate Overlay: Options reorganized** - Overlay tab now structured in three logical sections: shared settings at top (anchor, expansion, health bar position, icon size, spacing, opacity, highlight mode, hotkeys, flash), then an "Offensive Queue" section (offensive slots), then a "Defensive Suggestions" section (enable, visibility, defensive slots, health bar).
+- **DefensiveEngine module** - Extracted ~855 lines of defensive spell logic from JustAC.lua into `DefensiveEngine.lua` (LibStub `JustAC-DefensiveEngine` v1) for maintainability. Core addon retains thin wrapper methods.
 
 ### Changed
 
-- **BlizzardAPI v30**: Removed dead code — `GetBypassFlags()`, `IsCooldownFeatureAvailable()`, `IsDefensivesFeatureAvailable()`, `TestCooldownAccess()` all had no external consumers. Feature availability struct simplified from 5 fields to 3.
+- **BlizzardAPI v30**: Removed dead code - `GetBypassFlags()`, `IsCooldownFeatureAvailable()`, `IsDefensivesFeatureAvailable()`, `TestCooldownAccess()` all had no external consumers. Feature availability struct simplified from 5 fields to 3.
 - **SpellQueue v34**: `GetRotationSpells()` result is now cached and only refreshed on `RotationSpellsUpdated` event (was called ~10/sec in combat). Replaced `GetBypassFlags()` table allocation with direct `IsProcFeatureAvailable()` call.
 - Default icon size changed from 36 to 42 for new profiles
 - Default defensive icon scale changed from 1.2 to 1.0 for new profiles
 
 ### Fixed
 
-- **Dynamic transform hotkeys missing** (e.g. Templar Strike → Templar Slash): ActionBarScanner v35 — pass `onlyKnown=false` to `C_Spell.GetOverrideSpell()`, added `FindSpellOverrideByID` fallback and forward override scan for aura-driven combat transforms
+- **Dynamic transform hotkeys missing** (e.g. Templar Strike → Templar Slash): ActionBarScanner v35 - pass `onlyKnown=false` to `C_Spell.GetOverrideSpell()`, added `FindSpellOverrideByID` fallback and forward override scan for aura-driven combat transforms
 - **Frame rebuild consistency**: All frame-affecting Options setters unified through single `UpdateFrameSize()` path; health bar width now updates immediately on config changes
 - **Defensive "Reset to Defaults"**: Synced hardcoded reset values with actual profile defaults (health bar, glow mode, icon count, items, display mode were all mismatched)
-- **BlizzardAPI**: `TestProcAccess()` accessed `spells[1].spellId` but `GetRotationSpells()` returns a flat array of numbers — secret-value detection for procs was dead code (fail-open masked the bug). Now correctly uses `spells[1]`.
+- **BlizzardAPI**: `TestProcAccess()` accessed `spells[1].spellId` but `GetRotationSpells()` returns a flat array of numbers - secret-value detection for procs was dead code (fail-open masked the bug). Now correctly uses `spells[1]`.
 - **BlizzardAPI**: `GetActionInfo()` filtered Assisted Combat placeholder slots by checking `id == "assistedcombat"` but Blizzard's canonical filter is `subType == "assistedcombat"`. Now checks both `subType` and `id` for robustness.
 - Nameplate Overlay: "Show Hotkeys" and "Show Flash" settings now apply to defensive overlay icons as well as DPS icons (both now pass their own override to ShowDefensiveIcon instead of reading the main panel's defensives profile)
 - Nameplate Overlay: key-press flash for defensive overlay icons was gated on the main panel's `defensives.showFlash` setting instead of the overlay's own `showFlash`
 
 ### Removed
 
-- Nameplate Overlay: "Show Procced Defensives" toggle removed — procced spells always appear in the overlay defensive queue; the Highlight Mode dropdown controls whether they receive special highlighting
+- Nameplate Overlay: "Show Procced Defensives" toggle removed - procced spells always appear in the overlay defensive queue; the Highlight Mode dropdown controls whether they receive special highlighting
 
 ## [3.26.2] - 2026-02-20
 
 ### Added
 
-- **Nameplate Overlay** — Independent queue cluster that attaches directly to the target's nameplate. Fully separate from the main panel; either or both can be active at once. Includes DPS queue icons, defensive queue icons (opposite side), and a compact player health bar. Configurable anchor side, expansion direction (horizontal or vertical), icon count, icon size, glow mode, hotkey display, and per-section visibility. Overlay defensives operate independently of the main Defensive Suggestions setting.
-- **Items in defensive queue** — Spell lists now accept equipped items (`-itemID` or `item:ID` syntax). Items display with an `[Item]` tag and correct icon/name in the editor. Auto-deduplication against hardcoded health potions.
-- **Reset to Defaults buttons** — Each major options tab (General, Offensives, Overlay, Defensives) now has a section-scoped reset button. Spell lists and the blacklist are never affected.
+- **Nameplate Overlay** - Independent queue cluster that attaches directly to the target's nameplate. Fully separate from the main panel; either or both can be active at once. Includes DPS queue icons, defensive queue icons (opposite side), and a compact player health bar. Configurable anchor side, expansion direction (horizontal or vertical), icon count, icon size, glow mode, hotkey display, and per-section visibility. Overlay defensives operate independently of the main Defensive Suggestions setting.
+- **Items in defensive queue** - Spell lists now accept equipped items (`-itemID` or `item:ID` syntax). Items display with an `[Item]` tag and correct icon/name in the editor. Auto-deduplication against hardcoded health potions.
+- **Reset to Defaults buttons** - Each major options tab (General, Offensives, Overlay, Defensives) now has a section-scoped reset button. Spell lists and the blacklist are never affected.
 
 ### Changed
 
@@ -1204,15 +1246,15 @@
 - Charge-based ability cooldown sweep bleeding outside icon border (SetDrawSwipe disabled on chargeCooldown; edge ring now matches Blizzard's own rendering)
 - Target frame anchor not re-applied after loading screens or combat lockdown (UpdateTargetFrameAnchor now called on PLAYER_ENTERING_WORLD and PLAYER_REGEN_ENABLED)
 - DPS icons invisible after icon refactor (alpha not reset on slot reuse)
-- Defensive spells on cooldown permanently hidden in combat — cooldown swipe is now the visual indicator; visibility is no longer gated on cooldown state
+- Defensive spells on cooldown permanently hidden in combat - cooldown swipe is now the visual indicator; visibility is no longer gated on cooldown state
 - Rotation list positions 2+ permanently hiding spells on cooldown
 - Cooldown swipe not re-shown when an icon slot is reused
 - Icon background corner-clipping (rounded mask now applied to background as well as texture)
 - Disabled spec profile not applied on login/reload until the user manually switched specs
-- Defensive queue item deduplication: same item in multiple spell lists (selfheal + cooldown) could appear twice — cross-call check used negative key but callers marked positive key
-- Defensive queue showing same ability twice when a talent replaces a base spell (e.g. Impending Victory replacing Victory Rush) — both the base ID and the talent ID passed availability checks and both appeared; fixed by resolving talent overrides via FindSpellOverrideByID in GetUsableDefensiveSpells and the ActionBarScanner proc injection path, so both share the same tracking key and only the active (talent) version is shown
+- Defensive queue item deduplication: same item in multiple spell lists (selfheal + cooldown) could appear twice - cross-call check used negative key but callers marked positive key
+- Defensive queue showing same ability twice when a talent replaces a base spell (e.g. Impending Victory replacing Victory Rush) - both the base ID and the talent ID passed availability checks and both appeared; fixed by resolving talent overrides via FindSpellOverrideByID in GetUsableDefensiveSpells and the ActionBarScanner proc injection path, so both share the same tracking key and only the active (talent) version is shown
 - Options: Profiles tab had same `order = 4` as Defensives tab (undefined tab ordering)
-- Options: Nameplate Overlay health bar was incorrectly gated on "Show Defensives" — users could not enable it independently
+- Options: Nameplate Overlay health bar was incorrectly gated on "Show Defensives" - users could not enable it independently
 - Options: Standard queue settings (icon size, spacing, orientation, anchor, tooltips, opacity, fade, panel interaction) had no disabled state when Display Mode was Overlay-only or Disabled
 - Options: Offensive settings had no disabled state when Display Mode was Overlay-only or Disabled
 
@@ -1220,11 +1262,11 @@
 
 ### Added
 
-- **Nameplate overlay: expansion direction setting** — New "Expansion Direction" dropdown: Horizontal (Out) chains icons away from the nameplate (original behaviour), Vertical Up stacks slot 2 above slot 1, Vertical Down stacks them downward. Anchor dropdown is now LEFT/RIGHT only (TOP/BOTTOM were mis-implemented as above/below the nameplate and have been removed).
-- **Nameplate overlay: vertical health bar** — For Vertical Up/Down expansion the health bar renders as a thin vertical strip beside the icon column, spanning the full cluster height (26 px × 1 icon, 54 px × 2 icons, 82 px × 3 icons). Orientation is VERTICAL so fill direction matches the icon stack.
-- **Nameplate overlay defensive display mode** — New "Defensive Visibility" dropdown in the Nameplate Overlay options: "In Combat Only" (default) or "Always". Previously the overlay defensives inherited the main defensive panel's `displayMode`. The overlay now has its own independent setting and calls `GetDefensiveSpellQueue` with an `overrideDisplayMode`.
-- **Items in defensive queue** — Negative numbers in spell lists represent items (-itemID).
-  - `BlizzardAPI.CheckDefensiveItemState(itemID, profile)` — validates item count and cooldown.
+- **Nameplate overlay: expansion direction setting** - New "Expansion Direction" dropdown: Horizontal (Out) chains icons away from the nameplate (original behaviour), Vertical Up stacks slot 2 above slot 1, Vertical Down stacks them downward. Anchor dropdown is now LEFT/RIGHT only (TOP/BOTTOM were mis-implemented as above/below the nameplate and have been removed).
+- **Nameplate overlay: vertical health bar** - For Vertical Up/Down expansion the health bar renders as a thin vertical strip beside the icon column, spanning the full cluster height (26 px × 1 icon, 54 px × 2 icons, 82 px × 3 icons). Orientation is VERTICAL so fill direction matches the icon stack.
+- **Nameplate overlay defensive display mode** - New "Defensive Visibility" dropdown in the Nameplate Overlay options: "In Combat Only" (default) or "Always". Previously the overlay defensives inherited the main defensive panel's `displayMode`. The overlay now has its own independent setting and calls `GetDefensiveSpellQueue` with an `overrideDisplayMode`.
+- **Items in defensive queue** - Negative numbers in spell lists represent items (-itemID).
+  - `BlizzardAPI.CheckDefensiveItemState(itemID, profile)` - validates item count and cooldown.
   - Options UI accepts `-itemID` or `item:ID` syntax in the manual input field.
   - Items display with `[Item]` tag and correct icon/name in the spell list editor.
   - `GetUsableDefensiveSpells` handles mixed spell/item lists, deduplicates with hardcoded potions.
@@ -1234,20 +1276,20 @@
 ### Changed
 
 - BlizzardAPI library bumped to v29.
-- **Health bar color** — Overlay health bar now uses pure bright green `(0, 1, 0)` instead of the previous murky `(0.1, 0.8, 0.1)`, matching Blizzard's nameplate health bar saturation.
-- **Health bar inset formula** — Replaced asymmetric `iconSize * 1.8 + (n-2)*spacing` with symmetric `clusterWidth - 2*inset` so both outer edges have equal inset.
-- **healthBarPosition option** — Disabled when expansion is "out" (horizontal) instead of when anchor is LEFT/RIGHT. Only meaningful for vertical expansion.
+- **Health bar color** - Overlay health bar now uses pure bright green `(0, 1, 0)` instead of the previous murky `(0.1, 0.8, 0.1)`, matching Blizzard's nameplate health bar saturation.
+- **Health bar inset formula** - Replaced asymmetric `iconSize * 1.8 + (n-2)*spacing` with symmetric `clusterWidth - 2*inset` so both outer edges have equal inset.
+- **healthBarPosition option** - Disabled when expansion is "out" (horizontal) instead of when anchor is LEFT/RIGHT. Only meaningful for vertical expansion.
 
 ### Fixed
 
-- **Defensive overlay invisible after option change** — `UINameplateOverlay.Create` now calls `ForceUpdateAll()` after anchoring so icons render immediately without requiring a re-target.
-- **DPS queue invisible after CreateBaseIcon refactor** — `CreateBaseIcon` was setting `button:SetAlpha(0)` at init; the DPS renderer only calls `icon:Show()` (not `fadeIn:Play()`), so icons were permanently invisible. Removed the alpha reset from `CreateBaseIcon`; defensive icons set alpha=0 themselves before playing fadeIn.
-- **Defensive queue permanently hides spells on cooldown** — `CheckDefensiveSpellState` was calling `IsSpellOnRealCooldown` and returning `isUsable=false` for spells on CD. In combat cooldown duration is secret so we can never reliably detect expiry. Removed the gate; all known non-redundant defensives now appear with the cooldown swipe as the visual indicator.
-- **Rotation list (positions 2+) permanently hides spells on cooldown** — Added `PassesRotationFilters` in SpellQueue.lua that checks availability and redundancy but skips `IsSpellUsable`/cooldown filtering. The rotation list now uses this function.
-- **Cooldown swipe not re-shown when icon slot is reused** — `HideDefensiveIcon` and the DPS slot-clear path were calling `cooldown:Hide()` without resetting `_cooldownShown` / `_chargeCooldownShown` / `_cachedMaxCharges`. All three flags now reset in both clear paths.
-- **Icon background corner-clipping** — `iconMask` was only applied to `iconTexture`, not `slotBackground`. Added `slotBackground:AddMaskTexture(iconMask)` so the background is also clipped.
-- **Disabled spec profile not applied on login/reload** — `PLAYER_ENTERING_WORLD` now calls `OnSpecChange()` to apply the spec profile (including disabled state) on world entry.
-- **Defensive icons/health bar could re-appear while spec-disabled** — `OnHealthChanged` now guards on `isDisabledMode` so live health changes can't undo the hide performed by `EnterDisabledMode`.
+- **Defensive overlay invisible after option change** - `UINameplateOverlay.Create` now calls `ForceUpdateAll()` after anchoring so icons render immediately without requiring a re-target.
+- **DPS queue invisible after CreateBaseIcon refactor** - `CreateBaseIcon` was setting `button:SetAlpha(0)` at init; the DPS renderer only calls `icon:Show()` (not `fadeIn:Play()`), so icons were permanently invisible. Removed the alpha reset from `CreateBaseIcon`; defensive icons set alpha=0 themselves before playing fadeIn.
+- **Defensive queue permanently hides spells on cooldown** - `CheckDefensiveSpellState` was calling `IsSpellOnRealCooldown` and returning `isUsable=false` for spells on CD. In combat cooldown duration is secret so we can never reliably detect expiry. Removed the gate; all known non-redundant defensives now appear with the cooldown swipe as the visual indicator.
+- **Rotation list (positions 2+) permanently hides spells on cooldown** - Added `PassesRotationFilters` in SpellQueue.lua that checks availability and redundancy but skips `IsSpellUsable`/cooldown filtering. The rotation list now uses this function.
+- **Cooldown swipe not re-shown when icon slot is reused** - `HideDefensiveIcon` and the DPS slot-clear path were calling `cooldown:Hide()` without resetting `_cooldownShown` / `_chargeCooldownShown` / `_cachedMaxCharges`. All three flags now reset in both clear paths.
+- **Icon background corner-clipping** - `iconMask` was only applied to `iconTexture`, not `slotBackground`. Added `slotBackground:AddMaskTexture(iconMask)` so the background is also clipped.
+- **Disabled spec profile not applied on login/reload** - `PLAYER_ENTERING_WORLD` now calls `OnSpecChange()` to apply the spec profile (including disabled state) on world entry.
+- **Defensive icons/health bar could re-appear while spec-disabled** - `OnHealthChanged` now guards on `isDisabledMode` so live health changes can't undo the hide performed by `EnterDisabledMode`.
 
 ## [3.25.1] - 2026-02-17
 
@@ -1273,12 +1315,12 @@
 - Migration: existing flat spell lists (`selfHealSpells`/`cooldownSpells`/`petHealSpells`) automatically migrated to new structure on first load
 - `GetClassSpellList(listKey)` helper for clean per-class spell access
 - `/jac defensive` now shows current class name and pet heal count
-- **Pet rez/summon system**: High-priority defensive icon when pet is dead (`UnitIsDead`) or missing (`!UnitExists`) — reliable in combat (not secret)
+- **Pet rez/summon system**: High-priority defensive icon when pet is dead (`UnitIsDead`) or missing (`!UnitExists`) - reliable in combat (not secret)
 - `CLASS_PET_REZ_DEFAULTS` in SpellDB: Hunter (Revive Pet, Heart of the Phoenix, Call Pet 1), Warlock (all summon demons), Death Knight (Raise Dead)
 - `BlizzardAPI.GetPetStatus()`: returns "dead", "missing", or "alive" using combat-safe APIs
 - **Pet health bar**: Teal-colored StatusBar mirroring player health bar style, independently toggleable via `showPetHealthBar`
   - Auto-hides when no pet is active, shows red dead overlay when pet is dead
-  - StatusBar accepts secret values — renders pet health visually even when exact % is hidden
+  - StatusBar accepts secret values - renders pet health visually even when exact % is hidden
   - Stacks above player health bar when both enabled, defensive icons offset correctly for both bars
 - Pet Rez/Summon and Pet Heal priority list sections in Options panel (hidden for non-pet classes)
 - `/jac defensive` now shows pet status, pet health %, pet rez spell count
@@ -1286,7 +1328,7 @@
 
 ### Changed
 
-- Defensive spell lists are no longer stored at `profile.defensives.selfHealSpells` — they live under `profile.defensives.classSpells[CLASS].selfHealSpells`
+- Defensive spell lists are no longer stored at `profile.defensives.selfHealSpells` - they live under `profile.defensives.classSpells[CLASS].selfHealSpells`
 - Profile copy/share now transfers visual settings (thresholds, icon count, display mode) while each class auto-populates its own defensive spells on first login
 - Pet heal suggestions now require pet to be alive (dead/missing triggers rez spells instead)
 - Pet heal threshold is best-effort: pet health is secret in combat, heals only suggested when health is readable
@@ -1355,14 +1397,14 @@
 
 ### Fixed
 
-- **Fix crash opening hotkey override dialog**: `OpenHotkeyOverrideDialog` was calling `addon:GetCachedSpellInfo()` (doesn't exist) instead of `SpellQueue.GetCachedSpellInfo()` — right-clicking a spell icon to set a custom hotkey caused an error
+- **Fix crash opening hotkey override dialog**: `OpenHotkeyOverrideDialog` was calling `addon:GetCachedSpellInfo()` (doesn't exist) instead of `SpellQueue.GetCachedSpellInfo()` - right-clicking a spell icon to set a custom hotkey caused an error
 - **Fix glow animations not pausing/resuming on combat state change**: `PauseAllGlows` and `ResumeAllGlows` were called without the required `addon` argument at 4 call sites, so they silently did nothing
 
 ## [3.21.6] - 2026-02-11
 
 ### Changed
 
-- **Removed section summaries from Offensives/Defensives tabs**: Info descriptions at top of each tab removed — settings are self-explanatory
+- **Removed section summaries from Offensives/Defensives tabs**: Info descriptions at top of each tab removed - settings are self-explanatory
 - **Compact About panel**: Replaced verbose feature list with concise one-liner; removed console command instructions (assisted combat is on by default in 12.0)
 - **About version now reads from TOC**: Uses `C_AddOns.GetAddOnMetadata` instead of stale `db.global.version` default
 
@@ -1376,15 +1418,15 @@
 
 ### Changed
 
-- **Defensive queue and health bar disabled by default**: New profiles start with defensives off and health bar hidden — enable in Defensives tab if desired
+- **Defensive queue and health bar disabled by default**: New profiles start with defensives off and health bar hidden - enable in Defensives tab if desired
 - **Clear All buttons for blacklist and hotkey overrides**: Both panels now show a "Clear All" button (with confirmation) when entries exist
 - **Removed health bar color gradient**: Bar stays green with red background showing missing health (gradient didn't work with secret health values)
 
 ### Fixed
 
-- **Fix `IsShown` crash in `HideDefensiveIcon`**: Was passing addon object (`self`) instead of defensive icon frame — caused 57+ errors per second during health updates
+- **Fix `IsShown` crash in `HideDefensiveIcon`**: Was passing addon object (`self`) instead of defensive icon frame - caused 57+ errors per second during health updates
 - **Fix `ShowDefensiveIcon` silently failing**: Two call sites were missing the required `defensiveIcon` frame parameter, so defensive icons never displayed when health dropped or hotkey overrides changed
-- **Fix health bar toggle in options**: Was calling nonexistent `UIHealthBar.DestroyHealthBar()` instead of `UIHealthBar.Destroy()` — toggling health bar off in settings had no effect
+- **Fix health bar toggle in options**: Was calling nonexistent `UIHealthBar.DestroyHealthBar()` instead of `UIHealthBar.Destroy()` - toggling health bar off in settings had no effect
 - **Fix default mismatches in Options panel**: `maxIcons` fallback was 5 (should be 4), `iconSpacing` fallback was 2 (should be 1), causing options sliders to show wrong values on fresh profiles
 - **Fix profile migration on profile switch**: `RefreshConfig` now calls `NormalizeSavedData()` so switching to an older profile properly migrates string-keyed spell IDs, profile-level blacklists, and `panelLocked` boolean
 - **Fix profile reset wiping character data**: `OnProfileReset` no longer clears blacklist and hotkey overrides, which are character-specific and should persist across profile operations

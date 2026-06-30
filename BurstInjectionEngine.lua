@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- BurstInjectionEngine.lua — Burst injection system: detect burst windows and
+-- BurstInjectionEngine.lua - Burst injection system: detect burst windows and
 -- inject user-configured priority spells at position 1.
 --
 -- Two-phase trigger detection:
@@ -57,7 +57,7 @@ local timerTriggerCastTime = 0      -- GetTime() when a trigger spell was last c
 --- Return the base cooldown of a spell in seconds (cached).
 --- Uses GetSpellBaseCooldown (returns ms) with fallback to C_Spell.GetSpellCharges
 --- cooldownDuration for charge-based spells where GetSpellBaseCooldown returns 0.
---- Must be called out of combat — both APIs return secrets in combat.
+--- Must be called out of combat - both APIs return secrets in combat.
 local function GetBaseCooldownSeconds(spellID)
     if not spellID or spellID <= 0 then return 0 end
     local cached = baseCooldownCache[spellID]
@@ -243,7 +243,7 @@ local function TryInjectionCandidate(spellID, addedSpellIDs)
     if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
 
     -- Blacklist: suppress entries the user has hidden from all positions.
-    -- Check both the curated base ID and the talent-resolved ID — the user may
+    -- Check both the curated base ID and the talent-resolved ID - the user may
     -- have blacklisted either form (IsSpellBlacklisted expands each via display override).
     if not SpellQueue then SpellQueue = LibStub("JustAC-SpellQueue", true) end
     if SpellQueue and SpellQueue.IsSpellBlacklisted
@@ -261,7 +261,7 @@ local function TryInjectionCandidate(spellID, addedSpellIDs)
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Resource check: don't inject spells the player can't afford
-    -- C_Spell.IsSpellUsable returns (isUsable, insufficientPower) — both NeverSecret
+    -- C_Spell.IsSpellUsable returns (isUsable, insufficientPower) - both NeverSecret
     -- failOpen=true: if usability can't be determined, allow the spell through
     local _, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID, true)
     if notEnoughResources then return nil end
@@ -279,7 +279,7 @@ function BurstInjectionEngine.GetBurstSpecKey()
 end
 
 --- Return class default trigger spells for the current spec (ignores overrides).
---- Shows all defaults regardless of talent status — for display in options panel.
+--- Shows all defaults regardless of talent status - for display in options panel.
 --- Returns: { {spellID=number, name=string, baseCd=number}, ... } or empty table.
 function BurstInjectionEngine.GetDefaultTriggers()
     local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
@@ -481,13 +481,13 @@ function BurstInjectionEngine.GetBurstInjectionSpell(addon, addedSpellIDs)
         if resolved then return resolved, base end
     end
 
-    -- All injection spells on CD or already shown — nothing to inject.
+    -- All injection spells on CD or already shown - nothing to inject.
     return nil
 end
 
 --- Mark all burst injection spell IDs into a set.
 --- Called by SpellQueue to suppress these from the rotation list when burst
---- injection is enabled — our insertion controls when they appear.
+--- injection is enabled - our insertion controls when they appear.
 function BurstInjectionEngine.MarkBurstInjectionSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
     local spellList = ResolveInjectionSpells(addon)
@@ -547,7 +547,7 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
 
     -- Pre-cache base cooldowns AND register for local CD tracking while out
     -- of combat. GetSpellBaseCooldown and RegisterSpellForTracking both need
-    -- non-secret API values — in combat they fail silently.
+    -- non-secret API values - in combat they fail silently.
     local injList = profile.burstInjection.injectionSpells[specKey]
     if injList then
         for _, sid in ipairs(injList) do
@@ -591,7 +591,7 @@ end
 
 --- Pre-cache base cooldowns for all spells in the Blizzard rotation list.
 --- Must be called OUT of combat (GetSpellBaseCooldown returns secrets in combat).
---- Safe to call multiple times — already-cached spells are skipped.
+--- Safe to call multiple times - already-cached spells are skipped.
 function BurstInjectionEngine.PreCacheRotationCooldowns()
     if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return end
     local rotationSpells = BlizzardAPI.GetRotationSpells()

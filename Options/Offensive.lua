@@ -213,7 +213,7 @@ function Offensive.UpdateBlacklistOptions(addon)
                 }
             }
 
-            -- Position-1 scope toggle (spells only — items never appear at position 1).
+            -- Position-1 scope toggle (spells only - items never appear at position 1).
             -- On (value == true): hidden everywhere. Off ({fixedQueue=true}): hidden from
             -- positions 2+ only, so Blizzard's position-1 recommendation can't stall.
             if entry.id > 0 then

@@ -439,7 +439,7 @@ function BlizzardAPI.ClearAvailabilityCache()
 end
 
 -- Event-only invalidation: cleared by SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
--- and RotationSpellsUpdated via ClearAvailabilityCache(). No timer needed — spell
+-- and RotationSpellsUpdated via ClearAvailabilityCache(). No timer needed - spell
 -- availability only changes on talent/spec/spell-grant events.
 function BlizzardAPI.IsSpellAvailable(spellID)
     if not spellID or spellID == 0 then return false end
@@ -469,7 +469,7 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         if C_SpellBook_IsSpellInSpellBook(spellID, Enum_SpellBookSpellBank_Player) then
             -- Choice-node guard: spellbook returns true for all options in a
             -- talent choice row, even unselected ones. If IsSpellKnown explicitly
-            -- returned false above, this is an unselected talent — reject it.
+            -- returned false above, this is an unselected talent - reject it.
             if IsSpellKnown and not IsSpellKnown(spellID) and not IsPlayerSpell(spellID) then
                 spellAvailabilityCache[spellID] = false
                 return false

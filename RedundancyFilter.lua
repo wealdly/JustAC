@@ -31,7 +31,7 @@ local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
 -- Source: Meorawr (Blizzard) hotfix + NoSelph/ShadowedUnitFrames research.
 -- These spells return non-secret AuraData (spellId, name, icon, duration, etc.)
 -- even in combat on player/party/raid units. When the aura API reports a field
--- as "secret" for one of these spells, we can safely pcall-access it — the data
+-- as "secret" for one of these spells, we can safely pcall-access it - the data
 -- is guaranteed readable and the pcall verifies that guarantee holds.
 -- This allows resolution of NEW auras gained during combat (no instance-map entry)
 -- without waiting for the next out-of-combat refresh.
@@ -103,7 +103,7 @@ local NEVER_SECRET_AURA_SPELLS = {
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
 -- Absolute minimum time-remaining threshold for long-duration buffs (poisons, raid buffs, etc).
--- When less than this many seconds remain, stop filtering — show the recast suggestion so
+-- When less than this many seconds remain, stop filtering - show the recast suggestion so
 -- the player can reapply before or immediately after entering combat.
 -- expirationTime is cached out of combat as a plain Lua number (GetTime() timestamp),
 -- so remaining = expirationTime - GetTime() is valid arithmetic even in combat.
@@ -130,7 +130,7 @@ local EXPIRATION_CHECK_INTERVAL = 5
 
 --------------------------------------------------------------------------------
 -- Aura Instance ID Mapping (12.0 Combat-Safe Aura Detection)
--- auraInstanceID is NeverSecret in 12.0 — it's always readable even in combat.
+-- auraInstanceID is NeverSecret in 12.0 - it's always readable even in combat.
 -- We build a map of instanceID → spellID out of combat (when spellId is readable),
 -- then use it in combat to resolve secret spellId fields back to real values.
 -- UNIT_AURA addedAuras/removedAuraInstanceIDs keep the map current during combat.
@@ -174,7 +174,7 @@ local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo or fun
 
 -- Invalidate aura cache on UNIT_AURA; keep inCombatActivations until combat ends
 -- Preserve trusted out-of-combat snapshot while in combat to avoid gaps caused by secret values
--- Preserve instanceToSpellMap always — it's our combat-safe aura identity resolution
+-- Preserve instanceToSpellMap always - it's our combat-safe aura identity resolution
 function RedundancyFilter.InvalidateCache()
     wipe(cachedAuras)
     lastAuraCheck = 0
@@ -186,7 +186,7 @@ function RedundancyFilter.InvalidateCache()
         lastTrustedCacheTime = 0
         nextExpirationCheck = 0
         -- Instance maps are rebuilt on next RefreshAuraCache out of combat
-        -- Don't wipe them here — they may still be valid and are cheap to rebuild
+        -- Don't wipe them here - they may still be valid and are cheap to rebuild
     end
 
     -- Prune expired activations (handles toggleable auras being turned off)
@@ -240,7 +240,7 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     
     -- Process added auras: populate instance maps for new auras
     -- In 12.0, addedAuras is an array of AuraData tables for newly applied auras.
-    -- The spellId/name may be secret in combat, but we try anyway — if readable,
+    -- The spellId/name may be secret in combat, but we try anyway - if readable,
     -- we get immediate mapping; if secret, match against pendingActivations by timing.
     if updateInfo.addedAuras then
         local now = GetTime()
@@ -264,7 +264,7 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                 local isHarmful = auraData.isHarmful
                 if BlizzardAPI.IsSecretValue(isHelpful) then isHelpful = nil end
                 if BlizzardAPI.IsSecretValue(isHarmful) then isHarmful = nil end
-                -- Skip harmful auras entirely — we only track beneficial spells
+                -- Skip harmful auras entirely - we only track beneficial spells
                 local isDefinitelyHarmful = (isHarmful == true) or (isHelpful == false)
                 
                 if not isDefinitelyHarmful then
@@ -272,7 +272,7 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                         resolvedSpellID = auraData.spellId
                     elseif spellIdIsSecret and #pendingActivations > 0 then
                         -- Secret spellId: match against pending activations by timing.
-                        -- Only safe when exactly one pending activation exists —
+                        -- Only safe when exactly one pending activation exists -
                         -- with multiple pending, we can't reliably determine which
                         -- cast produced this aura, so skip and fail-open (show spell).
                         -- Only matches helpful auras (harmful ones skipped above).
@@ -328,7 +328,7 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     end
     
     -- updatedAuraInstanceIDs: auras that changed (e.g., stack count change)
-    -- We don't need to do anything special here — the cache invalidation will
+    -- We don't need to do anything special here - the cache invalidation will
     -- cause RefreshAuraCache to re-read the current aura state on next access.
     -- The instance map entries remain valid (same instanceID = same aura).
 end
@@ -555,7 +555,7 @@ RefreshAuraCache = function()
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
     
     -- 12.0+ fast pre-check: skip the full aura scan when all fields are known secret.
-    -- C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean — safe to branch on.
+    -- C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean - safe to branch on.
     -- When true (combat), the loop below would just hit secret values on every aura,
     -- so we skip it entirely and rely on trustedOutOfCombatCache + instance maps.
     local aurasAreSecret = C_Secrets and C_Secrets.ShouldAurasBeSecret
@@ -584,14 +584,14 @@ RefreshAuraCache = function()
             local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
             if not ok or not auraData then break end
             
-            -- auraInstanceID is NeverSecret in 12.0 — always readable
+            -- auraInstanceID is NeverSecret in 12.0 - always readable
             local instanceID = auraData.auraInstanceID
             local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
             local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
             
             if spellIdIsSecret or nameIsSecret then
                 -- 12.0 NeverSecret whitelist: Some auras are guaranteed non-secret
-                -- even in combat. For these, pcall-access the fields directly —
+                -- even in combat. For these, pcall-access the fields directly -
                 -- if readable, skip the instance-map resolution path entirely.
                 -- This handles auras gained during combat that have no instance map entry.
                 local whitelistResolved = false
@@ -600,7 +600,7 @@ RefreshAuraCache = function()
                     if ok and realSpellId and NEVER_SECRET_AURA_SPELLS[realSpellId] then
                         -- spellId was readable (NeverSecret) despite IsSecretValue returning true.
                         -- Process as a normal non-secret aura.
-                        -- IMPORTANT: Don't use BlizzardAPI.GetAuraTiming here — it calls
+                        -- IMPORTANT: Don't use BlizzardAPI.GetAuraTiming here - it calls
                         -- Unsecret() which trusts issecretvalue(). For NeverSecret fields,
                         -- issecretvalue() still returns true (generic marking), but the
                         -- actual values ARE readable via forced evaluation. Use the same
@@ -664,7 +664,7 @@ RefreshAuraCache = function()
                 end
                 end  -- not whitelistResolved
             else
-                -- Not secret — process normally and update instance maps
+                -- Not secret - process normally and update instance maps
                 if auraData.spellId then
                     cachedAuras.byID[auraData.spellId] = true
                     -- Store aura timing info for pandemic check (use API-specific helper)
@@ -773,7 +773,7 @@ RefreshAuraCache = function()
         end
         lastTrustedCacheTime = now
         
-        -- Out of combat, we have authoritative data — prune stale entries
+        -- Out of combat, we have authoritative data - prune stale entries
         local activeInstances = {}
         if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
             for i = 1, 40 do
@@ -848,7 +848,7 @@ local function IsInPandemicWindow(spellID)
 
     -- For long-duration buffs (>= 10 min, e.g. poisons, Mark of the Wild), apply an
     -- absolute minimum window so the addon suggests reapplication with time to spare.
-    -- expirationTime is a plain Lua number cached out of combat — arithmetic is safe in combat.
+    -- expirationTime is a plain Lua number cached out of combat - arithmetic is safe in combat.
     -- The auraInstanceID → timing mapping (instanceToTimingMap) carries this value into combat
     -- even when the aura API returns secret values for expirationTime directly.
     if duration >= LONG_BUFF_DURATION_CUTOFF then
@@ -1039,7 +1039,7 @@ local function CountActivePoisonBuffs()
 
     -- FALLBACK 1: Aura cache by buff spell ID (works out of combat, pre-combat buffs)
     -- Also checks cached expirationTime: if <= PRE_COMBAT_REFRESH_THRESHOLD seconds remain,
-    -- don't count the poison as "active" — the player should reapply before or at combat start.
+    -- don't count the poison as "active" - the player should reapply before or at combat start.
     -- expirationTime is a plain Lua number from the out-of-combat snapshot (or instanceToTimingMap),
     -- so the arithmetic is valid even when the aura API returns secret values in combat.
     if auras.byID then
@@ -1171,7 +1171,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     
     -- 2. MAINTENANCE BUFF COMBAT SUPPRESSION
     -- Long-duration maintenance buffs (poisons, imbues, raid buffs, rites) should never
-    -- take priority over DPS mid-combat. Filter them out — they can wait until combat ends.
+    -- take priority over DPS mid-combat. Filter them out - they can wait until combat ends.
     -- Covers aura IDs (NEVER_SECRET_AURA_SPELLS) and cast IDs (poison/imbue cast tables).
     if UnitAffectingCombat("player") then
         if NEVER_SECRET_AURA_SPELLS[spellID] or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) then
@@ -1184,7 +1184,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
     
     -- Check if we have incomplete aura data (unresolved secrets after instance map resolution)
-    -- Instance maps make the raw auraAPIBlocked check redundant — hasSecrets is the
+    -- Instance maps make the raw auraAPIBlocked check redundant - hasSecrets is the
     -- authoritative indicator of whether our aura cache is complete
     local auras = RefreshAuraCache()
     local auraDataIncomplete = auras and auras.hasSecrets

@@ -48,7 +48,7 @@ function Options.RefreshAllDynamic(addon)
     end
 end
 
--- Shared NotifyChange wrapper — guards the registry lookup in one place so
+-- Shared NotifyChange wrapper - guards the registry lookup in one place so
 -- panels and the Widgets builders don't each re-inline the nil check.
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
 function Options.NotifyChange()
@@ -221,7 +221,7 @@ local function HandleSlashCommand(addon, input)
 end
 
 -------------------------------------------------------------------------------
--- Initialization — called from JustAC:OnInitialize
+-- Initialization - called from JustAC:OnInitialize
 -------------------------------------------------------------------------------
 function Options.Initialize(addon)
     local AceConfig = LibStub("AceConfig-3.0")

@@ -377,7 +377,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     if locFrame then savedCCAnchors.locFrame = locFrame end
 
     -- Displace ClassificationFrame (elite/boss/rare badge) when our defensive icons
-    -- occupy the LEFT side of the health bar — the badge's default position floats
+    -- occupy the LEFT side of the health bar - the badge's default position floats
     -- to the LEFT of the bar center and collides with defIcons[1].
     -- Fix: overlay the badge on the top-left corner of the health bar at 80% scale.
     -- Covers default mode (DEF on left) and reversed anchor mode (DPS on left).
@@ -395,7 +395,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
         end
     end
 
-    -- Displace RaidTargetFrame (skull/cross/star raid markers) — default anchor is
+    -- Displace RaidTargetFrame (skull/cross/star raid markers) - default anchor is
     -- RIGHT of HealthBarsContainer.LEFT at center height, directly in front of our
     -- left-side defensive cluster.
     -- Fix: move it above the health bar, centered, so it clears both clusters.
@@ -415,7 +415,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     -- otherwise CC goes above/beside the first icon.
     local topAnchorFrame = (rightHasHealthBar and healthBar) or rightIcons[1]
 
-    -- pcall all anchor/scale mutations — CC frames may be restricted in some
+    -- pcall all anchor/scale mutations - CC frames may be restricted in some
     -- combat contexts (e.g., arena) and ClearAllPoints/SetPoint could taint.
     --
     -- Scale: match CC icon visual size to our queue's iconSize.
@@ -473,7 +473,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     end)
 
     if not ok then
-        -- Displacement failed (restricted frame) — clean up and skip
+        -- Displacement failed (restricted frame) - clean up and skip
         savedCCAnchors = nil
     end
 end
@@ -487,7 +487,7 @@ end
 -- Health bar (when shown) floats above the nameplate for all anchor directions.
 -- ─────────────────────────────────────────────────────────────────────────────
 local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, iconSpacing)
-    -- anchor:            "LEFT" or "RIGHT" — which side of the nameplate
+    -- anchor:            "LEFT" or "RIGHT" - which side of the nameplate
     -- expansion:         "out" (horizontal), "up" (vertical upward), "down" (vertical downward)
     -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
     expansion         = expansion or "down"
@@ -544,7 +544,7 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
     end
 
-    -- Interrupt icon: "position 0" — sits outside the queue so it never
+    -- Interrupt icon: "position 0" - sits outside the queue so it never
     -- displaces dpsIcons[1].  Icon 1 anchors directly to the nameplate and
     -- never shifts when the interrupt appears/hides.
     --   "out"       → above icon 1 (perpendicular, away from nameplate)
@@ -908,7 +908,7 @@ end
 
 --- Update DPS icon textures, cooldowns, glows, and hotkey tracking.
 --- Called from JustAC:UpdateSpellQueue() with the same spellIDs array
---- already passed to UIRenderer.RenderSpellQueue — zero extra queue cost.
+--- already passed to UIRenderer.RenderSpellQueue - zero extra queue cost.
 function UINameplateOverlay.Render(addon, spellIDs)
     if not currentNameplate then return end
     if not addon then return end
@@ -989,7 +989,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if npoInterruptMode == "importantOnly" then npoInterruptMode = "kickOnly" end
     if npoInterruptMode == "ccShielded" then npoInterruptMode = "kickPrefer" end
     if interruptIcon and resolvedInterrupts and npoInterruptMode ~= "disabled" then
-        -- Delegate to UIRenderer.EvaluateInterrupt() — single evaluation shared between
+        -- Delegate to UIRenderer.EvaluateInterrupt() - single evaluation shared between
         -- RenderSpellQueue and UINameplateOverlay.Render so both renderers see identical
         -- interrupt state and share a single debounce timer (one player, one interrupt).
         local intResult           = UIRenderer.EvaluateInterrupt(resolvedInterrupts, npoInterruptMode, now)
@@ -1062,7 +1062,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
             end
 
             -- Cast aura: passthrough the enemy cast bar icon texture from the
-            -- nameplate (textures can be secret values in 12.0 — pass directly
+            -- nameplate (textures can be secret values in 12.0 - pass directly
             -- to SetTexture without any comparison; Blizzard handles secrets in UI)
             if interruptIcon.castAura then
                 local castIcon = castBar and castBar.Icon
@@ -1098,7 +1098,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
             UIRenderer.HideInterruptIcon(interruptIcon)
         end
 
-        -- Track interrupt visibility state (no re-anchor needed — interrupt
+        -- Track interrupt visibility state (no re-anchor needed - interrupt
         -- icon is at inline position 0, never displaces dpsIcons[1]).
         interruptShown = shouldShowInterrupt
     end
@@ -1206,7 +1206,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
             -- Gap-closer glow only applies when the spell was synthetically injected
             -- by our gap-closer system (IsSyntheticProc). When Blizzard independently
             -- recommends the same gap-closer at position 1, it gets the blue assisted
-            -- crawl instead — matching standard queue behavior.
+            -- crawl instead - matching standard queue behavior.
             local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
             local isDisplaced     = IsDisplacedPrimary and IsDisplacedPrimary(spellID)
             local isBurstInjection = IsBurstInjection and IsBurstInjection(spellID)
@@ -1405,7 +1405,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
             if instantShow then
-                -- "always" mode: no fade-in. Stop unconditionally — IsPlaying() may not
+                -- "always" mode: no fade-in. Stop unconditionally - IsPlaying() may not
                 -- return true synchronously after Play(), so the IsPlaying guard is unreliable.
                 if icon.fadeIn then icon.fadeIn:Stop() end
                 icon:SetAlpha(opacity)
@@ -1588,7 +1588,7 @@ end
 function UINameplateOverlay.UpdateHealthBar()
     if not healthBar then return end
 
-    -- Drive fill from raw UnitHealth — secret-safe, tracks continuously.
+    -- Drive fill from raw UnitHealth - secret-safe, tracks continuously.
     local health    = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
     if health and maxHealth and maxHealth > 0 then

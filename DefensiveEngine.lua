@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- DefensiveEngine.lua — Defensive spell system: health-based queue, proc detection, potions
+-- DefensiveEngine.lua - Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
 local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 1)
@@ -14,7 +14,7 @@ local ipairs = ipairs
 local pairs = pairs
 local math_min = math.min
 
--- Module references (resolved at load time — DefensiveEngine loads after all deps in TOC)
+-- Module references (resolved at load time - DefensiveEngine loads after all deps in TOC)
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner  = LibStub("JustAC-ActionBarScanner", true)
 local SpellQueue         = LibStub("JustAC-SpellQueue", true)
@@ -24,7 +24,7 @@ local UIHealthBar        = LibStub("JustAC-UIHealthBar", true)
 local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
 
 --------------------------------------------------------------------------------
--- Pooled tables — avoid GC pressure on hot paths
+-- Pooled tables - avoid GC pressure on hot paths
 --------------------------------------------------------------------------------
 
 local lastHealthUpdate = 0
@@ -48,7 +48,7 @@ local defensiveResetTime = GetTime()
 local AppendUsableSpells
 local ResolveHealthState
 
--- Spell list type configuration — maps restoreKey (used by Options) to
+-- Spell list type configuration - maps restoreKey (used by Options) to
 -- the profile listKey and SpellDB defaults table name.
 local SPELL_LIST_CONFIG = {
     { listKey = "defensiveSpells", restoreKey = "defensive", defaultsKey = "CLASS_DEFENSIVE_DEFAULTS" },
@@ -106,7 +106,7 @@ end
 -- Resolve player health into isLow boolean.
 -- 12.0: UnitHealth() is secret in combat. The only reliable in-combat signal is
 -- LowHealthFrame visibility (~35% threshold, NeverSecret). Health levels above 35%
--- are indistinguishable in combat — no thresholds above 35% are usable.
+-- are indistinguishable in combat - no thresholds above 35% are usable.
 ResolveHealthState = function(profile)
     local isLow = BlizzardAPI and BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState()
     return isLow == true
@@ -203,7 +203,7 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
         local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
         if spellList then
             for _, entry in ipairs(spellList) do
-                -- Only register positive entries (spells) — negative entries are items
+                -- Only register positive entries (spells) - negative entries are items
                 if entry and entry > 0 then
                     BlizzardAPI.RegisterSpellForTracking(entry, "defensive")
                 end
@@ -257,7 +257,7 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
 end
 
 --------------------------------------------------------------------------------
--- Health change handler — main defensive queue dispatch
+-- Health change handler - main defensive queue dispatch
 --------------------------------------------------------------------------------
 
 function DefensiveEngine.OnHealthChanged(addon, event, unit)
@@ -302,7 +302,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local needsDefensives = (def and def.enabled) or (overlayActive and npo.showDefensives)
     if not needsDefensives then return end
 
-    -- Health state — computed once, shared by main panel and overlay paths
+    -- Health state - computed once, shared by main panel and overlay paths
     local inCombat = UnitAffectingCombat("player")
     local isLow = ResolveHealthState(profile)
 
@@ -311,7 +311,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
     local petNeedsHeal = petHealthPercent and petHealthPercent <= 50
 
-    -- UnitIsDead/UnitExists are NOT secret — pet rez/summon works reliably in combat.
+    -- UnitIsDead/UnitExists are NOT secret - pet rez/summon works reliably in combat.
     -- Suppress when the player is petless on purpose (Lone Wolf / sacrificed pet) so
     -- those specs aren't nagged to summon a pet they intentionally don't run.
     local petStatus = BlizzardAPI and BlizzardAPI.GetPetStatus and BlizzardAPI.GetPetStatus()
@@ -333,13 +333,13 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local defensiveQueue, mainAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions)
         local maxIcons = def.maxIcons or 4
 
-        -- Pet rez/summon: HIGH priority — pet dead or missing (reliable in combat).
+        -- Pet rez/summon: HIGH priority - pet dead or missing (reliable in combat).
         -- Cap at one icon: getting the pet back is a single action, not a queue.
         if petNeedsRez and #defensiveQueue < maxIcons then
             AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #defensiveQueue + 1, mainAddedSet)
         end
 
-        -- Pet heals: LOWER priority — out-of-combat only (health is secret in combat)
+        -- Pet heals: LOWER priority - out-of-combat only (health is secret in combat)
         if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
             AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), #defensiveQueue + 1, mainAddedSet)
         end
@@ -351,7 +351,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         ResizeHealthBars(addon, 0)
     end
 
-    -- Nameplate overlay defensive queue — independent of defensives.enabled.
+    -- Nameplate overlay defensive queue - independent of defensives.enabled.
     -- Uses its own display mode and icon count settings.
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "always"
@@ -380,9 +380,9 @@ end
 -- List entries: positive = spell ID, negative = item ID (-itemID)
 --
 -- Single-pass design: iterates spellList once, categorizing into three priority tiers:
---   1. Procced spells (instant/free cast available — highest priority)
+--   1. Procced spells (instant/free cast available - highest priority)
 --   2. Castable non-procced spells + usable items (mid priority, user list order)
---   3. Unusable spells (on CD or lacking resources — de-prioritized to end)
+--   3. Unusable spells (on CD or lacking resources - de-prioritized to end)
 -- Ready-to-use defensives always appear before on-cooldown ones.
 function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     wipe(usableResults)
@@ -398,9 +398,9 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     wipe(unusableBuffer)
 
     -- Single pass: categorize spells into three priority tiers:
-    --   1. Procced (instant/free cast — highest priority)
-    --   2. Castable non-procced (usable, off CD — mid priority, user list order)
-    --   3. Unusable (on CD or lacking resources — de-prioritized to end)
+    --   1. Procced (instant/free cast - highest priority)
+    --   2. Castable non-procced (usable, off CD - mid priority, user list order)
+    --   3. Unusable (on CD or lacking resources - de-prioritized to end)
     for _, entry in ipairs(spellList) do
         if entry and entry > 0 then
             local resolvedID = BlizzardAPI.ResolveSpellID(entry)
@@ -461,7 +461,7 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                     if isUsable then
                         nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
                     else
-                        -- Item on cooldown — show greyed out (parity with spell behavior)
+                        -- Item on cooldown - show greyed out (parity with spell behavior)
                         unusableBuffer[#unusableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false, unusable = true, noResources = false}
                     end
                     usableAddedHere[entry] = true
@@ -505,7 +505,7 @@ end
 -- Reorder a defensive list by emergency tier (1 bubble → 2 big heal → 3 rest), stable
 -- within each tier so the user's configured order is preserved as the tiebreaker. Returns
 -- a fresh table; used only below the low-health threshold. ponytail: builds one small
--- table per low-health rebuild — fine, rebuilds are cached/throttled.
+-- table per low-health rebuild - fine, rebuilds are cached/throttled.
 local emergencyOrderBuf = {}
 local function OrderByEmergencyTier(list)
     wipe(emergencyOrderBuf)
@@ -520,7 +520,7 @@ local function OrderByEmergencyTier(list)
 end
 
 -- Display order: instant procs first, then unified defensive list in user priority order.
--- overrides (optional table): displayMode, maxIcons, showProcs — override profile defaults for
+-- overrides (optional table): displayMode, maxIcons, showProcs - override profile defaults for
 -- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
 function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()

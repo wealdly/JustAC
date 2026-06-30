@@ -120,15 +120,16 @@ function General.CreateTabArgs(addon)
                             return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
                         end,
                     },
-                    -- SHARED BEHAVIOR (10-19)
-                    behaviorHeader = {
+                    -- INTERRUPT (6-9) - own section; not a shared-behavior setting.
+                    -- Order 7.5 is reserved for the future "Context Aware" CC toggle.
+                    interruptHeader = {
                         type = "header",
-                        name = L["Shared Behavior"],
-                        order = 10,
+                        name = L["Interrupt"],
+                        order = 6,
                     },
                     interruptMode = W.select(addon, "interruptMode", {
                         name = L["Interrupt Mode"], desc = L["Interrupt Mode desc"],
-                        order = 11, width = "double", default = "kickPrefer",
+                        order = 7, width = "double", default = "kickPrefer",
                         values = {
                             disabled   = L["Interrupt Mode Disabled"],
                             kickOnly   = L["Interrupt Mode Kick Only"],
@@ -140,29 +141,70 @@ function General.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize(); rebuildNPO(addon) end,
                         disabled = fullyDisabled,
                     }),
+                    includeFears = W.toggle(addon, "includeFears", {
+                        name = L["Include Fears"], desc = L["Include Fears desc"],
+                        order = 7.5, width = "double", default = false,
+                        disabled = function()
+                            local m = addon.db.profile.interruptMode or "kickPrefer"
+                            -- Only relevant when CC can be suggested (kickPrefer / ccPrefer).
+                            return fullyDisabled(addon) or m == "disabled" or m == "kickOnly"
+                        end,
+                    }),
+                    interruptAlertSound = W.select(addon, "interruptAlertSound", {
+                        name = L["Interrupt Alert"], desc = L["Interrupt Alert Sound desc"],
+                        order = 8, width = "double", default = "None",
+                        dialogControl = "LSM30_Sound",
+                        values = function()
+                            local LSM = LibStub("LibSharedMedia-3.0", true)
+                            return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
+                        end,
+                        disabled = fullyDisabled,
+                    }),
+                    testInterruptSound = {
+                        type = "execute",
+                        name = "|TInterface\\Common\\VoiceChat-Speaker:0|t Test",
+                        order = 9,
+                        width = "half",
+                        func = function()
+                            local UIRenderer = LibStub("JustAC-UIRenderer", true)
+                            if UIRenderer and UIRenderer.PlayInterruptAlertSound then
+                                UIRenderer.PlayInterruptAlertSound(addon.db.profile)
+                            end
+                        end,
+                        disabled = function()
+                            local s = addon.db.profile.interruptAlertSound
+                            return not s or s == "None" or (addon.db.profile.displayMode or "queue") == "disabled"
+                        end,
+                    },
+                    -- SHARED BEHAVIOR (10-19)
+                    behaviorHeader = {
+                        type = "header",
+                        name = L["Shared Behavior"],
+                        order = 10,
+                    },
                     showFlash = W.toggle(addon, "showFlash", {
                         name = L["Show Key Press Flash"], desc = L["Show Key Press Flash desc"],
-                        order = 12, width = "full", default = true, disabled = fullyDisabled,
+                        order = 12, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     greyOutWhileCasting = W.toggle(addon, "greyOutWhileCasting", {
                         name = L["Grey Out While Casting"], desc = L["Grey Out While Casting desc"],
-                        order = 13, width = "full", default = true, disabled = fullyDisabled,
+                        order = 13, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     greyOutWhileChanneling = W.toggle(addon, "greyOutWhileChanneling", {
                         name = L["Grey Out While Channeling"], desc = L["Grey Out While Channeling desc"],
-                        order = 14, width = "full", default = true, disabled = fullyDisabled,
+                        order = 14, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     showUsabilityTint = W.toggle(addon, "showUsabilityTint", {
                         name = L["Show Usability Tint"], desc = L["Show Usability Tint desc"],
-                        order = 15, width = "full", default = true, disabled = fullyDisabled,
+                        order = 15, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     showRangeTint = W.toggle(addon, "showRangeTint", {
                         name = L["Show Range Tint"], desc = L["Show Range Tint desc"],
-                        order = 16, width = "full", default = true, disabled = fullyDisabled,
+                        order = 16, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     showCastingHighlight = W.toggle(addon, "showCastingHighlight", {
                         name = L["Show Casting Highlight"], desc = L["Show Casting Highlight desc"],
-                        order = 17, width = "full", default = true, disabled = fullyDisabled,
+                        order = 17, width = "normal", default = true, disabled = fullyDisabled,
                     }),
                     gamepadIconStyle = W.select(addon, "gamepadIconStyle", {
                         name = L["Gamepad Icon Style"], desc = L["Gamepad Icon Style desc"],
@@ -198,44 +240,12 @@ function General.CreateTabArgs(addon)
                         desc = L["Disable Blizzard Highlight desc"],
                         order = 21,
                         width = "full",
-                        -- CVar-backed, not a profile field — stays raw.
+                        -- CVar-backed, not a profile field - stays raw.
                         get = function() return not GetCVarBool("assistedCombatHighlight") end,
                         set = function(_, val)
                             SetCVar("assistedCombatHighlight", val and 0 or 1)
                         end,
                         disabled = function() return fullyDisabled(addon) end,
-                    },
-                    -- SOUNDS (23-29)
-                    soundsHeader = {
-                        type = "header",
-                        name = L["Sounds"],
-                        order = 23,
-                    },
-                    interruptAlertSound = W.select(addon, "interruptAlertSound", {
-                        name = L["Interrupt Alert"], desc = L["Interrupt Alert Sound desc"],
-                        order = 24, width = "double", default = "None",
-                        dialogControl = "LSM30_Sound",
-                        values = function()
-                            local LSM = LibStub("LibSharedMedia-3.0", true)
-                            return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
-                        end,
-                        disabled = fullyDisabled,
-                    }),
-                    testInterruptSound = {
-                        type = "execute",
-                        name = "|TInterface\\Common\\VoiceChat-Speaker:0|t Test",
-                        order = 25,
-                        width = "half",
-                        func = function()
-                            local UIRenderer = LibStub("JustAC-UIRenderer", true)
-                            if UIRenderer and UIRenderer.PlayInterruptAlertSound then
-                                UIRenderer.PlayInterruptAlertSound(addon.db.profile)
-                            end
-                        end,
-                        disabled = function()
-                            local s = addon.db.profile.interruptAlertSound
-                            return not s or s == "None" or (addon.db.profile.displayMode or "queue") == "disabled"
-                        end,
                     },
                     -- OFFENSIVE QUEUE CONTENT (30-39)
                     offensiveQueueHeader = {
@@ -245,13 +255,13 @@ function General.CreateTabArgs(addon)
                     },
                     includeHiddenAbilities = W.toggle(addon, "includeHiddenAbilities", {
                         name = L["Include All Available Abilities"], desc = L["Include All Available Abilities desc"],
-                        order = 31, width = "full", default = true,
+                        order = 31, width = "normal", default = true,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = fullyDisabled,
                     }),
                     showSpellbookProcs = W.toggle(addon, "showSpellbookProcs", {
                         name = L["Insert Procced Abilities"], desc = L["Insert Procced Abilities desc"],
-                        order = 32, width = "full", default = false,
+                        order = 32, width = "normal", default = false,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = fullyDisabled,
                     }),
@@ -260,8 +270,8 @@ function General.CreateTabArgs(addon)
                         name = L["Allow Item Abilities"],
                         desc = L["Allow Item Abilities desc"],
                         order = 33,
-                        width = "full",
-                        -- Inverted (toggle shows "Allow", stores "hide") — stays raw.
+                        width = "normal",
+                        -- Inverted (toggle shows "Allow", stores "hide") - stays raw.
                         get = function() return not addon.db.profile.hideItemAbilities end,
                         set = function(_, val)
                             addon.db.profile.hideItemAbilities = not val

@@ -546,11 +546,11 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
             if isOnGCDSecret then
                 isOnGCDStr = "SECRET"
             elseif cd.isOnGCD == nil then
-                isOnGCDStr = "nil (ambiguous — off CD OR unflagged CD running)"
+                isOnGCDStr = "nil (ambiguous - off CD OR unflagged CD running)"
             elseif cd.isOnGCD == true then
-                isOnGCDStr = "true (GCD only — spell ready once GCD clears)"
+                isOnGCDStr = "true (GCD only - spell ready once GCD clears)"
             elseif cd.isOnGCD == false then
-                isOnGCDStr = "false (real CD running — Blizzard-flagged spell)"
+                isOnGCDStr = "false (real CD running - Blizzard-flagged spell)"
             else
                 isOnGCDStr = tostring(cd.isOnGCD)
             end
@@ -816,11 +816,11 @@ function DebugCommands.BurstDiagnostics(addon)
     local detected = BurstInjectionEngine.GetDetectedTriggers(addon)
     if detected and #detected > 0 then
         for i, entry in ipairs(detected) do
-            local cdTag = entry.baseCd > 0 and (" — " .. entry.baseCd .. "s CD") or ""
+            local cdTag = entry.baseCd > 0 and (" - " .. entry.baseCd .. "s CD") or ""
             addon:Print("  " .. i .. ". " .. entry.name .. " (" .. entry.spellID .. ")" .. cdTag)
         end
     else
-        addon:Print("  |cff888888(none — no triggers defined for this spec)|r")
+        addon:Print("  |cff888888(none - no triggers defined for this spec)|r")
     end
 
     -- ── SpellDB trigger defaults for reference ──
@@ -920,11 +920,11 @@ end
 -- One-shot cast-interruptibility diagnostic. Settles two assumptions the interrupt
 -- tracker is built on: (Q1) do INTERRUPTIBLE/NOT_INTERRUPTIBLE events fire at cast
 -- START, or only on a mid-cast transition? (Q2) does an addon-created CastingBar
--- resolve the secret notInterruptible? Arm it, then target a caster — ideally one whose
+-- resolve the secret notInterruptible? Arm it, then target a caster - ideally one whose
 -- cast is non-interruptible from the start (the hard case).
 function DebugCommands.CastDiagnostics(addon)
     if DebugCommands._castDiag then
-        addon:Print("|cffffff00castdiag already armed — target a caster (or /reload to cancel).|r")
+        addon:Print("|cffffff00castdiag already armed - target a caster (or /reload to cancel).|r")
         return
     end
     local f = CreateFrame("Frame")
@@ -934,7 +934,7 @@ function DebugCommands.CastDiagnostics(addon)
     local castSpellID, probeLines = nil, {}
 
     addon:Print("|cff00ff00=== castdiag ARMED ===|r Target a caster. Reads .notInterruptible MID-cast.")
-    -- NOTE: do NOT set HideIconWhenNotInterruptible on a cast bar — if that bar has been
+    -- NOTE: do NOT set HideIconWhenNotInterruptible on a cast bar - if that bar has been
     -- tainted by any third-party addon (skinning the target frame, replacing the nameplate),
     -- the resulting IsInterruptable() call throws on the secret barType. The icon-hidden
     -- signal only works on an UNtainted, Blizzard-driven bar. Verified 2026-06-28.
@@ -942,7 +942,7 @@ function DebugCommands.CastDiagnostics(addon)
     local function stamp(label) log[#log + 1] = string.format("%+.3fs %s", GetTime() - armT, label) end
 
     -- Convert any value to a print-safe string. Returns "<secret>" for secret values,
-    -- secret-tainted strings, or anything tostring can't handle — never lets a secret
+    -- secret-tainted strings, or anything tostring can't handle - never lets a secret
     -- reach AceConsole's concat (which errors on secrets).
     local function safe(v)
         if v == nil then return "nil" end
@@ -1034,24 +1034,24 @@ function DebugCommands.CastDiagnostics(addon)
             local sawInterEvt = false
             for _, line in ipairs(log) do if line:find("INTERRUPTIBLE") then sawInterEvt = true break end end
             addon:Print("  Q1 interruptible event this cast: " ..
-                (sawInterEvt and "|cff00ff00YES — events may suffice|r" or "|cffff6600NO — initial state needs secret resolution|r"))
+                (sawInterEvt and "|cff00ff00YES - events may suffice|r" or "|cffff6600NO - initial state needs secret resolution|r"))
             if #probeLines > 0 then
                 addon:Print("  |cffffd100--- MID-CAST reads (what the addon actually uses) ---|r")
                 for _, l in ipairs(probeLines) do addon:Print("  " .. l) end
             else
-                addon:Print("  |cffff6600(no mid-cast capture — cast ended in <0.3s)|r")
+                addon:Print("  |cffff6600(no mid-cast capture - cast ended in <0.3s)|r")
             end
-            -- Q2: the cast's spellID from the event — if readable, a spell-keyed lookup is viable.
+            -- Q2: the cast's spellID from the event - if readable, a spell-keyed lookup is viable.
             local idStr = safe(castSpellID)
             addon:Print("  Q2 event spellID: " .. idStr ..
                 (idStr == "<secret>" and " |cffff6600(secret -> spell-DB approach dead)|r"
                  or " |cff00ff00(readable -> spell-DB approach viable)|r"))
-            -- Q3: BorderShield:IsShown() — Blizzard's display derivation. shown=true would
+            -- Q3: BorderShield:IsShown() - Blizzard's display derivation. shown=true would
             -- mean non-interruptible if it reads as a concrete (non-secret) boolean.
             addon:Print("  Q3 cast-bar BorderShield IsShown (true expected on a shielded cast):")
             local function probeShield(label, bar)
                 if not bar then addon:Print("    " .. label .. ": |cff888888absent|r"); return end
-                -- (post-STOP read — kept only for the BorderShield secret check; the meaningful
+                -- (post-STOP read - kept only for the BorderShield secret check; the meaningful
                 -- .notInterruptible value is the MID-CAST capture printed above.)
                 local shield = bar.BorderShield or bar.Shield
                 if shield and shield.IsShown then
@@ -1085,7 +1085,7 @@ function DebugCommands.CastDiagnostics(addon)
             probeColor("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
             probeColor("nameplate.UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
             -- Q5: can we PASS the secret shield state into display sinks without reading it?
-            -- SetDesaturated greys the icon (non-occluding — keybind stays visible); SetShown
+            -- SetDesaturated greys the icon (non-occluding - keybind stays visible); SetShown
             -- drives a non-covering border/badge. ok = that cue is viable.
             -- Which secret-accepting sinks can drive a cue? ok = that visual is usable.
             -- VertexColor (color tint) is the most obvious; Alpha (fade) next; Desaturated

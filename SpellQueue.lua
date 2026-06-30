@@ -66,7 +66,7 @@ local filterResultCache = {}
 local rotationFilterCache = {}
 -- ─────────────────────────────────────────────────────────────────────────────────────────────
 
--- Cached rotation spell list — only refreshed on RotationSpellsUpdated event
+-- Cached rotation spell list - only refreshed on RotationSpellsUpdated event
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
 -- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
 local cachedRotationList = nil
@@ -95,7 +95,7 @@ local function GetBlacklistTable()
 end
 
 -- A blacklist entry is `true` (hidden at every position) or `{ fixedQueue = true }`
--- (hidden from positions 2+ only — still shown at Blizzard's position-1 pick so its
+-- (hidden from positions 2+ only - still shown at Blizzard's position-1 pick so its
 -- dynamic recommendation keeps advancing instead of stalling on a spell we hide).
 -- isPrimary marks the position-1 slot.
 local function IsBlacklistedEntry(value, isPrimary)
@@ -194,6 +194,16 @@ local function PassesRotationFilters(spellID, profile)
     return result
 end
 
+-- Per-spell proc-priority opt-out. Shared store with the defensive engine
+-- (profile.defensives.spellSettings[spellID].procPriority). Default true: a procced
+-- spell jumps to the proc bucket. False: it stays in source order (still glows).
+-- Honored only when the master "procs first" toggle is on (bypassProcs already gates that).
+local function ProcPriorityEnabled(spellID, profile)
+    local ss = profile.defensives and profile.defensives.spellSettings
+        and profile.defensives.spellSettings[spellID]
+    return not ss or ss.procPriority ~= false
+end
+
 -- Resolve display ID, check dedup, mark both IDs as claimed.
 -- Returns displayID on success, nil if already claimed.
 local function ClaimSpellID(spellID, addedSpellIDs)
@@ -275,24 +285,38 @@ local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedS
     return spellCount
 end
 
---- Context rank for the fixed-queue bias (positions 2+). Lower = higher priority
---- within its bucket: 0 = archetype matches position-1's context (boost),
---- 2 = melee spell while the context is ranged / out of melee (soft-demote),
---- 1 = neutral. Untagged spells and absent context both yield 1 (no reordering).
-local function ContextRank(spellID, ctxArch, ctxRange)
+--- Context rank for the fixed-queue bias (positions 2+). Lower = higher priority within
+--- its bucket: 0 = boost (archetype matches position-1's context, or execute phase),
+--- 1 = neutral (untagged, no context, or archetype mismatch).
+--- ctxExecute is the HIGH-confidence axis: when position-1 is an execute-gated spell the
+--- target is below its HP threshold (a secret-free read of target health), so any
+--- execute-gated rotation spell is boosted to the top regardless of archetype.
+--- BOOST-ONLY by design: archetype only ever promotes a context-matching spell, it NEVER
+--- demotes a mismatch below neutral. Demoting was redundant (boosting matches already
+--- floats them above mismatches) AND harmful - it buried high-priority spells whose
+--- archetype isn't a stable static property: DoTs/bleeds tagged "st" and ST spells that
+--- talents/buffs morph into AoE (same spell ID, so the static tag can't know).
+--- RANGE AXIS is SOUND, not inferred: ctxOutOfMelee comes from a real range check
+--- (SpellDB.IsTargetWithin(5), built on IsSpellInRange) - NOT from position-1's archetype
+--- (a ranged pick doesn't mean we're at range; ranged abilities work point-blank). When
+--- the target is CONFIRMED out of melee, a melee spell is uncastable, so sink it (rank 3).
+--- Fail-safe: ctxOutOfMelee is only true on a confirmed read; unknown (no probe) → false →
+--- no demote, so low-level / sparse-probe characters never get a wrong reading.
+local function ContextRank(spellID, ctxArch, ctxExecute, ctxOutOfMelee)
     local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(spellID)
-    local rng  = SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID)
-    if not arch and not rng then return 1 end
-    -- Range is the HARD axis (castability): a melee spell is unusable when we're out
-    -- of melee (context is ranged), so it sinks below everything regardless of archetype.
-    if ctxRange == "ranged" and rng == "melee" then return 3 end
-    -- Archetype is the SOFT axis (preference) among castable spells. ST and multi-target
-    -- are mirror classes; aoe and cleave are one "multi" class. Matching the context's
-    -- class boosts (ST↔ST or multi↔multi), the opposite soft-demotes — both directions.
-    if ctxArch and arch then
+    if ctxExecute and SpellDB and SpellDB.GetGate and SpellDB.GetGate(spellID) == "execute" then
+        return 0
+    end
+    if ctxOutOfMelee and SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID) == "melee" then
+        return 3
+    end
+    if not arch then return 1 end
+    -- Archetype is the SOFT axis: matching the context's class (ST↔ST or multi↔multi)
+    -- boosts; a mismatch stays neutral (never demoted - see boost-only note above).
+    if ctxArch then
         local ctxMulti   = (ctxArch == "aoe" or ctxArch == "cleave")
         local spellMulti = (arch == "aoe" or arch == "cleave")
-        return (ctxMulti == spellMulti) and 0 or 2
+        return (ctxMulti == spellMulti) and 0 or 1
     end
     return 1
 end
@@ -315,26 +339,31 @@ end
 --- Categorize rotation spells into procced/normal/cooldown buckets and assemble
 --- in priority order: proc > normal > on-cooldown. Within the proc and normal
 --- buckets, entries are ordered by ContextRank so the spell matching position-1's
---- archetype/range context surfaces first (e.g. the AOE proc wins slot 2 when
---- position 1 is AOE). ctxArch/ctxRange are nil when position 1 is untagged → no reorder.
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange)
+--- archetype context surfaces first (e.g. the AOE proc wins slot 2 when
+--- position 1 is AOE). ctxArch is nil when position 1 is untagged → no reorder.
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
     wipe(normalRank)
     local proccedCount, normalCount, cooldownCount = 0, 0, 0
+    -- rankOf: neutral (1, list order preserved) when the situation bias is toggled off.
+    local function rankOf(spellID)
+        if not contextBias then return 1 end
+        return ContextRank(spellID, ctxArch, ctxExecute, ctxOutOfMelee)
+    end
 
     for i = 1, #rotationList do
         local spellID = rotationList[i]
         if spellID and not addedSpellIDs[spellID] then
             if spellID < 0 then
                 -- Item entry (negative ID): use item-specific APIs.
-                -- Items are only present via Custom Queue — skip spell filters.
+                -- Items are only present via Custom Queue - skip spell filters.
                 local itemID = -spellID
                 addedSpellIDs[spellID] = true
                 local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID)
                 if hasItem then
-                    if onCooldown then
+                    if onCooldown and sinkCooldowns then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = spellID
                     else
@@ -348,17 +377,18 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                 if displayID
                    and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
                    and PassesRotationFilters(displayID, profile) then
-                    if not BlizzardAPI.IsSpellReady(displayID) then
+                    if sinkCooldowns and not BlizzardAPI.IsSpellReady(displayID) then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
-                    elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID) then
+                    elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID)
+                       and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
-                        proccedRank[proccedCount] = ContextRank(spellID, ctxArch, ctxRange)
+                        proccedRank[proccedCount] = rankOf(spellID)
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
-                        normalRank[normalCount] = ContextRank(spellID, ctxArch, ctxRange)
+                        normalRank[normalCount] = rankOf(spellID)
                     end
                 else
                     -- Undo claim if filters rejected
@@ -391,7 +421,7 @@ function SpellQueue.GetCurrentSpellQueue()
 
     local now = GetTime()
     -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
-    -- Internal safety throttle — main loop in JustAC.lua is the primary rate limiter
+    -- Internal safety throttle - main loop in JustAC.lua is the primary rate limiter
     -- (CVar-driven, min 0.03s).  These match the main loop's minimum intervals so
     -- SpellQueue never bottlenecks the caller.
     local inCombat = UnitAffectingCombat("player")
@@ -513,7 +543,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 end
             end
 
-            -- Suppress gap-closers from rotation list — our injection controls placement.
+            -- Suppress gap-closers from rotation list - our injection controls placement.
             if cachedGapCloserEngine.MarkGapCloserSpellIDs then
                 cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
             end
@@ -528,7 +558,7 @@ function SpellQueue.GetCurrentSpellQueue()
             local burstPhase, triggerPosition = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID, recommendedSpells)
             -- Phase "pending": trigger CD is visible in the queue. Mark it as burst so
             -- renderers can show the burst glow (signal to press it), but don't
-            -- inject anything — let Blizzard's recommendation stand.
+            -- inject anything - let Blizzard's recommendation stand.
             if burstPhase == "pending" and triggerPosition and spellCount >= triggerPosition then
                 local triggerDisplay = recommendedSpells[triggerPosition]
                 if triggerDisplay then
@@ -566,7 +596,7 @@ function SpellQueue.GetCurrentSpellQueue()
                     burstInjectedSpells[biSpell] = true
                     burstInjectedSpells[biDisplay] = true
 
-                    -- Suppress burst injection spells from rotation list — only when
+                    -- Suppress burst injection spells from rotation list - only when
                     -- we actually injected one, so they show normally when all on CD.
                     if cachedBurstEngine.MarkBurstInjectionSpellIDs then
                         cachedBurstEngine.MarkBurstInjectionSpellIDs(cachedAddon, addedSpellIDs)
@@ -591,8 +621,9 @@ function SpellQueue.GetCurrentSpellQueue()
                and cqProfile[specKey].enabled and cqProfile[specKey].spells
                and #cqProfile[specKey].spells > 0 then
                 -- Copy the user's custom spell list as the rotation source
+                local cq = cqProfile[specKey]
                 cachedRotationList = {}
-                for i, sid in ipairs(cqProfile[specKey].spells) do
+                for i, sid in ipairs(cq.spells) do
                     cachedRotationList[i] = sid
                 end
                 useCustom = true
@@ -625,15 +656,27 @@ function SpellQueue.GetCurrentSpellQueue()
             end
         end
     end
-    -- Fixed-queue context: bias positions 2+ by the archetype/range of Blizzard's
-    -- position-1 pick (the original recommendation, before any gap-closer/burst injection).
-    local ctxArch, ctxRange
+    -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
+    -- pick (the original recommendation, before any gap-closer/burst injection).
+    local ctxArch, ctxExecute
     if primarySpellID and SpellDB then
         ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
-        ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
+        ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
+    -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
+    -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
+    -- no demote (fail-safe). Lets us sink uncastable melee spells in positions 2+.
+    local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false
     if cachedRotationList then
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange)
+        -- Master ordering toggles (profile-level; apply to both the custom list and
+        -- Blizzard's default rotation). Default nil → true (smart order):
+        -- "procs first" off folds procced spells into the normal bucket (kept in source
+        -- order); "context aware" off neutralizes ContextRank; "cooldowns last" off leaves
+        -- on-CD spells in their source slot instead of trailing.
+        local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
+        local contextBias  = profile.orderContextAware ~= false
+        local sinkCooldowns = profile.orderSinkCooldowns ~= false
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but
@@ -652,7 +695,7 @@ function SpellQueue.ForceUpdate()
     lastQueueUpdate = 0
 end
 
---- Cached visibility verdict from last queue build — avoids re-evaluating per render frame.
+--- Cached visibility verdict from last queue build - avoids re-evaluating per render frame.
 function SpellQueue.ShouldShowQueue()
     return lastShouldShowQueue
 end
@@ -709,7 +752,7 @@ function SpellQueue.OnSpellsChanged()
     SpellQueue.ForceUpdate()
 end
 
--- Invalidate the cached rotation list — called on RotationSpellsUpdated and SPELLS_CHANGED
+-- Invalidate the cached rotation list - called on RotationSpellsUpdated and SPELLS_CHANGED
 function SpellQueue.InvalidateRotationCache()
     cachedRotationList = nil
     -- Clear rotation spell registrations; they'll be re-registered on next fetch

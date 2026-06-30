@@ -50,7 +50,7 @@ function TFA.ClampFrameToScreen(addon)
         pos.y = -150
         addon.mainFrame:ClearAllPoints()
         addon.mainFrame:SetPoint("CENTER", 0, -150)
-        addon:DebugPrint("Frame was off-screen — reset to center")
+        addon:DebugPrint("Frame was off-screen - reset to center")
     end
 end
 
@@ -63,7 +63,7 @@ local standardTargetFrameStatus = nil
 
 -- Whitelist check: is the genuine Blizzard TargetFrame active?
 -- Returns false if a third-party unit-frame addon replaced it.
--- Cached per session — invalidated on PLAYER_ENTERING_WORLD / reload.
+-- Cached per session - invalidated on PLAYER_ENTERING_WORLD / reload.
 function TFA.IsStandardTargetFrame(addon)
     if standardTargetFrameStatus ~= nil then
         return standardTargetFrameStatus

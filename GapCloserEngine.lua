@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- GapCloserEngine.lua — Gap-closer system: melee range detection, spell prioritization
+-- GapCloserEngine.lua - Gap-closer system: melee range detection, spell prioritization
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
@@ -9,20 +9,17 @@ if not GapCloserEngine then return end
 
 -- Hot path cache
 local GetTime = GetTime
-local UnitClass = UnitClass
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
-local UnitGUID = UnitGUID
-local GetSpecialization = GetSpecialization
 local IsStealthed = IsStealthed
-local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
+local IsSpellKnown = IsSpellKnown
 local C_Spell = C_Spell
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local ipairs = ipairs
 
 -- Module references (resolved at load time)
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
-local ActionBarScanner  = LibStub("JustAC-ActionBarScanner", true)
 local SpellDB           = LibStub("JustAC-SpellDB", true)
 local SpellQueue        = LibStub("JustAC-SpellQueue", true)
 
@@ -31,20 +28,16 @@ local SpellQueue        = LibStub("JustAC-SpellQueue", true)
 --------------------------------------------------------------------------------
 
 -- Hide debounce: after target returns to melee range, hold the gap-closer icon
--- briefly so it doesn't vanish on a single in-range frame.  No show debounce —
+-- briefly so it doesn't vanish on a single in-range frame.  No show debounce -
 -- showing the gap closer instantly is correct because the slot would otherwise
 -- fill with a rotation spell, and the subsequent debounce expiry would cause a
 -- visible blink.
-local GAP_CLOSER_HIDE_DEBOUNCE = 0.15  -- seconds before icon disappears
+local GAP_CLOSER_HIDE_DEBOUNCE = 0.4   -- seconds to hold the icon after returning to range.
+                                       -- Larger than the old event-driven value because we
+                                       -- now POLL IsSpellInRange each build; the longer hold
+                                       -- bridges boundary jitter so the icon doesn't flicker
+                                       -- as the player crosses in/out of melee.
 local lastOutOfRangeTime = 0
-
--- Target-switch cooldown: suppress gap-closer suggestions briefly after
--- PLAYER_TARGET_CHANGED so IsActionInRange can stabilize on the new target.
--- Without this, a stale out-of-range frame from the previous target can
--- cause a false-positive gap-closer flash on the new (in-range) target.
-local TARGET_SWITCH_COOLDOWN = 0.2  -- seconds
-local lastTargetSwitchTime = 0
-local previousTargetGUID = nil
 
 --------------------------------------------------------------------------------
 -- Cached state
@@ -54,35 +47,15 @@ local previousTargetGUID = nil
 local cachedGapCloserSpells = nil
 local cachedGapCloserSpecKey = nil
 
--- Melee range reference: a fixed per-spec spell whose action bar slot we poll
--- with IsActionInRange() to decide "out of melee range".  Replaces the old
--- broad slotRangeState approach that tracked all 120 slots and could fire
--- false-positive out-of-range on non-melee abilities.
-local cachedMeleeRefSpellID = nil
-local cachedMeleeRefSlot = nil
-local cachedMeleeRefSpecKey = nil
-
 --------------------------------------------------------------------------------
 -- Internal helpers
 --------------------------------------------------------------------------------
-
---- Try to find an action bar slot for a spell ID (base + talent override).
---- Returns slot number or nil.
-local function FindSlotForSpell(spellID)
-    if not ActionBarScanner or not ActionBarScanner.GetSlotForSpell then return nil end
-    local resolved = BlizzardAPI.ResolveSpellID(spellID)
-    local slot = ActionBarScanner.GetSlotForSpell(resolved)
-    if not slot and resolved ~= spellID then
-        slot = ActionBarScanner.GetSlotForSpell(spellID)
-    end
-    return slot
-end
 
 --- Evaluate a single gap-closer candidate: resolve → dedup → available →
 --- known → ready → (optional range).  Returns resolvedID, baseID on success,
 --- or nil if the spell doesn't pass all gates.
 --- The gap-closer list is curated (user-configured or SpellDB defaults), so
---- the only availability gate is "does the player know this spell" — filtering
+--- the only availability gate is "does the player know this spell" - filtering
 --- out default entries the player hasn't talented into.  No usability check
 --- (fail-closed rejects valid spells in combat due to secret values; fail-open
 --- adds no value for a curated list).  Cooldown check remains to avoid
@@ -99,11 +72,14 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
         return nil
     end
 
-    -- Known check: filter out spells the player doesn't have (untalented defaults)
-    if not BlizzardAPI.IsSpellAvailable(resolvedID) then return nil end
+    -- Known check: filter out spells the player doesn't have (untalented defaults). Use
+    -- IsSpellKnown (form-independent), NOT IsSpellAvailable (castability) - the latter wrongly
+    -- rejects a known gap-closer that isn't instantly castable (e.g. a Druid's form-gated
+    -- Wild Charge). Cooldown is handled separately below; range by the checkRange gate.
+    if IsSpellKnown and not (IsSpellKnown(spellID) or IsSpellKnown(resolvedID)) then return nil end
 
     -- Blacklist: suppress entries the user has hidden from all positions.
-    -- Check both the curated base ID and the talent-resolved ID — the user may
+    -- Check both the curated base ID and the talent-resolved ID - the user may
     -- have blacklisted either form (IsSpellBlacklisted expands each via display override).
     if not SpellQueue then SpellQueue = LibStub("JustAC-SpellQueue", true) end
     if SpellQueue and SpellQueue.IsSpellBlacklisted
@@ -123,97 +99,20 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     end
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
-    -- Range check: only when caller requests it AND we can find the slot.
-    -- Self-targeted spells (Sprint) return nil from IsActionInRange, passing
-    -- the == false gate.  No slot → skip range check (spell is still valid).
-    if checkRange then
-        local slot = FindSlotForSpell(spellID)
-        if slot and C_ActionBar_IsActionInRange and C_ActionBar_IsActionInRange(slot) == false then return nil end
+    -- Range check: reject only if the spell is confirmed OUT of its OWN range (e.g. target
+    -- beyond Wild Charge's max range). Spellbook IsSpellInRange (non-secret in combat,
+    -- reliable in any form) - the action-slot check proved unreliable. Self-targeted spells
+    -- (Sprint) return nil → not == false → pass. Secret → unknown → pass (fail-safe).
+    if checkRange and C_Spell_IsSpellInRange then
+        local r = C_Spell_IsSpellInRange(spellID, "target")
+        if not (BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(r)) and r == false then
+            return nil
+        end
     end
 
     return resolvedID, spellID
 end
 
--- 12.0+ push-based range check: EnableActionRangeCheck opts a slot into
--- ACTION_RANGE_CHECK_UPDATE events, eliminating poll-based IsActionInRange.
--- Detected once at load time; omitted on pre-12.0 clients.
-local EnableActionRangeCheck = C_ActionBar and C_ActionBar.EnableActionRangeCheck
-
---- Helper: register/unregister a slot for push-based ACTION_RANGE_CHECK_UPDATE.
---- Safely no-ops on pre-12.0 clients where the API doesn't exist.
-local function SetRangeCheckEnabled(slot, enabled)
-    if not EnableActionRangeCheck or not slot then return end
-    pcall(EnableActionRangeCheck, slot, enabled)
-end
-
---- Get the melee range reference spell + slot for the current spec.
---- Priority chain: user override → SpellDB default[1] → SpellDB default[2].
---- First spell found on the action bar wins.  Caches result until spec change
---- or InvalidateGapCloserCache().
-local function ResolveMeleeReference(addon)
-    local specKey, playerClass
-    if SpellDB and SpellDB.GetSpecKey then
-        specKey, playerClass = SpellDB.GetSpecKey()
-    end
-    if not playerClass then return nil, nil end
-
-    -- Return cache if still valid
-    if cachedMeleeRefSpecKey == specKey and cachedMeleeRefSlot then
-        return cachedMeleeRefSpellID, cachedMeleeRefSlot
-    end
-
-    -- If switching to a different slot, disable range check on the old one.
-    local previousSlot = cachedMeleeRefSlot
-
-    -- 1) Check profile for user override
-    local profile = addon and addon.db and addon.db.profile
-    local gc = profile and profile.gapClosers
-    if gc and gc.meleeRangeSpell and gc.meleeRangeSpell > 0 then
-        local slot = FindSlotForSpell(gc.meleeRangeSpell)
-        if slot then
-            if previousSlot and previousSlot ~= slot then
-                SetRangeCheckEnabled(previousSlot, false)
-            end
-            cachedMeleeRefSpellID = gc.meleeRangeSpell
-            cachedMeleeRefSlot = slot
-            cachedMeleeRefSpecKey = specKey
-            SetRangeCheckEnabled(slot, true)
-            return cachedMeleeRefSpellID, cachedMeleeRefSlot
-        end
-    end
-
-    -- 2) Try SpellDB defaults: [1] primary, [2] hidden backup
-    if SpellDB and SpellDB.MELEE_RANGE_REFERENCE_SPELLS then
-        local defaults = SpellDB.MELEE_RANGE_REFERENCE_SPELLS[specKey]
-        if defaults then
-            for i = 1, 2 do
-                local refID = defaults[i]
-                if refID then
-                    local slot = FindSlotForSpell(refID)
-                    if slot then
-                        if previousSlot and previousSlot ~= slot then
-                            SetRangeCheckEnabled(previousSlot, false)
-                        end
-                        cachedMeleeRefSpellID = refID
-                        cachedMeleeRefSlot = slot
-                        cachedMeleeRefSpecKey = specKey
-                        SetRangeCheckEnabled(slot, true)
-                        return cachedMeleeRefSpellID, cachedMeleeRefSlot
-                    end
-                end
-            end
-        end
-    end
-
-    -- No slot found — disable range check on previous slot if any.
-    if previousSlot then
-        SetRangeCheckEnabled(previousSlot, false)
-    end
-    cachedMeleeRefSpecKey = specKey
-    cachedMeleeRefSpellID = nil
-    cachedMeleeRefSlot = nil
-    return nil, nil
-end
 
 --- Resolve the gap-closer spell list for the current class+spec.
 --- Reads from profile (user-configured) with SpellDB defaults as fallback.
@@ -305,59 +204,16 @@ function GapCloserEngine.InitializeGapClosers(addon)
     end
 end
 
---- Called from JustAC:OnActionRangeUpdate(slot, isInRange, checksRange)
---- Returns true if this event was for the melee reference slot (caller uses
---- this to decide whether to trigger a queue rebuild).
-function GapCloserEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
-    if not slot then return false end
-    if checksRange == false then return false end
-    -- Only track the melee reference spell's slot
-    if cachedMeleeRefSlot and slot == cachedMeleeRefSlot then
-        if not isInRange then
-            lastOutOfRangeTime = GetTime()
-        end
-        return true
-    end
-    return false
-end
-
---- Clear range state (target changed, combat ended, etc.)
---- Detects same-unit retargets (e.g. /cleartarget + /targetenemy macros) and
---- skips the stabilization cooldown so the gap-closer doesn't blink off.
+--- Reset range state on target change / combat end: clears the hide-debounce timestamp so
+--- a new target doesn't inherit the previous target's "recently out of range" hold.
 function GapCloserEngine.ClearRangeState()
     lastOutOfRangeTime = 0
-    local currentGUID = UnitGUID("target")
-    if currentGUID and not (BlizzardAPI and BlizzardAPI.IsSecretValue(currentGUID)) then
-        if currentGUID == previousTargetGUID then
-            -- Same unit retargeted — cancel the cooldown, range hasn't changed
-            lastTargetSwitchTime = 0
-        else
-            -- Genuinely new target — apply stabilization cooldown
-            lastTargetSwitchTime = GetTime()
-        end
-        previousTargetGUID = currentGUID
-    else
-        -- Target cleared — apply cooldown tentatively.
-        -- If a retarget of the same unit follows (same frame), it cancels this.
-        lastTargetSwitchTime = GetTime()
-    end
-    -- Don't clear cachedMeleeRefSlot here — the reference spell's slot
-    -- doesn't change between targets, only the range state does.
-    -- Slot is invalidated by InvalidateGapCloserCache() on spec/profile change.
 end
 
 --- Invalidate cached gap-closer spell list (spec change, profile change)
 function GapCloserEngine.InvalidateGapCloserCache()
-    -- Disable push-based range check on the old melee reference slot.
-    if cachedMeleeRefSlot then
-        SetRangeCheckEnabled(cachedMeleeRefSlot, false)
-    end
     cachedGapCloserSpells = nil
     cachedGapCloserSpecKey = nil
-    cachedMeleeRefSpellID = nil
-    cachedMeleeRefSlot = nil
-    cachedMeleeRefSpecKey = nil
-    previousTargetGUID = nil
 end
 
 --- Returns the first usable gap-closer spell ID for the current spec, or nil.
@@ -377,20 +233,16 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
         return nil
     end
 
-    -- Target-switch cooldown: suppress gap-closer suggestions briefly after
-    -- switching targets so IsActionInRange can settle on the new target.
-    -- Without this, a stale out-of-range frame from the old target can cause
-    -- a false-positive gap-closer flash on a new target that's already in range.
-    if lastTargetSwitchTime > 0 and (GetTime() - lastTargetSwitchTime) < TARGET_SWITCH_COOLDOWN then
-        return nil
-    end
+    -- (No target-switch cooldown needed: that delay existed to wait out IsActionInRange's
+    -- stale-frame lag on target swap. IsSpellInRange reads the CURRENT target fresh every
+    -- call, so there's no stale frame - the gap closer can evaluate immediately on acquire.)
 
     -- IsStealthed() is NeverSecret and covers Stealth, Vanish, Shadow Dance, etc.
     local stealthed = IsStealthed and IsStealthed() or false
     local spellList = ResolveGapCloserSpells(addon)
 
     ----------------------------------------------------------------------------
-    -- STEALTH GAP CLOSERS — evaluate before the melee range gate.
+    -- STEALTH GAP CLOSERS - evaluate before the melee range gate.
     -- When stealthed, the melee reference spell may transform on the action bar
     -- (e.g. Backstab → Shadowstrike with 25yd range), causing IsActionInRange
     -- on its slot to report the override's range instead of true melee range.
@@ -409,50 +261,18 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
         end
     end
 
-    -- Melee range reference check.  If no reference resolves (ranged spec or
-    -- nothing on the action bar), skip non-stealth gap closers entirely.
-    local _, meleeRefSlot = ResolveMeleeReference(addon)
-    if not meleeRefSlot then return nil end
-
-    -- If the primary reference spell is currently showing a different spell on
-    -- its slot (state-driven transform, e.g. Stormstrike → Windstrike during
-    -- Ascendance), IsActionInRange would report the override's wider range.
-    -- Fall back to the SpellDB backup candidate [2] if it's on the action bar.
-    -- GetDisplaySpellID (C_Spell.GetOverrideSpell) covers aura/stance transforms;
-    -- the stealth guard below still handles talent-driven overrides separately.
-    local activeRefSlot = meleeRefSlot
-    if cachedMeleeRefSpellID then
-        local displayID = BlizzardAPI.GetDisplaySpellID(cachedMeleeRefSpellID)
-        if displayID and displayID ~= cachedMeleeRefSpellID then
-            local specKey = GapCloserEngine.GetGapCloserSpecKey()
-            local defaults = specKey and SpellDB.MELEE_RANGE_REFERENCE_SPELLS
-                and SpellDB.MELEE_RANGE_REFERENCE_SPELLS[specKey]
-            local backupID = defaults and defaults[2]
-            if backupID then
-                local backupSlot = FindSlotForSpell(backupID)
-                if backupSlot then activeRefSlot = backupSlot end
-            end
-        end
-    end
-
-    -- Check range using the (possibly backup) melee reference slot
-    local inRange = C_ActionBar_IsActionInRange and C_ActionBar_IsActionInRange(activeRefSlot)
-    local outOfRange = (inRange == false)  -- false=out of range, nil=no range check, true=in range
+    -- Melee detection via the shared range-reference system (SpellDB.IsTargetWithin), so the
+    -- gap closer and ContextRank use ONE melee check - all melee specs covered bar-free
+    -- (5yd probes in Data/RangeReferences.lua). IsTargetWithin polls every melee ability the
+    -- player actually knows, so no per-spec reference or user override is needed.
+    -- nil (no probe known / can't tell) → false → not out of melee (fail-safe).
     local now = GetTime()
-
-    -- If stealthed and the melee reference spell is overridden to a stealth
-    -- gap closer with extended range (e.g. Backstab slot shows Shadowstrike
-    -- at 25yd), the range check is unreliable.  Force "out of range" so
-    -- non-stealth gap closers like Shadowstep and Sprint can still fire.
-    if not outOfRange and stealthed and cachedMeleeRefSpellID then
-        local overrideID = BlizzardAPI.ResolveSpellID(cachedMeleeRefSpellID)
-        if overrideID ~= cachedMeleeRefSpellID and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
-            and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[overrideID] then
-            outOfRange = true
-        end
-    end
+    local outOfRange = (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false) or false
 
     if outOfRange then
+        -- Maintain the hide-debounce timestamp from the poll itself, so the bar-free
+        -- (spellbook) path gets the same smoothing as the action-range event path.
+        lastOutOfRangeTime = now
         -- No show debounce: display gap closer immediately when out of range.
         -- A show debounce would cause slot 2 to blink (rotation spell fills it
         -- during the debounce window, then gets displaced by the gap closer).
@@ -516,7 +336,7 @@ end
 
 --- Mark all gap-closer spell IDs (base + talent-resolved forms) into a set.
 --- Called by SpellQueue to suppress gap-closer spells from the rotation list
---- when the gap-closer system is enabled — our insertion controls when they appear.
+--- when the gap-closer system is enabled - our insertion controls when they appear.
 function GapCloserEngine.MarkGapCloserSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
     local spellList = ResolveGapCloserSpells(addon)

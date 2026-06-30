@@ -191,7 +191,7 @@ function SpellSearch.GetFilteredResults(filterText, excludeList)
 end
 
 -------------------------------------------------------------------------------
--- Spells-only search — for panels where items are not applicable
+-- Spells-only search - for panels where items are not applicable
 -- (gap-closers, hotkeys, melee range override).
 -------------------------------------------------------------------------------
 function SpellSearch.GetFilteredSpellbookSpells(filterText, excludeList)
@@ -211,9 +211,9 @@ function SpellSearch.GetFilteredSpellbookSpells(filterText, excludeList)
 end
 
 -------------------------------------------------------------------------------
--- Aura search — returns active player buffs for linking to items.
+-- Aura search - returns active player buffs for linking to items.
 -- Empty/short text → all active buffs. Text input → filter by name or spell ID.
--- Returns {[spellID] = "Aura Name (ID: 12345)"} — positive keys (auras are spells).
+-- Returns {[spellID] = "Aura Name (ID: 12345)"} - positive keys (auras are spells).
 -------------------------------------------------------------------------------
 function SpellSearch.GetFilteredPlayerAuras(filterText, excludeList)
     local results = {}
@@ -520,6 +520,13 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                 width = 0.7,
                 name = L["Proc Priority"],
                 desc = L["Proc Priority desc"],
+                -- In the Rotation (custom queue) list this only matters while the master
+                -- "Procs first" toggle is on; grey it out otherwise. The defensives lists
+                -- use a separate path (the defensive engine), so they're never gated here.
+                disabled = listType == "customqueue" and function()
+                    local profile = _addon:GetProfile()
+                    return profile and profile.orderProcsFirst == false or false
+                end or nil,
                 get = function()
                     local profile = _addon:GetProfile()
                     local settings = profile and profile.defensives and profile.defensives.spellSettings and profile.defensives.spellSettings[spellID]

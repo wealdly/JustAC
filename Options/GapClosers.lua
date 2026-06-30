@@ -78,103 +78,6 @@ function GapClosers.CreateTabArgs(addon)
                     addon:ForceUpdate()
                 end,
             },
-            meleeRangeGroup = {
-                type = "group",
-                inline = true,
-                name = L["Melee Range Reference"],
-                order = 5,
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.gapClosers and profile.gapClosers.enabled)
-                end,
-                args = {
-                    meleeRangeInfo = {
-                        type = "description",
-                        name = L["Melee Range Spell desc"],
-                        order = 1,
-                        fontSize = "small",
-                    },
-                    currentDefault = {
-                        type = "description",
-                        name = function()
-                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()
-                            if not specKey or not SDB or not SDB.MELEE_RANGE_REFERENCE_SPELLS then
-                                return L["Default"] .. ": " .. L["Unknown"]
-                            end
-                            local defaults = SDB.MELEE_RANGE_REFERENCE_SPELLS[specKey]
-                            local refID = defaults and defaults[1]
-                            if not refID then return L["Default"] .. ": " .. L["None"] end
-                            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(refID)
-                            local name = info and info.name or tostring(refID)
-                            local line = L["Default"] .. ": |cFF00FF00" .. name .. "|r (" .. refID .. ")"
-                            -- Append active override if set
-                            local profile = addon:GetProfile()
-                            local gc = profile and profile.gapClosers
-                            local overrideID = gc and gc.meleeRangeSpell
-                            if overrideID and overrideID > 0 then
-                                local oi = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(overrideID)
-                                local oname = oi and oi.name or tostring(overrideID)
-                                line = line .. "\n" .. L["Override"] .. ": |cFFFFD100" .. oname .. "|r (" .. overrideID .. ")"
-                            end
-                            return line
-                        end,
-                        order = 2,
-                        fontSize = "medium",
-                    },
-                    meleeRange_set = {
-                        type  = "execute",
-                        name  = L["Set Override..."],
-                        desc  = L["Melee Range Spell Override desc"],
-                        order = 3,
-                        width = "normal",
-                        func  = function()
-                            local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
-                            if not LiveSearchPopup then return end
-                            if not SpellSearch then SpellSearch = LibStub("JustAC-OptionsSpellSearch", true) end
-                            SpellSearch.BuildSpellbookCache()
-                            LiveSearchPopup.Open({
-                                title      = L["Melee Range Reference"],
-                                searchFunc = SpellSearch.GetFilteredSpellbookSpells,
-                                onSelect   = function(spellID, _)
-                                    if not spellID or spellID == 0 then return end
-                                    local profile = addon:GetProfile()
-                                    if not profile then return end
-                                    if not profile.gapClosers then
-                                        profile.gapClosers = { enabled = false, classSpells = {} }
-                                    end
-                                    profile.gapClosers.meleeRangeSpell = spellID
-                                    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                                    if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
-                                    addon:ForceUpdate()
-                                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                                end,
-                            })
-                        end,
-                    },
-                    meleeRange_clear = {
-                        type = "execute",
-                        name = L["Clear Override"],
-                        order = 3.2,
-                        width = 0.8,
-                        func = function()
-                            local profile = addon:GetProfile()
-                            if not profile or not profile.gapClosers then return end
-                            profile.gapClosers.meleeRangeSpell = nil
-                            local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                            if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
-                            addon:ForceUpdate()
-                            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                        end,
-                        disabled = function()
-                            local profile = addon:GetProfile()
-                            local gc = profile and profile.gapClosers
-                            return not (gc and gc.meleeRangeSpell and gc.meleeRangeSpell > 0)
-                        end,
-                    },
-                },
-            },
             -- RESET (990+)
             resetHeader = {
                 type = "header",
@@ -195,7 +98,6 @@ function GapClosers.CreateTabArgs(addon)
                     end
                     profile.gapClosers.enabled = false
                     profile.gapClosers.showGlow = true  -- default: true (glow on by default)
-                    profile.gapClosers.meleeRangeSpell = nil  -- default: nil (auto-detect)
                     local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
                     if GCE and GCE.InvalidateGapCloserCache then
                         GCE.InvalidateGapCloserCache()

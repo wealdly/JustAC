@@ -65,7 +65,7 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     -- Check if procced (instant/free cast available)
     local isProcced = BlizzardAPI.IsSpellProcced(spellID)
 
-    -- Check redundancy (buff already active — reliable, based on UnitBuff not cooldown)
+    -- Check redundancy (buff already active - reliable, based on UnitBuff not cooldown)
     local RedundancyFilter = GetRedundancyFilter()
     local isRedundant = RedundancyFilter and RedundancyFilter.IsSpellRedundant(spellID, profile, true) or false
     if isRedundant then
@@ -181,26 +181,26 @@ end
 --   while in combat. There is no in-combat API that can identify mob type on a
 --   *fresh* target. All known alternative approaches have been evaluated:
 --
---   UnitCreatureType()  — SECRETED in combat. Primary data source, unusable.
---   UnitGUID()          — SECRETED in combat. GUID-keyed cache is not viable.
---   UnitCreatureFamily()— NOT secreted, but only distinguishes Beast from
+--   UnitCreatureType()  - SECRETED in combat. Primary data source, unusable.
+--   UnitGUID()          - SECRETED in combat. GUID-keyed cache is not viable.
+--   UnitCreatureFamily()- NOT secreted, but only distinguishes Beast from
 --                         everything else (nil for Mechanical/Undead/etc.).
---   UnitClassification()— NOT secreted. Used for worldboss/boss slot detection.
---   UnitIsUnit(boss1-5) — NOT secreted. Used for boss slot detection.
+--   UnitClassification()- NOT secreted. Used for worldboss/boss slot detection.
+--   UnitIsUnit(boss1-5) - NOT secreted. Used for boss slot detection.
 --
 -- DESIGN CONSEQUENCE:
 --   The cache is populated out of combat (TARGET_CHANGED, PLAYER_REGEN_ENABLED).
 --   If the player tabs to a NEW target mid-combat (not yet cached), the creature
 --   type is unknowable and IsTargetCCImmune() returns false (fail-open: assume
---   CC-able). This is intentional — showing a CC suggestion on a Mechanical mob
+--   CC-able). This is intentional - showing a CC suggestion on a Mechanical mob
 --   is a minor UX annoyance; suppressing CC on a valid target would be harmful.
 --
 -- UPDATE (in-game verified 2026-06-28, build 12.0.7): UnitCreatureType("target") is
--- in fact READABLE in combat for resolved targets — targeting resolves the unit, so
+-- in fact READABLE in combat for resolved targets - targeting resolves the unit, so
 -- the type reads back mid-combat (the Feb-2026 finding no longer holds for the target).
 -- UnitName is likewise readable in combat. The secret system is volatile (it loosened
 -- since Feb 2026), so as a hedge we cache the type keyed by the readable UnitName
--- whenever it's available — a pre-warmed fallback if Blizzard ever re-secrets it.
+-- whenever it's available - a pre-warmed fallback if Blizzard ever re-secrets it.
 -- Resolution order (BlizzardAPI.GetTargetCreatureTypeID below): live read -> name
 -- cache -> fail-open (assume CC-able).
 
@@ -209,7 +209,7 @@ end
 local NAME_TYPE_CACHE_CAP = 1500
 
 -- Localized creature-type name -> numeric ID, built once from C_CreatureInfo
--- (locale-correct — no hardcoded type strings).
+-- (locale-correct - no hardcoded type strings).
 local creatureTypeByName = nil
 local function BuildCreatureTypeMap()
     if creatureTypeByName then return end
@@ -242,7 +242,7 @@ end
 -- UnitGUID() is SECRET in combat, so NPC ID is only populated when a target is
 -- acquired out of combat (pre-pull) or on PLAYER_REGEN_ENABLED.  When a CC
 -- failure is detected and the NPC ID is known, that mob TYPE is remembered for
--- the rest of the instance — all future mobs with the same NPC ID are suppressed
+-- the rest of the instance - all future mobs with the same NPC ID are suppressed
 -- without needing to re-learn.
 local ccImmuneNPCIDs = {}           -- [npcID] = true; persists across pulls
 local currentTargetNPCID = nil      -- NPC ID from GUID when readable
@@ -272,7 +272,7 @@ local ccFailureChecked  = false     -- true = we already checked this cast
 function BlizzardAPI.RefreshTargetCreatureType()
     -- Clear per-target state first; a stale NPC ID is worse than nil (nil fails open).
     currentTargetNPCID = nil
-    -- Also reset CC-failure learning on target switch — the new target might
+    -- Also reset CC-failure learning on target switch - the new target might
     -- be CC-able even if the previous one wasn't.
     ccCastTime = 0
     ccFailureObserved = false
@@ -280,7 +280,7 @@ function BlizzardAPI.RefreshTargetCreatureType()
     local ct = UnitCreatureType and UnitCreatureType("target")
     if ct and not IsSecretValue(ct) then
         -- Pre-warm the persistent name->type cache while the type is readable, keyed
-        -- by the (also-readable) UnitName — insurance if the type is ever re-secreted.
+        -- by the (also-readable) UnitName - insurance if the type is ever re-secreted.
         BuildCreatureTypeMap()
         local name = UnitName and UnitName("target")
         if name and not IsSecretValue(name) then
@@ -296,7 +296,7 @@ function BlizzardAPI.RefreshTargetCreatureType()
 end
 
 --- Resolve the current target's creature type ID (numeric, locale-independent), or nil.
---- Order: live UnitCreatureType when readable (resolved targets, even in combat — and
+--- Order: live UnitCreatureType when readable (resolved targets, even in combat - and
 --- caches it by name); else the persistent name cache (UnitName stays readable when the
 --- type is secret); else nil so the caller fails open. See the creature-type notes above.
 function BlizzardAPI.GetTargetCreatureTypeID()
@@ -322,7 +322,7 @@ end
 -- spellID -> allowed-creature-type bitmask (bit (typeID-1) set = type allowed), from
 -- SpellTargetRestrictions.TargetCreatureType. Only the type-restricted subset of the CC
 -- spells we actually suggest; every other suggested CC is a universal stun (no entry =
--- no restriction). Regenerate per patch by intersecting CLASS_INTERRUPT_DEFAULTS cc
+-- no restriction). Regenerate per patch by intersecting INTERRUPT_ABILITIES cc
 -- spells with non-zero TargetCreatureType. Verified: 118 = Dragonkin/Demon/Giant/Undead/
 -- Humanoid (blocks Beast/Elemental/Mechanical/Critter).
 local CC_TYPE_MASK = {
@@ -345,13 +345,13 @@ end
 function BlizzardAPI.NotifyCCCastOnTarget()
     ccCastTime = GetTime()
     ccFailureChecked = false
-    -- Don't clear ccFailureObserved here — if we already know this target is
+    -- Don't clear ccFailureObserved here - if we already know this target is
     -- immune, keep that knowledge.
 end
 
 --- Called on PLAYER_REGEN_ENABLED to reset per-target CC-failure learning for
 --- the next combat session.  Instance-level ccImmuneNPCIDs is NOT cleared here
---- — it persists across pulls until the player changes zone.
+--- - it persists across pulls until the player changes zone.
 function BlizzardAPI.ResetCCFailureLearning()
     ccCastTime = 0
     ccFailureObserved = false
@@ -366,7 +366,7 @@ end
 function BlizzardAPI.BackfillCCImmunity()
     if not ccFailureObserved then return end
     if currentTargetNPCID then
-        -- NPC ID was known during combat — already persisted in IsTargetCCImmune
+        -- NPC ID was known during combat - already persisted in IsTargetCCImmune
         return
     end
     -- Combat just ended; GUID is readable again. If the player is still
@@ -427,7 +427,7 @@ function BlizzardAPI.IsTargetCCImmune()
         if UnitIsCrowdControlled then
             local isCCd = UnitIsCrowdControlled("target")
             if IsSecretValue(isCCd) then
-                -- Secret value — can't determine, fail-open
+                -- Secret value - can't determine, fail-open
             elseif not isCCd then
                 ccFailureObserved = true
                 -- Persist to instance cache if NPC ID is known (target was
@@ -455,16 +455,16 @@ function BlizzardAPI.IsTargetInterruptWorthy()
     if UnitClassification("target") == "minus" then return false end
     -- Minions are pets, totems, treants, guardians.  UnitIsMinion() is
     -- NeverSecret and covers the same ground as the secreted
-    -- UnitCreatureType() Mechanical/Totem check — but works IN combat.
+    -- UnitCreatureType() Mechanical/Totem check - but works IN combat.
     if UnitIsMinion and UnitIsMinion("target") then return false end
     return true
 end
 
 --------------------------------------------------------------------------------
--- Player & Pet Health (moved from SpellQuery — consolidated with health helpers)
+-- Player & Pet Health (moved from SpellQuery - consolidated with health helpers)
 --------------------------------------------------------------------------------
 
--- UnitHealth/UnitHealthMax are SECRET in 12.0 combat — returns nil when secret.
+-- UnitHealth/UnitHealthMax are SECRET in 12.0 combat - returns nil when secret.
 function BlizzardAPI.GetPlayerHealthPercent()
     if not UnitExists("player") then return nil end
 
@@ -508,8 +508,8 @@ function BlizzardAPI.GetPetHealthPercent()
 end
 
 -- Returns pet status string: "dead", "missing", "alive", or nil (no pet class)
--- UnitExists and UnitIsDead are NOT secret — reliable in combat
--- Pet health IS secret in combat — use GetPetHealthPercent() for best-effort health
+-- UnitExists and UnitIsDead are NOT secret - reliable in combat
+-- Pet health IS secret in combat - use GetPetHealthPercent() for best-effort health
 function BlizzardAPI.GetPetStatus()
     local ok, exists = pcall(UnitExists, "pet")
     if not ok or not exists then
@@ -525,7 +525,7 @@ function BlizzardAPI.GetPetStatus()
 end
 
 -- Auras meaning the player has intentionally chosen a petless playstyle.
--- While any is active, "missing pet" is by design — suppress rez/summon reminders.
+-- While any is active, "missing pet" is by design - suppress rez/summon reminders.
 local PETLESS_BY_CHOICE_AURAS = {
     155228,  -- Lone Wolf (Marksmanship Hunter running without a pet)
     196099,  -- Demonic Power (Warlock with pet sacrificed for a damage buff)
@@ -538,7 +538,7 @@ function BlizzardAPI.IsPetlessByChoice()
 end
 
 -- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.
--- In combat UnitHealth() is secret — only the LowHealthFrame binary (~35% threshold)
+-- In combat UnitHealth() is secret - only the LowHealthFrame binary (~35% threshold)
 -- is reliable. Health percentages above 35% are indistinguishable in combat.
 function BlizzardAPI.GetPlayerHealthPercentSafe()
     local exactPct = BlizzardAPI.GetPlayerHealthPercent()
@@ -586,7 +586,7 @@ end
 --
 --  1. UNIT_SPELLCAST_INTERRUPTIBLE / UNIT_SPELLCAST_NOT_INTERRUPTIBLE events
 --     fire for mid-cast transitions (e.g. boss becoming immune). Event name
---     IS the data — real (non-secret) boolean.
+--     IS the data - real (non-secret) boolean.
 --
 --  2. UnitCastingInfo() / UnitChannelInfo() notInterruptible field, read
 --     immediately in the UNIT_SPELLCAST_START handler. This catches casts
@@ -610,11 +610,11 @@ local castEventFrame = nil
 
 -- Resolve a notInterruptible flag. In 12.0 combat this is genuinely UNRESOLVABLE: every
 -- candidate signal is a secret value or silent. Verified via /jac inspect castdiag (12.0.7):
---   • UnitCastingInfo notInterruptible / cast barType — secret (IsInterruptable() errors
+--   • UnitCastingInfo notInterruptible / cast barType - secret (IsInterruptable() errors
 --     when compared under our taint, on Blizzard's own frames too)
---   • the cast spellID from UNIT_SPELLCAST_START — secret (so no spell-keyed lookup)
---   • CastingBar BorderShield:IsShown() — returns a secret boolean (display state sealed too)
---   • UNIT_SPELLCAST_INTERRUPTIBLE / NOT_INTERRUPTIBLE — fire only on mid-cast transitions,
+--   • the cast spellID from UNIT_SPELLCAST_START - secret (so no spell-keyed lookup)
+--   • CastingBar BorderShield:IsShown() - returns a secret boolean (display state sealed too)
+--   • UNIT_SPELLCAST_INTERRUPTIBLE / NOT_INTERRUPTIBLE - fire only on mid-cast transitions,
 --     not at cast start, so they don't establish the initial state
 -- This is the secret-value system, not a UI-addon issue. For a secret value we return nil
 -- and the caller fails open (assume interruptible). A plain boolean (out of combat / pre-12.0)
@@ -653,7 +653,7 @@ local function InitTargetCastTracking()
     if castEventFrame then return end
     castEventFrame = CreateFrame("Frame")
 
-    -- Unit events filtered to "target" only — zero overhead for player/party casts
+    -- Unit events filtered to "target" only - zero overhead for player/party casts
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "target")
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "target")
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "target")
@@ -667,7 +667,7 @@ local function InitTargetCastTracking()
 
     castEventFrame:SetScript("OnEvent", function(_, event)
         if event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
-            -- Event name IS the data (the event itself carries it) — never secret
+            -- Event name IS the data (the event itself carries it) - never secret
             targetCastInterruptible = true
             targetCastInterruptKnown = true
         elseif event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
@@ -698,12 +698,12 @@ local function InitTargetCastTracking()
             or event == "UNIT_SPELLCAST_CHANNEL_STOP"
             or event == "UNIT_SPELLCAST_FAILED"
             or event == "UNIT_SPELLCAST_INTERRUPTED" then
-            -- Cast ended — reset state
+            -- Cast ended - reset state
             targetCastActive = false
             targetCastInterruptKnown = false
             targetCastInterruptible = true
         elseif event == "PLAYER_TARGET_CHANGED" then
-            -- New target — probe for an existing cast on the new target so we
+            -- New target - probe for an existing cast on the new target so we
             -- detect mid-cast interruptibility without depending on a visible
             -- cast bar frame (addon-agnostic).
             targetCastActive = false
@@ -729,7 +729,7 @@ end
 --------------------------------------------------------------------------------
 -- These FORWARD a possibly-secret value into a Blizzard widget method that consumes it
 -- for display without revealing it to us (the method is marked SecretArguments =
--- "AllowedWhenTainted"). We never read or branch on the value — the engine renders it.
+-- "AllowedWhenTainted"). We never read or branch on the value - the engine renders it.
 -- The complete set of such sinks: SetAlphaFromBoolean / SetVertexColorFromBoolean (secret
 -- booleans) and SetCooldownFromDurationObject (secret durations). This is how the addon can
 -- reflect a secret bool visually (interruptibility, range, usability) without resolving it.
@@ -760,7 +760,7 @@ end
 
 --- Drive an interrupt icon's alpha from the target cast's secret notInterruptible:
 --- non-interruptible (or no active cast) → alpha 0; interruptible → shownAlpha. Works
---- regardless of cast-bar / nameplate / unit-frame addons — no cast-bar dependency, never
+--- regardless of cast-bar / nameplate / unit-frame addons - no cast-bar dependency, never
 --- reads the secret. See the INTERRUPT DETECTION notes in CastInterruptTracker for why this is the
 --- only robust path. Caller should apply this only to a KICK suggestion (a CC is the correct
 --- call on a non-interruptible cast and must stay visible).

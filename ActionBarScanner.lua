@@ -189,7 +189,7 @@ local function GetCachedStateHash()
     return cachedStateData.hash
 end
 
--- Binding version counter — incremented on each RebuildBindingCache to detect changes
+-- Binding version counter - incremented on each RebuildBindingCache to detect changes
 local bindingVersion = 0
 
 -- Select the appropriate binding key based on input preference (auto/keyboard/gamepad).
@@ -372,8 +372,8 @@ end
 --   InvalidateStateCache()    → wipes slot mapping + spell/hotkey caches on bar/form changes.
 --                               Use for UPDATE_BONUS_ACTIONBAR, UPDATE_SHAPESHIFT_FORM, etc.
 -- Public façades:
---   ActionBarScanner.InvalidateHotkeyCache()   — partial wipe (spell/slot/hotkey only)
---   ActionBarScanner.InvalidateKeybindCache()  — delegates to local InvalidateKeybindCache
+--   ActionBarScanner.InvalidateHotkeyCache()   - partial wipe (spell/slot/hotkey only)
+--   ActionBarScanner.InvalidateKeybindCache()  - delegates to local InvalidateKeybindCache
 local function InvalidateKeybindCache()
     keybindCacheValid = false
     lastValidatedStateHash = 0
@@ -457,7 +457,7 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                         end
                     end
 
-                    -- FindSpellOverrideByID fallback — separate native API for talent/aura overrides
+                    -- FindSpellOverrideByID fallback - separate native API for talent/aura overrides
                     -- that C_Spell.GetOverrideSpell may miss (different internal lookup path)
                     if not isMatch and FindSpellOverrideByID then
                         local slotOverride = FindSpellOverrideByID(id)

@@ -64,6 +64,11 @@ local defaults = {
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
+        -- Master queue-ordering toggles: apply to positions 2+ of both the custom list and
+        -- Blizzard's default rotation. All on = smart order; all off = exact source order.
+        orderProcsFirst = true,           -- Surface procced abilities ahead of source order
+        orderContextAware = true,         -- Bias by situation (AoE/ST, melee range) ahead of source order
+        orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
@@ -221,8 +226,8 @@ local function MigrateBlacklist(profile, charData)
     end
 
     -- Normalize per-spec blacklist tables (SavedVariables may load numeric keys as strings).
-    -- Preserve the entry value as-is — `true` (all positions) or `{ fixedQueue = true }`
-    -- (positions 2+ only) — and keep both spells (positive IDs) and items (negative IDs).
+    -- Preserve the entry value as-is - `true` (all positions) or `{ fixedQueue = true }`
+    -- (positions 2+ only) - and keep both spells (positive IDs) and items (negative IDs).
     for specKey, spellTable in pairs(profile.blacklistedSpells) do
         if type(spellTable) == "table" then
             local normalized = {}
@@ -271,7 +276,7 @@ local function MigrateLegacySettings(profile)
     end
     -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
     -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
-    -- NOTE: defensives.showHotkeys is NOT migrated here — it was a separate
+    -- NOTE: defensives.showHotkeys is NOT migrated here - it was a separate
     -- per-category toggle that no longer exists. Merging it into the unified
     -- toggle would hide ALL hotkeys (offensive + defensive) for users who only
     -- intended to hide defensive hotkeys. Fail-open: show hotkeys by default.
@@ -344,7 +349,7 @@ local function MigrateLegacySettings(profile)
     end
     -- showHealthBar/showPetHealthBar: General tab fallbacks → defensives owns these
     if profile.showHealthBar == true and profile.defensives and not profile.defensives.enabled then
-        -- User had standalone health bar enabled with defensives off — move to defensives setting
+        -- User had standalone health bar enabled with defensives off - move to defensives setting
         profile.defensives.showHealthBar = true
     end
     if profile.showPetHealthBar == true and profile.defensives and not profile.defensives.enabled then
@@ -561,7 +566,6 @@ function JustAC:OnEnable()
 
     -- ── Target + range + usability ────────────────────────────────────────────────
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
-    self:RegisterEvent("ACTION_RANGE_CHECK_UPDATE", "OnActionRangeUpdate")
     self:RegisterEvent("ACTION_USABLE_CHANGED", "OnActionUsableChanged")
 
     -- ── Cast tracking ─────────────────────────────────────────────────────────────────
@@ -583,7 +587,7 @@ function JustAC:OnEnable()
     self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
 
     -- ── Encounter / instance ──────────────────────────────────────────────────────
-    -- 12.0.5: aura instance IDs re-randomize at encounter/M+/PvP start — flush stale maps
+    -- 12.0.5: aura instance IDs re-randomize at encounter/M+/PvP start - flush stale maps
     self:RegisterEvent("ENCOUNTER_START",      "OnEncounterStart")
     self:RegisterEvent("CHALLENGE_MODE_START", "OnEncounterStart")
     self:RegisterEvent("PVP_MATCH_ACTIVE",     "OnEncounterStart")
@@ -819,7 +823,7 @@ end
 
 -- Only on explicit profile reset (not change/copy)
 -- Character data (blacklist, spec profiles) is intentionally preserved;
--- Profile-level data (hotkey overrides, settings) is cleared — that's what a reset does.
+-- Profile-level data (hotkey overrides, settings) is cleared - that's what a reset does.
 -- AceDB already resets profile-level settings to defaults.
 function JustAC:OnProfileReset()
     self:RefreshConfig()
@@ -1264,10 +1268,10 @@ function JustAC:OnSpellIconChanged()
 end
 
 function JustAC:OnShapeshiftFormChanged()
-    -- Form changes swap the active action bar (Druid Cat/Bear/etc.), so the
-    -- melee range reference slot may now point at a different spell or be
-    -- absent entirely.  Invalidate so ResolveMeleeReference re-queries the
-    -- correct form-bar slots on the next GetGapCloserSpell call.
+    -- Form changes (Druid Cat/Bear/etc.) can change which abilities are usable; clear the
+    -- cached gap-closer list and reset the range debounce so the next GetGapCloserSpell
+    -- re-evaluates fresh. (Melee detection is now form-independent via IsSpellInRange, so
+    -- there's no action-slot to re-query.)
     if GapCloserEngine then
         GapCloserEngine.InvalidateGapCloserCache()
         GapCloserEngine.ClearRangeState()
@@ -1302,7 +1306,7 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
         self:InvalidateCaches({auras = true})
         -- Reset update timer in combat so proc-driven AC changes surface promptly
         -- instead of waiting for the next CVar-rate poll.  Throttled to 10x/sec
-        -- by lastAuraInvalidation — safe even in heavy multi-aura combat.
+        -- by lastAuraInvalidation - safe even in heavy multi-aura combat.
         if UnitAffectingCombat("player") and self.updateTimeLeft then
             self.updateTimeLeft = 0
         end
@@ -1368,7 +1372,7 @@ function JustAC:OnBindingsUpdated()
 end
 
 function JustAC:OnGamePadChanged()
-    -- Input device changed — re-select preferred bindings (auto mode)
+    -- Input device changed - re-select preferred bindings (auto mode)
     if ActionBarScanner and ActionBarScanner.OnKeybindsChanged then
         ActionBarScanner.OnKeybindsChanged()
         self:ForceUpdate()
@@ -1388,7 +1392,7 @@ function JustAC:OnProcGlowChange(event, spellID)
         end
     end
 
-    -- Procs affect rotation and defensive priorities — ForceUpdateAll marks both
+    -- Procs affect rotation and defensive priorities - ForceUpdateAll marks both
     -- queues dirty; OnUpdate loop handles rendering + defensive re-evaluation.
     self:ForceUpdateAll()
 end
@@ -1431,26 +1435,11 @@ function JustAC:OnActionUsableChanged(_, changes)
     end
 end
 
-function JustAC:OnActionRangeUpdate(_, slot, isInRange, checksRange)
-    if GapCloserEngine then
-        local isRefSlot = GapCloserEngine.OnActionRangeUpdate(slot, isInRange, checksRange)
-        -- Only rebuild the queue when the melee reference slot changes range.
-        -- This prevents every random ability's range event from triggering
-        -- a gap-closer re-evaluation.  Trigger on both directions so we
-        -- show the gap closer instantly on out-of-range AND remove it
-        -- promptly on return-to-range.
-        if isRefSlot then
-            if SpellQueue then SpellQueue.ForceUpdate() end
-            self:MarkQueueDirty()
-        end
-    end
-end
-
 function JustAC:OnNamePlateAdded(_, nameplateUnit)
     if UINameplateOverlay and UnitIsUnit(nameplateUnit, "target") then ---@diagnostic disable-line: undefined-global
         UINameplateOverlay.UpdateAnchor(self)
         -- ForceUpdateAll so the defensive overlay re-renders as soon as the plate appears.
-        -- ForceUpdate (DPS-only) isn't enough — defensive icons are driven by OnHealthChanged.
+        -- ForceUpdate (DPS-only) isn't enough - defensive icons are driven by OnHealthChanged.
         self:ForceUpdateAll()
     end
 end
@@ -1477,7 +1466,7 @@ end
 
 function JustAC:OnPetChanged(event, unit)
     if unit ~= "player" then return end
-    -- Pet summoned/dismissed/died — update pet health bar visibility and defensive queue
+    -- Pet summoned/dismissed/died - update pet health bar visibility and defensive queue
     if UIHealthBar and UIHealthBar.UpdatePetVisibility then
         UIHealthBar.UpdatePetVisibility(self)
     end
@@ -1515,7 +1504,7 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
         -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
         -- will check if UnitIsCrowdControlled("target") became true.
-        -- Guard: skip for pure interrupt spells (Kick, Wind Shear, etc.) — they apply a lockout
+        -- Guard: skip for pure interrupt spells (Kick, Wind Shear, etc.) - they apply a lockout
         -- but no CC mechanic, so the failure check would always fire and permanently mark
         -- the target as CC-immune, suppressing CC fallbacks (e.g. Blind after Kick).
         if BlizzardAPI and BlizzardAPI.NotifyCCCastOnTarget
@@ -1524,13 +1513,13 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         end
     end
 
-    -- Cast completed — dirty flags ensure next OnUpdate tick rebuilds both queues.
+    -- Cast completed - dirty flags ensure next OnUpdate tick rebuilds both queues.
     -- No deferred timer needed; the natural OnUpdate cadence provides sufficient
     -- settle time (~30-50ms) for game state to update after the cast.
     self:ForceUpdateAll()
 end
 
--- Event-driven cast/channel spell ID caching — avoids polling UnitCastingInfo/UnitChannelInfo
+-- Event-driven cast/channel spell ID caching - avoids polling UnitCastingInfo/UnitChannelInfo
 -- every render frame. spellID from UNIT_SPELLCAST_* for "player" is NeverSecret.
 function JustAC:OnPlayerCastStart(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
@@ -1556,7 +1545,7 @@ function JustAC:OnCooldownUpdate()
     -- SPELL_UPDATE_COOLDOWN fires ~10x per cast in combat (GCD cascade), and also
     -- fires OOC when abilities/items come off cooldown.  In combat, reset the timer
     -- immediately for low-latency response.  OOC, only mark dirty and let the 0.5s
-    -- idle cycle handle the update — avoids waking the loop dozens of times per minute.
+    -- idle cycle handle the update - avoids waking the loop dozens of times per minute.
     spellQueueDirty = true
     defensiveQueueDirty = true
     if UnitAffectingCombat("player") and self.updateTimeLeft then
@@ -1566,7 +1555,7 @@ end
 
 --- Marks queues dirty and ensures the next OnUpdate tick processes immediately.
 --- All rendering goes through the unified OnUpdate loop (no synchronous renders).
---- Multiple calls per frame are idempotent — setting dirty flags is a no-op when already set.
+--- Multiple calls per frame are idempotent - setting dirty flags is a no-op when already set.
 function JustAC:ForceUpdate(includeDefensives)
     spellQueueDirty = true
     if includeDefensives then defensiveQueueDirty = true end
@@ -1602,12 +1591,12 @@ end
 -- Update Cycle Architecture
 --
 -- All rendering is driven by a single OnUpdate loop. No synchronous rendering
--- occurs in event handlers — they only set dirty flags and reset the timer.
+-- occurs in event handlers - they only set dirty flags and reset the timer.
 --
--- Tier 1 (spell queue):    CVar rate, min 0.03s  (~20-33Hz) — rotation + render
--- Tier 2 (cooldown swipes): 0.08s fixed           (~12Hz)   — CD widget params
--- Tier 3 (defensives):      2× CVar rate           (~10Hz)  — health evaluation
--- Tier 4 (idle/OOC):       0.5s                    (2Hz)    — nothing happening
+-- Tier 1 (spell queue):    CVar rate, min 0.03s  (~20-33Hz) - rotation + render
+-- Tier 2 (cooldown swipes): 0.08s fixed           (~12Hz)   - CD widget params
+-- Tier 3 (defensives):      2× CVar rate           (~10Hz)  - health evaluation
+-- Tier 4 (idle/OOC):       0.5s                    (2Hz)    - nothing happening
 --
 -- ForceUpdate() / ForceUpdateAll() set dirty flags + updateTimeLeft = 0
 -- so the next frame processes. Multiple calls per frame are idempotent.

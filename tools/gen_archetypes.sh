@@ -26,7 +26,7 @@ for v in "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE"; do
     [ -n "$v" ] || { echo "ERROR: a required CSV is missing in $CSV/" >&2; exit 1; }
 done
 
-# The spell SET = every class-family spell (SpellClassOptions.SpellClassSet != 0 —
+# The spell SET = every class-family spell (SpellClassOptions.SpellClassSet != 0 -
 # covers all class abilities incl. talents) UNIONed with accumulated GetRotationSpells()
 # dumps (belt-and-suspenders for anything lacking a family). DB2 then classifies them.
 IDSFILE="tools/rotation_spell_ids.txt"

@@ -4,7 +4,7 @@
 --
 -- Collapses the ~280 hand-written get/set/disabled closures that were duplicated
 -- across the option panels into a handful of builders. Each builder takes the
--- addon, a profile path ("iconSize" or "nameplateOverlay.iconSize" — dots mean
+-- addon, a profile path ("iconSize" or "nameplateOverlay.iconSize" - dots mean
 -- nested, auto nil-guarded on write), and an opts table.
 --
 -- opts fields:
@@ -16,7 +16,7 @@
 --   hidden    → function(addon) → bool  (same)
 --
 -- Entries with exotic get/set logic (migrations, multi-field writes, frame
--- rebuilds) stay raw — the builders are opt-in, not mandatory.
+-- rebuilds) stay raw - the builders are opt-in, not mandatory.
 local W = LibStub:NewLibrary("JustAC-OptionsWidgets", 1)
 if not W then return end
 

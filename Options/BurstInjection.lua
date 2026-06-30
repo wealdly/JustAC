@@ -172,7 +172,7 @@ function BurstInjection.CreateTabArgs(addon)
                         name = function()
                             local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                             if not engine or not engine.GetDetectedTriggers then
-                                return L["Detected Burst Triggers"] .. " —"
+                                return L["Detected Burst Triggers"] .. " -"
                             end
                             local triggers = engine.GetDetectedTriggers(addon)
                             if not triggers or #triggers == 0 then

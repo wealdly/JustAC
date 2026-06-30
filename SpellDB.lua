@@ -13,6 +13,14 @@ local DEFENSIVE_SPELLS = {}
 local HEALING_SPELLS = {}
 local CROWD_CONTROL_SPELLS = {}
 local UTILITY_SPELLS = {}
+-- Curated interrupt/CC ability data lives in Data/InterruptAbilities.lua (registered below).
+-- Flat [spellID] = {kind, mech, reach, radius, pri}; see that file for the field contract.
+local INTERRUPT_ABILITIES = {}
+-- Curated range-reference abilities live in Data/RangeReferences.lua (registered below).
+-- [spellID] = max range in yards. On-target harmful abilities (damage + CC) with stable,
+-- known ranges, used as distance probes: IsSpellInRange (a non-secret boolean - only the
+-- yardage is secret) on each KNOWN reference brackets the target's distance. See IsTargetWithin.
+local RANGE_REFERENCES = {}
 
 --- Populate the category tables from Data/SpellCategories.lua. Merges into the
 --- existing local table objects so the IsXSpell closures keep seeing the data.
@@ -22,6 +30,52 @@ function SpellDB.RegisterCategories(t)
     if t.healing   then for id in pairs(t.healing)   do HEALING_SPELLS[id] = true end end
     if t.cc        then for id in pairs(t.cc)        do CROWD_CONTROL_SPELLS[id] = true end end
     if t.utility   then for id in pairs(t.utility)   do UTILITY_SPELLS[id] = true end end
+end
+
+--- Populate the interrupt/CC ability list from Data/InterruptAbilities.lua. Merges into
+--- the existing local table so ResolveInterruptSpells/BuildInterruptTypeSpellIDs see it.
+function SpellDB.RegisterInterruptAbilities(t)
+    if type(t) ~= "table" then return end
+    for id, meta in pairs(t) do INTERRUPT_ABILITIES[id] = meta end
+end
+
+--- Populate the range-reference list from Data/RangeReferences.lua.
+function SpellDB.RegisterRangeReferences(t)
+    if type(t) ~= "table" then return end
+    for id, yards in pairs(t) do RANGE_REFERENCES[id] = yards end
+end
+
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+local IsSpellKnown = IsSpellKnown
+
+--- Is the current target within `yards`? Returns true / false / nil (unknown).
+--- Brackets the target using the player's KNOWN reference abilities: a reference of range
+--- ≤ yards that IS in range proves target ≤ yards (within); a reference of range ≥ yards
+--- that is OUT of range proves target > yards (beyond). Distance in yards is a secret in
+--- combat, but IsSpellInRange's boolean is not - this is built entirely on it.
+--- Reliability scales with probe density near `yards`; nil when no probe brackets it.
+function SpellDB.IsTargetWithin(yards)
+    if not C_Spell_IsSpellInRange then return nil end
+    local api = LibStub("JustAC-BlizzardAPI", true)
+    local isSecret = api and api.IsSecretValue
+    local within, beyond
+    for id, ref in pairs(RANGE_REFERENCES) do
+        -- Gate on KNOWN (form-independent), NOT castability: IsSpellAvailable would skip a
+        -- form-gated probe (a Druid's Mangle while shifted, anything on GCD/low resources),
+        -- which silently breaks detection. IsSpellInRange only needs the spell to be known.
+        if not IsSpellKnown or IsSpellKnown(id) then
+            local r = C_Spell_IsSpellInRange(id, "target")   -- "target" unit is required
+            if r ~= nil and not (isSecret and isSecret(r)) then
+                if r ~= false then
+                    if ref <= yards then within = true end   -- target ≤ ref ≤ yards
+                elseif ref >= yards then
+                    beyond = true                            -- target > ref ≥ yards
+                end
+            end
+        end
+    end
+    if within then return true elseif beyond then return false end
+    return nil
 end
 
 --------------------------------------------------------------------------------
@@ -46,21 +100,19 @@ function SpellDB.IsCrowdControlSpell(spellID)
     return CROWD_CONTROL_SPELLS[spellID] == true
 end
 
--- Lazily-built set of pure interrupt spells (type="interrupt" in CLASS_INTERRUPT_DEFAULTS).
--- Interrupts apply a lockout but no CC mechanic — they must not trigger CC-failure learning.
+-- Lazily-built set of pure interrupt spells (kind="interrupt" in INTERRUPT_ABILITIES).
+-- Interrupts apply a lockout but no CC mechanic - they must not trigger CC-failure learning.
 local interruptTypeSpellIDs = nil
 local function BuildInterruptTypeSpellIDs()
     interruptTypeSpellIDs = {}
-    for _, entries in pairs(SpellDB.CLASS_INTERRUPT_DEFAULTS) do
-        for _, entry in ipairs(entries) do
-            if entry[2] == "interrupt" then
-                interruptTypeSpellIDs[entry[1]] = true
-            end
+    for id, e in pairs(INTERRUPT_ABILITIES) do
+        if e.kind == "interrupt" then
+            interruptTypeSpellIDs[id] = true
         end
     end
 end
 
--- Returns true if spellID is a pure lockout interrupt (type="interrupt" in CLASS_INTERRUPT_DEFAULTS).
+-- Returns true if spellID is a pure lockout interrupt (kind="interrupt" in INTERRUPT_ABILITIES).
 -- Returns false for cc-type entries (stun, silence, incapacitate) even if also in CROWD_CONTROL_SPELLS.
 function SpellDB.IsInterruptTypeSpell(spellID)
     if not spellID then return false end
@@ -68,14 +120,11 @@ function SpellDB.IsInterruptTypeSpell(spellID)
     return interruptTypeSpellIDs[spellID] == true
 end
 
--- Silence-class CC: only prevents SPELL casts, not physical channels. In ccOnly mode
--- (uninterruptible cast, which may be physical) the interrupt tracker prefers a stun-class
--- CC that stops anything. From DB2 SpellCategories.Mechanic == 9 (silence) intersected with
--- the CLASS_INTERRUPT_DEFAULTS cc spells; regenerate per patch. Currently just Strangulate.
-local SILENCE_CC_SPELLS = { [47476] = true }
-function SpellDB.IsSilenceClassCC(spellID)
-    return spellID ~= nil and SILENCE_CC_SPELLS[spellID] == true
-end
+-- Per-CC mechanic (silence/fear/stun/…) now lives in INTERRUPT_ABILITIES[id].mech and
+-- travels on each resolved entry (entry.mech), so callers branch on entry.mech directly:
+--   mech == 9 (silence) only stops SPELL casts, not physical channels - in ccOnly mode the
+--             tracker prefers a stun-class CC and defers silence (see EvaluateInterrupt).
+--   mech == 5 (fear) breaks on damage and scatters packs - excluded unless includeFears.
 
 -- Check if a spell is utility (movement, rez, taunt, external, etc.)
 function SpellDB.IsUtilitySpell(spellID)
@@ -100,14 +149,17 @@ end
 
 --------------------------------------------------------------------------------
 -- OFFENSIVE SPELL ATTRIBUTES (archetype / range / gate)
--- Flat per-spell map — archetype and range are properties of the spell, so this is
+-- Flat per-spell map - archetype and range are properties of the spell, so this is
 -- robust to talent/priority-queue changes. Used to bias the fixed queue (positions
 -- 2+) by the context of Blizzard's position-1 pick:
 --   arch  = "st" | "cleave" | "aoe"      → boost same-archetype spells up
 --   range = "melee" | "ranged"           → soft-demote melee spells when the
 --                                          context spell is ranged (out of melee)
---   gate  = "stealth" | ...              → reserved (not yet filtered; usability
---                                          tint already greys gated spells)
+--   gate  = "stealth"                    → reserved (usability tint already greys it)
+--           "execute"                    → HP-gated finisher. When Blizzard's position-1
+--                                          pick carries this gate, the target is below the
+--                                          execute threshold (a secret-free target-HP read),
+--                                          so other execute-gated spells are boosted in 2+.
 -- Sourced from DB2 (wago.tools): arch from SpellEffect ImplicitTarget + MaxTargets,
 -- range from SpellRange. Intended to grow into a full auto-generated table.
 --------------------------------------------------------------------------------
@@ -122,6 +174,12 @@ local GATE  = {}   -- [spellID] = "stealth" | ...  (reserved; not yet filtered)
 -- damage is indirect (triggered/cloned) and so can't be classified mechanically.
 local function ApplyArchOverrides()
     GATE[185438] = "stealth"          -- Shadowstrike (stealth-gated)
+    -- Execute (HP-gated finishers). DB2 has no health-threshold column, so this is a
+    -- hand-verified list of cast IDs GetNextCastSpell actually returns; extend per spec
+    -- via /jac inspect while in execute phase. Stale IDs are harmless (never match).
+    GATE[53351]  = "execute"          -- Kill Shot (Marksmanship/Beast Mastery)
+    GATE[320976] = "execute"          -- Kill Shot (Survival)
+    GATE[322109] = "execute"          -- Touch of Death (Monk)
     -- ARCH[280719] = "cleave"        -- Secret Technique: AOE via clones (uncomment to boost)
     -- ARCH[426591] = "cleave"        -- Goremaw's Bite: AOE via trigger
 end
@@ -163,10 +221,10 @@ end
 
 --- Resolve defaults from a table that supports both spec-level and class-level keys.
 --- Tries "CLASS_N" first, then falls back to "CLASS".
---- @param defaultsTable table — e.g. SpellDB.CLASS_DEFENSIVE_DEFAULTS
---- @param specKey string|nil — e.g. "WARRIOR_3" (optional; computed if nil)
---- @param playerClass string|nil — e.g. "WARRIOR" (optional; computed if nil)
---- @return table|nil — the default spell list, or nil
+--- @param defaultsTable table - e.g. SpellDB.CLASS_DEFENSIVE_DEFAULTS
+--- @param specKey string|nil - e.g. "WARRIOR_3" (optional; computed if nil)
+--- @param playerClass string|nil - e.g. "WARRIOR" (optional; computed if nil)
+--- @return table|nil - the default spell list, or nil
 function SpellDB.ResolveDefaults(defaultsTable, specKey, playerClass)
     if not defaultsTable then return nil end
     if not specKey or not playerClass then
@@ -217,7 +275,7 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
-    -- Class fallback (all specs — Renewing Blaze merged into Obsidian Scales in 12.0)
+    -- Class fallback (all specs - Renewing Blaze merged into Obsidian Scales in 12.0)
     EVOKER        = {363916, 360995},                           -- Obsidian Scales, Verdant Embrace
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
@@ -280,16 +338,16 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
 -- Hand-curated over CLASS_DEFENSIVE_DEFAULTS: DB2 SpellEffect cleanly tags only the
 -- direct-aura bubbles (39/40 + broad school mask) and %-heals (Effect 136/67); the
 -- indirect-aura immunities (Turtle, Cloak) and flat/SP-scaled heals (Death Strike, Word
--- of Glory, Regrowth) are verified by hand. Tier 2 is "big instant heal" only — small
+-- of Glory, Regrowth) are verified by hand. Tier 2 is "big instant heal" only - small
 -- top-offs (Crimson Vial, Expel Harm) and cast-time heals (Healing Surge) stay tier 3.
 -- Regenerate the candidate set per patch from SpellEffect; hand-verify the misses.
 local DEFENSE_TIER = {
-    -- Tier 1 — immunity bubbles
+    -- Tier 1 - immunity bubbles
     [642]    = 1,  -- Divine Shield (Paladin)
     [45438]  = 1,  -- Ice Block (Mage)
     [186265] = 1,  -- Aspect of the Turtle (Hunter)
     [31224]  = 1,  -- Cloak of Shadows (Rogue, magic immunity)
-    -- Tier 2 — big instant heals
+    -- Tier 2 - big instant heals
     [633]    = 2,  -- Lay on Hands (Paladin, 100%)
     [19236]  = 2,  -- Desperate Prayer (Priest, 25%)
     [108238] = 2,  -- Renewal (Druid, 30%)
@@ -309,42 +367,23 @@ function SpellDB.GetDefenseTier(spellID)
     return DEFENSE_TIER[spellID] or 3
 end
 
--- Pet rez/summon spells (shown when pet is dead or missing — reliable in combat via UnitIsDead/UnitExists)
+-- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
     HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1
     WARLOCK = {688, 697, 712, 691, 30146},           -- Summon Imp/Voidwalker/Succubus/Felhunter/Felguard
     WARLOCK_2 = {30146, 688, 697, 712, 691},         -- Demonology: Felguard first (its mandatory pet), others as fallback
-    DEATHKNIGHT_3 = {46584, 46585},                  -- Raise Dead (Unholy only — permanent ghoul 46584; 46585 covers the temporary variant. Blood/Frost ghoul is a Guardian, not a pet)
+    DEATHKNIGHT_3 = {46584, 46585},                  -- Raise Dead (Unholy only - permanent ghoul 46584; 46585 covers the temporary variant. Blood/Frost ghoul is a Guardian, not a pet)
 }
 
--- Pet heal spells (shown when PET health is low — OUT OF COMBAT ONLY)
+-- Pet heal spells (shown when PET health is low - OUT OF COMBAT ONLY)
 -- In 12.0 combat, UnitHealth("pet") is secret so pet heals cannot trigger.
 SpellDB.CLASS_PETHEAL_DEFAULTS = {
     HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
     WARLOCK = {755},                                 -- Health Funnel
 }
 
--- Interrupt/CC spells for the interrupt reminder feature (priority-ordered per class).
--- Each entry is {spellID, type} where type is:
---   "interrupt" = pure lockout (works on bosses)
---   "cc"       = stun/silence/incapacitate (filtered against boss mobs)
--- First entry is the class's primary interrupt. Subsequent entries are fallbacks
--- shown when earlier spells are on cooldown.
-SpellDB.CLASS_INTERRUPT_DEFAULTS = {
-    DEATHKNIGHT = {{47528,"interrupt"}, {108194,"cc"}, {221562,"cc"}, {207167,"cc"}, {47476,"cc"}}, -- Mind Freeze, Asphyxiate, Asphyxiate (Blood), Blinding Sleet, Strangulate
-    DEMONHUNTER = {{183752,"interrupt"}, {179057,"cc"}, {211881,"cc"}},                     -- Disrupt, Chaos Nova, Fel Eruption
-    DRUID       = {{106839,"interrupt"}, {78675,"interrupt"}, {5211,"cc"}, {99,"cc"}},      -- Skull Bash, Solar Beam, Mighty Bash, Incapacitating Roar
-    EVOKER      = {{351338,"interrupt"}},                                                  -- Quell (no reliable instant CC fallback: Oppressing Roar buffs CC duration but does not apply CC; Sleep Walk has 1.7s cast time)
-    HUNTER      = {{147362,"interrupt"}, {187707,"interrupt"}, {24394,"cc"}},                -- Counter Shot, Muzzle, Intimidation
-    MAGE        = {{2139,"interrupt"}, {31661,"cc"}},                                       -- Counterspell, Dragon's Breath
-    MONK        = {{116705,"interrupt"}, {119381,"cc"}, {115078,"cc"}},                      -- Spear Hand Strike, Leg Sweep, Paralysis
-    PALADIN     = {{96231,"interrupt"}, {31935,"interrupt"}, {853,"cc"}, {20066,"cc"}},      -- Rebuke, Avenger's Shield, Hammer of Justice, Repentance
-    PRIEST      = {{15487,"interrupt"}, {64044,"cc"}, {205369,"cc"}, {8122,"cc"}},           -- Silence, Psychic Horror (stun, Shadow), Mind Bomb (silence+disorient), Psychic Scream (AoE fear)
-    ROGUE       = {{1766,"interrupt"}, {2094,"cc"}, {408,"cc"}, {1833,"cc"}, {1776,"cc"}},   -- Kick, Blind, Kidney Shot, Cheap Shot (usable after Vanish/Shadow Dance), Gouge
-    SHAMAN      = {{57994,"interrupt"}, {192058,"cc"}},                                    -- Wind Shear, Capacitor Totem (Sundering removed: 2s incapacitate breaks from auto-attacks immediately)
-    WARLOCK     = {{19647,"interrupt"}, {212619,"interrupt"}, {89766,"cc"}, {30283,"cc"}},   -- Spell Lock, Call Felhunter, Axe Toss, Shadowfury
-    WARRIOR     = {{6552,"interrupt"}, {107570,"cc"}, {46968,"cc"}, {5246,"cc"}},            -- Pummel, Storm Bolt, Shockwave, Intimidating Shout
-}
+-- Interrupt/CC ability data: see Data/InterruptAbilities.lua (registered via
+-- RegisterInterruptAbilities). Resolved + sorted by ResolveInterruptSpells below.
 
 -- Gap-closer spells for melee specs (shown when target is out of melee range).
 -- Spec-aware: keyed by "CLASS_SPECINDEX" so only melee specs get suggestions.
@@ -370,10 +409,10 @@ SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
     DRUID_2 = {102401},                              -- Feral: Wild Charge
     DRUID_3 = {102401},                              -- Guardian: Wild Charge
 
-    -- Evoker: Augmentation (3) is mid-range, not truly melee — omit all
+    -- Evoker: Augmentation (3) is mid-range, not truly melee - omit all
 
     -- Hunter: Survival (3) is melee
-    HUNTER_3 = {190925},                             -- Survival: Harpoon (190925; 186270 is Raptor Strike, a melee attack — not a gap closer)
+    HUNTER_3 = {190925},                             -- Survival: Harpoon (190925; 186270 is Raptor Strike, a melee attack - not a gap closer)
 
     -- Monk: Windwalker (3) is melee, Brewmaster (1) is melee tank
     MONK_1 = {109132, 115008},                       -- Brewmaster: Roll, Chi Torpedo
@@ -397,54 +436,9 @@ SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
     WARRIOR_3 = {100, 6544},                         -- Protection: Charge, Heroic Leap
 }
 
---------------------------------------------------------------------------------
--- MELEE RANGE REFERENCE SPELLS
--- Two core melee abilities per spec, ordered by priority.  We poll their
--- action-bar slot with IsActionInRange() to decide "out of melee range".
--- [1] = primary (shown as default in options), [2] = hidden backup.
--- The engine tries user override first, then [1], then [2] — first one
--- found on the action bar wins.  Must be reliable, always-known, ~5 yd
--- melee abilities the player is likely to have on their bar.
---------------------------------------------------------------------------------
-SpellDB.MELEE_RANGE_REFERENCE_SPELLS = {
-    -- Death Knight
-    DEATHKNIGHT_1 = {49998, 206930},  -- Blood: Death Strike, Heart Strike
-    DEATHKNIGHT_2 = {49020, 49998},   -- Frost: Obliterate, Death Strike
-    DEATHKNIGHT_3 = {85948, 49998},   -- Unholy: Festering Strike, Death Strike (avoid Scourge Strike — talents to Clawing Shadows, a 30yd ranged spell that breaks melee detection)
-
-    -- Demon Hunter
-    DEMONHUNTER_1 = {162794, 232893}, -- Havoc: Chaos Strike, Felblade
-    DEMONHUNTER_2 = {228477, 204513}, -- Vengeance: Soul Cleave, Shear
-
-    -- Druid
-    DRUID_2 = {5221, 1822},           -- Feral: Shred, Rake
-    DRUID_3 = {33917, 77758},         -- Guardian: Mangle, Thrash
-
-    -- Hunter
-    HUNTER_3 = {259387, 186270},      -- Survival: Mongoose Bite, Raptor Strike
-
-    -- Monk
-    MONK_1 = {100780, 205523},        -- Brewmaster: Tiger Palm, Blackout Kick
-    MONK_3 = {100780, 107428},        -- Windwalker: Tiger Palm, Rising Sun Kick
-
-    -- Paladin
-    PALADIN_2 = {35395, 53600},       -- Protection: Crusader Strike, Shield of the Righteous
-    PALADIN_3 = {35395, 215661},      -- Retribution: Crusader Strike, Justicar's Vengeance
-
-    -- Rogue (backups must be stealth-stable: primary builders transform
-    -- in stealth, but Kidney Shot never changes range)
-    ROGUE_1 = {1329, 703},            -- Assassination: Mutilate, Garrote
-    ROGUE_2 = {193315, 408},          -- Outlaw: Sinister Strike, Kidney Shot (melee-stable fallback)
-    ROGUE_3 = {53, 408},              -- Subtlety: Backstab, Kidney Shot (melee-stable fallback)
-
-    -- Shaman
-    SHAMAN_2 = {17364, 60103},        -- Enhancement: Stormstrike, Lava Lash
-
-    -- Warrior
-    WARRIOR_1 = {12294, 262161},      -- Arms: Mortal Strike, Warbreaker
-    WARRIOR_2 = {23881, 85288},       -- Fury: Bloodthirst, Raging Blow
-    WARRIOR_3 = {23922, 6572},        -- Protection: Shield Slam, Revenge
-}
+-- Melee-range detection is handled by SpellDB.IsTargetWithin(5), which polls every melee
+-- ability the player knows (5yd probes in Data/RangeReferences.lua). There is no per-spec
+-- reference table or user override - the probe set is comprehensive on its own.
 
 --------------------------------------------------------------------------------
 -- GAP-CLOSERS THAT ONLY WORK IN STEALTH
@@ -486,7 +480,7 @@ SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT = 45  -- seconds; legacy, kept for Optio
 -- Per-spec list of major offensive CDs that Blizzard's Assisted Combat will
 -- recommend when a burst window is appropriate.  When any of these appear at
 -- position 1, the engine activates burst injection.
--- Includes talent alternatives (e.g. Incarnation vs Berserk) — the engine
+-- Includes talent alternatives (e.g. Incarnation vs Berserk) - the engine
 -- filters by IsSpellAvailable at runtime.
 --------------------------------------------------------------------------------
 SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
@@ -573,13 +567,13 @@ end
 -- Per-spec ordered list of spells to inject at position 1 during burst.
 -- First usable spell wins. Typically secondary CDs, empowered abilities,
 -- or spells the player wants to guarantee during a burst window.
--- Intentionally sparse — users can customize. Ship with known combos only.
+-- Intentionally sparse - users can customize. Ship with known combos only.
 --------------------------------------------------------------------------------
 SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
     -- Death Knight
     DEATHKNIGHT_1 = {194844},                        -- Blood: Bonestorm (60s)
-    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s) — stack during Breath window
-    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s) — stack during Dark Transformation
+    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s) - stack during Breath window
+    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s) - stack during Dark Transformation
 
     -- Demon Hunter
     DEMONHUNTER_1 = {370965},                        -- Havoc: The Hunt (90s)
@@ -708,29 +702,53 @@ function SpellDB.IsInterruptOnCooldown(spellID)
     return not api.IsSpellReady(spellID)
 end
 
---- Resolve the current player's interrupt spell IDs (primary interrupt + CC backups).
---- Returns an ordered array of {spellID, type} entries, or nil if none found.
---- Each entry: {spellID = number, type = "interrupt"|"cc"}
+-- Reliability tier for interrupt-reminder ordering (lower = preferred). A kick locks the
+-- school and works on bosses; a stun stops anything; a silence stops only magic casts; the
+-- rest are softer / situational. Fear is last and gated behind includeFears.
+local function CCTier(e)
+    if e.type == "interrupt" then return 0 end
+    local m = e.mech
+    if m == 12 then return 1      -- stun
+    elseif m == 9  then return 2  -- silence (magic-only)
+    elseif m == 14 then return 3  -- incapacitate
+    elseif m == 2  then return 4  -- disorient
+    elseif m == 10 then return 4  -- sleep/charm (breaks on damage)
+    elseif m == 5  then return 5  -- fear
+    end
+    return 6
+end
+
+-- Best-first: reliability tier, then intra-tier priority (old hand-order), then spellID
+-- (stable/deterministic since the source table is iterated with pairs()).
+local function CCSortLess(a, b)
+    local ta, tb = CCTier(a), CCTier(b)
+    if ta ~= tb then return ta < tb end
+    local pa, pb = a.pri or 0, b.pri or 0
+    if pa ~= pb then return pa < pb end
+    return a.spellID < b.spellID
+end
+
+--- Resolve the current player's interrupt/CC abilities from the central INTERRUPT_ABILITIES
+--- list, filtered to what THIS character actually knows (IsSpellAvailable - auto-handles
+--- class spells, racials, and multi-class variants), then sorted best-first by reliability
+--- tier then intra-tier priority. Returns an ordered array, or nil if none.
+--- Each entry: { spellID, type = "interrupt"|"cc", mech, reach, radius }.
 --- Called once during frame/overlay creation; result is cached.
 function SpellDB.ResolveInterruptSpells()
-    if not SpellDB.CLASS_INTERRUPT_DEFAULTS then return nil end
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local defaults = SpellDB.CLASS_INTERRUPT_DEFAULTS[playerClass]
-    if not defaults then return nil end
     local result = {}
-    for _, entry in ipairs(defaults) do
-        local spellID = entry[1]
-        local spellType = entry[2] or "interrupt"
+    for spellID, meta in pairs(INTERRUPT_ABILITIES) do
         local resolvedID = spellID
         if FindSpellOverrideByID then
             local ov = FindSpellOverrideByID(spellID)
             if ov and ov ~= 0 and ov ~= spellID then resolvedID = ov end
         end
         if BlizzardAPI.IsSpellAvailable(resolvedID) then
-            result[#result + 1] = { spellID = resolvedID, type = spellType }
+            result[#result + 1] = {
+                spellID = resolvedID, type = meta.kind,
+                mech = meta.mech, reach = meta.reach, radius = meta.radius, pri = meta.pri,
+            }
             -- Register for local cooldown tracking so IsSpellReady() can detect
             -- CD state in combat (isOnGCD is nil for most interrupt spells).
             if BlizzardAPI.RegisterSpellForTracking then
@@ -738,12 +756,14 @@ function SpellDB.ResolveInterruptSpells()
             end
         end
     end
-    return #result > 0 and result or nil
+    if #result == 0 then return nil end
+    table.sort(result, CCSortLess)
+    return result
 end
 
 --------------------------------------------------------------------------------
 -- Static spell classification tables (shared with RedundancyFilter)
--- Pure data — no dependency on filter state. Maintained here so other modules
+-- Pure data - no dependency on filter state. Maintained here so other modules
 -- can reference them without depending on RedundancyFilter.
 --------------------------------------------------------------------------------
 
@@ -816,7 +836,7 @@ SpellDB.UNIQUE_AURA_SPELLS = {
     [186289] = true,  -- Aspect of the Eagle
 }
 
--- Raid buffs are also unique auras (can only have one active) — merge at load time.
+-- Raid buffs are also unique auras (can only have one active) - merge at load time.
 for spellID in pairs(SpellDB.RAID_BUFF_SPELLS) do
     SpellDB.UNIQUE_AURA_SPELLS[spellID] = true
 end

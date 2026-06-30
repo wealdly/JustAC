@@ -45,6 +45,33 @@ local function IsCustomQueueHidden(addon)
         and profile.customQueue[specKey].enabled)
 end
 
+--- Build a master ordering toggle. `field` is a profile-level key; the toggle
+--- applies universally - to positions 2+ of both the custom list and Blizzard's
+--- default rotation. All three default to enabled (nil → true: smart order);
+--- turning all three off renders positions 2+ in their exact source order.
+local function MakeOrderingToggle(addon, field, name, desc, order)
+    return {
+        type = "toggle",
+        name = name,
+        desc = desc,
+        order = order,
+        width = "normal",
+        get = function()
+            local profile = addon:GetProfile()
+            return not profile or profile[field] ~= false
+        end,
+        set = function(_, val)
+            local profile = addon:GetProfile()
+            if not profile then return end
+            profile[field] = val
+            addon:ForceUpdateAll()
+            -- Refresh the panel so the per-ability Proc Priority toggles re-evaluate
+            -- their greyed state against the new "Procs first" value.
+            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        end,
+    }
+end
+
 --- Snapshot the current Blizzard rotation into the profile (baseline + spells).
 --- Returns true if snapshot was taken, false if no rotation available.
 local function SnapshotRotation(addon, specKey)
@@ -132,17 +159,17 @@ function CustomQueue.CreateTabArgs(addon)
         name = L["Custom Queue"],
         order = 1,
         args = {
+            positionNote = {
+                type = "description",
+                name = L["Custom Queue Position Note"],
+                order = 0.25,
+                fontSize = "medium",
+            },
             info = {
                 type = "description",
                 name = L["Custom Queue Info"],
                 order = 1,
                 fontSize = "medium",
-            },
-            blacklistNote = {
-                type = "description",
-                name = "|cFF999999" .. L["Custom Queue Blacklist Note"] .. "|r",
-                order = 1.5,
-                fontSize = "small",
             },
             enableCustomQueue = {
                 type = "toggle",
@@ -177,6 +204,23 @@ function CustomQueue.CreateTabArgs(addon)
                     CustomQueue.UpdateCustomQueueOptions(addon)
                     addon:ForceUpdateAll()
                 end,
+            },
+            ordering = {
+                type = "group",
+                inline = true,
+                name = L["Custom Queue Ordering"],
+                order = 0.5,
+                args = {
+                    note = {
+                        type = "description",
+                        name = "|cFF999999" .. L["Custom Queue Ordering Note"] .. "|r",
+                        order = 1,
+                        fontSize = "small",
+                    },
+                    procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2),
+                    contextBias   = MakeOrderingToggle(addon, "orderContextAware", L["Custom Queue Context Aware"], L["Custom Queue Context Aware desc"], 3),
+                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"], L["Custom Queue Sink Cooldowns desc"], 4),
+                },
             },
             staleWarning = {
                 type = "description",

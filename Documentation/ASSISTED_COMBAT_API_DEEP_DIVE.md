@@ -6,7 +6,7 @@
 
 > **⚠ 12.0 MAJOR UPDATE:** `AssistedCombatManager.lua`, `AssistedCombatDocumentation.lua`,
 > `Blizzard_SpellSearchAssistedCombatFilter.lua`, and all `AssistedCombatRotationFrameMixin`
-> code in `ActionButton.lua` are **entirely new in 12.0** (confirmed via diff — new file mode).
+> code in `ActionButton.lua` are **entirely new in 12.0** (confirmed via diff - new file mode).
 > The core `C_AssistedCombat` namespace existed pre-12.0 but the entire Blizzard UI controller
 > layer was added/rewritten in 12.0.
 
@@ -191,9 +191,9 @@ local actionType, actionID = GetActionInfo(slot)
 ```
 
 **Detection Methods:**
-1. **`subType` check (Blizzard's actual method):** `type == "spell" and subType ~= "assistedcombat"` — Blizzard checks `subType`, NOT `id`!
-2. API check: `C_ActionBar.IsAssistedCombatAction(slot)` — authoritative
-3. Fallback: `type(id) == "string" and id == "assistedcombat"` — may or may not be reliable (unverified)
+1. **`subType` check (Blizzard's actual method):** `type == "spell" and subType ~= "assistedcombat"` - Blizzard checks `subType`, NOT `id`!
+2. API check: `C_ActionBar.IsAssistedCombatAction(slot)` - authoritative
+3. Fallback: `type(id) == "string" and id == "assistedcombat"` - may or may not be reliable (unverified)
 
 > **⚠ DOCUMENTATION ERROR (pre-12.0):** Earlier notes stated `id == "assistedcombat"`. Source confirms
 > Blizzard filters via `subType ~= "assistedcombat"`. JustAC's `BlizzardAPI.GetActionInfo()` should
@@ -275,7 +275,7 @@ end
 - **Type:** Boolean
 - **Purpose:** Tutorial/RPE-specific highlight variant (set by `Blizzard_Tutorials_RPE`)
 - **Effect:** Enables highlight mode during new player experience quests only
-- **JustAC:** Ignore — tutorial system only, disabled after RPE completes
+- **JustAC:** Ignore - tutorial system only, disabled after RPE completes
 
 ---
 
@@ -377,7 +377,7 @@ end
 ## AssistedCombatManager Public API *(New in 12.0)*
 
 Blizzard now exposes a global singleton `AssistedCombatManager` with a rich public API.
-These can be called directly from JustAC — no need to re-implement equivalent logic.
+These can be called directly from JustAC - no need to re-implement equivalent logic.
 
 ```lua
 -- Check if action spell exists
@@ -414,7 +414,7 @@ with Blizzard-managed cache. Could replace/supplement JustAC's own rotation set 
 ## EventRegistry Events *(New in 12.0)*
 
 Blizzard fires these `EventRegistry` events from `AssistedCombatManager`. These are **not**
-standard WoW frame events — they use `EventRegistry:RegisterCallback()` not `self:RegisterEvent()`.
+standard WoW frame events - they use `EventRegistry:RegisterCallback()` not `self:RegisterEvent()`.
 
 | Event | When Fired | JustAC Use |
 |-------|-----------|------------|
@@ -439,7 +439,7 @@ end, JustAC)
 ```
 
 > **Note:** `RotationSpellsUpdated` fires AFTER `SPELLS_CHANGED` has finished processing
-> the full rotation set — Blizzard explicitly comments this is intentional so listeners
+> the full rotation set - Blizzard explicitly comments this is intentional so listeners
 > get accurate `IsRotationSpell()` results.
 
 ---
@@ -730,7 +730,7 @@ end
 > All items below were validated against Blizzard source (`AssistedCombatManager.lua`,
 > `AssistedCombatDocumentation.lua`, `ActionButton.lua`) on 2025-07-11.
 
-#### BUG-1: `TestCooldownAccess()` / `TestProcAccess()` — Dead Code *(Critical)*
+#### BUG-1: `TestCooldownAccess()` / `TestProcAccess()` - Dead Code *(Critical)*
 
 **File:** `BlizzardAPI.lua` lines 200, 225  
 **Issue:** Both functions access `spells[1].spellId`, but `C_AssistedCombat.GetRotationSpells()`
@@ -772,7 +772,7 @@ so no user-visible bugs currently. The `subType` check should be added alongside
 
 **File:** `SpellQueue.lua` line 386  
 **Issue:** `GetRotationSpells()` is called every throttle tick (~10/sec in combat). Blizzard's
-`AssistedCombatManager` only calls it on `SPELLS_CHANGED` — the list is static during combat.
+`AssistedCombatManager` only calls it on `SPELLS_CHANGED` - the list is static during combat.
 
 **Status:** JustAC already wires `RotationSpellsUpdated` EventRegistry event (JustAC.lua line 273).  
 **Fix:** Cache the result list and only refresh on the `RotationSpellsUpdated` callback.
@@ -798,7 +798,7 @@ end
 
 #### OPP-1: Use `AssistedCombatManager:IsRotationSpell(spellID)` *(Low Priority)*
 
-**Source:** `AssistedCombatManager.lua` line 3 — declared as global.  
+**Source:** `AssistedCombatManager.lua` line 3 - declared as global.  
 **Benefit:** O(1) hash-set lookup vs. iterating the rotation list. Already maintained by
 Blizzard's event handlers. Requires 12.0+ guard since the global doesn't exist pre-12.0.
 
@@ -889,5 +889,5 @@ end
 - **Pre-12.0 (TWW/11.x):** Core `C_AssistedCombat` namespace already existed. `GetNextCastSpell`,
   `GetRotationSpells`, `GetActionSpell`, `IsAvailable` were available. No formal documentation
   file and no `AssistedCombatManager` singleton.
-- **`GetNextCastSpell` flag:** Has `SecretArguments = "AllowedWhenUntainted"` in docs —
+- **`GetNextCastSpell` flag:** Has `SecretArguments = "AllowedWhenUntainted"` in docs -
   confirms call must come from untainted addon code (JustAC is untainted, so no issue).

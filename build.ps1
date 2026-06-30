@@ -24,7 +24,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 Write-Host "Building $addonName v$version..." -ForegroundColor Cyan
 
 # Derive addon source files from JustAC.toc (single source of truth for load order).
-# Libs entries are excluded here — the Libs folder is copied as a directory below.
+# Libs entries are excluded here - the Libs folder is copied as a directory below.
 $addonFiles = Get-Content "JustAC.toc" |
     Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*$' -and $_ -notmatch '^Libs[\\/]' } |
     ForEach-Object { $_.Trim() }
@@ -58,7 +58,7 @@ $libsDest = Join-Path $outputDir "Libs"
 Copy-Item (Join-Path $PSScriptRoot "Libs") $libsDest -Recurse -Force
 
 # Remove duplicate nested folders in Libs (cleanup)
-# AceGUI-3.0-SharedMediaWidgets has a legitimate same-named subfolder — skip it
+# AceGUI-3.0-SharedMediaWidgets has a legitimate same-named subfolder - skip it
 Get-ChildItem $libsDest -Directory | ForEach-Object {
     $nested = Join-Path $_.FullName $_.Name
     if ((Test-Path $nested) -and $_.Name -ne "AceGUI-3.0-SharedMediaWidgets") {

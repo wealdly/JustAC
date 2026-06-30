@@ -283,13 +283,13 @@ function Overlay.CreateTabArgs(addon)
                     },
                     showHealthBar = W.toggle(addon, "nameplateOverlay.showHealthBar", {
                         name = L["Show Health Bars"], desc = L["Nameplate Show Health Bars desc"],
-                        order = 5, width = "full",
+                        order = 5, width = "normal",
                         onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
                         disabled = defDisabled,
                     }),
                     showPetHealthBar = W.toggle(addon, "nameplateOverlay.showPetHealthBar", {
                         name = L["Show Pet Health Bar"], desc = L["Show Pet Health Bar desc"],
-                        order = 6, width = "full",
+                        order = 6, width = "normal",
                         onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
                         disabled = defDisabled,
                         hidden = function()

@@ -6,15 +6,15 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Dual Display Surfaces
 
-- **Standard Queue** — Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring. Sub-tabs for Layout, Offensive Display, Defensive Display, and Appearance.
-- **Nameplate Overlay** — Icon cluster attached directly to the target nameplate. Mirrors the Standard Queue's sub-tab structure with independent settings. Falls back to the main panel when the nameplate isn't rendered.
+- **Standard Queue** - Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring. Sub-tabs for Layout, Offensive Display, Defensive Display, and Appearance.
+- **Nameplate Overlay** - Icon cluster attached directly to the target nameplate. Mirrors the Standard Queue's sub-tab structure with independent settings. Falls back to the main panel when the nameplate isn't rendered.
 - Either or both surfaces can run simultaneously via the Display Mode setting.
 
 ### Offensive Queue
 
-- Position 1 shows the currently recommended ability with your keybind — blacklisted spells auto-substitute via highlight-mode lookahead
+- Position 1 shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
 - Position 2+ displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
-- **Context-aware ranking** — positions 2+ re-rank to match the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's position-1 pick, so an AOE pull lifts your AOE/cleave tools and a ranged pull sinks the melee ones. Range is a hard constraint, archetype a soft preference; applies to the Custom Queue too. Backed by a DB2-generated archetype table covering all classes
+- **Context-aware ranking** - positions 2+ re-rank to match the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's position-1 pick, so an AOE pull lifts your AOE/cleave tools and a ranged pull sinks the melee ones. Range is a hard constraint, archetype a soft preference; applies to the Custom Queue too. Backed by a DB2-generated archetype table covering all classes
 - Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
@@ -24,28 +24,28 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 - Define a custom spell/item ordering for positions 2+ (per spec, stored in profile)
 - Auto-seeds from Blizzard's rotation on first enable; unavailable or on-cooldown entries collapse automatically
-- Stale queue detection warns when Blizzard's rotation changes — "Merge Changes" preserves custom ordering while syncing additions/removals
+- Stale queue detection warns when Blizzard's rotation changes - "Merge Changes" preserves custom ordering while syncing additions/removals
 - Supports trinkets and on-use items alongside spells
 
 ### Smart Interrupt Reminders
 
 - Shows your interrupt ability before the DPS queue when the target is casting
 - **Important Only** mode filters to lethal/must-interrupt casts (`C_Spell.IsSpellImportant`)
-- **CC Non-Important Casts** — Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts; prefers a stun over a silence when only CC can stop an uninterruptible cast (a silence can't stop a physical channel)
-- **Creature-type-aware CC** — won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
+- **CC Non-Important Casts** - Uses stuns/incapacitates on trash mobs, saving true interrupt lockout for dangerous casts; prefers a stun over a silence when only CC can stop an uninterruptible cast (a silence can't stop a physical channel)
+- **Creature-type-aware CC** - won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
 - Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
-- The interrupt is correctly hidden on casts that can't be interrupted — driven straight from the cast's protected interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use. (Auto-substituting a CC for a kick on a non-interruptible cast still needs the Blizzard default cast bar; with a replaced cast bar you simply get no suggestion there instead of a CC — never a wrongly-shown kick)
-- Third-party nameplate support — auto-discovers cast bars from supported nameplate addons and the Blizzard default nameplate
+- The interrupt is correctly hidden on casts that can't be interrupted - driven straight from the cast's protected interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use. (Auto-substituting a CC for a kick on a non-interruptible cast still needs the Blizzard default cast bar; with a replaced cast bar you simply get no suggestion there instead of a CC - never a wrongly-shown kick)
+- Third-party nameplate support - auto-discovers cast bars from supported nameplate addons and the Blizzard default nameplate
 
 ### Defensive Suggestions
 
 - Unified priority list: self-heals and major cooldowns combined with configurable per-class ordering
-- **Low-health emergency ordering** — below the ~35% threshold the queue leads with immunity bubbles, then big instant heals, ahead of mitigation and small fillers; above the threshold fast/free fillers and procs stay first for routine upkeep
+- **Low-health emergency ordering** - below the ~35% threshold the queue leads with immunity bubbles, then big instant heals, ahead of mitigation and small fillers; above the threshold fast/free fillers and procs stay first for routine upkeep
 - Procced defensives (Victory Rush, free heals) shown at any health level
 - Usability-aware visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate on cooldown
 - Pet rez/summon and pet heal support for Hunter, Warlock, Death Knight
 - Compact health bar (player + pet) with automatic resize
-- Items supported (potions, healthstones) with auto-detection from action bars — optional aura linking and combat hiding per item
+- Items supported (potions, healthstones) with auto-detection from action bars - optional aura linking and combat hiding per item
 - Combat-safe health detection via LowHealthFrame signal (~35%) for 12.0 secret-value compatibility
 
 ### Gap-Closer Suggestions
@@ -56,8 +56,8 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Burst Injection *(Experimental)*
 
-- Detects burst windows via aura tracking — when a trigger spell's self-buff is active on the player, configured burst spells inject at position 1 with a purple glow
-- Trigger detection scans all visible queue positions, not just position 1 — triggers at any position show burst glow
+- Detects burst windows via aura tracking - when a trigger spell's self-buff is active on the player, configured burst spells inject at position 1 with a purple glow
+- Trigger detection scans all visible queue positions, not just position 1 - triggers at any position show burst glow
 - Timer fallback for triggers that don't create a self-buff (pet summons, target debuffs)
 - Per-spec trigger and injection spell lists with class-appropriate defaults
 - Configurable fallback window duration
@@ -75,10 +75,10 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 ### Intelligent Filtering
 
 - Hides redundant suggestions (buffs already active, current form, existing pet)
-- Per-spell blacklist (Shift+Right-click to toggle) — blacklisted position-1 spells auto-substitute via highlight-mode lookahead
+- Per-spell blacklist (Shift+Right-click to toggle) - blacklisted position-1 spells auto-substitute via highlight-mode lookahead
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
-- Combat-safe aura tracking via `auraInstanceID` mapping — detects buff removal and reapply even when `spellId` is secret
+- Combat-safe aura tracking via `auraInstanceID` mapping - detects buff removal and reapply even when `spellId` is secret
 - NeverSecret aura whitelist (~50 spells) for direct resolution without instance-map lookup
 
 ### Performance Optimized
@@ -108,7 +108,7 @@ Options are organized into 6 tabs:
 | **Defensives** | Spell priority list, health thresholds, per-item aura linking |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
-- **Localization** — English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
+- **Localization** - English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
 
 ## Acknowledgments & Credits
 
@@ -144,7 +144,7 @@ Button skinning library that allows JustAC icons to match your UI's button theme
 
 ### Blizzard Entertainment
 
-For the Combat Assistant system. The `C_AssistedCombat` API powers this entire addon—JustAC simply presents what Blizzard's system suggests in a more accessible format.
+For the Combat Assistant system. The `C_AssistedCombat` API powers this entire addon-JustAC simply presents what Blizzard's system suggests in a more accessible format.
 
 ### The WoW Addon Community
 
@@ -162,12 +162,12 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 
 ## Technical Notes
 
-- **WoW 12.0 Midnight Compliant** — Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
-- **Secret-safe visuals** — Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
-- **No External Spell Databases** — Native spell classification (`SpellDB` + generated `Data/` tables) replaces LibPlayerSpells
-- **Modular Architecture** — Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
-- **Event-Driven** — Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
-- **Cache-Smart** — Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)
+- **WoW 12.0 Midnight Compliant** - Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
+- **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
+- **No External Spell Databases** - Native spell classification (`SpellDB` + generated `Data/` tables) replaces LibPlayerSpells
+- **Modular Architecture** - Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
+- **Event-Driven** - Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
+- **Cache-Smart** - Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)
 
 ## Commands
 
@@ -198,9 +198,9 @@ The embedded Ace3 libraries retain their original licenses and are clearly marke
 
 Notable embedded library licenses:
 
-- **Ace3, LibStub, CallbackHandler** — Public domain / BSD-style
-- **LibSharedMedia-3.0** — Public domain
-- **AceGUI-3.0-SharedMediaWidgets** — GPL v2 or later
+- **Ace3, LibStub, CallbackHandler** - Public domain / BSD-style
+- **LibSharedMedia-3.0** - Public domain
+- **AceGUI-3.0-SharedMediaWidgets** - GPL v2 or later
 
 ---
 

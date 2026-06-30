@@ -179,7 +179,7 @@ local function UpdateButtonCooldowns(button)
 
     -- Find the direct action bar slot for this spell/item (one where this exact
     -- spell is the visible action). Priority: direct slot > assisted combat slot
-    -- (pos1 off-bar spells). Modifier-macro slots are deliberately excluded — see
+    -- (pos1 off-bar spells). Modifier-macro slots are deliberately excluded - see
     -- the cdSlot note below.
     local directSlot
     if isItem then
@@ -193,7 +193,7 @@ local function UpdateButtonCooldowns(button)
             end
         end
     end
-    -- Cooldown queries use ONLY a direct slot — one where this exact spell is the
+    -- Cooldown queries use ONLY a direct slot - one where this exact spell is the
     -- currently-visible action. We must NOT fall back to a modifier-macro slot here:
     -- that slot reflects whatever the macro resolves to *right now* (the base spell
     -- when the modifier isn't held), so its cooldown is the wrong spell's. The symptom
@@ -201,7 +201,7 @@ local function UpdateButtonCooldowns(button)
     -- release. When there's no direct slot we fall through to the spell API below, which
     -- reads THIS spell's own cooldown and persists regardless of modifier state.
     -- (Trade-off: a GCD-only swipe won't show on a modifier-gated icon while the
-    -- modifier is up — acceptable; correct real-CD display matters more.)
+    -- modifier is up - acceptable; correct real-CD display matters more.)
     local cdSlot = directSlot
 
     -- Fetch cooldown + charge data for the swipe animation.
@@ -209,7 +209,7 @@ local function UpdateButtonCooldowns(button)
     -- structs that ActionButton_ApplyCooldown also renders correctly.
     local cooldownInfo, chargeInfo
     -- True when cooldownInfo carries our own non-secret start/duration numbers
-    -- (item or local-cache source) rather than a secret/slot struct — drives the
+    -- (item or local-cache source) rather than a secret/slot struct - drives the
     -- duration-object construction below.
     local ciFromNumbers = false
 
@@ -285,8 +285,8 @@ local function UpdateButtonCooldowns(button)
             and BlizzardAPI.IsChargeSpellOnCooldown and BlizzardAPI.IsChargeSpellOnCooldown(cooldownID)
 
         -- Main cooldown swipe. Priority: the direct action-bar slot (most accurate,
-        -- secret-safe passthrough). When that slot disappears — a modifier press/release
-        -- hides the ability from the bar — we transition to the non-secret local-cache
+        -- secret-safe passthrough). When that slot disappears - a modifier press/release
+        -- hides the ability from the bar - we transition to the non-secret local-cache
         -- numbers and apply them ONCE; the swipe is already animating, so we then leave
         -- it alone (no per-tick duration-object rebuild) for a seamless, efficient hold.
         if showNormal or chargeDepleted then
@@ -336,7 +336,7 @@ local function UpdateButtonCooldowns(button)
             button._cdStart, button._cdDuration = nil, nil
         end
 
-        -- Charge cooldown edge ring (only while charges remain — at 0 charges the
+        -- Charge cooldown edge ring (only while charges remain - at 0 charges the
         -- recharge is shown as the main swipe above to match the action bar).
         if showCharge and not chargeDepleted and button.chargeCooldown then
             local chargeDurObj
@@ -605,7 +605,7 @@ local function ApplyVisualState(icon, visualState, baseDesaturation, brightness,
         if changed then iconTexture:SetDesaturation(baseDesaturation) end
         iconTexture:SetVertexColor(1.0, 0.2, 0.2)
     elseif visualState == VS_RANGE_HOTKEY then
-        -- Muted warm tint — hotkey text provides the red range feedback
+        -- Muted warm tint - hotkey text provides the red range feedback
         if prevState ~= VS_RANGE_HOTKEY then iconTexture:SetDesaturation(0) end
         iconTexture:SetVertexColor(0.55, 0.35, 0.35)
     else  -- VS_NORMAL
@@ -1015,7 +1015,7 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         end
     end
 
-    -- Consume the rebuild flag — icons are now at full alpha, future shows should fade in normally.
+    -- Consume the rebuild flag - icons are now at full alpha, future shows should fade in normally.
     if addon.defensiveFrame then
         addon.defensiveFrame.skipNextFade = nil
     end
@@ -1090,7 +1090,7 @@ function UIRenderer.PlayInterruptAlertSound(profile)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Glow state resolver — one clear intent instead of six cascading booleans
+-- Glow state resolver - one clear intent instead of six cascading booleans
 -- ─────────────────────────────────────────────────────────────────────────────
 local GLOW_NONE       = 0   -- no glow
 local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
@@ -1099,7 +1099,7 @@ local GLOW_GAP_CLOSER = 3   -- gold crawl (gap-closer, target out of melee range
 local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window active)
 
 --- Priority: gap-closer > burst > proc > assisted > none.
---- No WoW API calls — all inputs pre-computed by caller.
+--- No WoW API calls - all inputs pre-computed by caller.
 local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow, showBurstGlow)
     local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
@@ -1290,7 +1290,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 intIcon.hasInterruptGlow = true
             end
 
-            -- Cast bar textures can be secret in 12.0 — pass through unconditionally.
+            -- Cast bar textures can be secret in 12.0 - pass through unconditionally.
             if intIcon.castAura then
                 local castIcon = castBar and castBar.Icon
                 local castTexture = castIcon and castIcon.GetTexture and castIcon:GetTexture()
@@ -1299,7 +1299,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if not castTexture then
                     local _, _, tex = UnitCastingInfo("target")
                     if not tex then _, _, tex = UnitChannelInfo("target") end
-                    -- In 12.0 combat, texture may be secret — still pass through.
+                    -- In 12.0 combat, texture may be secret - still pass through.
                     castTexture = tex
                 end
                 if castTexture then
@@ -1318,7 +1318,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             local frameOpacity = profile.frameOpacity or 1.0
             -- Hide a KICK suggestion on a non-interruptible cast via the secret-aware alpha
             -- sink (works under any cast-bar addon; never reads the secret). A CC suggestion
-            -- stays visible — CC is the correct call on a non-interruptible cast.
+            -- stays visible - CC is the correct call on a non-interruptible cast.
             if SpellDB and SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(intSpellID) then
                 BlizzardAPI.ApplyInterruptIconAlpha(intIcon, frameOpacity)
             else
@@ -1438,7 +1438,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
                 -- Smooth spell-change transition: fade the button in when the spell
                 -- changes while the icon is already on screen.  Reuses the existing
-                -- 100ms fade-in animation — rapid churn within 100ms keeps restarting
+                -- 100ms fade-in animation - rapid churn within 100ms keeps restarting
                 -- the fade, masking the instability rather than exposing a raw pop.
                 if spellChanged and icon:IsShown() and icon.fadeIn then
                     if icon.fadeOut and icon.fadeOut:IsPlaying() then
@@ -1840,7 +1840,7 @@ end
 --- @param resolvedInts  table?   ordered {spellID, type} array from SpellDB.ResolveInterruptSpells
 --- @param interruptMode string   "kickOnly" | "ccPrefer"
 --- @param currentTime   number   GetTime() value from the caller
---- @return table  { shouldShow, spellID, castBar } — reused each call; do NOT hold across frames
+--- @return table  { shouldShow, spellID, castBar } - reused each call; do NOT hold across frames
 function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
     if CastInterruptTracker then
         return CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)

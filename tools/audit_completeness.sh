@@ -52,7 +52,7 @@ for cat in INT CC DEF HEAL; do
     [ "$cat" = DEF ] && label="DEFENSIVE (mitigation/absorb/immunity aura)"
     [ "$cat" = HEAL ]&& label="HEALING (heal effect or periodic-heal aura)"
     n=$(awk -F'\t' -v c="$cat" '$1==c{print $3}' /tmp/cand.txt | sort -u | wc -l | tr -d ' ')
-    echo "=== $label — $n candidates not in list (deduped by name; sample) ==="
+    echo "=== $label - $n candidates not in list (deduped by name; sample) ==="
     awk -F'\t' -v c="$cat" '$1==c{print "  "$2"  "$3}' /tmp/cand.txt | sort -t' ' -k2 -u | head -25
     echo ""
 done

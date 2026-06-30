@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 wealdly
 # Release helper: promotes UNRELEASED.md into CHANGELOG.md under a new version
-# heading, bumps the .toc version, and resets UNRELEASED.md. Does NOT commit/tag —
+# heading, bumps the .toc version, and resets UNRELEASED.md. Does NOT commit/tag -
 # it prints the git commands so you can review the diff first.
 #
 # Run: .\release.ps1 -Version 4.24.0

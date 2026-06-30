@@ -210,7 +210,7 @@ function KPD.Create(addon)
     ---------------------------------------------------------------------------
     -- Mouse button detection (poll IsMouseButtonDown for down-transitions)
     -- OnKeyDown never fires for mouse buttons, so we detect state transitions
-    -- each frame. Throttled to ~30Hz — max 33ms detection latency, which is
+    -- each frame. Throttled to ~30Hz - max 33ms detection latency, which is
     -- imperceptible for flash feedback (human reaction time ~150-300ms).
     ---------------------------------------------------------------------------
     local mouseUpdateAccum = 0

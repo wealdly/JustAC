@@ -214,7 +214,7 @@ end
 -- Per-type configuration tables (avoid allocations on hot path)
 local GLOW_CONFIG = {
     ASSISTED = {
-        frameKey    = "JustACAssistedGlow",  -- NOT "AssistedCombatHighlightFrame" — Masque auto-detects that key
+        frameKey    = "JustACAssistedGlow",  -- NOT "AssistedCombatHighlightFrame" - Masque auto-detects that key
         r = 1, g = 1, b = 1,                -- White/no tint (appears blue in-game from atlas)
         desaturate  = false,
         scaleMul    = 1.02,
@@ -265,7 +265,7 @@ local GLOW_CONFIG = {
     },
 }
 
--- Core start function — all glow types funnel through here
+-- Core start function - all glow types funnel through here
 local function StartMarchingAntsGlow(icon, config, isInCombat)
     if not icon then return end
 
@@ -318,7 +318,7 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
     end
 end
 
--- Core stop function — all glow types funnel through here
+-- Core stop function - all glow types funnel through here
 local function StopMarchingAntsGlow(icon, config)
     if not icon then return end
 
@@ -561,8 +561,8 @@ end
 -- to the rounded icon shape.
 --
 -- Lifecycle:
---   StartChannelFill(icon) — creates (once) / shows / plays for current channel
---   StopChannelFill(icon)  — stops anim, hides frame
+--   StartChannelFill(icon) - creates (once) / shows / plays for current channel
+--   StopChannelFill(icon)  - stops anim, hides frame
 --
 -- Identification of the channeled icon uses UnitChannelInfo spellID +
 -- C_Spell.GetOverrideSpell matching at the call site, not inside these helpers.

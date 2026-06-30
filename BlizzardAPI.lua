@@ -42,7 +42,7 @@ function BlizzardAPI.IsSecretValue(value)
     return issecretvalue ~= nil and issecretvalue(value) or false
 end
 
---- Extract a readable value — returns fallback when secret or nil.
+--- Extract a readable value - returns fallback when secret or nil.
 --- Optimistic: assumes the value IS readable (Blizzard may loosen restrictions
 --- over time), only falls back when it provably isn't.
 ---
@@ -94,7 +94,7 @@ function BlizzardAPI.InvalidateSlotUsabilityCache()
 end
 
 --- Returns the action bar usability state for a spell, or nil if unavailable.
---- NeverSecret API — safe in combat. Uses ActionBarScanner to find the slot.
+--- NeverSecret API - safe in combat. Uses ActionBarScanner to find the slot.
 --- Falls back to assisted combat slot when spell isn't on the player's bars.
 --- Checks the event-driven cache first; falls back to live API.
 --- @param spellID number
