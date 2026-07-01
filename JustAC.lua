@@ -147,9 +147,10 @@ local defaults = {
         precombatBuffs = {
             enabled = true,
             -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
-            -- xp/speed are utility categories - default OFF (explicit false, so "on" must be
-            -- stored as a truthy value to override the AceDB default).
-            categories = { xp = false, speed = false },
+            -- Speed is a food preference (stat="speed"), not its own category. XP is a utility
+            -- category - default OFF (explicit false, so "on" must be a truthy value to
+            -- override the AceDB default).
+            categories = { xp = false },
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {

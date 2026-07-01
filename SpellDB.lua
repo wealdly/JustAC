@@ -284,6 +284,18 @@ local function OwnsBuffEntry(e)
     return (GetItemCount(e.id) or 0) > 0
 end
 
+-- Caster specs (intellect primary) want weapon oils; physical specs want stones/whetstones.
+-- The highest of str/agi/int identifies the primary stat - gear stacks it heavily, so the
+-- comparison is reliable at the levels that pre-buff. Out of combat only (stats OK there).
+local function PlayerPrefersOil()
+    if not UnitStat then return false end
+    local _, str = UnitStat("player", 1)
+    local _, agi = UnitStat("player", 2)
+    local _, int = UnitStat("player", 4)
+    str, agi, int = str or 0, agi or 0, int or 0
+    return int > str and int > agi
+end
+
 --- Best owned buff entry for a category, honoring a stat preference, or nil. statPref
 --- nil/"optimal" keeps the list's newest-first order; a stat string ("haste", "crit",
 --- "mastery", "versatility", "primary") floats matching entries to the top. Out of combat
@@ -299,11 +311,18 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
         local mh = GetInventoryItemID("player", 16)
         weaponExp = mh and select(15, GetItemInfo(mh))
     end
+    local prefKind  -- weaponEnchant: soft-prefer the class-appropriate archetype
+    if cat == "weaponEnchant" then
+        prefKind = PlayerPrefersOil() and "caster" or "physical"
+    end
     local n = #b.items
     local best, bestScore = nil, -1
     for i = 1, n do
         local e = b.items[i]
-        if OwnsBuffEntry(e) then  -- cheap gate first; only resolve expansion for owned ones
+        -- Speed foods are an explicit pick: they match ONLY statPref "speed" and never
+        -- surface under Auto or a stat pref (they share the single Well Fed slot with stat
+        -- foods). For every other category e.stat is never "speed", so this is a no-op.
+        if OwnsBuffEntry(e) and (e.stat == "speed") == (statPref == "speed") then
             local applies = true
             if weaponExp then
                 local oilExp = select(15, GetItemInfo(e.id))
@@ -314,6 +333,9 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
                 if statPref and statPref ~= "optimal" and e.stat
                     and e.stat:find(statPref, 1, true) then
                     score = score + 1000000  -- a stat match outranks any recency gap
+                end
+                if prefKind and e.stat == prefKind then
+                    score = score + 500000  -- class-appropriate oil vs stone (soft bias)
                 end
                 if score > bestScore then bestScore = score; best = e end
             end

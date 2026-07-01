@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [4.29.1] - 2026-07-01
+
+### Pre-combat buffs
+- Every pre-combat buff dropdown now shows **the exact item from your bags** on each option
+  — the Flask list tells you which flask "Haste" will actually use, so you can see what
+  you'd get (or what you're missing) without guessing.
+- **Speed and XP consumables** are now covered. The Food dropdown gains a **Speed** option
+  (long-lasting movement-speed foods, for travel and leveling), and XP-boost consumables get
+  their own opt-in **XP** dropdown. Both stay off unless you choose them.
+- **Weapon enchant** auto-picks the right type for your spec: a weapon oil for casters, a
+  sharpening stone or whetstone for physical specs.
+- Only **long-lasting buffs (20 minutes or more)** are suggested now, so short snacks and
+  quick potions no longer clutter the reminders.
+
 ## [4.29.0] - 2026-06-30
 
 ### Pre-combat buffs (new)

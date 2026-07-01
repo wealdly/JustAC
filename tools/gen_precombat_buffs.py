@@ -27,6 +27,9 @@ STAT_AURAS = {"189", "29", "137", "99", "124"}  # MOD_RATING/STAT/TOTAL_STAT%/AP
 RATING_BITS = {"crit": (8, 9, 10), "haste": (17, 18, 19), "mastery": (25,),
                "versatility": (28, 29, 30)}
 PRIMARY_STAT = {"0": "strength", "1": "agility", "2": "stamina", "3": "intellect"}
+# A maintained pre-buff must last a while to be a useful out-of-combat reminder: drop any
+# aura buff shorter than this (e.g. a 15s movement-speed "snack" food that carries a stat).
+FLOOR_MS = 20 * 60 * 1000  # 20 minutes
 
 EXPANSION = {11: "Midnight / current", 10: "Dragonflight / TWW", 9: "Shadowlands",
              8: "Battle for Azeroth", 7: "Legion", 6: "Warlords of Draenor",
@@ -60,7 +63,22 @@ def load():
         for r in csv.DictReader(f):
             se[r["SpellID"]].append((r["Effect"], r["EffectAura"],
                                      r["EffectTriggerSpell"], r["EffectMiscValue_0"]))
-    return cls, ie, ix, se
+    mi = {}  # spellID -> DurationIndex (SpellMisc)
+    with open(find_csv("SpellMisc"), encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            sid = r.get("SpellID") or r.get("ID")
+            if sid:
+                mi[sid] = r["DurationIndex"]
+    du = {}  # DurationIndex -> duration ms (SpellDuration)
+    with open(find_csv("SpellDuration"), encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            du[r["ID"]] = int(r["Duration"] or 0)
+    return cls, ie, ix, se, mi, du
+
+
+def buff_ms(buff, mi, du):
+    """Duration (ms) of a buff spell, or None when unknown (missing = keep, don't drop)."""
+    return du.get(mi.get(str(buff)))
 
 
 def stat_of(aura, misc):
@@ -87,6 +105,9 @@ def resolve_buff(sid, se, depth=0, seen=None):
     for eff, aura, _trig, misc in effects:
         if eff == "6" and aura in STAT_AURAS:
             return sid, stat_of(aura, misc)
+    for _eff, aura, _trig, _misc in effects:
+        if aura == "31":  # movement-speed well-fed -> a "speed" food (one Well Fed slot)
+            return sid, "speed"
     if depth < 2:
         for _eff, _aura, trig, _misc in effects:
             if trig and trig != "0":
@@ -114,9 +135,10 @@ def categorize(name, sub):
 
 
 def main():
-    cls, ie, ix, se = load()
+    cls, ie, ix, se, mi, du = load()
     CRAFTING = ("Recipe:", "Pattern:", "Plan:", "Formula:", "Technique:", "Design:", "[")
     buckets = defaultdict(list)  # cat -> [(exp, ilvl, id, name, buff, stat)]
+    dropped_short = 0
 
     with open(find_csv("ItemSparse"), encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -136,8 +158,21 @@ def main():
                 buff = buff or use
                 if not buff:
                     continue
+                # No secondary-stat matrix for consumable enhancements; tag the archetype so
+                # the addon can auto-pick the class-appropriate one (casters want oils,
+                # physical specs want stones/whetstones).
+                stat = "caster" if ("Oil" in name or "Wax" in name) else "physical"
             elif not buff:
                 continue
+            # Duration floor: a maintained pre-buff has to last a while to be worth an OOC
+            # reminder. Drop aura buffs under 20 min (e.g. a short "snack" food that carries
+            # a stat). weaponEnchant is exempt - it's read off the weapon, not an aura, so
+            # its apply-spell has no meaningful duration. Unknown duration = keep.
+            if cat != "weaponEnchant":
+                ms = buff_ms(buff, mi, du)
+                if ms is not None and 0 < ms < FLOOR_MS:
+                    dropped_short += 1
+                    continue
             buckets[cat].append((int(r["ExpansionID"] or 0), int(r["ItemLevel"] or 0),
                                  iid, name, buff, stat))
     # Weapon enchants are kept across all expansions: the addon filters them at suggest
@@ -162,7 +197,7 @@ def main():
 
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    print(f"wrote {OUT}", file=sys.stderr)
+    print(f"wrote {OUT} (dropped {dropped_short} sub-20m buffs)", file=sys.stderr)
 
 
 HEADER = """\
@@ -187,10 +222,23 @@ FOOTER = """\
 })
 
 -- ──────────────────────────── HAND-CURATED (not generated) ────────────────────────────
--- Toys and class self-buffs flow through the same detect+overlay pipeline via `source`.
--- Add them with SpellDB.RegisterPrecombatBuffsExtra so a regen never clobbers them.
+-- Curated extras the per-class generator above doesn't cover: aura-discovered utility
+-- categories (xp / movement-speed foods, duration-filtered to 20m+) plus toys and class
+-- self-buffs. All flow through the same detect+overlay pipeline via `source`. This block is
+-- part of the generator template, so a re-run preserves it verbatim - edit it here.
 if SpellDB.RegisterPrecombatBuffsExtra then
     SpellDB.RegisterPrecombatBuffsExtra({
+        -- (Movement-speed foods are generated into the `food` category above, tagged
+        --  stat = "speed" - they share the one Well Fed slot, so they're a food option.)
+
+        -- XP (leveling): long XP buffs only (>= 20m). Off by default. Tome of Combat Training
+        -- (10m) intentionally excluded by the duration floor.
+        { category = "xp", id = 166750, buff = 289982 },      -- Draught of Ten Lands (60m)
+        { category = "xp", id = 166751, buff = 289982 },      -- Draught of Ten Lands (60m)
+        { category = "xp", id = 239142, buff = 1221184 },     -- Bottle of Mysterious Wisdom (120m)
+        { category = "xp", id = 254693, buff = 1258529 },     -- Distilled Knowledge of Timeways (120m)
+        { category = "xp", id = 209997, buff = 423860 },      -- Distilled Knowledge of Timeways (120m)
+
         -- XP / leveling toys (source = "toy": owned via PlayerHasToy, used via /usetoy)
         -- { category = "xp", id = <toyItemID>, buff = <auraSpellID>, source = "toy" },
 

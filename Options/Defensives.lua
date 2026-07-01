@@ -12,12 +12,6 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 -- Pre-combat buff options -------------------------------------------------------------
 -- categories[cat]: false = off, a stat string = preference, nil = auto (optimal/recency).
 local PB_STAT_ORDER = { "off", "auto", "haste", "crit", "mastery", "versatility" }
-local function pbStatValues()
-    return {
-        off = L["Off"], auto = L["Auto"], haste = L["Haste"],
-        crit = L["Crit"], mastery = L["Mastery"], versatility = L["Versatility"],
-    }
-end
 
 local function pbCategories(addon)
     local pb = addon.db.profile.precombatBuffs
@@ -36,29 +30,38 @@ local function pbDisabled(addon)
     return addon.db.profile.precombatBuffs.enabled == false
 end
 
--- Wrap a category label so it also shows the specific bag item the current selection
--- resolves to - "Flask  (Flask of Tempered Swiftness)" - answering "which flask will it
--- use?". Green matches the OOC buff glow; shows "(none in bags)" when nothing owned fits.
-local function pbNameWithMatch(addon, cat, base)
-    return function()
-        local v = pbCategories(addon)[cat]
-        if v == false then return base end                       -- category off: label only
-        local SDB = LibStub("JustAC-SpellDB", true)
-        local entry = SDB and SDB.GetBestOwnedBuff
-            and SDB.GetBestOwnedBuff(cat, type(v) == "string" and v or nil)
-        if not entry then
-            return base .. "  |cff808080(" .. L["none in bags"] .. ")|r"
-        end
-        local itemName = (entry.id and GetItemInfo(entry.id)) or ("#" .. tostring(entry.id))
-        return base .. "  |cff2ecc71(" .. itemName .. ")|r"
-    end
+-- Label an option with the specific bag item it resolves to - "Haste  Flask of Tempered
+-- Swiftness" (green, matching the OOC buff glow). Answers "which flask does this pick?".
+-- Falls back to the plain label when nothing owned fits that option.
+local function pbOptLabel(cat, statPref, base)
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local entry = SDB and SDB.GetBestOwnedBuff and SDB.GetBestOwnedBuff(cat, statPref)
+    local nm = entry and entry.id and (GetItemInfo(entry.id))
+    return nm and (base .. "  |cff2ecc71" .. nm .. "|r") or base
 end
 
--- Stat-preference dropdown (flask/food): Off / Auto / a secondary stat.
-local function pbStatSelect(addon, cat, name, order)
+-- Stat-preference dropdown (flask/food): Off / Auto / a secondary stat. Each option shows
+-- the specific bag item it resolves to, so the list itself answers "which flask for haste?".
+-- Food passes withSpeed=true to add a Speed option (movement-speed foods share the one Well
+-- Fed slot, so they're a food flavour, not a separate category).
+local function pbStatSelect(addon, cat, name, order, withSpeed)
+    local sorting = withSpeed
+        and { "off", "auto", "haste", "crit", "mastery", "versatility", "speed" }
+        or PB_STAT_ORDER
     return {
-        type = "select", name = pbNameWithMatch(addon, cat, name), order = order,
-        values = pbStatValues, sorting = PB_STAT_ORDER,
+        type = "select", name = name, order = order, sorting = sorting,
+        values = function()
+            local vals = {
+                off = L["Off"],
+                auto = pbOptLabel(cat, nil, L["Auto"]),
+                haste = pbOptLabel(cat, "haste", L["Haste"]),
+                crit = pbOptLabel(cat, "crit", L["Crit"]),
+                mastery = pbOptLabel(cat, "mastery", L["Mastery"]),
+                versatility = pbOptLabel(cat, "versatility", L["Versatility"]),
+            }
+            if withSpeed then vals.speed = pbOptLabel(cat, "speed", L["Speed"]) end
+            return vals
+        end,
         disabled = function() return pbDisabled(addon) end,
         get = function()
             local v = pbCategories(addon)[cat]
@@ -75,24 +78,30 @@ local function pbStatSelect(addon, cat, name, order)
     }
 end
 
--- On/off toggle, defaults ON (augment rune / weapon enchant: no stat choice).
-local function pbToggle(addon, cat, name, order)
+-- Off / Auto dropdown for categories with no stat choice (augment rune, weapon enchant, xp,
+-- speed). The Auto option is labelled with the winning bag item. `defaultOff` flips the
+-- default so xp/speed stay off until chosen (stored as an explicit truthy value, since a nil
+-- would revert to the AceDB `false` default).
+local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
     return {
-        type = "toggle", name = pbNameWithMatch(addon, cat, name), order = order,
+        type = "select", name = name, order = order, desc = desc, sorting = { "off", "auto" },
+        values = function()
+            return { off = L["Off"], auto = pbOptLabel(cat, nil, L["Auto"]) }
+        end,
         disabled = function() return pbDisabled(addon) end,
-        get = function() return pbCategories(addon)[cat] ~= false end,
-        set = function(_, v) pbCategories(addon)[cat] = v and nil or false; pbApply(addon) end,
-    }
-end
-
--- On/off toggle, defaults OFF (xp / speed utility categories). "On" is stored as an
--- explicit true so it overrides the AceDB `false` default (a nil would revert to it).
-local function pbToggleOff(addon, cat, name, order, desc)
-    return {
-        type = "toggle", name = pbNameWithMatch(addon, cat, name), order = order, desc = desc,
-        disabled = function() return pbDisabled(addon) end,
-        get = function() return pbCategories(addon)[cat] == true end,
-        set = function(_, v) pbCategories(addon)[cat] = v or false; pbApply(addon) end,
+        get = function()
+            local v = pbCategories(addon)[cat]
+            if defaultOff then return v == true and "auto" or "off" end
+            return v == false and "off" or "auto"
+        end,
+        set = function(_, val)
+            if defaultOff then
+                pbCategories(addon)[cat] = (val == "auto") or false
+            else
+                pbCategories(addon)[cat] = (val == "off") and false or nil
+            end
+            pbApply(addon)
+        end,
     }
 end
 
@@ -135,11 +144,10 @@ function Defensives.CreateTabArgs(addon)
                         end,
                     },
                     flask = pbStatSelect(addon, "flask", L["Flask"], 10),
-                    food = pbStatSelect(addon, "food", L["Food"], 11),
-                    augmentRune = pbToggle(addon, "augmentRune", L["Augment Rune"], 12),
-                    weaponEnchant = pbToggle(addon, "weaponEnchant", L["Weapon Enchant"], 13),
-                    speed = pbToggleOff(addon, "speed", L["Speed"], 14, L["Speed desc"]),
-                    xp = pbToggleOff(addon, "xp", L["XP"], 15, L["XP desc"]),
+                    food = pbStatSelect(addon, "food", L["Food"], 11, true),
+                    augmentRune = pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false),
+                    weaponEnchant = pbOnOffSelect(addon, "weaponEnchant", L["Weapon Enchant"], 13, false),
+                    xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
                 },
             },
             spellListGroup = {
