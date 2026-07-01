@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Health Bar Module - Shows player health bar for low-health warning
-local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 8)
+local UIHealthBar = LibStub:NewLibrary("JustAC-UIHealthBar", 9)
 if not UIHealthBar then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -11,6 +11,7 @@ local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
+local UnitCanAttack = UnitCanAttack
 local GetTime = GetTime
 
 -- Constants
@@ -34,6 +35,41 @@ local lastPetVisibleCount = -1  -- cached visible icon count for pet bar
 -- Two modes:
 --   Defensives enabled  + defensives.showHealthBar → spans defensive cluster, floats ABOVE it
 --   Defensives disabled + defensives.showHealthBar → spans offensive queue, sits at BAR_SPACING above mainFrame
+-- 1px black tube bevel on statusBar's OVERLAY layer (engine can't clobber it).
+-- Horizontal bars bevel top+bottom; vertical bars bevel left+right. Alphas: 0.35 outer / 0.16 inner.
+local function AddTubeBevel(statusBar, barIsHorizontal)
+    local function strip(alpha, a, b, ox, oy, horizontal)
+        local t = statusBar:CreateTexture(nil, "OVERLAY")
+        t:SetTexture("Interface\\Buttons\\WHITE8X8")
+        t:SetVertexColor(0, 0, 0, alpha)
+        t:SetPoint(a, statusBar, a, ox, oy)
+        t:SetPoint(b, statusBar, b, ox, oy)
+        if horizontal then t:SetHeight(1) else t:SetWidth(1) end
+    end
+    if barIsHorizontal then
+        strip(0.35, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  0, true)
+        strip(0.16, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  1, true)
+        strip(0.16, "TOPLEFT",    "TOPRIGHT",    0, -1, true)
+        strip(0.35, "TOPLEFT",    "TOPRIGHT",    0,  0, true)
+    else
+        strip(0.35, "TOPLEFT",  "BOTTOMLEFT",  0, 0, false)
+        strip(0.16, "TOPLEFT",  "BOTTOMLEFT",  1, 0, false)
+        strip(0.16, "TOPRIGHT", "BOTTOMRIGHT", -1, 0, false)
+        strip(0.35, "TOPRIGHT", "BOTTOMRIGHT", 0, 0, false)
+    end
+end
+
+-- Shared depleted-health background. One neutral dark tone behind every bar so the
+-- fill color (player green / pet yellow / target red) is what reads as "remaining",
+-- and the missing portion is clearly visible against all three.
+local function AddBarBackground(statusBar)
+    local bg = statusBar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(statusBar)
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    bg:SetVertexColor(0.12, 0.12, 0.12, 0.9)
+    return bg
+end
+
 function UIHealthBar.CreateHealthBar(addon)
     if healthBarFrame then
         healthBarFrame:Hide()
@@ -220,72 +256,13 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Set initial bright green color (matches nameplate overlay bar)
     statusBar:SetStatusBarColor(0.0, 0.80, 0.0, 0.9)
 
-    -- Solid dark-red background fills the bar frame
-    local bg = statusBar:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(statusBar)
-    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)  -- Bright red background to emphasize missing health
+    -- Neutral dark background (shared across all bars) so missing health reads clearly.
+    AddBarBackground(statusBar)
 
     -- 4-strip tube bevel on OVERLAY so the engine never clobbers them.
     -- Horizontal: symmetric alphas (bright band dead-centre on 6 px bar).
     -- Vertical:   asymmetric (near-queue heavier) - bar is wide enough.
-    if barIsHorizontal then
-        local shBot1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shBot1:SetVertexColor(0, 0, 0, 0.35)
-        shBot1:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 0)
-        shBot1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
-        shBot1:SetHeight(1)
-
-        local shBot2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shBot2:SetVertexColor(0, 0, 0, 0.16)
-        shBot2:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 1)
-        shBot2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 1)
-        shBot2:SetHeight(1)
-
-        local shTop1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shTop1:SetVertexColor(0, 0, 0, 0.16)
-        shTop1:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, -1)
-        shTop1:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, -1)
-        shTop1:SetHeight(1)
-
-        local shTop2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shTop2:SetVertexColor(0, 0, 0, 0.35)
-        shTop2:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, 0)
-        shTop2:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, 0)
-        shTop2:SetHeight(1)
-    else
-        local shL1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shL1:SetVertexColor(0, 0, 0, 0.35)
-        shL1:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    0, 0)
-        shL1:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 0, 0)
-        shL1:SetWidth(1)
-
-        local shL2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shL2:SetVertexColor(0, 0, 0, 0.16)
-        shL2:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    1, 0)
-        shL2:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 1, 0)
-        shL2:SetWidth(1)
-
-        local shR1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shR1:SetVertexColor(0, 0, 0, 0.16)
-        shR1:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    -1, 0)
-        shR1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", -1, 0)
-        shR1:SetWidth(1)
-
-        local shR2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shR2:SetVertexColor(0, 0, 0, 0.35)
-        shR2:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    0, 0)
-        shR2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
-        shR2:SetWidth(1)
-    end
+    AddTubeBevel(statusBar, barIsHorizontal)
 
     -- Low-health pulse: gently throbs the bar when GetLowHealthState() (~35% binary)
     -- crosses. Stopped by default; driven by Update on state transitions only.
@@ -299,7 +276,6 @@ function UIHealthBar.CreateHealthBar(addon)
     statusBar.lowHealthPulse = pulse
 
     frame.statusBar = statusBar
-    frame.background = bg
     frame.useDefensiveDims = useDefensiveDims
 
     healthBarFrame = frame
@@ -508,8 +484,12 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
     end
 
-    -- Reposition to stay aligned above/below the visible cluster
-    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    -- Reposition to stay aligned above/below the visible cluster.
+    -- Use iconSpacing (not max) so the gap from the defensive cluster is exactly
+    -- BAR_SPACING: the icons sit iconSpacing from the mainFrame, so this keeps a
+    -- clean BAR_SPACING between them and the bar (matches CreateHealthBar, and the
+    -- target bar's BAR_SPACING gap from the offensive queue).
+    local defSpacing = iconSpacing
     local barDist    = defSpacing + defIconSize + BAR_SPACING
 
     if orientation == "LEFT" then
@@ -592,9 +572,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
     local _, playerClass = UnitClass("player")
     local SpellDB = LibStub("JustAC-SpellDB", true)
     if not SpellDB then return nil end
-    local hasPetSpells = (SpellDB.CLASS_PET_REZ_DEFAULTS and SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass])
-        or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
-    if not hasPetSpells then return nil end
+    if not SpellDB.ClassHasPetDefaults(playerClass) then return nil end
 
     local iconSize    = profile.iconSize or 42
     local iconSpacing = profile.iconSpacing or 1
@@ -669,7 +647,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
             end
             offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
 
-            local defSpacing = math.max(iconSpacing, BAR_SPACING)
+            local defSpacing = iconSpacing  -- clean BAR_SPACING gap from the defensive cluster (see CreateHealthBar)
             local barDist    = defSpacing + defIconSize + BAR_SPACING
             local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
             local dist = barDist + extraOffset
@@ -750,70 +728,11 @@ function UIHealthBar.CreatePetHealthBar(addon)
     -- Warm yellow for pet (distinct from player's green and UI blue/mana)
     statusBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
 
-    -- Background (dark red when pet is hurt/missing health shows through)
-    local bg = statusBar:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(statusBar)
-    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-    bg:SetVertexColor(0.6, 0.15, 0.15, 0.9)
+    -- Neutral dark background (shared across all bars).
+    AddBarBackground(statusBar)
 
     -- 4-strip tube bevel (symmetric horizontal, same as player bar).
-    if barIsHorizontal then
-        local shBot1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shBot1:SetVertexColor(0, 0, 0, 0.35)
-        shBot1:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 0)
-        shBot1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
-        shBot1:SetHeight(1)
-
-        local shBot2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shBot2:SetVertexColor(0, 0, 0, 0.16)
-        shBot2:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 1)
-        shBot2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 1)
-        shBot2:SetHeight(1)
-
-        local shTop1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shTop1:SetVertexColor(0, 0, 0, 0.16)
-        shTop1:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, -1)
-        shTop1:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, -1)
-        shTop1:SetHeight(1)
-
-        local shTop2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shTop2:SetVertexColor(0, 0, 0, 0.35)
-        shTop2:SetPoint("TOPLEFT",  statusBar, "TOPLEFT",  0, 0)
-        shTop2:SetPoint("TOPRIGHT", statusBar, "TOPRIGHT", 0, 0)
-        shTop2:SetHeight(1)
-    else
-        local shL1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shL1:SetVertexColor(0, 0, 0, 0.35)
-        shL1:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    0, 0)
-        shL1:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 0, 0)
-        shL1:SetWidth(1)
-
-        local shL2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shL2:SetVertexColor(0, 0, 0, 0.16)
-        shL2:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    1, 0)
-        shL2:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 1, 0)
-        shL2:SetWidth(1)
-
-        local shR1 = statusBar:CreateTexture(nil, "OVERLAY")
-        shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shR1:SetVertexColor(0, 0, 0, 0.16)
-        shR1:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    -1, 0)
-        shR1:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", -1, 0)
-        shR1:SetWidth(1)
-
-        local shR2 = statusBar:CreateTexture(nil, "OVERLAY")
-        shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
-        shR2:SetVertexColor(0, 0, 0, 0.35)
-        shR2:SetPoint("TOPRIGHT",    statusBar, "TOPRIGHT",    0, 0)
-        shR2:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
-        shR2:SetWidth(1)
-    end
+    AddTubeBevel(statusBar, barIsHorizontal)
 
     -- Dead overlay (red tint, hidden by default)
     local deadOverlay = frame:CreateTexture(nil, "ARTWORK")
@@ -823,7 +742,6 @@ function UIHealthBar.CreatePetHealthBar(addon)
     deadOverlay:Hide()
 
     frame.statusBar = statusBar
-    frame.background = bg
     frame.deadOverlay = deadOverlay
     frame.useDefensiveDims = useDefensiveDims
 
@@ -1039,7 +957,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
     end
 
     -- Reposition: stack beyond the player health bar
-    local defSpacing = math.max(iconSpacing, BAR_SPACING)
+    local defSpacing = iconSpacing  -- clean BAR_SPACING gap from the defensive cluster (see CreateHealthBar)
     local barDist    = defSpacing + defIconSize + BAR_SPACING
     local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
     local dist = barDist + extraOffset
@@ -1089,4 +1007,184 @@ function UIHealthBar.DestroyPet()
     end
     lastPetUpdate = 0
     lastPetVisibleCount = -1
+end
+
+--------------------------------------------------------------------------------
+-- Target Health Bar (hostile-only). Always spans the OFFENSIVE queue and hugs the
+-- OPPOSITE edge from the player/pet bars (below for horizontal queues, left for
+-- vertical), a fixed BAR_SPACING gap from the queue. No defensive-cluster spanning,
+-- no detached mode, no per-count resize - it hugs the queue directly.
+-- UnitHealth("target") is secret in combat but StatusBar:SetValue accepts secrets;
+-- UnitExists/UnitCanAttack gate visibility (NeverSecret OOC, secret-safe in combat).
+-- ponytail: if defensive icons sit on SIDE2 (below a horizontal queue) this bar can
+-- overlap that cluster; defaults put defensives on SIDE1 (above), so it's clear in
+-- the common case. Add a SIDE2-aware offset only if users actually hit this.
+--------------------------------------------------------------------------------
+
+local targetHealthBarFrame = nil
+local lastTargetUpdate = 0
+
+-- Offensive-queue span (dimension + first-icon offset), matching the
+-- offensive-dims math used by the player/pet bars above.
+local function ComputeOffensiveSpan(profile)
+    local iconSize       = profile.iconSize or 42
+    local iconSpacing    = profile.iconSpacing or 1
+    local firstIconScale = profile.firstIconScale or 1.0
+    local maxIcons       = profile.maxIcons or 4
+    local firstIconSize  = iconSize * firstIconScale
+    local queueDimension
+    if maxIcons == 1 then
+        queueDimension = firstIconSize
+    else
+        queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
+    end
+    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+    return queueDimension, offset
+end
+
+-- Size + anchor the target bar: spans the offensive queue and hugs the OPPOSITE
+-- mainFrame edge to the player/pet bars (below for horizontal queues, left for
+-- vertical), a BAR_SPACING gap from the queue. Returns whether the bar is
+-- horizontal (for StatusBar setup).
+--
+-- Note: this hugs the QUEUE, not "the same distance as the player bar." The player
+-- bar's larger gap is filled by the defensive icon cluster between it and the queue;
+-- there are no icons on the target side, so matching that distance would just leave
+-- an empty gap. Hugging the queue keeps the same visual tightness (3px to nearest UI).
+local function PositionTargetBar(frame, mainFrame, profile)
+    local orientation = profile.queueOrientation or "LEFT"
+    local barIsHorizontal = (orientation == "LEFT" or orientation == "RIGHT")
+    local iconSpacing = profile.iconSpacing or 1
+
+    -- RIGHT/UP shift icons within the frame to keep the grab tab predictable;
+    -- match that shift so the bar stays aligned with the icons.
+    local grabTabReserve = 0
+    if orientation == "RIGHT" or orientation == "UP" then
+        local GRAB_TAB_LENGTH = 12
+        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + ((orientation == "UP") and 0 or 1)
+    end
+
+    local queueDimension, offset = ComputeOffensiveSpan(profile)
+    if barIsHorizontal then
+        frame:SetSize(queueDimension, BAR_HEIGHT)
+    else
+        frame:SetSize(BAR_HEIGHT, queueDimension)
+    end
+
+    frame:ClearAllPoints()
+    if orientation == "LEFT" then
+        frame:SetPoint("TOPLEFT",     mainFrame, "BOTTOMLEFT",   offset,                     -BAR_SPACING)
+    elseif orientation == "RIGHT" then
+        frame:SetPoint("TOPRIGHT",    mainFrame, "BOTTOMRIGHT", -(offset + grabTabReserve),  -BAR_SPACING)
+    elseif orientation == "DOWN" then
+        frame:SetPoint("TOPRIGHT",    mainFrame, "TOPLEFT",     -BAR_SPACING,                -offset)
+    else -- UP
+        frame:SetPoint("BOTTOMRIGHT", mainFrame, "BOTTOMLEFT",  -BAR_SPACING,                 offset + grabTabReserve)
+    end
+    return barIsHorizontal
+end
+
+-- Show the bar only for an existing, attackable target. UnitCanAttack can be
+-- secret in combat - when unreadable, fall back to showing (a visible bar beats
+-- hiding a valid target).
+local function ShouldShowTargetBar()
+    if not UnitExists("target") then return false end
+    if not UnitCanAttack then return true end
+    local ok, canAttack = pcall(UnitCanAttack, "player", "target")
+    if ok and canAttack ~= nil and not (BlizzardAPI and BlizzardAPI.IsSecretValue(canAttack)) then
+        return canAttack == true
+    end
+    return true
+end
+
+function UIHealthBar.CreateTargetHealthBar(addon)
+    if targetHealthBarFrame then
+        targetHealthBarFrame:Hide()
+        targetHealthBarFrame:SetParent(nil)
+        targetHealthBarFrame = nil
+    end
+
+    if not addon or not addon.db or not addon.db.profile then return nil end
+    local profile = addon.db.profile
+    if not (profile.defensives and profile.defensives.showTargetHealthBar) then return nil end
+    if not addon.mainFrame then return nil end
+
+    local frame = CreateFrame("Frame", nil, addon.mainFrame)
+    local barIsHorizontal = PositionTargetBar(frame, addon.mainFrame, profile)
+
+    -- StatusBar (accepts secrets), shared dark background, red fill.
+    local statusBar = CreateFrame("StatusBar", nil, frame)
+    statusBar:SetAllPoints(frame)
+    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    statusBar:SetOrientation(barIsHorizontal and "HORIZONTAL" or "VERTICAL")
+    statusBar:SetStatusBarColor(0.85, 0.10, 0.10, 0.9)  -- red (hostile target)
+
+    AddBarBackground(statusBar)
+    AddTubeBevel(statusBar, barIsHorizontal)
+
+    frame.statusBar = statusBar
+    targetHealthBarFrame = frame
+
+    UIHealthBar.UpdateTargetVisibility(addon)
+    return frame
+end
+
+-- Update target health value on timer.
+function UIHealthBar.UpdateTarget(addon)
+    if not targetHealthBarFrame or not targetHealthBarFrame:IsVisible() then return end
+
+    local now = GetTime()
+    if now - lastTargetUpdate < UPDATE_INTERVAL then return end
+    lastTargetUpdate = now
+
+    if not UnitExists("target") then
+        targetHealthBarFrame:Hide()
+        return
+    end
+
+    local health = UnitHealth("target")
+    local maxHealth = UnitHealthMax("target")
+    if not health or not maxHealth then return end
+
+    local statusBar = targetHealthBarFrame.statusBar
+    if not statusBar then return end
+
+    -- SetMinMaxValues/SetValue accept secret values directly (rendered by Blizzard).
+    statusBar:SetMinMaxValues(0, maxHealth)
+    statusBar:SetValue(health)
+end
+
+-- Show/hide based on target existence + hostility.
+function UIHealthBar.UpdateTargetVisibility(addon)
+    if not targetHealthBarFrame then return end
+    if ShouldShowTargetBar() then
+        targetHealthBarFrame:Show()
+        UIHealthBar.UpdateTarget(addon)
+    else
+        targetHealthBarFrame:Hide()
+    end
+end
+
+function UIHealthBar.HideTarget()
+    if targetHealthBarFrame then
+        targetHealthBarFrame:Hide()
+    end
+end
+
+-- Recreate on size/orientation change (mirrors UpdateSize/UpdatePetSize).
+function UIHealthBar.UpdateTargetSize(addon)
+    if not addon or not addon.db or not addon.db.profile then return end
+    if targetHealthBarFrame then
+        UIHealthBar.DestroyTarget()
+    end
+    UIHealthBar.CreateTargetHealthBar(addon)
+end
+
+function UIHealthBar.DestroyTarget()
+    if targetHealthBarFrame then
+        targetHealthBarFrame:Hide()
+        targetHealthBarFrame:SetParent(nil)
+        targetHealthBarFrame = nil
+    end
+    lastTargetUpdate = 0
 end

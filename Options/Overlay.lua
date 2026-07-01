@@ -295,9 +295,7 @@ function Overlay.CreateTabArgs(addon)
                         hidden = function()
                             local _, pc = UnitClass("player")
                             local SDB = LibStub("JustAC-SpellDB", true)
-                            if not SDB or not pc then return true end
-                            return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                                or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
+                            return not (SDB and SDB.ClassHasPetDefaults(pc))
                         end,
                     }),
                     -- RESET

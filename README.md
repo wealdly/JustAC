@@ -46,7 +46,17 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - Pet rez/summon and pet heal support for Hunter, Warlock, Death Knight
 - Compact health bar (player + pet) with automatic resize
 - Items supported (potions, healthstones) with auto-detection from action bars - optional aura linking and combat hiding per item
+- **Emergency healing potion** auto-picks the best potion you're carrying, ranked by how much it actually restores - a potion that heals a share of your maximum health can out-rank a bigger fixed-amount one, and the reverse; the tile's tooltip explains the pick
 - Combat-safe health detection via LowHealthFrame signal (~35%) for 12.0 secret-value compatibility
+
+### Pre-Combat Buffs
+
+- Out of combat, the defensive queue surfaces the buffs you're **missing but own** as clickable icons with a green glow - flask, food, augment rune, weapon enchant
+- **Class maintained buffs** - rogue poisons, shaman shields and weapon imbues, and the standard party/raid buffs. You're reminded when one is missing or has dropped below half its remaining duration; a lapsed buff is refilled with whatever your rotation ranks highest, and rogues get both a lethal and a non-lethal poison at once
+- **Click-to-use** - a hover highlight and click-to-use layer sits over every out-of-combat icon (like an action button), casting the spell or using the item straight from the queue
+- **Eating / applying feedback** - while a buff is being applied (eating food and the like) the whole queue greys out with a channel-style progress sweep across the buff window
+- Buff data is DB2-generated (discovered by item class and buff aura, stat decoded from the effect chain) and spans all expansions, so leveling characters are covered too; weapon-enchant suggestions respect your equipped weapon so you're never offered an oil or stone it can't take
+- Detection is aura-based and runs out of combat only, sidestepping 12.0 secret values entirely
 
 ### Gap-Closer Suggestions
 
@@ -105,7 +115,7 @@ Options are organized into 6 tabs:
 | **Standard Queue** | Layout, offensive display, defensive display, appearance (4 sub-tabs) |
 | **Overlay** | Nameplate overlay layout, offensive display, defensive display (3 sub-tabs) |
 | **Offensive** | Blacklist, custom queue, gap-closers, burst injection, interrupt mode |
-| **Defensives** | Spell priority list, health thresholds, per-item aura linking |
+| **Defensives** | Spell priority list, health thresholds, per-item aura linking, pre-combat buffs |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
 - **Localization** - English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese

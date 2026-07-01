@@ -36,15 +36,7 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
     if not generalArgs or not generalArgs.hotkeyOverrides then return end
     local hotkeyArgs = generalArgs.hotkeyOverrides.args
 
-    local keysToClear = {}
-    for key, _ in pairs(hotkeyArgs) do
-        if key ~= "info" then
-            table.insert(keysToClear, key)
-        end
-    end
-    for _, key in ipairs(keysToClear) do
-        hotkeyArgs[key] = nil
-    end
+    SpellSearch.ClearDynamicArgs(hotkeyArgs, { info = true })
 
     local hotkeyOverrides = addon.db.profile.hotkeyOverrides or {}
 

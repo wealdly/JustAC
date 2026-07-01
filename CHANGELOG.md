@@ -3,6 +3,48 @@
 
 ## [Unreleased]
 
+## [4.29.0] - 2026-06-30
+
+### Pre-combat buffs (new)
+- Out of combat, the defensive queue now reminds you of the pre-combat buffs you're
+  **missing but own** — flask, food, augment rune, weapon enchant — as clickable icons
+  with a green glow. Click one to use it right from the queue. Made for buffing up before
+  a group or dungeon pull.
+- **Class buffs** are covered too: rogue poisons, shaman shields and weapon imbues, and the
+  standard party/raid buffs. You're reminded when one is missing or has dropped below half
+  its remaining time, and offered the option your rotation already favors — rogues get both
+  a lethal and a non-lethal poison.
+- While you're **eating or applying** a buff, the whole queue greys out with a channel-style
+  progress sweep, so it's clear the buff is on its way.
+- Every out-of-combat queue icon now has a **hover highlight and click-to-use**, like an
+  action button.
+
+### Defensive queue
+- The emergency healing potion now surfaces the **best potion you're actually carrying**,
+  ranked by how much it restores — a potion that heals a share of your maximum health can
+  out-rank a bigger fixed-amount one, and the reverse. The tile's tooltip explains the pick.
+
+### Health bars
+- New **target health bar**: a compact red bar on the far side of the standard queue,
+  opposite the player/pet bars. Shows for hostile targets only and hides when you have
+  no target. Toggle it under Defensives → Show Health Bars.
+- All health bars now share a neutral dark background, so missing health reads clearly
+  behind every bar color.
+
+### Interrupts
+- The interrupt reminder now overlays the target's cast progress on the kick icon,
+  with a highlighted zone over the final stretch — press the interrupt as the bar
+  reaches the zone to time it well. Channels drain instead of fill.
+
+### Rotation
+- "Cooldowns last" now also sends abilities that are **out of charges** to the back
+  of the queue, not just ones on a flat cooldown. Charge abilities (in a custom
+  rotation or Blizzard's) that used to linger up front now drop back until a charge
+  returns.
+
+### Maintenance
+- Internal code cleanup.
+
 ## [4.28.1] - 2026-06-29
 
 ### Responsiveness

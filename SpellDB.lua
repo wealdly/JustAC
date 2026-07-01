@@ -22,6 +22,11 @@ local INTERRUPT_ABILITIES = {}
 -- yardage is secret) on each KNOWN reference brackets the target's distance. See IsTargetWithin.
 local RANGE_REFERENCES = {}
 
+-- Ranked health-restoring consumables (Data/HealingItems.lua); see GetBestHealingItem.
+local HEALING_ITEMS = {}
+local bestHealingItem = nil    -- cached best owned item id, or nil
+local healingBagsDirty = true  -- bags changed; re-scan on next OOC GetBestHealingItem
+
 --- Populate the category tables from Data/SpellCategories.lua. Merges into the
 --- existing local table objects so the IsXSpell closures keep seeing the data.
 function SpellDB.RegisterCategories(t)
@@ -43,6 +48,294 @@ end
 function SpellDB.RegisterRangeReferences(t)
     if type(t) ~= "table" then return end
     for id, yards in pairs(t) do RANGE_REFERENCES[id] = yards end
+end
+
+--- Populate the ranked healing-item list from Data/HealingItems.lua (best first).
+function SpellDB.RegisterHealingItems(t)
+    if type(t) ~= "table" then return end
+    for i = 1, #t do HEALING_ITEMS[i] = t[i] end
+    healingBagsDirty = true
+end
+
+--- Mark the bag scan stale (call on BAG_UPDATE / zone-in so leveling pot swaps are caught).
+function SpellDB.MarkHealingBagsDirty()
+    healingBagsDirty = true
+end
+
+-- Reads a healing item's heal from its on-use spell description. Returns the effective
+-- heal (for ranking owned pots), whether it is percentage-based, and the raw number
+-- behind it (the percent, or the fixed amount). A percentage pot ("Restores 50% ...")
+-- scales with max health; a fixed pot uses its largest heal number. The '%' symbol and
+-- the digits are locale-independent; all-zero if the description can't be read, so an
+-- unreadable pot falls back to its recency rank in the list order.
+local function HealInfo(itemID)
+    local getItemSpell = C_Item and C_Item.GetItemSpell
+    local spellID = getItemSpell and select(2, getItemSpell(itemID))
+    local getDesc = C_Spell and C_Spell.GetSpellDescription
+    local desc = spellID and getDesc and getDesc(spellID)
+    if not desc or desc == "" then return 0, false, 0 end
+    local pct = desc:match("(%d+)%s*%%")
+    if pct then
+        pct = tonumber(pct)
+        return (pct / 100) * (UnitHealthMax("player") or 0), true, pct
+    end
+    local best = 0
+    for n in desc:gmatch("%d[%d,]*") do
+        local num = tonumber((n:gsub(",", "")))
+        if num and num > best then best = num end
+    end
+    return best, false, best
+end
+
+--- Best health-restoring item the player currently owns, or nil. Scans out of combat
+--- (GetItemCount + descriptions are readable there) and caches until bags change. Ranks
+--- by effective heal so a percentage pot is compared correctly against a fixed one;
+--- ties / unreadable heals fall back to the list's recency order.
+function SpellDB.GetBestHealingItem()
+    if healingBagsDirty and not InCombatLockdown() then
+        bestHealingItem = nil
+        local bestHeal = -1
+        for i = 1, #HEALING_ITEMS do
+            local id = HEALING_ITEMS[i]
+            if (GetItemCount(id) or 0) > 0 then
+                local heal = HealInfo(id)
+                if heal > bestHeal then
+                    bestHeal = heal
+                    bestHealingItem = id
+                end
+            end
+        end
+        healingBagsDirty = false
+    end
+    return bestHealingItem
+end
+
+--- Detail about the current auto-best pot, for the options tooltip: a table
+--- { id, name, isPct, value, heal, owned } or nil. Out of combat only (reads
+--- descriptions / max health). `value` is the percent (isPct) or the fixed amount.
+function SpellDB.GetBestHealingItemInfo()
+    if InCombatLockdown() then return nil end
+    local id = SpellDB.GetBestHealingItem()
+    if not id then return nil end
+    local heal, isPct, value = HealInfo(id)
+    local owned = 0
+    for i = 1, #HEALING_ITEMS do
+        if (GetItemCount(HEALING_ITEMS[i]) or 0) > 0 then owned = owned + 1 end
+    end
+    return { id = id, name = (GetItemInfo(id)) or ("item " .. id),
+             isPct = isPct, value = value, heal = heal, owned = owned }
+end
+
+-- Reserved sentinel id for the user-positioned "Emergency Potion" tile in the defensive
+-- list. Resolved at queue-build to the chosen/best owned healing item; never a real item.
+SpellDB.EMERGENCY_POTION = -9000000
+
+--- Health items the player currently owns, best-first: { {id=, name=}, ... }. Feeds the
+--- Emergency Potion tile's dropdown. Out of combat only (item names); call lazily.
+function SpellDB.GetOwnedHealingItems()
+    local owned = {}
+    for i = 1, #HEALING_ITEMS do
+        local id = HEALING_ITEMS[i]
+        if (GetItemCount(id) or 0) > 0 then
+            owned[#owned + 1] = { id = id, name = (GetItemInfo(id)) or ("Item " .. id) }
+        end
+    end
+    return owned
+end
+
+--------------------------------------------------------------------------------
+-- PRE-COMBAT BUFFS: flasks, food, augment runes, weapon enchants (Data/PrecombatBuffs.lua)
+-- category -> { items = { {id, buff, stat, source}, ... }, buffSet = { [spellID]=true } }.
+-- buffSet is the aura set the engine checks to know if a category is satisfied; items
+-- drive the owns-gate / best-owned pick. source: "item" (bag) | "toy" | "spell".
+--------------------------------------------------------------------------------
+local PRECOMBAT_BUFFS = {}
+local PRECOMBAT_ORDER = {}  -- categories in registration order (stable display order)
+local PRECOMBAT_ITEM_SET = {}  -- every bag-item buff id, for IsPrecombatBuffItem (click layers)
+local PRECOMBAT_ITEM_CATEGORY = {}  -- bag-item buff id -> category ("flask"/"food"/…)
+
+local function AddPrecombatEntry(cat, e)
+    if not cat or type(e) ~= "table" or not e.id then return end
+    local bucket = PRECOMBAT_BUFFS[cat]
+    if not bucket then
+        bucket = { items = {}, buffSet = {} }
+        PRECOMBAT_BUFFS[cat] = bucket
+        PRECOMBAT_ORDER[#PRECOMBAT_ORDER + 1] = cat
+    end
+    e.source = e.source or "item"
+    bucket.items[#bucket.items + 1] = e
+    if e.buff then bucket.buffSet[e.buff] = true end
+    if e.source == "item" then
+        PRECOMBAT_ITEM_SET[e.id] = true
+        PRECOMBAT_ITEM_CATEGORY[e.id] = cat
+    end
+end
+
+--- True if itemID is any registered pre-combat buff consumable. Lets the defensive render
+--- recognise inserted buff icons so the click-layer overlay can sit on exactly those.
+function SpellDB.IsPrecombatBuffItem(itemID)
+    return itemID ~= nil and PRECOMBAT_ITEM_SET[itemID] == true
+end
+
+--- Category of a buff item ("flask"/"food"/…), or nil. Lets the render pick the food icon.
+function SpellDB.GetPrecombatBuffCategory(itemID)
+    return itemID and PRECOMBAT_ITEM_CATEGORY[itemID] or nil
+end
+
+-- Eating/drinking is aura-based (not a spell channel) and uses a generic "Food"/"Drink"
+-- aura separate from the food's on-use spell - so the queue can show an eat-progress sweep.
+-- Curated; add ids as tiers/expansions introduce new eating buffs.
+local EATING_AURAS = { 452276 }  -- "Food"
+--- The player's active eating/drinking aura (with timing), or nil.
+function SpellDB.GetActiveEatingAura()
+    local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+    if not get then return nil end
+    for i = 1, #EATING_AURAS do
+        local a = get(EATING_AURAS[i])
+        if a then return a end
+    end
+    return nil
+end
+
+--------------------------------------------------------------------------------
+-- CLASS MAINTAINED BUFFS: self-buffs the player keeps up pre-combat (poisons, imbues...).
+-- Each group holds interchangeable options; we maintain whichever is ACTIVE (refresh before
+-- it lapses) rather than picking a "best", and suggest `default` only when none is up. Cast
+-- and detect share the same spellID (the ability applies a like-named self-buff). Gated at
+-- runtime by IsPlayerSpell, so only spells the player actually knows ever surface.
+--------------------------------------------------------------------------------
+SpellDB.CLASS_MAINTAINED_BUFFS = {
+    DRUID = {
+        { group = { 1126 }, default = 1126 },                          -- Mark of the Wild
+    },
+    EVOKER = {
+        { group = { 364342 }, default = 364342 },                      -- Blessing of the Bronze
+    },
+    MAGE = {
+        { group = { 1459 }, default = 1459 },                          -- Arcane Intellect
+    },
+    PRIEST = {
+        { group = { 21562 }, default = 21562 },                        -- Power Word: Fortitude
+    },
+    ROGUE = {
+        { group = { 315584, 2823, 8679, 381664 }, default = 315584 },  -- Lethal (Instant default)
+        { group = { 3408, 5761, 381637 }, default = 3408 },            -- Non-lethal (Crippling default)
+    },
+    SHAMAN = {
+        { group = { 192106, 52127, 974 }, default = 192106 },          -- Shield (Lightning/Water/Earth)
+        { group = { 462854 }, default = 462854 },                      -- Skyfury
+    },
+    WARRIOR = {
+        { group = { 6673 }, default = 6673 },                          -- Battle Shout
+    },
+    -- No aura-based maintained pre-combat self-buff (or handled by the pet system):
+    -- DEATHKNIGHT, DEMONHUNTER, HUNTER, MONK, PALADIN, WARLOCK. Shaman weapon imbues
+    -- (Windfury/Flametongue) show as weapon enchants, not auras, so they need
+    -- GetWeaponEnchantInfo detection - deferred to a later pass.
+}
+
+local CLASS_BUFF_SET = {}  -- flat spellID set, for the green-glow emphasis on class-buff icons
+for _, groups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
+    for _, grp in ipairs(groups) do
+        for _, id in ipairs(grp.group) do CLASS_BUFF_SET[id] = true end
+    end
+end
+
+--- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
+function SpellDB.IsClassMaintainedBuff(spellID)
+    return spellID ~= nil and CLASS_BUFF_SET[spellID] == true
+end
+
+--- Register generated buff categories: { flask = { {id=,buff=,stat=}, ... }, food = ... }.
+function SpellDB.RegisterPrecombatBuffs(t)
+    if type(t) ~= "table" then return end
+    for cat, list in pairs(t) do
+        for i = 1, #list do AddPrecombatEntry(cat, list[i]) end
+    end
+end
+
+--- Register hand-curated entries (toys/class spells): a flat list, each carrying its own
+--- `category` and `source`. Kept separate so a generator re-run never clobbers them.
+function SpellDB.RegisterPrecombatBuffsExtra(t)
+    if type(t) ~= "table" then return end
+    for i = 1, #t do AddPrecombatEntry(t[i].category, t[i]) end
+end
+
+--- Categories in display order, and the buff-aura set / item list for one category.
+function SpellDB.GetPrecombatBuffCategories() return PRECOMBAT_ORDER end
+function SpellDB.GetPrecombatBuffSet(cat)
+    local b = PRECOMBAT_BUFFS[cat]; return b and b.buffSet
+end
+function SpellDB.GetPrecombatBuffItems(cat)
+    local b = PRECOMBAT_BUFFS[cat]; return b and b.items
+end
+
+local PlayerHasToy = PlayerHasToy
+local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
+
+-- Does the player have this buff entry available to use right now? Source-aware:
+-- bag item (GetItemCount), toy (PlayerHasToy), or known spell (IsPlayerSpell).
+local function OwnsBuffEntry(e)
+    if e.source == "toy" then
+        return PlayerHasToy and PlayerHasToy(e.id)
+    elseif e.source == "spell" then
+        return IsPlayerSpell and IsPlayerSpell(e.id)
+    end
+    return (GetItemCount(e.id) or 0) > 0
+end
+
+--- Best owned buff entry for a category, honoring a stat preference, or nil. statPref
+--- nil/"optimal" keeps the list's newest-first order; a stat string ("haste", "crit",
+--- "mastery", "versatility", "primary") floats matching entries to the top. Out of combat
+--- only for the bag scan; entries are ranked, the first owned match wins ties by recency.
+function SpellDB.GetBestOwnedBuff(cat, statPref)
+    local b = PRECOMBAT_BUFFS[cat]
+    if not b then return nil end
+    -- Weapon enhancements only apply to weapons from their own expansion or earlier - a
+    -- newer weapon rejects an older oil/stone as "too high level". Skip any enhancement
+    -- older than the equipped main-hand (expansion read from GetItemInfo's expacID, #15).
+    local weaponExp
+    if cat == "weaponEnchant" and GetInventoryItemID then
+        local mh = GetInventoryItemID("player", 16)
+        weaponExp = mh and select(15, GetItemInfo(mh))
+    end
+    local n = #b.items
+    local best, bestScore = nil, -1
+    for i = 1, n do
+        local e = b.items[i]
+        if OwnsBuffEntry(e) then  -- cheap gate first; only resolve expansion for owned ones
+            local applies = true
+            if weaponExp then
+                local oilExp = select(15, GetItemInfo(e.id))
+                applies = oilExp ~= nil and oilExp >= weaponExp
+            end
+            if applies then
+                local score = n - i  -- recency: earlier in the list = newer = higher
+                if statPref and statPref ~= "optimal" and e.stat
+                    and e.stat:find(statPref, 1, true) then
+                    score = score + 1000000  -- a stat match outranks any recency gap
+                end
+                if score > bestScore then bestScore = score; best = e end
+            end
+        end
+    end
+    return best
+end
+
+--- Owned buff entries for a category, best-first: { {id=, name=, stat=}, ... }. Feeds the
+--- per-category dropdown. Out of combat only (item names).
+function SpellDB.GetOwnedPrecombatBuffs(cat)
+    local b = PRECOMBAT_BUFFS[cat]
+    if not b then return {} end
+    local owned = {}
+    for i = 1, #b.items do
+        local e = b.items[i]
+        if OwnsBuffEntry(e) then
+            owned[#owned + 1] = { id = e.id, stat = e.stat,
+                                  name = (GetItemInfo(e.id)) or ("Item " .. e.id) }
+        end
+    end
+    return owned
 end
 
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -125,12 +418,6 @@ end
 --   mech == 9 (silence) only stops SPELL casts, not physical channels - in ccOnly mode the
 --             tracker prefers a stun-class CC and defers silence (see EvaluateInterrupt).
 --   mech == 5 (fear) breaks on damage and scatters packs - excluded unless includeFears.
-
--- Check if a spell is utility (movement, rez, taunt, external, etc.)
-function SpellDB.IsUtilitySpell(spellID)
-    if not spellID then return false end
-    return UTILITY_SPELLS[spellID] == true
-end
 
 -- Check if a spell is offensive (NOT defensive, healing, CC, or utility)
 -- This is the primary check for DPS queue filtering
@@ -381,6 +668,13 @@ SpellDB.CLASS_PETHEAL_DEFAULTS = {
     HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
     WARLOCK = {755},                                 -- Health Funnel
 }
+
+-- Returns true if the given class has any pet rez or heal defaults (drives pet-UI visibility).
+function SpellDB.ClassHasPetDefaults(playerClass)
+    if not playerClass then return false end
+    return SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass] ~= nil
+        or SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass] ~= nil
+end
 
 -- Interrupt/CC ability data: see Data/InterruptAbilities.lua (registered via
 -- RegisterInterruptAbilities). Resolved + sorted by ResolveInterruptSpells below.

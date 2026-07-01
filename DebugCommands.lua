@@ -22,6 +22,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect interrupts - Diagnose interrupt/CC queue state")
     addon:Print("/jac inspect burst - Dump burst injection priority list")
     addon:Print("/jac inspect auras - Diagnose aura cache state")
+    addon:Print("/jac inspect buffs - Diagnose pre-combat buff checklist (out of combat)")
     addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
     addon:Print("/jac inspect perf reset - Reset build counters")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -578,6 +579,22 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
         local ready = BlizzardAPI.IsSpellReady(spellID)
         addon:Print("   IsSpellReady: " .. (ready and "|cff00ff00true (ready)|r" or "|cffff6600false (on CD)|r"))
     end
+    if BlizzardAPI and BlizzardAPI.DebugTrackingState then
+        local cat, maxCh, curCh, localCD = BlizzardAPI.DebugTrackingState(spellID)
+        addon:Print("   Tracked: " .. (cat and ("|cff00ff00" .. tostring(cat) .. "|r") or "|cffff0000NO (not registered)|r"))
+        if maxCh then
+            addon:Print("   Charge cache: maxCharges=" .. tostring(maxCh) ..
+                (curCh and (", current=" .. tostring(curCh)) or "") .. ", localCD=" .. tostring(localCD))
+        else
+            addon:Print("   Charge cache: |cffff6600none|r, localCD=" .. tostring(localCD))
+        end
+        local displayID = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID)
+        if displayID and displayID ~= spellID then
+            local dcat = BlizzardAPI.DebugTrackingState(displayID)
+            addon:Print("   (display ID " .. tostring(displayID) .. " tracked: " ..
+                (dcat and ("|cff00ff00" .. tostring(dcat) .. "|r") or "|cffff0000NO|r") .. ")")
+        end
+    end
     local SpellDB = LibStub("JustAC-SpellDB", true)
     if SpellDB and SpellDB.IsInterruptOnCooldown then
         local intCD = SpellDB.IsInterruptOnCooldown(spellID)
@@ -841,6 +858,47 @@ function DebugCommands.BurstDiagnostics(addon)
     end
 
     addon:Print("==================================")
+end
+
+--------------------------------------------------------------------------------
+-- Pre-combat buff checklist diagnostics
+--------------------------------------------------------------------------------
+function DebugCommands.PrecombatBuffDiagnostics(addon)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local Engine  = LibStub("JustAC-PrecombatEngine", true)
+    addon:Print("===== Pre-combat Buffs =====")
+    if not SpellDB or not SpellDB.GetPrecombatBuffCategories or not Engine then
+        addon:Print("|cffff6666PrecombatEngine / data not loaded.|r")
+        return
+    end
+    if InCombatLockdown() then
+        addon:Print("|cffffff00In combat - detection is out-of-combat only. Re-run after combat.|r")
+        return
+    end
+
+    for _, cat in ipairs(SpellDB.GetPrecombatBuffCategories()) do
+        local items = SpellDB.GetPrecombatBuffItems(cat) or {}
+        local satisfied = Engine.IsCategorySatisfied(cat)
+        local best = SpellDB.GetBestOwnedBuff(cat)
+        local bestName = best and ((GetItemInfo(best.id)) or ("item " .. best.id))
+        local statTag = best and best.stat and (" |cff888888[" .. best.stat .. "]|r") or ""
+        local state = satisfied and "|cff00ff00active|r"
+            or (best and "|cffff6666MISSING|r" or "|cff888888missing, none owned|r")
+        addon:Print(string.format("%s (%d known): %s%s%s", cat, #items, state,
+            bestName and ("  best owned: " .. bestName) or "", statTag))
+    end
+
+    local missing = Engine.GetMissingBuffs()
+    addon:Print("---- would surface ----")
+    if #missing == 0 then
+        addon:Print("|cff00ff00Nothing missing (or nothing owned to fix it).|r")
+    else
+        for _, m in ipairs(missing) do
+            local nm = (GetItemInfo(m.entry.id)) or ("item " .. m.entry.id)
+            addon:Print("  " .. m.category .. " -> " .. nm)
+        end
+    end
+    addon:Print("============================")
 end
 
 --------------------------------------------------------------------------------

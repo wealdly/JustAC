@@ -12,8 +12,6 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 local ipairs = ipairs
 local table_concat = table.concat
-local wipe = wipe
-local pcall = pcall
 
 --- Resolve a spell ID to its base ID (handles talent overrides).
 local function ResolveSpellID(id)
@@ -311,18 +309,7 @@ function CustomQueue.CreateTabArgs(addon)
             spellListGroup = {
                 type = "group",
                 inline = true,
-                name = function()
-                    local className, playerClass = UnitClass("player")
-                    local colorCode = (playerClass and SpellSearch and SpellSearch.CLASS_COLORS
-                        and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    local specIndex = GetSpecialization and GetSpecialization()
-                    local specName
-                    if specIndex then
-                        local _, name = GetSpecializationInfo(specIndex)
-                        specName = name
-                    end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Custom Queue Spells"] .. " (" .. (specName or "?") .. ")"
-                end,
+                name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
                 order = 10,
                 hidden = function() return IsCustomQueueHidden(addon) end,
                 args = {
@@ -473,37 +460,3 @@ function CustomQueue.EnsureInitialized(addon)
     end
 end
 
---- Remove a spell from the custom queue for the current spec.
---- Returns true if the spell was found and removed.
-function CustomQueue.RemoveSpell(addon, spellID)
-    if not spellID or spellID == 0 then return false end
-    local specKey = GetSpecKey()
-    if not specKey then return false end
-
-    local profile = addon and addon.db and addon.db.profile
-    if not profile or not profile.customQueue then return false end
-    local cq = profile.customQueue[specKey]
-    if not cq or not cq.spells then return false end
-
-    -- Items (negative IDs): direct match only. Spells: check both raw and resolved ID.
-    local isItem = spellID < 0
-    local resolvedTarget = not isItem and ResolveSpellID(spellID) or nil
-
-    local found = false
-    local newSpells = {}
-    for _, sid in ipairs(cq.spells) do
-        if sid == spellID or (not isItem and ResolveSpellID(sid) == resolvedTarget) then
-            found = true
-        else
-            newSpells[#newSpells + 1] = sid
-        end
-    end
-
-    if not found then return false end
-    cq.spells = newSpells
-
-    InvalidateRotationCache()
-
-    CustomQueue.UpdateCustomQueueOptions(addon)
-    return true
-end

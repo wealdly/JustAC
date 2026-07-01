@@ -143,18 +143,7 @@ function BurstInjection.CreateTabArgs(addon)
             triggerGroup = {
                 type = "group",
                 inline = true,
-                name = function()
-                    local className, playerClass = UnitClass("player")
-                    local colorCode = (playerClass and SpellSearch and SpellSearch.CLASS_COLORS
-                        and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    local specIndex = GetSpecialization and GetSpecialization()
-                    local specName
-                    if specIndex then
-                        local _, name = GetSpecializationInfo(specIndex)
-                        specName = name
-                    end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Burst Trigger Override"] .. " (" .. (specName or "?") .. ")"
-                end,
+                name = SpellSearch.SpecHeader(L["Burst Trigger Override"]),
                 order = 10,
                 disabled = function()
                     local profile = addon:GetProfile()
@@ -227,18 +216,7 @@ function BurstInjection.CreateTabArgs(addon)
             injectionGroup = {
                 type = "group",
                 inline = true,
-                name = function()
-                    local className, playerClass = UnitClass("player")
-                    local colorCode = (playerClass and SpellSearch and SpellSearch.CLASS_COLORS
-                        and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    local specIndex = GetSpecialization and GetSpecialization()
-                    local specName
-                    if specIndex then
-                        local _, name = GetSpecializationInfo(specIndex)
-                        specName = name
-                    end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Burst Injection Spells"] .. " (" .. (specName or "?") .. ")"
-                end,
+                name = SpellSearch.SpecHeader(L["Burst Injection Spells"]),
                 order = 50,
                 disabled = function()
                     local profile = addon:GetProfile()

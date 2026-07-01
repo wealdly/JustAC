@@ -233,8 +233,8 @@ end
 UIFrameFactory.CreateRoundedActionIconMask = CreateRoundedActionIconMask
 UIFrameFactory.ApplyActionButtonBorderGeometry = ApplyActionButtonBorderGeometry
 
-local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile)
-    local button = CreateFrame("Button", nil, parent)
+local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, template)
+    local button = CreateFrame("Button", nil, parent, template)
     if not button then return nil end
 
     button:SetSize(size, size)
@@ -614,6 +614,30 @@ end
 
 -- Creates the detached defensive frame (UIParent child) with fade animations.
 -- Mirrors CreateMainFrame pattern. Called by CreateDefensiveIcons when detached=true.
+-- Attaches frame.fadeIn / frame.fadeOut Alpha animation groups (0↔1, SetToFinalAlpha).
+-- onInFinished / onOutFinished: optional OnFinished callbacks.
+local function AddFadeAnims(frame, duration, onInFinished, onOutFinished)
+    local fadeIn = frame:CreateAnimationGroup()
+    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
+    fadeInAlpha:SetFromAlpha(0)
+    fadeInAlpha:SetToAlpha(1)
+    fadeInAlpha:SetDuration(duration)
+    fadeInAlpha:SetSmoothing("OUT")
+    fadeIn:SetToFinalAlpha(true)
+    if onInFinished then fadeIn:SetScript("OnFinished", onInFinished) end
+    frame.fadeIn = fadeIn
+
+    local fadeOut = frame:CreateAnimationGroup()
+    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
+    fadeOutAlpha:SetFromAlpha(1)
+    fadeOutAlpha:SetToAlpha(0)
+    fadeOutAlpha:SetDuration(duration)
+    fadeOutAlpha:SetSmoothing("IN")
+    fadeOut:SetToFinalAlpha(true)
+    if onOutFinished then fadeOut:SetScript("OnFinished", onOutFinished) end
+    frame.fadeOut = fadeOut
+end
+
 local function CreateDetachedDefensiveFrame(addon)
     -- Destroy any existing detached frame
     if addon.defensiveFrame then
@@ -664,34 +688,15 @@ local function CreateDetachedDefensiveFrame(addon)
         end
     end)
 
-    -- Fade-in animation
-    local fadeIn = frame:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.1)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    fadeIn:SetScript("OnFinished", function()
+    -- Fade animations
+    AddFadeAnims(frame, 0.1, function()
         local currentProfile = addon:GetProfile()
         local frameOpacity = currentProfile and currentProfile.frameOpacity or 1.0
         frame:SetAlpha(frameOpacity)
-    end)
-    frame.fadeIn = fadeIn
-
-    -- Fade-out animation
-    local fadeOut = frame:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.1)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
+    end, function()
         frame:Hide()
         frame:SetAlpha(0)
     end)
-    frame.fadeOut = fadeOut
 
     frame:SetAlpha(0)
     frame:Hide()
@@ -814,26 +819,9 @@ local function CreateDefensiveGrabTab(addon)
     end)
 
     -- Fade animations
-    local fadeIn = tab:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    tab.fadeIn = fadeIn
-
-    local fadeOut = tab:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
+    AddFadeAnims(tab, 0.15, nil, function()
         tab:SetAlpha(0)
     end)
-    tab.fadeOut = fadeOut
 
     tab:SetAlpha(0)
     tab:Show()
@@ -1106,35 +1094,16 @@ function UIFrameFactory.CreateMainFrame(addon)
     addon.mainFrame:SetAlpha(0)  -- Start invisible for fade-in
     addon.mainFrame:Hide()
     
-    -- Create fade-in animation
-    local fadeIn = addon.mainFrame:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.1)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    fadeIn:SetScript("OnFinished", function()
+    -- Fade animations
+    AddFadeAnims(addon.mainFrame, 0.1, function()
         -- Apply user's frame opacity after fade completes
         local currentProfile = addon:GetProfile()
         local frameOpacity = currentProfile and currentProfile.frameOpacity or 1.0
         addon.mainFrame:SetAlpha(frameOpacity)
-    end)
-    addon.mainFrame.fadeIn = fadeIn
-
-    -- Create fade-out animation
-    local fadeOut = addon.mainFrame:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.1)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
+    end, function()
         addon.mainFrame:Hide()
         addon.mainFrame:SetAlpha(0)
     end)
-    addon.mainFrame.fadeOut = fadeOut
 end
 
 function UIFrameFactory.CreateGrabTab(addon)
@@ -1318,29 +1287,11 @@ function UIFrameFactory.CreateGrabTab(addon)
         end
     end)
     
-    -- Create fade-in animation
-    local fadeIn = addon.grabTab:CreateAnimationGroup()
-    local fadeInAlpha = fadeIn:CreateAnimation("Alpha")
-    fadeInAlpha:SetFromAlpha(0)
-    fadeInAlpha:SetToAlpha(1)
-    fadeInAlpha:SetDuration(0.15)
-    fadeInAlpha:SetSmoothing("OUT")
-    fadeIn:SetToFinalAlpha(true)
-    addon.grabTab.fadeIn = fadeIn
-    
-    -- Create fade-out animation
-    local fadeOut = addon.grabTab:CreateAnimationGroup()
-    local fadeOutAlpha = fadeOut:CreateAnimation("Alpha")
-    fadeOutAlpha:SetFromAlpha(1)
-    fadeOutAlpha:SetToAlpha(0)
-    fadeOutAlpha:SetDuration(0.15)
-    fadeOutAlpha:SetSmoothing("IN")
-    fadeOut:SetToFinalAlpha(true)
-    fadeOut:SetScript("OnFinished", function()
+    -- Fade animations
+    AddFadeAnims(addon.grabTab, 0.15, nil, function()
         -- Stay shown (alpha=0) so the frame keeps receiving mouse events
         addon.grabTab:SetAlpha(0)
     end)
-    addon.grabTab.fadeOut = fadeOut
     
     -- Start invisible but shown so mouse detection works immediately
     addon.grabTab:SetAlpha(0)
@@ -1356,7 +1307,7 @@ local function CreateInterruptIcon(addon, profile)
     -- Cleanup any existing interrupt icon
     if stdInterruptIcon then
         if UIAnimations then
-            if stdInterruptIcon.hasInterruptGlow then UIAnimations.StopInterruptGlow(stdInterruptIcon) end
+            if stdInterruptIcon.hasInterruptGlow then UIAnimations.HideInterruptProcGlow(stdInterruptIcon) end
             if stdInterruptIcon.hasProcGlow      then UIAnimations.HideProcGlow(stdInterruptIcon)      end
         end
         local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
@@ -1757,5 +1708,3 @@ function UIFrameFactory.SavePosition(addon)
     }
 end
 
--- Export public functions
-UIFrameFactory.GetSpellIcons = function() return spellIcons end

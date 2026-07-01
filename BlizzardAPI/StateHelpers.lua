@@ -24,7 +24,6 @@ local UnitHealthMax  = UnitHealthMax
 local UnitExists     = UnitExists
 local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
-local Unsecret      = BlizzardAPI.Unsecret
 local C_Secrets     = C_Secrets
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
 local strsplit      = strsplit       ---@diagnostic disable-line: undefined-global

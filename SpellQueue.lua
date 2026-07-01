@@ -149,25 +149,6 @@ function SpellQueue.ToggleSpellBlacklist(spellID)
     end
 end
 
-function SpellQueue.GetBlacklistedSpells()
-    local blacklist = GetBlacklistTable()
-    if not blacklist then return {} end
-
-    local spells = {}
-    for spellID, _ in pairs(blacklist) do
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(spellID)
-        if spellInfo and spellInfo.name then
-            spells[#spells + 1] = {
-                id = spellID,
-                name = spellInfo.name,
-                icon = spellInfo.iconID
-            }
-        end
-    end
-
-    table.sort(spells, function(a, b) return a.name < b.name end)
-    return spells
-end
 
 -- Position 1 / spellbook proc filter: availability + usability + redundancy.
 -- Usability (C_Spell.IsSpellUsable) is NeverSecret; includes resource + CD check.

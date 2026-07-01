@@ -193,21 +193,9 @@ function LiveSearchPopup.Open(config)
     hintText:Show()
 
     frame:ClearAllPoints()
-    if config.anchor then
-        frame:SetPoint("TOPLEFT", config.anchor, "TOPRIGHT", 8, 0)
-    else
-        frame:SetPoint("CENTER", UIParent, "CENTER")
-    end
+    frame:SetPoint("CENTER", UIParent, "CENTER")
 
     frame:Show()
     frame:Raise()
     searchEdit:SetFocus()
-end
-
-function LiveSearchPopup.Close()
-    frame:Hide()
-end
-
-function LiveSearchPopup.IsOpen()
-    return frame:IsShown()
 end

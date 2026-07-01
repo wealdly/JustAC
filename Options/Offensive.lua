@@ -129,18 +129,7 @@ function Offensive.UpdateBlacklistOptions(addon)
     }
     blacklistArgs.listHeader = {
         type = "header",
-        name = function()
-            local className, playerClass = UnitClass("player")
-            local colorCode = (playerClass and SpellSearch and SpellSearch.CLASS_COLORS
-                and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-            local specIndex = GetSpecialization and GetSpecialization()
-            local specName
-            if specIndex then
-                local _, name = GetSpecializationInfo(specIndex)
-                specName = name
-            end
-            return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Blacklist"] .. " (" .. (specName or "?") .. ")"
-        end,
+        name = SpellSearch.SpecHeader(L["Blacklist"]),
         order = 22.5,
     }
 

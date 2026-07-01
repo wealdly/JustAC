@@ -48,13 +48,6 @@ function Options.RefreshAllDynamic(addon)
     end
 end
 
--- Shared NotifyChange wrapper - guards the registry lookup in one place so
--- panels and the Widgets builders don't each re-inline the nil check.
-local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
-function Options.NotifyChange()
-    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-end
-
 -------------------------------------------------------------------------------
 -- Shared display-mode predicates used by options sub-modules
 -------------------------------------------------------------------------------
@@ -203,13 +196,15 @@ local function HandleSlashCommand(addon, input)
             CallDebug("BurstDiagnostics")
         elseif topic == "auras" then
             CallDebug("AuraDiagnostics")
+        elseif topic == "buffs" then
+            CallDebug("PrecombatBuffDiagnostics")
         elseif topic == "perf" then
             CallDebug("PerformanceDiagnostics", topicArg)
         elseif topic == "castdiag" then
             CallDebug("CastDiagnostics")
         else
             addon:Print("Unknown inspect topic: '" .. topic .. "'")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, perf [reset], castdiag")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], castdiag")
         end
 
     elseif command == "help" then

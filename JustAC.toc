@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.28.1
+## Version: 4.29.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -44,6 +44,8 @@ Data\SpellCategories.lua
 Data\SpellArchetypes.lua
 Data\InterruptAbilities.lua
 Data\RangeReferences.lua
+Data\HealingItems.lua
+Data\PrecombatBuffs.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua
@@ -64,10 +66,12 @@ UI\CastInterruptTracker.lua
 UI\UIFrameFactory.lua
 UI\UIRenderer.lua
 UI\UINameplateOverlay.lua
+UI\UIPrecombatOverlay.lua
 
 # Engines  (depend on full UI stack)
 DefensiveEngine.lua
 GapCloserEngine.lua
+PrecombatEngine.lua
 BurstInjectionEngine.lua
 DebugCommands.lua
 

@@ -16,9 +16,6 @@ local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C
 local IsSecretValue = BlizzardAPI.IsSecretValue
 local Unsecret      = BlizzardAPI.Unsecret
 
--- Version constants set by BlizzardAPI.lua (root) before this file loads.
-local IS_MIDNIGHT_OR_LATER = BlizzardAPI.IS_MIDNIGHT_OR_LATER
-
 --------------------------------------------------------------------------------
 -- Feature Availability (12.0+ secret value graceful degradation)
 --------------------------------------------------------------------------------
@@ -155,10 +152,6 @@ function BlizzardAPI.GetAuraTiming(unit, index, filter)
     local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
     if not aura then return nil, nil end
     return Unsecret(aura.duration), Unsecret(aura.expirationTime)
-end
-
-function BlizzardAPI.IsMidnightOrLater()
-    return IS_MIDNIGHT_OR_LATER
 end
 
 

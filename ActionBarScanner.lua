@@ -920,10 +920,6 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     return previousValue or ""
 end
 
-function ActionBarScanner.FindSpellInActions(spellID, spellName)
-    return FindSpellInActions(spellID, spellName)
-end
-
 -- Item hotkey lookup: override → direct bar scan → cast-spell fallback.
 -- Uses GetOptimizedKeybind + AbbreviateKeybind for consistent formatting.
 function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
@@ -1046,13 +1042,11 @@ end
 local activeProcs = {}
 local activeProcsList = {}
 local procListDirty = true
-local defensiveProcsListDirty = true
 
 function ActionBarScanner.OnProcShow(spellID)
     if spellID and spellID > 0 and not activeProcs[spellID] then
         activeProcs[spellID] = true
         procListDirty = true
-        defensiveProcsListDirty = true
 
         -- Track override spell too
         local displayID = BlizzardAPI and BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID)
@@ -1069,13 +1063,11 @@ function ActionBarScanner.OnProcHide(spellID)
         if activeProcs[spellID] then
             activeProcs[spellID] = nil
             procListDirty = true
-            defensiveProcsListDirty = true
         end
         
         if displayID and displayID ~= spellID and activeProcs[displayID] then
             activeProcs[displayID] = nil
             procListDirty = true
-            defensiveProcsListDirty = true
         end
     end
 end
@@ -1194,8 +1186,6 @@ local defensiveProcsList = {}
 
 -- Validates procs via API to catch stale event cache
 local function RebuildDefensiveProcList()
-    if not defensiveProcsListDirty then return end
-
     wipe(defensiveProcsList)
     local toRemove = {}
 
@@ -1217,12 +1207,10 @@ local function RebuildDefensiveProcList()
         procListDirty = true
     end
 
-    defensiveProcsListDirty = false
 end
 
 -- Force revalidation: stale procs cause visible glow color issues
 function ActionBarScanner.GetDefensiveProccedSpells()
-    defensiveProcsListDirty = true
     RebuildDefensiveProcList()
     return defensiveProcsList
 end

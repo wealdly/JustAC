@@ -110,18 +110,7 @@ function GapClosers.CreateTabArgs(addon)
             spellListGroup = {
                 type = "group",
                 inline = true,
-                name = function()
-                    local className, playerClass = UnitClass("player")
-                    local colorCode = (playerClass and SpellSearch and SpellSearch.CLASS_COLORS
-                        and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    local specIndex = GetSpecialization and GetSpecialization()
-                    local specName
-                    if specIndex then
-                        local _, name = GetSpecializationInfo(specIndex)
-                        specName = name
-                    end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. L["Gap-Closers"] .. " (" .. (specName or "?") .. ")"
-                end,
+                name = SpellSearch.SpecHeader(L["Gap-Closers"]),
                 order = 10,
                 disabled = function()
                     local profile = addon:GetProfile()

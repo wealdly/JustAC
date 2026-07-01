@@ -7,7 +7,7 @@
 -- Key functions added by each submodule:
 --   SpellQuery.lua        → GetAddon, GetProfile, GetDebugMode, GetSpellInfo, IsSpellUsable
 --   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
---   SecretValues.lua      → IsMidnightOrLater, IsRedundancyFilterAvailable
+--   SecretValues.lua      → IsRedundancyFilterAvailable
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
 local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 35)
 if not BlizzardAPI then return end
@@ -19,7 +19,6 @@ local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
 local _, CURRENT_BUILD = GetBuildInfo()
 CURRENT_BUILD = tonumber(CURRENT_BUILD) or 0
 BlizzardAPI.IS_MIDNIGHT_OR_LATER   = CURRENT_VERSION >= 120000
-BlizzardAPI._interfaceVersion      = CURRENT_VERSION
 
 -- Build 66562 (2026-03-24): ActionButton_ApplyCooldown no longer accepts secret
 -- values from addon (tainted) execution. New DurationObject-based cooldown APIs

@@ -9,6 +9,93 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
+-- Pre-combat buff options -------------------------------------------------------------
+-- categories[cat]: false = off, a stat string = preference, nil = auto (optimal/recency).
+local PB_STAT_ORDER = { "off", "auto", "haste", "crit", "mastery", "versatility" }
+local function pbStatValues()
+    return {
+        off = L["Off"], auto = L["Auto"], haste = L["Haste"],
+        crit = L["Crit"], mastery = L["Mastery"], versatility = L["Versatility"],
+    }
+end
+
+local function pbCategories(addon)
+    local pb = addon.db.profile.precombatBuffs
+    pb.categories = pb.categories or {}
+    return pb.categories
+end
+
+-- Apply an options change immediately: drop the buff cache, then rebuild the queues.
+local function pbApply(addon)
+    local PE = LibStub("JustAC-PrecombatEngine", true)
+    if PE and PE.ClearCache then PE.ClearCache() end
+    addon:ForceUpdateAll()
+end
+
+local function pbDisabled(addon)
+    return addon.db.profile.precombatBuffs.enabled == false
+end
+
+-- Wrap a category label so it also shows the specific bag item the current selection
+-- resolves to - "Flask  (Flask of Tempered Swiftness)" - answering "which flask will it
+-- use?". Green matches the OOC buff glow; shows "(none in bags)" when nothing owned fits.
+local function pbNameWithMatch(addon, cat, base)
+    return function()
+        local v = pbCategories(addon)[cat]
+        if v == false then return base end                       -- category off: label only
+        local SDB = LibStub("JustAC-SpellDB", true)
+        local entry = SDB and SDB.GetBestOwnedBuff
+            and SDB.GetBestOwnedBuff(cat, type(v) == "string" and v or nil)
+        if not entry then
+            return base .. "  |cff808080(" .. L["none in bags"] .. ")|r"
+        end
+        local itemName = (entry.id and GetItemInfo(entry.id)) or ("#" .. tostring(entry.id))
+        return base .. "  |cff2ecc71(" .. itemName .. ")|r"
+    end
+end
+
+-- Stat-preference dropdown (flask/food): Off / Auto / a secondary stat.
+local function pbStatSelect(addon, cat, name, order)
+    return {
+        type = "select", name = pbNameWithMatch(addon, cat, name), order = order,
+        values = pbStatValues, sorting = PB_STAT_ORDER,
+        disabled = function() return pbDisabled(addon) end,
+        get = function()
+            local v = pbCategories(addon)[cat]
+            if v == false then return "off" elseif type(v) == "string" then return v end
+            return "auto"
+        end,
+        set = function(_, val)
+            local c = pbCategories(addon)
+            if val == "off" then c[cat] = false
+            elseif val == "auto" then c[cat] = nil
+            else c[cat] = val end
+            pbApply(addon)
+        end,
+    }
+end
+
+-- On/off toggle, defaults ON (augment rune / weapon enchant: no stat choice).
+local function pbToggle(addon, cat, name, order)
+    return {
+        type = "toggle", name = pbNameWithMatch(addon, cat, name), order = order,
+        disabled = function() return pbDisabled(addon) end,
+        get = function() return pbCategories(addon)[cat] ~= false end,
+        set = function(_, v) pbCategories(addon)[cat] = v and nil or false; pbApply(addon) end,
+    }
+end
+
+-- On/off toggle, defaults OFF (xp / speed utility categories). "On" is stored as an
+-- explicit true so it overrides the AceDB `false` default (a nil would revert to it).
+local function pbToggleOff(addon, cat, name, order, desc)
+    return {
+        type = "toggle", name = pbNameWithMatch(addon, cat, name), order = order, desc = desc,
+        disabled = function() return pbDisabled(addon) end,
+        get = function() return pbCategories(addon)[cat] == true end,
+        set = function(_, v) pbCategories(addon)[cat] = v or false; pbApply(addon) end,
+    }
+end
+
 --- Returns true when the player's class has pet rez/summon defaults.
 local function IsPetRezClass()
     local _, pc = UnitClass("player")
@@ -29,6 +116,32 @@ function Defensives.CreateTabArgs(addon)
         name = L["Defensives"],
         order = 5,
         args = {
+            precombatGroup = {
+                type = "group",
+                inline = true,
+                name = L["Pre-combat Buffs"],
+                order = 10,
+                args = {
+                    pbEnabled = {
+                        type = "toggle",
+                        name = L["Enable Pre-combat Buffs"],
+                        desc = L["Pre-combat Buffs desc"],
+                        order = 1,
+                        width = "full",
+                        get = function() return addon.db.profile.precombatBuffs.enabled ~= false end,
+                        set = function(_, v)
+                            addon.db.profile.precombatBuffs.enabled = v
+                            pbApply(addon)
+                        end,
+                    },
+                    flask = pbStatSelect(addon, "flask", L["Flask"], 10),
+                    food = pbStatSelect(addon, "food", L["Food"], 11),
+                    augmentRune = pbToggle(addon, "augmentRune", L["Augment Rune"], 12),
+                    weaponEnchant = pbToggle(addon, "weaponEnchant", L["Weapon Enchant"], 13),
+                    speed = pbToggleOff(addon, "speed", L["Speed"], 14, L["Speed desc"]),
+                    xp = pbToggleOff(addon, "xp", L["XP"], 15, L["XP desc"]),
+                },
+            },
             spellListGroup = {
                 type = "group",
                 inline = true,
@@ -173,10 +286,7 @@ function Defensives.UpdateDefensivesOptions(addon)
 
     -- Determine if this is a pet class (has rez or heal defaults)
     local SpellDB = LibStub("JustAC-SpellDB", true)
-    local isPetClass = SpellDB and (
-        (SpellDB.CLASS_PET_REZ_DEFAULTS and SpellDB.CLASS_PET_REZ_DEFAULTS[playerClass])
-        or (SpellDB.CLASS_PETHEAL_DEFAULTS and SpellDB.CLASS_PETHEAL_DEFAULTS[playerClass])
-    )
+    local isPetClass = SpellDB and SpellDB.ClassHasPetDefaults(playerClass)
 
     local updateFunc = function()
         Defensives.UpdateDefensivesOptions(addon)

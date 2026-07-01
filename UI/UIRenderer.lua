@@ -385,11 +385,6 @@ local HOTKEY_MIN_FONT_SIZE = UIFrameFactory.HOTKEY_MIN_FONT_SIZE
 local HOTKEY_OFFSET_FIRST = UIFrameFactory.HOTKEY_OFFSET_FIRST
 local HOTKEY_OFFSET_QUEUE = UIFrameFactory.HOTKEY_OFFSET_QUEUE
 
-local function GetQueueDesaturation()
-    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
-    return profile and profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
-end
-
 local isInCombat = false
 local isChanneling = false
 local channelSpellID = nil  -- Override spellID (for fill animation matching)
@@ -403,7 +398,6 @@ local lastPanelLocked = nil
 local lastFrameState = {
     shouldShow = false,
     spellCount = 0,
-    lastUpdate = 0,
 }
 
 -- Swipe animates smoothly once set; no need to update every frame.
@@ -783,6 +777,9 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         defensiveIcon.lastDefVisualState = defVisualState
     end
 
+    -- Fill sweep while this item is the active channel - including the synthetic "eating"
+    -- channel we derive from a food's on-use aura above (StartChannelFill falls back to that
+    -- aura's timing when there's no real UnitChannelInfo).
     if isDefActiveSpell and isChanneling then
         if not defensiveIcon._hasChannelFill and UIAnimations then
             UIAnimations.StartChannelFill(defensiveIcon)
@@ -919,10 +916,22 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local isProc = procCheckID and IsSpellProcced(procCheckID) or false
     local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
 
-    if wantProcGlow then
+    -- Inserted pre-combat buffs get their own vivid-green glow (out of combat) so they read
+    -- as distinct, important "use me" icons rather than ordinary defensive suggestions.
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local isBuff = not isInCombat and SDB and (
+        (isItem and SDB.IsPrecombatBuffItem and SDB.IsPrecombatBuffItem(id))
+        or (not isItem and SDB.IsClassMaintainedBuff and SDB.IsClassMaintainedBuff(id)))
+    if isBuff then
+        UIAnimations.HideProcGlow(defensiveIcon)
+        UIAnimations.StopDefensiveGlow(defensiveIcon)
+        UIAnimations.StartPrecombatGlow(defensiveIcon, isInCombat)
+    elseif wantProcGlow then
+        UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.ShowProcGlow(defensiveIcon, isInCombat)
     else
+        UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.HideProcGlow(defensiveIcon)
         local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
         if showMarching then
@@ -945,6 +954,7 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
     
     if defensiveIcon:IsShown() or defensiveIcon.currentID then
         UIAnimations.StopDefensiveGlow(defensiveIcon)
+        UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.HideProcGlow(defensiveIcon)
         defensiveIcon.spellID = nil
         defensiveIcon.itemID = nil
@@ -1021,6 +1031,10 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
             end
         end
     end
+
+    -- Re-seat the out-of-combat click layers over any inserted pre-combat buff icons.
+    local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
+    if PrecombatOverlay and PrecombatOverlay.Refresh then PrecombatOverlay.Refresh() end
 end
 
 function UIRenderer.HideDefensiveIcons(addon)
@@ -1057,6 +1071,7 @@ function UIRenderer.HideInterruptIcon(intIcon)
     intIcon.iconTexture:SetDesaturation(0)
     if UIAnimations then
         UIAnimations.HideInterruptProcGlow(intIcon)
+        UIAnimations.HideInterruptCastBar(intIcon)
         if intIcon.hasProcGlow then UIAnimations.HideProcGlow(intIcon); intIcon.hasProcGlow = false end
         intIcon.hasInterruptGlow = false
     end
@@ -1131,6 +1146,24 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     -- Shared cast/channel state (used by both standard queue and nameplate overlay).
     isChanneling, channelSpellID, isCasting, castSpellID = ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
+
+    -- Eating is aura-based, NOT a spell channel (no cast bar, no UnitChannelInfo), and uses a
+    -- generic "Food" aura distinct from the food's on-use spell. When it's active, treat the
+    -- shown food buff icon as the channel target so the queue greys out and it shows the fill.
+    local SDB = LibStub("JustAC-SpellDB", true)
+    if not isChanneling and not isCasting and addon.defensiveIcons
+            and profile.greyOutWhileChanneling ~= false
+            and SDB and SDB.GetActiveEatingAura and SDB.GetActiveEatingAura() then
+        for _, dicon in ipairs(addon.defensiveIcons) do
+            if dicon:IsShown() and dicon.isItem and dicon.itemCastSpellID
+                    and SDB.GetPrecombatBuffCategory
+                    and SDB.GetPrecombatBuffCategory(dicon.itemID) == "food" then
+                isChanneling = true
+                channelSpellID = dicon.itemCastSpellID
+                break
+            end
+        end
+    end
 
     -- Cooldown throttle: shared by defensive and offensive icon updates below.
     local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -1270,6 +1303,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 UIAnimations.ShowInterruptProcGlow(intIcon)
                 intIcon.hasInterruptGlow = true
             end
+
+            -- Secret-aware target cast-progress bar with a kick-zone (engine-driven).
+            UIAnimations.ShowInterruptCastBar(intIcon)
 
             -- Cast bar textures can be secret in 12.0 - pass through unconditionally.
             if intIcon.castAura then
@@ -1747,7 +1783,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     
     lastFrameState.shouldShow = shouldShowFrame
     lastFrameState.spellCount = spellCount
-    lastFrameState.lastUpdate = currentTime
 end
 
 function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
@@ -1825,14 +1860,6 @@ end
 
 function UIRenderer.SetChannelSpellID(spellID)
     cachedChannelSpellID = spellID
-end
-
-function UIRenderer.GetCachedCastSpellID()
-    return cachedCastSpellID
-end
-
-function UIRenderer.GetCachedChannelSpellID()
-    return cachedChannelSpellID
 end
 
 function UIRenderer.ResolvePlayerCastState(profile)

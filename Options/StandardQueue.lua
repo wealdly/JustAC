@@ -315,6 +315,12 @@ function StandardQueue.CreateTabArgs(addon)
                         sorting = { "unlocked", "locked", "clickthrough" },
                         disabled = panelDisabled,
                     }),
+                    clickToCastOOC = W.toggle(addon, "clickToCastOOC", {
+                        name = L["Click to Cast"], desc = L["Click to Cast desc"],
+                        order = 24, width = "full", default = true,
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = panelDisabled,
+                    }),
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -342,6 +348,7 @@ function StandardQueue.CreateTabArgs(addon)
                             p.frameOpacity        = 1.0
                             p.tooltipMode         = "always"
                             p.panelInteraction    = "unlocked"
+                            p.clickToCastOOC      = true
                             -- Clear legacy migration keys
                             p.panelLocked      = nil
                             p.showTooltips     = nil
@@ -503,10 +510,14 @@ function StandardQueue.CreateTabArgs(addon)
                         hidden = function()
                             local _, pc = UnitClass("player")
                             local SDB = LibStub("JustAC-SpellDB", true)
-                            if not SDB or not pc then return true end
-                            return not ((SDB.CLASS_PET_REZ_DEFAULTS and SDB.CLASS_PET_REZ_DEFAULTS[pc])
-                                or (SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]))
+                            return not (SDB and SDB.ClassHasPetDefaults(pc))
                         end,
+                    }),
+                    showTargetHealthBar = W.toggle(addon, "defensives.showTargetHealthBar", {
+                        name = L["Show Target Health Bar"], desc = L["Show Target Health Bar desc"],
+                        order = 13, width = "normal",
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defensiveDisabled,
                     }),
                     -- RESET
                     resetHeader = {
@@ -529,6 +540,7 @@ function StandardQueue.CreateTabArgs(addon)
                             def.glowMode         = "all"
                             def.showHealthBar    = true
                             def.showPetHealthBar = true
+                            def.showTargetHealthBar = true
                             -- Clear legacy migration keys
                             def.showOnlyInCombat    = nil
                             def.alwaysShowDefensive = nil

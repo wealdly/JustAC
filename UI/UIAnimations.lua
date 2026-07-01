@@ -6,6 +6,8 @@ if not UIAnimations then return end
 
 local GetTime = GetTime
 local UnitChannelInfo = UnitChannelInfo
+local UnitCastingDuration = UnitCastingDuration
+local UnitChannelDuration = UnitChannelDuration
 
 -- Flash animation constants
 local FLASH_DURATION = 0.2
@@ -19,6 +21,7 @@ local StopAssistedGlow
 local StopDefensiveGlow
 local StopGapCloserGlow
 local StopBurstGlow
+local StopPrecombatGlow
 local UpdateFlash
 
 -- Create marching ants glow to show active abilities (Blizzard's rotation helper style)
@@ -182,14 +185,6 @@ local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
 end
 
-local function ShowBurstProcGlow(icon)
-    ShowColoredProcGlow(icon, "BurstProcGlowFrame", BURST_PROC_R, BURST_PROC_G, BURST_PROC_B)
-end
-
-local function HideBurstProcGlow(icon)
-    HideColoredProcGlow(icon, "BurstProcGlowFrame")
-end
-
 local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
     if highlightFrame and highlightFrame.Flipbook then
         -- The rotationhelper_ants_flipbook atlas is predominantly blue/cyan.
@@ -209,7 +204,6 @@ end
 -- | Assisted    | JustACAssistedGlow         | 1, 1, 1       | no    | ×1.02  | yes       | hasAssistedGlow   | yes         |
 -- | Defensive   | DefensiveHighlightFrame    | 0.3, 1.0, 0.3 | no    | ×1.0   | yes       | hasDefensiveGlow  | yes         |
 -- | Gap-closer  | GapCloserHighlightFrame    | 1.0, 0.95, 0.4| yes   | ×1.0   | no        | hasGapCloserGlow  | no          |
--- | Interrupt   | InterruptHighlightFrame    | 1.0, 0.95, 0.4| yes   | ×1.0   | no        | hasInterruptGlow  | yes         |
 
 -- Per-type configuration tables (avoid allocations on hot path)
 local GLOW_CONFIG = {
@@ -243,16 +237,6 @@ local GLOW_CONFIG = {
         pauseField  = nil,                   -- No pause tracking needed
         clearsProc  = false,
     },
-    INTERRUPT = {
-        frameKey    = "InterruptHighlightFrame",
-        r = 1.0, g = 0.95, b = 0.4,         -- Same gold as gap-closer
-        desaturate  = true,
-        scaleMul    = 1.0,
-        pauseOOC    = false,                 -- Combat-only anyway, always animate
-        flagField   = "hasInterruptGlow",
-        pauseField  = nil,
-        clearsProc  = true,
-    },
     BURST = {
         frameKey    = "BurstHighlightFrame",
         r = 0.7, g = 0.2, b = 1.0,          -- Purple for burst injection
@@ -260,6 +244,16 @@ local GLOW_CONFIG = {
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
         flagField   = "hasBurstGlow",
+        pauseField  = nil,
+        clearsProc  = false,
+    },
+    PRECOMBAT = {
+        frameKey    = "PrecombatHighlightFrame",
+        r = 0.2, g = 1.0, b = 0.4,          -- Vivid green for inserted pre-combat buffs
+        desaturate  = false,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- Always animate: these are the OOC call to action
+        flagField   = "hasPrecombatGlow",
         pauseField  = nil,
         clearsProc  = false,
     },
@@ -374,12 +368,12 @@ StopBurstGlow = function(icon)
     StopMarchingAntsGlow(icon, GLOW_CONFIG.BURST)
 end
 
-local function StartInterruptGlow(icon, isInCombat)
-    StartMarchingAntsGlow(icon, GLOW_CONFIG.INTERRUPT, isInCombat)
+local function StartPrecombatGlow(icon, isInCombat)
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.PRECOMBAT, isInCombat)
 end
 
-local function StopInterruptGlow(icon)
-    StopMarchingAntsGlow(icon, GLOW_CONFIG.INTERRUPT)
+StopPrecombatGlow = function(icon)
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.PRECOMBAT)
 end
 
 local function StartFlash(button)
@@ -446,7 +440,8 @@ local function HideIconGlows(icon)
     StopDefensiveGlow(icon)
     StopGapCloserGlow(icon)
     StopBurstGlow(icon)
-    StopInterruptGlow(icon)
+    HideInterruptProcGlow(icon)
+    icon.hasInterruptGlow = false
     HideProcGlow(icon)
 end
 
@@ -630,6 +625,27 @@ local function StartChannelFill(icon)
 
     -- Get channel timing from UnitChannelInfo (all NeverSecret, verified 2026-03-05)
     local _, _, _, startMS, endMS = UnitChannelInfo("player")
+    -- Aura-based application (eating food) is not a real channel - fall back to the item's
+    -- on-use aura, then the generic eating aura, for timing so the sweep still tracks.
+    if (not startMS or not endMS) and C_UnitAuras then
+        local aura = icon.itemCastSpellID
+            and C_UnitAuras.GetPlayerAuraBySpellID(icon.itemCastSpellID)
+        local eating = false
+        if not aura then
+            local SDB = LibStub("JustAC-SpellDB", true)
+            if SDB and SDB.GetActiveEatingAura then
+                aura = SDB.GetActiveEatingAura()
+                eating = aura ~= nil
+            end
+        end
+        if aura and aura.expirationTime and aura.duration and aura.duration > 0 then
+            startMS = (aura.expirationTime - aura.duration) * 1000
+            -- Well Fed lands after ~10s of eating, not the full ~20s aura - track that
+            -- window so the sweep completes exactly when the buff is granted.
+            endMS = eating and (startMS + math.min(aura.duration, 10) * 1000)
+                or aura.expirationTime * 1000
+        end
+    end
     if not startMS or not endMS then return end
 
     local totalDuration = (endMS - startMS) / 1000
@@ -676,6 +692,89 @@ local function StopChannelFill(icon)
     icon._hasChannelFill = false
 end
 
+--------------------------------------------------------------------------------
+-- Interrupt cast-progress bar (secret-aware)
+--------------------------------------------------------------------------------
+-- Reflects the TARGET's cast progress on the interrupt icon without ever reading
+-- a (12.0-secret) timing value: a unit-keyed cast Duration object drives a
+-- StatusBar through the engine's SetTimerDuration sink, so the engine animates
+-- the fill and we compute nothing.  A static "kick zone" segment marks the final
+-- quarter; the engine-driven fill animates into it (press when it enters).  Casts
+-- fill forward; channels drain.  Self-disables on clients without the timer API.
+local HAS_CAST_TIMER = UnitCastingDuration and Enum
+    and Enum.StatusBarTimerDirection and Enum.StatusBarInterpolation and true or false
+
+local INTERRUPT_KICKZONE_FRAC = 0.25
+
+local function CreateInterruptCastBar(icon)
+    local bar = CreateFrame("StatusBar", nil, icon)
+    bar:SetPoint("BOTTOMLEFT",  icon, "BOTTOMLEFT",   1, 1)
+    bar:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", -1, 1)
+    bar:SetFrameLevel(icon:GetFrameLevel() + 3)
+    if icon.isOverlayIcon then bar:SetFrameStrata("BACKGROUND") end
+
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    local fill = bar:GetStatusBarTexture()
+    if fill then fill:SetVertexColor(1.0, 0.82, 0.0, 1) end  -- gold fill
+
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(bar)
+    bg:SetColorTexture(0, 0, 0, 0.6)
+
+    local zone = bar:CreateTexture(nil, "OVERLAY")
+    zone:SetPoint("TOPRIGHT",    bar, "TOPRIGHT",    0, 0)
+    zone:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
+    zone:SetColorTexture(1.0, 0.2, 0.1, 0.40)  -- static "press now" zone
+    bar.KickZone = zone
+
+    bar:Hide()
+    icon.InterruptCastBar = bar
+    return bar
+end
+
+local function ShowInterruptCastBar(icon)
+    if not icon or not HAS_CAST_TIMER then return end
+    local bar = icon.InterruptCastBar or CreateInterruptCastBar(icon)
+
+    -- Size to the current icon (icons scale with firstIconScale); zone = final quarter.
+    local size = icon.cachedIconSize or icon:GetWidth() or 0
+    if size > 0 then
+        bar:SetHeight(math.max(4, size * 0.18))
+        bar.KickZone:SetWidth(math.max(1, (size - 2) * INTERRUPT_KICKZONE_FRAC))
+    end
+
+    -- Arm once per cast; only latch on a successful drive so a transient nil
+    -- duration retries next frame instead of leaving the bar blank.
+    if icon._castBarArmed and bar:IsShown() then return end
+
+    local durObj, isChannel
+    local ok, d = pcall(UnitCastingDuration, "target")
+    if ok and d and type(d) == "userdata" then durObj, isChannel = d, false end
+    if not durObj and UnitChannelDuration then
+        ok, d = pcall(UnitChannelDuration, "target")
+        if ok and d and type(d) == "userdata" then durObj, isChannel = d, true end
+    end
+
+    if not durObj or not bar.SetTimerDuration then
+        bar:Hide()
+        icon._castBarArmed = false
+        return
+    end
+
+    local dir = isChannel and Enum.StatusBarTimerDirection.RemainingTime
+                          or  Enum.StatusBarTimerDirection.ElapsedTime
+    bar:SetMinMaxValues(0, 1)
+    bar:SetTimerDuration(durObj, Enum.StatusBarInterpolation.Immediate, dir)
+    bar:Show()
+    icon._castBarArmed = true
+end
+
+local function HideInterruptCastBar(icon)
+    if not icon or not icon.InterruptCastBar then return end
+    icon.InterruptCastBar:Hide()
+    icon._castBarArmed = false
+end
+
 -- Exports
 UIAnimations.StartAssistedGlow = StartAssistedGlow
 UIAnimations.StopAssistedGlow = StopAssistedGlow
@@ -685,14 +784,12 @@ UIAnimations.StartGapCloserGlow = StartGapCloserGlow
 UIAnimations.StopGapCloserGlow = StopGapCloserGlow
 UIAnimations.StartBurstGlow = StartBurstGlow
 UIAnimations.StopBurstGlow = StopBurstGlow
-UIAnimations.StartInterruptGlow = StartInterruptGlow
-UIAnimations.StopInterruptGlow = StopInterruptGlow
+UIAnimations.StartPrecombatGlow = StartPrecombatGlow
+UIAnimations.StopPrecombatGlow = StopPrecombatGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
-UIAnimations.ShowBurstProcGlow = ShowBurstProcGlow
-UIAnimations.HideBurstProcGlow = HideBurstProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash
@@ -701,3 +798,5 @@ UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows
 UIAnimations.StartChannelFill = StartChannelFill
 UIAnimations.StopChannelFill = StopChannelFill
+UIAnimations.ShowInterruptCastBar = ShowInterruptCastBar
+UIAnimations.HideInterruptCastBar = HideInterruptCastBar

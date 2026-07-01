@@ -61,6 +61,7 @@ local defaults = {
         queueVisibility = "always",    -- "always", "combatOnly", or "requireHostile"
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
+        clickToCastOOC = true,            -- Left-click queue icons out of combat to cast/use them
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
@@ -130,6 +131,7 @@ local defaults = {
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = true,    -- Display compact health bar above main queue
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
+            showTargetHealthBar = true, -- Display compact target health bar opposite the player/pet bars (hostile targets only)
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
@@ -140,6 +142,14 @@ local defaults = {
             detached = false,                                    -- Give defensives their own independent draggable frame
             detachedPosition = { point = "CENTER", x = 0, y = 100 }, -- Saved position of the detached defensive frame
             detachedOrientation = "LEFT",                        -- Icon growth direction for detached frame (LEFT/RIGHT/UP/DOWN)
+        },
+        -- Pre-combat buff checklist (out of combat only; secure click-to-use overlay)
+        precombatBuffs = {
+            enabled = true,
+            -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
+            -- xp/speed are utility categories - default OFF (explicit false, so "on" must be
+            -- stored as a truthy value to override the AceDB default).
+            categories = { xp = false, speed = false },
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
@@ -514,6 +524,12 @@ function JustAC:OnEnable()
     if UIHealthBar and UIHealthBar.CreatePetHealthBar then
         UIHealthBar.CreatePetHealthBar(self)
     end
+    if UIHealthBar and UIHealthBar.CreateTargetHealthBar then
+        UIHealthBar.CreateTargetHealthBar(self)
+    end
+
+    local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
+    if PrecombatOverlay and PrecombatOverlay.Init then PrecombatOverlay.Init(self) end
 
     if UnitAffectingCombat("player") then
         if UIAnimations and UIAnimations.ResumeAllGlows then UIAnimations.ResumeAllGlows(self) end
@@ -578,6 +594,7 @@ function JustAC:OnEnable()
     -- ── Pet + equipment ────────────────────────────────────────────────────────────
     self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
+    self:RegisterEvent("BAG_UPDATE_DELAYED", "OnBagUpdate")
 
     -- ── Vehicle + override bars ──────────────────────────────────────────────────
     self:RegisterEvent("UNIT_ENTERED_VEHICLE",         "OnVehicleChanged")
@@ -738,6 +755,9 @@ function JustAC:EnterDisabledMode()
     if UIHealthBar and UIHealthBar.HidePet then
         UIHealthBar.HidePet()
     end
+    if UIHealthBar and UIHealthBar.HideTarget then
+        UIHealthBar.HideTarget()
+    end
 
     -- Hide nameplate overlay
     if UINameplateOverlay then UINameplateOverlay.HideAll() end
@@ -767,6 +787,9 @@ function JustAC:ExitDisabledMode()
         end
         if profile.defensives.showPetHealthBar and UIHealthBar.UpdatePetVisibility then
             UIHealthBar.UpdatePetVisibility(self)
+        end
+        if profile.defensives.showTargetHealthBar and UIHealthBar.UpdateTargetVisibility then
+            UIHealthBar.UpdateTargetVisibility(self)
         end
     end
 
@@ -848,6 +871,12 @@ end
 
 -- Defensive Engine wrapper methods (delegated to DefensiveEngine module)
 function JustAC:OnHealthChanged(event, unit)
+    -- Target health bar lives outside the defensive system; handle it here so
+    -- target health never enters DefensiveEngine (which only acts on player/pet).
+    if unit == "target" then
+        if UIHealthBar and UIHealthBar.UpdateTarget then UIHealthBar.UpdateTarget(self) end
+        return
+    end
     if DefensiveEngine then DefensiveEngine.OnHealthChanged(self, event, unit) end
 end
 function JustAC:InitializeDefensiveSpells()
@@ -1045,6 +1074,9 @@ function JustAC:UpdateSpellQueue()
     if UIRenderer and UIRenderer.RenderSpellQueue then
         UIRenderer.RenderSpellQueue(self, currentSpells)
     end
+    -- Re-seat the out-of-combat click layers over the freshly-rendered main-queue icons.
+    local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
+    if PrecombatOverlay and PrecombatOverlay.Refresh then PrecombatOverlay.Refresh() end
     if UINameplateOverlay then
         UINameplateOverlay.Render(self, currentSpells)
         -- Re-render cached defensive icons on the same tick so both queues
@@ -1413,6 +1445,10 @@ function JustAC:OnTargetChanged()
     end
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
     if UINameplateOverlay then UINameplateOverlay.UpdateAnchor(self) end
+    -- Target health bar: show/hide for the new target (hostile-only).
+    if UIHealthBar and UIHealthBar.UpdateTargetVisibility then
+        UIHealthBar.UpdateTargetVisibility(self)
+    end
     -- Invalidate rotation cache so Blizzard is re-queried for the new target
     -- (prevents stale spells from previous target persisting).
     if SpellQueue and SpellQueue.InvalidateRotationCache then
@@ -1481,6 +1517,15 @@ function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
     -- Equipment can change defensive item availability (trinkets/belt/gloves),
     -- so refresh both queues immediately instead of waiting for defensive cadence.
     self:ForceUpdateAll()
+end
+
+-- Bags changed (loot, used a potion, leveled into a new tier) - mark the emergency
+-- healing-item scan stale so it re-resolves the best owned pot on the next OOC build.
+function JustAC:OnBagUpdate()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if SpellDB and SpellDB.MarkHealingBagsDirty then
+        SpellDB.MarkHealingBagsDirty()
+    end
 end
 
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
@@ -1712,6 +1757,7 @@ function JustAC:UpdateFrameSize()
     if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
     if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
     if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
+    if UIHealthBar and UIHealthBar.UpdateTargetSize then UIHealthBar.UpdateTargetSize(self) end
     -- Re-apply target frame anchor after resize (SetSize doesn't move the frame, but
     -- the anchor guard IsShown check may not have fired before the first render)
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end

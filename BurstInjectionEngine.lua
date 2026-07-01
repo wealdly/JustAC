@@ -278,31 +278,6 @@ function BurstInjectionEngine.GetBurstSpecKey()
     return SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
 end
 
---- Return class default trigger spells for the current spec (ignores overrides).
---- Shows all defaults regardless of talent status - for display in options panel.
---- Returns: { {spellID=number, name=string, baseCd=number}, ... } or empty table.
-function BurstInjectionEngine.GetDefaultTriggers()
-    local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
-    if not specKey or not SpellDB or not SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then return {} end
-    local defaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
-    if not defaults then return {} end
-    local result = {}
-    for _, spellID in ipairs(defaults) do
-        if spellID and spellID > 0 then
-            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
-            local displayID = resolvedID or spellID
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(displayID)
-            if not spellInfo then
-                spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            end
-            local name = spellInfo and spellInfo.name or tostring(spellID)
-            local baseCd = GetBaseCooldownSeconds(displayID)
-            result[#result + 1] = { spellID = displayID, name = name, baseCd = baseCd }
-        end
-    end
-    return result
-end
-
 --- Return the active trigger spell list for the current spec.
 --- Shows explicit overrides if configured, otherwise SpellDB curated defaults.
 --- Filters by IsSpellAvailable (talent alternatives the player doesn't know are hidden).

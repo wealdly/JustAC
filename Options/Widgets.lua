@@ -112,31 +112,5 @@ end
 function W.toggle(addon, path, opts) return scalar(addon, "toggle", path, opts) end
 function W.range(addon, path, opts)  return scalar(addon, "range",  path, opts) end
 function W.select(addon, path, opts) return scalar(addon, "select", path, opts) end
-function W.input(addon, path, opts)  return scalar(addon, "input",  path, opts) end
-
--- Color widget: stored as {r,g,b,a}; get/set fan the components in and out.
-function W.color(addon, path, opts)
-    local segs = compilePath(path)
-    local lastKey = segs[#segs]
-    local default = opts.default
-    local hasAlpha = opts.hasAlpha
-    local onSet = opts.onSet
-    local notify = opts.notify
-    local entry = buildBase(addon, "color", opts)
-    entry.get = function()
-        local c = pathGet(addon.db.profile, segs) or default or {}
-        return c.r or 1, c.g or 1, c.b or 1, (hasAlpha and (c.a or 1)) or 1
-    end
-    entry.set = function(_, r, g, b, a)
-        local parent = pathEnsureParent(addon.db.profile, segs)
-        local c = parent[lastKey]
-        if type(c) ~= "table" then c = {}; parent[lastKey] = c end
-        c.r, c.g, c.b = r, g, b
-        if hasAlpha then c.a = a end
-        if onSet then onSet(addon, c) end
-        if notify then notifyChange() end
-    end
-    return entry
-end
 
 return W

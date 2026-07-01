@@ -74,6 +74,7 @@ local function HideDefensiveIconFrames(addon)
 end
 
 -- Resize both player and pet health bars to match visible defensive icon count.
+-- (The target bar hugs the queue at a fixed gap and is not defensive-count-driven.)
 local function ResizeHealthBars(addon, count)
     if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, count) end
     if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, count) end
@@ -107,7 +108,7 @@ end
 -- 12.0: UnitHealth() is secret in combat. The only reliable in-combat signal is
 -- LowHealthFrame visibility (~35% threshold, NeverSecret). Health levels above 35%
 -- are indistinguishable in combat - no thresholds above 35% are usable.
-ResolveHealthState = function(profile)
+ResolveHealthState = function()
     local isLow = BlizzardAPI and BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState()
     return isLow == true
 end
@@ -180,6 +181,20 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
             if defaults then
                 CopySpellList(cs, cfg.listKey, defaults)
             end
+        end
+    end
+
+    -- Emergency Potion tile: add its sentinel to the defensive list once (default on, at
+    -- the bottom). The per-spec flag means removing the tile sticks - it won't re-add.
+    if SpellDB and SpellDB.EMERGENCY_POTION and not cs.emergencyPotionInit then
+        cs.emergencyPotionInit = true
+        cs.defensiveSpells = cs.defensiveSpells or {}
+        local present = false
+        for i = 1, #cs.defensiveSpells do
+            if cs.defensiveSpells[i] == SpellDB.EMERGENCY_POTION then present = true; break end
+        end
+        if not present then
+            cs.defensiveSpells[#cs.defensiveSpells + 1] = SpellDB.EMERGENCY_POTION
         end
     end
 
@@ -304,7 +319,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
 
     -- Health state - computed once, shared by main panel and overlay paths
     local inCombat = UnitAffectingCombat("player")
-    local isLow = ResolveHealthState(profile)
+    local isLow = ResolveHealthState()
 
     -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
     -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
@@ -522,6 +537,39 @@ end
 -- Display order: instant procs first, then unified defensive list in user priority order.
 -- overrides (optional table): displayMode, maxIcons, showProcs - override profile defaults for
 -- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
+-- Replace the Emergency Potion sentinel (a user-positioned tile in the defensive list)
+-- with the chosen or best owned healing item, as an item entry. Returns the list as-is
+-- when no sentinel is present; otherwise a resolved copy (never mutates the saved list).
+-- choice: -1 = off (drop it), 0/nil = auto best owned, >0 = a specific owned item.
+local function ResolveEmergencyDefensives(list, profile)
+    if not list or not SpellDB or not SpellDB.EMERGENCY_POTION then return list end
+    local sentinel = SpellDB.EMERGENCY_POTION
+    local hasSentinel = false
+    for i = 1, #list do if list[i] == sentinel then hasSentinel = true; break end end
+    if not hasSentinel then return list end
+
+    local choice = profile.defensives.emergencyPotionChoice
+    local potID
+    if choice == -1 then
+        potID = nil  -- disabled via the tile dropdown
+    elseif choice and choice > 0 and (GetItemCount(choice) or 0) > 0 then
+        potID = choice
+    elseif SpellDB.GetBestHealingItem then
+        potID = SpellDB.GetBestHealingItem()
+    end
+
+    local out = {}
+    for i = 1, #list do
+        local e = list[i]
+        if e == sentinel then
+            if potID then out[#out + 1] = -potID end
+        else
+            out[#out + 1] = e
+        end
+    end
+    return out
+end
+
 function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
@@ -557,7 +605,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         inCombat = passedInCombat or UnitAffectingCombat("player")
     else
         -- Safety net: resolve health state from scratch if caller didn't pass it
-        isLow = ResolveHealthState(profile)
+        isLow = ResolveHealthState()
         inCombat = UnitAffectingCombat("player")
     end
 
@@ -571,6 +619,38 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             displayMode = "always"
         else
             displayMode = "healthBased"
+        end
+    end
+
+    -- Out of combat: insert missing pre-combat buffs at the FRONT of the queue so the
+    -- existing defensive icons shift back. Display rides the normal item-icon path; the
+    -- click-to-use layer (UIPrecombatOverlay) sits invisibly over these icons, OOC only.
+    -- Main panel only (not overrides) - the nameplate overlay has no click layers, and
+    -- buffs on a target's nameplate make no sense.
+    if not inCombat and not overrides
+        and profile.precombatBuffs and profile.precombatBuffs.enabled ~= false then
+        local PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
+        if PrecombatEngine and PrecombatEngine.GetMissingBuffItems then
+            for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(profile.precombatBuffs.categories)) do
+                if #results >= maxIcons then break end
+                if not alreadyAdded[itemID] then
+                    results[#results + 1] = { spellID = itemID, isItem = true, isProcced = false }
+                    alreadyAdded[itemID] = true
+                end
+            end
+        end
+        -- Class maintained buffs (poisons, imbues) as spell entries, gated by IsPlayerSpell.
+        -- These deliberately BYPASS dpsQueueExclusions: the SBA lists a missing poison in the
+        -- offensive queue, but as an OOC pre-combat buff we want it ALSO shown here as a
+        -- clickable green buff - honoring the exclusion would hide it from the defensive queue
+        -- entirely. GetMissingClassBuffs returns distinct spells, so no in-loop dedupe is
+        -- needed; mark alreadyAdded so the later proc/defensive passes don't re-add them.
+        if PrecombatEngine and PrecombatEngine.GetMissingClassBuffs then
+            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs()) do
+                if #results >= maxIcons then break end
+                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false }
+                alreadyAdded[spellID] = true
+            end
         end
     end
 
@@ -605,8 +685,10 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- Early exit: proc injection already filled the queue
     if #results >= maxIcons then return results, alreadyAdded end
 
-    -- Unified defensive spell list (user-ordered priority)
+    -- Unified defensive spell list (user-ordered priority); resolve the Emergency Potion
+    -- tile's sentinel into the chosen/best owned item before the usability passes.
     local defensiveSpells = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
+    defensiveSpells = ResolveEmergencyDefensives(defensiveSpells, profile)
 
     -- Procced spells from configured list (any health level)
     AppendUsableSpells(addon, results, defensiveSpells, maxIcons, alreadyAdded, true)

@@ -41,65 +41,6 @@ local localCharges = {}
 -- Minimum base cooldown to track - ignore GCD-only spells
 local MIN_TRACKABLE_CD_SECS = 3
 
--- GCD startRecoveryCategory value (NeverSecret, verified 2026-02-25)
-local GCD_CATEGORY = 133
-
--- Off-GCD spell cache: spells that do NOT trigger the global cooldown.
--- Pre-populated with known off-GCD defensives as of 12.0.7; self-learning fills the
--- rest via SPELL_UPDATE_COOLDOWN startRecoveryCategory (NeverSecret) for registered spells.
--- Default (unknown) is "on GCD" - fail-closed means no spurious GCD swipe.
-local offGCDCache = {
-    -- Death Knight
-    [48707]  = true, -- Anti-Magic Shell
-    [51052]  = true, -- Anti-Magic Zone
-    [48792]  = true, -- Icebound Fortitude
-    -- Demon Hunter
-    [196718] = true, -- Darkness
-    [198589] = true, -- Blur
-    [196555] = true, -- Netherwalk
-    -- Druid
-    [22812]  = true, -- Barkskin
-    [61336]  = true, -- Survival Instincts
-    -- Evoker
-    [363916] = true, -- Obsidian Scales
-    [374348] = true, -- Zephyr
-    -- Hunter
-    [109304] = true, -- Exhilaration
-    [186265] = true, -- Aspect of the Turtle
-    -- Mage
-    [45438]  = true, -- Ice Block
-    -- Monk
-    [115203] = true, -- Fortifying Brew
-    [122278] = true, -- Dampen Harm
-    [122783] = true, -- Diffuse Magic
-    -- Paladin
-    [498]    = true, -- Divine Protection
-    [633]    = true, -- Lay on Hands
-    [642]    = true, -- Divine Shield
-    [1022]   = true, -- Blessing of Protection
-    [6940]   = true, -- Blessing of Sacrifice
-    -- Priest
-    [19236]  = true, -- Desperate Prayer
-    [33206]  = true, -- Pain Suppression
-    [47788]  = true, -- Guardian Spirit
-    -- Rogue
-    [1966]   = true, -- Feint
-    [5277]   = true, -- Evasion
-    [31224]  = true, -- Cloak of Shadows
-    -- Shaman
-    [108271] = true, -- Astral Shift
-    -- Warlock
-    [104773] = true, -- Unending Resolve
-    [108416] = true, -- Dark Pact
-    -- Warrior
-    [871]    = true, -- Shield Wall
-    [12975]  = true, -- Last Stand
-    [23920]  = true, -- Spell Reflection
-    [97462]  = true, -- Rallying Cry
-    [118038] = true, -- Die by the Sword
-    [184364] = true, -- Enraged Regeneration
-}
-
 -- Hidden tooltip for parsing traited cooldown values
 local probeTooltip = nil
 
@@ -349,30 +290,6 @@ local function ScanCooldownDurations()
     end
 end
 
---- Try to clear a local cooldown/charge entry via action bar usability.
---- Called when isOnGCD is nil (unflagged spell) - usability cross-check detects
---- CDR completion that isOnGCD alone cannot see.
---- Returns true if the local CD was cleared.
-local function TryClearViaCrossCheck(spellID)
-    local usable, noMana = BlizzardAPI.GetActionBarUsability(spellID)
-    if usable == nil then return false end  -- no slot, can't determine
-    -- usable=true → CD done. noMana=true → CD done but resource-blocked.
-    -- Either way the cooldown has expired.
-    if usable or noMana then
-        localCooldowns[spellID] = nil
-        -- Also advance charge recovery if charge spell at 0 charges
-        local chargeData = localCharges[spellID]
-        if chargeData and chargeData.current <= 0 then
-            ProcessChargeRecovery(chargeData)
-            if chargeData.current <= 0 then
-                chargeData.current = 1
-            end
-        end
-        return true
-    end
-    return false
-end
-
 --- Check tracked spells with active local cooldowns for early CD completion.
 --- Called on SPELL_UPDATE_COOLDOWN. Detection method:
 ---   isOnGCD == true → GCD only, real CD has ended (flagged rotation spells).
@@ -451,18 +368,7 @@ local function InitCooldownTracking()
             end
         elseif event == "SPELL_UPDATE_COOLDOWN" then
             -- spellID payload is NeverSecret in combat (verified 2026-02-25)
-            -- startRecoveryCategory=133 means spell triggers GCD (NeverSecret, static per spell)
-            local spellID, baseSpellID, category, startRecoveryCategory = ...
-            -- Self-learn GCD status for registered spells (bounded to tracked set)
-            if spellID and startRecoveryCategory ~= nil and trackedSpells[spellID] then
-                if startRecoveryCategory ~= GCD_CATEGORY then
-                    offGCDCache[spellID] = true
-                    if baseSpellID and baseSpellID ~= spellID then offGCDCache[baseSpellID] = true end
-                else
-                    offGCDCache[spellID] = nil
-                    if baseSpellID and baseSpellID ~= spellID then offGCDCache[baseSpellID] = nil end
-                end
-            end
+            local spellID = ...
             CheckCooldownCompletions(spellID)
         elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
             ClearLocalCooldowns()
@@ -505,8 +411,18 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
         end
     end
 
-    -- Only "rotation" category has the CD duration gate
-    if category == "rotation" then
+    -- A charge ability's cooldown lives on its per-charge recharge, so GetSpellBaseCooldown
+    -- reads ~0 and the rotation gate below would drop it - leaving IsSpellReady and the
+    -- charge UI with no charge data. maxCharges is NeverSecret (readable in combat,
+    -- verified 2026-06-30), so detect charge spells directly and exempt them from the gate.
+    local isChargeSpell = false
+    if C_Spell_GetSpellCharges then
+        local ok, ci = pcall(C_Spell_GetSpellCharges, spellID)
+        if ok and ci and (Unsecret(ci.maxCharges) or 0) > 1 then isChargeSpell = true end
+    end
+
+    -- Only "rotation" category has the CD duration gate; charge spells are exempt.
+    if category == "rotation" and not isChargeSpell then
         local effectiveCdMs = (cachedDurations[spellID] or 0) * 1000
         if effectiveCdMs < MIN_TRACKABLE_CD_SECS * 1000 then return end
     end
@@ -569,13 +485,6 @@ function BlizzardAPI.GetLocalCooldown(spellID)
     return nil
 end
 
---- Get cached maxCharges for a spell. Returns nil if unknown.
---- Populated at spell registration (out of combat) and refreshed on combat exit.
---- ALL GetSpellCharges fields are SECRET in combat (verified 2026-02-25).
-function BlizzardAPI.GetCachedMaxCharges(spellID)
-    return cachedMaxCharges[spellID]
-end
-
 --- Returns true when a charge-based spell has 0 charges remaining.
 --- Uses local charge tracking (cast decrements + lazy recharge recovery).
 --- Returns false (fail-open) if the spell has no cached charge data.
@@ -584,6 +493,15 @@ function BlizzardAPI.IsChargeSpellOnCooldown(spellID)
     if not data then return false end
     ProcessChargeRecovery(data)
     return data.current <= 0
+end
+
+-- Debug: report a spell's presence in the tracking caches. Diagnoses the sink/readiness
+-- gap where a spell falls outside local CD/charge tracking and IsSpellReady fails open in
+-- combat. Returns: category|nil, maxCharges|nil, currentCharges|nil, localCDActive(bool).
+function BlizzardAPI.DebugTrackingState(spellID)
+    if not spellID then return nil, nil, nil, false end
+    local cdata = localCharges[spellID]
+    return trackedSpells[spellID], cachedMaxCharges[spellID], cdata and cdata.current, localCooldowns[spellID] ~= nil
 end
 
 --------------------------------------------------------------------------------
@@ -600,13 +518,6 @@ end
 --- When isOnGCD is nil in combat, SpellCooldownInfo.isActive (NeverSecret) is
 --- used as ground truth: true → real unflagged CD running; false → spell ready.
 --- Returns true if the spell is known to NOT trigger the global cooldown.
---- Pre-populated at module load; self-learned from SPELL_UPDATE_COOLDOWN for registered spells.
---- Default (unknown): false - fail-closed, no spurious GCD swipe.
-function BlizzardAPI.IsSpellOffGCD(spellID)
-    if not spellID then return false end
-    return offGCDCache[spellID] == true
-end
-
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true end
 

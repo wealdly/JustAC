@@ -5,6 +5,7 @@ local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 1)
 if not SpellSearch then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Hot path locals
@@ -281,6 +282,25 @@ function SpellSearch.ClearDynamicArgs(argsTable, staticKeys)
 end
 
 -------------------------------------------------------------------------------
+-- Returns a name-function for a class-colored, spec-suffixed inline header.
+-- label: already-localized middle text, e.g. L["Blacklist"].
+-------------------------------------------------------------------------------
+function SpellSearch.SpecHeader(label)
+    return function()
+        local className, playerClass = UnitClass("player")
+        local colorCode = (playerClass and SpellSearch.CLASS_COLORS
+            and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
+        local specIndex = GetSpecialization and GetSpecialization()
+        local specName
+        if specIndex then
+            local _, name = GetSpecializationInfo(specIndex)
+            specName = name
+        end
+        return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. label .. " (" .. (specName or "?") .. ")"
+    end
+end
+
+-------------------------------------------------------------------------------
 -- Helper to add a spell or item to a list (used by both dropdown and manual input)
 -- Positive ID = spell, negative ID = item (stored as -itemID in the list)
 -------------------------------------------------------------------------------
@@ -338,10 +358,32 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
     if not spellList then return end
 
     for i, entry in ipairs(spellList) do
-        local isItemEntry = (entry < 0)
+        local isEmergency = listType == "defensive" and SpellDB and SpellDB.EMERGENCY_POTION
+            and entry == SpellDB.EMERGENCY_POTION
+        local isItemEntry = (not isEmergency) and (entry < 0)
         local displayName, displayIcon, cooldownInfo
 
-        if isItemEntry then
+        if isEmergency then
+            local p = _addon:GetProfile()
+            local choice = (p and p.defensives and p.defensives.emergencyPotionChoice) or 0
+            local label
+            if choice == -1 then
+                label = "|cff888888" .. (L["Emergency Potion Off"] or "Off") .. "|r"
+            elseif choice > 0 then
+                label = (GetItemInfo(choice)) or ("Item " .. choice)
+            else
+                local bestID = SpellDB.GetBestHealingItem and SpellDB.GetBestHealingItem()
+                local bestName = bestID and (GetItemInfo(bestID))
+                if bestName then
+                    label = (L["Auto"] or "Auto") .. ": " .. bestName
+                else
+                    label = (L["Auto best owned"] or "Auto (best owned)")
+                end
+            end
+            displayName = (L["Emergency Potion"] or "Emergency Potion") .. " |cff00ccff(" .. label .. ")|r"
+            displayIcon = 134832
+            cooldownInfo = ""
+        elseif isItemEntry then
             -- Negative entry = item ID
             local itemID = -entry
             local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
@@ -378,9 +420,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     width = 0.3,
                     disabled = function() return i == 1 end,
                     func = function()
-                        local temp = spellList[i - 1]
-                        spellList[i - 1] = spellList[i]
-                        spellList[i] = temp
+                        spellList[i - 1], spellList[i] = spellList[i], spellList[i - 1]
                         updateFunc()
                     end
                 },
@@ -392,9 +432,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     width = 0.3,
                     disabled = function() return i == #spellList end,
                     func = function()
-                        local temp = spellList[i + 1]
-                        spellList[i + 1] = spellList[i]
-                        spellList[i] = temp
+                        spellList[i + 1], spellList[i] = spellList[i], spellList[i + 1]
                         updateFunc()
                     end
                 },
@@ -423,6 +461,63 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                 }
             }
         }
+
+        -- Emergency Potion tile: a dropdown to pick which pot it fires (or turn it off).
+        if isEmergency then
+            local entryArgs = defensivesArgs[listType .. "_" .. i].args
+            entryArgs.potion = {
+                type = "select",
+                name = L["Emergency Potion Use"] or "Use",
+                desc = function()
+                    local rule = L["Emergency Potion Auto Desc"]
+                        or ("Auto fires the health item that restores the most at your "
+                            .. "current maximum health, so a percentage potion is weighed "
+                            .. "fairly against a fixed-amount one. Pick a specific potion "
+                            .. "to override.")
+                    local info = SpellDB and SpellDB.GetBestHealingItemInfo
+                        and SpellDB.GetBestHealingItemInfo()
+                    if not info then return rule end
+                    local restores
+                    if info.isPct then
+                        restores = info.value .. "%"
+                        if info.heal and info.heal > 0 then
+                            restores = restores .. " (~" .. BreakUpLargeNumbers(math.floor(info.heal)) .. ")"
+                        end
+                    elseif info.value and info.value > 0 then
+                        restores = "~" .. BreakUpLargeNumbers(info.value)
+                    end
+                    local best = "|cff00ff00" .. info.name .. "|r"
+                    if restores then
+                        best = best .. " — " .. restores .. " " .. (L["health"] or "health")
+                    end
+                    if info.owned > 1 then
+                        best = best .. " (" .. (L["best of"] or "best of") .. " " .. info.owned .. ")"
+                    end
+                    return rule .. "\n\n" .. (L["Best in bags"] or "Best in bags") .. ": " .. best
+                end,
+                order = 0.5,
+                width = "double",
+                values = function()
+                    local vals = {
+                        [-1] = (L["Emergency Potion Off"] or "Off"),
+                        [0]  = (L["Auto best owned"] or "Auto (best owned)"),
+                    }
+                    if SpellDB and SpellDB.GetOwnedHealingItems then
+                        for _, it in ipairs(SpellDB.GetOwnedHealingItems()) do vals[it.id] = it.name end
+                    end
+                    return vals
+                end,
+                get = function()
+                    local p = _addon:GetProfile()
+                    return (p and p.defensives and p.defensives.emergencyPotionChoice) or 0
+                end,
+                set = function(_, v)
+                    local p = _addon:GetProfile()
+                    if p and p.defensives then p.defensives.emergencyPotionChoice = v end
+                    updateFunc()
+                end,
+            }
+        end
 
         -- Per-item controls: Link Aura + Hide in Combat
         if isItemEntry then

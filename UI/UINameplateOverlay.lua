@@ -199,77 +199,33 @@ local function CreateOverlayHealthBar(initialWidth)
     bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)
     bar.bg = bg
 
-    -- Horizontal bevel strips (4-strip symmetric tube).
-    -- Shown when orientation is HORIZONTAL, hidden when VERTICAL.
-    local shBot1 = bar:CreateTexture(nil, "OVERLAY")
-    shBot1:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shBot1:SetVertexColor(0, 0, 0, 0.35)
-    shBot1:SetPoint("BOTTOMLEFT",  bar, "BOTTOMLEFT",  0, 0)
-    shBot1:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
-    shBot1:SetHeight(1)
-    shBot1:Hide()
+    -- 1px black bevel strip on bar's OVERLAY layer; starts hidden (shown per orientation).
+    local function bevelStrip(alpha, a, b, ox, oy, horizontal)
+        local t = bar:CreateTexture(nil, "OVERLAY")
+        t:SetTexture("Interface\\Buttons\\WHITE8X8")
+        t:SetVertexColor(0, 0, 0, alpha)
+        t:SetPoint(a, bar, a, ox, oy)
+        t:SetPoint(b, bar, b, ox, oy)
+        if horizontal then t:SetHeight(1) else t:SetWidth(1) end
+        t:Hide()
+        return t
+    end
 
-    local shBot2 = bar:CreateTexture(nil, "OVERLAY")
-    shBot2:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shBot2:SetVertexColor(0, 0, 0, 0.16)
-    shBot2:SetPoint("BOTTOMLEFT",  bar, "BOTTOMLEFT",  0, 1)
-    shBot2:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 1)
-    shBot2:SetHeight(1)
-    shBot2:Hide()
+    -- Horizontal bevel strips (shown when orientation is HORIZONTAL).
+    bar.hBevelStrips = {
+        bevelStrip(0.35, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  0, true),
+        bevelStrip(0.16, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  1, true),
+        bevelStrip(0.16, "TOPLEFT",    "TOPRIGHT",    0, -1, true),
+        bevelStrip(0.35, "TOPLEFT",    "TOPRIGHT",    0,  0, true),
+    }
 
-    local shTop1 = bar:CreateTexture(nil, "OVERLAY")
-    shTop1:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shTop1:SetVertexColor(0, 0, 0, 0.16)
-    shTop1:SetPoint("TOPLEFT",  bar, "TOPLEFT",  0, -1)
-    shTop1:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, -1)
-    shTop1:SetHeight(1)
-    shTop1:Hide()
-
-    local shTop2 = bar:CreateTexture(nil, "OVERLAY")
-    shTop2:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shTop2:SetVertexColor(0, 0, 0, 0.35)
-    shTop2:SetPoint("TOPLEFT",  bar, "TOPLEFT",  0, 0)
-    shTop2:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
-    shTop2:SetHeight(1)
-    shTop2:Hide()
-
-    bar.hBevelStrips = { shBot1, shBot2, shTop1, shTop2 }
-
-    -- Vertical bevel strips (symmetric, same alphas as horizontal).
-    -- Shown when orientation is VERTICAL, hidden when HORIZONTAL.
-    local shL1 = bar:CreateTexture(nil, "OVERLAY")
-    shL1:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shL1:SetVertexColor(0, 0, 0, 0.35)
-    shL1:SetPoint("TOPLEFT",    bar, "TOPLEFT",    0, 0)
-    shL1:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
-    shL1:SetWidth(1)
-    shL1:Hide()
-
-    local shL2 = bar:CreateTexture(nil, "OVERLAY")
-    shL2:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shL2:SetVertexColor(0, 0, 0, 0.16)
-    shL2:SetPoint("TOPLEFT",    bar, "TOPLEFT",    1, 0)
-    shL2:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 1, 0)
-    shL2:SetWidth(1)
-    shL2:Hide()
-
-    local shR1 = bar:CreateTexture(nil, "OVERLAY")
-    shR1:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shR1:SetVertexColor(0, 0, 0, 0.16)
-    shR1:SetPoint("TOPRIGHT",    bar, "TOPRIGHT",    -1, 0)
-    shR1:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -1, 0)
-    shR1:SetWidth(1)
-    shR1:Hide()
-
-    local shR2 = bar:CreateTexture(nil, "OVERLAY")
-    shR2:SetTexture("Interface\\Buttons\\WHITE8X8")
-    shR2:SetVertexColor(0, 0, 0, 0.35)
-    shR2:SetPoint("TOPRIGHT",    bar, "TOPRIGHT",    0, 0)
-    shR2:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", 0, 0)
-    shR2:SetWidth(1)
-    shR2:Hide()
-
-    bar.bevelStrips = { shL1, shL2, shR1, shR2 }
+    -- Vertical bevel strips (shown when orientation is VERTICAL).
+    bar.bevelStrips = {
+        bevelStrip(0.35, "TOPLEFT",  "BOTTOMLEFT",  0, 0, false),
+        bevelStrip(0.16, "TOPLEFT",  "BOTTOMLEFT",  1, 0, false),
+        bevelStrip(0.16, "TOPRIGHT", "BOTTOMRIGHT", -1, 0, false),
+        bevelStrip(0.35, "TOPRIGHT", "BOTTOMRIGHT", 0, 0, false),
+    }
 
     bar:SetAlpha(0)
     bar:Hide()
@@ -890,6 +846,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
         if interruptIcon then
             if UIAnimations then
                 UIAnimations.HideInterruptProcGlow(interruptIcon)
+                UIAnimations.HideInterruptCastBar(interruptIcon)
                 if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
                 interruptIcon.hasInterruptGlow = false
             end
@@ -1054,6 +1011,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 UIAnimations.ShowInterruptProcGlow(interruptIcon)
                 interruptIcon.hasInterruptGlow = true
             end
+
+            -- Secret-aware target cast-progress bar with a kick-zone (engine-driven).
+            if UIAnimations then UIAnimations.ShowInterruptCastBar(interruptIcon) end
 
             -- Cast aura: passthrough the enemy cast bar icon texture from the
             -- nameplate (textures can be secret values in 12.0 - pass directly
@@ -1672,6 +1632,7 @@ function UINameplateOverlay.HideAll()
     if interruptIcon then
         if UIAnimations then
             UIAnimations.HideInterruptProcGlow(interruptIcon)
+            UIAnimations.HideInterruptCastBar(interruptIcon)
             if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
             interruptIcon.hasInterruptGlow = false
         end
