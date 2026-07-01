@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [4.30.1] - 2026-07-01
+
+### Added
+- **Shamans get a weapon-imbue reminder.** Out of combat, when your weapon has no enchant,
+  JustAC reminds you to apply your imbue — Windfury or Flametongue for Enhancement,
+  Earthliving for Restoration — as a clickable green buff icon, just like the other
+  pre-combat reminders. It won't suggest a weapon oil on top of an imbue you'd rather use.
+
+### Changed
+- **Interrupt and crowd-control reminders dim on the global cooldown.** A reminder that's
+  briefly unavailable only because the global cooldown is ticking now greys out, so a
+  fully-lit icon always means it's ready to press. Interrupts that ignore the global
+  cooldown stay lit.
+
+### Fixed
+- Fixed an error that could appear when opening the options window.
+
 ## [4.30.0] - 2026-07-01
 
 ### Added

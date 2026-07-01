@@ -230,8 +230,8 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
     },
     -- No aura-based maintained pre-combat self-buff (or handled by the pet system):
     -- DEATHKNIGHT, DEMONHUNTER, HUNTER, MONK, PALADIN, WARLOCK. Shaman weapon imbues
-    -- (Windfury/Flametongue) show as weapon enchants, not auras, so they need
-    -- GetWeaponEnchantInfo detection - deferred to a later pass.
+    -- (Windfury/Flametongue/Earthliving) are weapon enchants, not auras - they're suggested
+    -- via GetWeaponEnchantInfo in PrecombatEngine (see WEAPON_IMBUE_SPELLS below).
 }
 
 local CLASS_BUFF_SET = {}  -- flat spellID set, for the green-glow emphasis on class-buff icons
@@ -240,6 +240,16 @@ for _, groups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
         for _, id in ipairs(grp.group) do CLASS_BUFF_SET[id] = true end
     end
 end
+
+-- Weapon imbues (shaman): these apply a temp weapon ENCHANT, not a player aura, so they can't
+-- live in CLASS_MAINTAINED_BUFFS (that path detects via auras). PrecombatEngine suggests them
+-- by reading the weapon directly (GetWeaponEnchantInfo). Listed here only so they green-glow
+-- and get the OOC click hint like the other maintained buffs. IsPlayerSpell picks the first
+-- the player knows, which cleanly separates specs (Enhancement -> Windfury, Resto -> Earthliving)
+-- with no explicit spec/class check. Mirrors RedundancyFilter's WEAPON_ENCHANT_SPELLS whitelist
+-- (12.0 Midnight) minus Frostbrand, a situational swap that's never the default maintained imbue.
+SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
+for _, id in ipairs(SpellDB.WEAPON_IMBUE_SPELLS) do CLASS_BUFF_SET[id] = true end
 
 --- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
 function SpellDB.IsClassMaintainedBuff(spellID)
@@ -285,15 +295,15 @@ local function OwnsBuffEntry(e)
 end
 
 -- Caster specs (intellect primary) want weapon oils; physical specs want stones/whetstones.
--- The highest of str/agi/int identifies the primary stat - gear stacks it heavily, so the
--- comparison is reliable at the levels that pre-buff. Out of combat only (stats OK there).
+-- The spec's primary stat is deterministic and non-secret; reading raw UnitStat instead
+-- returns a SECRET number under taint (e.g. options opened from addon code), and comparing
+-- secrets throws. GetSpecializationInfo's 6th return is the primary stat (same enum as
+-- UnitStat: 1=Str, 2=Agi, 4=Int).
 local function PlayerPrefersOil()
-    if not UnitStat then return false end
-    local _, str = UnitStat("player", 1)
-    local _, agi = UnitStat("player", 2)
-    local _, int = UnitStat("player", 4)
-    str, agi, int = str or 0, agi or 0, int or 0
-    return int > str and int > agi
+    if not (GetSpecialization and GetSpecializationInfo) then return false end
+    local spec = GetSpecialization()
+    if not spec then return false end
+    return select(6, GetSpecializationInfo(spec)) == 4  -- 4 = Intellect -> caster -> oil
 end
 
 --- Best owned buff entry for a category, honoring a stat preference, or nil. statPref

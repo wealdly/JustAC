@@ -1404,6 +1404,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             else
                 intIcon:SetAlpha(frameOpacity)
             end
+            -- Grey the reminder (interrupt or CC) while it's on the GCD; off-GCD
+            -- interrupts stay full-color since IsSpellOnGCD is false for them.
+            intIcon.iconTexture:SetDesaturation(BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0)
         else
             if intIcon.spellID or intIcon:IsShown() then
                 UIRenderer.HideInterruptIcon(intIcon)

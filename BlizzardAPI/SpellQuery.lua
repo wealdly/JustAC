@@ -241,6 +241,16 @@ function BlizzardAPI.GetGCDInfo()
     return 0, 0
 end
 
+-- True only when spellID is idle except for the shared GCD (off-GCD spells like most
+-- interrupts return false). Used to grey a reminder that's momentarily unavailable
+-- purely because a GCD is ticking. isOnGCD is NeverSecret, so this is safe in combat.
+function BlizzardAPI.IsSpellOnGCD(spellID)
+    if not spellID or not C_Spell_GetSpellCooldown then return false end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return false end
+    return cd.isOnGCD == true
+end
+
 -- 12.0: Falls back to action bar state when secret.
 -- failOpen (default true): return true when usability can't be determined.
 -- Pass false for gap closers where suggesting an unusable spell is worse than skipping.

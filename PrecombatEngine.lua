@@ -35,6 +35,18 @@ local function HasAnyAura(buffSet)
     end
 end
 
+-- The weapon imbue the player knows (in preference order), or nil. Shaman only - IsPlayerSpell
+-- gates and separates specs (Enhancement -> Windfury, Resto -> Earthliving). Imbues are weapon
+-- ENCHANTS, so they're detected/suggested off the weapon (GetWeaponEnchantInfo), not auras.
+local function KnownWeaponImbue()
+    local list = SpellDB and SpellDB.WEAPON_IMBUE_SPELLS
+    if not list then return nil end
+    for i = 1, #list do
+        if IsPlayerSpell(list[i]) then return list[i] end
+    end
+    return nil
+end
+
 --- Is the buff category already satisfied? Weapon enchant is read off the weapon (temp
 --- enchant); every other category from the player's auras. Out of combat only.
 function PrecombatEngine.IsCategorySatisfied(category)
@@ -58,8 +70,12 @@ function PrecombatEngine.GetMissingBuffs(settings)
     if InCombatLockdown() then return out end
     if not SpellDB or not SpellDB.GetPrecombatBuffCategories then return out end
     for _, category in ipairs(SpellDB.GetPrecombatBuffCategories()) do
+        -- An imbue-using class (Enhancement shaman) fills the main-hand enchant slot with its
+        -- weapon imbue, so never suggest a weapon oil for it - the imbue is offered instead by
+        -- GetMissingClassBuffs (and an oil would just overwrite the imbue anyway).
+        local skip = category == "weaponEnchant" and KnownWeaponImbue() ~= nil
         local pref = settings and settings[category]
-        if pref ~= false and not PrecombatEngine.IsCategorySatisfied(category) then
+        if not skip and pref ~= false and not PrecombatEngine.IsCategorySatisfied(category) then
             local entry = SpellDB.GetBestOwnedBuff(category,
                 type(pref) == "string" and pref or nil)
             if entry then
@@ -160,6 +176,16 @@ function PrecombatEngine.GetMissingClassBuffs()
                 local pick = HighestQueuedInGroup(grp.group) or grp.default
                 if pick and IsPlayerSpell(pick) then out[#out + 1] = pick end
             end
+        end
+    end
+    -- Weapon imbue (Enhancement shaman): a temp weapon ENCHANT, not a player aura, so it can't
+    -- ride the group loop above. Suggest the known imbue while the main hand is bare. Mirrors
+    -- IsCategorySatisfied's weapon read; GetWeaponEnchantInfo's first return is a plain OOC value.
+    if not InCombatLockdown() then
+        local imbue = KnownWeaponImbue()
+        if imbue then
+            local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
+            if not hasMainHand then out[#out + 1] = imbue end
         end
     end
     cachedClassBuffs, cachedClassBuffsAt = out, now

@@ -1048,6 +1048,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
             else
                 interruptIcon:SetAlpha(opacity)
             end
+            -- Grey the reminder (interrupt or CC) while it's on the GCD; off-GCD
+            -- interrupts stay full-color since IsSpellOnGCD is false for them.
+            interruptIcon.iconTexture:SetDesaturation(BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0)
         else
             UIRenderer.HideInterruptIcon(interruptIcon)
         end
