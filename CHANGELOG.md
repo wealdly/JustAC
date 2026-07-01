@@ -3,6 +3,33 @@
 
 ## [Unreleased]
 
+## [4.30.0] - 2026-07-01
+
+### Added
+- **Hide Emergency Heals Until Low Health** (Defensive settings) holds panic buttons,
+  including immunity bubbles, big instant heals, and health potions, until your health
+  drops below the low-health threshold. Mitigation and filler defensives still show.
+  Off by default.
+
+### Changed
+- **Smarter queue ordering.** The queue, meaning everything after the Assisted Combat
+  slot, now ranks each ability by how closely it matches Assisted Combat's current
+  suggestion. Target pattern and builder/spender role rise to the top, so the
+  alternatives on offer are the best fit for the current pull. This powers the
+  **Context Aware** ordering toggle, which is on by default, and applies to the Custom
+  Queue too.
+- Damage-over-time and bleed abilities are now recognized across every class and spec.
+- The options now call the first icon the **AC slot** and the rest **the queue**.
+- **Speed food and flasks now use the Speed stat.** Choosing "Speed" now suggests
+  consumables that grant the Speed secondary stat, and plain run-speed foods are no
+  longer suggested.
+
+### Fixed
+- Defensive icons no longer trigger blocked-action errors when they appear or hide
+  during combat while the queue is anchored to the target frame.
+- Cooldown swipes now stay on the correct ability when a macro slot changes with
+  modifier keys.
+
 ## [4.29.1] - 2026-07-01
 
 ### Pre-combat buffs

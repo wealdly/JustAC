@@ -319,9 +319,9 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
     local best, bestScore = nil, -1
     for i = 1, n do
         local e = b.items[i]
-        -- Speed foods are an explicit pick: they match ONLY statPref "speed" and never
-        -- surface under Auto or a stat pref (they share the single Well Fed slot with stat
-        -- foods). For every other category e.stat is never "speed", so this is a no-op.
+        -- Speed (the Speed secondary stat) is an explicit pick: entries match ONLY statPref
+        -- "speed" and never surface under Auto or another stat pref - Speed is niche, so we
+        -- don't let it masquerade as a spec's combat stat/flask. No-op when neither is "speed".
         if OwnsBuffEntry(e) and (e.stat == "speed") == (statPref == "speed") then
             local applies = true
             if weaponExp then
@@ -478,6 +478,7 @@ end
 local ARCH  = {}   -- [spellID] = "aoe" | "cleave" | "st"
 local RANGE = {}   -- [spellID] = "melee" | "ranged"
 local GATE  = {}   -- [spellID] = "stealth" | ...  (reserved; not yet filtered)
+local ROLE  = {}   -- [spellID] = "builder" | "spender"  (accumulator resource-phase)
 
 -- Hand overrides on top of the generated data: gates, and arch fixes for spells whose
 -- damage is indirect (triggered/cloned) and so can't be classified mechanically.
@@ -489,8 +490,8 @@ local function ApplyArchOverrides()
     GATE[53351]  = "execute"          -- Kill Shot (Marksmanship/Beast Mastery)
     GATE[320976] = "execute"          -- Kill Shot (Survival)
     GATE[322109] = "execute"          -- Touch of Death (Monk)
-    -- ARCH[280719] = "cleave"        -- Secret Technique: AOE via clones (uncomment to boost)
-    -- ARCH[426591] = "cleave"        -- Goremaw's Bite: AOE via trigger
+    ARCH[280719] = "cleave"           -- Secret Technique: AOE via clones
+    ARCH[426591] = "cleave"           -- Goremaw's Bite: AOE via trigger
 end
 
 --- Called by the generated Data/SpellArchetypes.lua. Accepts archetype groups, each a
@@ -509,6 +510,19 @@ end
 function SpellDB.GetArch(spellID)  return ARCH[spellID]  end
 function SpellDB.GetRange(spellID) return RANGE[spellID] end
 function SpellDB.GetGate(spellID)  return GATE[spellID]  end
+
+--- Called by the generated Data/SpellArchetypes.lua. Groups: { builder = {[id]=true,...},
+--- spender = {[id]=true,...} }. Role = the accumulator resource-phase (generates vs spends
+--- combo points / holy power / soul shards / etc.), orthogonal to archetype. Fuel resources
+--- (mana/rage/focus/energy/runes) are intentionally untagged -> nil -> neutral.
+function SpellDB.RegisterRoles(t)
+    if type(t) ~= "table" then return end
+    if t.builder then for id in pairs(t.builder) do ROLE[id] = "builder" end end
+    if t.spender then for id in pairs(t.spender) do ROLE[id] = "spender" end end
+end
+
+--- Builder/spender role ("builder"/"spender") or nil if untagged/neutral.
+function SpellDB.GetRole(spellID)  return ROLE[spellID]  end
 
 -- Apply overrides immediately so gate entries exist even before (or without) the data file.
 ApplyArchOverrides()
@@ -639,17 +653,22 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
 }
 
 -- Emergency tier for the <35% defensive reorder. Tier 1 = immunity bubble (survives any
--- hit), tier 2 = big instant heal (restores a large chunk now). Untagged = tier 3
--- (mitigation / small filler / cast-time heal), left in the normal filler-first order.
+-- hit), tier 2 = big instant heal (restores a large chunk in ONE hit, right now).
+-- Untagged = tier 3 (mitigation / small filler / cast-time or over-time heal), left in the
+-- normal filler-first order.
 -- Used only when below the low-health threshold to float survival buttons above fillers;
 -- above the threshold, list order (filler-first) and proc-priority already do the right thing.
+--
+-- Tier 2 is BURST-heal only: the big heal must land instantly. Cast-time heals (Healing
+-- Surge), HoTs / over-time heals (Regrowth, Frenzied Regeneration, Crimson Vial), and
+-- channels do NOT qualify - at <35% a heal that trickles in can't save you before the next
+-- hit lands, so floating it to the top would be actively misleading. Those stay tier 3.
 --
 -- Hand-curated over CLASS_DEFENSIVE_DEFAULTS: DB2 SpellEffect cleanly tags only the
 -- direct-aura bubbles (39/40 + broad school mask) and %-heals (Effect 136/67); the
 -- indirect-aura immunities (Turtle, Cloak) and flat/SP-scaled heals (Death Strike, Word
--- of Glory, Regrowth) are verified by hand. Tier 2 is "big instant heal" only - small
--- top-offs (Crimson Vial, Expel Harm) and cast-time heals (Healing Surge) stay tier 3.
--- Regenerate the candidate set per patch from SpellEffect; hand-verify the misses.
+-- of Glory) are verified by hand. Regenerate the candidate set per patch from SpellEffect;
+-- hand-verify the misses.
 local DEFENSE_TIER = {
     -- Tier 1 - immunity bubbles
     [642]    = 1,  -- Divine Shield (Paladin)
@@ -664,7 +683,6 @@ local DEFENSE_TIER = {
     [34428]  = 2,  -- Victory Rush (Warrior)
     [202168] = 2,  -- Impending Victory (Warrior)
     [49998]  = 2,  -- Death Strike (Death Knight)
-    [8936]   = 2,  -- Regrowth (Druid; instant when procced)
     [85673]  = 2,  -- Word of Glory (Paladin)
     [360995] = 2,  -- Verdant Embrace (Evoker)
 }

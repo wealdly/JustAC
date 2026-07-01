@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- UIPrecombatOverlay.lua - Out-of-combat click overlay for the whole panel. A pool of
--- invisible SecureActionButtonTemplate buttons is laid over every shown queue icon (main
--- rotation + defensive, including the inserted pre-combat buffs) so they can be clicked to
--- cast/use the ability out of combat.
+-- UIPrecombatOverlay.lua - Out-of-combat click overlay for the defensive queue. A pool of
+-- invisible SecureActionButtonTemplate buttons is laid over every shown defensive-queue icon
+-- (defensive/utility suggestions plus the inserted pre-combat buffs) so they can be clicked to
+-- cast/use the ability out of combat. The DPS rotation is keybind-only and never covered.
 --
 -- The display icons stay insecure - the queues rebuild and show/hide them every frame, which
 -- a secure (protected) frame can't do in combat - so only these transparent layers are
@@ -52,6 +52,15 @@ local function EnsurePool()
             local f = self.icon and self.icon:GetScript("OnLeave")
             if f then f(self.icon) end
         end)
+        -- Faint centered "click" hint, shown only over inserted pre-combat buff icons (which
+        -- only exist OOC anyway). FontStrings don't intercept mouse, so clicks still land.
+        local hint = b:CreateFontString(nil, "OVERLAY")
+        hint:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
+        hint:SetTextColor(1, 1, 1, 0.55)
+        hint:SetPoint("CENTER")
+        hint:SetText("click")
+        hint:Hide()
+        b.clickHint = hint
         b:Hide()
         layers[i] = b
     end
@@ -62,7 +71,7 @@ end
 -- ID - the proven path. Both mouse buttons fire it (a left-click-only macro turned out not
 -- to activate reliably); right-click hotkey-override yields to the click while the overlay
 -- is up, which only matters in unlocked mode.
-local function ConfigureLayer(layer, icon)
+local function ConfigureLayer(layer, icon, eating)
     layer.icon = icon
     if icon.isItem and icon.itemID then
         layer:SetAttribute("type", "item")
@@ -76,12 +85,21 @@ local function ConfigureLayer(layer, icon)
     layer:ClearAllPoints()
     layer:SetAllPoints(icon)
     layer:SetFrameLevel(icon:GetFrameLevel() + 10)
+    if layer.clickHint then
+        -- Mid-food-channel, clicking anything breaks the eat, so the hint says "wait".
+        if icon.isPrecombatBuff == true then
+            layer.clickHint:SetText(eating and "wait" or "click")
+            layer.clickHint:Show()
+        else
+            layer.clickHint:Hide()
+        end
+    end
     layer:Show()
     return true
 end
 
---- Lay click layers over every shown queue icon (main + defensive) out of combat. Yields in
---- click-through mode and when click-to-cast is disabled.
+--- Lay click layers over every shown defensive-queue icon out of combat (the DPS rotation is
+--- keybind-only). Yields in click-through mode and when click-to-cast is disabled.
 function PrecombatOverlay.OverlayClickLayers(addon)
     addon = addon or ownerAddon
     if not addon or InCombatLockdown() then return end
@@ -92,17 +110,20 @@ function PrecombatOverlay.OverlayClickLayers(addon)
     local clickThrough = p and p.panelInteraction == "clickthrough"
     local placed = 0
     if enabled and not clickThrough then
+        local SDB = LibStub("JustAC-SpellDB", true)
+        local eating = SDB and SDB.GetActiveEatingAura and SDB.GetActiveEatingAura() ~= nil
         local function cover(icons)
             if not icons then return end
             for i = 1, #icons do
                 local icon = icons[i]
                 if placed < POOL_SIZE and icon and icon:IsShown()
                     and (icon.spellID or (icon.isItem and icon.itemID)) then
-                    if ConfigureLayer(layers[placed + 1], icon) then placed = placed + 1 end
+                    if ConfigureLayer(layers[placed + 1], icon, eating) then placed = placed + 1 end
                 end
             end
         end
-        cover(addon.spellIcons)
+        -- Defensive queue only: it holds the inserted pre-combat buffs and utility/defensive
+        -- suggestions. The DPS rotation is keybind-driven and never click-to-cast.
         cover(addon.defensiveIcons)
     end
     for i = placed + 1, POOL_SIZE do layers[i]:Hide(); layers[i].icon = nil end

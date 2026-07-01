@@ -202,9 +202,9 @@ function Offensive.UpdateBlacklistOptions(addon)
                 }
             }
 
-            -- Position-1 scope toggle (spells only - items never appear at position 1).
+            -- AC-slot scope toggle (spells only - items never appear in the AC slot).
             -- On (value == true): hidden everywhere. Off ({fixedQueue=true}): hidden from
-            -- positions 2+ only, so Blizzard's position-1 recommendation can't stall.
+            -- the queue only, so Blizzard's AC-slot recommendation can't stall.
             if entry.id > 0 then
                 groupArgs.pos1 = {
                     type = "toggle",

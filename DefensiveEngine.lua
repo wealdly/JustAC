@@ -13,6 +13,7 @@ local wipe = wipe
 local ipairs = ipairs
 local pairs = pairs
 local math_min = math.min
+local GetSpellBaseCooldown = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 
 -- Module references (resolved at load time - DefensiveEngine loads after all deps in TOC)
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
@@ -88,7 +89,11 @@ local function ApplyMainPanelQueue(addon, defensiveQueue)
         elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
             UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
         end
-        ResizeHealthBars(addon, #defensiveQueue)
+        -- The cluster is padded with empty slots up to maxIcons (see ShowDefensiveIcons),
+        -- so the health bar spans the full cluster width, not just the filled count.
+        local def = addon:GetProfile() and addon:GetProfile().defensives
+        local maxDefIcons = math_min((def and def.maxIcons) or 4, 7)
+        ResizeHealthBars(addon, maxDefIcons)
     else
         HideDefensiveIconFrames(addon)
         ResizeHealthBars(addon, 0)
@@ -241,6 +246,10 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
             end
         end
     end
+
+    -- Cache base cooldowns OOC so the "hold-worthy" test (long-CD panic button vs rotational
+    -- heal) is a pure table read in combat - never a live/secret GetSpellBaseCooldown call.
+    DefensiveEngine.PreCacheDefensiveCooldowns(addon)
 end
 
 function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
@@ -534,6 +543,101 @@ local function OrderByEmergencyTier(list)
     return emergencyOrderBuf
 end
 
+-- Base cooldown (seconds) for a spell, cached. MUST be populated OUT of combat -
+-- GetSpellBaseCooldown returns secrets in combat, so an unreadable value is NOT cached
+-- (it's retried on the next OOC pass). Combat reads go straight to defBaseCdCache below.
+local defBaseCdCache = {}
+local function GetDefBaseCooldownSeconds(spellID)
+    if not spellID or spellID <= 0 then return 0 end
+    local cached = defBaseCdCache[spellID]
+    if cached ~= nil then return cached end
+    local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+    if ms == nil or BlizzardAPI.IsSecretValue(ms) then
+        return 0  -- unreadable (in combat): don't cache, let a later OOC pass fill it
+    end
+    local sec = (ms > 0) and (ms / 1000) or 0
+    -- Charge-based spells report 0 base CD but have a per-charge recharge time.
+    if sec == 0 and C_Spell and C_Spell.GetSpellCharges then
+        local ok, charges = pcall(C_Spell.GetSpellCharges, spellID)
+        if ok and charges and charges.cooldownDuration
+           and not BlizzardAPI.IsSecretValue(charges.cooldownDuration) and charges.cooldownDuration > 0 then
+            sec = charges.cooldownDuration
+        end
+    end
+    defBaseCdCache[spellID] = sec
+    return sec
+end
+
+-- Pre-cache base cooldowns for the current spec's defensive list. MUST run OUT of combat.
+-- Only tier-2 big heals actually need it (bubbles + items are always hold-worthy), but
+-- caching the whole list is cheap and keeps the combat-time reads pure table lookups.
+function DefensiveEngine.PreCacheDefensiveCooldowns(addon)
+    local list = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
+    if not list then return end
+    for _, sid in ipairs(list) do
+        if sid and sid > 0 then
+            GetDefBaseCooldownSeconds(sid)
+            local resolved = BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(sid)
+            if resolved and resolved ~= sid then GetDefBaseCooldownSeconds(resolved) end
+        end
+    end
+end
+
+-- "Hold-worthy" = a genuine save-it-for-emergency panic button: immunity bubbles (always),
+-- heal items (pots / healthstone), and big instant heals whose BASE cooldown is long enough
+-- to be worth holding (>= HOLD_MIN_COOLDOWN). Short / resource-gated rotational heals (Death
+-- Strike, Victory Rush, Word of Glory) have ~0 base CD, so they're NOT held - they show and
+-- order normally. Base CD is a pure read from the OOC-populated cache; never a live/secret read.
+local HOLD_MIN_COOLDOWN = 60  -- seconds
+
+local function TierOf(sid)
+    return (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid)) or 3
+end
+
+local function IsHoldWorthy(sid)  -- raw list id (negative = heal item)
+    if not sid then return false end
+    if sid < 0 then return true end
+    local tier = TierOf(sid)
+    if tier == 1 then return true end                                   -- immunity bubble
+    if tier == 2 then return (defBaseCdCache[sid] or 0) >= HOLD_MIN_COOLDOWN end
+    return false
+end
+
+local function IsHoldWorthyEntry(entry)  -- resolved result entry ({spellID, isItem})
+    if not entry then return false end
+    if entry.isItem then return true end
+    local tier = TierOf(entry.spellID)
+    if tier == 1 then return true end
+    if tier == 2 then return (defBaseCdCache[entry.spellID] or 0) >= HOLD_MIN_COOLDOWN end
+    return false
+end
+
+-- Bottom-ordering rank above the low-health threshold: 0 = filler/mitigation + rotational
+-- heals (stay up top in the user's order), 1 = hold-worthy big heal / heal item, 2 = immunity
+-- bubble (very bottom). Combat-safe: tier is static, base CD is a cached OOC value.
+local function EmergencyRank(sid)
+    if not IsHoldWorthy(sid) then return 0 end
+    if sid > 0 and TierOf(sid) == 1 then return 2 end  -- immunity bubble → very bottom
+    return 1  -- hold-worthy big heal / heal item
+end
+
+-- Reorder so emergency panic buttons sink to the end (big heals, then bubbles at the very
+-- bottom), keeping fillers/mitigation up top in the user's order. Stable within each rank.
+-- Fresh pooled table; consume before the next call (mutually exclusive with
+-- OrderByEmergencyTier - low- vs high-health branches).
+local emergencyLastBuf = {}
+local function OrderEmergencyLast(list)
+    wipe(emergencyLastBuf)
+    for rank = 0, 2 do
+        for _, sid in ipairs(list) do
+            if EmergencyRank(sid) == rank then
+                emergencyLastBuf[#emergencyLastBuf + 1] = sid
+            end
+        end
+    end
+    return emergencyLastBuf
+end
+
 -- Display order: instant procs first, then unified defensive list in user priority order.
 -- overrides (optional table): displayMode, maxIcons, showProcs - override profile defaults for
 -- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
@@ -634,7 +738,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(profile.precombatBuffs.categories)) do
                 if #results >= maxIcons then break end
                 if not alreadyAdded[itemID] then
-                    results[#results + 1] = { spellID = itemID, isItem = true, isProcced = false }
+                    results[#results + 1] = { spellID = itemID, isItem = true, isProcced = false, precombat = true }
                     alreadyAdded[itemID] = true
                 end
             end
@@ -648,7 +752,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         if PrecombatEngine and PrecombatEngine.GetMissingClassBuffs then
             for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs()) do
                 if #results >= maxIcons then break end
-                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false }
+                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false, precombat = true }
                 alreadyAdded[spellID] = true
             end
         end
@@ -702,14 +806,35 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
 
     local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
     if showAllAvailable or isLow then
-        -- Below ~35%, float survival buttons (immunity bubbles, then big instant heals)
-        -- above mitigation/fillers. Procs were already placed on top by the pass above;
-        -- on-CD spells still sink. Above the threshold, list order (filler-first) stands.
+        -- Order the unified list by health state: below ~35% survival floats up; above it,
+        -- emergency panic buttons sink to the end. Procs were already placed on top by the
+        -- proc pass; on-CD spells still sink within GetUsableDefensiveSpells.
         local listToShow = defensiveSpells
-        if isLow and defensiveSpells then
-            listToShow = OrderByEmergencyTier(defensiveSpells)
+        if defensiveSpells then
+            if isLow then
+                -- Below ~35%: float survival buttons (bubble → big heal) above fillers.
+                listToShow = OrderByEmergencyTier(defensiveSpells)
+            else
+                -- Above the threshold: park emergency panic buttons at the end (big heals,
+                -- immunity bubbles at the very bottom); fillers/mitigation stay up top.
+                listToShow = OrderEmergencyLast(defensiveSpells)
+            end
         end
         AppendUsableSpells(addon, results, listToShow, maxIcons, alreadyAdded)
+
+        -- With "hide until low" on and above the threshold, don't remove the parked panic
+        -- buttons - flag them so the renderer shows them desaturated with a centered WAIT
+        -- tag. Procs are exempt (free, highlighted opportunities placed by the proc pass).
+        if not isLow and profile.defensives.hideEmergencyUntilLow then
+            for _, entry in ipairs(results) do
+                -- Pre-combat buffs (food/flask/class buffs) are use-now, not held-back
+                -- emergency buttons: never tag them waiting, or their icon shows a "wait"
+                -- label that collides with the OOC click overlay's "click"/"wait" hint.
+                if not entry.isProcced and not entry.precombat and IsHoldWorthyEntry(entry) then
+                    entry.waiting = true
+                end
+            end
+        end
     end
 
     return results, alreadyAdded

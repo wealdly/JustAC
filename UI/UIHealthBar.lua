@@ -23,6 +23,42 @@ local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 UIHealthBar.BAR_HEIGHT = BAR_HEIGHT
 UIHealthBar.BAR_SPACING = BAR_SPACING
 
+-- ── Shared queue-construction math (single source of truth for every bar) ─────
+-- These mirror the icon queue the bar sits next to; keeping them centralized is
+-- what prevents create/resize drift (e.g. the past defSpacing mismatch).
+
+local GRAB_TAB_LENGTH = 12
+
+--- Pixel span + first-icon inset for a bar mirroring a queue of `count` icons.
+--- The first icon may be scaled (firstSize); the rest are bodySize. The 0.90 factors
+--- inset the bar slightly from the outermost icons; the returned offset shifts the bar
+--- so it stays centered over the (possibly larger) first icon.
+--- @return number dimension, number offset
+local function ComputeBarSpan(firstSize, bodySize, spacing, count)
+    if count <= 1 then
+        return firstSize, 0
+    end
+    return firstSize * 0.90 + (count - 2) * (bodySize + spacing) + bodySize * 0.90,
+           firstSize * 0.10
+end
+
+--- Grab-tab reserve length for a given axis (horizontal bars add a 1px border fudge).
+local function GrabTabLength(isVertical, iconSpacing)
+    return iconSpacing + GRAB_TAB_LENGTH + (isVertical and 0 or 1)
+end
+
+--- Attached mode: only RIGHT/UP shift the icons to reserve the tab edge; LEFT/DOWN keep 0.
+local function GrabTabReserve(orientation, iconSpacing)
+    if orientation ~= "RIGHT" and orientation ~= "UP" then return 0 end
+    return GrabTabLength(orientation == "UP", iconSpacing)
+end
+
+--- Distance a bar floats beyond the defensive cluster: the cluster sits iconSpacing from
+--- the mainFrame, and the bar clears it by BAR_SPACING. One formula so create/resize agree.
+local function DefensiveBarDist(defIconSize, iconSpacing)
+    return iconSpacing + defIconSize + BAR_SPACING
+end
+
 -- Module state
 local healthBarFrame = nil
 local petHealthBarFrame = nil
@@ -109,18 +145,13 @@ function UIHealthBar.CreateHealthBar(addon)
         local defIconSize  = iconSize * defIconScale
         local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
 
-        if maxDefIcons == 1 then
-            queueDimension = defIconSize
-        else
-            queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-        end
-        offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+        queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, maxDefIcons)
 
         frame = CreateFrame("Frame", nil, addon.defensiveFrame)
         useDefensiveDims = true
 
         -- grabTabSpacing mirrors UpdateDefensiveFrameSize: spacing + 12 (vert) or spacing + 13 (horiz)
-        local grabTabSpacing = isVert and (iconSpacing + 12) or (iconSpacing + 13)
+        local grabTabSpacing = GrabTabLength(isVert, iconSpacing)
 
         -- Per-orientation anchor: bar floats on the open side of the icon cluster.
         --   LEFT  → tab at RIGHT,   icons from LEFT  → bar ABOVE, left-aligned
@@ -154,12 +185,7 @@ function UIHealthBar.CreateHealthBar(addon)
 
         -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
         -- predictable position.  Health bars must match that shift to stay aligned.
-        local grabTabReserve = 0
-        if orientation == "RIGHT" or orientation == "UP" then
-            local GRAB_TAB_LENGTH = 12
-            local isVert = (orientation == "UP")
-            grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
-        end
+        local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
 
         if useDefensiveDims then
             -- Span the defensive icon cluster; float on the far side (away from mainFrame)
@@ -168,17 +194,11 @@ function UIHealthBar.CreateHealthBar(addon)
             local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
             local defPosition  = profile.defensives.position or "SIDE1"
 
-            if maxDefIcons == 1 then
-                queueDimension = defIconSize
-            else
-                queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-            end
-            offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+            queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, maxDefIcons)
 
-            -- Defensive icons sit at iconSpacing from mainFrame edge (matches icon-to-icon spacing);
-            -- bar floats BAR_SPACING beyond the outer edge of that cluster.
-            local defSpacing = iconSpacing
-            local barDist    = defSpacing + defIconSize + BAR_SPACING
+            -- Defensive icons sit at iconSpacing from mainFrame edge; bar floats
+            -- BAR_SPACING beyond the outer edge of that cluster.
+            local barDist = DefensiveBarDist(defIconSize, iconSpacing)
 
             if barIsHorizontal then
                 frame:SetSize(queueDimension, BAR_HEIGHT)
@@ -219,12 +239,7 @@ function UIHealthBar.CreateHealthBar(addon)
             local maxIcons       = profile.maxIcons or 4
             local firstIconSize  = iconSize * firstIconScale
 
-            if maxIcons == 1 then
-                queueDimension = firstIconSize
-            else
-                queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
-            end
-            offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+            queueDimension, offset = ComputeBarSpan(firstIconSize, iconSize, iconSpacing, maxIcons)
 
             if barIsHorizontal then
                 frame:SetSize(queueDimension, BAR_HEIGHT)
@@ -386,15 +401,9 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         local defIconScale = profile.defensives.iconScale or 1.0
         local defIconSize  = iconSize * defIconScale
 
-        local queueDimension
-        if visibleCount == 1 then
-            queueDimension = defIconSize
-        else
-            queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-        end
-        local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+        local queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, visibleCount)
 
-        local grabTabSpacing = isVert and (iconSpacing + 12) or (iconSpacing + 13)
+        local grabTabSpacing = GrabTabLength(isVert, iconSpacing)
         healthBarFrame:ClearAllPoints()
         if detachOrientation == "LEFT" then
             healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
@@ -419,12 +428,7 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
 
     -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
     -- predictable position.  Health bars must match that shift to stay aligned.
-    local grabTabReserve = 0
-    if orientation == "RIGHT" or orientation == "UP" then
-        local GRAB_TAB_LENGTH = 12
-        local isVert = (orientation == "UP")
-        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
-    end
+    local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
 
     healthBarFrame:ClearAllPoints()
 
@@ -435,13 +439,7 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         local maxIcons       = profile.maxIcons or 4
         local firstIconSize  = iconSize * firstIconScale
 
-        local queueDimension
-        if maxIcons == 1 then
-            queueDimension = firstIconSize
-        else
-            queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
-        end
-        local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+        local queueDimension, offset = ComputeBarSpan(firstIconSize, iconSize, iconSpacing, maxIcons)
 
         if orientation == "LEFT" or orientation == "RIGHT" then
             healthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
@@ -469,13 +467,7 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
     local defIconSize  = iconSize * defIconScale
     local defPosition  = profile.defensives.position or "SIDE1"
 
-    local queueDimension
-    if visibleCount == 1 then
-        queueDimension = defIconSize
-    else
-        queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-    end
-    local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+    local queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, visibleCount)
 
     -- Resize
     if orientation == "LEFT" or orientation == "RIGHT" then
@@ -484,13 +476,8 @@ function UIHealthBar.ResizeToCount(addon, visibleCount)
         healthBarFrame:SetSize(BAR_HEIGHT, queueDimension)
     end
 
-    -- Reposition to stay aligned above/below the visible cluster.
-    -- Use iconSpacing (not max) so the gap from the defensive cluster is exactly
-    -- BAR_SPACING: the icons sit iconSpacing from the mainFrame, so this keeps a
-    -- clean BAR_SPACING between them and the bar (matches CreateHealthBar, and the
-    -- target bar's BAR_SPACING gap from the offensive queue).
-    local defSpacing = iconSpacing
-    local barDist    = defSpacing + defIconSize + BAR_SPACING
+    -- Reposition to stay aligned above/below the visible cluster (BAR_SPACING gap).
+    local barDist = DefensiveBarDist(defIconSize, iconSpacing)
 
     if orientation == "LEFT" then
         if defPosition == "SIDE1" then
@@ -589,16 +576,11 @@ function UIHealthBar.CreatePetHealthBar(addon)
         local defIconSize  = iconSize * defIconScale
         local maxDefIcons  = math.min(profile.defensives.maxIcons or 1, 7)
 
-        if maxDefIcons == 1 then
-            queueDimension = defIconSize
-        else
-            queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-        end
-        offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+        queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, maxDefIcons)
 
         frame = CreateFrame("Frame", nil, addon.defensiveFrame)
         local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
-        local grabTabSpacing = isVert and (iconSpacing + 12) or (iconSpacing + 13)
+        local grabTabSpacing = GrabTabLength(isVert, iconSpacing)
 
         if detachOrientation == "LEFT" then
             barIsHorizontal = true
@@ -624,12 +606,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
 
         -- For RIGHT/UP, icons are shifted within the frame to keep the grab tab at a
         -- predictable position.  Pet health bars must match that shift.
-        local grabTabReserve = 0
-        if orientation == "RIGHT" or orientation == "UP" then
-            local GRAB_TAB_LENGTH = 12
-            local isVert = (orientation == "UP")
-            grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
-        end
+        local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
 
         frame = CreateFrame("Frame", nil, addon.mainFrame)
 
@@ -640,15 +617,9 @@ function UIHealthBar.CreatePetHealthBar(addon)
             local maxDefIcons  = math.min(profile.defensives.maxIcons or 4, 7)
             local defPosition  = profile.defensives.position or "SIDE1"
 
-            if maxDefIcons == 1 then
-                queueDimension = defIconSize
-            else
-                queueDimension = defIconSize * 0.90 + (maxDefIcons - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-            end
-            offset = maxDefIcons == 1 and 0 or (defIconSize * 0.10)
+            queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, maxDefIcons)
 
-            local defSpacing = iconSpacing  -- clean BAR_SPACING gap from the defensive cluster (see CreateHealthBar)
-            local barDist    = defSpacing + defIconSize + BAR_SPACING
+            local barDist = DefensiveBarDist(defIconSize, iconSpacing)
             local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
             local dist = barDist + extraOffset
 
@@ -690,12 +661,7 @@ function UIHealthBar.CreatePetHealthBar(addon)
             local maxIcons       = profile.maxIcons or 4
             local firstIconSize  = iconSize * firstIconScale
 
-            if maxIcons == 1 then
-                queueDimension = firstIconSize
-            else
-                queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
-            end
-            offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+            queueDimension, offset = ComputeBarSpan(firstIconSize, iconSize, iconSpacing, maxIcons)
 
             if barIsHorizontal then
                 frame:SetSize(queueDimension, BAR_HEIGHT)
@@ -852,18 +818,12 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
         local defIconScale = profile.defensives.iconScale or 1.0
         local defIconSize  = iconSize * defIconScale
 
-        local queueDimension
-        if visibleCount == 1 then
-            queueDimension = defIconSize
-        else
-            queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-        end
-        local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+        local queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, visibleCount)
 
         local playerBarExists = (healthBarFrame ~= nil) and (profile.defensives and profile.defensives.showHealthBar)
         local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
 
-        local grabTabSpacing = isVert and (iconSpacing + 12) or (iconSpacing + 13)
+        local grabTabSpacing = GrabTabLength(isVert, iconSpacing)
         petHealthBarFrame:ClearAllPoints()
         if detachOrientation == "LEFT" then
             petHealthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
@@ -886,12 +846,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
     local iconSize    = profile.iconSize or 42
     local iconSpacing = profile.iconSpacing or 1
 
-    local grabTabReserve = 0
-    if orientation == "RIGHT" or orientation == "UP" then
-        local GRAB_TAB_LENGTH = 12
-        local isVert = (orientation == "UP")
-        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
-    end
+    local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
 
     local playerBarExists = (healthBarFrame ~= nil)
         and (profile.defensives and profile.defensives.showHealthBar)
@@ -904,13 +859,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
         local maxIcons       = profile.maxIcons or 4
         local firstIconSize  = iconSize * firstIconScale
 
-        local queueDimension
-        if maxIcons == 1 then
-            queueDimension = firstIconSize
-        else
-            queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
-        end
-        local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
+        local queueDimension, offset = ComputeBarSpan(firstIconSize, iconSize, iconSpacing, maxIcons)
 
         if orientation == "LEFT" or orientation == "RIGHT" then
             petHealthBarFrame:SetSize(queueDimension, BAR_HEIGHT)
@@ -941,13 +890,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
     local defIconSize  = iconSize * defIconScale
     local defPosition  = profile.defensives.position or "SIDE1"
 
-    local queueDimension
-    if visibleCount == 1 then
-        queueDimension = defIconSize
-    else
-        queueDimension = defIconSize * 0.90 + (visibleCount - 2) * (defIconSize + iconSpacing) + defIconSize * 0.90
-    end
-    local offset = visibleCount == 1 and 0 or (defIconSize * 0.10)
+    local queueDimension, offset = ComputeBarSpan(defIconSize, defIconSize, iconSpacing, visibleCount)
 
     -- Resize
     if orientation == "LEFT" or orientation == "RIGHT" then
@@ -957,8 +900,7 @@ function UIHealthBar.ResizePetToCount(addon, visibleCount)
     end
 
     -- Reposition: stack beyond the player health bar
-    local defSpacing = iconSpacing  -- clean BAR_SPACING gap from the defensive cluster (see CreateHealthBar)
-    local barDist    = defSpacing + defIconSize + BAR_SPACING
+    local barDist = DefensiveBarDist(defIconSize, iconSpacing)
     local extraOffset = playerBarExists and (BAR_HEIGHT + BAR_SPACING) or 0
     local dist = barDist + extraOffset
 
@@ -1024,22 +966,14 @@ end
 local targetHealthBarFrame = nil
 local lastTargetUpdate = 0
 
--- Offensive-queue span (dimension + first-icon offset), matching the
--- offensive-dims math used by the player/pet bars above.
+-- Offensive-queue span (dimension + first-icon offset) read straight from the profile;
+-- same math as the player/pet bars, via the shared ComputeBarSpan.
 local function ComputeOffensiveSpan(profile)
     local iconSize       = profile.iconSize or 42
     local iconSpacing    = profile.iconSpacing or 1
     local firstIconScale = profile.firstIconScale or 1.0
     local maxIcons       = profile.maxIcons or 4
-    local firstIconSize  = iconSize * firstIconScale
-    local queueDimension
-    if maxIcons == 1 then
-        queueDimension = firstIconSize
-    else
-        queueDimension = firstIconSize * 0.90 + (maxIcons - 2) * (iconSize + iconSpacing) + iconSize * 0.90
-    end
-    local offset = maxIcons == 1 and 0 or (firstIconSize * 0.10)
-    return queueDimension, offset
+    return ComputeBarSpan(iconSize * firstIconScale, iconSize, iconSpacing, maxIcons)
 end
 
 -- Size + anchor the target bar: spans the offensive queue and hugs the OPPOSITE
@@ -1058,11 +992,7 @@ local function PositionTargetBar(frame, mainFrame, profile)
 
     -- RIGHT/UP shift icons within the frame to keep the grab tab predictable;
     -- match that shift so the bar stays aligned with the icons.
-    local grabTabReserve = 0
-    if orientation == "RIGHT" or orientation == "UP" then
-        local GRAB_TAB_LENGTH = 12
-        grabTabReserve = iconSpacing + GRAB_TAB_LENGTH + ((orientation == "UP") and 0 or 1)
-    end
+    local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
 
     local queueDimension, offset = ComputeOffensiveSpan(profile)
     if barIsHorizontal then

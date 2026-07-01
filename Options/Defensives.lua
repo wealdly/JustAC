@@ -42,8 +42,9 @@ end
 
 -- Stat-preference dropdown (flask/food): Off / Auto / a secondary stat. Each option shows
 -- the specific bag item it resolves to, so the list itself answers "which flask for haste?".
--- Food passes withSpeed=true to add a Speed option (movement-speed foods share the one Well
--- Fed slot, so they're a food flavour, not a separate category).
+-- withSpeed adds a Speed option - the Speed secondary stat (a rating that always stacks);
+-- both food and flask can grant it. Kept opt-in (never surfaces under Auto), since Speed is
+-- niche and most specs wouldn't want it auto-picked over their combat stat.
 local function pbStatSelect(addon, cat, name, order, withSpeed)
     local sorting = withSpeed
         and { "off", "auto", "haste", "crit", "mastery", "versatility", "speed" }
@@ -143,7 +144,7 @@ function Defensives.CreateTabArgs(addon)
                             pbApply(addon)
                         end,
                     },
-                    flask = pbStatSelect(addon, "flask", L["Flask"], 10),
+                    flask = pbStatSelect(addon, "flask", L["Flask"], 10, true),
                     food = pbStatSelect(addon, "food", L["Food"], 11, true),
                     augmentRune = pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false),
                     weaponEnchant = pbOnOffSelect(addon, "weaponEnchant", L["Weapon Enchant"], 13, false),

@@ -18,7 +18,10 @@ if not BlizzardAPI or not ActionBarScanner or not SpellQueue or not UIAnimations
 end
 
 -- Localized label shown on the overlay when Assisted Combat is waiting for resources.
-local WAIT_LABEL = (L and L["WAIT"]) or "WAIT"
+-- Centered over-icon text is standardized lowercase (matches the OOC click overlay's
+-- "click"/"wait" hint). :lower() is ASCII-only, so Latin locales lowercase and CJK/Cyrillic
+-- (no case) pass through unchanged.
+local WAIT_LABEL = ((L and L["WAIT"]) or "WAIT"):lower()
 
 -- Hot path cache
 local GetTime = GetTime
@@ -420,6 +423,7 @@ local DVS_NO_RESOURCES  = 2  -- usable but not enough resources (blue tint)
 local DVS_NORMAL        = 3  -- ready and usable
 local DVS_ON_COOLDOWN   = 4  -- on cooldown or unavailable (gray desat)
 local DVS_ACTIVE_CAST   = 5  -- this spell is currently being cast/channeled
+local DVS_WAITING       = 6  -- held-back emergency heal above the low-health threshold (desat + WAIT tag)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
@@ -698,6 +702,18 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     local id = defensiveIcon.currentID
     if not id then return end
 
+    -- Held-back emergency heal (above the low-health threshold with "hide until low" on):
+    -- shown desaturated with a WAIT tag instead of removed. Skip the usual usability/
+    -- cooldown/channel tinting - the WAIT state is intentional and fixed until it lights up.
+    if defensiveIcon.isWaiting then
+        if defensiveIcon.lastDefVisualState ~= DVS_WAITING then
+            defensiveIcon.iconTexture:SetDesaturation(1.0)
+            defensiveIcon.iconTexture:SetVertexColor(0.5, 0.5, 0.5)
+            defensiveIcon.lastDefVisualState = DVS_WAITING
+        end
+        return
+    end
+
     -- Items use itemCastSpellID for channel/cast matching.
     local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
     local isDefActiveSpell = false
@@ -828,8 +844,26 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     end
 end
 
+-- Combat-safe visibility toggle for defensive icons. When the main frame is anchored to
+-- Blizzard's TargetFrame (Target Frame anchoring), the attached icons join its protected
+-- anchor family, so calling the protected frame Show()/Hide() on them in combat is blocked
+-- ("AddOn 'JustAC' tried to call the protected function 'Button:Hide()'"). SetAlpha is never
+-- protected: drive visibility with alpha and keep the frame Shown so alpha stays authoritative
+-- (a Hidden frame can't be revealed by alpha alone). The protected Show() is only reconciled
+-- out of combat; the parent main frame still hides the whole cluster when the HUD is hidden.
+-- ponytail: a "hidden" icon stays Shown at alpha 0 (a small invisible mouse rect by the queue,
+-- same as the DPS-queue empty slots). Upgrade path: EnableMouse(false) at creation if it bites.
+local function SetDefensiveIconVisible(defensiveIcon, visible)
+    if not defensiveIcon:IsShown() and not InCombatLockdown() then
+        defensiveIcon:Show()
+    end
+    defensiveIcon:SetAlpha(visible and 1 or 0)
+end
+
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride)
+-- waiting: held-back emergency heal (above low-health threshold) - render desaturated
+-- with a centered WAIT tag and no glow, instead of showing it as a live suggestion.
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride, waiting)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -903,6 +937,16 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     SetIconHotkeyText(defensiveIcon, hotkey, showHotkeys)
     SetIconNormalizedHotkey(defensiveIcon, hotkey, GetTime(), true)
 
+    defensiveIcon.isWaiting = waiting or nil
+    if defensiveIcon.centerText then
+        if waiting then
+            defensiveIcon.centerText:SetText(WAIT_LABEL)
+            defensiveIcon.centerText:Show()
+        else
+            defensiveIcon.centerText:Hide()
+        end
+    end
+
     UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
 
     local defGlowMode = glowModeOverride
@@ -922,7 +966,13 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local isBuff = not isInCombat and SDB and (
         (isItem and SDB.IsPrecombatBuffItem and SDB.IsPrecombatBuffItem(id))
         or (not isItem and SDB.IsClassMaintainedBuff and SDB.IsClassMaintainedBuff(id)))
-    if isBuff then
+    defensiveIcon.isPrecombatBuff = isBuff or nil  -- click-overlay reads this for its "click" hint
+    if waiting then
+        -- Held-back heal parked at the bottom: no "use me" glow until it lights up at 35%.
+        UIAnimations.StopPrecombatGlow(defensiveIcon)
+        UIAnimations.HideProcGlow(defensiveIcon)
+        UIAnimations.StopDefensiveGlow(defensiveIcon)
+    elseif isBuff then
         UIAnimations.HideProcGlow(defensiveIcon)
         UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.StartPrecombatGlow(defensiveIcon, isInCombat)
@@ -941,17 +991,17 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         end
     end
     
-    if not defensiveIcon:IsShown() then
-        defensiveIcon:Show()
-        -- Per-icon fades are disabled everywhere; appear instantly. Nameplate callers
-        -- set their overlay opacity right after this returns.
-        defensiveIcon:SetAlpha(1)
-    end
+    -- Per-icon fades are disabled everywhere; appear instantly. Nameplate callers set
+    -- their overlay opacity right after this returns (overriding the alpha 1 below).
+    SetDefensiveIconVisible(defensiveIcon, true)
 end
 
-function UIRenderer.HideDefensiveIcon(defensiveIcon)
+-- keepSlot: when true, clear the icon's spell content but leave the button shown as
+-- an empty placeholder slot (SlotBackground + border), mirroring the DPS queue. Used
+-- to pad the defensive cluster up to maxIcons instead of collapsing it.
+function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
     if not defensiveIcon then return end
-    
+
     if defensiveIcon:IsShown() or defensiveIcon.currentID then
         UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.StopPrecombatGlow(defensiveIcon)
@@ -961,6 +1011,9 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         defensiveIcon.itemCastSpellID = nil
         defensiveIcon.currentID = nil
         defensiveIcon.isItem = nil
+        defensiveIcon.isPrecombatBuff = nil
+        defensiveIcon.isWaiting = nil
+        if defensiveIcon.centerText then defensiveIcon.centerText:Hide() end
         defensiveIcon.iconTexture:Hide()
         -- Ensure clean state on reuse.
         if defensiveIcon.cooldown then
@@ -987,10 +1040,14 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon)
         if defensiveIcon.chargeText then
             defensiveIcon.chargeText:Hide()
         end
-        
-        -- Per-icon fades are disabled everywhere; hide instantly.
-        defensiveIcon:Hide()
-        defensiveIcon:SetAlpha(0)
+
+        -- Per-icon fades are disabled everywhere; show/hide instantly. Never call the
+        -- protected frame Hide()/Show() here (see SetDefensiveIconVisible): alpha 0 hides.
+        SetDefensiveIconVisible(defensiveIcon, keepSlot)
+    elseif keepSlot then
+        -- Already-empty icon: surface it as a placeholder slot.
+        defensiveIcon.iconTexture:Hide()
+        SetDefensiveIconVisible(defensiveIcon, true)
     end
 end
 
@@ -1000,14 +1057,20 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
     local icons = addon.defensiveIcons
     local anyVisible = false
 
+    -- When at least one defensive is suggested, pad the remaining positions with empty
+    -- placeholder slots (up to maxIcons) so the cluster keeps a consistent width like the
+    -- DPS queue, instead of collapsing. When nothing is suggested, hide the slots entirely
+    -- (the whole cluster fades out below).
+    local hasReal = #queue > 0
+
     for i, icon in ipairs(icons) do
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, nil, nil, entry.waiting)
             anyVisible = true
         else
-            UIRenderer.HideDefensiveIcon(icon)
+            UIRenderer.HideDefensiveIcon(icon, hasReal)
         end
     end
 

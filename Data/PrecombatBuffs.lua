@@ -67,16 +67,16 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 212732, buff = 431973, stat = "versatility" },  -- Fleeting Flask of Tempered Versatility
         { id = 212775, buff = 431971, stat = "crit" },  -- zzOldFleeting Flask of Tempered Aggression
         -- Shadowlands
-        { id = 191350, buff = 371186 },  -- Charged Phial of Alacrity
-        { id = 204669, buff = 371186 },  -- Fleeting Charged Phial of Alacrity
+        { id = 191350, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 204669, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204666, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191341, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
-        { id = 191349, buff = 371186 },  -- Charged Phial of Alacrity
-        { id = 204668, buff = 371186 },  -- Fleeting Charged Phial of Alacrity
+        { id = 191349, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 204668, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204665, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191340, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
-        { id = 191348, buff = 371186 },  -- Charged Phial of Alacrity
-        { id = 204667, buff = 371186 },  -- Fleeting Charged Phial of Alacrity
+        { id = 191348, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 204667, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204664, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191339, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
         { id = 195580, buff = 379076, stat = "crit" },  -- Suspicious Bottle
@@ -147,10 +147,8 @@ SpellDB.RegisterPrecombatBuffs({
         -- Midnight / current
         { id = 245573, buff = 1239149, stat = "versatility" },  -- Salmon
         -- Dragonflight / TWW
-        { id = 225592, buff = 455369 },  -- Exquisitely Eviscerated Muscle
+        { id = 225592, buff = 455369, stat = "speed" },  -- Exquisitely Eviscerated Muscle
         { id = 222740, buff = 382235, stat = "stamina" },  -- Hearty Meals
-        { id = 223971, buff = 456578, stat = "speed" },  -- Azj-Kahet Special
-        { id = 212492, buff = 454497, stat = "speed" },  -- Twilight-Spiced Grouper
         -- Shadowlands
         { id = 197783, buff = 382153, stat = "haste+versatility" },  -- Aromatic Seafood Platter
         { id = 197788, buff = 382234, stat = "stamina" },  -- Braised Bruffalon Brisket
@@ -205,7 +203,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 154885, buff = 257422, stat = "versatility" },  -- Mon'Dazi
         { id = 154883, buff = 257413, stat = "haste" },  -- Ravenberry Tarts
         { id = 166343, buff = 288074, stat = "stamina" },  -- Wild Berry Bread
-        { id = 167832, buff = 294365 },  -- Canned Minnows
+        { id = 167832, buff = 294365, stat = "speed" },  -- Canned Minnows
         -- Warlords of Draenor
         { id = 133571, buff = 225603, stat = "haste" },  -- Azshari Salad
         { id = 133567, buff = 225599, stat = "mastery" },  -- Barracuda Mrglgagh
@@ -288,7 +286,6 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 98127, buff = 124219, stat = "mastery" },  -- Dented Can of Kaja'Cola
         { id = 101747, buff = 146807, stat = "versatility" },  -- Farmer's Delight
         { id = 101750, buff = 146804, stat = "strength" },  -- Fluffy Silkfeather Omelet
-        { id = 98116, buff = 142280, stat = "speed" },  -- Freeze-Dried Hyena Jerky
         { id = 104343, buff = 124216, stat = "haste" },  -- Golden Dragon Noodles
         { id = 94535, buff = 124219, stat = "mastery" },  -- Grilled Dinosaur Haunch
         { id = 79320, buff = 111840, stat = "stamina" },  -- Half a Lovely Apple
@@ -631,13 +628,14 @@ SpellDB.RegisterPrecombatBuffs({
 
 -- ──────────────────────────── HAND-CURATED (not generated) ────────────────────────────
 -- Curated extras the per-class generator above doesn't cover: aura-discovered utility
--- categories (xp / movement-speed foods, duration-filtered to 20m+) plus toys and class
--- self-buffs. All flow through the same detect+overlay pipeline via `source`. This block is
--- part of the generator template, so a re-run preserves it verbatim - edit it here.
+-- categories (xp foods, duration-filtered to 20m+) plus toys and class self-buffs. All flow
+-- through the same detect+overlay pipeline via `source`. This block is part of the generator
+-- template, so a re-run preserves it verbatim - edit it here.
 if SpellDB.RegisterPrecombatBuffsExtra then
     SpellDB.RegisterPrecombatBuffsExtra({
-        -- (Movement-speed foods are generated into the `food` category above, tagged
-        --  stat = "speed" - they share the one Well Fed slot, so they're a food option.)
+        -- (Speed foods/flasks - the Speed *secondary stat*, rating bit 13 - are generated
+        --  above tagged stat = "speed". Flat run-speed % foods, aura 31, are intentionally
+        --  not tracked: they don't stack and can't be validated OOC.)
 
         -- XP (leveling): long XP buffs only (>= 20m). Off by default. Tome of Combat Training
         -- (10m) intentionally excluded by the duration floor.

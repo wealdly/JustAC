@@ -266,46 +266,76 @@ local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedS
     return spellCount
 end
 
---- Context rank for the fixed-queue bias (positions 2+). Lower = higher priority within
---- its bucket: 0 = boost (archetype matches position-1's context, or execute phase),
---- 1 = neutral (untagged, no context, or archetype mismatch).
---- ctxExecute is the HIGH-confidence axis: when position-1 is an execute-gated spell the
---- target is below its HP threshold (a secret-free read of target health), so any
---- execute-gated rotation spell is boosted to the top regardless of archetype.
---- BOOST-ONLY by design: archetype only ever promotes a context-matching spell, it NEVER
---- demotes a mismatch below neutral. Demoting was redundant (boosting matches already
---- floats them above mismatches) AND harmful - it buried high-priority spells whose
---- archetype isn't a stable static property: DoTs/bleeds tagged "st" and ST spells that
---- talents/buffs morph into AoE (same spell ID, so the static tag can't know).
---- RANGE AXIS is SOUND, not inferred: ctxOutOfMelee comes from a real range check
---- (SpellDB.IsTargetWithin(5), built on IsSpellInRange) - NOT from position-1's archetype
---- (a ranged pick doesn't mean we're at range; ranged abilities work point-blank). When
---- the target is CONFIRMED out of melee, a melee spell is uncastable, so sink it (rank 3).
---- Fail-safe: ctxOutOfMelee is only true on a confirmed read; unknown (no probe) → false →
---- no demote, so low-level / sparse-probe characters never get a wrong reading.
-local function ContextRank(spellID, ctxArch, ctxExecute, ctxOutOfMelee)
-    local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(spellID)
+--- Profile-distance rank for the queue (positions after the AC slot). LOWER = closer match
+--- to the AC pick's profile, so it sorts earlier within its bucket; a large sink value trails.
+--- Rationale: the AC pick encodes the current situation, so the queue ability whose profile
+--- (archetype + geometry + build/spend role) is CLOSEST to it is the best same-situation DPS.
+--- Graded distance, NOT a gate: a slightly-off ability (e.g. a ranged AoE when the pick is a
+--- melee/PBAoE AoE) ranks just behind the exact match rather than being flattened to neutral.
+--- Axes fold into the distance (all tunable via the constants below). Each spell reduces to
+--- a target pattern: single | melee-multi | ranged-multi (see pattern()). Cleave counts as
+--- melee-multi - a cleave ability is treated as equivalent to a melee/PBAoE AoE.
+---   pattern  same +0 | multi<->multi with different geometry (melee<->ranged) +GEOM_PEN
+---            | multi<->single +ARCH_MISS | untagged +ARCH_UNK (neutral middle)
+---   role     same build/spend phase +0 | different +ROLE_PEN | untagged +0
+--- Two overrides sit OUTSIDE the distance:
+---   execute - when the pick is execute-gated the target is in execute range (secret-free
+---             target-HP read), so every execute-gated spell floats to 0 regardless of profile.
+---   sink    - a melee spell with the target CONFIRMED out of melee (real IsSpellInRange-based
+---             read via SpellDB.IsTargetWithin(5)) is uncastable, so it trails at RANK_SINK.
+--- Fail-safe: an untagged pick (ctxArch nil) makes every spell ARCH_UNK -> uniform -> source
+--- order preserved. ctxOutOfMelee is only true on a confirmed read; unknown -> no sink.
+--- Target count is AC's to read, not ours: when AC offers a cleave ability while an AoE sits
+--- available in the kit, it has REVEALED a cleave-tier count (it would have offered the AoE
+--- otherwise). So ctxArch already encodes the target-count regime we can't read directly - no
+--- nameplate count needed to know the situation; it would only help rank untagged picks.
+local ARCH_MISS = 4   -- multi-target <-> single-target: a real situational mismatch
+local ARCH_UNK  = 3   -- one side untagged: neutral middle, neither boost nor bury
+local GEOM_PEN  = 1   -- melee-multi <-> ranged-multi: same AoE need, different delivery
+local ROLE_PEN  = 1   -- builder <-> spender: wrong resource phase
+local RANK_SINK = 9   -- uncastable (melee, target out of range): trails everything
+-- Reduce (archetype, range) to a target pattern. Cleave counts as melee-multi: a cleave
+-- ability is treated as equivalent to a melee/PBAoE AoE. AoE keeps its own geometry
+-- (melee/PBAoE vs ranged/ground); ST is single-target. Untagged -> nil -> neutral.
+local function pattern(arch, range)
+    if arch == "aoe"    then return (range == "ranged") and "rmulti" or "mmulti" end
+    if arch == "cleave" then return "mmulti" end
+    if arch == "st"     then return "st" end
+    return nil
+end
+local function ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
     if ctxExecute and SpellDB and SpellDB.GetGate and SpellDB.GetGate(spellID) == "execute" then
         return 0
     end
-    if ctxOutOfMelee and SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID) == "melee" then
-        return 3
+    local range = SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID)
+    if ctxOutOfMelee and range == "melee" then
+        return RANK_SINK
     end
-    if not arch then return 1 end
-    -- Archetype is the SOFT axis: matching the context's class (ST↔ST or multi↔multi)
-    -- boosts; a mismatch stays neutral (never demoted - see boost-only note above).
-    if ctxArch then
-        local ctxMulti   = (ctxArch == "aoe" or ctxArch == "cleave")
-        local spellMulti = (arch == "aoe" or arch == "cleave")
-        return (ctxMulti == spellMulti) and 0 or 1
+    if not ctxArch then return ARCH_UNK end   -- no context to match against: uniform neutral
+    local dist = 0
+    local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(spellID)
+    local pat = pattern(arch, range)
+    local ctxPat = pattern(ctxArch, ctxRange)
+    if not pat or not ctxPat then
+        dist = dist + ARCH_UNK
+    elseif pat ~= ctxPat then
+        if pat ~= "st" and ctxPat ~= "st" then
+            dist = dist + GEOM_PEN    -- both multi, different geometry (melee vs ranged)
+        else
+            dist = dist + ARCH_MISS   -- multi vs single-target
+        end
     end
-    return 1
+    local role = SpellDB and SpellDB.GetRole and SpellDB.GetRole(spellID)
+    if role and ctxRole and role ~= ctxRole then
+        dist = dist + ROLE_PEN
+    end
+    return dist
 end
 
---- Append a bucket's entries to recommendedSpells in context-rank order
---- (boost → neutral → demote), stable within each rank. Returns the new spellCount.
+--- Append a bucket's entries to recommendedSpells in profile-distance order
+--- (closest match first), stable within each rank. Returns the new spellCount.
 local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
-    for rank = 0, 3 do
+    for rank = 0, RANK_SINK do
         for i = 1, count do
             if spellCount >= maxIcons then return spellCount end
             if ranks[i] == rank then
@@ -319,10 +349,10 @@ end
 
 --- Categorize rotation spells into procced/normal/cooldown buckets and assemble
 --- in priority order: proc > normal > on-cooldown. Within the proc and normal
---- buckets, entries are ordered by ContextRank so the spell matching position-1's
---- archetype context surfaces first (e.g. the AOE proc wins slot 2 when
---- position 1 is AOE). ctxArch is nil when position 1 is untagged → no reorder.
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
+--- buckets, entries are ordered by ContextRank (profile-distance to the AC pick), so the
+--- ability closest to what Assisted Combat is recommending surfaces first. ctxArch is nil
+--- when the AC pick is untagged → uniform rank → no reorder.
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
@@ -331,7 +361,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
     -- rankOf: neutral (1, list order preserved) when the situation bias is toggled off.
     local function rankOf(spellID)
         if not contextBias then return 1 end
-        return ContextRank(spellID, ctxArch, ctxExecute, ctxOutOfMelee)
+        return ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
     end
 
     for i = 1, #rotationList do
@@ -639,9 +669,11 @@ function SpellQueue.GetCurrentSpellQueue()
     end
     -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
     -- pick (the original recommendation, before any gap-closer/burst injection).
-    local ctxArch, ctxExecute
+    local ctxArch, ctxRange, ctxRole, ctxExecute
     if primarySpellID and SpellDB then
         ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
+        ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
+        ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
         ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
     -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
@@ -657,7 +689,7 @@ function SpellQueue.GetCurrentSpellQueue()
         local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
         local contextBias  = profile.orderContextAware ~= false
         local sinkCooldowns = profile.orderSinkCooldowns ~= false
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but

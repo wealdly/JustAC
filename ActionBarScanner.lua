@@ -861,7 +861,13 @@ function ActionBarScanner.GetSpellHotkey(spellID)
         local finalHotkey = FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers)
         spellHotkeyCache[cacheID] = finalHotkey
         spellSlotCache[cacheID] = slot
-        local isDirect = not modifiers or not next(modifiers)
+        -- "Direct" means the slot's action IS this spell/item, so slot-based cooldown
+        -- queries are safe. A macro slot is never direct: its resolved spell - and thus
+        -- GetActionCooldown(slot) - changes with modifiers even when our target is the
+        -- macro's no-modifier branch (empty modifiers). Marking it direct made the swipe
+        -- read the modifier-branch spell's cooldown, mismatching the displayed icon.
+        local slotActionType = BlizzardAPI.GetActionInfo(slot)
+        local isDirect = slotActionType == "spell" or slotActionType == "item"
         slotDirectCache[cacheID] = isDirect
         if extraCacheID then
             spellHotkeyCache[extraCacheID] = finalHotkey

@@ -12,9 +12,9 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Offensive Queue
 
-- Position 1 shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
-- Position 2+ displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
-- **Context-aware ranking** - positions 2+ re-rank to match the archetype (single-target / cleave / AOE) and range (melee / ranged) of Blizzard's position-1 pick, so an AOE pull lifts your AOE/cleave tools and a ranged pull sinks the melee ones. Range is a hard constraint, archetype a soft preference; applies to the Custom Queue too. Backed by a DB2-generated archetype table covering all classes
+- The **AC slot** shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
+- The **queue** (everything after the AC slot) displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
+- **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Uncastable melee abilities sink while the target is out of range. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; switch it off in the Rotation tab's ordering toggles to keep a fixed order
 - Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
@@ -22,7 +22,8 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Custom Queue
 
-- Define a custom spell/item ordering for positions 2+ (per spec, stored in profile)
+- Define a custom spell/item ordering for the queue (per spec, stored in profile)
+- **Ordering toggles** - Procs First, Context Aware, and Cooldowns Last (all on by default). Turn them off to keep your exact saved order as a fixed queue; they apply to both the Custom Queue and Blizzard's default rotation
 - Auto-seeds from Blizzard's rotation on first enable; unavailable or on-cooldown entries collapse automatically
 - Stale queue detection warns when Blizzard's rotation changes - "Merge Changes" preserves custom ordering while syncing additions/removals
 - Supports trinkets and on-use items alongside spells
@@ -66,8 +67,8 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Burst Injection *(Experimental)*
 
-- Detects burst windows via aura tracking - when a trigger spell's self-buff is active on the player, configured burst spells inject at position 1 with a purple glow
-- Trigger detection scans all visible queue positions, not just position 1 - triggers at any position show burst glow
+- Detects burst windows via aura tracking - when a trigger spell's self-buff is active on the player, configured burst spells inject at the front of the queue with a purple glow
+- Trigger detection scans all visible queue positions, not just the AC slot - triggers at any position show burst glow
 - Timer fallback for triggers that don't create a self-buff (pet summons, target debuffs)
 - Per-spec trigger and injection spell lists with class-appropriate defaults
 - Configurable fallback window duration
@@ -85,7 +86,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 ### Intelligent Filtering
 
 - Hides redundant suggestions (buffs already active, current form, existing pet)
-- Per-spell blacklist (Shift+Right-click to toggle) - blacklisted position-1 spells auto-substitute via highlight-mode lookahead
+- Per-spell blacklist (Shift+Right-click to toggle) - a blacklisted AC-slot spell auto-substitutes via highlight-mode lookahead
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
 - Combat-safe aura tracking via `auraInstanceID` mapping - detects buff removal and reapply even when `spellId` is secret

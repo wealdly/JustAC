@@ -61,7 +61,7 @@ local defaults = {
         queueVisibility = "always",    -- "always", "combatOnly", or "requireHostile"
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
-        clickToCastOOC = true,            -- Left-click queue icons out of combat to cast/use them
+        clickToCastOOC = true,            -- Left-click defensive-queue icons out of combat to cast/use them
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
@@ -138,6 +138,7 @@ local defaults = {
             itemSettings = {},        -- Per-item settings: itemSettings[itemID] = {linkedAura=spellID, combatHide=bool}
             spellSettings = {},       -- Per-spell settings: spellSettings[spellID] = {procPriority=bool}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
+            hideEmergencyUntilLow = false, -- hold back panic buttons (bubbles/big heals/pots) above the low-health threshold
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
             detached = false,                                    -- Give defensives their own independent draggable frame
             detachedPosition = { point = "CENTER", x = 0, y = 100 }, -- Saved position of the detached defensive frame

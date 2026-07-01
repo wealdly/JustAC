@@ -6,10 +6,11 @@
 #   arch  = st | cleave | aoe   (SpellEffect implicit targets + SpellTargetRestrictions)
 #   range = melee | ranged      (SpellMisc.RangeIndex -> SpellRange.RangeMax; <=8 = melee)
 #
-# Conservative by design: only spells with a direct SchoolDamage effect (Effect=2) are
-# tagged. Spells whose damage is indirect (triggers/clones, e.g. Secret Technique) have
-# no direct area/single damage target, so they're left UNTAGGED -> neutral at runtime
-# (never a wrong boost). Refine those by hand / SimC intent later.
+# Conservative by design: only spells with a direct SchoolDamage effect (Effect=2) or a
+# periodic-damage aura (Effect=6 APPLY_AURA, DoT/bleed/leech) are tagged - the periodic pass
+# covers DoTs the direct-only classification missed. Spells whose damage is indirect
+# (triggers/clones, e.g. Secret Technique) have no direct/periodic damage target, so they're
+# left UNTAGGED -> neutral at runtime (never a wrong boost). Refine those by hand later.
 #
 # Re-run per patch after dropping fresh CSVs in Documentation/wow_spell_csv/.
 set -euo pipefail
@@ -22,7 +23,8 @@ mkdir -p Data
 pick() { ls "$CSV/$1".*.csv 2>/dev/null | head -1; }
 SR=$(pick SpellRange); SM=$(pick SpellMisc); SCO=$(pick SpellClassOptions)
 STR=$(pick SpellTargetRestrictions); SN=$(pick SpellName); SE=$(pick SpellEffect)
-for v in "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE"; do
+SP=$(pick SpellPower)
+for v in "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP"; do
     [ -n "$v" ] || { echo "ERROR: a required CSV is missing in $CSV/" >&2; exit 1; }
 done
 
@@ -32,7 +34,7 @@ done
 IDSFILE="tools/rotation_spell_ids.txt"
 [ -f "$IDSFILE" ] || { echo "ERROR: $IDSFILE not found" >&2; exit 1; }
 IDS=$(grep -vE '^\s*#' "$IDSFILE" | grep -oE '[0-9]+' | sort -un | tr '\n' ' ')
-echo "Using:"; printf '  %s\n' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$IDSFILE"
+echo "Using:"; printf '  %s\n' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" "$IDSFILE"
 
 BUILD=$(basename "$SE" | sed -E 's/^SpellEffect\.(.*)\.csv$/\1/')
 
@@ -43,6 +45,11 @@ BEGIN{
     split("24 54 104", C, " ");          for(i in C) CONET[C[i]]=1;  # cone-enemy targets
     split("2 6", Y, " ");                for(i in Y) SINGLE[Y[i]]=1; # single-enemy targets
     n=split(ids, II, " "); for(i=1;i<=n;i++) if(II[i]!="") PLAYER[II[i]+0]=1;
+    # Accumulator resources for builder/spender (crisp point pools). Excludes fuel:
+    # Mana(0), Rage(1), Focus(2), Energy(3), Runes(5).
+    split("4 6 7 8 9 11 12 13 16 17 18 19", R, " "); for(i in R) POINT[R[i]]=1;
+    # Periodic-damage EffectAura types (DoT / bleed / leech) so Effect=6 auras count as damage.
+    split("3 89 53", PP, " "); for(i in PP) PERIODIC[PP[i]]=1;
 }
 FNR==1 { file=basef(FILENAME); next }                                # skip header rows
 file ~ /^SpellRange\./        { m=($NF+0>$(NF-1)+0)?$NF+0:$(NF-1)+0; RANGE[$1+0]=m; next }
@@ -50,10 +57,17 @@ file ~ /^SpellClassOptions\./ { if(($4+0)!=0) PLAYER[$2+0]=1; next }  # SpellCla
 file ~ /^SpellMisc\./         { MRANGE[$NF+0]=$23+0; next }           # SpellID -> RangeIndex
 file ~ /^SpellTargetRestrictions\./ { MAXT[$NF+0]=$4+0; CONE[$NF+0]=$3+0; next }
 file ~ /^SpellName\./        { nm=$0; sub(/^[0-9]*,/,"",nm); NAME[$1+0]=nm; next }
+file ~ /^SpellPower\./ {                                             # point-resource cost = spender
+    if(((($3+0)+($8+0)+($14+0))>0) && (($12+0) in POINT)) COSTPT[$NF+0]=1
+    next
+}
 file ~ /^SpellEffect\./ {
     sid=$NF+0
     if(!(sid in PLAYER)) next
-    if(($5+0)!=2) next                                               # SchoolDamage only
+    if(($5+0)==30 && (($(NF-10)+0) in POINT)) ENGPT[sid]=1           # ENERGIZE a point pool = builder
+    # Damage = direct SchoolDamage (Effect 2) OR a periodic-damage aura (Effect 6 w/ a
+    # periodic-damage EffectAura $2) - the latter picks up DoTs/bleeds the direct pass missed.
+    if(($5+0)!=2 && !(($5+0)==6 && (($2+0) in PERIODIC))) next
     DMG[sid]=1
     t0=$(NF-2)+0; t1=$(NF-1)+0
     if((t0 in AREA)||(t1 in AREA))     AREAD[sid]=1
@@ -75,13 +89,24 @@ END{
         nm=NAME[sid]; gsub(/[\t\r"]/,"",nm)
         print arch "\t" sid "\t" rng "\t" nm
     }
+    for(sid in PLAYER){                                             # builder/spender (cost wins over energize)
+        if(sid in COSTPT)     role="spender"
+        else if(sid in ENGPT) role="builder"
+        else continue
+        nm=NAME[sid]; if(nm=="") continue; gsub(/[\t\r"]/,"",nm)
+        print "role_" role "\t" sid "\t-\t" nm
+    }
 }
-' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" > /tmp/_arch_raw.txt
+' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" > /tmp/_arch_raw.txt
 
 # Emit one archetype group: "[id] = "range",  -- Spell Name" lines, sorted by id.
 emit_group() {
     awk -F'\t' -v a="$1" '$1==a{print $2"\t"$3"\t"$4}' /tmp/_arch_raw.txt | sort -n | \
         awk -F'\t' '{printf "        [%s] = \"%s\",  -- %s\n", $1, $2, $3}'
+}
+emit_role() {
+    awk -F'\t' -v a="$1" '$1==a{print $2"\t"$4}' /tmp/_arch_raw.txt | sort -n | \
+        awk -F'\t' '{printf "        [%s] = true,  -- %s\n", $1, $2}'
 }
 
 TOTAL=$(awk -F'\t' '$1=="aoe"||$1=="cleave"||$1=="st"' /tmp/_arch_raw.txt | wc -l | tr -d ' ')
@@ -92,6 +117,8 @@ TOTAL=$(awk -F'\t' '$1=="aoe"||$1=="cleave"||$1=="st"' /tmp/_arch_raw.txt | wc -
     echo "-- Source: wago.tools DB2 build $BUILD. Regenerate with tools/gen_archetypes.sh."
     echo "-- Player class damage spells grouped by archetype; value = range; comment = name."
     echo "-- Indirect-damage spells (triggered/cloned) are intentionally absent (neutral)."
+    echo "-- Plus builder/spender roles: spender = costs an accumulator resource, builder ="
+    echo "-- generates one (ENERGIZE). Fuel resources (mana/rage/focus/energy/runes) excluded."
     echo "local SpellDB = LibStub(\"JustAC-SpellDB\", true)"
     echo "if not SpellDB or not SpellDB.RegisterArchetypes then return end"
     echo ""
@@ -100,6 +127,16 @@ TOTAL=$(awk -F'\t' '$1=="aoe"||$1=="cleave"||$1=="st"' /tmp/_arch_raw.txt | wc -
         n=$(awk -F'\t' -v a="$cat" '$1==a' /tmp/_arch_raw.txt | wc -l | tr -d ' ')
         echo "    $cat = {  -- $n spells (value = range)"
         emit_group "$cat"
+        echo "    },"
+    done
+    echo "})"
+    echo ""
+    echo "if not SpellDB.RegisterRoles then return end"
+    echo "SpellDB.RegisterRoles({"
+    for role in builder spender; do
+        n=$(awk -F'\t' -v a="role_$role" '$1==a' /tmp/_arch_raw.txt | wc -l | tr -d ' ')
+        echo "    $role = {  -- $n spells"
+        emit_role "role_$role"
         echo "    },"
     done
     echo "})"

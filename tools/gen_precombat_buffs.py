@@ -23,9 +23,10 @@ SUBCLASS = {"3": "flask", "5": "food", "8": "enh"}
 # Aura types that mean "this spell grants a stat" (so the spell IS the buff we detect).
 STAT_AURAS = {"189", "29", "137", "99", "124"}  # MOD_RATING/STAT/TOTAL_STAT%/AP/RANGED_AP
 # Combat-rating bits (EffectMiscValue on a MOD_RATING aura) -> secondary stat. Verified
-# against this build's flask buffs: crit 8-10, haste 17-19, mastery 25, versatility 28-30.
+# against this build's buffs: crit 8-10, haste 17-19, mastery 25, versatility 28-30,
+# speed 13 (the Speed secondary stat - a rating that stacks, unlike a flat run-speed %).
 RATING_BITS = {"crit": (8, 9, 10), "haste": (17, 18, 19), "mastery": (25,),
-               "versatility": (28, 29, 30)}
+               "versatility": (28, 29, 30), "speed": (13,)}
 PRIMARY_STAT = {"0": "strength", "1": "agility", "2": "stamina", "3": "intellect"}
 # A maintained pre-buff must last a while to be a useful out-of-combat reminder: drop any
 # aura buff shorter than this (e.g. a 15s movement-speed "snack" food that carries a stat).
@@ -105,9 +106,10 @@ def resolve_buff(sid, se, depth=0, seen=None):
     for eff, aura, _trig, misc in effects:
         if eff == "6" and aura in STAT_AURAS:
             return sid, stat_of(aura, misc)
-    for _eff, aura, _trig, _misc in effects:
-        if aura == "31":  # movement-speed well-fed -> a "speed" food (one Well Fed slot)
-            return sid, "speed"
+    # A flat run-speed % (aura 31) is deliberately NOT tracked: it doesn't stack with other
+    # movement effects (highest wins), so it's often dead weight, and the addon can't tell
+    # OOC whether it'll clash. The Speed *secondary stat* (rating bit 13, matched above) is
+    # the real "speed" option - it's a rating, so it always stacks.
     if depth < 2:
         for _eff, _aura, trig, _misc in effects:
             if trig and trig != "0":
@@ -223,13 +225,14 @@ FOOTER = """\
 
 -- ──────────────────────────── HAND-CURATED (not generated) ────────────────────────────
 -- Curated extras the per-class generator above doesn't cover: aura-discovered utility
--- categories (xp / movement-speed foods, duration-filtered to 20m+) plus toys and class
--- self-buffs. All flow through the same detect+overlay pipeline via `source`. This block is
--- part of the generator template, so a re-run preserves it verbatim - edit it here.
+-- categories (xp foods, duration-filtered to 20m+) plus toys and class self-buffs. All flow
+-- through the same detect+overlay pipeline via `source`. This block is part of the generator
+-- template, so a re-run preserves it verbatim - edit it here.
 if SpellDB.RegisterPrecombatBuffsExtra then
     SpellDB.RegisterPrecombatBuffsExtra({
-        -- (Movement-speed foods are generated into the `food` category above, tagged
-        --  stat = "speed" - they share the one Well Fed slot, so they're a food option.)
+        -- (Speed foods/flasks - the Speed *secondary stat*, rating bit 13 - are generated
+        --  above tagged stat = "speed". Flat run-speed % foods, aura 31, are intentionally
+        --  not tracked: they don't stack and can't be validated OOC.)
 
         -- XP (leveling): long XP buffs only (>= 20m). Off by default. Tome of Combat Training
         -- (10m) intentionally excluded by the duration floor.

@@ -490,6 +490,16 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = defEnabledDisabled,
                     }),
+                    hideEmergencyUntilLow = W.toggle(addon, "defensives.hideEmergencyUntilLow", {
+                        name = L["Hide Emergency Until Low"], desc = L["Hide Emergency Until Low desc"],
+                        order = 6, width = "full", default = false,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        -- Meaningless in "When Health Low" mode (everything is already gated).
+                        disabled = function()
+                            return defEnabledDisabled(addon)
+                                or (addon.db.profile.defensives.displayMode or "always") == "healthBased"
+                        end,
+                    }),
                     -- HEALTH BARS (10-19)
                     healthBarHeader = {
                         type = "header",
@@ -538,6 +548,7 @@ function StandardQueue.CreateTabArgs(addon)
                             def.maxIcons         = 4
                             def.iconScale        = 1.0
                             def.glowMode         = "all"
+                            def.hideEmergencyUntilLow = false
                             def.showHealthBar    = true
                             def.showPetHealthBar = true
                             def.showTargetHealthBar = true
