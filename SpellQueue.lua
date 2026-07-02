@@ -349,6 +349,17 @@ local function ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxO
     return dist
 end
 
+--- Structurally unusable: the action bar reports a confirmed-unusable state that is NOT
+--- resource starvation. Catches condition-gated spells the cooldown model can't see -
+--- HP-gated finishers (Execute, Kill Shot), stealth-gated openers - via the never-secret
+--- ACTION_USABLE_CHANGED cache. Resource starvation (noMana) is transient (rage/energy
+--- refill every GCD) and must NOT sink or the queue would churn every press; an unknown
+--- read (spell on no bar, secret fallback) fails open to "usable" and leaves order alone.
+local function IsConfirmedUnusable(spellID)
+    local usable, noMana = BlizzardAPI.GetActionBarUsability(spellID)
+    return usable == false and not noMana
+end
+
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
 local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
@@ -414,7 +425,8 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID)
-                    elseif sinkCooldowns and not BlizzardAPI.IsSpellReady(displayID) then
+                    elseif sinkCooldowns and (not BlizzardAPI.IsSpellReady(displayID)
+                           or IsConfirmedUnusable(displayID)) then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                     else

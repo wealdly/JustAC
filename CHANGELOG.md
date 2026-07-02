@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.32.1] - 2026-07-02
+
+### Fixed
+- Custom queue: abilities the game reports as unusable - Execute above its health threshold, Kill Shot, stealth-only openers - now move to the end of the queue with "Cooldowns last" enabled, instead of holding a front slot they can't be pressed from. Proc highlights still jump to the front (a Sudden Death Execute shows immediately), and abilities that are merely low on rage/energy stay in place.
+
 ## [4.32.0] - 2026-07-01
 
 ### Added
