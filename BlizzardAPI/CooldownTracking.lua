@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 10
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 11
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -323,8 +323,15 @@ local function CheckCooldownCompletions(eventSpellID)
                     if trackedSpells[eventSpellID] == "rotation" then
                         localCooldowns[eventSpellID] = nil
                     end
+                elseif cd.isOnGCD == nil and cd.isActive == false then
+                    -- isActive is NeverSecret ground truth (same signal IsSpellReady
+                    -- trusts): isOnGCD==nil (outside the GCD window) + isActive==false
+                    -- means NO cooldown timer is running. Our local timer is stale -
+                    -- a CDR/reset effect we couldn't observe - so clear it, for ALL
+                    -- categories (interrupts/defensives/gap-closers, not just
+                    -- rotation). Explicit ==false: nil/secret must never clear.
+                    localCooldowns[eventSpellID] = nil
                 end
-                -- isOnGCD == nil: unflagged spell - trust local timer.
                 -- isOnGCD == false: real CD running - no action needed.
             end
         end
@@ -340,8 +347,32 @@ local function CheckCooldownCompletions(eventSpellID)
                     -- See targeted-check comment above: only rotation-category spells
                     -- are reliably Blizzard-flagged and use the nil→false→nil pattern.
                     localCooldowns[spellID] = nil
+                elseif cd.isOnGCD == nil and cd.isActive == false then
+                    -- Stale entry, all categories - see targeted-check comment above.
+                    localCooldowns[spellID] = nil
                 end
-                -- isOnGCD == nil: unflagged spell - trust local timer.
+            end
+        end
+    end
+end
+
+--- SPELL_UPDATE_CHARGES sweep: on the charges struct, chargeInfo.isActive is
+--- NeverSecret in combat while every other field except maxCharges is secret
+--- (field-verified 2026-07-01 via /jac inspect chargediag). isActive == false
+--- means no recharge is running, which is only possible at FULL charges - so a
+--- local count below max is stale (talent charge refund, haste-drifted recharge
+--- timer) and snaps to full. Refunds that don't reach full (0/2 -> 1/2) stay
+--- invisible here (isActive remains true) - those are covered by the
+--- usable-flip hint and the AC-pick oracle. The event carries no payload
+--- (verified same date), so sweep all tracked charge spells.
+local function CheckChargeCorrections()
+    if not C_Spell_GetSpellCharges then return end
+    for spellID, data in pairs(localCharges) do
+        if data.current < data.maxCharges then
+            local ok, ci = pcall(C_Spell_GetSpellCharges, spellID)
+            if ok and ci and ci.isActive == false then
+                data.current = data.maxCharges
+                data.rechargeEndTime = 0
             end
         end
     end
@@ -353,7 +384,11 @@ local function InitCooldownTracking()
     cooldownEventFrame = CreateFrame("Frame")
     cooldownEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
     cooldownEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-    cooldownEventFrame:RegisterEvent("PLAYER_DEAD")
+    cooldownEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+    -- Deliberately NOT wiping on PLAYER_DEAD: real cooldowns persist through death,
+    -- and wiping left the tracker empty after a battle res (the OOC-only resync
+    -- can't run mid-combat), failing everything open. Stale entries self-heal via
+    -- the isActive clear in CheckCooldownCompletions + the combat-exit resync.
     cooldownEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
@@ -370,7 +405,9 @@ local function InitCooldownTracking()
             -- spellID payload is NeverSecret in combat (verified 2026-02-25)
             local spellID = ...
             CheckCooldownCompletions(spellID)
-        elseif event == "PLAYER_DEAD" or event == "PLAYER_ENTERING_WORLD" then
+        elseif event == "SPELL_UPDATE_CHARGES" then
+            CheckChargeCorrections()
+        elseif event == "PLAYER_ENTERING_WORLD" then
             ClearLocalCooldowns()
             -- Re-scan OOC after world load - rotation list may not be registered yet
             -- so this is a best-effort pre-cache for any already-registered spells.
@@ -455,6 +492,35 @@ end
 
 function BlizzardAPI.IsSpellOnLocalCooldown(spellID)
     return IsLocalCooldownActive(spellID)
+end
+
+--- The AC pick is a readiness oracle: Blizzard's engine never recommends an
+--- uncastable spell. A proc-driven CD reset or charge refund fires no
+--- UNIT_SPELLCAST_SUCCEEDED, so the local tracker can hold a stale entry that
+--- keeps sinking the spell in the queue - the pick corrects it. Called from
+--- SpellQueue on every build with the current recommendation.
+--- Freshness guard: the pick lags a just-completed cast (Blizzard refreshes it
+--- on its own cadence), so an entry recorded within the last RECOMMEND_GRACE_SECS
+--- is the cast we just observed, not a stale one - leave it alone.
+local RECOMMEND_GRACE_SECS = 1.5
+function BlizzardAPI.NoteSpellRecommended(spellID)
+    if not spellID or spellID == 0 then return end
+    local now = GetTime()
+    local data = localCooldowns[spellID]
+    if data and (now - data.startTime) > RECOMMEND_GRACE_SECS then
+        localCooldowns[spellID] = nil
+    end
+    local cdata = localCharges[spellID]
+    if cdata then
+        ProcessChargeRecovery(cdata)
+        if cdata.current < 1 then
+            -- rechargeEndTime - rechargeDuration = when the last charge was spent
+            local rechargeStart = cdata.rechargeEndTime - cdata.rechargeDuration
+            if cdata.rechargeEndTime <= 0 or (now - rechargeStart) > RECOMMEND_GRACE_SECS then
+                cdata.current = 1
+            end
+        end
+    end
 end
 
 --- Non-secret locally-tracked cooldown timing for the swipe display.

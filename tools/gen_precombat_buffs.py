@@ -5,7 +5,8 @@
 #   python tools/gen_precombat_buffs.py            # all expansions
 #   python tools/gen_precombat_buffs.py > out.lua  # inspect without writing
 #
-# Re-run each major patch after refreshing the CSVs in Documentation/wow_spell_csv/.
+# Re-run each major patch after refreshing the CSVs in Documentation/wow_spell_csv/
+# (includes SpellEquippedItems - the weapon-subclass restriction masks).
 # The generator owns the bulk (bag consumables, source="item"); toys (source="toy") and
 # class self-buffs (source="spell") are hand-added in the data file below the marker.
 import csv, glob, os, sys
@@ -74,7 +75,14 @@ def load():
     with open(find_csv("SpellDuration"), encoding="utf-8") as f:
         for r in csv.DictReader(f):
             du[r["ID"]] = int(r["Duration"] or 0)
-    return cls, ie, ix, se, mi, du
+    eq = {}  # spellID -> allowed weapon-subclass bitmask (EquippedItemClass 2 = weapon)
+    with open(find_csv("SpellEquippedItems"), encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            if r["EquippedItemClass"] == "2":
+                mask = int(r["EquippedItemSubclass"] or 0)
+                if mask > 0:
+                    eq[r["SpellID"]] = mask
+    return cls, ie, ix, se, mi, du, eq
 
 
 def buff_ms(buff, mi, du):
@@ -125,6 +133,30 @@ def on_use(item_id, ie, ix):
     return (use or [sp for sp, _ in spells] or [None])[0]
 
 
+# Eating-aura signature: apply-aura effect (6) with OBS_MOD_HEALTH (84) / OBS_MOD_POWER
+# (85) - "restores health/mana while eating". Verified against 5004/396918/452276.
+EAT_AURAS = {"84", "85"}
+
+
+def trigger_closure(sid, se, depth=0, seen=None):
+    """All spells reachable from sid via EffectTriggerSpell, sid included (depth <= 4).
+    The visible eating aura can hang off a side branch of the Well Fed resolution path
+    (use -> "Refreshment" -> trigger -> shared "Food"), so walk everything."""
+    seen = seen if seen is not None else set()
+    if not sid or sid == "0" or sid in seen:
+        return seen
+    seen.add(sid)
+    if depth < 4:
+        for _eff, _aura, trig, _misc in se.get(sid, []):
+            if trig and trig != "0":
+                trigger_closure(trig, se, depth + 1, seen)
+    return seen
+
+
+def is_eating_aura(sid, se):
+    return any(eff == "6" and aura in EAT_AURAS for eff, aura, _t, _m in se.get(sid, []))
+
+
 def categorize(name, sub):
     cat = SUBCLASS.get(sub)
     if cat == "enh":
@@ -137,9 +169,9 @@ def categorize(name, sub):
 
 
 def main():
-    cls, ie, ix, se, mi, du = load()
+    cls, ie, ix, se, mi, du, eq = load()
     CRAFTING = ("Recipe:", "Pattern:", "Plan:", "Formula:", "Technique:", "Design:", "[")
-    buckets = defaultdict(list)  # cat -> [(exp, ilvl, id, name, buff, stat)]
+    buckets = defaultdict(list)  # cat -> [(exp, ilvl, id, name, buff, stat, wmask)]
     dropped_short = 0
 
     with open(find_csv("ItemSparse"), encoding="utf-8") as f:
@@ -156,14 +188,21 @@ def main():
             # flask/food/rune must grant a detectable stat aura; weapon enchants are
             # detected via GetWeaponEnchantInfo so they keep their apply-spell instead -
             # but skip any with no resolvable spell at all (avoids buff = nil entries).
+            wmask = None
             if cat == "weaponEnchant":
-                buff = buff or use
-                if not buff:
+                # A real temp weapon enchant carries effect 54 (ENCHANT_ITEM_TEMPORARY) on
+                # its use spell; name-matched stragglers (contracts, portal stones,
+                # ensembles) don't - drop them.
+                if not any(e == "54" for e, _a, _t, _m in se.get(use or "", [])):
                     continue
+                buff = buff or use
                 # No secondary-stat matrix for consumable enhancements; tag the archetype so
                 # the addon can auto-pick the class-appropriate one (casters want oils,
                 # physical specs want stones/whetstones).
                 stat = "caster" if ("Oil" in name or "Wax" in name) else "physical"
+                # Allowed weapon-subclass bitmask (whetstone = bladed, weightstone = blunt);
+                # the addon tests the equipped main hand against it at suggest time.
+                wmask = eq.get(use)
             elif not buff:
                 continue
             # Duration floor: a maintained pre-buff has to last a while to be worth an OOC
@@ -176,7 +215,7 @@ def main():
                     dropped_short += 1
                     continue
             buckets[cat].append((int(r["ExpansionID"] or 0), int(r["ItemLevel"] or 0),
-                                 iid, name, buff, stat))
+                                 iid, name, buff, stat, wmask))
     # Weapon enchants are kept across all expansions: the addon filters them at suggest
     # time by the equipped weapon's expansion (an older oil/stone won't apply to a newer
     # weapon), which also keeps leveling-content coverage that a hard floor would drop.
@@ -186,16 +225,33 @@ def main():
         items = sorted(buckets.get(cat, []), key=lambda x: (-x[0], -x[1], x[3]))
         lines.append(f"    {cat} = {{")
         cur = None
-        for exp, ilvl, iid, name, buff, stat in items:
+        for exp, ilvl, iid, name, buff, stat, wmask in items:
             if exp != cur:
                 lines.append(f"        -- {EXPANSION.get(exp, 'exp ' + str(exp))}")
                 cur = exp
             st = f', stat = "{stat}"' if stat else ""
-            lines.append(f"        {{ id = {iid}, buff = {buff}{st} }},"
+            wm = f", wmask = {wmask}" if wmask else ""
+            lines.append(f"        {{ id = {iid}, buff = {buff}{st}{wm} }},"
                          f"  -- {name}")
         lines.append("    },")
         print(f"  {cat}: {len(items)} items", file=sys.stderr)
     lines.append(FOOTER)
+
+    # Eating auras: every eat/drink regen aura reachable from ANY food item's use-spell
+    # trigger chain (not just foods that made the buff cut - extra ids are harmless, the
+    # runtime test is set membership against the player's visible buffs).
+    eat_ids = set()
+    for iid, sub in cls.items():
+        if sub == "5":
+            for sid in trigger_closure(on_use(iid, ie, ix), se):
+                if is_eating_aura(sid, se):
+                    eat_ids.add(int(sid))
+    lines.append(EAT_HEADER)
+    ids = sorted(eat_ids)
+    for i in range(0, len(ids), 12):
+        lines.append("        " + ", ".join(str(x) for x in ids[i:i + 12]) + ",")
+    lines.append("    })\nend\n")
+    print(f"  eatingAuras: {len(ids)} ids", file=sys.stderr)
 
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -250,6 +306,15 @@ if SpellDB.RegisterPrecombatBuffsExtra then
     })
 end
 """
+
+EAT_HEADER = """\
+
+-- ──────────────────────────── EATING AURAS (generated) ────────────────────────────
+-- Every eat/drink regen aura ("Food"/"Refreshment" variants) reachable from a food
+-- item's use-spell trigger chain. This is the aura visible on the player while eating;
+-- SpellDB.GetActiveEatingAura tests set membership for the eat sweep and "wait" hint.
+if SpellDB.RegisterEatingAuras then
+    SpellDB.RegisterEatingAuras({"""
 
 if __name__ == "__main__":
     main()

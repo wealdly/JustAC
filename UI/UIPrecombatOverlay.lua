@@ -82,8 +82,20 @@ local function ConfigureLayer(layer, icon, eating)
     else
         return false
     end
+    -- Absolute placement, never SetAllPoints(icon): anchoring a secure button to the icon
+    -- makes the icon - and everything its rect depends on, up through the main frame -
+    -- geometry-protected in combat. Anchor dependencies aren't suspended even while the
+    -- layer is hidden, so insecure SetPoint/SetSize/Show on those frames mid-fight get
+    -- blocked ("Interface action failed"). Copy the icon's rect into UIParent-relative
+    -- coordinates instead (scale-corrected); the icons stay insecure, as the module
+    -- header promises. Positions re-sync through the existing OOC refresh paths - this
+    -- function only ever runs out of combat.
+    local left, bottom, width, height = icon:GetRect()
+    if not left or not width or width == 0 then return false end
+    local s = icon:GetEffectiveScale() / layer:GetEffectiveScale()
     layer:ClearAllPoints()
-    layer:SetAllPoints(icon)
+    layer:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * s, bottom * s)
+    layer:SetSize(width * s, height * s)
     layer:SetFrameLevel(icon:GetFrameLevel() + 10)
     if layer.clickHint then
         -- Mid-food-channel, clicking anything breaks the eat, so the hint says "wait".

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 9)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 10)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -184,17 +184,41 @@ end
 
 -- Eating/drinking is aura-based (not a spell channel) and uses a generic "Food"/"Drink"
 -- aura separate from the food's on-use spell - so the queue can show an eat-progress sweep.
--- Curated; add ids as tiers/expansions introduce new eating buffs.
-local EATING_AURAS = { 452276 }  -- "Food"
+-- Each food generation has its own aura id (200+ across expansions); the full set is
+-- generated into Data/PrecombatBuffs.lua (RegisterEatingAuras below) from the DB2 trigger
+-- chains. The seeds here are live-verified fallbacks in case the data file is missing.
+-- A missing id silently disables the eat sweep and "wait" hint for that food: verify with
+-- /jac inspect auras while eating, regenerate via tools/gen_precombat_buffs.py.
+local EATING_AURAS = { [452276] = true, [396918] = true }
+
+--- Called by the generated Data/PrecombatBuffs.lua with the full eating-aura id list.
+function SpellDB.RegisterEatingAuras(ids)
+    if type(ids) ~= "table" then return end
+    for i = 1, #ids do EATING_AURAS[ids[i]] = true end
+end
+
 --- The player's active eating/drinking aura (with timing), or nil.
+--- The set is too large to probe id-by-id, so scan the player's buffs and test set
+--- membership. Combat bail is correctness, not just cost: you can't eat in combat, and
+--- in-combat aura spellIds can be secret (secret table keys throw). Memoized briefly -
+--- called per render frame while a food suggestion is displayed.
+local eatCache, eatCacheAt = nil, 0
 function SpellDB.GetActiveEatingAura()
-    local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
-    if not get then return nil end
-    for i = 1, #EATING_AURAS do
-        local a = get(EATING_AURAS[i])
-        if a then return a end
+    local get = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not get or UnitAffectingCombat("player") then return nil end
+    local now = GetTime()
+    if now - eatCacheAt < 0.2 then return eatCache end
+    eatCacheAt = now
+    eatCache = nil
+    for i = 1, 60 do
+        local a = get("player", i, "HELPFUL")
+        if not a then break end
+        if a.spellId and EATING_AURAS[a.spellId] then
+            eatCache = a
+            break
+        end
     end
-    return nil
+    return eatCache
 end
 
 --------------------------------------------------------------------------------
@@ -316,10 +340,18 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
     -- Weapon enhancements only apply to weapons from their own expansion or earlier - a
     -- newer weapon rejects an older oil/stone as "too high level". Skip any enhancement
     -- older than the equipped main-hand (expansion read from GetItemInfo's expacID, #15).
-    local weaponExp
+    -- They're also weapon-type restricted (whetstone = bladed, weightstone = blunt):
+    -- each entry's wmask is the enchant's allowed weapon-subclass bitmask; test the
+    -- main hand's subclass bit against it so a spear never gets a weightstone offered.
+    local weaponExp, weaponTypeBit
     if cat == "weaponEnchant" and GetInventoryItemID then
         local mh = GetInventoryItemID("player", 16)
         weaponExp = mh and select(15, GetItemInfo(mh))
+        local getInstant = GetItemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
+        if mh and getInstant then
+            local classID, subClassID = select(6, getInstant(mh))
+            if classID == 2 and subClassID then weaponTypeBit = 2 ^ subClassID end
+        end
     end
     local prefKind  -- weaponEnchant: soft-prefer the class-appropriate archetype
     if cat == "weaponEnchant" then
@@ -337,6 +369,9 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
             if weaponExp then
                 local oilExp = select(15, GetItemInfo(e.id))
                 applies = oilExp ~= nil and oilExp >= weaponExp
+            end
+            if applies and e.wmask and weaponTypeBit then
+                applies = bit.band(e.wmask, weaponTypeBit) ~= 0
             end
             if applies then
                 local score = n - i  -- recency: earlier in the list = newer = higher

@@ -442,187 +442,74 @@ SpellDB.RegisterPrecombatBuffs({
     },
     weaponEnchant = {
         -- Midnight / current
-        { id = 243736, buff = 1237001, stat = "caster" },  -- Oil of Dawn
-        { id = 237369, buff = 1224333, stat = "physical" },  -- Refulgent Weightstone
-        { id = 237371, buff = 1224328, stat = "physical" },  -- Refulgent Whetstone
-        { id = 243734, buff = 1237006, stat = "caster" },  -- Thalassian Phoenix Oil
-        { id = 243735, buff = 1237002, stat = "caster" },  -- Oil of Dawn
-        { id = 237367, buff = 1224332, stat = "physical" },  -- Refulgent Weightstone
-        { id = 237370, buff = 1224331, stat = "physical" },  -- Refulgent Whetstone
-        { id = 243733, buff = 1237008, stat = "caster" },  -- Thalassian Phoenix Oil
+        { id = 243736, buff = 1237001, stat = "caster", wmask = 983039 },  -- Oil of Dawn
+        { id = 237369, buff = 1224333, stat = "physical", wmask = 9264 },  -- Refulgent Weightstone
+        { id = 237371, buff = 1224328, stat = "physical", wmask = 41923 },  -- Refulgent Whetstone
+        { id = 243734, buff = 1237006, stat = "caster", wmask = 983039 },  -- Thalassian Phoenix Oil
+        { id = 243735, buff = 1237002, stat = "caster", wmask = 983039 },  -- Oil of Dawn
+        { id = 237367, buff = 1224332, stat = "physical", wmask = 9264 },  -- Refulgent Weightstone
+        { id = 237370, buff = 1224331, stat = "physical", wmask = 41923 },  -- Refulgent Whetstone
+        { id = 243733, buff = 1237008, stat = "caster", wmask = 983039 },  -- Thalassian Phoenix Oil
         -- Dragonflight / TWW
-        { id = 220156, buff = 444755, stat = "caster" },  -- Bubbling Wax
-        { id = 222510, buff = 458937, stat = "physical" },  -- Ironclaw Weightstone
-        { id = 222504, buff = 458934, stat = "physical" },  -- Ironclaw Whetstone
-        { id = 222509, buff = 458936, stat = "physical" },  -- Ironclaw Weightstone
-        { id = 222503, buff = 458933, stat = "physical" },  -- Ironclaw Whetstone
-        { id = 222508, buff = 458935, stat = "physical" },  -- Ironclaw Weightstone
-        { id = 222502, buff = 458932, stat = "physical" },  -- Ironclaw Whetstone
-        { id = 224105, buff = 451869, stat = "caster" },  -- Algari Mana Oil
-        { id = 224106, buff = 451873, stat = "caster" },  -- Algari Mana Oil
-        { id = 224107, buff = 451874, stat = "caster" },  -- Algari Mana Oil
-        { id = 224108, buff = 451926, stat = "caster" },  -- Oil of Beledar's Grace
-        { id = 224109, buff = 451925, stat = "caster" },  -- Oil of Beledar's Grace
-        { id = 224110, buff = 451927, stat = "caster" },  -- Oil of Beledar's Grace
-        { id = 224111, buff = 451882, stat = "caster" },  -- Oil of Deep Toxins
-        { id = 224112, buff = 451901, stat = "caster" },  -- Oil of Deep Toxins
-        { id = 224113, buff = 451902, stat = "caster" },  -- Oil of Deep Toxins
-        { id = 234382, buff = 1213839, stat = "caster" },  -- Ensemble: Unkindled Waxweave Panoply
-        { id = 226224, buff = 458517, stat = "physical" },  -- Luminous Nerubian Catalyst Stone
+        { id = 220156, buff = 444755, stat = "caster", wmask = 720883 },  -- Bubbling Wax
+        { id = 222510, buff = 458937, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
+        { id = 222504, buff = 458934, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
+        { id = 222509, buff = 458936, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
+        { id = 222503, buff = 458933, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
+        { id = 222508, buff = 458935, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
+        { id = 222502, buff = 458932, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
+        { id = 224105, buff = 451869, stat = "caster", wmask = 983039 },  -- Algari Mana Oil
+        { id = 224106, buff = 451873, stat = "caster", wmask = 983039 },  -- Algari Mana Oil
+        { id = 224107, buff = 451874, stat = "caster", wmask = 983039 },  -- Algari Mana Oil
+        { id = 224108, buff = 451926, stat = "caster", wmask = 983039 },  -- Oil of Beledar's Grace
+        { id = 224109, buff = 451925, stat = "caster", wmask = 983039 },  -- Oil of Beledar's Grace
+        { id = 224110, buff = 451927, stat = "caster", wmask = 983039 },  -- Oil of Beledar's Grace
+        { id = 224111, buff = 451882, stat = "caster", wmask = 983039 },  -- Oil of Deep Toxins
+        { id = 224112, buff = 451901, stat = "caster", wmask = 983039 },  -- Oil of Deep Toxins
+        { id = 224113, buff = 451902, stat = "caster", wmask = 983039 },  -- Oil of Deep Toxins
         -- Shadowlands
-        { id = 191944, buff = 371677, stat = "physical" },  -- Primal Weightstone
-        { id = 191940, buff = 396157, stat = "physical" },  -- Primal Whetstone
-        { id = 191945, buff = 371678, stat = "physical" },  -- Primal Weightstone
-        { id = 191933, buff = 396155, stat = "physical" },  -- Primal Whetstone
-        { id = 191943, buff = 371676, stat = "physical" },  -- Primal Weightstone
-        { id = 191939, buff = 396156, stat = "physical" },  -- Primal Whetstone
+        { id = 191944, buff = 371677, stat = "physical", wmask = 9264 },  -- Primal Weightstone
+        { id = 191940, buff = 396157, stat = "physical", wmask = 41923 },  -- Primal Whetstone
+        { id = 191945, buff = 371678, stat = "physical", wmask = 9264 },  -- Primal Weightstone
+        { id = 191933, buff = 396155, stat = "physical", wmask = 41923 },  -- Primal Whetstone
+        { id = 191943, buff = 371676, stat = "physical", wmask = 9264 },  -- Primal Weightstone
+        { id = 191939, buff = 396156, stat = "physical", wmask = 41923 },  -- Primal Whetstone
         -- Battle for Azeroth
-        { id = 171436, buff = 322749, stat = "physical" },  -- Porous Sharpening Stone
-        { id = 171438, buff = 322761, stat = "physical" },  -- Porous Weightstone
-        { id = 171437, buff = 322762, stat = "physical" },  -- Shaded Sharpening Stone
-        { id = 171439, buff = 322763, stat = "physical" },  -- Shaded Weightstone
-        { id = 180683, buff = 334428, stat = "physical" },  -- Guardian Stonewing
-        { id = 180684, buff = 334431, stat = "physical" },  -- Sentinel Stonewing
-        { id = 181337, buff = 336160, stat = "physical" },  -- Stonefiend's Wings
-        { id = 176139, buff = 321651, stat = "physical" },  -- Contract: Stoneborn Reserves
-        { id = 186981, buff = 355159, stat = "physical" },  -- Porous Stone Statue
-        { id = 178686, buff = 327299, stat = "physical" },  -- RSVP: Stonehead
-        { id = 186982, buff = 355175, stat = "physical" },  -- Shaded Stone Statue
-        { id = 181771, buff = 343719, stat = "physical" },  -- Stonehead's Best Bud Bracelet
-        { id = 189572, buff = 365941, stat = "physical" },  -- Tame Prime: Hadeon the Stonebreaker
-        -- Legion
-        { id = 165719, buff = 285840, stat = "physical" },  -- Monelite Whetstone
-        { id = 165720, buff = 285840, stat = "physical" },  -- Monelite Whetstone
-        { id = 162120, buff = 276228, stat = "physical" },  -- Platinum Whetstone
-        { id = 165748, buff = 276228, stat = "physical" },  -- Platinum Whetstone
-        { id = 167077, buff = 300539, stat = "physical" },  -- Scrying Stone
-        { id = 161385, buff = 275199, stat = "physical" },  -- Stonefist Watch
-        { id = 162511, buff = 276927, stat = "physical" },  -- Stonetusk Watch
-        -- Warlords of Draenor
-        { id = 147303, buff = 240515, stat = "physical" },  -- Giant Elemental's Closed Stone Fist
-        { id = 152927, buff = 253837, stat = "physical" },  -- Serrated Stone Axe
-        { id = 131746, buff = 208705, stat = "physical" },  -- Stonehide Leather Barding
-        -- Mists of Pandaria
-        { id = 118221, buff = 173893, stat = "physical" },  -- Petrification Stone
-        -- Cataclysm
-        { id = 87872, buff = 127563, stat = "caster" },  -- Desecrated Oil
+        { id = 171436, buff = 322749, stat = "physical", wmask = 41923 },  -- Porous Sharpening Stone
+        { id = 171438, buff = 322761, stat = "physical", wmask = 9264 },  -- Porous Weightstone
+        { id = 171437, buff = 322762, stat = "physical", wmask = 41923 },  -- Shaded Sharpening Stone
+        { id = 171439, buff = 322763, stat = "physical", wmask = 9264 },  -- Shaded Weightstone
         -- Classic
-        { id = 23529, buff = 29453, stat = "physical" },  -- Adamantite Sharpening Stone
-        { id = 28421, buff = 34340, stat = "physical" },  -- Adamantite Weightstone
+        { id = 23529, buff = 29453, stat = "physical", wmask = 33731 },  -- Adamantite Sharpening Stone
+        { id = 28421, buff = 34340, stat = "physical", wmask = 9264 },  -- Adamantite Weightstone
         { id = 22522, buff = 28017, stat = "caster" },  -- Superior Wizard Oil
-        { id = 23528, buff = 29452, stat = "physical" },  -- Fel Sharpening Stone
-        { id = 28420, buff = 34339, stat = "physical" },  -- Fel Weightstone
-        { id = 25884, buff = 32806, stat = "physical" },  -- Primal Stone Statue
+        { id = 23528, buff = 29452, stat = "physical", wmask = 33731 },  -- Fel Sharpening Stone
+        { id = 28420, buff = 34339, stat = "physical", wmask = 9264 },  -- Fel Weightstone
         { id = 22521, buff = 28013, stat = "caster" },  -- Superior Mana Oil
-        { id = 29796, buff = 35745, stat = "physical" },  -- Socrethar's Teleportation Stone
         -- Classic
-        { id = 140329, buff = 224382, stat = "physical" },  -- Infinite Stone
-        { id = 146919, buff = 240307, stat = "physical" },  -- Portal-Stone: An'thyna
-        { id = 146920, buff = 240310, stat = "physical" },  -- Portal-Stone: Fel Obliterator
-        { id = 146918, buff = 240304, stat = "physical" },  -- Portal-Stone: Force-Commander Xillious
-        { id = 146921, buff = 240313, stat = "physical" },  -- Portal-Stone: Illisthyndria
-        { id = 146917, buff = 240301, stat = "physical" },  -- Portal-Stone: Skulguloth
-        { id = 146916, buff = 240298, stat = "physical" },  -- Portal-Stone: Than'otalion
-        { id = 116981, buff = 172376, stat = "caster" },  -- Fire Ammonite Oil
-        { id = 122457, buff = 181062, stat = "physical" },  -- Ultimate Battle-Training Stone
-        { id = 133890, buff = 201800, stat = "physical" },  -- Stoneshroom
-        { id = 116119, buff = 170895, stat = "physical" },  -- Ango'rosh Sorcerer Stone
-        { id = 62345, buff = 86901, stat = "physical" },  -- Greater Inscription of Jagged Stone
-        { id = 68716, buff = 86901, stat = "physical" },  -- Greater Inscription of Jagged Stone
-        { id = 62344, buff = 86900, stat = "physical" },  -- Lesser Inscription of Jagged Stone
-        { id = 89303, buff = 129894, stat = "physical" },  -- Stack of Stone Blocks
         { id = 36899, buff = 47904, stat = "caster" },  -- Exceptional Mana Oil
-        { id = 18262, buff = 22756, stat = "physical" },  -- Elemental Sharpening Stone
+        { id = 18262, buff = 22756, stat = "physical", wmask = 41923 },  -- Elemental Sharpening Stone
         { id = 23123, buff = 28898, stat = "caster" },  -- Blessed Wizard Oil
         { id = 203862, buff = 25123, stat = "caster" },  -- Brilliant Mana Oil
         { id = 203865, buff = 25122, stat = "caster" },  -- Brilliant Wizard Oil
-        { id = 23122, buff = 28891, stat = "physical" },  -- Consecrated Sharpening Stone
-        { id = 25883, buff = 32805, stat = "physical" },  -- Dense Stone Statue
+        { id = 23122, buff = 28891, stat = "physical", wmask = 1097715 },  -- Consecrated Sharpening Stone
         { id = 20747, buff = 25120, stat = "caster" },  -- Lesser Mana Oil
         { id = 20750, buff = 25121, stat = "caster" },  -- Wizard Oil
-        { id = 12404, buff = 16138, stat = "physical" },  -- Dense Sharpening Stone
-        { id = 12643, buff = 16622, stat = "physical" },  -- Dense Weightstone
-        { id = 8956, buff = 11350, stat = "caster" },  -- Oil of Immolation
-        { id = 118699, buff = 11350, stat = "caster" },  -- Oil of Immolation
-        { id = 3829, buff = 3595, stat = "caster" },  -- Frost Oil
+        { id = 12404, buff = 16138, stat = "physical", wmask = 33731 },  -- Dense Sharpening Stone
+        { id = 12643, buff = 16622, stat = "physical", wmask = 9264 },  -- Dense Weightstone
+        { id = 3829, buff = 3595, stat = "caster", wmask = 174067 },  -- Frost Oil
         { id = 20746, buff = 25119, stat = "caster" },  -- Lesser Wizard Oil
-        { id = 25882, buff = 32804, stat = "physical" },  -- Solid Stone Statue
-        { id = 7964, buff = 9900, stat = "physical" },  -- Solid Sharpening Stone
-        { id = 7965, buff = 9903, stat = "physical" },  -- Solid Weightstone
-        { id = 3824, buff = 3594, stat = "caster" },  -- Shadow Oil
-        { id = 25881, buff = 32803, stat = "physical" },  -- Heavy Stone Statue
+        { id = 7964, buff = 9900, stat = "physical", wmask = 33731 },  -- Solid Sharpening Stone
+        { id = 7965, buff = 9903, stat = "physical", wmask = 9264 },  -- Solid Weightstone
+        { id = 3824, buff = 3594, stat = "caster", wmask = 174067 },  -- Shadow Oil
         { id = 20745, buff = 25118, stat = "caster" },  -- Minor Mana Oil
-        { id = 2871, buff = 2830, stat = "physical" },  -- Heavy Sharpening Stone
-        { id = 3241, buff = 3114, stat = "physical" },  -- Heavy Weightstone
-        { id = 25880, buff = 32802, stat = "physical" },  -- Coarse Stone Statue
-        { id = 1322, buff = 7396, stat = "caster" },  -- Fishliver Oil
-        { id = 2863, buff = 2829, stat = "physical" },  -- Coarse Sharpening Stone
-        { id = 3240, buff = 3113, stat = "physical" },  -- Coarse Weightstone
+        { id = 2871, buff = 2830, stat = "physical", wmask = 33731 },  -- Heavy Sharpening Stone
+        { id = 3241, buff = 3114, stat = "physical", wmask = 9264 },  -- Heavy Weightstone
+        { id = 2863, buff = 2829, stat = "physical", wmask = 33731 },  -- Coarse Sharpening Stone
+        { id = 3240, buff = 3113, stat = "physical", wmask = 9264 },  -- Coarse Weightstone
         { id = 20744, buff = 25117, stat = "caster" },  -- Minor Wizard Oil
-        { id = 6458, buff = 433, stat = "caster" },  -- Oil Covered Fish
-        { id = 25498, buff = 32254, stat = "physical" },  -- Rough Stone Statue
-        { id = 1177, buff = 54497, stat = "caster" },  -- Oil of Olaf
-        { id = 1434, buff = 13424, stat = "caster" },  -- Glowing Wax Stick
-        { id = 2862, buff = 2828, stat = "physical" },  -- Rough Sharpening Stone
-        { id = 3239, buff = 3112, stat = "physical" },  -- Rough Weightstone
-        { id = 116424, buff = 171515, stat = "physical" },  -- Aquatic Battle-Training Stone
-        { id = 87257, buff = 126589, stat = "physical" },  -- Arcane Familiar Stone
-        { id = 116374, buff = 162984, stat = "physical" },  -- Beast Battle-Training Stone
-        { id = 116418, buff = 171520, stat = "physical" },  -- Critter Battle-Training Stone
-        { id = 147564, buff = 242134, stat = "physical" },  -- Diamond Stone
-        { id = 116419, buff = 171516, stat = "physical" },  -- Dragonkin Battle-Training Stone
-        { id = 116420, buff = 171522, stat = "physical" },  -- Elemental Battle-Training Stone
-        { id = 127755, buff = 187567, stat = "physical" },  -- Fel-Touched Battle-Training Stone
-        { id = 87258, buff = 126587, stat = "physical" },  -- Fiery Familiar Stone
-        { id = 92679, buff = 134488, stat = "physical" },  -- Flawless Aquatic Battle-Stone
-        { id = 92741, buff = 134644, stat = "physical" },  -- Flawless Battle-Stone
-        { id = 116429, buff = 171525, stat = "physical" },  -- Flawless Battle-Training Stone
-        { id = 92675, buff = 134482, stat = "physical" },  -- Flawless Beast Battle-Stone
-        { id = 92676, buff = 134484, stat = "physical" },  -- Flawless Critter Battle-Stone
-        { id = 92683, buff = 134492, stat = "physical" },  -- Flawless Dragonkin Battle-Stone
-        { id = 92665, buff = 134448, stat = "physical" },  -- Flawless Elemental Battle-Stone
-        { id = 92677, buff = 134486, stat = "physical" },  -- Flawless Flying Battle-Stone
-        { id = 92682, buff = 134491, stat = "physical" },  -- Flawless Humanoid Battle-Stone
-        { id = 92678, buff = 134487, stat = "physical" },  -- Flawless Magic Battle-Stone
-        { id = 92680, buff = 134489, stat = "physical" },  -- Flawless Mechanical Battle-Stone
-        { id = 92681, buff = 134490, stat = "physical" },  -- Flawless Undead Battle-Stone
-        { id = 116421, buff = 171518, stat = "physical" },  -- Flying Battle-Training Stone
-        { id = 8095, buff = 10723, stat = "caster" },  -- Hinott's Oil
-        { id = 116416, buff = 171517, stat = "physical" },  -- Humanoid Battle-Training Stone
-        { id = 87259, buff = 126586, stat = "physical" },  -- Icy Familiar Stone
-        { id = 137391, buff = 212863, stat = "physical" },  -- Immaculate Aquatic Battle-Stone
-        { id = 137627, buff = 213521, stat = "physical" },  -- Immaculate Battle-Stone
-        { id = 137394, buff = 212862, stat = "physical" },  -- Immaculate Beast Battle-Stone
-        { id = 137393, buff = 212856, stat = "physical" },  -- Immaculate Critter Battle-Stone
-        { id = 137387, buff = 212859, stat = "physical" },  -- Immaculate Dragonkin Battle-Stone
-        { id = 137395, buff = 212857, stat = "physical" },  -- Immaculate Elemental Battle-Stone
-        { id = 137396, buff = 212860, stat = "physical" },  -- Immaculate Flying Battle-Stone
-        { id = 137388, buff = 212866, stat = "physical" },  -- Immaculate Humanoid Battle-Stone
-        { id = 137392, buff = 212858, stat = "physical" },  -- Immaculate Magic Battle-Stone
-        { id = 137390, buff = 212861, stat = "physical" },  -- Immaculate Mechanical Battle-Stone
-        { id = 137389, buff = 212864, stat = "physical" },  -- Immaculate Undead Battle-Stone
-        { id = 142359, buff = 230286, stat = "caster" },  -- Lava Oil
-        { id = 116422, buff = 171521, stat = "physical" },  -- Magic Battle-Training Stone
-        { id = 98715, buff = 134644, stat = "physical" },  -- Marked Flawless Battle-Stone
-        { id = 116417, buff = 171523, stat = "physical" },  -- Mechanical Battle-Training Stone
-        { id = 92689, buff = 134499, stat = "physical" },  -- Polished Aquatic Battle-Stone
-        { id = 92742, buff = 134496, stat = "physical" },  -- Polished Battle-Stone
-        { id = 92685, buff = 134495, stat = "physical" },  -- Polished Beast Battle-Stone
-        { id = 92686, buff = 134761, stat = "physical" },  -- Polished Critter Battle-Stone
-        { id = 92693, buff = 134504, stat = "physical" },  -- Polished Dragonkin Battle-Stone
-        { id = 92684, buff = 134494, stat = "physical" },  -- Polished Elemental Battle-Stone
-        { id = 92687, buff = 134497, stat = "physical" },  -- Polished Flying Battle-Stone
-        { id = 92692, buff = 134503, stat = "physical" },  -- Polished Humanoid Battle-Stone
-        { id = 92688, buff = 134498, stat = "physical" },  -- Polished Magic Battle-Stone
-        { id = 92690, buff = 134501, stat = "physical" },  -- Polished Mechanical Battle-Stone
-        { id = 92691, buff = 134502, stat = "physical" },  -- Polished Undead Battle-Stone
-        { id = 219146, buff = 442935, stat = "physical" },  -- Set Keystone Map: Stonevault
-        { id = 147563, buff = 242133, stat = "physical" },  -- Stone Totem
-        { id = 30309, buff = 11009, stat = "physical" },  -- Stonebreaker Brew
-        { id = 116423, buff = 171519, stat = "physical" },  -- Undead Battle-Training Stone
-        { id = 139816, buff = 221923, stat = "physical" },  -- Well-Worn Stone
-        -- exp -3
-        { id = 223647, buff = 449639, stat = "physical" },  -- Lifeless Stone Ring
+        { id = 2862, buff = 2828, stat = "physical", wmask = 33731 },  -- Rough Sharpening Stone
+        { id = 3239, buff = 3112, stat = "physical", wmask = 9264 },  -- Rough Weightstone
     },
 })
 
@@ -650,5 +537,34 @@ if SpellDB.RegisterPrecombatBuffsExtra then
 
         -- Class self-buffs (source = "spell": known via IsSpellKnown, cast via type=spell)
         -- { category = "classBuff", id = <spellID>, buff = <auraSpellID>, source = "spell" },
+    })
+end
+
+
+-- ──────────────────────────── EATING AURAS (generated) ────────────────────────────
+-- Every eat/drink regen aura ("Food"/"Refreshment" variants) reachable from a food
+-- item's use-spell trigger chain. This is the aura visible on the player while eating;
+-- SpellDB.GetActiveEatingAura tests set membership for the eat sweep and "wait" hint.
+if SpellDB.RegisterEatingAuras then
+    SpellDB.RegisterEatingAuras({
+        430, 431, 432, 433, 434, 435, 833, 1127, 1129, 1131, 1133, 1135,
+        1137, 2639, 5004, 5006, 5007, 6410, 7737, 10256, 10257, 18124, 18194, 18229,
+        18230, 18232, 18233, 18234, 21149, 22731, 22734, 24005, 24355, 24707, 24800, 24869,
+        25660, 25694, 25695, 25696, 25702, 25703, 25888, 25889, 25941, 25990, 26260, 26261,
+        26401, 26402, 27089, 27094, 29008, 29073, 32112, 33253, 33255, 33258, 33260, 33262,
+        33264, 33265, 33266, 33269, 33725, 33773, 33774, 34291, 35270, 35271, 40768, 41030,
+        42207, 42311, 42312, 43180, 43182, 43183, 43763, 45020, 45548, 46683, 46755, 46812,
+        46898, 52911, 53283, 61874, 64056, 65420, 65422, 66041, 72623, 80166, 80167, 80168,
+        80169, 87544, 87566, 87567, 87568, 87570, 87571, 87572, 87573, 87577, 87584, 87586,
+        87587, 87588, 87594, 87595, 87597, 87599, 87601, 87602, 87604, 87636, 87648, 87958,
+        87959, 94468, 100365, 100367, 100374, 100376, 100379, 104235, 104262, 104269, 104270, 104934,
+        105230, 105231, 105232, 105233, 108030, 111841, 111842, 118358, 125879, 127843, 148922, 148984,
+        160598, 160599, 170908, 172786, 175780, 175787, 191876, 192000, 192001, 192002, 192128, 195472,
+        201312, 215752, 225737, 225738, 227227, 227229, 257427, 257428, 262265, 262568, 262569, 274910,
+        274911, 274913, 274914, 276030, 279739, 281605, 281606, 297098, 303634, 303680, 305441, 308429,
+        308433, 314646, 314648, 318086, 329593, 340109, 348436, 348439, 359070, 360640, 369156, 369159,
+        369161, 369162, 369166, 394350, 396917, 396918, 396919, 396920, 396921, 398851, 410668, 452276,
+        452319, 452382, 452384, 452389, 456574, 456575, 460938, 462174, 462179, 470480, 473490, 1250721,
+        1256686,
     })
 end

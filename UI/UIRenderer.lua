@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 23)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 24)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -335,7 +335,25 @@ local function UpdateButtonCooldowns(button)
                 button._cdStart, button._cdDuration = nil, nil
             end
         else
-            button.cooldown:Clear()
+            -- isActive tracks REAL cooldowns, so a pure GCD window lands here on icons
+            -- whose swipe source can't see the GCD: macro-driven slots are never
+            -- "direct" (their resolved spell changes with modifiers), and the
+            -- local-numbers path only carries real CDs. IsSpellOnGCD (NeverSecret,
+            -- true exactly during a pure GCD window; never for off-GCD abilities)
+            -- gates rendering the GCD from the spell's own duration object instead
+            -- of clearing - so macro/off-bar icons keep the GCD sweep.
+            local gcdShown = false
+            if cooldownID and C_Spell_GetSpellCooldownDuration
+               and BlizzardAPI.IsSpellOnGCD and BlizzardAPI.IsSpellOnGCD(cooldownID) then
+                local ok, durObj = pcall(C_Spell_GetSpellCooldownDuration, cooldownID)
+                if ok and durObj then
+                    button.cooldown:SetCooldownFromDurationObject(durObj)
+                    gcdShown = true
+                end
+            end
+            if not gcdShown then
+                button.cooldown:Clear()
+            end
             button._cdStart, button._cdDuration = nil, nil
         end
 
@@ -853,8 +871,11 @@ end
 -- out of combat; the parent main frame still hides the whole cluster when the HUD is hidden.
 -- ponytail: a "hidden" icon stays Shown at alpha 0 (a small invisible mouse rect by the queue,
 -- same as the DPS-queue empty slots). Upgrade path: EnableMouse(false) at creation if it bites.
+-- Nameplate-overlay icons are exempt: they anchor to non-protected nameplates and are
+-- Hidden on target loss (UpdateAnchor), so their Show() is combat-safe and must not
+-- wait for OOC or they stay invisible for the rest of combat.
 local function SetDefensiveIconVisible(defensiveIcon, visible)
-    if not defensiveIcon:IsShown() and not InCombatLockdown() then
+    if not defensiveIcon:IsShown() and (defensiveIcon.isOverlayIcon or not InCombatLockdown()) then
         defensiveIcon:Show()
     end
     defensiveIcon:SetAlpha(visible and 1 or 0)

@@ -3,6 +3,42 @@
 
 ## [Unreleased]
 
+## [4.31.0] - 2026-07-01
+
+### Fixed
+
+- Nameplate overlay: defensive icons could vanish for the rest of combat after
+  losing or switching your target.
+- Defensive queue: no longer invisible after a UI reload during combat.
+- Eating: the progress sweep and "wait" hint now work with foods from every
+  expansion, not just the current tier.
+- The global-cooldown sweep now shows on queue icons for abilities cast through
+  macros or otherwise not directly on a bound action bar slot.
+- Weapon enhancements: sharpening stones and weightstones are only suggested when
+  they fit your equipped weapon (bladed vs. blunt), and look-alike items (pet
+  battle stones, statues) no longer appear as suggestions.
+
+### Improved
+
+- Cooldown tracking: talent-driven cooldown resets and reductions on interrupts,
+  defensives, and gap-closers are now detected mid-combat.
+- Cooldown tracking: charge abilities snap back to full the moment their last
+  charge recovers or is refunded.
+- Cooldown tracking: cooldown state survives dying - after a battle resurrection,
+  abilities no longer all appear ready.
+- Queue ordering: procced spells keep their priority spot even when a talent
+  reset their cooldown or refunded a charge.
+- Queue ordering: multi-target situations are remembered for a few seconds, so
+  the queue no longer flips to single-target ordering while your AoE spells
+  recharge.
+- Queue ordering: execute abilities stay prioritized for the rest of a target's
+  life once it enters execute range.
+
+### Added
+
+- `/jac inspect rank` - shows how the queue reads the current combat situation
+  and how each queued ability is ranked.
+
 ## [4.30.1] - 2026-07-01
 
 ### Added

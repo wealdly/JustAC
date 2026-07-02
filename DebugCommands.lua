@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 19)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 20)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -25,6 +25,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect buffs - Diagnose pre-combat buff checklist (out of combat)")
     addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
     addon:Print("/jac inspect perf reset - Reset build counters")
+    addon:Print("/jac inspect rank - Queue context inference and per-spell ordering ranks")
+    addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac help - Show this help")
 end
@@ -253,7 +255,11 @@ function DebugCommands.DefensiveDiagnostics(addon)
     else
         for i, icon in ipairs(defensiveIcons) do
             addon:Print("  [Position " .. i .. "]")
-            addon:Print("    Visible: " .. (icon:IsShown() and "|cff00ff00YES|r" or "NO"))
+            -- Visibility is Shown AND alpha > 0: icons are born Shown at alpha 0 and
+            -- driven by alpha (combat-safe), so IsShown alone doesn't prove visible.
+            local alphaPct = math.floor((icon:GetAlpha() or 0) * 100 + 0.5)
+            addon:Print("    Visible: " .. (icon:IsShown() and "|cff00ff00shown|r" or "|cffff0000HIDDEN|r")
+                .. " (alpha " .. alphaPct .. "%)")
             addon:Print("    CurrentID: " .. tostring(icon.currentID or "nil"))
             addon:Print("    SpellID: " .. tostring(icon.spellID or "nil"))
             addon:Print("    isItem: " .. tostring(icon.isItem or "nil"))
@@ -343,7 +349,8 @@ function DebugCommands.DefensiveDiagnostics(addon)
         end
     end
 
-    -- GetHaste() NeverSecret research (untested in combat as of 2026-03-17)
+    -- GetHaste(): verified SECRET in combat (2026-07-01) - not usable for live
+    -- recharge/CD scaling; kept here as a probe in case a patch changes it.
     addon:Print("")
     addon:Print("Haste API:")
     if GetHaste then ---@diagnostic disable-line: undefined-global
@@ -489,7 +496,12 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
     if ActionBarScanner and ActionBarScanner.GetSlotForSpell then
         local slot = ActionBarScanner.GetSlotForSpell(spellID)
         if slot then
-            addon:Print("   Slot: " .. slot)
+            local direct = ActionBarScanner.GetDirectSlotForSpell
+                and ActionBarScanner.GetDirectSlotForSpell(spellID)
+            local actionType = GetActionInfo and GetActionInfo(slot) or "?"
+            addon:Print("   Slot: " .. slot .. " (" .. tostring(actionType) .. ")  Direct: "
+                .. (direct and "|cff00ff00YES|r (slot drives swipe+GCD)"
+                    or "|cffff6600NO|r (macro/unbound: swipe from local numbers, GCD via fallback)"))
             if ActionBarScanner.GetActionBarCooldown then
                 local start, dur = ActionBarScanner.GetActionBarCooldown(spellID)
                 local startSecret = BlizzardAPI.IsSecretValue(start)
@@ -902,6 +914,74 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
 end
 
 --------------------------------------------------------------------------------
+-- Fixed-Queue Context Rank Diagnostics
+--------------------------------------------------------------------------------
+-- Dumps the inferred combat context (from the AC pick, post execute-latch and
+-- sticky-multi smoothing) and each queue spell's profile-distance rank. Every
+-- value shown is non-secret by construction, so this is safe to run in combat.
+function DebugCommands.ContextRankDiagnostics(addon)
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if not SpellQueue or not SpellQueue.DebugContextState then
+        addon:Print("|cffff0000SpellQueue not loaded|r")
+        return
+    end
+
+    local function spellName(id)
+        if id < 0 then
+            local name = GetItemInfo and GetItemInfo(-id)
+            return name or ("item " .. -id)
+        end
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+        return (info and info.name) or "?"
+    end
+
+    local ctx = SpellQueue.DebugContextState()
+    addon:Print("=== Fixed-Queue Context Rank ===")
+    if ctx.pickID then
+        addon:Print("AC pick: " .. spellName(ctx.pickID) .. " (" .. ctx.pickID .. ")")
+    else
+        addon:Print("AC pick: |cff888888none|r")
+    end
+    addon:Print(string.format("Context: arch=%s range=%s role=%s%s",
+        tostring(ctx.arch), tostring(ctx.range), tostring(ctx.role),
+        ctx.stickyApplied and " |cffadd8e6(sticky multi)|r" or ""))
+    addon:Print(string.format("Execute: %s%s  OutOfMelee: %s",
+        tostring(ctx.execute),
+        ctx.executeLatched and " |cffadd8e6(latched)|r" or "",
+        tostring(ctx.outOfMelee)))
+
+    local profile = addon.db and addon.db.profile
+    if profile and profile.orderContextAware == false then
+        addon:Print("|cffffff00Context-aware ordering is OFF - ranks below are not applied.|r")
+    end
+
+    addon:Print("")
+    addon:Print("Queue (rank 0 = best match ... 9 = uncastable sink; the AC slot is never reordered):")
+    local queue = SpellQueue.GetCurrentSpellQueue()
+    if not queue or #queue == 0 then
+        addon:Print("  |cff888888(empty)|r")
+        addon:Print("================================")
+        return
+    end
+    for i, sid in ipairs(queue) do
+        if sid > 0 then
+            local arch = SpellDB and SpellDB.GetArch and SpellDB.GetArch(sid)
+            local range = SpellDB and SpellDB.GetRange and SpellDB.GetRange(sid)
+            local role = SpellDB and SpellDB.GetRole and SpellDB.GetRole(sid)
+            local gate = SpellDB and SpellDB.GetGate and SpellDB.GetGate(sid)
+            local rankTag = (i == 1) and "|cff888888AC slot|r"
+                or ("rank=" .. tostring(SpellQueue.DebugRankSpell and SpellQueue.DebugRankSpell(sid)))
+            addon:Print(string.format("  %d. %s (%d)  arch=%s range=%s role=%s gate=%s  %s",
+                i, spellName(sid), sid, tostring(arch), tostring(range), tostring(role), tostring(gate), rankTag))
+        else
+            addon:Print(string.format("  %d. %s (item)  rank=1 (neutral)", i, spellName(sid)))
+        end
+    end
+    addon:Print("================================")
+end
+
+--------------------------------------------------------------------------------
 -- Performance Diagnostics
 --------------------------------------------------------------------------------
 function DebugCommands.PerformanceDiagnostics(addon, subCommand)
@@ -975,6 +1055,139 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
     addon:Print("======================================")
 end
 
+--------------------------------------------------------------------------------
+-- Charge API Diagnostics (SPELL_UPDATE_CHARGES / GetSpellCharges secrecy probe)
+--------------------------------------------------------------------------------
+-- Settles whether a charge-refund correction is buildable in combat:
+--   Q1: does SPELL_UPDATE_CHARGES fire in combat, and is its payload readable?
+--   Q2: which C_Spell.GetSpellCharges fields are non-secret in combat?
+--   Q3: does any readable field cleanly distinguish "recharging" from "charges
+--       full"? (recharge inactive ⟺ full would give a definitive refund fix)
+-- Arm, enter combat, spend a charge, let it recharge. Auto-disarms after 60s
+-- or 12 logged events.
+function DebugCommands.ChargeDiagnostics(addon, spellArg)
+    if DebugCommands._chargeDiag then
+        addon:Print("|cffffff00chargediag already armed (/reload to cancel).|r")
+        return
+    end
+    if not (C_Spell and C_Spell.GetSpellCharges) then
+        addon:Print("|cffff0000C_Spell.GetSpellCharges not available|r")
+        return
+    end
+
+    -- Print-safe conversion; "<secret>" for secret values. Event args and struct
+    -- fields can be secret in ways IsSecretValue misses, so force the value
+    -- through compare+concat and catch the throw (same approach as castdiag).
+    local function safe(v)
+        if v == nil then return "nil" end
+        local ok, s = pcall(function()
+            local str = tostring(v)
+            local _ = (str == "")
+            return str .. ""
+        end)
+        if ok and type(s) == "string" then return s end
+        return "<secret>"
+    end
+
+    -- Resolve probe spells: named arg, else every charge spell in the spellbook.
+    local probeSpells = {}
+    local normalizedArg = type(spellArg) == "string" and spellArg:match("^%s*(.-)%s*$") or nil
+    if normalizedArg == "" then normalizedArg = nil end
+    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+        local lowerArg = normalizedArg and normalizedArg:lower()
+        for i = 1, 1000 do
+            local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+            if not info then break end
+            if info.spellID and info.name then
+                if lowerArg then
+                    if info.name:lower() == lowerArg then
+                        probeSpells[1] = info.spellID
+                        break
+                    end
+                else
+                    local ok, ci = pcall(C_Spell.GetSpellCharges, info.spellID)
+                    if ok and ci then
+                        -- maxCharges is NeverSecret; arithmetic throws if that changes
+                        local okMax, isMulti = pcall(function() return ci.maxCharges > 1 end)
+                        if okMax and isMulti and #probeSpells < 4 then
+                            probeSpells[#probeSpells + 1] = info.spellID
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #probeSpells == 0 then
+        if normalizedArg then
+            addon:Print("|cffff0000Spell not found in spellbook:|r " .. normalizedArg)
+        else
+            addon:Print("|cffff6600No charge spells found in spellbook. Name one: /jac inspect chargediag <spell>|r")
+        end
+        return
+    end
+
+    local function dumpCharges(label, spellID)
+        local info = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+        local name = (info and info.name) or "?"
+        local ok, ci = pcall(C_Spell.GetSpellCharges, spellID)
+        if not ok or not ci then
+            addon:Print(string.format("  [%s] %s (%d): GetSpellCharges -> nil", label, name, spellID))
+            return
+        end
+        local parts = {}
+        for k, v in pairs(ci) do
+            parts[#parts + 1] = tostring(k) .. "=" .. safe(v)
+        end
+        table.sort(parts)
+        addon:Print(string.format("  [%s] %s (%d): %s", label, name, spellID, table.concat(parts, "  ")))
+    end
+
+    local f = CreateFrame("Frame")
+    DebugCommands._chargeDiag = f
+    local armT = GetTime()
+    local fires = 0
+    local MAX_FIRES = 12
+    local probeSet = {}
+    for _, sid in ipairs(probeSpells) do probeSet[sid] = true end
+
+    local function disarm(msg)
+        f:UnregisterAllEvents(); f:SetScript("OnEvent", nil); f:SetScript("OnUpdate", nil)
+        DebugCommands._chargeDiag = nil
+        addon:Print(msg)
+    end
+
+    addon:Print("|cff00ff00=== chargediag ARMED (60s) ===|r monitoring " .. #probeSpells .. " charge spell(s):")
+    for _, sid in ipairs(probeSpells) do dumpCharges("baseline", sid) end
+    addon:Print("  In combat: spend a charge, then let it recharge. Watching SPELL_UPDATE_CHARGES.")
+
+    f:RegisterEvent("SPELL_UPDATE_CHARGES")
+    f:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+    f:SetScript("OnEvent", function(_, event, arg1)
+        if event == "SPELL_UPDATE_COOLDOWN" then
+            -- Fallback trigger question only; this event is spammy, so log it
+            -- solely when the payload names a probe spell. pcall: payload may be
+            -- secret, and indexing with a secret key throws.
+            local ok, isProbe = pcall(function() return probeSet[arg1] == true end)
+            if not (ok and isProbe) then return end
+        end
+        fires = fires + 1
+        addon:Print(string.format("|cffadd8e6[%+.2fs]|r %s payload=%s inCombat=%s",
+            GetTime() - armT, event, safe(arg1), tostring(UnitAffectingCombat("player"))))
+        for _, sid in ipairs(probeSpells) do dumpCharges("now", sid) end
+        if fires >= MAX_FIRES then
+            disarm("|cffffff00chargediag: max events logged - disarmed. Re-arm to continue.|r")
+        end
+    end)
+    f:SetScript("OnUpdate", function()
+        if GetTime() - armT > 60 then
+            disarm("|cffffff00chargediag: 60s window ended - disarmed.|r")
+        end
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- Cast Interruptibility Diagnostics
+--------------------------------------------------------------------------------
 -- One-shot cast-interruptibility diagnostic. Settles two assumptions the interrupt
 -- tracker is built on: (Q1) do INTERRUPTIBLE/NOT_INTERRUPTIBLE events fire at cast
 -- START, or only on a mid-cast transition? (Q2) does an addon-created CastingBar

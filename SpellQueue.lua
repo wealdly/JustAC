@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 40)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 41)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -16,6 +16,7 @@ local IsMounted = IsMounted
 local GetShapeshiftFormID = GetShapeshiftFormID
 local UnitExists = UnitExists
 local UnitCanAttack = UnitCanAttack
+local UnitGUID = UnitGUID
 local wipe = wipe
 local type = type
 local ipairs = ipairs
@@ -58,6 +59,22 @@ local recommendedSpells = {}
 -- Parallel context-rank buffers for the fixed-queue archetype/range bias.
 local proccedRank = {}
 local normalRank = {}
+
+-- Situation memory: the AC pick churns faster than the situation it reveals.
+--   stickyArch/-Range: last multi-target (aoe/cleave) pick, held STICKY_CTX_SECONDS.
+--     An ST pick during AoE is common (the multi spells are cooling down - exactly
+--     when the pick lies about target count); a multi pick on few targets is rare.
+--     So multi evidence outlives the pick; ST picks alone don't clear it.
+--   executeLatchGUID: enemy health only drops, so an execute reveal holds for the
+--     rest of that target's life instead of flickering off while the execute
+--     spell itself cools down.
+-- Both cleared on combat exit (and the latch on target change).
+local STICKY_CTX_SECONDS = 8
+local stickyArch, stickyRange, stickyTime = nil, nil, 0
+local executeLatchGUID = nil
+
+-- Snapshot of the last build's context (post latch/sticky), for /jac inspect rank.
+local lastCtx = {}
 
 -- Per-update cache for spell filter results (cleared at start of each GetCurrentSpellQueue call)
 -- Prevents re-checking the same spell multiple times per update cycle
@@ -388,14 +405,18 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                 if displayID
                    and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
                    and PassesRotationFilters(displayID, profile) then
-                    if sinkCooldowns and not BlizzardAPI.IsSpellReady(displayID) then
-                        cooldownCount = cooldownCount + 1
-                        cooldownSpells[cooldownCount] = displayID
-                    elseif not bypassProcs and BlizzardAPI.IsSpellProcced(displayID)
+                    -- Proc check BEFORE the cooldown sink: the proc overlay is
+                    -- Blizzard's NeverSecret "press this now" signal and outranks our
+                    -- readiness inference, which goes stale on unobserved resets/refunds
+                    -- (a proc-driven CD reset or charge refund fires no cast event).
+                    if not bypassProcs and BlizzardAPI.IsSpellProcced(displayID)
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID)
+                    elseif sinkCooldowns and not BlizzardAPI.IsSpellReady(displayID) then
+                        cooldownCount = cooldownCount + 1
+                        cooldownSpells[cooldownCount] = displayID
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
@@ -445,6 +466,12 @@ function SpellQueue.GetCurrentSpellQueue()
     if not EvaluateQueueVisibility(profile, inCombat) then
         lastShouldShowQueue = false
         lastQueueUpdate = now
+        -- Clear situation memory here too: with combat-only visibility this early
+        -- return is the only path that runs OOC, and a stale execute latch must not
+        -- survive into the next fight (evade-reset mobs return at full health).
+        if not inCombat then
+            stickyArch, stickyRange, executeLatchGUID = nil, nil, nil
+        end
         wipe(lastSpellIDs)
         return lastSpellIDs
     end
@@ -486,6 +513,17 @@ function SpellQueue.GetCurrentSpellQueue()
     -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
     -- position 1 (isPrimary=true) so the rotation keeps advancing.
     local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
+
+    -- AC never recommends an uncastable spell: expire any stale local CD/charge
+    -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
+    -- can't keep sinking this spell in later builds.
+    if primarySpellID and primarySpellID > 0 and BlizzardAPI.NoteSpellRecommended then
+        BlizzardAPI.NoteSpellRecommended(primarySpellID)
+        local primaryDisplay = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+        if primaryDisplay ~= primarySpellID then
+            BlizzardAPI.NoteSpellRecommended(primaryDisplay)
+        end
+    end
 
     if primarySpellID and primarySpellID > 0 then
         local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
@@ -676,10 +714,44 @@ function SpellQueue.GetCurrentSpellQueue()
         ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
         ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
+    -- Temporal smoothing of the revealed context (see module-state comment):
+    -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
+    local stickyApplied, executeLatched = false, false
+    if inCombat then
+        local targetGUID = UnitGUID("target")
+        if ctxExecute and targetGUID then
+            executeLatchGUID = targetGUID
+        elseif executeLatchGUID then
+            if targetGUID == executeLatchGUID then
+                ctxExecute = true
+                executeLatched = true
+            else
+                executeLatchGUID = nil
+            end
+        end
+        if ctxArch == "aoe" or ctxArch == "cleave" then
+            stickyArch, stickyRange, stickyTime = ctxArch, ctxRange, now
+        elseif stickyArch then
+            if now - stickyTime <= STICKY_CTX_SECONDS then
+                ctxArch, ctxRange = stickyArch, stickyRange
+                stickyApplied = true
+            else
+                stickyArch, stickyRange = nil, nil
+            end
+        end
+    else
+        stickyArch, stickyRange = nil, nil
+        executeLatchGUID = nil
+    end
     -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
     -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
     -- no demote (fail-safe). Lets us sink uncastable melee spells in positions 2+.
     local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false
+    -- Snapshot for /jac inspect rank.
+    lastCtx.pickID = primarySpellID
+    lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
+    lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
+    lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
     if cachedRotationList then
         -- Master ordering toggles (profile-level; apply to both the custom list and
         -- Blizzard's default rotation). Default nil → true (smart order):
@@ -711,6 +783,16 @@ end
 --- Cached visibility verdict from last queue build - avoids re-evaluating per render frame.
 function SpellQueue.ShouldShowQueue()
     return lastShouldShowQueue
+end
+
+--- Last build's context (post latch/sticky). Diagnostic only (/jac inspect rank).
+function SpellQueue.DebugContextState()
+    return lastCtx
+end
+
+--- Rank a spell against the last build's context. Diagnostic only (/jac inspect rank).
+function SpellQueue.DebugRankSpell(spellID)
+    return ContextRank(spellID, lastCtx.arch, lastCtx.range, lastCtx.role, lastCtx.execute, lastCtx.outOfMelee)
 end
 
 --- Returns true if spellID was injected as a synthetic proc (gap-closer, etc.)

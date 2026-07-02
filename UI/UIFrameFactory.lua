@@ -445,6 +445,14 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     local button = CreateBaseIcon(parentFrame, actualIconSize, true, true, profile)
     if not button then return nil end
 
+    -- Born Shown at alpha 0: defensive visibility is alpha-driven (SetDefensiveIconVisible),
+    -- and the real Show() is skipped in combat (blocked when target-frame anchoring makes the
+    -- family protected). A /reload DURING combat creates these buttons mid-lockdown - born
+    -- Hidden they'd stay invisible until the next out-of-combat render. At creation the
+    -- anchor family is never protected yet, so this Show() is always combat-safe.
+    button:SetAlpha(0)
+    button:Show()
+
     -- Defensive-specific slot tracking
     button.iconIndex = index
 
