@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.32.2] - 2026-07-02
+
+### Fixed
+- Custom queue: abilities that are out of range on your current target now move to the end of the queue - including minimum-range abilities like Heroic Throw while you're in melee. They move back up the moment range is right again; the red range tint on the icon shows why an ability stepped back.
+
+### Changed
+- The custom queue's "Cooldowns last" ordering toggle is now "Unavailable last", matching everything it covers: on cooldown, out of charges, unusable (like Execute above its health threshold), and out of range. It handles the hard can't-press-it-now states; the situational reordering (matching Blizzard's pick, melee-range bias) remains separate on the "Context aware" toggle.
+
 ## [4.32.1] - 2026-07-02
 
 ### Fixed

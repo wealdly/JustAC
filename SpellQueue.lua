@@ -11,6 +11,7 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Hot path cache
 local GetTime = GetTime
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local UnitAffectingCombat = UnitAffectingCombat
 local IsMounted = IsMounted
 local GetShapeshiftFormID = GetShapeshiftFormID
@@ -360,6 +361,21 @@ local function IsConfirmedUnusable(spellID)
     return usable == false and not noMana
 end
 
+--- Confirmed out of range on the current target. Catches range gates usability can't see:
+--- a minimum range (Heroic Throw inside 8yd), melee against a kited target. IsSpellInRange's
+--- boolean is never secret (only the yardage is - same read the icon's red range tint uses).
+--- nil (no range requirement, no valid target) or a secret fails open and leaves order alone.
+--- No debounce: the flip only happens on genuine positional change, and the queue is
+--- context-live by design (melee sink, execute float) - the red tint explains the move.
+local function IsConfirmedOutOfRange(spellID)
+    if not C_Spell_IsSpellInRange then return false end
+    local r = C_Spell_IsSpellInRange(spellID, "target")
+    if r == nil or (BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(r)) then
+        return false
+    end
+    return r == false
+end
+
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
 local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
@@ -426,7 +442,8 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID)
                     elseif sinkCooldowns and (not BlizzardAPI.IsSpellReady(displayID)
-                           or IsConfirmedUnusable(displayID)) then
+                           or IsConfirmedUnusable(displayID)
+                           or IsConfirmedOutOfRange(displayID)) then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                     else
