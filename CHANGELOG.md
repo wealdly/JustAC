@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.32.4] - 2026-07-02
+
+### Fixed
+- Pre-combat buff and class-buff reminders now stay quiet in PvP instances, where the 12.0.7 game update makes buff data unreadable even out of combat. Previously the addon could re-suggest a flask or food you had already used (and clicking would consume another one) because it couldn't see your active buffs there.
+
 ## [4.32.3] - 2026-07-02
 
 ### Fixed

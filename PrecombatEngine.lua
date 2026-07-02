@@ -53,6 +53,13 @@ end
 --- Is the buff category already satisfied? Weapon enchant is read off the weapon (temp
 --- enchant); every other category from the player's auras. Out of combat only.
 function PrecombatEngine.IsCategorySatisfied(category)
+    -- 12.0.7: in aura-restricted contexts (PvP instances - restriction is per-context,
+    -- not per-combat) every aura reads as secret, so nothing can be verified. Report
+    -- satisfied so we never nag someone to re-consume a buff they may already have.
+    -- NeverSecret predicate; false in normal content keeps this a no-op.
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return true
+    end
     if category == "weaponEnchant" then
         local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
         return hasMainHand and true or false
@@ -159,7 +166,10 @@ function PrecombatEngine.GetMissingClassBuffs()
     local class = groups and select(2, UnitClass("player"))
     groups = class and SpellDB.CLASS_MAINTAINED_BUFFS[class]
     local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
-    if groups and get then
+    -- 12.0.7: in aura-restricted contexts the by-ID probe returns nil for secret-flagged
+    -- auras (RequiresNonSecretAura), so every class buff would look lapsed - offer nothing.
+    local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+    if groups and get and not restricted then
         for _, grp in ipairs(groups) do
             local active, aura
             for _, spellID in ipairs(grp.group) do
