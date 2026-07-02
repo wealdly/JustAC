@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.32.3] - 2026-07-02
+
+### Fixed
+- Fixed a flood of "attempted to index a table that cannot be indexed with secret keys" errors after the 12.0.7 game update, which made some buff data unreadable even out of combat. Buff scanning (pre-combat buff reminders, food/eating detection, class-buff refresh timing, the eating progress sweep) now skips unreadable buffs instead of erroring.
+
 ## [4.32.2] - 2026-07-02
 
 ### Fixed

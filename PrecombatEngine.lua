@@ -30,7 +30,10 @@ local function HasAnyAura(buffSet)
     while true do
         local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
         if not aura then return false end
-        if aura.spellId and buffSet[aura.spellId] then return true end
+        -- 12.0.7: some aura spellIds are secret even out of combat; a secret table
+        -- key throws, so skip those auras (their identity is unknowable here).
+        if aura.spellId and not (issecretvalue and issecretvalue(aura.spellId))
+           and buffSet[aura.spellId] then return true end
         i = i + 1
     end
 end
@@ -166,9 +169,15 @@ function PrecombatEngine.GetMissingClassBuffs()
                 end
             end
             if active then
-                local dur = aura.duration or 0
-                local rem = (aura.expirationTime or 0) - now
-                if dur > 0 and rem <= dur * CLASS_BUFF_REFRESH_FRACTION then out[#out + 1] = active end
+                -- 12.0.7: aura timing can be secret even out of combat (arithmetic on a
+                -- secret throws). Secret timing = buff is up but the refresh window is
+                -- unknowable - suggest nothing rather than a premature refresh.
+                local dur, exp = aura.duration, aura.expirationTime
+                if not (issecretvalue and (issecretvalue(dur) or issecretvalue(exp))) then
+                    dur = dur or 0
+                    local rem = (exp or 0) - now
+                    if dur > 0 and rem <= dur * CLASS_BUFF_REFRESH_FRACTION then out[#out + 1] = active end
+                end
             else
                 -- Missing entirely (lapsed/cancelled): offer what the fixed queue ranks
                 -- highest in this group, else the group's own default. Each group resolves

@@ -199,8 +199,9 @@ end
 
 --- The player's active eating/drinking aura (with timing), or nil.
 --- The set is too large to probe id-by-id, so scan the player's buffs and test set
---- membership. Combat bail is correctness, not just cost: you can't eat in combat, and
---- in-combat aura spellIds can be secret (secret table keys throw). Memoized briefly -
+--- membership. Combat bail is correctness, not just cost: you can't eat in combat.
+--- 12.0.7: some aura spellIds are secret even OUT of combat (secret table keys throw),
+--- so those auras are skipped - their identity is unknowable here. Memoized briefly -
 --- called per render frame while a food suggestion is displayed.
 local eatCache, eatCacheAt = nil, 0
 function SpellDB.GetActiveEatingAura()
@@ -213,7 +214,8 @@ function SpellDB.GetActiveEatingAura()
     for i = 1, 60 do
         local a = get("player", i, "HELPFUL")
         if not a then break end
-        if a.spellId and EATING_AURAS[a.spellId] then
+        if a.spellId and not (issecretvalue and issecretvalue(a.spellId))
+           and EATING_AURAS[a.spellId] then
             eatCache = a
             break
         end

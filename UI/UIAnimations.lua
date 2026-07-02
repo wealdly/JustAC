@@ -638,6 +638,12 @@ local function StartChannelFill(icon)
                 eating = aura ~= nil
             end
         end
+        -- 12.0.7: aura timing can be secret even out of combat - comparing or doing
+        -- arithmetic on a secret throws, so a secret-timed aura gets no fill sweep.
+        if aura and issecretvalue
+           and (issecretvalue(aura.duration) or issecretvalue(aura.expirationTime)) then
+            aura = nil
+        end
         if aura and aura.expirationTime and aura.duration and aura.duration > 0 then
             startMS = (aura.expirationTime - aura.duration) * 1000
             -- Well Fed lands after ~10s of eating, not the full ~20s aura - track that
