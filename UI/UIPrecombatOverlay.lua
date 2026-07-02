@@ -10,12 +10,13 @@
 -- secure. They live in an insecure container hidden in combat by RegisterStateDriver([combat]
 -- hide), and are only ever (re)configured out of combat.
 --
--- Interaction: left-click casts via a "[button:1]" macro (so ONLY left-click fires the
--- action); the layer forwards hover (the icon's rich tooltip) and right-click (the icon's
--- hotkey-override handler) to the icon beneath, and shows an action-bar-style highlight on
--- hover. It yields entirely in click-through mode (clicks still pass to the game world) and
--- when click-to-cast is disabled. Out of combat the panel's own icons aren't draggable
--- (the grab tab moves the frame), so the overlay has nothing else to forward.
+-- Interaction: left-click casts via the button-1-suffixed secure attribute ("type1"), so
+-- only left-click fires the action; the layer forwards hover (the icon's rich tooltip) and
+-- right-click (the icon's hotkey-override handler, which enforces panel lock) to the icon
+-- beneath, and shows an action-bar-style highlight on hover. It yields entirely in
+-- click-through mode (clicks still pass to the game world) and when click-to-cast is
+-- disabled. Out of combat the panel's own icons aren't draggable (the grab tab moves the
+-- frame), so the overlay has nothing else to forward.
 
 local PrecombatOverlay = LibStub:NewLibrary("JustAC-PrecombatOverlay", 1)
 if not PrecombatOverlay then return end
@@ -52,6 +53,15 @@ local function EnsurePool()
             local f = self.icon and self.icon:GetScript("OnLeave")
             if f then f(self.icon) end
         end)
+        -- Right-click resolves no secure action ("type1" is left-click only); forward it to
+        -- the icon's OnClick (hotkey override - it enforces panel lock itself) on release,
+        -- matching the icons' own RightButtonUp registration.
+        b:SetScript("PostClick", function(self, mouseButton, down)
+            if mouseButton == "RightButton" and not down then
+                local f = self.icon and self.icon:GetScript("OnClick")
+                if f then f(self.icon, mouseButton) end
+            end
+        end)
         -- Faint centered "click" hint, shown only over inserted pre-combat buff icons (which
         -- only exist OOC anyway). FontStrings don't intercept mouse, so clicks still land.
         local hint = b:CreateFontString(nil, "OVERLAY")
@@ -68,16 +78,17 @@ local function EnsurePool()
 end
 
 -- Point a layer at an icon (out of combat only) using the secure item/spell attributes by
--- ID - the proven path. Both mouse buttons fire it (a left-click-only macro turned out not
--- to activate reliably); right-click hotkey-override yields to the click while the overlay
--- is up, which only matters in unlocked mode.
+-- ID - the proven path. The action type is bound to "type1" so only left-click resolves a
+-- secure action (a left-click-only macro turned out not to activate reliably); right-click
+-- falls through to the PostClick forwarder above. The data attributes stay unsuffixed -
+-- secure lookup falls back from "spell1"/"item1" to "spell"/"item".
 local function ConfigureLayer(layer, icon, eating)
     layer.icon = icon
     if icon.isItem and icon.itemID then
-        layer:SetAttribute("type", "item")
+        layer:SetAttribute("type1", "item")
         layer:SetAttribute("item", "item:" .. icon.itemID)
     elseif icon.spellID then
-        layer:SetAttribute("type", "spell")
+        layer:SetAttribute("type1", "spell")
         layer:SetAttribute("spell", icon.spellID)
     else
         return false

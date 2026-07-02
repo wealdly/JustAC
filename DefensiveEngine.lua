@@ -408,6 +408,9 @@ end
 --   2. Castable non-procced spells + usable items (mid priority, user list order)
 --   3. Unusable spells (on CD or lacking resources - de-prioritized to end)
 -- Ready-to-use defensives always appear before on-cooldown ones.
+-- Aura-linked hints (SpellDB.DEFENSIVE_AURA_HINTS) can float a ready button into the
+-- procced tier (its trigger aura is present, e.g. heavy stagger → purify) or sink one
+-- to the unusable tier (its mitigation buff is already active).
 function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     wipe(usableResults)
     if not spellList or maxCount <= 0 then return usableResults end
@@ -432,7 +435,14 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
                 local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
-                    if isProcced then
+                    -- Aura-linked ordering hints (tank active mitigation) - keyed by base list ID
+                    local hint = SpellDB and SpellDB.DEFENSIVE_AURA_HINTS and SpellDB.DEFENSIVE_AURA_HINTS[entry]
+                    if hint and hint.sinkAura and not isProcced
+                        and BlizzardAPI.IsAuraActive("player", hint.sinkAura) then
+                        -- Mitigation buff already rolling: a re-press isn't the priority.
+                        -- Order-only park with the on-CD entries; the icon renders normally.
+                        unusableBuffer[#unusableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = false}
+                    elseif isProcced then
                         -- Check per-spell proc-priority setting (default true)
                         local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
                         local procPriority = not spellSettings or spellSettings.procPriority ~= false
@@ -458,7 +468,21 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                         if unusable then
                             unusableBuffer[#unusableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = noResources}
                         else
-                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
+                            -- Aura-linked float: trigger aura present and the button is ready
+                            -- (e.g. heavy stagger → purify). Treated like a proc: front of the
+                            -- queue, surfaced at any health level. Unlike real procs this only
+                            -- applies to READY buttons - the ready/resource checks above ran.
+                            local floated = false
+                            if hint and hint.floatAuras then
+                                for _, auraID in ipairs(hint.floatAuras) do
+                                    if BlizzardAPI.IsAuraActive("player", auraID) then floated = true; break end
+                                end
+                            end
+                            if floated then
+                                proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                            else
+                                nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
+                            end
                         end
                     end
                     usableAddedHere[resolvedID] = true

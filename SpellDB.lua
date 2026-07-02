@@ -635,7 +635,7 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     DEMONHUNTER_2 = {228477, 203720, 204021, 198589, 263648},  -- Soul Cleave, Demon Spikes, Fiery Brand, Blur, Soul Barrier
 
     -- ── Druid ───────────────────────────────────────────────────────────────
-    -- Class fallback (Balance/Resto): Regrowth, Barkskin, Renewal
+    -- Class fallback (Balance/Resto): Regrowth, Renewal, Barkskin
     DRUID         = {8936, 108238, 22812},                     -- Regrowth, Renewal, Barkskin
     -- Feral: Regrowth, Survival Instincts, Barkskin, Renewal
     DRUID_2       = {8936, 61336, 22812, 108238},              -- Regrowth, Survival Instincts, Barkskin, Renewal
@@ -658,8 +658,11 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Monk ────────────────────────────────────────────────────────────────
     -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Diffuse Magic
     MONK          = {322101, 115203, 122783},                  -- Expel Harm, Fortifying Brew, Diffuse Magic
-    -- Brewmaster (tank): Celestial Brew, Expel Harm, Fortifying Brew  (Dampen Harm removed in 12.0; Diffuse Magic merged into Fortifying Brew talent)
-    MONK_1        = {322507, 322101, 120954},                  -- Celestial Brew, Expel Harm, Fortifying Brew
+    -- Brewmaster (tank): Purifying Brew first (stagger is the real damage signal - the
+    -- float hint below surfaces it whenever Moderate/Heavy Stagger is up), then Celestial
+    -- Brew, Expel Harm, Fortifying Brew  (Dampen Harm removed in 12.0; Diffuse Magic merged
+    -- into Fortifying Brew talent)
+    MONK_1        = {119582, 322507, 322101, 120954},          -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew
     -- Mistweaver: Fortifying Brew, Diffuse Magic  (Expel Harm removed in 12.0)
     MONK_2        = {115203, 122783},                           -- Fortifying Brew, Diffuse Magic
     -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
@@ -668,8 +671,9 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Paladin ─────────────────────────────────────────────────────────────
     -- Class fallback (Holy/Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
     PALADIN       = {85673, 403876, 642, 633},                 -- Word of Glory, Divine Protection, Divine Shield, Lay on Hands
-    -- Protection (tank): Shield of the Righteous (rotational but defensive), Ardent Defender,
-    -- Guardian of Ancient Kings, Word of Glory, Divine Shield, Lay on Hands
+    -- Protection (tank): Word of Glory, Ardent Defender, Guardian of Ancient Kings,
+    -- Divine Shield, Lay on Hands.  Shield of the Righteous is deliberately absent -
+    -- AC recommends it rotationally, so it lives in the offensive queue.
     PALADIN_2     = {85673, 31850, 86659, 642, 633},           -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Divine Shield, Lay on Hands
 
     -- ── Priest ──────────────────────────────────────────────────────────────
@@ -691,23 +695,29 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     WARLOCK       = {108416, 234153, 104773},                  -- Dark Pact, Drain Life, Unending Resolve
 
     -- ── Warrior ─────────────────────────────────────────────────────────────
-    -- Class fallback (Arms/Fury DPS): Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
-    WARRIOR       = {34428, 202168, 190456, 118038, 97462},    -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Rallying Cry
-    -- Protection (tank): Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection  (Last Stand is now a passive talent in 12.0)
-    WARRIOR_3     = {190456, 871, 97462, 23920},               -- Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
+    -- Class fallback (Arms/Fury DPS). Die by the Sword is Arms-only and Enraged
+    -- Regeneration Fury-only - the runtime known-spell gate shows each spec its own wall.
+    WARRIOR       = {34428, 202168, 190456, 118038, 184364, 97462},  -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Enraged Regeneration, Rallying Cry
+    -- Protection (tank): Shield Block first (physical active mitigation, used on CD -
+    -- the sink hint below parks it while its buff is already rolling), then Ignore Pain,
+    -- Shield Wall, Rallying Cry, Spell Reflection  (Last Stand is now a passive talent in 12.0)
+    WARRIOR_3     = {2565, 190456, 871, 97462, 23920},         -- Shield Block, Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
 }
 
 -- Emergency tier for the <35% defensive reorder. Tier 1 = immunity bubble (survives any
--- hit), tier 2 = big instant heal (restores a large chunk in ONE hit, right now).
--- Untagged = tier 3 (mitigation / small filler / cast-time or over-time heal), left in the
--- normal filler-first order.
+-- hit), tier 2 = survival button: a big instant heal OR a major damage-reduction cooldown
+-- (a tank's equivalent - Shield Wall-class CDs that stop the next hit from killing).
+-- Untagged = tier 3 (rotational mitigation / small filler / cast-time or over-time heal),
+-- left in the normal filler-first order.
 -- Used only when below the low-health threshold to float survival buttons above fillers;
 -- above the threshold, list order (filler-first) and proc-priority already do the right thing.
 --
--- Tier 2 is BURST-heal only: the big heal must land instantly. Cast-time heals (Healing
--- Surge), HoTs / over-time heals (Regrowth, Frenzied Regeneration, Crimson Vial), and
--- channels do NOT qualify - at <35% a heal that trickles in can't save you before the next
--- hit lands, so floating it to the top would be actively misleading. Those stay tier 3.
+-- Tier 2 heals must land INSTANTLY. Cast-time heals (Healing Surge), HoTs / over-time
+-- heals (Regrowth, Frenzied Regeneration, Crimson Vial), and channels do NOT qualify -
+-- at <35% a heal that trickles in can't save you before the next hit lands, so floating
+-- it to the top would be actively misleading. Likewise short rotational mitigation
+-- (Ignore Pain, Ironfur, Demon Spikes, Celestial Brew, Barkskin) stays tier 3: it's
+-- uptime play, not an emergency answer.
 --
 -- Hand-curated over CLASS_DEFENSIVE_DEFAULTS: DB2 SpellEffect cleanly tags only the
 -- direct-aura bubbles (39/40 + broad school mask) and %-heals (Effect 136/67); the
@@ -730,14 +740,65 @@ local DEFENSE_TIER = {
     [49998]  = 2,  -- Death Strike (Death Knight)
     [85673]  = 2,  -- Word of Glory (Paladin)
     [360995] = 2,  -- Verdant Embrace (Evoker)
+    [228477] = 2,  -- Soul Cleave (Demon Hunter, instant spender-heal like Death Strike)
+    -- Tier 2 - major damage-reduction cooldowns (survival buttons; all have long base
+    -- CDs, so the hold-worthy logic also parks them as emergencies when healthy).
+    -- NOT tiered on purpose: semi-rotational short DR (Blur, Barkskin, Ignore Pain),
+    -- school-limited walls (AMS, Spell Reflection, Diffuse Magic), situational
+    -- avoidance (Feint, Evasion) - parking or floating those would miscoach.
+    [871]    = 2,  -- Shield Wall (Warrior)
+    [61336]  = 2,  -- Survival Instincts (Druid)
+    [31850]  = 2,  -- Ardent Defender (Paladin)
+    [86659]  = 2,  -- Guardian of Ancient Kings (Paladin)
+    [115203] = 2,  -- Fortifying Brew (Monk)
+    [120954] = 2,  -- Fortifying Brew (Brewmaster variant)
+    [201318] = 2,  -- Fortifying Brew (Windwalker variant)
+    [55233]  = 2,  -- Vampiric Blood (Death Knight)
+    [48792]  = 2,  -- Icebound Fortitude (Death Knight)
+    [204021] = 2,  -- Fiery Brand (Demon Hunter)
+    [108271] = 2,  -- Astral Shift (Shaman)
+    [104773] = 2,  -- Unending Resolve (Warlock)
+    [47585]  = 2,  -- Dispersion (Shadow Priest)
+    [363916] = 2,  -- Obsidian Scales (Evoker)
+    [118038] = 2,  -- Die by the Sword (Arms Warrior)
+    [184364] = 2,  -- Enraged Regeneration (Fury Warrior; heal-over-time BUT 30% DR while
+                   -- active - the DR component makes it Fury's wall, not a trickle heal)
 }
 
---- Emergency tier for the low-health defensive reorder: 1 = bubble, 2 = big instant heal,
---- 3 = everything else. Looks up the base list ID (talent overrides resolve to the same tool).
+-- Per-spec overrides layered over DEFENSE_TIER ("CLASS_N" → { [spellID] = tier }).
+-- Protection Paladin: Divine Shield drops all threat mid-pull, so as a tank it must
+-- never float to the top at low health - demoted to filler tier (still listed).
+local DEFENSE_TIER_SPEC = {
+    PALADIN_2 = { [642] = 3 },  -- Divine Shield
+}
+
+--- Emergency tier for the low-health defensive reorder: 1 = bubble, 2 = survival button
+--- (big instant heal or major DR cooldown), 3 = everything else. Looks up the base list
+--- ID (talent overrides resolve to the same tool); spec overrides win over class tiers.
+--- Negative IDs are heal items (potion/healthstone): instant burst heals, tier 2 - they
+--- must float when low just like they park as emergencies when healthy (IsHoldWorthy).
 function SpellDB.GetDefenseTier(spellID)
     if not spellID then return 3 end
-    return DEFENSE_TIER[spellID] or 3
+    if spellID < 0 then return 2 end
+    local specKey = SpellDB.GetSpecKey()
+    local specTiers = specKey and DEFENSE_TIER_SPEC[specKey]
+    return (specTiers and specTiers[spellID]) or DEFENSE_TIER[spellID] or 3
 end
+
+-- Aura-linked ordering hints for tank active mitigation. Combat-safe: only aura
+-- PRESENCE is read (via the instance-map cache); stacks and durations are secret.
+--   sinkAura   - while this self-buff is active the button is already doing its job:
+--                park it with the on-CD entries instead of suggesting a re-press.
+--   floatAuras - while ANY of these auras is present the button is the answer right
+--                now: float it to the front like a proc (e.g. purify heavy stagger).
+-- Keyed by base list ID (talent overrides resolve to the same tool).
+-- Ironfur is deliberately absent: stacking it is legitimate play and stack counts are
+-- secret in combat, so buff presence alone can't justify a sink.
+SpellDB.DEFENSIVE_AURA_HINTS = {
+    [2565]   = { sinkAura = 132404 },              -- Shield Block → its own buff
+    [203720] = { sinkAura = 203819 },              -- Demon Spikes → its own buff
+    [119582] = { floatAuras = {124273, 124274} },  -- Purifying Brew → Heavy/Moderate Stagger
+}
 
 -- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {

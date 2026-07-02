@@ -3,6 +3,26 @@
 
 ## [Unreleased]
 
+## [4.32.0] - 2026-07-01
+
+### Added
+- Tank defensive queues now follow each tank's playstyle:
+  - **Brewmaster Monk**: Purifying Brew joins the default list and jumps to the front (glowing) whenever you have Moderate or Heavy Stagger - even at full health, because stagger is the real danger signal.
+  - **Protection Warrior**: Shield Block joins the default list at the top; while its buff is already active it steps to the back of the queue so Ignore Pain and friends take priority.
+  - **Vengeance Demon Hunter**: Demon Spikes steps to the back of the queue while its buff is already active.
+  - **Protection Paladin**: Divine Shield no longer floats to the top at low health - bubbling as a tank drops your threat mid-pull.
+  - Major survival cooldowns (Shield Wall, Survival Instincts, Ardent Defender, Guardian of Ancient Kings, Fortifying Brew, Vampiric Blood, Icebound Fortitude, Fiery Brand) and Soul Cleave now float above filler abilities when you're low, and are held back as emergency buttons while you're healthy.
+- The same treatment applies to non-tank damage-reduction cooldowns: Astral Shift, Unending Resolve, Dispersion, Obsidian Scales, and Die by the Sword now float to the top when you're low - your wall comes before a slow-cast heal.
+- Fury Warriors now get Enraged Regeneration in the default defensive list (each warrior spec sees its own wall).
+- The Emergency Potion tile (enabled by default, auto-picking your strongest owned healing potion or stone) now floats up with the other survival buttons when you're low, instead of staying parked at the bottom of the list.
+
+### Fixed
+- Right-clicking a defensive icon out of combat opens the custom-hotkey dialog again (with the panel unlocked). Click-to-cast was swallowing the right-click and casting instead; casting is now left-click only.
+- `/jac profile <name>` with a name that doesn't exist now reports "Profile not found" instead of silently creating a fresh profile (which looked like all your settings reset).
+
+### Notes
+- Existing characters keep their saved defensive lists. Use "Restore Defaults" in Options → Defensives to pick up the new Shield Block / Purifying Brew entries; the smarter ordering applies either way.
+
 ## [4.31.0] - 2026-07-01
 
 ### Fixed

@@ -52,8 +52,17 @@ function DebugCommands.ManageProfile(addon, profileAction)
             addon:Print("No profiles available")
         end
     else
-        local success = pcall(function() addon.db:SetProfile(profileAction) end)
-        if success then
+        -- SetProfile silently creates unknown profiles; check existence so a
+        -- typo doesn't create an empty profile and "reset" all settings.
+        local exists = false
+        for _, name in ipairs(addon.db:GetProfiles()) do
+            if name == profileAction then
+                exists = true
+                break
+            end
+        end
+        if exists then
+            addon.db:SetProfile(profileAction)
             addon:Print("Switched to profile: " .. profileAction)
         else
             addon:Print("Profile not found: " .. profileAction)
