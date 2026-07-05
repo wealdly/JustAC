@@ -504,7 +504,10 @@ local function PauseAllGlows(addon)
             local icon = addon.defensiveIcons[i]
             PauseIconGlows(icon)
             HideProcGlow(icon)
-            icon.pendingDefGlow = nil
+            -- Reset the renderer's glow arbiter so the combat-exit rebuild
+            -- re-applies from a clean, known state.
+            icon.appliedDefGlowState = nil
+            icon.pendingDefGlowState = nil
         end
     end
 end

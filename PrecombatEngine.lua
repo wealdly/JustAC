@@ -249,14 +249,33 @@ function PrecombatEngine.GetMissingClassBuffs()
             local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
             if pct and pct < RECUPERATE_HEALTH_PCT then
                 hurt = true
-            elseif estimated and BlizzardAPI.HasRecentPlayerHealthActivity
-                and BlizzardAPI.HasRecentPlayerHealthActivity() then
+            elseif estimated and BlizzardAPI.HasSustainedPlayerHealthActivity
+                and BlizzardAPI.HasSustainedPlayerHealthActivity() then
+                -- Sustained (not just recent) activity: a couple of scratch-repair
+                -- ticks at near-full must not summon a 30s heal suggestion.
                 hurt = true
             end
         end
         if hurt and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"))
             and not HasProccedHeal() then
-            out[#out + 1] = SpellDB.RECUPERATE
+            -- Prefer the class's own cheap heal (spammable; resource regens OOC).
+            -- Ready-check via the local cooldown tracker (never secret); usability
+            -- fails OPEN because resource state can be secret even out of combat -
+            -- worst case an out-of-mana click errors and mana is back in seconds.
+            local heal = SpellDB.GetKnownTopoffHeal and SpellDB.GetKnownTopoffHeal()
+            local BAPI = LibStub("JustAC-BlizzardAPI", true)
+            if heal and get(heal) then
+                -- The chosen heal's own HoT is still ticking: the player IS being
+                -- healed - suggest nothing (mirrors the Recuperate aura gate, and
+                -- prevents the HoT's own no-change snapshots at full health from
+                -- keeping the suggestion alive).
+            elseif heal and BAPI
+                and (not BAPI.IsSpellUsable or BAPI.IsSpellUsable(heal, true))
+                and (not BAPI.IsSpellReady or BAPI.IsSpellReady(heal)) then
+                out[#out + 1] = heal
+            else
+                out[#out + 1] = SpellDB.RECUPERATE
+            end
         end
     end
     cachedClassBuffs, cachedClassBuffsAt = out, now

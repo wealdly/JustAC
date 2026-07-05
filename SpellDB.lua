@@ -348,9 +348,34 @@ end
 SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
 for _, id in ipairs(SpellDB.WEAPON_IMBUE_SPELLS) do CLASS_BUFF_SET[id] = true end
 
--- Recuperate: suggested by PrecombatEngine as a health-conditioned maintained buff;
--- listed here so it green-glows and gets the OOC click hint like the others.
-CLASS_BUFF_SET[SpellDB.RECUPERATE] = true
+-- Cheap self-heals castable out of combat, per class: preferred over Recuperate
+-- for topping off (faster, and the resource regenerates out of combat anyway).
+-- Only no/short-cooldown heals belong here - never real combat cooldowns
+-- (Exhilaration, Renewal), which Recuperate exists to preserve. First KNOWN
+-- entry wins; classes without an entry fall back to Recuperate.
+-- Deliberately NOT added to CLASS_BUFF_SET: these spells also appear as regular
+-- defensive-list entries, and the green glow keys on entry provenance (the
+-- queue entry's precombat flag), never on spell identity.
+SpellDB.CLASS_TOPOFF_HEALS = {
+    DRUID   = { 8936 },       -- Regrowth
+    EVOKER  = { 355913 },     -- Emerald Blossom
+    MONK    = { 322101, 116670 },  -- Expel Harm (instant), Vivify
+    PALADIN = { 19750 },      -- Flash of Light
+    PRIEST  = { 2061, 139 },  -- Flash Heal, Renew
+    ROGUE   = { 185311 },     -- Crimson Vial (30s recharge - back before next pull)
+    SHAMAN  = { 8004 },       -- Healing Surge
+}
+
+--- First top-off heal the player's class knows, or nil.
+function SpellDB.GetKnownTopoffHeal()
+    local _, class = UnitClass("player")
+    local list = class and SpellDB.CLASS_TOPOFF_HEALS[class]
+    if not list then return nil end
+    for i = 1, #list do
+        if IsPlayerSpell(list[i]) then return list[i] end
+    end
+    return nil
+end
 
 --- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
 function SpellDB.IsClassMaintainedBuff(spellID)

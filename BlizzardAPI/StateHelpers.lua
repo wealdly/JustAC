@@ -487,8 +487,12 @@ function BlizzardAPI.GetPlayerHealthPercent()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
 
-    -- 12.0+ fast path: skip per-value IsSecretValue() when no restrictions are active.
-    -- C_Secrets.HasSecretRestrictions() is false out of combat (the common case).
+    -- 12.0.7 reality (probe-verified 2026-07-05): HasSecretRestrictions() is TRUE
+    -- even out of combat in the open world - UnitHealth is secret there while
+    -- UnitHealthMax stays readable. Exact reads only work in unrestricted contexts
+    -- (rested areas etc.); every alternative channel (UnitHealthPercent,
+    -- UnitPercentHealthFromGUID, frame fill-width/value reads) returns secrets
+    -- too, so callers MUST handle nil - see /jac inspect healthprobe.
     if C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions() then
         if IsSecretValue(health) or IsSecretValue(maxHealth) then
             return nil
@@ -559,26 +563,36 @@ end
 -- restricted contexts, but the event FIRING is itself readable information.
 -- Stamped by the UNIT_HEALTH handler in JustAC.lua (real events only, not the
 -- synthetic periodic rebuild calls).
+-- IMPORTANT (probe-verified on a druid at full health): in secret-restricted
+-- zones the client can't compare health values, so UNIT_HEALTH also fires for
+-- NO-CHANGE server snapshots - lingering HoTs and slow passives (Ysera's Gift,
+-- ~5s cadence) keep the event stream alive at FULL health forever. "Events are
+-- firing" alone therefore means nothing; only a run of CLOSELY-SPACED ticks
+-- (out-of-combat regen / eating, ~1s cadence) indicates genuine recovery.
+local RUN_BREAK_SECS = 4        -- silence (or a passive's slow drip) ends a run
+local SUSTAINED_TICKS = 3       -- ticks needed before "actively recovering"
+local MAX_AVG_TICK_GAP = 2.5    -- run must tick at recovery cadence, not drip
 local lastPlayerHealthEventAt = -1e9
--- Observed spacing between consecutive ticks. Starts conservative (slow-tick
--- assumption) and learns the real rate from the second tick onward.
-local lastTickGap = 5
+local runTickCount, runStartedAt = 0, 0
 function BlizzardAPI.NotePlayerHealthEvent()
     local now = GetTime()
-    local gap = now - lastPlayerHealthEventAt
-    -- Ignore the first event after a long silence: that gap measures idle time
-    -- at full health, not tick spacing.
-    if gap < 10 then
-        lastTickGap = gap
+    if now - lastPlayerHealthEventAt > RUN_BREAK_SECS then
+        runTickCount, runStartedAt = 0, now
     end
+    runTickCount = runTickCount + 1
     lastPlayerHealthEventAt = now
 end
--- Health has settled (= back at full) once the silence exceeds the observed
--- tick spacing plus margin: fast regen (~1s ticks) clears ~2s after full,
--- slow ticks (~5s) get the window they need instead of flickering between ticks.
 function BlizzardAPI.HasRecentPlayerHealthActivity()
-    local window = math_min(8, math_max(2, lastTickGap * 1.5 + 0.5))
-    return (GetTime() - lastPlayerHealthEventAt) < window
+    return (GetTime() - lastPlayerHealthEventAt) < RUN_BREAK_SECS
+end
+-- Sustained activity: enough ticks, at recovery cadence, still fresh. A 5s
+-- passive drip starts a new 1-tick run each time (never sustained); a scratch
+-- repairs in 1-2 ticks (never sustained); real regen qualifies in ~3 seconds.
+function BlizzardAPI.HasSustainedPlayerHealthActivity()
+    if runTickCount < SUSTAINED_TICKS then return false end
+    if not BlizzardAPI.HasRecentPlayerHealthActivity() then return false end
+    local avgGap = (lastPlayerHealthEventAt - runStartedAt) / (runTickCount - 1)
+    return avgGap <= MAX_AVG_TICK_GAP
 end
 
 -- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.

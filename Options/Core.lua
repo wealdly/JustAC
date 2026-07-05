@@ -180,7 +180,7 @@ local function HandleSlashCommand(addon, input)
         end
         if not topic then
             addon:Print("Usage: /jac inspect <topic>")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, chargediag [spell], castdiag")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, chargediag [spell], castdiag, healthprobe")
             return
         end
         topic = topic:lower()
@@ -206,9 +206,11 @@ local function HandleSlashCommand(addon, input)
             CallDebug("ChargeDiagnostics", topicArg)
         elseif topic == "castdiag" then
             CallDebug("CastDiagnostics")
+        elseif topic == "healthprobe" then
+            CallDebug("HealthProbe")
         else
             addon:Print("Unknown inspect topic: '" .. topic .. "'")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, chargediag [spell], castdiag")
+            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, chargediag [spell], castdiag, healthprobe")
         end
 
     elseif command == "help" then

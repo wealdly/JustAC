@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [4.34.0] - 2026-07-05
+
+### Added
+- **Your class's own cheap heal is now the preferred out-of-combat top-off:** when you're hurt after a fight, classes with a spammable self-heal (Regrowth, Flash Heal, Vivify, Healing Surge, Flash of Light, Emerald Blossom, Crimson Vial) see it as the glowing click-to-cast suggestion - resources regenerate out of combat, so hardcasting it is free in practice. A procced free heal still comes first, and Recuperate remains the fallback for classes without a cheap heal or when it's on cooldown. Real combat cooldowns (Exhilaration and the like) are never suggested for topping off.
+
+### Fixed
+- **Defensive glow flicker and stutter:** the defensive row's two glow update paths could disagree - alternating glows on out-of-combat heal icons, and a stutter on the proc glow whenever you activated an ability in combat. All defensive glows now run through one arbiter with a single priority (proc glow wins, then the green pre-combat glow, then the standard glow) and a short settle time, so momentary state flaps during casts can't blink the animation. A procced heal keeps its proc animation even when it's also offered as an out-of-combat top-off.
+- **Recuperate no longer suggested when you're barely scratched or at full health:** in zones where the game hides exact health, the out-of-combat heal offer now requires a sustained run of recovery ticks at genuine regeneration pace - a sliver of missing health, a slow healing passive (Ysera's Gift), or a lingering heal-over-time at full health no longer summons the suggestion.
+- **Heals in your defensive list no longer wear the green pre-combat glow at full health:** a spell that is both a regular defensive entry and an out-of-combat top-off (Regrowth) was green-glowing in its defensive slot regardless of health. The green glow now marks only icons actually inserted by the pre-combat suggestion system.
+
 ## [4.33.0] - 2026-07-05
 
 ### Added

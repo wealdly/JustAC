@@ -713,6 +713,67 @@ function UIRenderer.InvalidateHotkeyCache()
     end
 end
 
+--------------------------------------------------------------------------------
+-- Unified defensive glow arbitration. The full rebuild and the per-frame visual
+-- pass BOTH funnel through here so they can never disagree (two writers with
+-- different rules was the source of glow flicker/stutter).
+-- Priority: proc > pre-combat green > marching ants > none - a procced OOC heal
+-- keeps its proc animation, per design.
+-- Turning a glow ON is immediate (procs must feel instant). Turning OFF or
+-- downgrading must hold stable for GLOW_SETTLE_TIME: ability casts trigger full
+-- rebuilds whose momentary proc-state flaps must not blink the glow.
+--------------------------------------------------------------------------------
+local GLOW_SETTLE_TIME = 0.3
+local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
+    local have = icon.appliedDefGlowState
+    if want == have then
+        icon.pendingDefGlowState = nil
+        return
+    end
+    if not immediate and have ~= nil and want ~= "proc" then
+        local now = GetTime()
+        if icon.pendingDefGlowState ~= want then
+            icon.pendingDefGlowState = want
+            icon.pendingDefGlowTime = now
+            return
+        elseif now - (icon.pendingDefGlowTime or 0) < GLOW_SETTLE_TIME then
+            return
+        end
+    end
+    icon.pendingDefGlowState = nil
+    if have == "proc" then
+        UIAnimations.HideProcGlow(icon)
+    elseif have == "marching" then
+        UIAnimations.StopDefensiveGlow(icon)
+    elseif have == "precombat" then
+        UIAnimations.StopPrecombatGlow(icon)
+    else
+        -- Unknown starting state (fresh icon, combat-transition reset): clear all
+        UIAnimations.HideProcGlow(icon)
+        UIAnimations.StopDefensiveGlow(icon)
+        UIAnimations.StopPrecombatGlow(icon)
+    end
+    if want == "proc" then
+        -- Always animated (even OOC): a procced heal is the preferred top-up
+        UIAnimations.ShowProcGlow(icon, true)
+    elseif want == "marching" then
+        UIAnimations.StartDefensiveGlow(icon, isInCombat)
+    elseif want == "precombat" then
+        UIAnimations.StartPrecombatGlow(icon, isInCombat)
+    end
+    icon.appliedDefGlowState = want
+end
+
+-- The one glow-priority rule, computed from icon state both paths maintain.
+local function ComputeDefensiveGlowState(icon, isProc)
+    if icon.isWaiting then return "none" end
+    local mode = icon.defGlowMode or "all"
+    if isProc and (mode == "all" or mode == "procOnly") then return "proc" end
+    if icon.isPrecombatBuff then return "precombat" end
+    if icon.defShowGlow and (mode == "all" or mode == "primaryOnly") then return "marching" end
+    return "none"
+end
+
 -- Per-frame defensive visual state: channeling, usability, cooldown tinting.
 function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     if not defensiveIcon or not defensiveIcon.iconTexture then return end
@@ -822,46 +883,13 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         UIAnimations.StopChannelFill(defensiveIcon)
     end
 
-    -- Per-frame proc glow re-evaluation with hysteresis.
+    -- Per-frame glow re-evaluation through the unified arbiter (same rule and
+    -- settle-time as the full rebuild - the two can never disagree).
     if UIAnimations then
         local procCheckID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
         local isProc = procCheckID and IsSpellProcced(procCheckID) or false
-        local glowMode = defensiveIcon.defGlowMode or "all"
-        local wantProcGlow = isProc and (glowMode == "all" or glowMode == "procOnly")
-        local hasProcGlow = defensiveIcon.ProcGlowFrame and defensiveIcon.ProcGlowFrame:IsShown()
-
-        local now = GetTime()
-        local applyChange = false
-        if wantProcGlow ~= hasProcGlow then
-            if defensiveIcon.pendingDefGlow == wantProcGlow then
-                if now - (defensiveIcon.pendingDefGlowTime or 0) >= GLOW_HOLD_TIME then
-                    applyChange = true
-                    defensiveIcon.pendingDefGlow = nil
-                end
-            else
-                defensiveIcon.pendingDefGlow = wantProcGlow
-                defensiveIcon.pendingDefGlowTime = now
-            end
-        else
-            defensiveIcon.pendingDefGlow = nil
-        end
-
-        if applyChange then
-            if wantProcGlow and not hasProcGlow then
-                UIAnimations.StopDefensiveGlow(defensiveIcon)
-                -- Always animate defensive procs (even OOC): a procced heal is the
-                -- preferred post-combat top-up, same emphasis rule as gap-closer/
-                -- interrupt/burst glows.
-                UIAnimations.ShowProcGlow(defensiveIcon, true)
-            elseif not wantProcGlow and hasProcGlow then
-                UIAnimations.HideProcGlow(defensiveIcon)
-                local showMarching = defensiveIcon.defShowGlow
-                    and (glowMode == "all" or glowMode == "primaryOnly")
-                if showMarching then
-                    UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
-                end
-            end
-        end
+        ApplyDefensiveGlow(defensiveIcon,
+            ComputeDefensiveGlowState(defensiveIcon, isProc), isInCombat)
     end
 end
 
@@ -887,7 +915,7 @@ end
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
 -- waiting: held-back emergency heal (above low-health threshold) - render desaturated
 -- with a centered WAIT tag and no glow, instead of showing it as a live suggestion.
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride, waiting)
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride, waiting, isPrecombatEntry)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
@@ -982,41 +1010,19 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     local procCheckID = isItem and defensiveIcon.itemCastSpellID or id
     local isProc = procCheckID and IsSpellProcced(procCheckID) or false
-    local wantProcGlow = isProc and (defGlowMode == "all" or defGlowMode == "procOnly")
 
     -- Inserted pre-combat buffs get their own vivid-green glow (out of combat) so they read
     -- as distinct, important "use me" icons rather than ordinary defensive suggestions.
-    local SDB = LibStub("JustAC-SpellDB", true)
-    local isBuff = not isInCombat and SDB and (
-        (isItem and SDB.IsPrecombatBuffItem and SDB.IsPrecombatBuffItem(id))
-        or (not isItem and SDB.IsClassMaintainedBuff and SDB.IsClassMaintainedBuff(id)))
+    -- Keyed on entry PROVENANCE (the queue entry's precombat flag), never on spell
+    -- identity: dual-role spells (Regrowth is both a defensive-list entry and an OOC
+    -- top-off offer) must only glow green when suggested BY the pre-combat system.
+    local isBuff = (not isInCombat and isPrecombatEntry) or false
     defensiveIcon.isPrecombatBuff = isBuff or nil  -- click-overlay reads this for its "click" hint
-    if waiting then
-        -- Held-back heal parked at the bottom: no "use me" glow until it lights up at 35%.
-        UIAnimations.StopPrecombatGlow(defensiveIcon)
-        UIAnimations.HideProcGlow(defensiveIcon)
-        UIAnimations.StopDefensiveGlow(defensiveIcon)
-    elseif isBuff then
-        UIAnimations.HideProcGlow(defensiveIcon)
-        UIAnimations.StopDefensiveGlow(defensiveIcon)
-        UIAnimations.StartPrecombatGlow(defensiveIcon, isInCombat)
-    elseif wantProcGlow then
-        UIAnimations.StopPrecombatGlow(defensiveIcon)
-        UIAnimations.StopDefensiveGlow(defensiveIcon)
-        -- Always animate defensive procs (even OOC): a procced heal is the
-        -- preferred post-combat top-up, same emphasis rule as gap-closer/
-        -- interrupt/burst glows.
-        UIAnimations.ShowProcGlow(defensiveIcon, true)
-    else
-        UIAnimations.StopPrecombatGlow(defensiveIcon)
-        UIAnimations.HideProcGlow(defensiveIcon)
-        local showMarching = showGlow and (defGlowMode == "all" or defGlowMode == "primaryOnly")
-        if showMarching then
-            UIAnimations.StartDefensiveGlow(defensiveIcon, isInCombat)
-        else
-            UIAnimations.StopDefensiveGlow(defensiveIcon)
-        end
-    end
+    -- Unified glow arbitration (proc > green > marching > none). idChanged
+    -- applies immediately - a new spell in the slot deserves its correct glow
+    -- now; same-spell transitions ride the settle-time debounce.
+    ApplyDefensiveGlow(defensiveIcon,
+        ComputeDefensiveGlowState(defensiveIcon, isProc), isInCombat, idChanged)
     
     -- Per-icon fades are disabled everywhere; appear instantly. Nameplate callers set
     -- their overlay opacity right after this returns (overriding the alpha 1 below).
@@ -1033,6 +1039,8 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         UIAnimations.StopDefensiveGlow(defensiveIcon)
         UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.HideProcGlow(defensiveIcon)
+        defensiveIcon.appliedDefGlowState = nil
+        defensiveIcon.pendingDefGlowState = nil
         defensiveIcon.spellID = nil
         defensiveIcon.itemID = nil
         defensiveIcon.itemCastSpellID = nil
@@ -1094,7 +1102,7 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, nil, nil, entry.waiting)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, nil, nil, entry.waiting, entry.precombat)
             anyVisible = true
         else
             UIRenderer.HideDefensiveIcon(icon, hasReal)

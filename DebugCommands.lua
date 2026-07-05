@@ -28,7 +28,127 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect rank - Queue context inference and per-spell ordering ranks")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
+    addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
     addon:Print("/jac help - Show this help")
+end
+
+--------------------------------------------------------------------------------
+-- OOC Health Detection Probe
+-- One-shot sweep of every plausible channel for reading player health out of
+-- combat in 12.0.7 secret-restricted zones. Run while HURT in the open world;
+-- every read is pcall-guarded, nothing is written or branched on a secret.
+--------------------------------------------------------------------------------
+function DebugCommands.HealthProbe(addon)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue or function() return false end
+    local function safe(v)
+        if IsSecret(v) then return "<secret>" end
+        local ok, s = pcall(tostring, v)
+        return ok and s or "<?>"
+    end
+    -- Read via pcall; classify: SEALED (threw), <secret>, or the plain value.
+    local function rd(fn)
+        local ok, v = pcall(fn)
+        if not ok then return "|cffff6666SEALED|r" end
+        if IsSecret(v) then return "|cffff6600<secret>|r" end
+        return "|cff00ff00" .. safe(v) .. "|r"
+    end
+
+    addon:Print("===== OOC Health Probe (run while HURT) =====")
+
+    -- A. Context: which restriction regime are we in, and why?
+    local name, instanceType = GetInstanceInfo()
+    addon:Print("A. context:")
+    addon:Print("  zone=" .. safe(name) .. " instanceType=" .. safe(instanceType)
+        .. " inCombat=" .. tostring(InCombatLockdown()))
+    addon:Print("  HasSecretRestrictions=" .. rd(function() return C_Secrets.HasSecretRestrictions() end)
+        .. " ShouldAurasBeSecret=" .. rd(function() return C_Secrets.ShouldAurasBeSecret() end))
+    addon:Print("  warModeDesired=" .. rd(function() return C_PvP.IsWarModeDesired() end)
+        .. " warModeActive=" .. rd(function() return C_PvP.IsWarModeActive() end)
+        .. "  (tests the war-mode-causes-it hypothesis)")
+
+    -- B. Raw unit APIs: which values are actually secret right now?
+    addon:Print("B. raw APIs:")
+    addon:Print("  UnitHealth=" .. rd(function() return UnitHealth("player") end)
+        .. " UnitHealthMax=" .. rd(function() return UnitHealthMax("player") end))
+    addon:Print("  UnitPower=" .. rd(function() return UnitPower("player") end)
+        .. " UnitPowerMax=" .. rd(function() return UnitPowerMax("player") end)
+        .. " UnitIsDeadOrGhost=" .. rd(function() return UnitIsDeadOrGhost("player") end))
+    addon:Print("  UnitGetTotalAbsorbs=" .. rd(function() return UnitGetTotalAbsorbs("player") end)
+        .. " UnitGetIncomingHeals=" .. rd(function() return UnitGetIncomingHeals("player") end))
+
+    -- C. Alternative APIs: call them, don't just check existence. A readable
+    --    (possibly quantized) percent here is the sanctioned clean fix.
+    addon:Print("C. candidate APIs (called live):")
+    if UnitHealthPercent then
+        addon:Print("  UnitHealthPercent('player')=" .. rd(function() return UnitHealthPercent("player") end)
+            .. "  ('player', true)=" .. rd(function() return UnitHealthPercent("player", true) end))
+    else
+        addon:Print("  UnitHealthPercent: absent")
+    end
+    if UnitPercentHealthFromGUID then
+        addon:Print("  UnitPercentHealthFromGUID(playerGUID)=" .. rd(function()
+            return UnitPercentHealthFromGUID(UnitGUID("player")) end))
+    else
+        addon:Print("  UnitPercentHealthFromGUID: absent")
+    end
+    addon:Print("  C_UnitHealth=" .. tostring(type(C_UnitHealth))
+        .. " UnitCastingDuration=" .. tostring(type(UnitCastingDuration))
+        .. "  (duration-object pattern; a health analog would be the clean fix)")
+
+    -- D. Secret-handling API surface: function names are plain strings - list them.
+    --    An unnoticed comparison/percent helper here would be the sanctioned answer.
+    local function dumpKeys(label, t)
+        if type(t) ~= "table" then addon:Print("  " .. label .. ": absent"); return end
+        local keys = {}
+        for k in pairs(t) do keys[#keys + 1] = tostring(k) end
+        table.sort(keys)
+        addon:Print("  " .. label .. " (" .. #keys .. "): " .. table.concat(keys, ", "))
+    end
+    addon:Print("D. secret-API surface:")
+    dumpKeys("C_Secrets", C_Secrets)
+    dumpKeys("C_CurveUtil", C_CurveUtil)
+
+    -- E. Frame-derived reads: Blizzard frames consume the secret engine-side;
+    --    is any RESULTING widget state an ordinary number?
+    addon:Print("E. frame-derived reads:")
+    local hb = PlayerFrame and PlayerFrame.PlayerFrameContent
+        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain
+        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer
+        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer.HealthBar
+    hb = hb or (PlayerFrame and PlayerFrame.healthbar)
+    if hb then
+        addon:Print("  PlayerFrame bar: GetValue=" .. rd(function() return hb:GetValue() end)
+            .. " minmax=" .. rd(function() local _, mx = hb:GetMinMaxValues(); return mx end))
+        addon:Print("    fillWidth=" .. rd(function()
+                local tex = hb:GetStatusBarTexture(); return tex and tex:GetWidth() end)
+            .. " barWidth=" .. rd(function() return hb:GetWidth() end)
+            .. "  (both plain numbers = ratio is readable health!)")
+        addon:Print("    fillTexCoordRight=" .. rd(function()
+                local tex = hb:GetStatusBarTexture()
+                if not tex then return nil end
+                local _, _, _, _, _, _, r = tex:GetTexCoord(); return r end))
+        local txt = hb.TextString or hb.text or (hb.HealthBarText)
+        addon:Print("    statusText=" .. (txt and rd(function() return txt:GetText() end) or "|cff888888no fontstring|r")
+            .. "  (needs status text enabled in Blizzard options)")
+    else
+        addon:Print("  PlayerFrame health bar: not found")
+    end
+    local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+        and C_NamePlate.GetNamePlateForUnit("player", false)
+    local phb = plate and plate.UnitFrame and plate.UnitFrame.healthBar
+    if phb then
+        addon:Print("  personal-plate bar: GetValue=" .. rd(function() return phb:GetValue() end)
+            .. " fillWidth=" .. rd(function()
+                local tex = phb:GetStatusBarTexture(); return tex and tex:GetWidth() end)
+            .. " barWidth=" .. rd(function() return phb:GetWidth() end))
+    else
+        addon:Print("  personal-plate bar: not shown (enable Personal Resource Display to test)")
+    end
+
+    addon:Print("F. verdict guide: any GREEN number in E that tracks your real health")
+    addon:Print("   percent = a readable channel; all SEALED/<secret> = heuristics stay.")
+    addon:Print("=============================================")
 end
 
 --------------------------------------------------------------------------------
@@ -946,11 +1066,36 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         addon:Print("  HoT (" .. tostring(SpellDB.RECUPERATE_AURA) .. ") up: " .. tostring(hotUp)
             .. "  active aura (" .. sid .. ") up: " .. tostring(activeUp))
         local activity = BAPI and BAPI.HasRecentPlayerHealthActivity and BAPI.HasRecentPlayerHealthActivity()
+        local sustained = BAPI and BAPI.HasSustainedPlayerHealthActivity and BAPI.HasSustainedPlayerHealthActivity()
         addon:Print("  health exact: " .. (pct and string.format("%.1f%%", pct) or "|cffff6666unreadable|r")
             .. "  safe: " .. (safePct and string.format("%.1f%%", safePct) or "nil")
             .. (estimated and " |cffffff00(vignette estimate)|r" or "")
             .. " (offer below 90%)" .. (dead and "  |cffff6666DEAD/GHOST|r" or ""))
-        addon:Print("  health event activity (regen ticking = below full): " .. tostring(activity or false))
+        addon:Print("  health event activity: recent=" .. tostring(activity or false)
+            .. " sustained=" .. tostring(sustained or false) .. " (sustained drives the offer)")
+        -- Fill-width probe: Blizzard's player frame sets its health fill from the
+        -- secret value engine-side. If the fill texture's LAID-OUT width reads as a
+        -- plain number, width/barWidth = exact health fraction even where UnitHealth
+        -- is secret - that would replace the activity heuristic outright.
+        local function FillRatio()
+            local hb = PlayerFrame and PlayerFrame.PlayerFrameContent
+                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain
+                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer
+                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer.HealthBar
+            hb = hb or (PlayerFrame and PlayerFrame.healthbar)
+            if not hb then return "|cff888888no healthbar frame found|r" end
+            local ok, ratio = pcall(function()
+                local tex = hb.GetStatusBarTexture and hb:GetStatusBarTexture()
+                local w = tex and tex:GetWidth()
+                local full = hb:GetWidth()
+                if w and full and full > 0 then return (w / full) * 100 end
+                return nil
+            end)
+            if not ok then return "|cffff6666SEALED (read threw - idea dead)|r" end
+            if not ratio then return "|cff888888no width available|r" end
+            return string.format("|cff00ff00%.1f%% (READABLE - compare to your real health!)|r", ratio)
+        end
+        addon:Print("  health-bar fill-width probe: " .. FillRatio())
         local surfaced = false
         for _, s in ipairs(Engine.GetMissingClassBuffs() or {}) do
             if s == sid then surfaced = true break end
