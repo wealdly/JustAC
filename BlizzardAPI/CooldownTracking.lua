@@ -382,7 +382,8 @@ local function InitCooldownTracking()
     if cooldownEventFrame then return end
 
     cooldownEventFrame = CreateFrame("Frame")
-    cooldownEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    -- Unit-filtered: fires for every unit in the area otherwise (heavy in cities)
+    cooldownEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     cooldownEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     cooldownEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
     -- Deliberately NOT wiping on PLAYER_DEAD: real cooldowns persist through death,

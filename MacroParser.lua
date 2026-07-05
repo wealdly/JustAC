@@ -138,6 +138,19 @@ function MacroParser.InvalidateMacroCache()
     wipe(spellOverrideCache)
 end
 
+--- Drop cached parses for a single action slot (ACTIONBAR_SLOT_CHANGED).
+--- Cache keys are "slot_spellID_spec". spellOverrideCache is untouched:
+--- a slot change can't alter spell overrides.
+function MacroParser.InvalidateMacroSlot(slot)
+    local prefix = slot .. "_"
+    local len = #prefix
+    for key in pairs(parsedMacroCache) do
+        if key:sub(1, len) == prefix then
+            parsedMacroCache[key] = nil
+        end
+    end
+end
+
 -- Event-only invalidation: spellOverrideCache is cleared by InvalidateMacroCache()
 -- which fires on UPDATE_SHAPESHIFT_FORM, SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
 -- ACTIONBAR_SLOT_CHANGED, and vehicle/possess events. No timer needed.
@@ -576,17 +589,27 @@ function MacroParser.GetMacroSpellInfo(slot, targetSpellID, targetSpellName)
     local currentSpec = SafeGetSpecialization()
     local cacheKey = slot .. "_" .. targetSpellID .. "_" .. currentSpec
 
+    -- false = cached negative: without it, every non-matching (slot, spell) pair
+    -- re-parses the full macro body on every hotkey rebuild.
     local cached = parsedMacroCache[cacheKey]
-    if cached then return cached end
+    if cached ~= nil then
+        return cached or nil
+    end
 
     local actionText = SafeGetActionText(slot)
     if not actionText or actionText == "" then return nil end
-    
+
     local name, _, body = SafeGetMacroInfo(actionText)
-    if not name or not body or body == "" then return nil end
-    
+    if not name or not body or body == "" then
+        parsedMacroCache[cacheKey] = false
+        return nil
+    end
+
     local found, modifiers = MacroParser.ParseMacroForSpell(body, targetSpellID, targetSpellName)
-    if not found then return nil end
+    if not found then
+        parsedMacroCache[cacheKey] = false
+        return nil
+    end
 
     local targetSpells = GetSpellAndOverride(targetSpellID, targetSpellName)
     local qualityScore = CalculateMacroSpecificityScore(name, body, targetSpells, GetDebugMode())

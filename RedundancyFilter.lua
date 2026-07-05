@@ -160,6 +160,14 @@ local inCombatActivations = {}
 -- Throttle debug prints (per-message-type timestamps)
 local lastPrintTime = {}
 
+-- Runs per spell per queue build (~2Hz out of combat) - unthrottled prints flood chat
+local function DebugPrintThrottled(key, msg)
+    local now = GetTime()
+    if lastPrintTime[key] and now - lastPrintTime[key] <= 5 then return end
+    lastPrintTime[key] = now
+    print(msg)
+end
+
 -- Forward declaration for RefreshAuraCache (defined in Dynamic Aura Detection section)
 -- Required because PruneExpiredActivations uses it before the full definition
 local RefreshAuraCache
@@ -1253,13 +1261,13 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                 -- Check pandemic window - allow refresh if aura is about to expire
                 if IsInPandemicWindow(spellID) then
                     if debugMode then
-                        print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Unique aura in pandemic window - refresh allowed")
+                        DebugPrintThrottled("pandemic_" .. spellID, "|cff66ccffJAC|r |cff00ff00ALLOWED|r: " .. spellName .. " - unique aura in pandemic window, refresh allowed")
                     end
                     return false  -- Allow the cast
                 end
-                
+
                 if debugMode then
-                    print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Unique aura already active (not in pandemic window)")
+                    DebugPrintThrottled("aura_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - unique aura already active (not in pandemic window)")
                 end
                 return true
             end
@@ -1267,7 +1275,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             -- Non-unique aura spells: trust Assisted Combat
             -- These may stack, refresh for damage, or have other valid reasons
             if debugMode and (HasBuffBySpellID(spellID) or HasBuffByName(spellName)) then
-                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Non-unique aura - may stack or have refresh benefit")
+                DebugPrintThrottled("nonunique_" .. spellID, "|cff66ccffJAC|r |cff00ff00ALLOWED|r: " .. spellName .. " - non-unique aura, may stack or have refresh benefit")
             end
         end
     end
@@ -1279,7 +1287,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         -- Revive is redundant only if pet is alive
         if IsPetAlive() then
             if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Revive Pet but pet is alive")
+                DebugPrintThrottled("petrez_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Revive Pet but pet is alive")
             end
             return true
         end
@@ -1287,7 +1295,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         -- Pet summon spells: redundant if any pet exists
         if IsPetSpell(spellID) and SafeHasPetUI() then
             if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon but pet already exists")
+                DebugPrintThrottled("petsummon_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon but pet already exists")
             end
             return true
         end
@@ -1298,7 +1306,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if IsStealthSpell(spellID) then
         if SafeIsStealthed() then
             if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
+                DebugPrintThrottled("stealth_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
             end
             return true
         end
@@ -1310,7 +1318,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         -- Check if this is a mount spell (avoid false positives)
         if IsMountSpell(spellID) then
             if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
+                DebugPrintThrottled("mount_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
             end
             return true
         end
@@ -1333,12 +1341,12 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if IsWeaponEnchantSpell(spellID) then
         if HasActiveWeaponEnchant() then
             if debugMode then
-                print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: Weapon enchant already active with time remaining")
+                DebugPrintThrottled("enchant_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - weapon enchant already active with time remaining")
             end
             return true
         else
             if debugMode then
-                print("|cff66ccffJAC|r |cff00ff00ALLOWED|r: Weapon enchant needed (missing or expiring)")
+                DebugPrintThrottled("enchantok_" .. spellID, "|cff66ccffJAC|r |cff00ff00ALLOWED|r: " .. spellName .. " - weapon enchant needed (missing or expiring)")
             end
         end
     end

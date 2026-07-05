@@ -555,9 +555,50 @@ function JustAC:OnEnable()
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     self:RegisterEvent("PLAYER_REGEN_ENABLED", "OnCombatEvent")
     self:RegisterEvent("PLAYER_REGEN_DISABLED", "OnCombatEvent")
-    self:RegisterEvent("UNIT_HEALTH", "OnHealthChanged")
     self:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED", "OnSpecChange")
     self:RegisterEvent("SPELLS_CHANGED", "OnSpellsChanged")
+
+    -- ── Unit-filtered events ─────────────────────────────────────────────────────
+    -- These UNIT_* events fire for every unit in the area (constant churn in
+    -- crowded cities). AceEvent has no RegisterUnitEvent, so a dedicated frame
+    -- filters to player/pet/target at the C level before any Lua runs.
+    local UNIT_EVENT_HANDLERS = {
+        UNIT_HEALTH                  = "OnHealthChanged",
+        UNIT_AURA                    = "OnUnitAura",
+        UNIT_SPELLCAST_SUCCEEDED     = "OnSpellcastSucceeded",
+        UNIT_SPELLCAST_START         = "OnPlayerCastStart",
+        UNIT_SPELLCAST_STOP          = "OnPlayerCastStop",
+        UNIT_SPELLCAST_CHANNEL_START = "OnPlayerChannelStart",
+        UNIT_SPELLCAST_CHANNEL_STOP  = "OnPlayerChannelStop",
+        UNIT_PET                     = "OnPetChanged",
+        UNIT_ENTERED_VEHICLE         = "OnVehicleChanged",
+        UNIT_EXITED_VEHICLE          = "OnVehicleChanged",
+    }
+    if not self.unitEventFrame then
+        self.unitEventFrame = CreateFrame("Frame")
+        self.unitEventFrame:SetScript("OnEvent", function(_, event, ...)
+            local handler = UNIT_EVENT_HANDLERS[event]
+            if handler then self[handler](self, event, ...) end
+        end)
+        -- RegisterUnitEvent allows max two units; target health (health bar only)
+        -- gets its own frame.
+        self.targetHealthFrame = CreateFrame("Frame")
+        self.targetHealthFrame:SetScript("OnEvent", function(_, event, unit)
+            self:OnHealthChanged(event, unit)
+        end)
+    end
+    local uf = self.unitEventFrame
+    uf:RegisterUnitEvent("UNIT_HEALTH", "player", "pet")
+    uf:RegisterUnitEvent("UNIT_AURA", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+    uf:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+    uf:RegisterUnitEvent("UNIT_PET", "player")
+    uf:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
+    uf:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
+    self.targetHealthFrame:RegisterUnitEvent("UNIT_HEALTH", "target")
 
     -- ── Action bar + keybinds ───────────────────────────────────────────────────
     self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", "OnActionBarChanged")
@@ -574,7 +615,6 @@ function JustAC:OnEnable()
     self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS", "OnShapeshiftFormsRebuilt")  -- GetShapeshiftForm() returns nil until this fires
     -- Throttle to prevent flicker from buff-based spell overrides
     self.lastAuraInvalidation = 0
-    self:RegisterEvent("UNIT_AURA", "OnUnitAura")
 
     -- ── Assisted combat signals + proc glows ───────────────────────────────────────
     self:RegisterEvent("ASSISTED_COMBAT_ACTION_SPELL_CAST", "ForceUpdate")
@@ -586,21 +626,11 @@ function JustAC:OnEnable()
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnTargetChanged")
     self:RegisterEvent("ACTION_USABLE_CHANGED", "OnActionUsableChanged")
 
-    -- ── Cast tracking ─────────────────────────────────────────────────────────────────
-    self:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED",    "OnSpellcastSucceeded")
-    self:RegisterEvent("UNIT_SPELLCAST_START",         "OnPlayerCastStart")
-    self:RegisterEvent("UNIT_SPELLCAST_STOP",          "OnPlayerCastStop")
-    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START", "OnPlayerChannelStart")
-    self:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP",  "OnPlayerChannelStop")
-
     -- ── Pet + equipment ────────────────────────────────────────────────────────────
-    self:RegisterEvent("UNIT_PET", "OnPetChanged")
     self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", "OnEquipmentChanged")
     self:RegisterEvent("BAG_UPDATE_DELAYED", "OnBagUpdate")
 
     -- ── Vehicle + override bars ──────────────────────────────────────────────────
-    self:RegisterEvent("UNIT_ENTERED_VEHICLE",         "OnVehicleChanged")
-    self:RegisterEvent("UNIT_EXITED_VEHICLE",          "OnVehicleChanged")
     self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR",  "OnVehicleChanged")
     self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR", "OnOverrideBarChanged")
     self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
@@ -711,6 +741,10 @@ end
 function JustAC:OnDisable()
     self:StopUpdates()
     self:CancelAllTimers()
+
+    -- AceEvent unregisters its own events on disable; mirror for our unit frames
+    if self.unitEventFrame then self.unitEventFrame:UnregisterAllEvents() end
+    if self.targetHealthFrame then self.targetHealthFrame:UnregisterAllEvents() end
     
     if EventRegistry then
         EventRegistry:UnregisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", self)
@@ -1224,7 +1258,10 @@ function JustAC:OnCombatEvent(event)
     end
 end
 
-function JustAC:OnSpecChange()
+function JustAC:OnSpecChange(event, unit)
+    -- PLAYER_SPECIALIZATION_CHANGED also fires for group members mid-combat;
+    -- only the player's spec affects our state. (Also called directly, no args.)
+    if unit and unit ~= "player" then return end
     local newSpec = GetSpecialization()
     if not newSpec then return end
 
@@ -1252,22 +1289,14 @@ function JustAC:OnSpecChange()
     end
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
-    -- Populate gap closer defaults for the new spec if empty
-    if GapCloserEngine and GapCloserEngine.InitializeGapClosers then
-        GapCloserEngine.InitializeGapClosers(self)
-    end
-    -- Populate burst injection defaults for the new spec if empty
-    if BurstInjectionEngine and BurstInjectionEngine.InitializeBurstInjection then
-        BurstInjectionEngine.InitializeBurstInjection(self)
-    end
+    -- Re-initialize all per-spec engines: defensive lists + cooldown-tracking
+    -- registration, gap closers, burst injection, custom queue defaults.
+    -- The defensive re-init is required: without it the old spec's spells stay
+    -- registered for cooldown tracking and the new spec's list is never seeded.
+    self:InitializeDefensiveSpells()
     -- Check if custom queue is stale for the new spec
-    if CustomQueueOpts then
-        if CustomQueueOpts.EnsureInitialized then
-            CustomQueueOpts.EnsureInitialized(self)
-        end
-        if CustomQueueOpts.CheckStaleNotification then
-            CustomQueueOpts.CheckStaleNotification(self)
-        end
+    if CustomQueueOpts and CustomQueueOpts.CheckStaleNotification then
+        CustomQueueOpts.CheckStaleNotification(self)
     end
     -- Invalidate options spellbook cache so it rebuilds for the new spec
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then
@@ -1302,6 +1331,12 @@ function JustAC:OnSpellIconChanged()
 end
 
 function JustAC:OnShapeshiftFormChanged()
+    -- UPDATE_SHAPESHIFT_FORM also fires for stance-bar state updates (cooldowns,
+    -- usability) with no actual form change - skip those, the invalidation below
+    -- is expensive (full macro + hotkey rebuild).
+    local form = GetShapeshiftForm and GetShapeshiftForm() or 0
+    if form == self.lastShapeshiftForm then return end
+    self.lastShapeshiftForm = form
     -- Form changes (Druid Cat/Bear/etc.) can change which abilities are usable; clear the
     -- cached gap-closer list and reset the range debounce so the next GetGapCloserSpell
     -- re-evaluates fresh. (Melee detection is now form-independent via IsSpellInRange, so
@@ -1312,10 +1347,15 @@ function JustAC:OnShapeshiftFormChanged()
     end
     if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
     self:InvalidateCaches({macros = true, hotkeys = true})
-    self:ForceUpdate()
+    -- Include defensives: form gates usability (e.g. bear-only defensives),
+    -- so re-evaluate immediately rather than waiting for the next health event.
+    self:ForceUpdate(true)
 end
 
 function JustAC:OnShapeshiftFormsRebuilt()
+    -- Form list rebuilt - indices may be renumbered, so the dedup compare in
+    -- OnShapeshiftFormChanged must re-evaluate on the next event.
+    self.lastShapeshiftForm = nil
     self:InvalidateCaches({forms = true, macros = true, hotkeys = true})
     self:ForceUpdate()
 end
@@ -1347,8 +1387,18 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     end
 end
 
-function JustAC:OnActionBarChanged()
-    self:InvalidateCaches({hotkeys = true, macros = true})
+function JustAC:OnActionBarChanged(event, slot)
+    -- ACTIONBAR_SLOT_CHANGED fires constantly in cities (dynamic macro icons
+    -- re-evaluating). A single-slot change only drops that slot's parsed macros;
+    -- hotkey caches are spell-keyed so they're always cleared (a slot change can
+    -- move a spell's best keybind), but they rebuild from the warm macro cache.
+    if event == "ACTIONBAR_SLOT_CHANGED" and slot and slot > 0
+        and MacroParser and MacroParser.InvalidateMacroSlot then
+        MacroParser.InvalidateMacroSlot(slot)
+        self:InvalidateCaches({hotkeys = true})
+    else
+        self:InvalidateCaches({hotkeys = true, macros = true})
+    end
     if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
         BlizzardAPI.InvalidateSlotUsabilityCache()
     end

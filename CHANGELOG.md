@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+## [4.32.5] - 2026-07-04
+
+### Performance
+- **Much lower idle CPU in crowded areas (cities, hubs):** events for other players' health, auras, and spellcasts are now filtered out by the game engine instead of being received and discarded one by one. Macro keybind data is no longer fully re-scanned when a single action button updates, repeated non-matching macro checks are now remembered instead of re-parsed, and spurious shapeshift-bar updates (no actual form change) no longer trigger a full macro/hotkey rebuild.
+
+### Fixed
+- **Defensive queue broken after changing specialization:** switching specs (e.g. on Druid) left the previous spec's defensive spells registered for cooldown tracking and never set up the new spec's list, leaving the defensive queue empty or showing wrong abilities until a UI reload. Spec changes now fully re-initialize defensives, gap closers, and burst injection for the new spec.
+- **Shapeshift form changes now refresh the defensive queue immediately** (e.g. bear-only defensives appearing/disappearing when shifting), in and out of combat, instead of waiting for the next health update.
+
 ## [4.32.4] - 2026-07-02
 
 ### Fixed
