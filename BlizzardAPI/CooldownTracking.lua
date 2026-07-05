@@ -92,6 +92,17 @@ local function IsLocalCooldownActive(spellID)
     return GetTime() < data.endTime
 end
 
+-- Static base cooldown/charge data generated from client data (Data/SpellCooldowns.lua).
+-- Unlike every runtime CD API, it can't be secreted - the only source that works
+-- for a spell first seen mid-combat (battle res, first engage after login).
+local staticCooldownData
+local function GetStaticCooldownData()
+    if staticCooldownData == nil then
+        staticCooldownData = LibStub("JustAC-CooldownData", true) or false
+    end
+    return staticCooldownData or nil
+end
+
 local function GetBestCooldownDuration(spellID)
     -- 1. Actual observed duration from a previous cast (most accurate)
     if cachedDurations[spellID] and cachedDurations[spellID] > 0 then
@@ -103,10 +114,19 @@ local function GetBestCooldownDuration(spellID)
         cachedDurations[spellID] = tooltipCD
         return tooltipCD
     end
-    -- 3. Base cooldown from API (unmodified by talents - last resort)
+    -- 3. Base cooldown from API (unmodified by talents; SECRET in combat -
+    --    an unguarded secret here would compare truthy and shadow tier 4)
     local baseCooldownMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    if baseCooldownMs and baseCooldownMs > 0 then
+    if baseCooldownMs and not IsSecretValue(baseCooldownMs) and baseCooldownMs > 0 then
         return baseCooldownMs / 1000
+    end
+    -- 4. Static client data (base values; readable in combat - last resort)
+    local staticData = GetStaticCooldownData()
+    if staticData then
+        local cdMs = staticData.Get(spellID)
+        if cdMs and cdMs > 0 then
+            return cdMs / 1000
+        end
     end
     return 0
 end
@@ -224,31 +244,51 @@ end
 --- (source-verified), but this function still guards against combat as a conservative
 --- measure since the other fields it reads are secret.
 local function CacheChargesForSpell(spellID)
-    if not spellID or not C_Spell_GetSpellCharges then return end
-    if InCombatLockdown() then return end  -- currentCharges/cooldownDuration are SECRET in combat
-    local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
-    if ok and chargeInfo then
-        local maxCharges = Unsecret(chargeInfo.maxCharges)
-        if maxCharges then
-            cachedMaxCharges[spellID] = maxCharges
-            if maxCharges > 1 then
-                local current = Unsecret(chargeInfo.currentCharges) or maxCharges
-                local rechargeDuration = Unsecret(chargeInfo.cooldownDuration) or 0
-                local rechargeEndTime = 0
-                if current < maxCharges and rechargeDuration > 0 then
-                    local start = Unsecret(chargeInfo.cooldownStartTime)
-                    if start and start > 0 then
-                        rechargeEndTime = start + rechargeDuration
+    if not spellID then return end
+    if C_Spell_GetSpellCharges and not InCombatLockdown() then
+        -- currentCharges/cooldownDuration are SECRET in combat; live read is OOC-only
+        local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
+        if ok and chargeInfo then
+            local maxCharges = Unsecret(chargeInfo.maxCharges)
+            if maxCharges then
+                cachedMaxCharges[spellID] = maxCharges
+                if maxCharges > 1 then
+                    local current = Unsecret(chargeInfo.currentCharges) or maxCharges
+                    local rechargeDuration = Unsecret(chargeInfo.cooldownDuration) or 0
+                    local rechargeEndTime = 0
+                    if current < maxCharges and rechargeDuration > 0 then
+                        local start = Unsecret(chargeInfo.cooldownStartTime)
+                        if start and start > 0 then
+                            rechargeEndTime = start + rechargeDuration
+                        end
                     end
+                    localCharges[spellID] = {
+                        current = current,
+                        maxCharges = maxCharges,
+                        rechargeDuration = rechargeDuration,
+                        rechargeEndTime = rechargeEndTime,
+                    }
                 end
-                localCharges[spellID] = {
-                    current = current,
-                    maxCharges = maxCharges,
-                    rechargeDuration = rechargeDuration,
-                    rechargeEndTime = rechargeEndTime,
-                }
+                return
             end
         end
+    end
+
+    -- Static fallback (in combat, or live read unavailable): seed from client data
+    -- with full charges (fail-toward-usable, same as the live path's defaults) so
+    -- charge spells registered mid-combat still track instead of failing open.
+    if localCharges[spellID] then return end
+    local staticData = GetStaticCooldownData()
+    if not staticData then return end
+    local _, maxCharges, rechargeMs = staticData.Get(spellID)
+    if maxCharges and maxCharges > 1 then
+        cachedMaxCharges[spellID] = cachedMaxCharges[spellID] or maxCharges
+        localCharges[spellID] = {
+            current = maxCharges,
+            maxCharges = maxCharges,
+            rechargeDuration = (rechargeMs or 0) / 1000,
+            rechargeEndTime = 0,
+        }
     end
 end
 
@@ -436,17 +476,13 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
     if not spellID or spellID == 0 then return end
     if trackedSpells[spellID] then return end  -- already registered
 
-    -- Always attempt to cache duration (needed by RecordSpellCooldown)
-    if not cachedDurations[spellID] or cachedDurations[spellID] <= 0 then
-        local tooltipCD = ParseTooltipCooldown(spellID)
-        if tooltipCD and tooltipCD > 0 then
-            cachedDurations[spellID] = tooltipCD
-        else
-            local baseCdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) or 0
-            if baseCdMs > 0 then
-                cachedDurations[spellID] = baseCdMs / 1000
-            end
-        end
+    -- Resolve the best-known duration for the rotation gate below. The tooltip
+    -- tier self-caches into cachedDurations; static tier-4 values are deliberately
+    -- NOT persisted - ScanCooldownDurations' already-cached guard would otherwise
+    -- block the talent-accurate OOC refresh with a stale base value for the session.
+    local bestDuration = cachedDurations[spellID]
+    if not bestDuration or bestDuration <= 0 then
+        bestDuration = GetBestCooldownDuration(spellID)
     end
 
     -- A charge ability's cooldown lives on its per-charge recharge, so GetSpellBaseCooldown
@@ -461,8 +497,7 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
 
     -- Only "rotation" category has the CD duration gate; charge spells are exempt.
     if category == "rotation" and not isChargeSpell then
-        local effectiveCdMs = (cachedDurations[spellID] or 0) * 1000
-        if effectiveCdMs < MIN_TRACKABLE_CD_SECS * 1000 then return end
+        if bestDuration * 1000 < MIN_TRACKABLE_CD_SECS * 1000 then return end
     end
 
     trackedSpells[spellID] = category or "rotation"

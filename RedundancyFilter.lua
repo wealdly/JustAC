@@ -884,6 +884,11 @@ local function IsAuraSpell(spellID)
     
     -- Check our known unique aura table first (fast path)
     if UNIQUE_AURA_SPELLS[spellID] then
+        -- Client-data veto: an aura that stacks is never "unique already active"
+        -- (guards the curated list against patch drift)
+        if SpellDB and SpellDB.GetAuraMaxStacks and SpellDB.GetAuraMaxStacks(spellID) then
+            return true, false
+        end
         return true, true
     end
     
@@ -892,6 +897,18 @@ local function IsAuraSpell(spellID)
     if FormCache and FormCache.GetFormIDBySpellID
             and FormCache.GetFormIDBySpellID(spellID) ~= nil then
         return true, true  -- Treat as unique personal aura
+    end
+
+    -- Client-data tier: spells whose every effect is a non-stacking self-applied
+    -- aura are unique by construction (generated across all classes - covers
+    -- curation gaps like Slice and Dice). Pandemic refresh still applies.
+    -- Defensives/heals are excluded: their redundancy is curated deliberately,
+    -- and application-stacking (Ironfur - each cast adds a stack the data
+    -- can't see) must never be suppressed.
+    if SpellDB and SpellDB.IsPureSelfAura and SpellDB.IsPureSelfAura(spellID)
+        and not (SpellDB.IsDefensiveSpell and SpellDB.IsDefensiveSpell(spellID))
+        and not (SpellDB.IsHealingSpell and SpellDB.IsHealingSpell(spellID)) then
+        return true, true
     end
 
     return false, false

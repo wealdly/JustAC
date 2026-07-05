@@ -849,7 +849,10 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         if applyChange then
             if wantProcGlow and not hasProcGlow then
                 UIAnimations.StopDefensiveGlow(defensiveIcon)
-                UIAnimations.ShowProcGlow(defensiveIcon, isInCombat)
+                -- Always animate defensive procs (even OOC): a procced heal is the
+                -- preferred post-combat top-up, same emphasis rule as gap-closer/
+                -- interrupt/burst glows.
+                UIAnimations.ShowProcGlow(defensiveIcon, true)
             elseif not wantProcGlow and hasProcGlow then
                 UIAnimations.HideProcGlow(defensiveIcon)
                 local showMarching = defensiveIcon.defShowGlow
@@ -1000,7 +1003,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     elseif wantProcGlow then
         UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.StopDefensiveGlow(defensiveIcon)
-        UIAnimations.ShowProcGlow(defensiveIcon, isInCombat)
+        -- Always animate defensive procs (even OOC): a procced heal is the
+        -- preferred post-combat top-up, same emphasis rule as gap-closer/
+        -- interrupt/burst glows.
+        UIAnimations.ShowProcGlow(defensiveIcon, true)
     else
         UIAnimations.StopPrecombatGlow(defensiveIcon)
         UIAnimations.HideProcGlow(defensiveIcon)

@@ -361,6 +361,47 @@ local function IsConfirmedUnusable(spellID)
     return usable == false and not noMana
 end
 
+--- Stealth-required (client data): confirmed unusable while in no stealth state.
+--- IsStealthed() is NeverSecret and covers Stealth, Vanish, and Shadow Dance;
+--- the Subterfuge aura is checked as a belt for its post-stealth window.
+--- Blindside-style procs never reach this sink (the proc bucket is filled first).
+local SUBTERFUGE_AURA = 115192
+local function IsStealthGated(spellID)
+    if not (SpellDB and SpellDB.IsStealthRequiredSpell
+        and SpellDB.IsStealthRequiredSpell(spellID)) then
+        return false
+    end
+    if IsStealthed and IsStealthed() then return false end
+    if BlizzardAPI.IsAuraActive and BlizzardAPI.IsAuraActive("player", SUBTERFUGE_AURA) then
+        return false
+    end
+    return true
+end
+
+--- Caster-aura-gated (client data): the spell needs a specific aura on the player
+--- (e.g. Arcane Missiles needs Clearcasting). Sinks while the aura is absent.
+---
+--- Self-calibrating: a required aura must be OBSERVED on the player once this
+--- session before its absence ever sinks anything. Client data contains entries
+--- whose "required aura" is hidden from the aura API or lives on the target
+--- (Channel Demonfire's Immolate) - those never latch, so they never sink
+--- (fail-open). Also fails open in 12.0.7 secret-aura contexts, and procs never
+--- reach this sink (the proc bucket is filled first).
+local observedRequiredAuras = {}
+local function IsCasterAuraGated(spellID)
+    local required = SpellDB and SpellDB.GetRequiredCasterAura
+        and SpellDB.GetRequiredCasterAura(spellID)
+    if not required then return false end
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return false
+    end
+    if BlizzardAPI.IsAuraActive and BlizzardAPI.IsAuraActive("player", required) then
+        observedRequiredAuras[required] = true
+        return false
+    end
+    return observedRequiredAuras[required] == true
+end
+
 --- Confirmed out of range on the current target. Catches range gates usability can't see:
 --- a minimum range (Heroic Throw inside 8yd), melee against a kited target. IsSpellInRange's
 --- boolean is never secret (only the yardage is - same read the icon's red range tint uses).
@@ -443,7 +484,10 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedRank[proccedCount] = rankOf(spellID)
                     elseif sinkCooldowns and (not BlizzardAPI.IsSpellReady(displayID)
                            or IsConfirmedUnusable(displayID)
-                           or IsConfirmedOutOfRange(displayID)) then
+                           or IsConfirmedOutOfRange(displayID)
+                           or (SpellDB and SpellDB.IsSpellFormGated and SpellDB.IsSpellFormGated(displayID))
+                           or IsStealthGated(displayID)
+                           or IsCasterAuraGated(displayID)) then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                     else

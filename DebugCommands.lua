@@ -919,6 +919,44 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
             addon:Print("  " .. m.category .. " -> " .. nm)
         end
     end
+
+    -- Recuperate gate-by-gate probe (health-conditioned class buff)
+    addon:Print("---- Recuperate ----")
+    if not SpellDB.RECUPERATE then
+        addon:Print("|cffff6666SpellDB.RECUPERATE not defined (old data?).|r")
+    else
+        local sid = SpellDB.RECUPERATE
+        local known = IsPlayerSpell(sid)
+        local knownAlt = (IsSpellKnown and IsSpellKnown(sid)) or false
+        local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+        local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+        local hotUp = get and get(SpellDB.RECUPERATE_AURA) ~= nil
+        local activeUp = get and get(sid) ~= nil
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        local pct = BAPI and BAPI.GetPlayerHealthPercent and BAPI.GetPlayerHealthPercent()
+        local safePct, estimated
+        if BAPI and BAPI.GetPlayerHealthPercentSafe then
+            safePct, estimated = BAPI.GetPlayerHealthPercentSafe()
+        end
+        local hasRestrictions = C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions()
+        local dead = UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")
+        addon:Print("  known: IsPlayerSpell=" .. tostring(known) .. " IsSpellKnown=" .. tostring(knownAlt))
+        addon:Print("  aura restricted: " .. tostring(restricted or false)
+            .. "  secret restrictions: " .. tostring(hasRestrictions or false))
+        addon:Print("  HoT (" .. tostring(SpellDB.RECUPERATE_AURA) .. ") up: " .. tostring(hotUp)
+            .. "  active aura (" .. sid .. ") up: " .. tostring(activeUp))
+        local activity = BAPI and BAPI.HasRecentPlayerHealthActivity and BAPI.HasRecentPlayerHealthActivity()
+        addon:Print("  health exact: " .. (pct and string.format("%.1f%%", pct) or "|cffff6666unreadable|r")
+            .. "  safe: " .. (safePct and string.format("%.1f%%", safePct) or "nil")
+            .. (estimated and " |cffffff00(vignette estimate)|r" or "")
+            .. " (offer below 90%)" .. (dead and "  |cffff6666DEAD/GHOST|r" or ""))
+        addon:Print("  health event activity (regen ticking = below full): " .. tostring(activity or false))
+        local surfaced = false
+        for _, s in ipairs(Engine.GetMissingClassBuffs() or {}) do
+            if s == sid then surfaced = true break end
+        end
+        addon:Print("  would surface: " .. (surfaced and "|cff00ff00YES|r" or "|cffff6666NO|r"))
+    end
     addon:Print("============================")
 end
 
@@ -1267,6 +1305,42 @@ function DebugCommands.CastDiagnostics(addon)
         end
         probeIconHidden("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
         probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- LIVENESS of the (possibly hidden) Blizzard bar: a replacing addon that merely
+        -- Hide()s it leaves its UNTAINTED event handlers running - the icon-hidden read
+        -- above then stays trustworthy even invisible. An addon that unregistered its
+        -- events leaves the state frozen-stale (must never be trusted: stale iconShown
+        -- would read as "interruptible" = wrongly-shown kick). Verdict rules:
+        --   eventsRegistered + castingFlag tracking THIS cast = LIVE (signal usable)
+        --   eventsRegistered=false = EVENT-DEAD (unusable)
+        local function probeLiveness(label, bar)
+            if not bar then return end
+            local regOk, regged = pcall(function() return bar:IsEventRegistered("UNIT_SPELLCAST_START") and true or false end)
+            local cOk, castingF = pcall(function() return (bar.casting or bar.channeling) and true or false end)
+            local shOk, shownF  = pcall(function() return bar:IsShown() and true or false end)
+            local vOk, visible  = pcall(function() return bar:IsVisible() and true or false end)
+            local verdict
+            if regOk and regged and cOk and castingF then
+                verdict = "|cff00ff00LIVE - hidden-bar icon signal trustworthy|r"
+            elseif regOk and not regged then
+                verdict = "|cffff6600EVENT-DEAD (events unregistered) - unusable|r"
+            elseif cOk and not castingF then
+                verdict = "|cffff6600STALE (casting flag not tracking this cast) - unusable|r"
+            else
+                verdict = "|cffff6600INCONCLUSIVE (reads sealed)|r"
+            end
+            probeLines[#probeLines + 1] = string.format(
+                "  %s liveness: eventsReg=%s castingFlag=%s shown=%s visible=%s",
+                label, regOk and safe(regged) or "?", cOk and safe(castingF) or "?",
+                shOk and safe(shownF) or "?", vOk and safe(visible) or "?")
+            probeLines[#probeLines + 1] = "    => " .. verdict
+        end
+        probeLiveness("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
+        probeLiveness("nameplate UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- Focus-frame bar: a second untainted Blizzard bar if the player has focus=target
+        if FocusFrame and FocusFrame.spellbar then
+            probeIconHidden("FocusFrame.spellbar (Blizzard)", FocusFrame.spellbar)
+            probeLiveness("FocusFrame.spellbar", FocusFrame.spellbar)
+        end
         -- BYPASS PROBE: does a replacing cast-bar addon expose its OWN interruptibility on its
         -- bar? Such bars commonly live at nameplate.unitFrame.castBar (lowercase). If a field
         -- reads a clean boolean matching the actual cast (and its shield is visually correct),

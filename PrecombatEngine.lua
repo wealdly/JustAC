@@ -17,7 +17,11 @@ local ipairs = ipairs
 local GetTime = GetTime
 local type = type
 local UnitClass = UnitClass
+local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
+
+-- Offer Recuperate while player health is below this (exact read, OOC only)
+local RECUPERATE_HEALTH_PCT = 90
 
 -- True if the player currently has any aura whose spellId is in the set. Iterates the
 -- player's helpful auras (usually < 40), so cost is independent of how big the set is -
@@ -205,6 +209,54 @@ function PrecombatEngine.GetMissingClassBuffs()
         if imbue then
             local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
             if not hasMainHand then out[#out + 1] = imbue end
+        end
+    end
+    -- Recuperate (cross-class OOC self-heal): a maintained buff whose "missing"
+    -- condition is health-based instead of aura-expiry - offer it while the player
+    -- is below the comfortable threshold and its heal-over-time isn't running.
+    -- (1231411 also applies its own 30s active aura, hence the second probe.)
+    -- A procced heal (free instant Regrowth and the like) is the better way to
+    -- top up after combat and already surfaces with its proc glow - step aside.
+    local function HasProccedHeal()
+        local ABS = LibStub("JustAC-ActionBarScanner", true)
+        local procs = ABS and ABS.GetDefensiveProccedSpells and ABS.GetDefensiveProccedSpells()
+        if not procs or not SpellDB.IsHealingSpell then return false end
+        for i = 1, #procs do
+            if SpellDB.IsHealingSpell(procs[i]) then return true end
+        end
+        return false
+    end
+    -- Known-check: general "All Classes" skill-line spells can fail IsPlayerSpell
+    -- even when learned, so fall back to IsSpellKnown/IsSpellKnownOrOverridesKnown.
+    local recupKnown = SpellDB and SpellDB.RECUPERATE and (
+        IsPlayerSpell(SpellDB.RECUPERATE)
+        or (IsSpellKnown and IsSpellKnown(SpellDB.RECUPERATE))
+        or (IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(SpellDB.RECUPERATE)))
+    -- Gate on the HoT (1231418) ONLY - deliberately not the 30s active aura
+    -- (1231411): a damage tick interrupts the heal but leaves the active aura
+    -- (and its animation) running, and that is exactly when a re-cast must be
+    -- offered. The click layer cancels the stale aura before re-casting.
+    if not InCombatLockdown() and not restricted and get and recupKnown
+        and not get(SpellDB.RECUPERATE_AURA) then
+        -- Hurt detection, layered by what 12.0.7 lets us read:
+        --   1. exact health percent when readable -> offer below the threshold
+        --   2. low-health vignette (never secret)  -> definitely hurt
+        --   3. player UNIT_HEALTH event activity   -> OOC regen is ticking, so
+        --      health is below full even when the value itself is secret
+        local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+        local hurt = false
+        if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
+            local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+            if pct and pct < RECUPERATE_HEALTH_PCT then
+                hurt = true
+            elseif estimated and BlizzardAPI.HasRecentPlayerHealthActivity
+                and BlizzardAPI.HasRecentPlayerHealthActivity() then
+                hurt = true
+            end
+        end
+        if hurt and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"))
+            and not HasProccedHeal() then
+            out[#out + 1] = SpellDB.RECUPERATE
         end
     end
     cachedClassBuffs, cachedClassBuffsAt = out, now

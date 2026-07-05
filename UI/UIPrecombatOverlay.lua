@@ -84,9 +84,27 @@ end
 -- secure lookup falls back from "spell1"/"item1" to "spell"/"item".
 local function ConfigureLayer(layer, icon, eating)
     layer.icon = icon
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local recupName
+    if icon.spellID and SDB and icon.spellID == SDB.RECUPERATE and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(icon.spellID)
+        recupName = info and info.name
+    end
     if icon.isItem and icon.itemID then
         layer:SetAttribute("type1", "item")
         layer:SetAttribute("item", "item:" .. icon.itemID)
+    elseif recupName then
+        -- Recuperate: a damage tick interrupts the heal-over-time while the 30s
+        -- "active" aura (and its animation) keeps running, and the stale aura
+        -- blocks a plain re-cast. Chain cancel + re-cast into the one click.
+        -- (Fallback if macro chaining ever regresses on these layers: WoW counts
+        -- click-DOWN and click-UP as two distinct hardware events, each allowed
+        -- its own secure action - RegisterForClicks("AnyDown","AnyUp") with
+        -- type1="cancelaura" on the press and typerelease1="spell" on the
+        -- release performs both from a single click. See
+        -- Documentation/CLICK_HARDWARE_EVENTS.md.)
+        layer:SetAttribute("type1", "macro")
+        layer:SetAttribute("macrotext", "/cancelaura " .. recupName .. "\n/cast " .. recupName)
     elseif icon.spellID then
         layer:SetAttribute("type1", "spell")
         layer:SetAttribute("spell", icon.spellID)

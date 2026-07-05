@@ -824,11 +824,14 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- Early exit: proc passes filled the queue
     if #results >= maxIcons then return results, alreadyAdded end
 
+    -- Out-of-combat recovery is handled by the pre-combat buff path (Recuperate),
+    -- so combatOnly hides the list the moment combat ends.
     if displayMode == "combatOnly" and not inCombat then
         return results, alreadyAdded
     end
 
-    local showAllAvailable = (displayMode == "always") or (displayMode == "combatOnly" and inCombat)
+    -- Past the gate, combatOnly implies in-combat
+    local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
     if showAllAvailable or isLow then
         -- Order the unified list by health state: below ~35% survival floats up; above it,
         -- emergency panic buttons sink to the end. Procs were already placed on top by the

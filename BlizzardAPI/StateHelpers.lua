@@ -47,6 +47,15 @@ local function GetRedundancyFilter()
     return cachedRedundancyFilter or nil
 end
 
+-- Cache for SpellDB lookup (lazy-loaded)
+local cachedSpellDB = nil
+local function GetSpellDB()
+    if cachedSpellDB == nil then
+        cachedSpellDB = LibStub("JustAC-SpellDB", true) or false
+    end
+    return cachedSpellDB or nil
+end
+
 -- Check defensive spell usability in one call (avoids repeated API lookups)
 -- Returns: isUsable, isRedundant, isProcced
 -- isUsable = spell is known AND NOT redundant (buff already active).
@@ -58,6 +67,14 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
 
     -- Check if spell is known/available
     if not BlizzardAPI.IsSpellAvailable(spellID) then
+        return false, false, false
+    end
+
+    -- Form-gated (client data): strictly requires a form the player isn't in
+    -- (bear-only mitigation while in cat). Never-secret, so form-gated
+    -- defensives hide in combat exactly as they do out of combat.
+    local SpellDB = GetSpellDB()
+    if SpellDB and SpellDB.IsSpellFormGated and SpellDB.IsSpellFormGated(spellID) then
         return false, false, false
     end
 
@@ -534,6 +551,34 @@ function BlizzardAPI.IsPetlessByChoice()
         if BlizzardAPI.IsAuraActive("player", auraID) then return true end
     end
     return false
+end
+
+-- Player UNIT_HEALTH event activity: a never-secret "below full health" signal.
+-- Out of combat, regen/heal ticks fire UNIT_HEALTH("player") continuously while
+-- health is below max and go silent at full - the payload stays secret in 12.0.7
+-- restricted contexts, but the event FIRING is itself readable information.
+-- Stamped by the UNIT_HEALTH handler in JustAC.lua (real events only, not the
+-- synthetic periodic rebuild calls).
+local lastPlayerHealthEventAt = -1e9
+-- Observed spacing between consecutive ticks. Starts conservative (slow-tick
+-- assumption) and learns the real rate from the second tick onward.
+local lastTickGap = 5
+function BlizzardAPI.NotePlayerHealthEvent()
+    local now = GetTime()
+    local gap = now - lastPlayerHealthEventAt
+    -- Ignore the first event after a long silence: that gap measures idle time
+    -- at full health, not tick spacing.
+    if gap < 10 then
+        lastTickGap = gap
+    end
+    lastPlayerHealthEventAt = now
+end
+-- Health has settled (= back at full) once the silence exceeds the observed
+-- tick spacing plus margin: fast regen (~1s ticks) clears ~2s after full,
+-- slow ticks (~5s) get the window they need instead of flickering between ticks.
+function BlizzardAPI.HasRecentPlayerHealthActivity()
+    local window = math_min(8, math_max(2, lastTickGap * 1.5 + 0.5))
+    return (GetTime() - lastPlayerHealthEventAt) < window
 end
 
 -- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.

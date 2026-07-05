@@ -130,6 +130,77 @@ end
 -- list. Resolved at queue-build to the chosen/best owned healing item; never a real item.
 SpellDB.EMERGENCY_POTION = -9000000
 
+-- Recuperate: cross-class out-of-combat self-heal (auto-learned, "All Classes" skill
+-- line; not castable in combat). Casting 1231411 applies the 1231418 heal-over-time.
+SpellDB.RECUPERATE = 1231411
+SpellDB.RECUPERATE_AURA = 1231418
+
+--------------------------------------------------------------------------------
+-- Generated client-data tables (registered by Data/ files at load)
+--------------------------------------------------------------------------------
+
+-- Aura max stacks: [spellID] = maxStacks (only stacking auras, > 1).
+-- Consumed by RedundancyFilter to veto "unique aura" classification.
+local auraMaxStacks
+function SpellDB.RegisterAuraStacks(t) auraMaxStacks = t end
+function SpellDB.GetAuraMaxStacks(spellID)
+    return auraMaxStacks and auraMaxStacks[spellID]
+end
+
+-- Pure self-buff spells: every effect is a non-stacking self-applied aura with
+-- a duration. Unique-by-construction for redundancy classification.
+local selfAuras
+function SpellDB.RegisterSelfAuras(t) selfAuras = t end
+function SpellDB.IsPureSelfAura(spellID)
+    return selfAuras ~= nil and selfAuras[spellID] == true
+end
+
+-- Caster-aura requirements: [spellID] = aura spellID the player must carry for
+-- the spell to be castable (client data). Gated at runtime via the aura cache.
+local auraRequirements
+function SpellDB.RegisterAuraRequirements(t) auraRequirements = t end
+function SpellDB.GetRequiredCasterAura(spellID)
+    return auraRequirements and auraRequirements[spellID]
+end
+
+-- Stealth-required spells (stealth-only stance masks). The QUEUE gates these at
+-- runtime with IsStealthed() + the Subterfuge window - never statically, because
+-- stealth windows (Subterfuge, Shadow Dance) outlive the stealth stance.
+local stealthRequirements
+function SpellDB.RegisterStealthRequirements(t) stealthRequirements = t end
+function SpellDB.IsStealthRequiredSpell(spellID)
+    return stealthRequirements ~= nil and stealthRequirements[spellID] == true
+end
+
+-- Form requirements: [spellID] = shapeshift mask (bit N = usable in form ID N+1).
+-- Cat/bear hard requirements only (see tools/gen_form_requirements.py).
+local formRequirements
+function SpellDB.RegisterFormRequirements(t) formRequirements = t end
+
+-- Talents that auto-shift into an ability's required form when it's used -
+-- while known, form gating must fail open (the "wrong form" cast still works).
+local FORM_GATE_BYPASS_TALENTS = {
+    449193, -- Fluid Form (Druid: attacks shift you into their required form)
+}
+
+--- True when client data says the spell strictly requires a shapeshift form the
+--- player is not currently in. GetShapeshiftFormID() is client-side UI state,
+--- never secret, so this works in combat where IsUsableSpell is secret.
+--- Fails open (false) for spells without form data, exotic form IDs > 32, or
+--- when the player knows an auto-shift talent.
+function SpellDB.IsSpellFormGated(spellID)
+    local mask = formRequirements and formRequirements[spellID]
+    if not mask then return false end
+    for i = 1, #FORM_GATE_BYPASS_TALENTS do
+        if IsPlayerSpell(FORM_GATE_BYPASS_TALENTS[i]) then return false end
+    end
+    local formID = GetShapeshiftFormID and GetShapeshiftFormID()
+    if not formID then return true end   -- requires a form, player is unshifted
+    if formID > 32 then return false end -- outside the stored mask word; fail open
+    local bitVal = 2 ^ (formID - 1)
+    return math.floor(mask / bitVal) % 2 == 0
+end
+
 --- Health items the player currently owns, best-first: { {id=, name=}, ... }. Feeds the
 --- Emergency Potion tile's dropdown. Out of combat only (item names); call lazily.
 function SpellDB.GetOwnedHealingItems()
@@ -276,6 +347,10 @@ end
 -- (12.0 Midnight) minus Frostbrand, a situational swap that's never the default maintained imbue.
 SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
 for _, id in ipairs(SpellDB.WEAPON_IMBUE_SPELLS) do CLASS_BUFF_SET[id] = true end
+
+-- Recuperate: suggested by PrecombatEngine as a health-conditioned maintained buff;
+-- listed here so it green-glows and gets the OOC click hint like the others.
+CLASS_BUFF_SET[SpellDB.RECUPERATE] = true
 
 --- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
 function SpellDB.IsClassMaintainedBuff(spellID)

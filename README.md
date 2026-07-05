@@ -14,7 +14,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 - The **AC slot** shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
 - The **queue** (everything after the AC slot) displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
-- **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Uncastable melee abilities sink while the target is out of range. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; switch it off in the Rotation tab's ordering toggles to keep a fixed order
+- **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Abilities the game won't let you use sink to the back: out-of-range melee, Cat/Bear-only abilities in the wrong form (skipped when Fluid Form makes them castable anywhere), stealth-only openers while unstealthed (Subterfuge/Shadow Dance respected), and abilities missing their enabling buff (e.g. Arcane Missiles without Clearcasting) - procs always outrank the sink. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; switch it off in the Rotation tab's ordering toggles to keep a fixed order
 - Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
@@ -48,12 +48,14 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - Compact health bar (player + pet) with automatic resize
 - Items supported (potions, healthstones) with auto-detection from action bars - optional aura linking and combat hiding per item
 - **Emergency healing potion** auto-picks the best potion you're carrying, ranked by how much it actually restores - a potion that heals a share of your maximum health can out-rank a bigger fixed-amount one, and the reverse; the tile's tooltip explains the pick
+- **Form-aware (Druid)** - defensives that strictly require Bear Form leave the row while you're in Cat Form and vice versa, in combat too (where usability normally can't be read); automatically disabled with Fluid Form
 - Combat-safe health detection via LowHealthFrame signal (~35%) for 12.0 secret-value compatibility
 
 ### Pre-Combat Buffs
 
 - Out of combat, the defensive queue surfaces the buffs you're **missing but own** as clickable icons with a green glow - flask, food, augment rune, weapon enchant
 - **Class maintained buffs** - rogue poisons, shaman shields and weapon imbues, and the standard party/raid buffs. You're reminded when one is missing or has dropped below half its remaining duration; a lapsed buff is refilled with whatever your rotation ranks highest, and rogues get both a lethal and a non-lethal poison at once
+- **Recuperate** - the all-classes out-of-combat self-heal is offered like any other missing buff whenever you're hurt (below 90% where exact health is readable; via never-secret recovery signals where 12.0.7 hides it), and hides while its heal-over-time is running
 - **Click-to-use** - a hover highlight and click-to-use layer sits over every out-of-combat icon (like an action button), casting the spell or using the item straight from the queue
 - **Eating / applying feedback** - while a buff is being applied (eating food and the like) the whole queue greys out with a channel-style progress sweep across the buff window
 - Buff data is DB2-generated (discovered by item class and buff aura, stat decoded from the effect chain) and spans all expansions, so leveling characters are covered too; weapon-enchant suggestions respect your equipped weapon so you're never offered an oil or stone it can't take
@@ -85,7 +87,8 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 ### Intelligent Filtering
 
-- Hides redundant suggestions (buffs already active, current form, existing pet)
+- Hides redundant suggestions (buffs already active, current form, existing pet) - self-buff detection is generated from client data across all classes (pure self-buffs like Slice and Dice suppress while active, reappear in the pandemic window)
+- **Stack-aware** - buffs that can stack are never suppressed as "already active", backed by client-data stack counts, so stacking abilities keep getting suggested while building stacks; defensives are always exempt (application-stacking like Ironfur must keep being suggested)
 - Per-spell blacklist (Shift+Right-click to toggle) - a blacklisted AC-slot spell auto-substitutes via highlight-mode lookahead
 - Respects class-specific mechanics (Druid forms, Rogue Stealth, etc.)
 - Cast-based inference for poisons, weapon imbues, and long-duration buffs in 12.0 combat
@@ -95,9 +98,10 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 ### Performance Optimized
 
 - Event-driven updates with minimal polling
+- Engine-level unit event filtering (`RegisterUnitEvent`) - other players' aura, health, and cast events never reach the addon, keeping idle CPU low in crowded cities
 - Push-based cooldown and range events (`SPELL_UPDATE_COOLDOWN`, `ACTION_RANGE_CHECK_UPDATE`)
 - Pooled table allocation to reduce garbage collection pressure
-- Cached spell info, override lookups, and filter results per update cycle
+- Cached spell info, override lookups, and filter results per update cycle - macro parses are cached per action slot (including misses) and invalidated slot-by-slot
 - 12.0 opaque cooldown pipeline (`SetCooldownFromDurationObject`) bypasses secret-value handling entirely
 
 ## Installation
@@ -167,7 +171,7 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ### Burst injection cooldown detection
 
-See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Major cooldown tracking in WoW 12.0 combat relies on local timer estimates which may drift or miss cooldown reduction effects.
+See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Major cooldown tracking in WoW 12.0 combat relies on local timer estimates, seeded from observed casts, tooltips, and a generated base-cooldown table - estimates may still drift on cooldown-reduction effects the addon can't observe.
 
 ---
 
@@ -175,7 +179,8 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 
 - **WoW 12.0 Midnight Compliant** - Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
-- **No External Spell Databases** - Native spell classification (`SpellDB` + generated `Data/` tables) replaces LibPlayerSpells
+- **Never-secret signals** - Where values are hidden, readable side-channels stand in: the low-health vignette (~35% binary), and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
+- **No External Spell Databases** - Native spell classification (`SpellDB` + generated `Data/` tables: archetypes, categories, base cooldowns & charges, aura stack counts, form/stealth requirements, caster-aura requirements, pure self-buffs, healing items, pre-combat buffs) replaces LibPlayerSpells; tables regenerate per patch from client data exports via `tools/`
 - **Modular Architecture** - Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
 - **Event-Driven** - Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
 - **Cache-Smart** - Aggressive caching with proper invalidation (throttled, state-hash, event-driven, instance-scoped patterns)

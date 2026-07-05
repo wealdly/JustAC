@@ -495,9 +495,16 @@ local function PauseAllGlows(addon)
             PauseIconGlows(addon.spellIcons[i])
         end
     end
+    -- Defensive icons: RESET the proc glow instead of freezing it mid-frame -
+    -- a paused flipbook reads as stuck. The combat-exit rebuild re-renders
+    -- immediately and re-establishes the correct glow (green pre-combat buff,
+    -- static proc glow, or marching ants).
     if addon.defensiveIcons then
         for i = 1, #addon.defensiveIcons do
-            PauseIconGlows(addon.defensiveIcons[i])
+            local icon = addon.defensiveIcons[i]
+            PauseIconGlows(icon)
+            HideProcGlow(icon)
+            icon.pendingDefGlow = nil
         end
     end
 end

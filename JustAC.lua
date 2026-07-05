@@ -907,6 +907,12 @@ end
 
 -- Defensive Engine wrapper methods (delegated to DefensiveEngine module)
 function JustAC:OnHealthChanged(event, unit)
+    -- Real player UNIT_HEALTH events (not the synthetic periodic calls with
+    -- event=nil) stamp the never-secret "health is changing" activity signal:
+    -- OOC regen fires these while below full and goes silent at full.
+    if event and unit == "player" and BlizzardAPI and BlizzardAPI.NotePlayerHealthEvent then
+        BlizzardAPI.NotePlayerHealthEvent()
+    end
     -- Target health bar lives outside the defensive system; handle it here so
     -- target health never enters DefensiveEngine (which only acts on player/pet).
     if unit == "target" then

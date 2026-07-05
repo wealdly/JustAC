@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [4.33.0] - 2026-07-05
+
+### Added
+- **Recuperate as a pre-combat buff:** whenever you're hurt out of combat, the new all-classes Recuperate self-heal is offered alongside your other missing buffs, with the same green glow and click-to-cast. It hides while its heal-over-time is running, steps aside when a procced heal is the better top-up, and respects the pre-combat buffs toggle. Works even in zones where the game hides exact health values out of combat - and if a damage-over-time effect interrupts the heal, one click cancels the stale effect and restarts it.
+- **State-aware suggestions across all classes:** abilities the game won't let you use right now sink in the queue instead of showing as ready - stealth-only openers while unstealthed (Subterfuge and Shadow Dance respected, procs always exempt), abilities missing their enabling buff (Arcane Missiles without Clearcasting), and Cat/Bear-only Druid abilities while in the wrong form (automatically disabled with Fluid Form, whose attacks shift you on their own). Self-buffs that are already active (Slice and Dice and the like) are now recognized for every class and reappear near expiry when a refresh is actually useful, while stackable buffs are never wrongly suppressed.
+- **Built-in base cooldown and charge data:** abilities the addon first sees mid-combat (battle res, spec change, first engage after login) now track their cooldowns and charges correctly instead of always showing as ready, even while the game hides live cooldown values in combat.
+
+### Fixed
+- **Cooldown countdowns no longer get stuck in combat:** a hidden in-combat value could poison the cooldown tracker, leaving an ability showing "on cooldown" with a countdown that refused to reset until well after combat ended.
+- **Defensive proc glow no longer freezes mid-animation when leaving combat:** it resets cleanly on combat exit - and procced heals now keep their glow animating out of combat, since a free heal is the preferred post-fight top-up.
+
 ## [4.32.5] - 2026-07-04
 
 ### Performance
