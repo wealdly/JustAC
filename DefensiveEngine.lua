@@ -3,7 +3,7 @@
 -- DefensiveEngine.lua - Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
-local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 1)
+local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 2)
 if not DefensiveEngine then return end
 
 -- Hot path cache
@@ -48,6 +48,7 @@ local defensiveResetTime = GetTime()
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
 local ResolveHealthState
+local healthIsCritical = false  -- latched by ResolveHealthState, read by OrderByEmergencyTier
 
 -- Spell list type configuration - maps restoreKey (used by Options) to
 -- the profile listKey and SpellDB defaults table name.
@@ -109,12 +110,27 @@ local function ApplyOverlayQueue(addon, npoQueue)
     end
 end
 
--- Resolve player health into isLow boolean.
--- 12.0: UnitHealth() is secret in combat. The only reliable in-combat signal is
--- LowHealthFrame visibility (~35% threshold, NeverSecret). Health levels above 35%
--- are indistinguishable in combat - no thresholds above 35% are usable.
+-- Resolve player health into isLow; also latches the ~20% critical flag
+-- (healthIsCritical, read by OrderByEmergencyTier in the same rebuild).
+-- 12.0: UnitHealth() is secret in combat and most open-world contexts, so the
+-- LowHealthFrame vignette (~35% shown / ~20% critical, NeverSecret) is the
+-- baseline signal. When the exact percent IS readable (unrestricted contexts)
+-- prefer it, with thresholds matching the vignette so behavior is identical
+-- either way. Levels above 35% stay indistinguishable in restricted contexts.
+local LOW_HEALTH_PCT, CRITICAL_HEALTH_PCT = 35, 20
 ResolveHealthState = function()
-    local isLow = BlizzardAPI and BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState()
+    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
+        local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+        if pct and estimated == false then
+            healthIsCritical = pct <= CRITICAL_HEALTH_PCT
+            return pct <= LOW_HEALTH_PCT
+        end
+    end
+    local isLow, isCritical
+    if BlizzardAPI and BlizzardAPI.GetLowHealthState then
+        isLow, isCritical = BlizzardAPI.GetLowHealthState()
+    end
+    healthIsCritical = isCritical == true
     return isLow == true
 end
 
@@ -550,14 +566,20 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     end
 end
 
--- Reorder a defensive list by emergency tier (1 bubble → 2 big heal → 3 rest), stable
--- within each tier so the user's configured order is preserved as the tiebreaker. Returns
--- a fresh table; used only below the low-health threshold. ponytail: builds one small
--- table per low-health rebuild - fine, rebuilds are cached/throttled.
+-- Reorder a defensive list by emergency tier, stable within each tier so the user's
+-- configured order is preserved as the tiebreaker. Below ~35% big heals lead and
+-- immunity bubbles follow; at critical (~20%, healthIsCritical) bubbles jump the
+-- queue - the true panic tier is reserved for actual panic. Returns a fresh table;
+-- used only below the low-health threshold. ponytail: builds one small table per
+-- low-health rebuild - fine, rebuilds are cached/throttled.
 local emergencyOrderBuf = {}
+local TIER_ORDER_LOW      = { 2, 1, 3 }  -- big heal -> bubble -> rest
+local TIER_ORDER_CRITICAL = { 1, 2, 3 }  -- bubble -> big heal -> rest
 local function OrderByEmergencyTier(list)
     wipe(emergencyOrderBuf)
-    for tier = 1, 3 do
+    local order = healthIsCritical and TIER_ORDER_CRITICAL or TIER_ORDER_LOW
+    for i = 1, 3 do
+        local tier = order[i]
         for _, sid in ipairs(list) do
             if (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid) or 3) == tier then
                 emergencyOrderBuf[#emergencyOrderBuf + 1] = sid
@@ -839,7 +861,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         local listToShow = defensiveSpells
         if defensiveSpells then
             if isLow then
-                -- Below ~35%: float survival buttons (bubble → big heal) above fillers.
+                -- Below ~35%: float survival buttons above fillers (big heals first;
+                -- bubbles jump ahead only at critical - see OrderByEmergencyTier).
                 listToShow = OrderByEmergencyTier(defensiveSpells)
             else
                 -- Above the threshold: park emergency panic buttons at the end (big heals,

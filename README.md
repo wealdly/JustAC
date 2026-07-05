@@ -202,7 +202,12 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 /jac inspect auras            - Diagnose aura cache state
 /jac inspect perf             - Queue build rate statistics (requires /jac debug)
 /jac inspect perf reset       - Reset build counters
+/jac inspect buffs            - Diagnose pre-combat buff checklist (out of combat)
+/jac inspect rank             - Queue context inference and per-spell ordering
+/jac inspect chargediag [sp]  - Armed charge-event probe (60s window)
 /jac inspect castdiag         - Diagnose in-combat interrupt detection (one-shot probe)
+/jac inspect healthprobe      - Sweep health-detection channels (run while hurt)
+/jac inspect validate [arm]   - Check API readability where you stand; arm = diff on combat enter/exit
 /jac help                     - Show all commands in-game
 ```
 

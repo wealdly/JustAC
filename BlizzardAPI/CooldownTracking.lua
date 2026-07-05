@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Local Cooldown Tracking (12.0+ secret value workaround)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after BlizzardAPI.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 11
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-CooldownTracking", 13
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -51,8 +51,8 @@ local probeTooltip = nil
 --- @return number|nil duration in seconds, or nil if not found
 local function ParseTooltipCooldown(spellID)
     if not spellID or type(spellID) ~= "number" or spellID == 0 then return nil end
-    -- Tooltip text is secreted in combat - skip entirely
-    if InCombatLockdown() then return nil end
+    -- Tooltip text is secreted alongside cooldowns - skip while restricted
+    if BlizzardAPI.AreCooldownsSecret() then return nil end
 
     -- Create the hidden scanning tooltip once
     if not probeTooltip then
@@ -172,9 +172,8 @@ local function RecordSpellCooldown(spellID)
 
     local now = GetTime()
     local duration = 0
-    local inCombat = InCombatLockdown()
 
-    if not inCombat and C_Spell_GetSpellCooldown then
+    if not BlizzardAPI.AreCooldownsSecret() and C_Spell_GetSpellCooldown then
         local cd = C_Spell_GetSpellCooldown(spellID)
         if cd and cd.duration and not IsSecretValue(cd.duration) and cd.duration > 0 then
             -- Only cache if it's a real cooldown (> 3s), not a GCD read
@@ -207,7 +206,7 @@ end
 --- Preserves CD tracking across combat transitions by reading actual CD state
 --- when the data is readable (OOC), instead of wiping it.
 local function ResyncLocalCooldowns()
-    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end
     local now = GetTime()
     wipe(localCooldowns)
     for spellID in pairs(trackedSpells) do
@@ -245,7 +244,7 @@ end
 --- measure since the other fields it reads are secret.
 local function CacheChargesForSpell(spellID)
     if not spellID then return end
-    if C_Spell_GetSpellCharges and not InCombatLockdown() then
+    if C_Spell_GetSpellCharges and not BlizzardAPI.AreCooldownsSecret() then
         -- currentCharges/cooldownDuration are SECRET in combat; live read is OOC-only
         local ok, chargeInfo = pcall(C_Spell_GetSpellCharges, spellID)
         if ok and chargeInfo then
@@ -274,13 +273,24 @@ local function CacheChargesForSpell(spellID)
         end
     end
 
-    -- Static fallback (in combat, or live read unavailable): seed from client data
-    -- with full charges (fail-toward-usable, same as the live path's defaults) so
-    -- charge spells registered mid-combat still track instead of failing open.
+    -- Fallback (in combat, or full live read unavailable): maxCharges is
+    -- NeverSecret even in combat, so take the live talent-accurate value when
+    -- readable and only the recharge duration (secret in combat) from client
+    -- data. Full charges = fail-toward-usable, same as the live path's defaults,
+    -- so charge spells registered mid-combat still track instead of failing open.
     if localCharges[spellID] then return end
+    local liveMax
+    if C_Spell_GetSpellCharges then
+        local ok, ci = pcall(C_Spell_GetSpellCharges, spellID)
+        if ok and ci then liveMax = Unsecret(ci.maxCharges) end
+    end
     local staticData = GetStaticCooldownData()
-    if not staticData then return end
-    local _, maxCharges, rechargeMs = staticData.Get(spellID)
+    local staticMax, rechargeMs
+    if staticData then
+        local _
+        _, staticMax, rechargeMs = staticData.Get(spellID)
+    end
+    local maxCharges = liveMax or staticMax
     if maxCharges and maxCharges > 1 then
         cachedMaxCharges[spellID] = cachedMaxCharges[spellID] or maxCharges
         localCharges[spellID] = {
@@ -297,7 +307,7 @@ end
 --- This prevents first-combat-session edge cases where RecordSpellCooldown
 --- has no cached duration and falls back to unmodified GetSpellBaseCooldown.
 local function ScanCooldownDurations()
-    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end
     local function scanSpell(spellID)
         -- Skip if already cached with a real value
         if cachedDurations[spellID] and cachedDurations[spellID] > 0 then return end
@@ -716,7 +726,7 @@ end
 --- start local tracking, so IsSpellReady fails-open for unflagged spells.
 function BlizzardAPI.SeedLocalCooldownIfActive(spellID)
     if not spellID or spellID == 0 then return end
-    if InCombatLockdown() or not C_Spell_GetSpellCooldown then return end
+    if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end
     -- Skip if already tracked
     if localCooldowns[spellID] then return end
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)

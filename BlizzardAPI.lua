@@ -9,7 +9,7 @@
 --   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
 --   SecretValues.lua      → IsRedundancyFilterAvailable
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
-local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 35)
+local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 36)
 if not BlizzardAPI then return end
 
 --------------------------------------------------------------------------------
@@ -55,6 +55,33 @@ function BlizzardAPI.Unsecret(value, fallback)
     if value == nil then return fallback end
     if issecretvalue ~= nil and issecretvalue(value) then return fallback end
     return value
+end
+
+--------------------------------------------------------------------------------
+-- Live Secrecy Gates (12.0.7+)
+--------------------------------------------------------------------------------
+-- C_Secrets predicates are plain booleans that flip exactly at combat edges in
+-- every context (validated in-game 12.0.7: open world, dungeon, delve). Prefer
+-- these over InCombatLockdown() as the "is this data readable" signal - they
+-- stay correct if Blizzard changes which contexts are restricted.
+
+local C_Secrets_ShouldCooldownsBeSecret = C_Secrets and C_Secrets.ShouldCooldownsBeSecret
+local C_Secrets_ShouldAurasBeSecret     = C_Secrets and C_Secrets.ShouldAurasBeSecret
+
+--- Are spell/action cooldown values secret right now?
+--- @return boolean
+function BlizzardAPI.AreCooldownsSecret()
+    if C_Secrets_ShouldCooldownsBeSecret then return C_Secrets_ShouldCooldownsBeSecret() end
+    -- Pre-predicate clients: combat is the only secrecy context
+    return BlizzardAPI.IS_MIDNIGHT_OR_LATER and InCombatLockdown() or false
+end
+
+--- Are unit aura contents secret right now? (Per-spell NeverSecret exemptions
+--- override this - see RedundancyFilter's exemption handling.)
+--- @return boolean
+function BlizzardAPI.AreAurasSecret()
+    if C_Secrets_ShouldAurasBeSecret then return C_Secrets_ShouldAurasBeSecret() end
+    return BlizzardAPI.IS_MIDNIGHT_OR_LATER and InCombatLockdown() or false
 end
 
 --------------------------------------------------------------------------------

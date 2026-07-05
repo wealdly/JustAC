@@ -42,7 +42,6 @@ local function EnsurePool()
         local b = CreateFrame("Button", "JustACClickLayer" .. i, container,
             "SecureActionButtonTemplate")
         b:RegisterForClicks("AnyDown", "AnyUp")  -- fire regardless of key-down/up cast CVar
-        b:SetFrameStrata("HIGH")
         b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         -- Forward hover to the icon below so its rich tooltip still shows through the layer.
         b:SetScript("OnEnter", function(self)
@@ -125,7 +124,9 @@ local function ConfigureLayer(layer, icon, eating)
     layer:ClearAllPoints()
     layer:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * s, bottom * s)
     layer:SetSize(width * s, height * s)
-    layer:SetFrameLevel(icon:GetFrameLevel() + 10)
+    -- Match the icon's strata and stay below its hotkey frame so keybind text remains visible.
+    layer:SetFrameStrata(icon:GetFrameStrata())
+    layer:SetFrameLevel(icon:GetFrameLevel() + 1)
     if layer.clickHint then
         -- Mid-food-channel, clicking anything breaks the eat, so the hint says "wait".
         if icon.isPrecombatBuff == true then

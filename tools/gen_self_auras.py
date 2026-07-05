@@ -80,6 +80,11 @@ def main():
             if durations.get(int(row["DurationIndex"] or 0), 0) != 0:
                 out.add(sid)
 
+    names = {int(r["ID"]): r["Name_lang"] for r in read_csv(find("SpellName"))}
+
+    def nm(sid):
+        return (names.get(sid) or "?").replace("\r", "").replace("\n", " ")
+
     lines = [
         "-- SPDX-License-Identifier: GPL-3.0-or-later",
         "-- Copyright (C) 2024-2026 wealdly",
@@ -94,7 +99,7 @@ def main():
         "SpellDB.RegisterSelfAuras({",
     ]
     for sid in sorted(out):
-        lines.append(f"[{sid}]=true,")
+        lines.append(f"[{sid}]=true,  -- {nm(sid)}")
     lines += ["})", ""]
 
     out_path = Path(__file__).parent.parent / "Data" / "SelfAuras.lua"

@@ -139,6 +139,21 @@ local function CreateOverlayIcon(iconSize, profile)
     button.borderFrame:SetFrameStrata("BACKGROUND")
     button.hotkeyFrame:SetFrameStrata("BACKGROUND")
 
+    -- Keep frame LEVELS at the engine floor too: strata alone isn't enough against
+    -- addon UI (e.g. a unit-frame addon) that also lives at BACKGROUND - it occluded
+    -- the icon body while the hotkey (+15) and glow frames (+4/+5) poked above it.
+    -- Explicit absolute levels on every subframe (parent-level cascade is not relied
+    -- on), packed 0..4: icon(0) < cooldowns(1) < border(2) < glows(3, clamped at
+    -- lazy creation in UIAnimations) < flash/hotkey(4; hotkey is created later so it
+    -- wins the tie and stays readable above the flash).
+    button:SetFrameLevel(0)
+    button.cooldownContainer:SetFrameLevel(1)
+    button.cooldown:SetFrameLevel(1)
+    button.chargeCooldown:SetFrameLevel(1)
+    button.borderFrame:SetFrameLevel(2)
+    button.FlashFrame:SetFrameLevel(4)
+    button.hotkeyFrame:SetFrameLevel(4)
+
     -- Nameplate-specific: tighter cooldown insets (3 px vs 4 px in base).
     button.cooldown:ClearAllPoints()
     button.cooldown:SetPoint("TOPLEFT",     button, "TOPLEFT",      3, -3)
@@ -832,6 +847,11 @@ function UINameplateOverlay.UpdateAnchor(addon)
                 if icon.hasDefensiveGlow then UIAnimations.StopDefensiveGlow(icon); icon.hasDefensiveGlow = false end
                 if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon);      icon.hasProcGlow      = false end
             end
+            -- Glows were force-hidden outside UIRenderer's arbiter: reset its state
+            -- (same rule as UIAnimations.PauseAllGlows) or the next RenderDefensives
+            -- sees want == have and never restarts the glow on the new target.
+            icon.appliedDefGlowState = nil
+            icon.pendingDefGlowState = nil
             icon:ClearAllPoints()
             icon:Hide()
         end
@@ -1354,7 +1374,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
             if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash, entry.waiting, entry.precombat)
             icon:SetAlpha(opacity)
             visibleCount = visibleCount + 1
         else

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Macro Parser Module - Resolves macro conditionals to find actionable spells
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 23)
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 24)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -331,6 +331,10 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
     return score
 end
 
+-- ponytail: hand-rolled subset of Blizzard's macro-conditional grammar; unhandled
+-- clauses (target/mounted/outdoors/...) fail-open. Drifts as Blizzard adds
+-- conditionals - deliberately NOT SecureCmdOptionParse, which answers "what fires
+-- right now" and would blank/churn a static keybind display.
 local function EvaluateConditions(conditionString, currentSpec, currentForm)
     local modifiers = {}
     local allConditionsMet = true

@@ -53,6 +53,11 @@ def main():
         if required > 0 and sid in universe:
             out[sid] = required
 
+    names = {int(r["ID"]): r["Name_lang"] for r in read_csv(find("SpellName"))}
+
+    def nm(sid):
+        return (names.get(sid) or "?").replace("\r", "").replace("\n", " ")
+
     lines = [
         "-- SPDX-License-Identifier: GPL-3.0-or-later",
         "-- Copyright (C) 2024-2026 wealdly",
@@ -67,7 +72,7 @@ def main():
         "SpellDB.RegisterAuraRequirements({",
     ]
     for sid in sorted(out):
-        lines.append(f"[{sid}]={out[sid]},")
+        lines.append(f"[{sid}]={out[sid]},  -- {nm(sid)} (requires {nm(out[sid])})")
     lines += ["})", ""]
 
     out_path = Path(__file__).parent.parent / "Data" / "AuraRequirements.lua"

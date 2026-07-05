@@ -31,7 +31,12 @@ local function CreateMarchingAntsFrame(parent, frameKey)
     highlightFrame:SetPoint("CENTER")
     highlightFrame:SetSize(45, 45)
     highlightFrame:SetFrameLevel(parent:GetFrameLevel() + 4)
-    if parent.isOverlayIcon then highlightFrame:SetFrameStrata("BACKGROUND") end
+    if parent.isOverlayIcon then
+        highlightFrame:SetFrameStrata("BACKGROUND")
+        -- Overlay icons pack levels 0..4 (see CreateOverlayIcon): glows sit at +3,
+        -- above the border (+2) and below flash/hotkey (+4).
+        highlightFrame:SetFrameLevel(parent:GetFrameLevel() + 3)
+    end
     
     local flipbook = highlightFrame:CreateTexture(nil, "OVERLAY")
     highlightFrame.Flipbook = flipbook
@@ -62,7 +67,11 @@ local function CreateProcGlowFrame(parent, frameKey)
     procFrame:SetPoint("CENTER")
     procFrame:SetSize(45 * 1.4, 45 * 1.4)
     procFrame:SetFrameLevel(parent:GetFrameLevel() + 5)
-    if parent.isOverlayIcon then procFrame:SetFrameStrata("BACKGROUND") end
+    if parent.isOverlayIcon then
+        procFrame:SetFrameStrata("BACKGROUND")
+        -- Overlay icons pack levels 0..4 (see CreateOverlayIcon): glows sit at +3.
+        procFrame:SetFrameLevel(parent:GetFrameLevel() + 3)
+    end
     procFrame:Hide()
     
     local procLoop = procFrame:CreateTexture(nil, "OVERLAY")

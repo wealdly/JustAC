@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 20)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 21)
 if not DebugCommands then return end
 
 --------------------------------------------------------------------------------
@@ -29,6 +29,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
+    addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
     addon:Print("/jac help - Show this help")
 end
 
@@ -1203,6 +1204,7 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
     if normalizedSub == "reset" then
         if SpellQueue and SpellQueue.ResetBuildStats then SpellQueue.ResetBuildStats() end
         if DefEngine and DefEngine.ResetBuildStats then DefEngine.ResetBuildStats() end
+        if addon and addon.ResetOOCEventCoalesceStats then addon:ResetOOCEventCoalesceStats() end
         addon:Print("|cff00ff00Build counters reset.|r")
         return
     end
@@ -1231,6 +1233,22 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
 
     local inCombat = UnitAffectingCombat("player")
     addon:Print("In combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
+
+    local coalesceStats = addon and addon.GetOOCEventCoalesceStats and addon:GetOOCEventCoalesceStats()
+    if coalesceStats then
+        local function printCoalesceLine(label, bucket)
+            local applied = (bucket and bucket.applied) or 0
+            local coalesced = (bucket and bucket.coalesced) or 0
+            local total = applied + coalesced
+            local coalescePct = total > 0 and (coalesced * 100 / total) or 0
+            local throttle = (bucket and bucket.throttle) or 0
+            addon:Print(string.format("OOC %s events: applied |cffadd8e6%d|r, coalesced |cffadd8e6%d|r (%.0f%%, throttle %.2fs)",
+                label, applied, coalesced, coalescePct, throttle))
+        end
+        printCoalesceLine("cooldown", coalesceStats.cooldown)
+        printCoalesceLine("usability", coalesceStats.usability)
+        printCoalesceLine("actionbar", coalesceStats.actionbar)
+    end
 
     if profile then
         local updateCVar = GetCVar and GetCVar("assistedCombatIconUpdateRate")
@@ -1652,4 +1670,356 @@ function DebugCommands.CastDiagnostics(addon)
         if not probed and (now - startedT) >= 0.3 then captureProbes() end  -- read .notInterruptible MID-cast
         if (now - startedT) > 8 then report() end                          -- long/channel cast with no STOP
     end)
+end
+
+--------------------------------------------------------------------------------
+-- Assumption Validation Suite
+-- /jac inspect validate       - one-shot sweep of every load-bearing API read
+-- /jac inspect validate arm   - also re-captures on combat enter/exit and prints
+--                               only what changed class (readable/secret/sealed)
+-- Every probe is classified: ok:<value> | secret | SEALED (threw) | nil | absent.
+-- Nothing is written or branched on a secret; reads are pcall-guarded.
+--------------------------------------------------------------------------------
+
+-- C_Secrets function count at last full audit (12.0.7, 2026-07-05). If the live
+-- count differs, the secrecy surface changed and every assumption needs re-audit.
+local SECRETS_SURFACE_COUNT = 27
+
+local function ValidateClassify(fn)
+    local ok, v = pcall(fn)
+    if not ok then return "SEALED", "|cffff6666SEALED|r" end
+    if v == nil then return "nil", "|cff888888nil|r" end
+    -- Force compare+concat: catches secrets IsSecretValue misses (struct fields,
+    -- event args) - same approach as chargediag/castdiag.
+    local ok2, s = pcall(function()
+        local str = tostring(v)
+        local _ = (str == "")
+        return str .. ""
+    end)
+    if not ok2 or type(s) ~= "string" then return "secret", "|cffff6600<secret>|r" end
+    -- Booleans are state, not noise: track the VALUE so a predicate flipping
+    -- false->true in combat shows in the diff. Numbers (cooldown clocks etc.)
+    -- churn constantly - class-only for those.
+    if type(v) == "boolean" then return "ok:" .. s, "|cff00ff00" .. s .. "|r" end
+    if #s > 24 then s = s:sub(1, 24) .. ".." end
+    return "ok", "|cff00ff00" .. s .. "|r"
+end
+
+-- First rotation spell if plainly readable, else the GCD reference spell.
+local function ValidateProbeSpell()
+    local ok, sid = pcall(function()
+        return C_AssistedCombat.GetRotationSpells()[1] + 0
+    end)
+    if ok and type(sid) == "number" then return sid end
+    return 61304
+end
+
+-- First occupied action slot with a plainly readable HasAction.
+local function ValidateProbeSlot()
+    for i = 1, 120 do
+        local ok, has = pcall(function() return HasAction(i) == true end)
+        if ok and has then return i end
+    end
+    return 1
+end
+
+local function BuildValidateProbes()
+    local probes = {}
+    local function add(key, fn) probes[#probes + 1] = { key, fn } end
+    local sid = ValidateProbeSpell()
+    local slot = ValidateProbeSlot()
+    local CS = C_Secrets
+
+    -- Secrecy predicates (full documented surface, correct args). Plain booleans
+    -- by contract; any class other than ok/absent here is itself a finding.
+    if type(CS) == "table" then
+        add("secrets.HasSecretRestrictions", function() return CS.HasSecretRestrictions() end)
+        add("secrets.ShouldAurasBeSecret", function() return CS.ShouldAurasBeSecret() end)
+        add("secrets.ShouldCooldownsBeSecret", function() return CS.ShouldCooldownsBeSecret() end)
+        add("secrets.ShouldUnitStatsBeSecret", function() return CS.ShouldUnitStatsBeSecret() end)
+        add("secrets.ShouldUnitHealthMaxBeSecret", function() return CS.ShouldUnitHealthMaxBeSecret("player") end)
+        add("secrets.ShouldUnitPowerBeSecret", function() return CS.ShouldUnitPowerBeSecret("player") end)
+        add("secrets.ShouldUnitIdentityBeSecret", function() return CS.ShouldUnitIdentityBeSecret("target") end)
+        add("secrets.ShouldUnitSpellCastingBeSecret", function() return CS.ShouldUnitSpellCastingBeSecret("target") end)
+        add("secrets.ShouldUnitComparisonBeSecret", function() return CS.ShouldUnitComparisonBeSecret("player", "target") end)
+        add("secrets.ShouldUnitThreatStateBeSecret", function() return CS.ShouldUnitThreatStateBeSecret("player", "target") end)
+        add("secrets.ShouldSpellCooldownBeSecret", function() return CS.ShouldSpellCooldownBeSecret(sid) end)
+        add("secrets.ShouldSpellAuraBeSecret", function() return CS.ShouldSpellAuraBeSecret(sid) end)
+        add("secrets.ShouldActionCooldownBeSecret", function() return CS.ShouldActionCooldownBeSecret(slot) end)
+        add("secrets.CanCompareUnitTokens", function() return CS.CanCompareUnitTokens("player", "target") end)
+        -- SecrecyLevel: 0=NeverSecret 1=AlwaysSecret 2=ContextuallySecret
+        add("secrets.SpellCooldownSecrecy", function() return CS.GetSpellCooldownSecrecy(sid) end)
+        add("secrets.SpellAuraSecrecy", function() return CS.GetSpellAuraSecrecy(sid) end)
+        add("secrets.SpellCastSecrecy", function() return CS.GetSpellCastSecrecy(sid) end)
+        add("secrets.PowerTypeSecrecy", function() return CS.GetPowerTypeSecrecy(0) end)
+    else
+        add("secrets.C_Secrets", function() return nil end)
+    end
+
+    add("health.UnitHealth", function() return UnitHealth("player") end)
+    add("health.UnitHealthMax", function() return UnitHealthMax("player") end)
+    add("health.UnitHealthMissing", function() return UnitHealthMissing and UnitHealthMissing("player") end)
+    add("health.UnitHealthPercent", function() return UnitHealthPercent and UnitHealthPercent("player") end)
+    add("health.UnitPower", function() return UnitPower("player") end)
+    add("health.UnitPowerMax", function() return UnitPowerMax("player") end)
+    add("health.absorbs", function() return UnitGetTotalAbsorbs("player") end)
+    add("health.targetHealth", function() return UnitHealth("target") end)
+
+    add("aura.helpfulCount", function()
+        local n = 0
+        for i = 1, 40 do
+            if not C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL") then break end
+            n = n + 1
+        end
+        return n
+    end)
+    for _, field in ipairs({ "name", "spellId", "duration", "expirationTime", "applications" }) do
+        add("aura.player1." .. field, function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+            return a and a[field]
+        end)
+    end
+    add("aura.durationObjSecret", function()
+        local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+        if not a then return nil end
+        local d = C_UnitAuras.GetAuraDuration("player", a.auraInstanceID)
+        return d and d:HasSecretValues()  -- ReturnsNeverSecret by contract
+    end)
+    -- Per-aura secrecy: docs say per-spell flags override the global rule
+    -- (ShouldAurasBeSecret=true while an exempt buff stays readable).
+    add("aura.player1.shouldBeSecret", function()
+        return CS and CS.ShouldUnitAuraIndexBeSecret("player", 1, "HELPFUL")
+    end)
+    add("aura.player1.auraSecrecy", function()
+        local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+        return a and CS and CS.GetSpellAuraSecrecy(a.spellId)  -- spellId may be secret; accepted per docs
+    end)
+    add("aura.target1.spellId", function()
+        local a = C_UnitAuras.GetAuraDataByIndex("target", 1, "HARMFUL")
+        return a and a.spellId
+    end)
+    -- Live fronts for the static SelfAuras/AuraStacks tables (SpellDB accessors).
+    -- maxStacks probes a KNOWN stacking aura (Ironfur): the API throws (SEALED)
+    -- for spells without a stacking record - verified 2026-07-05 with Cat Form.
+    add("aura.isSelfBuffAPI", function() return C_Spell.IsSelfBuff(sid) end)
+    add("aura.maxStacksIronfur", function() return C_UnitAuras.GetSpellMaxCumulativeAuraApplications(192081) end)
+
+    add("cd.probeSpell", function() return sid end)
+    add("cd.start", function() return C_Spell.GetSpellCooldown(sid).startTime end)
+    add("cd.duration", function() return C_Spell.GetSpellCooldown(sid).duration end)
+    add("cd.isEnabled", function() return C_Spell.GetSpellCooldown(sid).isEnabled end)
+    add("cd.chargesCurrent", function()
+        local c = C_Spell.GetSpellCharges(sid)
+        return c and c.currentCharges
+    end)
+    add("cd.chargesMax", function()
+        local c = C_Spell.GetSpellCharges(sid)
+        return c and c.maxCharges  -- NeverSecret by contract
+    end)
+    add("cd.castCount", function() return C_Spell.GetSpellCastCount and C_Spell.GetSpellCastCount(sid) end)
+    add("cd.durationObjSecret", function()
+        local d = C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(sid)
+        return d and d:HasSecretValues()
+    end)
+    add("cd.usable", function() return C_Spell.IsSpellUsable(sid) end)
+    add("cd.inRange", function() return C_Spell.IsSpellInRange(sid, "target") end)
+    add("cd.overrideSpell", function() return C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid) end)
+
+    add("ac.next", function() return C_AssistedCombat.GetNextCastSpell() end)
+    add("ac.rot1", function() return C_AssistedCombat.GetRotationSpells()[1] end)
+    add("ac.rotCount", function() return #C_AssistedCombat.GetRotationSpells() end)
+    add("ac.available", function() return (C_AssistedCombat.IsAvailable()) end)
+    add("proc.overlayed", function() return C_SpellActivationOverlay.IsSpellOverlayed(sid) end)
+
+    add("action.probeSlot", function() return slot end)
+    add("action.cdStart", function() return (GetActionCooldown(slot)) end)
+    add("action.usable", function() return (IsUsableAction(slot)) end)
+    add("action.inRange", function() return IsActionInRange(slot) end)
+    add("action.isInterrupt", function() return C_ActionBar.IsInterruptAction and C_ActionBar.IsInterruptAction(slot) end)
+    add("action.durationObjSecret", function()
+        local d = C_ActionBar.GetActionCooldownDuration and C_ActionBar.GetActionCooldownDuration(slot)
+        return d and d:HasSecretValues()
+    end)
+
+    add("cast.playerName", function() return (UnitCastingInfo("player")) end)
+    add("cast.targetName", function() return (UnitCastingInfo("target")) end)
+    add("cast.targetNotInterruptible", function() return select(8, UnitCastingInfo("target")) end)
+
+    add("viewer.available", function() return (C_CooldownViewer.IsCooldownViewerAvailable()) end)
+    add("viewer.essentialCount", function()
+        return #C_CooldownViewer.GetCooldownViewerCategorySet(Enum.CooldownViewerCategory.Essential, false)
+    end)
+
+    -- What the addon's own gates believe - should agree with the raw reads above.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.GetFeatureAvailability then
+        add("gate.health", function() return BAPI.GetFeatureAvailability().healthAccess end)
+        add("gate.aura", function() return BAPI.GetFeatureAvailability().auraAccess end)
+        add("gate.proc", function() return BAPI.GetFeatureAvailability().procAccess end)
+    end
+
+    return probes
+end
+
+local function PrintValidateEnv(addon)
+    local function vs(fn)
+        local ok, v = pcall(fn)
+        if not ok then return "SEALED" end
+        local ok2, s = pcall(tostring, v)
+        return ok2 and s or "<secret>"
+    end
+    addon:Print("  where: zone=" .. vs(function() return (GetInstanceInfo()) end)
+        .. " type=" .. vs(function() return select(2, GetInstanceInfo()) end)
+        .. " diff=" .. vs(function() return select(4, GetInstanceInfo()) end)
+        .. " map=" .. vs(function() return C_Map.GetBestMapForUnit("player") end)
+        .. " instID=" .. vs(function() return select(8, GetInstanceInfo()) end))
+    addon:Print("  state: combat=" .. tostring(UnitAffectingCombat("player"))
+        .. " resting=" .. vs(IsResting)
+        .. " group=" .. (IsInRaid() and "raid" or IsInGroup() and "party" or "solo")
+        .. " spec=" .. vs(function() return select(2, GetSpecializationInfo(GetSpecialization())) end)
+        .. " form=" .. vs(GetShapeshiftFormID)
+        .. " level=" .. vs(function() return UnitLevel("player") end))
+    addon:Print("  pvp: warMode=" .. vs(C_PvP.IsWarModeActive)
+        .. " zonePvP=" .. vs(function() return (C_PvP.GetZonePVPInfo()) end)
+        .. "  client: " .. vs(function() local v, b = GetBuildInfo(); return v .. "." .. b end))
+end
+
+-- Runs all probes; returns snapshot {key -> class} plus ordered key list.
+local function RunValidateSnapshot(addon, printAll)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.RefreshFeatureAvailability then pcall(BAPI.RefreshFeatureAvailability) end
+    local probes = BuildValidateProbes()
+    local snap, order = {}, {}
+    local curGroup, parts
+    local function flush()
+        if curGroup and parts and #parts > 0 then
+            addon:Print("  " .. curGroup .. ": " .. table.concat(parts, " "))
+        end
+        parts = {}
+    end
+    for _, p in ipairs(probes) do
+        local key, fn = p[1], p[2]
+        local class, disp = ValidateClassify(fn)
+        snap[key] = class
+        order[#order + 1] = key
+        if printAll then
+            local group, rest = key:match("^([^.]+)%.(.+)$")
+            if group ~= curGroup then
+                flush()
+                curGroup = group
+            end
+            parts[#parts + 1] = rest .. "=" .. disp
+            if #parts >= 5 then flush() end
+        end
+    end
+    if printAll then flush() end
+    return snap, order
+end
+
+local function DiffValidate(addon, base, now, order)
+    local changed = 0
+    for _, key in ipairs(order) do
+        if base[key] ~= now[key] then
+            changed = changed + 1
+            addon:Print(string.format("  |cffffff00%s|r: %s -> %s", key,
+                tostring(base[key]), tostring(now[key])))
+        end
+    end
+    addon:Print(string.format("  %d probe class change(s); %d held.", changed, #order - changed))
+end
+
+function DebugCommands.ValidateAssumptions(addon, arg)
+    local armed = arg == "arm"
+    if armed and DebugCommands._validate then
+        addon:Print("|cffffff00validate already armed (/reload to cancel).|r")
+        return
+    end
+
+    addon:Print("===== assumption validation (" .. (armed and "armed" or "one-shot") .. ") =====")
+    PrintValidateEnv(addon)
+
+    -- Secrecy surface drift check: the one signal that all cached verdicts are stale.
+    local fnCount = 0
+    if type(C_Secrets) == "table" then
+        for _, v in pairs(C_Secrets) do
+            if type(v) == "function" then fnCount = fnCount + 1 end
+        end
+    end
+    if fnCount ~= SECRETS_SURFACE_COUNT then
+        addon:Print(string.format(
+            "|cffff0000C_Secrets surface changed: %d functions (audited at %d) - re-audit all secrecy assumptions!|r",
+            fnCount, SECRETS_SURFACE_COUNT))
+    end
+
+    -- Render-sink availability (existence only; these consume secrets, never return them).
+    local sink = DebugCommands._validateSinkProbe
+    if not sink then
+        sink = { tex = UIParent:CreateTexture(), cd = CreateFrame("Cooldown", nil, UIParent, "CooldownFrameTemplate") }
+        sink.tex:Hide(); sink.cd:Hide()
+        DebugCommands._validateSinkProbe = sink
+    end
+    local function has(obj, m) return type(obj) == "table" and type(obj[m]) == "function" and "yes" or "|cffff6666NO|r" end
+    addon:Print("  sinks: SetAlphaFromBoolean=" .. has(sink.tex, "SetAlphaFromBoolean")
+        .. " SetVertexColorFromBoolean=" .. has(sink.tex, "SetVertexColorFromBoolean")
+        .. " SetCooldownFromDurationObject=" .. has(sink.cd, "SetCooldownFromDurationObject")
+        .. " C_CurveUtil=" .. has(C_CurveUtil, "EvaluateColorFromBoolean"))
+
+    local base, order = RunValidateSnapshot(addon, true)
+
+    if not armed then
+        addon:Print("Tip: '/jac inspect validate arm' re-captures on combat enter/exit and prints the diff.")
+        addon:Print("=============================================")
+        return
+    end
+
+    local f = CreateFrame("Frame")
+    DebugCommands._validate = f
+    local armT = GetTime()
+    local combatSnap
+    local pendingCaptureAt
+    local settleCaptureAt
+
+    local function disarm(msg)
+        f:UnregisterAllEvents(); f:SetScript("OnEvent", nil); f:SetScript("OnUpdate", nil)
+        DebugCommands._validate = nil
+        addon:Print(msg)
+    end
+
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:RegisterEvent("PLAYER_REGEN_ENABLED")
+    f:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_REGEN_DISABLED" then
+            pendingCaptureAt = GetTime() + 0.5  -- let secrecy state settle
+        elseif combatSnap then
+            settleCaptureAt = nil
+            addon:Print("|cff00ff00validate: combat ended - post-combat vs in-combat:|r")
+            PrintValidateEnv(addon)
+            local post = RunValidateSnapshot(addon, false)
+            DiffValidate(addon, combatSnap, post, order)
+            disarm("validate: done.")
+        end
+    end)
+    f:SetScript("OnUpdate", function()
+        local now = GetTime()
+        if pendingCaptureAt and now >= pendingCaptureAt then
+            pendingCaptureAt = nil
+            addon:Print("|cff00ff00validate: in-combat capture (+0.5s) - changes vs baseline:|r")
+            PrintValidateEnv(addon)
+            combatSnap = RunValidateSnapshot(addon, false)
+            DiffValidate(addon, base, combatSnap, order)
+            settleCaptureAt = now + 4.5  -- settle check: does anything flip late?
+        end
+        if settleCaptureAt and now >= settleCaptureAt then
+            settleCaptureAt = nil
+            local settled = RunValidateSnapshot(addon, false)
+            addon:Print("|cff00ff00validate: settle check (~+5s vs +0.5s capture):|r")
+            DiffValidate(addon, combatSnap, settled, order)
+            combatSnap = settled  -- exit diff compares against the latest state
+        end
+        if now - armT > 600 then
+            disarm("|cffffff00validate: 10min window ended - disarmed.|r")
+        end
+    end)
+    if UnitAffectingCombat("player") then pendingCaptureAt = GetTime() end
+    addon:Print("|cff00ff00validate ARMED:|r enter (and leave) combat to capture diffs. 10min window.")
 end

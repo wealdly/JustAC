@@ -18,6 +18,17 @@ local spellQueueDirty = true
 local defensiveQueueDirty = true
 local lastFullUpdate = 0
 local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
+local OOC_DIRTY_UPDATE_INTERVAL = 0.15   -- OOC dirty queue cadence (~6.7Hz)
+local OOC_DEFENSIVE_IDLE_INTERVAL = 1.0  -- OOC defensive full rebuild cadence (1Hz)
+local OOC_EVENT_DIRTY_THROTTLE = 0.2     -- Coalesce OOC cooldown/usability event bursts
+local lastOOCDirtyEvent = 0
+local OOC_ACTIONBAR_THROTTLE = 0.25      -- Coalesce OOC action-bar churn (cities/macros)
+local lastOOCActionBarEvent = 0
+local oocCoalesceStats = {
+    cooldown = { applied = 0, coalesced = 0 },
+    usability = { applied = 0, coalesced = 0 },
+    actionbar = { applied = 0, coalesced = 0 },
+}
 
 -- CVar cache (only needed by OnUpdateTick, but kept here for co-location with the rest)
 local cachedUpdateRate = nil
@@ -1116,9 +1127,6 @@ function JustAC:UpdateSpellQueue()
     if UIRenderer and UIRenderer.RenderSpellQueue then
         UIRenderer.RenderSpellQueue(self, currentSpells)
     end
-    -- Re-seat the out-of-combat click layers over the freshly-rendered main-queue icons.
-    local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
-    if PrecombatOverlay and PrecombatOverlay.Refresh then PrecombatOverlay.Refresh() end
     if UINameplateOverlay then
         UINameplateOverlay.Render(self, currentSpells)
         -- Re-render cached defensive icons on the same tick so both queues
@@ -1352,6 +1360,12 @@ function JustAC:OnShapeshiftFormChanged()
         GapCloserEngine.ClearRangeState()
     end
     if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
+    -- Defensive: bar-paging forms co-fire UPDATE_BONUS_ACTIONBAR which refreshes
+    -- the scanner's form/bonus state hash, but don't depend on that ordering -
+    -- make form state self-invalidating.
+    if ActionBarScanner and ActionBarScanner.OnSpecialBarChanged then
+        ActionBarScanner.OnSpecialBarChanged()
+    end
     self:InvalidateCaches({macros = true, hotkeys = true})
     -- Include defensives: form gates usability (e.g. bear-only defensives),
     -- so re-evaluate immediately rather than waiting for the next health event.
@@ -1394,6 +1408,19 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
 end
 
 function JustAC:OnActionBarChanged(event, slot)
+    local inCombat = UnitAffectingCombat("player")
+    if not inCombat then
+        local now = GetTime()
+        if (now - lastOOCActionBarEvent) < OOC_ACTIONBAR_THROTTLE then
+            oocCoalesceStats.actionbar.coalesced = oocCoalesceStats.actionbar.coalesced + 1
+            spellQueueDirty = true
+            defensiveQueueDirty = true
+            return
+        end
+        lastOOCActionBarEvent = now
+        oocCoalesceStats.actionbar.applied = oocCoalesceStats.actionbar.applied + 1
+    end
+
     -- ACTIONBAR_SLOT_CHANGED fires constantly in cities (dynamic macro icons
     -- re-evaluating). A single-slot change only drops that slot's parsed macros;
     -- hotkey caches are spell-keyed so they're always cleared (a slot change can
@@ -1424,6 +1451,12 @@ local function HandleAlternateControlChange(self)
     self:InvalidateCaches({macros = true, hotkeys = true})
     if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
         BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
+    -- Vehicle/override/possess bars change the slot universe: refresh the
+    -- scanner's state hash and assisted slot too, not just macro/hotkey caches.
+    if ActionBarScanner then
+        if ActionBarScanner.OnSpecialBarChanged then ActionBarScanner.OnSpecialBarChanged() end
+        if ActionBarScanner.InvalidateAssistedSlot then ActionBarScanner.InvalidateAssistedSlot() end
     end
     self:ForceUpdate()
 end
@@ -1521,10 +1554,22 @@ function JustAC:OnActionUsableChanged(_, changes)
     if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
         BlizzardAPI.OnActionUsableChanged(changes)
     end
-    -- Same OOC throttle as OnCooldownUpdate: mark dirty but don't reset the idle timer.
+    local inCombat = UnitAffectingCombat("player")
+    -- Same OOC throttle as OnCooldownUpdate: coalesce bursts while preserving
+    -- immediate in-combat responsiveness.
+    if not inCombat then
+        local now = GetTime()
+        if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
+            oocCoalesceStats.usability.coalesced = oocCoalesceStats.usability.coalesced + 1
+            return
+        end
+        lastOOCDirtyEvent = now
+        oocCoalesceStats.usability.applied = oocCoalesceStats.usability.applied + 1
+    end
+
     spellQueueDirty = true
     defensiveQueueDirty = true
-    if UnitAffectingCombat("player") and self.updateTimeLeft then
+    if inCombat and self.updateTimeLeft then
         self.updateTimeLeft = 0
     end
 end
@@ -1593,6 +1638,12 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         RedundancyFilter.RecordSpellActivation(spellID)
     end
 
+    -- Defensive item use latch: in-combat item cooldowns are secret, so an
+    -- observed use is the readiness signal until combat ends.
+    if BlizzardAPI and BlizzardAPI.NoteDefensiveItemUse then
+        BlizzardAPI.NoteDefensiveItemUse(spellID)
+    end
+
     -- Burst injection: record trigger spell casts for timer fallback window
     if BurstInjectionEngine and BurstInjectionEngine.RecordTriggerCast then
         BurstInjectionEngine.RecordTriggerCast(self, spellID)
@@ -1649,9 +1700,20 @@ function JustAC:OnCooldownUpdate()
     -- fires OOC when abilities/items come off cooldown.  In combat, reset the timer
     -- immediately for low-latency response.  OOC, only mark dirty and let the 0.5s
     -- idle cycle handle the update - avoids waking the loop dozens of times per minute.
+    local inCombat = UnitAffectingCombat("player")
+    if not inCombat then
+        local now = GetTime()
+        if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
+            oocCoalesceStats.cooldown.coalesced = oocCoalesceStats.cooldown.coalesced + 1
+            return
+        end
+        lastOOCDirtyEvent = now
+        oocCoalesceStats.cooldown.applied = oocCoalesceStats.cooldown.applied + 1
+    end
+
     spellQueueDirty = true
     defensiveQueueDirty = true
-    if UnitAffectingCombat("player") and self.updateTimeLeft then
+    if inCombat and self.updateTimeLeft then
         self.updateTimeLeft = 0
     end
 end
@@ -1668,6 +1730,35 @@ end
 
 function JustAC:ForceUpdateAll()
     self:ForceUpdate(true)
+end
+
+function JustAC:GetOOCEventCoalesceStats()
+    return {
+        cooldown = {
+            applied = oocCoalesceStats.cooldown.applied,
+            coalesced = oocCoalesceStats.cooldown.coalesced,
+            throttle = OOC_EVENT_DIRTY_THROTTLE,
+        },
+        usability = {
+            applied = oocCoalesceStats.usability.applied,
+            coalesced = oocCoalesceStats.usability.coalesced,
+            throttle = OOC_EVENT_DIRTY_THROTTLE,
+        },
+        actionbar = {
+            applied = oocCoalesceStats.actionbar.applied,
+            coalesced = oocCoalesceStats.actionbar.coalesced,
+            throttle = OOC_ACTIONBAR_THROTTLE,
+        },
+    }
+end
+
+function JustAC:ResetOOCEventCoalesceStats()
+    oocCoalesceStats.cooldown.applied = 0
+    oocCoalesceStats.cooldown.coalesced = 0
+    oocCoalesceStats.usability.applied = 0
+    oocCoalesceStats.usability.coalesced = 0
+    oocCoalesceStats.actionbar.applied = 0
+    oocCoalesceStats.actionbar.coalesced = 0
 end
 
 function JustAC:OpenOptionsPanel()
@@ -1762,23 +1853,28 @@ local function OnUpdateTick(_, elapsed)
         if not spellQueueDirty and not defensiveQueueDirty then
             updateRate = IDLE_CHECK_INTERVAL
         else
-            updateRate = math_max(cachedUpdateRate, 0.05)
+            updateRate = math_max(cachedUpdateRate, OOC_DIRTY_UPDATE_INTERVAL)
         end
     end
 
     JustAC.updateTimeLeft = updateRate
 
-    -- Always update spell queue (Blizzard doesn't provide events for rotation changes)
-    -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
-    -- get the same low-latency path as explicit ForceUpdate() calls.
-    if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
-        SpellQueue.ForceUpdate()
+    -- Combat keeps polling (Blizzard doesn't provide reliable rotation-change events).
+    -- Out of combat, skip queue rebuild/render unless an event marked it dirty.
+    local shouldUpdateSpellQueue = inCombat or spellQueueDirty
+    if shouldUpdateSpellQueue then
+        -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
+        -- get the same low-latency path as explicit ForceUpdate() calls.
+        if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
+            SpellQueue.ForceUpdate()
+        end
+        JustAC:UpdateSpellQueue()
+        spellQueueDirty = false
     end
-    JustAC:UpdateSpellQueue()
-    spellQueueDirty = false
 
     -- Only update defensive cooldowns if dirty or periodic check
-    if defensiveQueueDirty or (now - lastFullUpdate) > IDLE_CHECK_INTERVAL then
+    local defensiveInterval = inCombat and IDLE_CHECK_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
+    if defensiveQueueDirty or (now - lastFullUpdate) > defensiveInterval then
         -- Full queue rebuild: nil event bypasses DefensiveEngine throttle.
         -- Always rebuild (not just cooldown swipes) so "always" and "combatOnly"
         -- modes surface new icons promptly when cooldowns expire.

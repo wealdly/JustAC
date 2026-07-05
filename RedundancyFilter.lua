@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 42)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 43)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -25,6 +25,8 @@ local C_Secrets = C_Secrets
 local RAID_BUFF_SPELLS   = SpellDB and SpellDB.RAID_BUFF_SPELLS   or {}
 local PET_SUMMON_SPELLS  = SpellDB and SpellDB.PET_SUMMON_SPELLS  or {}
 local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
+local ROGUE_POISON_CAST_IDS = SpellDB and SpellDB.ROGUE_POISON_CAST_IDS or {}
+local WEAPON_ENCHANT_SPELLS = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS or {}
 
 --------------------------------------------------------------------------------
 -- NeverSecret Aura Whitelist (12.0+)
@@ -37,14 +39,10 @@ local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
 -- without waiting for the next out-of-combat refresh.
 --------------------------------------------------------------------------------
 local NEVER_SECRET_AURA_SPELLS = {
-    -- Raid Buffs (already in RAID_BUFF_SPELLS, but listed explicitly for whitelist)
-    [1126]   = true,  -- Mark of the Wild
-    [1459]   = true,  -- Arcane Intellect
-    [6673]   = true,  -- Battle Shout
-    [21562]  = true,  -- Power Word: Fortitude
+    -- Raid buffs merge in from SpellDB.RAID_BUFF_SPELLS below (single source);
+    -- only raid-buff-like spells NOT in that table are listed here.
     [369459] = true,  -- Source of Magic (Evoker)
     [462854] = true,  -- Skyfury
-    [381732] = true,  -- Blessing of the Bronze
     [381741] = true,  -- Blessing of the Bronze (DH)
     [381746] = true,  -- Blessing of the Bronze (DK)
     [381748] = true,  -- Blessing of the Bronze (Druid)
@@ -57,14 +55,7 @@ local NEVER_SECRET_AURA_SPELLS = {
     [381757] = true,  -- Blessing of the Bronze (Shaman)
     [381758] = true,  -- Blessing of the Bronze (Warlock)
     [474754] = true,  -- Symbiotic Relationship
-    -- Rogue Poisons (aura buff IDs)
-    [2823]   = true,  -- Deadly Poison
-    [8679]   = true,  -- Wound Poison
-    [3408]   = true,  -- Crippling Poison
-    [5761]   = true,  -- Numbing Poison
-    [315584] = true,  -- Instant Poison
-    [381637] = true,  -- Atrophic Poison
-    [381664] = true,  -- Amplifying Poison
+    -- Rogue poisons merge in from SpellDB.ROGUE_POISON_CAST_IDS below (cast = buff IDs)
     -- Shaman Imbuements
     [319773] = true,  -- Windfury Weapon (aura)
     [319778] = true,  -- Flametongue Weapon (aura)
@@ -98,6 +89,48 @@ local NEVER_SECRET_AURA_SPELLS = {
     [447959] = true,  -- Ride Along Active
     [447960] = true,  -- Ride Along Inactive
 }
+
+-- Raid buffs and poison casts single-source from SpellDB: same community-verified
+-- NeverSecret guarantee, and additions there flow into this whitelist automatically.
+for id in pairs(RAID_BUFF_SPELLS) do NEVER_SECRET_AURA_SPELLS[id] = true end
+for id in pairs(ROGUE_POISON_CAST_IDS) do NEVER_SECRET_AURA_SPELLS[id] = true end
+
+-- Dynamic exemption check (12.0.7+): C_Secrets.GetSpellAuraSecrecy returns a
+-- plain SecrecyLevel (0=NeverSecret) and per-spell flags override the global
+-- ShouldAurasBeSecret rule (validated in-game: Mark of the Wild stays readable
+-- mid-combat in every context). Supersedes hand-curating the whitelist above;
+-- the static list remains as seed + fallback for clients without the API.
+local auraSecrecyLevelCache = {}
+local C_Secrets_GetSpellAuraSecrecy = C_Secrets and C_Secrets.GetSpellAuraSecrecy
+local function IsNeverSecretAura(spellID)
+    if NEVER_SECRET_AURA_SPELLS[spellID] then return true end
+    if not C_Secrets_GetSpellAuraSecrecy then return false end
+    local level = auraSecrecyLevelCache[spellID]
+    if level == nil then
+        local ok, v = pcall(C_Secrets_GetSpellAuraSecrecy, spellID)
+        level = (ok and type(v) == "number") and v or -1
+        auraSecrecyLevelCache[spellID] = level
+    end
+    return level == 0
+end
+
+-- Forced evaluation: NeverSecret fields carry the generic secret mark
+-- (issecretvalue returns true) but their values ARE readable - index inside
+-- the pcall and let genuinely-secret values throw. Unsecret() can't serve this
+-- case because it trusts the generic mark. Plain-function pcall (no closure)
+-- keeps the UNIT_AURA path allocation-free.
+local function readNum(t, f) return t[f] + 0 end
+local function readStr(t, f) return t[f] .. "" end
+local function ForceReadNumber(tbl, field)
+    local ok, v = pcall(readNum, tbl, field)
+    if ok then return v end
+    return nil
+end
+local function ForceReadString(tbl, field)
+    local ok, v = pcall(readStr, tbl, field)
+    if ok then return v end
+    return nil
+end
 
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
@@ -275,10 +308,24 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                 -- Skip harmful auras entirely - we only track beneficial spells
                 local isDefinitelyHarmful = (isHarmful == true) or (isHelpful == false)
                 
+                local exemptReadable = false
                 if not isDefinitelyHarmful then
                     if not spellIdIsSecret and auraData.spellId then
                         resolvedSpellID = auraData.spellId
-                    elseif spellIdIsSecret and #pendingActivations > 0 then
+                    elseif spellIdIsSecret then
+                        -- NeverSecret exemption: per-spell flags override the global
+                        -- rule, so the field may be readable despite the generic
+                        -- secret mark. Forced evaluation + exemption check gives
+                        -- immediate mapping for exempt auras gained mid-combat
+                        -- (raid buff recast, poison reapply) without waiting for
+                        -- the timing match below.
+                        local realSpellId = ForceReadNumber(auraData, "spellId")
+                        if realSpellId and IsNeverSecretAura(realSpellId) then
+                            resolvedSpellID = realSpellId
+                            exemptReadable = true
+                        end
+                    end
+                    if not resolvedSpellID and spellIdIsSecret and #pendingActivations > 0 then
                         -- Secret spellId: match against pending activations by timing.
                         -- Only safe when exactly one pending activation exists -
                         -- with multiple pending, we can't reliably determine which
@@ -302,6 +349,14 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                     local exp = auraData.expirationTime
                     local durIsSecret = BlizzardAPI.IsSecretValue(dur)
                     local expIsSecret = BlizzardAPI.IsSecretValue(exp)
+                    if (durIsSecret or expIsSecret) and exemptReadable then
+                        local d = ForceReadNumber(auraData, "duration")
+                        local e = ForceReadNumber(auraData, "expirationTime")
+                        if d and e then
+                            dur, exp = d, e
+                            durIsSecret, expIsSecret = false, false
+                        end
+                    end
                     if not durIsSecret and not expIsSecret and dur and exp then
                         local halfwayThreshold = nil
                         if dur > 0 and exp > 0 then
@@ -563,11 +618,9 @@ RefreshAuraCache = function()
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
     
     -- 12.0+ fast pre-check: skip the full aura scan when all fields are known secret.
-    -- C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean - safe to branch on.
     -- When true (combat), the loop below would just hit secret values on every aura,
     -- so we skip it entirely and rely on trustedOutOfCombatCache + instance maps.
-    local aurasAreSecret = C_Secrets and C_Secrets.ShouldAurasBeSecret
-        and C_Secrets.ShouldAurasBeSecret()
+    local aurasAreSecret = BlizzardAPI.AreAurasSecret()
     
     if aurasAreSecret then
         -- Populate from instance maps maintained by OnUnitAuraUpdate (addedAuras/removedAuraInstanceIDs).
@@ -604,20 +657,15 @@ RefreshAuraCache = function()
                 -- This handles auras gained during combat that have no instance map entry.
                 local whitelistResolved = false
                 if spellIdIsSecret then
-                    local ok, realSpellId = pcall(function() return auraData.spellId + 0 end)
-                    if ok and realSpellId and NEVER_SECRET_AURA_SPELLS[realSpellId] then
-                        -- spellId was readable (NeverSecret) despite IsSecretValue returning true.
-                        -- Process as a normal non-secret aura.
-                        -- IMPORTANT: Don't use BlizzardAPI.GetAuraTiming here - it calls
-                        -- Unsecret() which trusts issecretvalue(). For NeverSecret fields,
-                        -- issecretvalue() still returns true (generic marking), but the
-                        -- actual values ARE readable via forced evaluation. Use the same
-                        -- pcall bypass used for spellId to extract duration/expirationTime.
+                    local realSpellId = ForceReadNumber(auraData, "spellId")
+                    if realSpellId and IsNeverSecretAura(realSpellId) then
+                        -- spellId was readable (NeverSecret) despite IsSecretValue
+                        -- returning true. Process as a normal non-secret aura,
+                        -- force-reading timing the same way (GetAuraTiming can't
+                        -- serve this - it trusts the generic secret mark).
                         cachedAuras.byID[realSpellId] = true
-                        local durOk, dur = pcall(function() return auraData.duration + 0 end)
-                        local expOk, exp = pcall(function() return auraData.expirationTime + 0 end)
-                        if not durOk then dur = nil end
-                        if not expOk then exp = nil end
+                        local dur = ForceReadNumber(auraData, "duration")
+                        local exp = ForceReadNumber(auraData, "expirationTime")
                         local halfwayThreshold = nil
                         if dur and dur > 0 and exp and exp > 0 then
                             halfwayThreshold = exp - (dur * 0.2)
@@ -634,8 +682,8 @@ RefreshAuraCache = function()
                             instanceToTimingMap[instanceID] = timingInfo
                         end
                         -- Try reading name/icon too (also NeverSecret for whitelisted)
-                        local nameOk, realName = pcall(function() return auraData.name .. "" end)
-                        if nameOk and realName then
+                        local realName = ForceReadString(auraData, "name")
+                        if realName then
                             cachedAuras.byName[realName] = realSpellId
                             if instanceID then instanceToNameMap[instanceID] = realName end
                         end
@@ -997,19 +1045,10 @@ end
 -- This avoids querying aura state which may return secret values
 --------------------------------------------------------------------------------
 
--- Poison CAST spell IDs (what C_AssistedCombat recommends)
--- These are tracked via UNIT_SPELLCAST_SUCCEEDED -> inCombatActivations
--- Duration: 1 HOUR - safe to assume active once cast observed
--- Source: 12.0 Midnight Exclusion Whitelist
-local ROGUE_POISON_CAST_IDS = {
-    [2823] = true,   -- Deadly Poison (Lethal)
-    [8679] = true,   -- Wound Poison (Lethal)
-    [315584] = true, -- Instant Poison (Lethal)
-    [381664] = true, -- Atrophic Poison (Lethal) - C_AssistedCombat uses this
-    [381637] = true, -- Atrophic Poison (Lethal) - alternate cast ID
-    [3408] = true,   -- Crippling Poison (Non-Lethal)
-    [5761] = true,   -- Numbing Poison (Non-Lethal)
-}
+-- Poison CAST spell IDs (what C_AssistedCombat recommends) are single-sourced from
+-- SpellDB.ROGUE_POISON_CAST_IDS (captured at the top of this file; derived there
+-- from CLASS_MAINTAINED_BUFFS.ROGUE). Tracked via UNIT_SPELLCAST_SUCCEEDED ->
+-- inCombatActivations; hour-long buffs, safe to assume active once cast observed.
 
 -- Poison AURA spell IDs (what appears in the player's buff list)
 -- Source: 12.0 Midnight Exclusion Whitelist
@@ -1114,15 +1153,8 @@ end
 -- 10 seconds = 10000 ms - if less than this, allow refresh
 local WEAPON_ENCHANT_REFRESH_THRESHOLD = 10000
 
--- Shaman weapon imbue spell IDs (1 hour duration)
--- Source: 12.0 Midnight Exclusion Whitelist
--- Maps the spell you cast to apply the weapon enchant
-local WEAPON_ENCHANT_SPELLS = {
-    [33757] = true,   -- Windfury Weapon
-    [318038] = true,  -- Flametongue Weapon
-    [196834] = true,  -- Frostbrand Weapon
-    [382021] = true,  -- Earthliving Weapon
-}
+-- Shaman weapon imbue cast IDs (1 hour duration) are single-sourced from
+-- SpellDB.WEAPON_ENCHANT_SPELLS (captured at the top of this file).
 
 -- Check if a spell is a weapon enchant application spell (Shaman imbue)
 local function IsWeaponEnchantSpell(spellID)

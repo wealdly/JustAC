@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Secret Value Utilities, Feature Availability, Secrecy API Wrappers (12.0+)
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after CooldownTracking.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SecretValues", 1
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-SecretValues", 2
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -20,9 +20,11 @@ local Unsecret      = BlizzardAPI.Unsecret
 -- Feature Availability (12.0+ secret value graceful degradation)
 --------------------------------------------------------------------------------
 
+-- Aura access is NOT cached here: BlizzardAPI.AreAurasSecret() is one live C
+-- call that flips exactly at combat edges (validated in-game 12.0.7), so it is
+-- consulted directly wherever aura availability matters.
 local featureAvailability = {
     healthAccess = true,
-    auraAccess = true,
     procAccess = true,
     lastCheck = 0,
 }
@@ -33,35 +35,6 @@ local function TestHealthAccess()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
     return not IsSecretValue(health) and not IsSecretValue(maxHealth)
-end
-
--- Aura CONTENTS may be secret in 12.0, but VECTORS are not
-local function TestAuraAccess()
-    -- 12.0+ fast pre-check: C_Secrets.ShouldAurasBeSecret() is a NeverSecret boolean.
-    -- When true, all aura fields will be secret - skip the per-aura loop entirely.
-    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
-        return false
-    end
-
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        local accessibleCount = 0
-        local secretCount = 0
-
-        for i = 1, 5 do
-            local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-            if not auraData then break end  -- No more auras
-
-            if IsSecretValue(auraData.spellId) or IsSecretValue(auraData.name) then
-                secretCount = secretCount + 1
-            else
-                accessibleCount = accessibleCount + 1
-            end
-        end
-
-        return accessibleCount > 0 or (accessibleCount == 0 and secretCount == 0)
-    end
-
-    return false
 end
 
 -- IsSpellOverlayed may return secret boolean in 12.0
@@ -91,11 +64,9 @@ local function RefreshFeatureAvailability()
     end
 
     local oldHealthAccess = featureAvailability.healthAccess
-    local oldAuraAccess = featureAvailability.auraAccess
     local oldProcAccess = featureAvailability.procAccess
 
     featureAvailability.healthAccess = TestHealthAccess()
-    featureAvailability.auraAccess = TestAuraAccess()
     featureAvailability.procAccess = TestProcAccess()
     featureAvailability.lastCheck = now
 
@@ -106,9 +77,6 @@ local function RefreshFeatureAvailability()
             if oldHealthAccess ~= featureAvailability.healthAccess then
                 addon:Print("Health API access: " .. (featureAvailability.healthAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
-            if oldAuraAccess ~= featureAvailability.auraAccess then
-                addon:Print("Aura API access: " .. (featureAvailability.auraAccess and "AVAILABLE" or "BLOCKED (secrets)"))
-            end
             if oldProcAccess ~= featureAvailability.procAccess then
                 addon:Print("Proc API access: " .. (featureAvailability.procAccess and "AVAILABLE" or "BLOCKED (secrets)"))
             end
@@ -117,8 +85,7 @@ local function RefreshFeatureAvailability()
 end
 
 function BlizzardAPI.IsRedundancyFilterAvailable()
-    RefreshFeatureAvailability()
-    return featureAvailability.auraAccess
+    return not BlizzardAPI.AreAurasSecret()
 end
 
 function BlizzardAPI.IsProcFeatureAvailable()
@@ -135,7 +102,7 @@ function BlizzardAPI.GetFeatureAvailability()
     RefreshFeatureAvailability()
     return {
         healthAccess = featureAvailability.healthAccess,
-        auraAccess = featureAvailability.auraAccess,
+        auraAccess = not BlizzardAPI.AreAurasSecret(),
         procAccess = featureAvailability.procAccess,
     }
 end

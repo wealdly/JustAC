@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
-local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 37)
+local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 38)
 if not ActionBarScanner then return end
 ActionBarScanner.lastKeybindChangeTime = 0
 
@@ -17,6 +17,7 @@ local GetActionCooldown = GetActionCooldown
 local GetItemSpell = GetItemSpell
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
+local C_ActionBar_FindSpellActionButtons = C_ActionBar and C_ActionBar.FindSpellActionButtons
 local FindBaseSpellByID = FindBaseSpellByID
 local FindSpellOverrideByID = FindSpellOverrideByID
 local C_GamePad = C_GamePad
@@ -418,6 +419,9 @@ local function GetOptimizedKeybind(slot)
     return keybindCache[slot]
 end
 
+-- ponytail: no actionType=="flyout" branch - a spell reachable only through a
+-- flyout is never matched. AC rotation spells are rarely flyout-nested; add
+-- C_ActionBar.FindFlyoutActionButtons handling if one ever surfaces.
 local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
     local candidates = wipe(scanCandidates)
     
@@ -614,6 +618,38 @@ local function FindSpellInActions(spellID, spellName)
             end
             if not isFormBarSlot then
                 currentBarSlots[slot] = true
+            end
+        end
+    end
+
+    -- Authoritative first pass: the engine's own placement index (the same API
+    -- Blizzard's on-bar highlight uses). Covers direct spell placements only -
+    -- macros, items, and stance bars still need the scan below. Base ID per the
+    -- API contract ("if a spell is overridden the base ID should be provided").
+    -- A single visible-bar hit short-circuits only when that slot has a binding;
+    -- otherwise fall through so the scan can pick a keyed macro/alternate slot.
+    -- Multiple hits always fall through so the hotkey-present tiebreak still applies.
+    if C_ActionBar_FindSpellActionButtons then
+        local base = (FindBaseSpellByID and FindBaseSpellByID(spellID)) or spellID
+        local ok, apiSlots = pcall(C_ActionBar_FindSpellActionButtons, base)
+        if ok and apiSlots then
+            local hit, hits = nil, 0
+            for i = 1, #apiSlots do
+                local slot = apiSlots[i]
+                if currentBarSlots[slot] then
+                    -- BlizzardAPI.GetActionInfo filters the assisted placeholder
+                    local aType, aId = BlizzardAPI.GetActionInfo(slot)
+                    if aType == "spell" and type(aId) == "number" then
+                        hits = hits + 1
+                        hit = hit or slot
+                    end
+                end
+            end
+            if hits == 1 and hit then
+                local baseKey = GetOptimizedKeybind(hit)
+                if baseKey and baseKey ~= "" then
+                    return hit, nil
+                end
             end
         end
     end

@@ -74,6 +74,11 @@ def main():
                 masks.pop(sid, None)
                 stealth.pop(sid, None)
 
+    names = {int(r["ID"]): r["Name_lang"] for r in read_csv(find("SpellName"))}
+
+    def nm(sid):
+        return (names.get(sid) or "?").replace("\r", "").replace("\n", " ")
+
     lines = [
         "-- SPDX-License-Identifier: GPL-3.0-or-later",
         "-- Copyright (C) 2024-2026 wealdly",
@@ -88,7 +93,7 @@ def main():
         "SpellDB.RegisterFormRequirements({",
     ]
     for sid in sorted(masks):
-        lines.append(f"[{sid}]={masks[sid]},")
+        lines.append(f"[{sid}]={masks[sid]},  -- {nm(sid)}")
     lines += [
         "})",
         "",
@@ -98,7 +103,7 @@ def main():
         "SpellDB.RegisterStealthRequirements({",
     ]
     for sid in sorted(stealth):
-        lines.append(f"[{sid}]=true,")
+        lines.append(f"[{sid}]=true,  -- {nm(sid)}")
     lines += ["})", "end", ""]
 
     out_path = Path(__file__).parent.parent / "Data" / "FormRequirements.lua"

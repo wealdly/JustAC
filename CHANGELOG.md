@@ -3,6 +3,26 @@
 
 ## [Unreleased]
 
+## [4.35.0] - 2026-07-05
+
+### Changed
+- Defensive suggestion priority is smarter at low health, with stronger emergency actions shown sooner when you are in real danger.
+- Buff and cooldown tracking is more reliable when entering or leaving combat.
+- New and alternate spell variants are recognized more consistently without extra setup.
+
+### Fixed
+- Defensive icons once again show hotkeys correctly out of combat.
+- Defensive click-to-cast layers no longer cover icon labels.
+- Interrupt recommendations are more reliable, including for empowered casts.
+- Defensive item suggestions no longer appear ready after you already used the item.
+- Hotkey detection is more consistent across vehicles, special bars, and macro-heavy action bars.
+- Nameplate overlay visuals are more stable: glow behavior is corrected, labels no longer bleed through overlapping frames, and held-back emergency suggestions show the correct waiting state.
+
+### Performance
+- Out-of-combat performance has been improved with smoother frame pacing and reduced idle update churn.
+- Event bursts are now coalesced more aggressively out of combat to reduce unnecessary queue rebuilds.
+- Added an in-game performance diagnostics view for coalesced out-of-combat events via `/jac inspect perf`.
+
 ## [4.34.0] - 2026-07-05
 
 ### Added

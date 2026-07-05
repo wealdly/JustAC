@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 41)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 42)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -392,7 +392,7 @@ local function IsCasterAuraGated(spellID)
     local required = SpellDB and SpellDB.GetRequiredCasterAura
         and SpellDB.GetRequiredCasterAura(spellID)
     if not required then return false end
-    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+    if BlizzardAPI.AreAurasSecret() then
         return false
     end
     if BlizzardAPI.IsAuraActive and BlizzardAPI.IsAuraActive("player", required) then

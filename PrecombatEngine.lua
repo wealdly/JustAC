@@ -5,10 +5,11 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 1)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 2)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 local InCombatLockdown = InCombatLockdown
 local GetWeaponEnchantInfo = GetWeaponEnchantInfo
@@ -60,8 +61,8 @@ function PrecombatEngine.IsCategorySatisfied(category)
     -- 12.0.7: in aura-restricted contexts (PvP instances - restriction is per-context,
     -- not per-combat) every aura reads as secret, so nothing can be verified. Report
     -- satisfied so we never nag someone to re-consume a buff they may already have.
-    -- NeverSecret predicate; false in normal content keeps this a no-op.
-    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+    -- Live gate; false in normal content keeps this a no-op.
+    if BlizzardAPI and BlizzardAPI.AreAurasSecret() then
         return true
     end
     if category == "weaponEnchant" then
@@ -172,7 +173,7 @@ function PrecombatEngine.GetMissingClassBuffs()
     local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
     -- 12.0.7: in aura-restricted contexts the by-ID probe returns nil for secret-flagged
     -- auras (RequiresNonSecretAura), so every class buff would look lapsed - offer nothing.
-    local restricted = C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret()
+    local restricted = BlizzardAPI and BlizzardAPI.AreAurasSecret()
     if groups and get and not restricted then
         for _, grp in ipairs(groups) do
             local active, aura
@@ -243,7 +244,6 @@ function PrecombatEngine.GetMissingClassBuffs()
         --   2. low-health vignette (never secret)  -> definitely hurt
         --   3. player UNIT_HEALTH event activity   -> OOC regen is ticking, so
         --      health is below full even when the value itself is secret
-        local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
         local hurt = false
         if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
             local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()

@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 7
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 8
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -95,6 +95,25 @@ end
 -- Defensive Item State Helper (mirrors CheckDefensiveSpellState for items)
 --------------------------------------------------------------------------------
 
+-- In combat the numeric item cooldown is secret, so an on-CD item reads as
+-- ready (fail-open). Latch observed uses instead: map each checked item's
+-- use-spell once (plain read), and when that spell is seen via
+-- UNIT_SPELLCAST_SUCCEEDED treat the item as on cooldown for the rest of the
+-- combat session. Out of combat the numeric read is authoritative again.
+-- ponytail: whole-combat suppression; per-item CD durations (ItemEffect data)
+-- only if long-fight healthstone re-suggests ever matter.
+local itemUseSpellToItem = {}
+local itemUseSpellMapped = {}
+local itemUsedInCombat = {}
+
+--- Called from UNIT_SPELLCAST_SUCCEEDED (player): latch defensive item use.
+function BlizzardAPI.NoteDefensiveItemUse(spellID)
+    local itemID = spellID and itemUseSpellToItem[spellID]
+    if itemID then
+        itemUsedInCombat[itemID] = true
+    end
+end
+
 -- Check defensive item usability in one call
 -- Returns: isUsable, hasItem, onCooldown
 -- isUsable = hasItem AND NOT onCooldown
@@ -107,6 +126,27 @@ function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
     local count = GetItemCount(itemID) or 0
     if count == 0 then
         return false, false, false
+    end
+
+    -- Lazily map this item's use-spell for combat use detection (plain values)
+    if not itemUseSpellMapped[itemID] then
+        itemUseSpellMapped[itemID] = true
+        local getItemSpell = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+        if getItemSpell then
+            local ok, _, useSpellID = pcall(getItemSpell, itemID)
+            if ok and type(useSpellID) == "number" then
+                itemUseSpellToItem[useSpellID] = itemID
+            end
+        end
+    end
+
+    if UnitAffectingCombat("player") then
+        -- Observed-use latch: the only reliable in-combat cooldown signal
+        if itemUsedInCombat[itemID] then
+            return false, true, true
+        end
+    else
+        itemUsedInCombat[itemID] = nil  -- OOC: numeric read is authoritative
     end
 
     -- Check cooldown (fail-open: if values are secret, assume NOT on cooldown)
@@ -720,6 +760,11 @@ local function InitTargetCastTracking()
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target")
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTIBLE", "target")
     castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE", "target")
+    -- Empowered casts (Evoker Fire Breath style) fire EMPOWER_*, not START/
+    -- CHANNEL_START; without these the event layer never engages for them.
+    -- Empowers surface through UnitChannelInfo, so route with the channel branch.
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_START", "target")
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "target")
     -- PLAYER_TARGET_CHANGED is a global event (not unit-filterable)
     castEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 
@@ -731,7 +776,8 @@ local function InitTargetCastTracking()
         elseif event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
             targetCastInterruptible = false
             targetCastInterruptKnown = true
-        elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+        elseif event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
+            or event == "UNIT_SPELLCAST_EMPOWER_START" then
             -- New cast started. INTERRUPTIBLE/NOT_INTERRUPTIBLE events only
             -- fire for mid-cast transitions, NOT for initially non-interruptible
             -- casts. Read notInterruptible from the API immediately and resolve
@@ -754,6 +800,7 @@ local function InitTargetCastTracking()
             end
         elseif event == "UNIT_SPELLCAST_STOP"
             or event == "UNIT_SPELLCAST_CHANNEL_STOP"
+            or event == "UNIT_SPELLCAST_EMPOWER_STOP"
             or event == "UNIT_SPELLCAST_FAILED"
             or event == "UNIT_SPELLCAST_INTERRUPTED" then
             -- Cast ended - reset state

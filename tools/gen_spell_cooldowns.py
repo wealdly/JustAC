@@ -91,6 +91,11 @@ def main():
         if cd >= MIN_CD_MS:
             out[sid] = cd
 
+    names = {int(r["ID"]): r["Name_lang"] for r in read_csv(find("SpellName"))}
+
+    def nm(sid):
+        return (names.get(sid) or "?").replace("\r", "").replace("\n", " ")
+
     lines = [
         "-- SPDX-License-Identifier: GPL-3.0-or-later",
         "-- Copyright (C) 2024-2026 wealdly",
@@ -107,9 +112,9 @@ def main():
     for sid in sorted(out):
         v = out[sid]
         if isinstance(v, tuple):
-            lines.append(f"[{sid}]={{{v[0]},{v[1]}}},")
+            lines.append(f"[{sid}]={{{v[0]},{v[1]}}},  -- {nm(sid)}")
         else:
-            lines.append(f"[{sid}]={v},")
+            lines.append(f"[{sid}]={v},  -- {nm(sid)}")
     lines += [
         "}",
         "",

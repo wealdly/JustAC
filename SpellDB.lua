@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 10)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 12)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -139,20 +139,54 @@ SpellDB.RECUPERATE_AURA = 1231418
 -- Generated client-data tables (registered by Data/ files at load)
 --------------------------------------------------------------------------------
 
--- Aura max stacks: [spellID] = maxStacks (only stacking auras, > 1).
--- Consumed by RedundancyFilter to veto "unique aura" classification.
+-- Static tables key by BASE spell IDs (client records); the queue often carries
+-- talent-OVERRIDE IDs. On a miss, retry the lookup on the base spell so overrides
+-- inherit the base spell's gates and classification (FormCache self-normalizes;
+-- these accessors previously did not). Override->base mapping is immutable client
+-- data, so the cache never needs invalidation. SpellDB loads before BlizzardAPI,
+-- so raw issecretvalue is used here instead of BlizzardAPI.Unsecret.
+local C_Spell_GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
+local baseIDCache = {}
+local function StaticLookup(t, spellID)
+    if not t or not spellID then return nil end
+    local v = t[spellID]
+    if v ~= nil or not C_Spell_GetBaseSpell then return v end
+    local base = baseIDCache[spellID]
+    if base == nil then
+        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
+        base = (ok and type(b) == "number" and b > 0) and b or false
+        baseIDCache[spellID] = base
+    end
+    if base and base ~= spellID then return t[base] end
+    return nil
+end
+
+-- Aura max stacks: generated table only. The live equivalent
+-- (C_UnitAuras.GetSpellMaxCumulativeAuraApplications) THROWS from addon code
+-- for every spell tested - non-stacking AND stacking (Ironfur), in-game
+-- 12.0.7 2026-07-05 - so there is no live front to prefer. The validate
+-- suite keeps a tripwire probe in case a patch makes it callable.
 local auraMaxStacks
 function SpellDB.RegisterAuraStacks(t) auraMaxStacks = t end
 function SpellDB.GetAuraMaxStacks(spellID)
-    return auraMaxStacks and auraMaxStacks[spellID]
+    return StaticLookup(auraMaxStacks, spellID)
 end
 
--- Pure self-buff spells: every effect is a non-stacking self-applied aura with
--- a duration. Unique-by-construction for redundancy classification.
+-- Pure self-buff spells: live classifier first. C_Spell.IsSelfBuff (plain bool,
+-- combat-safe) plus the max-stacks veto reconstructs "non-stacking self-applied
+-- aura" - the veto keeps application-stacking buffs (Ironfur-style) suggestable,
+-- the pitfall the generated table avoids by construction. Table as fallback.
+local C_Spell_IsSelfBuff = C_Spell and C_Spell.IsSelfBuff
 local selfAuras
 function SpellDB.RegisterSelfAuras(t) selfAuras = t end
 function SpellDB.IsPureSelfAura(spellID)
-    return selfAuras ~= nil and selfAuras[spellID] == true
+    if C_Spell_IsSelfBuff and spellID then
+        local ok, v = pcall(C_Spell_IsSelfBuff, spellID)
+        if ok and type(v) == "boolean" then
+            return v and SpellDB.GetAuraMaxStacks(spellID) == nil
+        end
+    end
+    return selfAuras ~= nil and StaticLookup(selfAuras, spellID) == true
 end
 
 -- Caster-aura requirements: [spellID] = aura spellID the player must carry for
@@ -160,7 +194,7 @@ end
 local auraRequirements
 function SpellDB.RegisterAuraRequirements(t) auraRequirements = t end
 function SpellDB.GetRequiredCasterAura(spellID)
-    return auraRequirements and auraRequirements[spellID]
+    return StaticLookup(auraRequirements, spellID)
 end
 
 -- Stealth-required spells (stealth-only stance masks). The QUEUE gates these at
@@ -169,7 +203,7 @@ end
 local stealthRequirements
 function SpellDB.RegisterStealthRequirements(t) stealthRequirements = t end
 function SpellDB.IsStealthRequiredSpell(spellID)
-    return stealthRequirements ~= nil and stealthRequirements[spellID] == true
+    return StaticLookup(stealthRequirements, spellID) == true
 end
 
 -- Form requirements: [spellID] = shapeshift mask (bit N = usable in form ID N+1).
@@ -189,7 +223,7 @@ local FORM_GATE_BYPASS_TALENTS = {
 --- Fails open (false) for spells without form data, exotic form IDs > 32, or
 --- when the player knows an auto-shift talent.
 function SpellDB.IsSpellFormGated(spellID)
-    local mask = formRequirements and formRequirements[spellID]
+    local mask = StaticLookup(formRequirements, spellID)
     if not mask then return false end
     for i = 1, #FORM_GATE_BYPASS_TALENTS do
         if IsPlayerSpell(FORM_GATE_BYPASS_TALENTS[i]) then return false end
@@ -338,13 +372,28 @@ for _, groups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
     end
 end
 
+-- Rogue poison cast IDs, derived from the maintained-buff groups above so the two
+-- can never drift. RedundancyFilter consumes this for cast-based poison detection
+-- and its NeverSecret whitelist merge.
+SpellDB.ROGUE_POISON_CAST_IDS = {}
+for _, grp in ipairs(SpellDB.CLASS_MAINTAINED_BUFFS.ROGUE) do
+    for _, id in ipairs(grp.group) do SpellDB.ROGUE_POISON_CAST_IDS[id] = true end
+end
+
 -- Weapon imbues (shaman): these apply a temp weapon ENCHANT, not a player aura, so they can't
 -- live in CLASS_MAINTAINED_BUFFS (that path detects via auras). PrecombatEngine suggests them
--- by reading the weapon directly (GetWeaponEnchantInfo). Listed here only so they green-glow
--- and get the OOC click hint like the other maintained buffs. IsPlayerSpell picks the first
--- the player knows, which cleanly separates specs (Enhancement -> Windfury, Resto -> Earthliving)
--- with no explicit spec/class check. Mirrors RedundancyFilter's WEAPON_ENCHANT_SPELLS whitelist
--- (12.0 Midnight) minus Frostbrand, a situational swap that's never the default maintained imbue.
+-- by reading the weapon directly (GetWeaponEnchantInfo).
+-- WEAPON_ENCHANT_SPELLS is the full cast-ID set and the single source (RedundancyFilter
+-- consumes it for enchant-cast detection). WEAPON_IMBUE_SPELLS is the maintained-default
+-- LIST: it excludes Frostbrand (a situational swap that's never the default) and exists so
+-- imbues green-glow and get the OOC click hint. IsPlayerSpell picks the first the player
+-- knows, which cleanly separates specs (Enhancement -> Windfury, Resto -> Earthliving).
+SpellDB.WEAPON_ENCHANT_SPELLS = {
+    [33757] = true,   -- Windfury Weapon
+    [318038] = true,  -- Flametongue Weapon
+    [196834] = true,  -- Frostbrand Weapon (situational; never a maintained default)
+    [382021] = true,  -- Earthliving Weapon
+}
 SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
 for _, id in ipairs(SpellDB.WEAPON_IMBUE_SPELLS) do CLASS_BUFF_SET[id] = true end
 
