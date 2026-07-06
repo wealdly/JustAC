@@ -26,6 +26,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
     addon:Print("/jac inspect perf reset - Reset build counters")
     addon:Print("/jac inspect rank - Queue context inference and per-spell ordering ranks")
+    addon:Print("/jac inspect dots - Maintained-DoT tracking state for the current target")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
@@ -1170,6 +1171,53 @@ function DebugCommands.ContextRankDiagnostics(addon)
         else
             addon:Print(string.format("  %d. %s (item)  rank=1 (neutral)", i, spellName(sid)))
         end
+    end
+    addon:Print("================================")
+end
+
+--------------------------------------------------------------------------------
+-- DoT Tracker Diagnostics
+--------------------------------------------------------------------------------
+--- Dumps the maintained-DoT tracking state for the current target: which tracked
+--- DoTs are considered live (sunk), whether presence is confirmed via the aura
+--- instance bridge or the post-cast window, and the pandemic-refresh countdown.
+--- Every value is non-secret (our own cast timing + NeverSecret instance IDs).
+function DebugCommands.DotDiagnostics(addon)
+    local DotTracker = LibStub("JustAC-DotTracker", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if not DotTracker or not DotTracker.DebugState then
+        addon:Print("|cffff0000DotTracker not loaded|r")
+        return
+    end
+
+    local function spellName(id)
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+        return (info and info.name) or "?"
+    end
+
+    local s = DotTracker.DebugState()
+    addon:Print("=== Maintained DoT Tracking (current target) ===")
+    addon:Print(string.format("Target: %s  |  pending casts: %d",
+        s.hasTarget and "yes" or "|cff888888none|r", s.pending))
+    if not s.hasTarget then
+        addon:Print("|cff888888(no target)|r")
+        addon:Print("================================")
+        return
+    end
+    if #s.entries == 0 then
+        addon:Print("  |cff888888No tracked DoTs applied to this target.|r")
+        addon:Print("================================")
+        return
+    end
+    for _, e in ipairs(s.entries) do
+        local est = SpellDB and SpellDB.GetTargetDotDuration and SpellDB.GetTargetDotDuration(e.spellID)
+        addon:Print(string.format("  %s (%d)  %s  src=%s  expiresIn=%.1fs%s  est=%s",
+            spellName(e.spellID), e.spellID,
+            e.active and "|cffff5555SUNK|r" or "|cff55ff55shown|r",
+            e.confirmed and "instance" or "window",
+            e.expiresIn,
+            e.pandemicIn and string.format("  pandemicIn=%.1fs", e.pandemicIn) or "",
+            est and (est .. "s") or "unknown"))
     end
     addon:Print("================================")
 end

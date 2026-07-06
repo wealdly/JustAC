@@ -8,6 +8,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local DotTracker = LibStub("JustAC-DotTracker", true)
 
 -- Hot path cache
 local GetTime = GetTime
@@ -27,6 +28,11 @@ local lastQueueUpdate = 0
 -- Cached visibility verdict from GetCurrentSpellQueue(); read by UIRenderer via ShouldShowQueue().
 -- Avoids re-evaluating the same mount/healer/OOC conditions every render frame.
 local lastShouldShowQueue = true
+-- True when Blizzard's position-1 pick is a maintained DoT that is already live on
+-- the current target (and not in its refresh window) - i.e. AC wants it applied
+-- ELSEWHERE, so the renderer shows a "switch target" arrow on the slot. Recomputed
+-- each build; read by UIRenderer via IsDotSpreadActive().
+local dotSpreadActive = false
 
 -- Lazy-resolved references for gap-closer and burst injection (load after SpellQueue in TOC)
 local cachedGapCloserEngine = nil
@@ -455,7 +461,11 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedRank[proccedCount] = rankOf(spellID)
                     elseif sinkCooldowns and (not ready
                            or IsUnusableNonResource(displayID)
-                           or IsConfirmedOutOfRange(displayID)) then
+                           or IsConfirmedOutOfRange(displayID)
+                           or (DotTracker and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
+                        -- On cooldown / uncastable / DoT already live on target: sink to
+                        -- the back. A DoT un-sinks on cleanse/expiry or inside its pandemic
+                        -- refresh window (DotTracker), and a proc still wins (checked above).
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                     else
@@ -554,6 +564,21 @@ function SpellQueue.GetCurrentSpellQueue()
     -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
     -- position 1 (isPrimary=true) so the rotation keeps advancing.
     local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
+
+    -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on
+    -- the current target (outside its refresh window), which means it wants the DoT
+    -- on OTHER targets. IsDotActiveOnCurrentTarget returns false during the pandemic
+    -- window, so a genuine refresh-this-target pick does not trigger the arrow.
+    dotSpreadActive = false
+    if profile.showDotSpreadArrow ~= false and primarySpellID and primarySpellID > 0
+       and DotTracker and DotTracker.IsDotActiveOnCurrentTarget
+       and SpellDB and SpellDB.IsTargetDot then
+        local pd = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+        if (SpellDB.IsTargetDot(primarySpellID) or SpellDB.IsTargetDot(pd))
+           and DotTracker.IsDotActiveOnCurrentTarget(pd) then
+            dotSpreadActive = true
+        end
+    end
 
     -- AC never recommends an uncastable spell: expire any stale local CD/charge
     -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
@@ -824,6 +849,12 @@ end
 --- Cached visibility verdict from last queue build - avoids re-evaluating per render frame.
 function SpellQueue.ShouldShowQueue()
     return lastShouldShowQueue
+end
+
+--- True when the position-1 pick is a DoT already live on the target (spread cue).
+--- UIRenderer shows the "switch target" arrow on slot 1 when this is set.
+function SpellQueue.IsDotSpreadActive()
+    return dotSpreadActive
 end
 
 --- Last build's context (post latch/sticky). Diagnostic only (/jac inspect rank).

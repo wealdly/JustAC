@@ -19,6 +19,25 @@ local UnitAffectingCombat = UnitAffectingCombat
 local table_remove = table.remove
 local C_Secrets = C_Secrets
 
+-- Talent-override variants resolve to a base spell ID the static classification
+-- tables key on. Mirrors SpellDB.StaticLookup: try the ID, then its base spell;
+-- cached. Keeps this module's own tables variant-aware like the SpellDB accessors.
+local C_Spell_GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
+local baseIDCache = {}
+local function StaticLookup(t, spellID)
+    if not t or not spellID then return nil end
+    local v = t[spellID]
+    if v ~= nil or not C_Spell_GetBaseSpell then return v end
+    local base = baseIDCache[spellID]
+    if base == nil then
+        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
+        base = (ok and type(b) == "number" and b > 0) and b or false
+        baseIDCache[spellID] = base
+    end
+    if base and base ~= spellID then return t[base] end
+    return nil
+end
+
 
 -- Spell classification tables (static data maintained in SpellDB.lua)
 -- See SpellDB.RAID_BUFF_SPELLS / PET_SUMMON_SPELLS / UNIQUE_AURA_SPELLS for contents.
@@ -103,7 +122,7 @@ for id in pairs(ROGUE_POISON_CAST_IDS) do NEVER_SECRET_AURA_SPELLS[id] = true en
 local auraSecrecyLevelCache = {}
 local C_Secrets_GetSpellAuraSecrecy = C_Secrets and C_Secrets.GetSpellAuraSecrecy
 local function IsNeverSecretAura(spellID)
-    if NEVER_SECRET_AURA_SPELLS[spellID] then return true end
+    if StaticLookup(NEVER_SECRET_AURA_SPELLS, spellID) then return true end
     if not C_Secrets_GetSpellAuraSecrecy then return false end
     local level = auraSecrecyLevelCache[spellID]
     if level == nil then
@@ -519,7 +538,7 @@ function RedundancyFilter.RecordSpellActivation(spellID)
     
     -- Queue for instance mapping: addedAuras will match by timing
     -- Only queue known aura spells to avoid noise from damage abilities
-    if UNIQUE_AURA_SPELLS[spellID] or RAID_BUFF_SPELLS[spellID] then
+    if StaticLookup(UNIQUE_AURA_SPELLS, spellID) or StaticLookup(RAID_BUFF_SPELLS, spellID) then
         pendingActivations[#pendingActivations + 1] = { spellID = spellID, time = now }
     end
 end
@@ -931,7 +950,7 @@ local function IsAuraSpell(spellID)
     if not spellID then return false, false end
     
     -- Check our known unique aura table first (fast path)
-    if UNIQUE_AURA_SPELLS[spellID] then
+    if StaticLookup(UNIQUE_AURA_SPELLS, spellID) then
         -- Client-data veto: an aura that stacks is never "unique already active"
         -- (guards the curated list against patch drift)
         if SpellDB and SpellDB.GetAuraMaxStacks and SpellDB.GetAuraMaxStacks(spellID) then
@@ -982,7 +1001,7 @@ local function IsDPSRelevant(spellID)
     if not spellID then return false end
     
     -- Known raid buffs: Always hide when can't check if active
-    if RAID_BUFF_SPELLS[spellID] then
+    if StaticLookup(RAID_BUFF_SPELLS, spellID) then
         return false
     end
     
@@ -992,7 +1011,7 @@ local function IsDPSRelevant(spellID)
     end
     
     -- Known unique auras (forms/stances): Hide when can't check if active
-    if UNIQUE_AURA_SPELLS[spellID] then
+    if StaticLookup(UNIQUE_AURA_SPELLS, spellID) then
         return false
     end
     
@@ -1231,7 +1250,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- take priority over DPS mid-combat. Filter them out - they can wait until combat ends.
     -- Covers aura IDs (NEVER_SECRET_AURA_SPELLS) and cast IDs (poison/imbue cast tables).
     if UnitAffectingCombat("player") then
-        if NEVER_SECRET_AURA_SPELLS[spellID] or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) then
+        if StaticLookup(NEVER_SECRET_AURA_SPELLS, spellID) or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) then
             return true
         end
     end

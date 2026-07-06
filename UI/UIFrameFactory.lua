@@ -376,6 +376,24 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
 
+    -- "Switch target" arrow: shown on slot 1 when AC re-recommends a DoT already
+    -- live on the current target (spread cue). On hotkeyFrame so it sits above the
+    -- border and glow layers. Only ever shown at position 1; created on every
+    -- pooled icon since a frame can occupy position 1 on a later build.
+    local spreadArrow = hotkeyFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+    -- Prefer the bold NPE arrow; fall back to the always-present forward-arrow
+    -- atlas if this client doesn't have it (avoids a blank overlay).
+    local arrowAtlas = "common-icon-forwardarrow"
+    if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("NPE_RightArrow") then
+        arrowAtlas = "NPE_RightArrow"
+    end
+    spreadArrow:SetAtlas(arrowAtlas)
+    local arrowSize = math_max(12, math_floor(size * 0.5))
+    spreadArrow:SetSize(arrowSize, arrowSize)
+    spreadArrow:SetPoint("CENTER", button, "CENTER", 0, 0)
+    spreadArrow:Hide()
+    button.spreadArrow = spreadArrow
+
     -- "WAIT" center indicator
     local centerText = hotkeyFrame:CreateFontString(nil, "OVERLAY", nil, 6)
     centerText:SetFont(STANDARD_TEXT_FONT, math_max(9, math_floor(size * 0.26)), "OUTLINE")

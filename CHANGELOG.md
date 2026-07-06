@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.37.0] - 2026-07-06
+
+### Added
+
+- Damage-over-time abilities you have already applied to your target now sink to the back of the queue while the debuff is live, so you are not nudged to re-cast a DoT that is already ticking. Works for maintained DoTs across every class (Rake, Rip, Corruption, Shadow Word: Pain, Moonfire, and many more). The ability reappears in time to refresh (inside its pandemic window), the moment the debuff drops or is dispelled, or when you switch to a target that does not have it. Multi-stack DoTs are left alone so you can keep building stacks. New diagnostic: `/jac inspect dots`.
+- Switch-target arrow: when Assisted Combat keeps recommending a damage-over-time ability that is already on your current target, an arrow appears on the first icon as a cue to apply it to another enemy. On by default; toggle in General options.
+
+### Fixed
+
+- Abilities that a talent replaces or renames are now recognized consistently everywhere. Defensive, healing, and crowd-control talent variants no longer occasionally slip into the damage queue, and talent-modified abilities get the correct archetype, priority, and DoT handling.
+- DoT tracking stays accurate when entering a raid encounter, Mythic+ run, or PvP match, and adds no measurable background cost when your spec has no tracked DoTs.
+
 ## [4.36.1] - 2026-07-06
 
 ### Fixed

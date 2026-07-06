@@ -189,6 +189,24 @@ function SpellDB.IsPureSelfAura(spellID)
     return selfAuras ~= nil and StaticLookup(selfAuras, spellID) == true
 end
 
+-- Maintained enemy DoT applicators (generated): rotation cast spells that apply
+-- a non-stacking periodic-damage debuff to the target, mapped to the debuff's
+-- estimated duration in seconds (0 = unknown). DotTracker sinks these in
+-- positions 2+ while their debuff is live on the current target, un-sinking ~30%
+-- before the duration estimate (pandemic refresh window). Stacking DoTs and
+-- channels are excluded by the generator, so a hit here is always safe to sink.
+-- StaticLookup resolves talent-override / base IDs the same as the other tables.
+local targetDots
+function SpellDB.RegisterTargetDots(t) targetDots = t end
+function SpellDB.IsTargetDot(spellID)
+    return targetDots ~= nil and StaticLookup(targetDots, spellID) ~= nil
+end
+--- Estimated debuff duration in seconds for a tracked DoT, or nil if unknown.
+function SpellDB.GetTargetDotDuration(spellID)
+    local d = targetDots ~= nil and StaticLookup(targetDots, spellID)
+    return (d and d > 0) and d or nil
+end
+
 -- Form / stealth / caster-aura CASTABILITY gating was removed: the never-secret
 -- C_Spell.IsSpellUsable evaluates all of it live (form, talents incl. form-bypass
 -- hero talents, stealth, and cast-condition auras), so SpellQueue and the
@@ -390,7 +408,7 @@ end
 
 --- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
 function SpellDB.IsClassMaintainedBuff(spellID)
-    return spellID ~= nil and CLASS_BUFF_SET[spellID] == true
+    return spellID ~= nil and StaticLookup(CLASS_BUFF_SET, spellID) == true
 end
 
 --- Register generated buff categories: { flask = { {id=,buff=,stat=}, ... }, food = ... }.
@@ -556,21 +574,23 @@ end
 --------------------------------------------------------------------------------
 
 -- Check if a spell is defensive (should not appear in DPS queue 2+)
+-- StaticLookup resolves talent-override variants to the base list ID so a variant
+-- of a defensive/heal/CC spell can't slip through classification as offensive.
 function SpellDB.IsDefensiveSpell(spellID)
     if not spellID then return false end
-    return DEFENSIVE_SPELLS[spellID] == true
+    return StaticLookup(DEFENSIVE_SPELLS, spellID) == true
 end
 
 -- Check if a spell is a healing spell (should not appear in DPS queue 2+)
 function SpellDB.IsHealingSpell(spellID)
     if not spellID then return false end
-    return HEALING_SPELLS[spellID] == true
+    return StaticLookup(HEALING_SPELLS, spellID) == true
 end
 
 -- Check if a spell is crowd control (should not appear in DPS queue 2+)
 function SpellDB.IsCrowdControlSpell(spellID)
     if not spellID then return false end
-    return CROWD_CONTROL_SPELLS[spellID] == true
+    return StaticLookup(CROWD_CONTROL_SPELLS, spellID) == true
 end
 
 -- Lazily-built set of pure interrupt spells (kind="interrupt" in INTERRUPT_ABILITIES).
@@ -590,7 +610,9 @@ end
 function SpellDB.IsInterruptTypeSpell(spellID)
     if not spellID then return false end
     if not interruptTypeSpellIDs then BuildInterruptTypeSpellIDs() end
-    return interruptTypeSpellIDs[spellID] == true
+    -- Base-resolve: the set is built from INTERRUPT_ABILITIES base keys, but callers
+    -- pass the resolved/override cast ID (ResolveInterruptSpells works in that form).
+    return StaticLookup(interruptTypeSpellIDs, spellID) == true
 end
 
 -- Per-CC mechanic (silence/fear/stun/…) now lives in INTERRUPT_ABILITIES[id].mech and
@@ -604,11 +626,12 @@ end
 function SpellDB.IsOffensiveSpell(spellID)
     if not spellID then return true end  -- Fail-open: unknown = assume offensive
     
-    -- If it's in any of the non-offensive tables, it's not offensive
-    if DEFENSIVE_SPELLS[spellID] then return false end
-    if HEALING_SPELLS[spellID] then return false end
-    if CROWD_CONTROL_SPELLS[spellID] then return false end
-    if UTILITY_SPELLS[spellID] then return false end
+    -- If it's in any of the non-offensive tables, it's not offensive.
+    -- Base-resolve so a talent-override variant is excluded like its base.
+    if StaticLookup(DEFENSIVE_SPELLS, spellID) then return false end
+    if StaticLookup(HEALING_SPELLS, spellID) then return false end
+    if StaticLookup(CROWD_CONTROL_SPELLS, spellID) then return false end
+    if StaticLookup(UTILITY_SPELLS, spellID) then return false end
     
     -- Not in any exclusion list = offensive
     return true
@@ -665,9 +688,11 @@ function SpellDB.RegisterArchetypes(t)
 end
 
 --- Archetype ("aoe"/"cleave"/"st") or nil if untagged. Reads with a nil key are safe.
-function SpellDB.GetArch(spellID)  return ARCH[spellID]  end
-function SpellDB.GetRange(spellID) return RANGE[spellID] end
-function SpellDB.GetGate(spellID)  return GATE[spellID]  end
+--- Base-resolve so a talent-override variant inherits its base's archetype/range/gate
+--- instead of falling to neutral in the context ranker.
+function SpellDB.GetArch(spellID)  return StaticLookup(ARCH, spellID)  end
+function SpellDB.GetRange(spellID) return StaticLookup(RANGE, spellID) end
+function SpellDB.GetGate(spellID)  return StaticLookup(GATE, spellID)  end
 
 --- Called by the generated Data/SpellArchetypes.lua. Groups: { builder = {[id]=true,...},
 --- spender = {[id]=true,...} }. Role = the accumulator resource-phase (generates vs spends
@@ -680,7 +705,7 @@ function SpellDB.RegisterRoles(t)
 end
 
 --- Builder/spender role ("builder"/"spender") or nil if untagged/neutral.
-function SpellDB.GetRole(spellID)  return ROLE[spellID]  end
+function SpellDB.GetRole(spellID)  return StaticLookup(ROLE, spellID)  end
 
 -- Apply overrides immediately so gate entries exist even before (or without) the data file.
 ApplyArchOverrides()
@@ -895,7 +920,7 @@ function SpellDB.GetDefenseTier(spellID)
     if spellID < 0 then return 2 end
     local specKey = SpellDB.GetSpecKey()
     local specTiers = specKey and DEFENSE_TIER_SPEC[specKey]
-    return (specTiers and specTiers[spellID]) or DEFENSE_TIER[spellID] or 3
+    return (specTiers and StaticLookup(specTiers, spellID)) or StaticLookup(DEFENSE_TIER, spellID) or 3
 end
 
 -- Aura-linked ordering hints for tank active mitigation. Combat-safe: only aura
@@ -912,6 +937,12 @@ SpellDB.DEFENSIVE_AURA_HINTS = {
     [203720] = { sinkAura = 203819 },              -- Demon Spikes → its own buff
     [119582] = { floatAuras = {124273, 124274} },  -- Purifying Brew → Heavy/Moderate Stagger
 }
+
+--- Base-aware lookup of the active-mitigation ordering hint for a spell (resolves
+--- talent-override variants to the base list ID). Returns the hint table or nil.
+function SpellDB.GetDefensiveAuraHint(spellID)
+    return StaticLookup(SpellDB.DEFENSIVE_AURA_HINTS, spellID)
+end
 
 -- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {

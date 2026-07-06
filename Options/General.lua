@@ -279,6 +279,13 @@ function General.CreateTabArgs(addon)
                         end,
                         disabled = function() return fullyDisabled(addon) end,
                     },
+                    showDotSpreadArrow = W.toggle(addon, "showDotSpreadArrow", {
+                        name = "Switch-Target Arrow",
+                        desc = "Show an arrow on the first icon when Assisted Combat keeps recommending a damage-over-time ability that is already active on your target - a cue to apply it to another enemy.",
+                        order = 34, width = "full", default = true,
+                        onSet = function() addon:ForceUpdate() end,
+                        disabled = fullyDisabled,
+                    }),
                     -- DEFENSIVE QUEUE CONTENT (40-49)
                     defensiveQueueHeader = {
                         type = "header",

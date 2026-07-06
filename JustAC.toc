@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 4.36.1
+## Version: 4.37.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -49,6 +49,7 @@ Data\PrecombatBuffs.lua
 Data\SpellCooldowns.lua
 Data\AuraStacks.lua
 Data\SelfAuras.lua
+Data\TargetDots.lua
 BlizzardAPI.lua
 BlizzardAPI\CooldownTracking.lua
 BlizzardAPI\SecretValues.lua
@@ -60,6 +61,7 @@ FormCache.lua
 MacroParser.lua
 ActionBarScanner.lua
 RedundancyFilter.lua
+DotTracker.lua
 SpellQueue.lua
 
 # UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UIRenderer → UINameplateOverlay)

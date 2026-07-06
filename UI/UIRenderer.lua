@@ -686,6 +686,9 @@ local function ClearIconState(icon)
     if icon.castingHighlight then
         icon.castingHighlight:Hide()
     end
+    if icon.spreadArrow then
+        icon.spreadArrow:Hide()
+    end
     if UIAnimations then
         if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
         if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon) end
@@ -1322,6 +1325,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if icon.hasProcGlow       then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow       = false end
                 if icon.hasGapCloserGlow  then UIAnimations.StopGapCloserGlow(icon);  icon.hasGapCloserGlow  = false end
                 if icon.hasBurstGlow      then UIAnimations.StopBurstGlow(icon);      icon.hasBurstGlow      = false end
+                if icon.spreadArrow and icon.spreadArrow:IsShown() then icon.spreadArrow:Hide() end
                 if icon.hasDefensiveGlow  then UIAnimations.StopDefensiveGlow(icon);  icon.hasDefensiveGlow  = false end
             end
         end
@@ -1621,6 +1625,16 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 elseif icon.hasAssistedGlow then
                     UIAnimations.StopAssistedGlow(icon)
                     icon.hasAssistedGlow = false
+                end
+
+                -- "Switch target" arrow: slot 1 only, when AC re-recommends a DoT
+                -- already live on the current target (spread cue from SpellQueue).
+                if icon.spreadArrow then
+                    if i == 1 and SpellQueue.IsDotSpreadActive and SpellQueue.IsDotSpreadActive() then
+                        icon.spreadArrow:Show()
+                    elseif icon.spreadArrow:IsShown() then
+                        icon.spreadArrow:Hide()
+                    end
                 end
 
                 if glowState == GLOW_PROC then

@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker
 
 -- Hot path cache for OnUpdateTick (upvalued at file scope so all methods share them)
 local UnitAffectingCombat = UnitAffectingCombat
@@ -600,7 +600,7 @@ function JustAC:OnEnable()
     end
     local uf = self.unitEventFrame
     uf:RegisterUnitEvent("UNIT_HEALTH", "player", "pet")
-    uf:RegisterUnitEvent("UNIT_AURA", "player")
+    uf:RegisterUnitEvent("UNIT_AURA", "player", "target")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
@@ -989,6 +989,7 @@ function JustAC:LoadModules()
     MacroParser = LibStub("JustAC-MacroParser", true)
     RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
     SpellDB = LibStub("JustAC-SpellDB", true)
+    DotTracker = LibStub("JustAC-DotTracker", true)
     CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
     SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
     
@@ -1243,6 +1244,10 @@ function JustAC:OnCombatEvent(event)
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
         end
+        -- Drop DoT tracking so no stale suppression carries into the next pull.
+        if DotTracker and DotTracker.Reset then
+            DotTracker.Reset()
+        end
         -- Clear any active burst window so it doesn't carry into the next pull
         if BurstInjectionEngine and BurstInjectionEngine.ClearBurstState then
             BurstInjectionEngine.ClearBurstState()
@@ -1381,6 +1386,18 @@ function JustAC:OnShapeshiftFormsRebuilt()
 end
 
 function JustAC:OnUnitAura(event, unit, updateInfo)
+    if unit == "target" then
+        -- Target debuff changes feed only the DoT tracker (cast->instance bridge
+        -- and live removal). Kept off the player-aura path below to avoid its
+        -- cache invalidation churn on every enemy aura tick. Mark the queue dirty
+        -- so a dropped/expiring DoT un-sinks promptly.
+        if DotTracker and DotTracker.OnTargetAuraUpdate then
+            if DotTracker.OnTargetAuraUpdate(unit, updateInfo) then
+                self:MarkQueueDirty()
+            end
+        end
+        return
+    end
     if unit ~= "player" then return end
 
     -- Any player aura change (including mount removal) must break the mainHidden early
@@ -1484,6 +1501,11 @@ function JustAC:OnEncounterStart()
     if RedundancyFilter and RedundancyFilter.FlushInstanceMaps then
         RedundancyFilter.FlushInstanceMaps()
     end
+    -- Same 12.0.5 re-randomization affects the DoT tracker's target-debuff instance
+    -- IDs; drop them so stale entries can't briefly mis-report a DoT as still live.
+    if DotTracker and DotTracker.Reset then
+        DotTracker.Reset()
+    end
     self:MarkQueueDirty()
 end
 
@@ -1544,6 +1566,10 @@ function JustAC:OnTargetChanged()
     -- (prevents stale spells from previous target persisting).
     if SpellQueue and SpellQueue.InvalidateRotationCache then
         SpellQueue.InvalidateRotationCache()
+    end
+    -- DoT tracking is current-target only; the new target starts fresh.
+    if DotTracker and DotTracker.Reset then
+        DotTracker.Reset()
     end
     -- ForceUpdateAll marks both queues dirty; OnUpdate renders on next tick.
     self:ForceUpdateAll()
@@ -1636,6 +1662,12 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
 
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
+    end
+
+    -- Record maintained-DoT applications so the queue can sink them while the
+    -- debuff is live on the target (identity from our own NeverSecret cast).
+    if UnitAffectingCombat("player") and DotTracker and DotTracker.OnCastSucceeded then
+        DotTracker.OnCastSucceeded(spellID)
     end
 
     -- Defensive item use latch: in-combat item cooldowns are secret, so an

@@ -451,8 +451,8 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
             if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
                 local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                 if isUsable then
-                    -- Aura-linked ordering hints (tank active mitigation) - keyed by base list ID
-                    local hint = SpellDB and SpellDB.DEFENSIVE_AURA_HINTS and SpellDB.DEFENSIVE_AURA_HINTS[entry]
+                    -- Aura-linked ordering hints (tank active mitigation), base-resolved.
+                    local hint = SpellDB and SpellDB.GetDefensiveAuraHint and SpellDB.GetDefensiveAuraHint(entry)
                     if hint and hint.sinkAura and not isProcced
                         and BlizzardAPI.IsAuraActive("player", hint.sinkAura) then
                         -- Mitigation buff already rolling: a re-press isn't the priority.

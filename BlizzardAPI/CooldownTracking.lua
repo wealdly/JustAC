@@ -14,6 +14,7 @@ local type                  = type
 local wipe                  = wipe
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 local C_Spell_GetSpellCharges  = C_Spell and C_Spell.GetSpellCharges
+local C_Spell_GetBaseSpell     = C_Spell and C_Spell.GetBaseSpell
 local GetSpellBaseCooldown     = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 local _G                       = _G                   ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
@@ -124,6 +125,14 @@ local function GetBestCooldownDuration(spellID)
     local staticData = GetStaticCooldownData()
     if staticData then
         local cdMs = staticData.Get(spellID)
+        -- Base-resolve: the static table is keyed by base IDs, but this can be
+        -- reached with a talent-override cast ID (first seen mid-combat).
+        if (not cdMs or cdMs == 0) and C_Spell_GetBaseSpell then
+            local ok, base = pcall(C_Spell_GetBaseSpell, spellID)
+            if ok and type(base) == "number" and base > 0 and base ~= spellID then
+                cdMs = staticData.Get(base)
+            end
+        end
         if cdMs and cdMs > 0 then
             return cdMs / 1000
         end
