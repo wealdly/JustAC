@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.36.1] - 2026-07-06
+
+### Fixed
+
+- A procced execute ability (e.g. Shadow Word: Death) that you cast while its proc glow is still lit no longer stays pinned near the front of the queue while on cooldown. It now sinks to the end with the other cooldowns, keeping its glow, until it is usable again.
+
 ## [4.36.0] - 2026-07-05
 
 ### Changed

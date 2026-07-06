@@ -436,16 +436,24 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                 if displayID
                    and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
                    and PassesRotationFilters(displayID, profile) then
-                    -- Proc check BEFORE the cooldown sink: the proc overlay is
-                    -- Blizzard's NeverSecret "press this now" signal and outranks our
-                    -- readiness inference, which goes stale on unobserved resets/refunds
-                    -- (a proc-driven CD reset or charge refund fires no cast event).
-                    if not bypassProcs and BlizzardAPI.IsSpellProcced(displayID)
+                    -- The proc overlay is Blizzard's NeverSecret "press this now" signal,
+                    -- but it lingers on a spell consumed into its own cooldown (an execute
+                    -- proc like Shadow Word: Death glows on, then cools down after the cast).
+                    -- A proc you can't act on yet must not hold a front slot - gate the proc
+                    -- bucket on readiness so it sinks with the other cooldowns (still glowing)
+                    -- until usable again. This does NOT undo mid-combat reset detection: for a
+                    -- flat cooldown IsSpellReady reads the authoritative isActive, so a real
+                    -- proc-driven CD *reset* reports ready and keeps its proc slot.
+                    -- ponytail: charge-refund procs are unreadable in combat (charges secret),
+                    -- so IsSpellReady falls back to stale local charge counts and such a proc
+                    -- could sink early. Rare; exempt charge spells here if one ever regresses.
+                    local ready = BlizzardAPI.IsSpellReady(displayID)
+                    if not bypassProcs and ready and BlizzardAPI.IsSpellProcced(displayID)
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID)
-                    elseif sinkCooldowns and (not BlizzardAPI.IsSpellReady(displayID)
+                    elseif sinkCooldowns and (not ready
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)) then
                         cooldownCount = cooldownCount + 1
