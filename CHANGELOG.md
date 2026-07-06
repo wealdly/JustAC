@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.36.0] - 2026-07-05
+
+### Changed
+- Whether an ability can be cast right now - form, stance, stealth, talents, and resources - is now read directly from the game instead of from bundled data. Abilities a talent makes usable in another form (for example Frenzied Regeneration in Cat Form via Empowered Shapeshifting) now appear correctly, and suggestions better reflect what you can actually cast.
+
+### Fixed
+- The defensive, blacklist, and rotation spell searches now find every spell in your spellbook, including General-tab and class-talent spells that were previously missed (they could be added only by typing the exact spell ID).
+
 ## [4.35.0] - 2026-07-05
 
 ### Changed

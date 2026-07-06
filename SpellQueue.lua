@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Queue Module - Retrieves and caches the current Assisted Combat rotation
-local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 42)
+local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 43)
 if not SpellQueue then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -352,54 +352,17 @@ end
 
 --- Structurally unusable: the action bar reports a confirmed-unusable state that is NOT
 --- resource starvation. Catches condition-gated spells the cooldown model can't see -
---- HP-gated finishers (Execute, Kill Shot), stealth-gated openers - via the never-secret
---- ACTION_USABLE_CHANGED cache. Resource starvation (noMana) is transient (rage/energy
---- refill every GCD) and must NOT sink or the queue would churn every press; an unknown
---- read (spell on no bar, secret fallback) fails open to "usable" and leaves order alone.
-local function IsConfirmedUnusable(spellID)
-    local usable, noMana = BlizzardAPI.GetActionBarUsability(spellID)
-    return usable == false and not noMana
-end
-
---- Stealth-required (client data): confirmed unusable while in no stealth state.
---- IsStealthed() is NeverSecret and covers Stealth, Vanish, and Shadow Dance;
---- the Subterfuge aura is checked as a belt for its post-stealth window.
---- Blindside-style procs never reach this sink (the proc bucket is filled first).
-local SUBTERFUGE_AURA = 115192
-local function IsStealthGated(spellID)
-    if not (SpellDB and SpellDB.IsStealthRequiredSpell
-        and SpellDB.IsStealthRequiredSpell(spellID)) then
-        return false
-    end
-    if IsStealthed and IsStealthed() then return false end
-    if BlizzardAPI.IsAuraActive and BlizzardAPI.IsAuraActive("player", SUBTERFUGE_AURA) then
-        return false
-    end
-    return true
-end
-
---- Caster-aura-gated (client data): the spell needs a specific aura on the player
---- (e.g. Arcane Missiles needs Clearcasting). Sinks while the aura is absent.
----
---- Self-calibrating: a required aura must be OBSERVED on the player once this
---- session before its absence ever sinks anything. Client data contains entries
---- whose "required aura" is hidden from the aura API or lives on the target
---- (Channel Demonfire's Immolate) - those never latch, so they never sink
---- (fail-open). Also fails open in 12.0.7 secret-aura contexts, and procs never
---- reach this sink (the proc bucket is filled first).
-local observedRequiredAuras = {}
-local function IsCasterAuraGated(spellID)
-    local required = SpellDB and SpellDB.GetRequiredCasterAura
-        and SpellDB.GetRequiredCasterAura(spellID)
-    if not required then return false end
-    if BlizzardAPI.AreAurasSecret() then
-        return false
-    end
-    if BlizzardAPI.IsAuraActive and BlizzardAPI.IsAuraActive("player", required) then
-        observedRequiredAuras[required] = true
-        return false
-    end
-    return observedRequiredAuras[required] == true
+--- Confirmed unusable for a NON-resource reason (wrong form/stance, no stealth,
+--- missing required aura, disabled), via the never-secret C_Spell.IsSpellUsable.
+--- The game evaluates form, talents, stealth, and cast conditions for us, so no
+--- static form/stealth/caster-aura tables are needed (it also knows form-bypass
+--- hero talents the static data can't see). Resource starvation (energy/rage
+--- refills every GCD) is transient and must NOT sink or the queue churns every
+--- press, so notEnoughResources is excluded. A secret/unknown read fails open to
+--- "usable" (BlizzardAPI.IsSpellUsable handles that fallback) and leaves order alone.
+local function IsUnusableNonResource(spellID)
+    local usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
+    return usable == false and not notEnoughResources
 end
 
 --- Confirmed out of range on the current target. Catches range gates usability can't see:
@@ -483,11 +446,8 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID)
                     elseif sinkCooldowns and (not BlizzardAPI.IsSpellReady(displayID)
-                           or IsConfirmedUnusable(displayID)
-                           or IsConfirmedOutOfRange(displayID)
-                           or (SpellDB and SpellDB.IsSpellFormGated and SpellDB.IsSpellFormGated(displayID))
-                           or IsStealthGated(displayID)
-                           or IsCasterAuraGated(displayID)) then
+                           or IsUnusableNonResource(displayID)
+                           or IsConfirmedOutOfRange(displayID)) then
                         cooldownCount = cooldownCount + 1
                         cooldownSpells[cooldownCount] = displayID
                     else

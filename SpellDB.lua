@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 12)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 13)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -189,51 +189,13 @@ function SpellDB.IsPureSelfAura(spellID)
     return selfAuras ~= nil and StaticLookup(selfAuras, spellID) == true
 end
 
--- Caster-aura requirements: [spellID] = aura spellID the player must carry for
--- the spell to be castable (client data). Gated at runtime via the aura cache.
-local auraRequirements
-function SpellDB.RegisterAuraRequirements(t) auraRequirements = t end
-function SpellDB.GetRequiredCasterAura(spellID)
-    return StaticLookup(auraRequirements, spellID)
-end
-
--- Stealth-required spells (stealth-only stance masks). The QUEUE gates these at
--- runtime with IsStealthed() + the Subterfuge window - never statically, because
--- stealth windows (Subterfuge, Shadow Dance) outlive the stealth stance.
-local stealthRequirements
-function SpellDB.RegisterStealthRequirements(t) stealthRequirements = t end
-function SpellDB.IsStealthRequiredSpell(spellID)
-    return StaticLookup(stealthRequirements, spellID) == true
-end
-
--- Form requirements: [spellID] = shapeshift mask (bit N = usable in form ID N+1).
--- Cat/bear hard requirements only (see tools/gen_form_requirements.py).
-local formRequirements
-function SpellDB.RegisterFormRequirements(t) formRequirements = t end
-
--- Talents that auto-shift into an ability's required form when it's used -
--- while known, form gating must fail open (the "wrong form" cast still works).
-local FORM_GATE_BYPASS_TALENTS = {
-    449193, -- Fluid Form (Druid: attacks shift you into their required form)
-}
-
---- True when client data says the spell strictly requires a shapeshift form the
---- player is not currently in. GetShapeshiftFormID() is client-side UI state,
---- never secret, so this works in combat where IsUsableSpell is secret.
---- Fails open (false) for spells without form data, exotic form IDs > 32, or
---- when the player knows an auto-shift talent.
-function SpellDB.IsSpellFormGated(spellID)
-    local mask = StaticLookup(formRequirements, spellID)
-    if not mask then return false end
-    for i = 1, #FORM_GATE_BYPASS_TALENTS do
-        if IsPlayerSpell(FORM_GATE_BYPASS_TALENTS[i]) then return false end
-    end
-    local formID = GetShapeshiftFormID and GetShapeshiftFormID()
-    if not formID then return true end   -- requires a form, player is unshifted
-    if formID > 32 then return false end -- outside the stored mask word; fail open
-    local bitVal = 2 ^ (formID - 1)
-    return math.floor(mask / bitVal) % 2 == 0
-end
+-- Form / stealth / caster-aura CASTABILITY gating was removed: the never-secret
+-- C_Spell.IsSpellUsable evaluates all of it live (form, talents incl. form-bypass
+-- hero talents, stealth, and cast-condition auras), so SpellQueue and the
+-- defensive engine gate on that directly. The generated FormRequirements/
+-- AuraRequirements data files and their generators were deleted with it.
+-- Kept accessors below (GetAuraMaxStacks, IsPureSelfAura) are REDUNDANCY data,
+-- not usability, and have no live equivalent.
 
 --- Health items the player currently owns, best-first: { {id=, name=}, ... }. Feeds the
 --- Emergency Potion tile's dropdown. Out of combat only (item names); call lazily.

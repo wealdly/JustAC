@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 8
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 10
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -60,22 +60,50 @@ end
 -- Returns: isUsable, isRedundant, isProcced
 -- isUsable = spell is known AND NOT redundant (buff already active).
 -- Cooldown gating is handled by the caller via IsSpellReady / IsSpellUsable.
+-- Resolve a display/override spellID to its castable base (override -> base),
+-- trying both APIs and returning the first that actually differs. nil if none.
+local function ResolveBaseSpellID(spellID)
+    if C_Spell and C_Spell.GetBaseSpell then
+        local ok, b = pcall(C_Spell.GetBaseSpell, spellID)
+        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
+    end
+    if FindBaseSpellByID then
+        local ok, b = pcall(FindBaseSpellByID, spellID)
+        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
+    end
+    return nil
+end
+
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false
     end
 
-    -- Check if spell is known/available
+    -- A user may add a display-override id whose castable base differs (e.g.
+    -- Recuperate 1231411 surfaces as Frenzied Regeneration 22842 for druids). The
+    -- override id may not be independently "known", so resolve to the base and
+    -- gate on that for both the availability check and the castability gate below.
+    local gateID = spellID
     if not BlizzardAPI.IsSpellAvailable(spellID) then
-        return false, false, false
+        local baseID = ResolveBaseSpellID(spellID)
+        if not baseID or not BlizzardAPI.IsSpellAvailable(baseID) then
+            return false, false, false
+        end
+        gateID = baseID
     end
 
-    -- Form-gated (client data): strictly requires a form the player isn't in
-    -- (bear-only mitigation while in cat). Never-secret, so form-gated
-    -- defensives hide in combat exactly as they do out of combat.
-    local SpellDB = GetSpellDB()
-    if SpellDB and SpellDB.IsSpellFormGated and SpellDB.IsSpellFormGated(spellID) then
-        return false, false, false
+    -- Castability gate: the never-secret C_Spell.IsSpellUsable (verified readable
+    -- in AND out of combat this build) evaluates form, talents, stealth, and cast
+    -- conditions for us - no static form/requirement tables needed, and it knows
+    -- form-bypass hero talents (Fluid Form, Empowered Shapeshifting, ...) the
+    -- static data can't. Hide only when genuinely uncastable for a NON-resource
+    -- reason; a pure resource shortfall (e.g. Frenzied Regeneration's 40 energy)
+    -- still shows - downstream renders that state. Fail open when unreadable.
+    if C_Spell and C_Spell.IsSpellUsable then
+        local ok, usable, notEnoughPower = pcall(C_Spell.IsSpellUsable, gateID)
+        if ok and not IsSecretValue(usable) and usable == false and notEnoughPower ~= true then
+            return false, false, false
+        end
     end
 
     -- Check if procced (instant/free cast available)

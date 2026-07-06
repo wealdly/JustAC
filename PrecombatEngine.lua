@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 2)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 3)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -274,6 +274,11 @@ function PrecombatEngine.GetMissingClassBuffs()
                 and (not BAPI.IsSpellReady or BAPI.IsSpellReady(heal)) then
                 out[#out + 1] = heal
             else
+                -- Recuperate (1231411) is a universal all-class heal, castable in
+                -- any form; druids see it DISPLAYED as Frenzied Regeneration in
+                -- bear, but the base carries no form requirement, so it is always
+                -- a valid recovery offer. (Do NOT gate on the display override's
+                -- legacy bear requirement - that hides a castable heal.)
                 out[#out + 1] = SpellDB.RECUPERATE
             end
         end

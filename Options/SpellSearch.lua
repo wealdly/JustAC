@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/SpellSearch - Shared spellbook cache, search/filter, spell list management
-local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 1)
+local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 2)
 if not SpellSearch then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -55,31 +55,55 @@ function SpellSearch.BuildSpellbookCache()
         return
     end
 
-    local function CacheSpellBank(bank, limit)
-        for i = 1, limit do
-            local spellInfo = C_SpellBook.GetSpellBookItemInfo(i, bank)
-            if not spellInfo then break end
-            if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
-                local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
-                if not isPassive then
-                    local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
-                    if fullInfo and fullInfo.name then
-                        -- Pre-compute search strings to avoid per-keystroke allocations
-                        spellbookCache[spellInfo.spellID] = {
-                            name      = fullInfo.name,
-                            nameLower = fullInfo.name:lower(),
-                            idStr     = tostring(spellInfo.spellID),
-                            icon      = fullInfo.iconID,
-                        }
-                    end
+    local function CacheSlot(slotIndex, bank)
+        local spellInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex, bank)
+        if not spellInfo then return end
+        if spellInfo.itemType == Enum.SpellBookItemType.Spell and spellInfo.spellID then
+            local isPassive = C_Spell and C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellInfo.spellID)
+            if not isPassive then
+                local fullInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellInfo.spellID)
+                if fullInfo and fullInfo.name then
+                    -- Pre-compute search strings to avoid per-keystroke allocations
+                    spellbookCache[spellInfo.spellID] = {
+                        name      = fullInfo.name,
+                        nameLower = fullInfo.name:lower(),
+                        idStr     = tostring(spellInfo.spellID),
+                        icon      = fullInfo.iconID,
+                    }
                 end
             end
         end
     end
 
-    CacheSpellBank(Enum.SpellBookSpellBank.Player, 500)
+    -- Enumerate by skill line (11.0+ spellbook), matching Blizzard's own code:
+    -- the flat 1..N Player scan BREAKS at the first gap between skill lines, so it
+    -- silently drops later tabs - the General line (Recuperate) and class-tree
+    -- spells (e.g. Frenzied Regeneration on Druid). Each line has its own
+    -- itemIndexOffset + numSpellBookItems range that must be walked separately.
+    local playerBank = Enum.SpellBookSpellBank.Player
+    if C_SpellBook.GetNumSpellBookSkillLines and C_SpellBook.GetSpellBookSkillLineInfo then
+        for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+            local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(line)
+            if lineInfo and lineInfo.numSpellBookItems then
+                for i = 1, lineInfo.numSpellBookItems do
+                    CacheSlot(lineInfo.itemIndexOffset + i, playerBank)
+                end
+            end
+        end
+    else
+        -- Fallback for clients without the skill-line API (contiguous flat scan)
+        for i = 1, 500 do
+            if not C_SpellBook.GetSpellBookItemInfo(i, playerBank) then break end
+            CacheSlot(i, playerBank)
+        end
+    end
+
+    -- Pet bank has no skill lines - contiguous flat scan
     if Enum.SpellBookSpellBank.Pet then
-        CacheSpellBank(Enum.SpellBookSpellBank.Pet, 200)
+        for i = 1, 200 do
+            if not C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Pet) then break end
+            CacheSlot(i, Enum.SpellBookSpellBank.Pet)
+        end
     end
 
     spellbookCacheBuilt = true
