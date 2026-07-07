@@ -122,6 +122,7 @@ local defaults = {
             defensiveIconScale   = 1.0,
             showHealthBar        = true,
             showPetHealthBar     = true,
+            showPowerBar         = false,  -- Resource bar (primary power + segmented point resource); anchors to the health bars
             -- Overlay-specific overrides (icons are smaller, so labels may need different sizing/positioning)
             textOverlays = {
                 hotkey   = { fontScale = 1.0 },
@@ -945,12 +946,14 @@ end
 function JustAC:OnPowerChanged(event, unit)
     if unit ~= "player" then return end
     if UIHealthBar and UIHealthBar.UpdatePower then UIHealthBar.UpdatePower(self) end
+    if UINameplateOverlay and UINameplateOverlay.UpdatePowerBar then UINameplateOverlay.UpdatePowerBar(self) end
 end
 
 function JustAC:OnPowerTypeChanged(event, unit)
     if unit ~= "player" then return end
     if UIHealthBar and UIHealthBar.UpdatePowerColor then UIHealthBar.UpdatePowerColor(self) end
     if UIHealthBar and UIHealthBar.UpdatePower then UIHealthBar.UpdatePower(self) end
+    if UINameplateOverlay and UINameplateOverlay.UpdatePowerColor then UINameplateOverlay.UpdatePowerColor(self) end
 end
 
 function JustAC:InitializeDefensiveSpells()

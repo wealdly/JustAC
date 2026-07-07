@@ -26,6 +26,8 @@ local UnitAffectingCombat = UnitAffectingCombat
 local UnitCanAttack = UnitCanAttack
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
+local UnitPower = UnitPower
+local UnitPowerMax = UnitPowerMax
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
 local UnitChannelInfo = UnitChannelInfo
@@ -45,6 +47,8 @@ local NAMEPLATE_GAP_RIGHT = 13  -- gap on RIGHT side; slightly larger to compens
                                 -- asymmetric bgTexture (extends further past the right edge)
 local BAR_HEIGHT     = 5   -- overlay health bar (thinner than UIHealthBar.BAR_HEIGHT=6)
 local BAR_SPACING    = 2   -- overlay bar gap (tighter than UIHealthBar.BAR_SPACING=3)
+local POWER_BAR_HEIGHT = (UIHealthBar and UIHealthBar.POWER_BAR_HEIGHT) or 3  -- resource-bar thickness
+local POWER_UPDATE_INTERVAL = 0.1  -- resource-bar value throttle (mirrors UIHealthBar's cadence)
 
 -- Cooldown update throttle (shared source with UIRenderer via UIFrameFactory export)
 local lastCooldownUpdate       = 0
@@ -60,6 +64,10 @@ local defIcons         = {}   -- [1..N] defensive icon buttons
 local pendingMasqueRemoval = {} -- icons whose RemoveButton was skipped in combat; cleaned on next OOC Destroy
 local healthBar        = nil  -- player health StatusBar
 local petHealthBar     = nil  -- pet health StatusBar (warm yellow)
+local overlayPowerBar          = nil  -- primary resource bar (current displayed power)
+local overlaySecondaryPowerBar = nil  -- secondary point-resource bar (combo points / chi / …)
+local overlaySecondarySegments = 0    -- cached fail-closed segment count for the secondary
+local lastOverlayPowerUpdate    = 0   -- throttle stamp for UpdatePowerBar
 local currentNameplate = nil  -- nameplate frame we're currently anchored to
 local savedCCAnchors   = nil  -- saved Blizzard CC frame anchors for restoration
 local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
@@ -246,6 +254,127 @@ local function CreateOverlayHealthBar(initialWidth)
     bar:SetAlpha(0)
     bar:Hide()
     return bar
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Player resource / power bars (overlay-owned)
+-- Mirrors the standard queue's power-bar system, but anchored to the overlay's
+-- nameplate-tracking health bars with dynamic per-render orientation. A PRIMARY
+-- bar for the current displayed power, plus an optional SEGMENTED SECONDARY bar
+-- for a spec's point resource (combo points / runes / chi / …). Value fill is a
+-- secret-safe StatusBar:SetValue passthrough; the segment helpers, colour and
+-- POWER_BAR_HEIGHT are reused from UIHealthBar. The StatusBar doubles as the
+-- `frame` the segment helpers expect (frame == frame.statusBar).
+-- ─────────────────────────────────────────────────────────────────────────────
+local function CreateOverlayPowerBar(powerType)
+    local bar = CreateFrame("StatusBar", nil, UIParent)
+    bar:SetFrameStrata("BACKGROUND")
+    bar:SetSize(POWER_BAR_HEIGHT, POWER_BAR_HEIGHT)  -- real size assigned per render
+    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(1)
+    bar:EnableMouse(false)
+
+    UIHealthBar.AddBarBackground(bar)         -- dark-neutral bg, re-tinted to the power colour
+    UIHealthBar.AddBarGloss(bar, true)        -- lit-tube sheen (create-time horizontal)
+    UIHealthBar.ApplyResourceColor(bar, powerType)
+
+    -- Fields the shared PositionSegments/RebuildSegments helpers read; the bar is
+    -- both the frame and its statusBar.
+    bar.statusBar      = bar
+    bar.powerType      = powerType            -- nil = current displayed power
+    bar.barIsHorizontal = true
+
+    bar:SetAlpha(0)
+    bar:Hide()
+    return bar
+end
+
+-- Cache the secondary segment count from the readable UnitPowerMax (0 = resource
+-- absent). In combat max may be secret, so guard IsSecretValue and reuse the cached
+-- count rather than fail open. Fail-CLOSED (a spec without the resource stays hidden).
+local function RefreshOverlaySecondaryCache()
+    if not overlaySecondaryPowerBar then overlaySecondarySegments = 0; return end
+    local maxP = UnitPowerMax("player", overlaySecondaryPowerBar.powerType)
+    local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
+    if maxP and not (IsSecret and IsSecret(maxP)) then
+        overlaySecondarySegments = (maxP > 0) and maxP or 0
+    end
+end
+
+-- Size + orient one resource bar beyond `anchorBar` at POWER_BAR_HEIGHT thickness,
+-- using the same per-orientation template the pet health bar uses. `barWidth`/`barHeight`
+-- come from the health-bar sizing (one is nil per orientation - only the used one matters).
+local function AnchorOverlayPowerBar(bar, anchorBar, expansion, isLeft, barWidth, barHeight)
+    bar:ClearAllPoints()
+    if expansion == "out" then
+        bar:SetOrientation("HORIZONTAL")
+        bar:SetSize(barWidth, POWER_BAR_HEIGHT)
+        bar.barIsHorizontal = true
+        if isLeft then
+            bar:SetPoint("BOTTOMLEFT",  anchorBar, "TOPLEFT",  0, BAR_SPACING)
+        else
+            bar:SetPoint("BOTTOMRIGHT", anchorBar, "TOPRIGHT", 0, BAR_SPACING)
+        end
+    else
+        bar:SetOrientation("VERTICAL")
+        bar:SetSize(POWER_BAR_HEIGHT, barHeight)
+        bar.barIsHorizontal = false
+        if expansion == "up" then
+            if isLeft then
+                bar:SetPoint("BOTTOMLEFT",  anchorBar, "BOTTOMRIGHT",  BAR_SPACING, 0)
+            else
+                bar:SetPoint("BOTTOMRIGHT", anchorBar, "BOTTOMLEFT",  -BAR_SPACING, 0)
+            end
+        else  -- "down"
+            if isLeft then
+                bar:SetPoint("TOPLEFT",  anchorBar, "TOPRIGHT",  BAR_SPACING, 0)
+            else
+                bar:SetPoint("TOPRIGHT", anchorBar, "TOPLEFT",  -BAR_SPACING, 0)
+            end
+        end
+    end
+end
+
+-- Stack the resource bars beyond the outermost shown health bar and (re)segment the
+-- secondary for the current orientation/size. Called from the health-bar re-anchor block.
+local function PositionOverlayPowerBars(npo, expansion, isLeft, barWidth, barHeight, opacity)
+    if not (overlayPowerBar and npo.showPowerBar and healthBar) then
+        if overlayPowerBar then overlayPowerBar:Hide() end
+        if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
+        return
+    end
+
+    local outer = (petHealthBar and petHealthBar:IsShown()) and petHealthBar or healthBar
+    AnchorOverlayPowerBar(overlayPowerBar, outer, expansion, isLeft, barWidth, barHeight)
+    overlayPowerBar:SetAlpha(opacity)
+    overlayPowerBar:Show()
+
+    if overlaySecondaryPowerBar then
+        RefreshOverlaySecondaryCache()
+        if overlaySecondarySegments > 0 then
+            AnchorOverlayPowerBar(overlaySecondaryPowerBar, overlayPowerBar, expansion, isLeft, barWidth, barHeight)
+            if overlaySecondaryPowerBar.segmentCount ~= overlaySecondarySegments then
+                UIHealthBar.RebuildSegments(overlaySecondaryPowerBar, overlaySecondarySegments)
+            else
+                UIHealthBar.PositionSegments(overlaySecondaryPowerBar)  -- re-lay-out for new size/orientation
+            end
+            overlaySecondaryPowerBar:SetAlpha(opacity)
+            overlaySecondaryPowerBar:Show()
+        else
+            overlaySecondaryPowerBar:Hide()
+        end
+    end
+end
+
+-- Secret-safe value passthrough for one resource bar.
+local function UpdateOneOverlayPowerBar(bar)
+    if not bar or not bar:IsVisible() then return end
+    local power    = UnitPower("player", bar.powerType)
+    local maxPower = UnitPowerMax("player", bar.powerType)
+    if not power or not maxPower then return end
+    bar:SetMinMaxValues(0, maxPower)   -- secret in combat; engine renders it
+    bar:SetValue(power)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -644,6 +773,16 @@ function UINameplateOverlay.Create(addon)
             petHealthBar = CreateOverlayHealthBar(iconSize * 2)
             petHealthBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
         end
+
+        -- Resource bars anchor to the health bars, so they require them. Primary =
+        -- current displayed power; secondary = the class point resource (if any).
+        if npo.showPowerBar then
+            overlayPowerBar = CreateOverlayPowerBar(nil)
+            local secType = UIHealthBar.GetClassSecondary()
+            if secType then
+                overlaySecondaryPowerBar = CreateOverlayPowerBar(secType)
+            end
+        end
     end
 
     -- Quest indicator replacement: suppress engine-rendered quest circles and
@@ -738,6 +877,20 @@ function UINameplateOverlay.Destroy(addon)
         petHealthBar:SetParent(nil)
         petHealthBar = nil
     end
+    if overlayPowerBar then
+        overlayPowerBar:ClearAllPoints()
+        overlayPowerBar:Hide()
+        overlayPowerBar:SetParent(nil)
+        overlayPowerBar = nil
+    end
+    if overlaySecondaryPowerBar then
+        overlaySecondaryPowerBar:ClearAllPoints()
+        overlaySecondaryPowerBar:Hide()
+        overlaySecondaryPowerBar:SetParent(nil)
+        overlaySecondaryPowerBar = nil
+    end
+    overlaySecondarySegments = 0
+    lastOverlayPowerUpdate = 0
 
     RestoreCCFrames()  -- restore Blizzard CC frame anchors before wiping state
 
@@ -1519,16 +1672,24 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                             petHealthBar:Hide()
                         end
                     end
+
+                    -- Resource/power bars: stack beyond the outermost shown health
+                    -- bar at the current orientation (re-segments the secondary).
+                    PositionOverlayPowerBars(npo, expansion, isLeft, barWidth, barHeight, opacity)
                 else
                     -- visibleCount unchanged: just update opacity
                     healthBar:SetAlpha(opacity)
                     if petHealthBar and petHealthBar:IsShown() then petHealthBar:SetAlpha(opacity) end
+                    if overlayPowerBar and overlayPowerBar:IsShown() then overlayPowerBar:SetAlpha(opacity) end
+                    if overlaySecondaryPowerBar and overlaySecondaryPowerBar:IsShown() then overlaySecondaryPowerBar:SetAlpha(opacity) end
                 end
             end
         else
             lastDefVisibleCount = 0
             healthBar:Hide()
             if petHealthBar then petHealthBar:Hide() end
+            if overlayPowerBar then overlayPowerBar:Hide() end
+            if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
         end
     end
 end
@@ -1541,6 +1702,8 @@ function UINameplateOverlay.HideDefensiveIcons()
     end
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
+    if overlayPowerBar then overlayPowerBar:Hide() end
+    if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
 end
 
 --- Re-render defensive icons using the last cached queue.
@@ -1631,6 +1794,36 @@ function UINameplateOverlay.UpdatePetHealthBar()
     petHealthBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
 end
 
+--- Update resource-bar fill values (throttled, mirrors UpdateHealthBar's cadence).
+--- UnitPower/UnitPowerMax are secret in combat but StatusBar:SetValue accepts them.
+function UINameplateOverlay.UpdatePowerBar(addon)
+    if not overlayPowerBar then return end
+    local profile = addon and addon:GetProfile()
+    local npo = profile and profile.nameplateOverlay
+    if not (npo and npo.showPowerBar) then return end
+    local now = GetTime()
+    if now - lastOverlayPowerUpdate < POWER_UPDATE_INTERVAL then return end
+    lastOverlayPowerUpdate = now
+    UpdateOneOverlayPowerBar(overlayPowerBar)
+    UpdateOneOverlayPowerBar(overlaySecondaryPowerBar)
+end
+
+--- Power-type changed (form/stance): recolour the primary (UnitPowerType is never
+--- secret), re-cache the secondary, and force the next render to re-anchor/re-segment
+--- it for the new form. Values re-applied immediately via the throttle reset.
+function UINameplateOverlay.UpdatePowerColor(addon)
+    if overlayPowerBar then
+        UIHealthBar.ApplyResourceColor(overlayPowerBar, overlayPowerBar.powerType)
+    end
+    if overlaySecondaryPowerBar then
+        RefreshOverlaySecondaryCache()
+        if overlaySecondarySegments <= 0 then overlaySecondaryPowerBar:Hide() end
+        lastDefVisibleCount = -1  -- force RenderDefensives to re-anchor/re-show the pair
+    end
+    lastOverlayPowerUpdate = 0
+    UINameplateOverlay.UpdatePowerBar(addon)
+end
+
 function UINameplateOverlay.RefreshInterruptSpells()
     if SpellDB and SpellDB.ResolveInterruptSpells then
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
@@ -1675,6 +1868,8 @@ function UINameplateOverlay.HideAll()
     end
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
+    if overlayPowerBar then overlayPowerBar:Hide() end
+    if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
     if interruptIcon then
         if UIAnimations then
             UIAnimations.HideInterruptProcGlow(interruptIcon)

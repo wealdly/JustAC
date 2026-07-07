@@ -28,6 +28,7 @@ local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 -- Export constants for UIFrameFactory to calculate defensive icon offset
 UIHealthBar.BAR_HEIGHT = BAR_HEIGHT
 UIHealthBar.BAR_SPACING = BAR_SPACING
+UIHealthBar.POWER_BAR_HEIGHT = POWER_BAR_HEIGHT  -- shared with the nameplate overlay's resource bars
 
 -- ── Shared queue-construction math (single source of truth for every bar) ─────
 -- These mirror the icon queue the bar sits next to; keeping them centralized is
@@ -1054,6 +1055,7 @@ local function GetClassSecondary()
     local _, class = UnitClass("player")
     return class and SECONDARY[class] or nil
 end
+UIHealthBar.GetClassSecondary = GetClassSecondary  -- shared with the nameplate overlay
 
 -- Cached segment count for the secondary = readable UnitPowerMax (0 = resource absent
 -- or unknown). Existence/segment-count only changes on a form/spec change (which fires
@@ -1092,6 +1094,7 @@ local function PositionSegments(frame)
         end
     end
 end
+UIHealthBar.PositionSegments = PositionSegments  -- shared with the nameplate overlay
 
 -- Draw n-1 dividers so the (passthrough-filled) secondary reads as n discrete segments
 -- - combo points / holy power / chi / etc. are point resources, not a continuous pool.
@@ -1112,6 +1115,7 @@ local function RebuildSegments(frame, n)
     end
     PositionSegments(frame)
 end
+UIHealthBar.RebuildSegments = RebuildSegments  -- shared with the nameplate overlay
 
 -- Color a resource bar from POWER_COLOR. powerType nil = the current displayed power
 -- (UnitPowerType's numeric index is NeverSecret). Falls back to mana-blue. The empty
@@ -1126,6 +1130,7 @@ local function ApplyResourceColor(statusBar, powerType)
     statusBar:SetStatusBarColor(c[1], c[2], c[3], 0.9)
     if statusBar.bg then statusBar.bg:SetVertexColor(c[1], c[2], c[3], 0.22) end
 end
+UIHealthBar.ApplyResourceColor = ApplyResourceColor  -- shared with the nameplate overlay
 
 -- Anchor a resource bar to anchorBar (inherits its span/position in every mode and
 -- follows its resize), or to the offensive-queue position when anchorBar is nil.

@@ -354,6 +354,8 @@ L["Interrupt Mode Kick Only"] = "Kick Only: True interrupts, no CC"
 L["Interrupt Mode Kick Prefer"] = "Kick Priority: Kick first, CC as fallback"
 L["Interrupt Mode CC Prefer"] = "CC Priority: CC over kicks (wastes CC on kickable casts)"
 L["Nameplate Show Health Bars desc"] = "Show compact health bars above the defensive icons. Auto-hides when no defensives are visible."
+L["Show Resource Bar"] = "Show Resource Bar"
+L["Nameplate Show Resource Bar desc"] = "Show a compact resource bar (primary power plus a segmented point-resource) beyond the health bars. Requires health bars enabled."
 
 -- Reset buttons
 L["Reset to Defaults"] = "Reset to Defaults"

@@ -331,6 +331,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showHealthBar then
         UINameplateOverlay.UpdateHealthBar()
         UINameplateOverlay.UpdatePetHealthBar()
+        if UINameplateOverlay.UpdatePowerBar then UINameplateOverlay.UpdatePowerBar(addon) end
     end
 
     -- Throttle defensive queue updates (expensive: table allocations, spell lookups)

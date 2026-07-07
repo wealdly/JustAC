@@ -231,6 +231,15 @@ function Overlay.CreateTabArgs(addon)
                             return not (SDB and SDB.ClassHasPetDefaults(pc))
                         end,
                     }),
+                    showPowerBar = W.toggle(addon, "nameplateOverlay.showPowerBar", {
+                        name = L["Show Resource Bar"], desc = L["Nameplate Show Resource Bar desc"],
+                        order = 7, width = "normal", default = false,
+                        onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
+                        -- Anchors to the health bars, so it needs them enabled too.
+                        disabled = function()
+                            return defDisabled(addon) or not addon.db.profile.nameplateOverlay.showHealthBar
+                        end,
+                    }),
                 },
             },
 
