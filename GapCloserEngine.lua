@@ -339,17 +339,7 @@ end
 --- when the gap-closer system is enabled - our insertion controls when they appear.
 function GapCloserEngine.MarkGapCloserSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
-    local spellList = ResolveGapCloserSpells(addon)
-    if not spellList then return end
-    for _, spellID in ipairs(spellList) do
-        if spellID and spellID > 0 then
-            spellIDSet[spellID] = true
-            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
-            if resolvedID ~= spellID then
-                spellIDSet[resolvedID] = true
-            end
-        end
-    end
+    BlizzardAPI.MarkResolvedIDs(ResolveGapCloserSpells(addon), spellIDSet)
 end
 
 --- Restore gap-closer defaults for the current spec

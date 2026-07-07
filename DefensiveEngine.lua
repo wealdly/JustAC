@@ -640,21 +640,15 @@ local function TierOf(sid)
     return (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid)) or 3
 end
 
-local function IsHoldWorthy(sid)  -- raw list id (negative = heal item)
+-- sid = raw list id (negative = heal item) OR a resolved entry's spellID with
+-- isItem passed explicitly (entry.spellID, entry.isItem). Items are always held.
+local function IsHoldWorthy(sid, isItem)
+    if isItem then return true end
     if not sid then return false end
     if sid < 0 then return true end
     local tier = TierOf(sid)
     if tier == 1 then return true end                                   -- immunity bubble
     if tier == 2 then return (defBaseCdCache[sid] or 0) >= HOLD_MIN_COOLDOWN end
-    return false
-end
-
-local function IsHoldWorthyEntry(entry)  -- resolved result entry ({spellID, isItem})
-    if not entry then return false end
-    if entry.isItem then return true end
-    local tier = TierOf(entry.spellID)
-    if tier == 1 then return true end
-    if tier == 2 then return (defBaseCdCache[entry.spellID] or 0) >= HOLD_MIN_COOLDOWN end
     return false
 end
 
@@ -880,7 +874,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                 -- Pre-combat buffs (food/flask/class buffs) are use-now, not held-back
                 -- emergency buttons: never tag them waiting, or their icon shows a "wait"
                 -- label that collides with the OOC click overlay's "click"/"wait" hint.
-                if not entry.isProcced and not entry.precombat and IsHoldWorthyEntry(entry) then
+                if not entry.isProcced and not entry.precombat and IsHoldWorthy(entry.spellID, entry.isItem) then
                     entry.waiting = true
                 end
             end

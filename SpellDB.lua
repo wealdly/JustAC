@@ -161,6 +161,22 @@ local function StaticLookup(t, spellID)
     return nil
 end
 
+-- Distinct base spell of a talent-override variant, or nil when there is none
+-- (self is its own base, or C_Spell.GetBaseSpell is unavailable). Shares
+-- StaticLookup's cache; exposed so other modules reuse this resolution instead
+-- of maintaining their own override->base cache.
+function SpellDB.GetBaseSpell(spellID)
+    if not spellID or not C_Spell_GetBaseSpell then return nil end
+    local base = baseIDCache[spellID]
+    if base == nil then
+        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
+        base = (ok and type(b) == "number" and b > 0) and b or false
+        baseIDCache[spellID] = base
+    end
+    if base and base ~= spellID then return base end
+    return nil
+end
+
 -- Aura max stacks: generated table only. The live equivalent
 -- (C_UnitAuras.GetSpellMaxCumulativeAuraApplications) THROWS from addon code
 -- for every spell tested - non-stacking AND stacking (Ironfur), in-game

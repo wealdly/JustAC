@@ -42,22 +42,12 @@ local wipe = wipe
 local tremove = table.remove
 local C_UnitAuras = C_UnitAuras
 local IsAuraFilteredOutByInstanceID = C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID
-local C_Spell_GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
-
 -- Talent variants of a DoT (Lunar Inspiration Moonfire 155625) share a base spell
 -- (8921) that the cast event and the rotation list may disagree on. Keying the
 -- record AND the query under both the spell and its base makes them match either
--- way. Cached; -1 = no distinct base.
-local baseCache = {}
+-- way. Resolution + cache live in SpellDB.GetBaseSpell (returns nil for no base).
 local function baseOf(spellID)
-    if not C_Spell_GetBaseSpell then return nil end
-    local b = baseCache[spellID]
-    if b == nil then
-        local ok, v = pcall(C_Spell_GetBaseSpell, spellID)
-        b = (ok and type(v) == "number" and v > 0 and v ~= spellID) and v or -1
-        baseCache[spellID] = b
-    end
-    return b ~= -1 and b or nil
+    return SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID) or nil
 end
 
 -- Unconfirmed fallback: how long after casting a DoT we assume it's still up when

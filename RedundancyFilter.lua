@@ -20,21 +20,14 @@ local table_remove = table.remove
 local C_Secrets = C_Secrets
 
 -- Talent-override variants resolve to a base spell ID the static classification
--- tables key on. Mirrors SpellDB.StaticLookup: try the ID, then its base spell;
--- cached. Keeps this module's own tables variant-aware like the SpellDB accessors.
-local C_Spell_GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
-local baseIDCache = {}
+-- tables key on. Try the ID, then its base spell (SpellDB.GetBaseSpell, cached).
+-- Keeps this module's own tables variant-aware like the SpellDB accessors.
 local function StaticLookup(t, spellID)
     if not t or not spellID then return nil end
     local v = t[spellID]
-    if v ~= nil or not C_Spell_GetBaseSpell then return v end
-    local base = baseIDCache[spellID]
-    if base == nil then
-        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
-        base = (ok and type(b) == "number" and b > 0) and b or false
-        baseIDCache[spellID] = base
-    end
-    if base and base ~= spellID then return t[base] end
+    if v ~= nil then return v end
+    local base = SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID)
+    if base then return t[base] end
     return nil
 end
 
@@ -415,22 +408,6 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     -- The instance map entries remain valid (same instanceID = same aura).
 end
 
---------------------------------------------------------------------------------
--- Safe API Wrappers
---------------------------------------------------------------------------------
-
--- Generic safe call wrapper: returns fallback on error or if func doesn't exist
-local function SafeCall(func, fallback, ...)
-    if not func then return fallback end
-    local ok, result = pcall(func, ...)
-    return ok and result or fallback
-end
-
-local function SafeUnitExists(unit) return SafeCall(UnitExists, false, unit) end
-local function SafeHasPetUI() return SafeCall(HasPetUI, false) end
-local function SafeIsMounted() return SafeCall(IsMounted, false) end
-local function SafeIsStealthed() return SafeCall(IsStealthed, false) end
-
 -- Spell ID sets used by multiple functions below -- defined here so all
 -- dependent functions can reference them regardless of declaration order.
 -- Uses spell IDs instead of English name patterns for locale safety.
@@ -483,21 +460,21 @@ function RedundancyFilter.PruneExpiredActivations()
         
         -- Method 2: Stealth detection (always works - not secret)
         if not shouldKeep then
-            if IsStealthSpell(spellID) and SafeIsStealthed() then
+            if IsStealthSpell(spellID) and IsStealthed() then
                 shouldKeep = true  -- Still stealthed
             end
         end
 
         -- Method 3: Pet detection (always works - not secret)
         if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
-            if SafeHasPetUI() then
+            if HasPetUI() then
                 shouldKeep = true  -- Pet still exists
             end
         end
 
         -- Method 4: Mount detection (always works - not secret)
         if not shouldKeep then
-            if IsMountSpell(spellID) and SafeIsMounted() then
+            if IsMountSpell(spellID) and IsMounted() then
                 shouldKeep = true  -- Still mounted
             end
         end
@@ -981,17 +958,10 @@ local function IsAuraSpell(spellID)
     return false, false
 end
 
--- Check if spell is a pet-related ability (native table + name pattern)
+-- Check if spell is a pet-related ability (known pet-summon table only; the old
+-- name-pattern fallback was removed, so unknown pet summons fail-open).
 local function IsPetSpell(spellID)
-    if not spellID then return false end
-    
-    -- Check known pet summon table
-    if PET_SUMMON_SPELLS[spellID] then
-        return true
-    end
-    
-    -- Name pattern fallback removed; unknown pet summon spells fail-open
-    return false
+    return spellID ~= nil and PET_SUMMON_SPELLS[spellID] ~= nil
 end
 
 -- Check if spell is DPS-relevant for rotation queue
@@ -1037,7 +1007,7 @@ end
 -- Check if pet is alive (exists AND not dead)
 -- 12.0: UnitIsDead result may be secret for non-player units
 local function IsPetAlive()
-    if not SafeUnitExists("pet") then return false end
+    if not UnitExists("pet") then return false end
     -- UnitIsDead returns true if unit is dead, false if alive
     local ok, isDead = pcall(UnitIsDead, "pet")
     if not ok then return true end  -- Fail-safe: assume alive
@@ -1361,7 +1331,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     else
         -- Pet summon spells: redundant if any pet exists
-        if IsPetSpell(spellID) and SafeHasPetUI() then
+        if IsPetSpell(spellID) and HasPetUI() then
             if debugMode then
                 DebugPrintThrottled("petsummon_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon but pet already exists")
             end
@@ -1372,7 +1342,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- 5. STEALTH REDUNDANCY
     -- Use IsStealthed() API - more reliable than buff checking
     if IsStealthSpell(spellID) then
-        if SafeIsStealthed() then
+        if IsStealthed() then
             if debugMode then
                 DebugPrintThrottled("stealth_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
             end
@@ -1382,7 +1352,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     
     -- 6. MOUNT REDUNDANCY
     -- Use IsMounted() API
-    if SafeIsMounted() then
+    if IsMounted() then
         -- Check if this is a mount spell (avoid false positives)
         if IsMountSpell(spellID) then
             if debugMode then

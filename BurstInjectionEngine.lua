@@ -465,17 +465,7 @@ end
 --- injection is enabled - our insertion controls when they appear.
 function BurstInjectionEngine.MarkBurstInjectionSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
-    local spellList = ResolveInjectionSpells(addon)
-    if not spellList then return end
-    for _, spellID in ipairs(spellList) do
-        if spellID and spellID > 0 then
-            spellIDSet[spellID] = true
-            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
-            if resolvedID ~= spellID then
-                spellIDSet[resolvedID] = true
-            end
-        end
-    end
+    BlizzardAPI.MarkResolvedIDs(ResolveInjectionSpells(addon), spellIDSet)
 end
 
 --- Initialize burst injection defaults for the current spec if not yet populated.

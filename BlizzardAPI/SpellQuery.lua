@@ -377,6 +377,22 @@ function BlizzardAPI.ResolveSpellID(spellID)
     return spellID
 end
 
+--- Mark each spell ID and its talent-resolved variant into a set. Shared by the
+--- gap-closer and burst-injection engines to suppress their spells from the
+--- rotation list (their own insertion controls when they appear).
+function BlizzardAPI.MarkResolvedIDs(spellList, spellIDSet)
+    if not spellList or not spellIDSet then return end
+    for _, spellID in ipairs(spellList) do
+        if spellID and spellID > 0 then
+            spellIDSet[spellID] = true
+            local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
+            if resolvedID ~= spellID then
+                spellIDSet[resolvedID] = true
+            end
+        end
+    end
+end
+
 function BlizzardAPI.IsOffensiveSpell(spellID)
     if not spellID then return true end
     if not SpellDB then return true end
