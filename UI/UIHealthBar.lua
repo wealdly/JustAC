@@ -17,6 +17,12 @@ local GetTime = GetTime
 -- Constants
 local UPDATE_INTERVAL = 0.1   -- Update frequently enough for responsive feedback
 local BAR_HEIGHT = 6          -- Compact height in pixels
+local POWER_BAR_HEIGHT = 3   -- Resource bars are half height, distinct from health
+-- Shared fill texture for every bar. Flat white keeps the tint at full brightness; the
+-- gradient client texture (UI-StatusBar) is dark at its top/bottom edges, which dominate
+-- and read as murky at 3-6px, so the unit-frame look comes from the colored drained-wash
+-- background instead. Single knob if a brighter bar texture ever wants swapping in.
+local BAR_TEXTURE = "Interface\\Buttons\\WHITE8X8"
 local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
 -- Export constants for UIFrameFactory to calculate defensive icon offset
@@ -40,6 +46,17 @@ local function ComputeBarSpan(firstSize, bodySize, spacing, count)
     end
     return firstSize * 0.90 + (count - 2) * (bodySize + spacing) + bodySize * 0.90,
            firstSize * 0.10
+end
+
+-- Offensive-queue span (dimension + first-icon offset) read straight from the profile;
+-- same math as the player/pet bars, via the shared ComputeBarSpan. Defined here (not
+-- in the target-bar section) so the power bar - which precedes it - can use it too.
+local function ComputeOffensiveSpan(profile)
+    local iconSize       = profile.iconSize or 42
+    local iconSpacing    = profile.iconSpacing or 1
+    local firstIconScale = profile.firstIconScale or 1.0
+    local maxIcons       = profile.maxIcons or 4
+    return ComputeBarSpan(iconSize * firstIconScale, iconSize, iconSpacing, maxIcons)
 end
 
 --- Grab-tab reserve length for a given axis (horizontal bars add a 1px border fudge).
@@ -103,7 +120,23 @@ local function AddBarBackground(statusBar)
     bg:SetAllPoints(statusBar)
     bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     bg:SetVertexColor(0.12, 0.12, 0.12, 0.9)
+    statusBar.bg = bg  -- exposed so a resource bar can re-tint it to its power color
     return bg
+end
+
+-- Glossy sheen: a white highlight fading to transparent, laid over the fill so each bar
+-- reads like a lit glass tube. White-only, so it brightens the tint and never darkens it
+-- (unlike a dark gradient texture, which muddies thin bars). Horizontal bars get a top
+-- highlight; vertical bars a one-side highlight. Drawn just above the fill, below dividers.
+local function AddBarGloss(statusBar, barIsHorizontal)
+    local gloss = statusBar:CreateTexture(nil, "OVERLAY", nil, 0)
+    gloss:SetTexture("Interface\\Buttons\\WHITE8X8")
+    gloss:SetAllPoints(statusBar)
+    local lit  = CreateColor(1, 1, 1, 0.22)
+    local dark = CreateColor(1, 1, 1, 0.00)
+    -- VERTICAL/HORIZONTAL gradient runs min->max = bottom->top / left->right.
+    gloss:SetGradient(barIsHorizontal and "VERTICAL" or "HORIZONTAL", dark, lit)
+    return gloss
 end
 
 function UIHealthBar.CreateHealthBar(addon)
@@ -265,8 +298,9 @@ function UIHealthBar.CreateHealthBar(addon)
     -- Create StatusBar (accepts secret values!)
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetAllPoints(frame)
-    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    statusBar:SetStatusBarTexture(BAR_TEXTURE)
     statusBar:SetOrientation(barIsHorizontal and "HORIZONTAL" or "VERTICAL")
+    AddBarGloss(statusBar, barIsHorizontal)
 
     -- Set initial bright green color (matches nameplate overlay bar)
     statusBar:SetStatusBarColor(0.0, 0.80, 0.0, 0.9)
@@ -688,8 +722,9 @@ function UIHealthBar.CreatePetHealthBar(addon)
     -- Create StatusBar (accepts secret values!)
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetAllPoints(frame)
-    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    statusBar:SetStatusBarTexture(BAR_TEXTURE)
     statusBar:SetOrientation(barIsHorizontal and "HORIZONTAL" or "VERTICAL")
+    AddBarGloss(statusBar, barIsHorizontal)
 
     -- Warm yellow for pet (distinct from player's green and UI blue/mana)
     statusBar:SetStatusBarColor(0.90, 0.75, 0.10, 0.9)
@@ -952,6 +987,328 @@ function UIHealthBar.DestroyPet()
 end
 
 --------------------------------------------------------------------------------
+-- Player Resource Bars. Secret-safe display (UnitPower is secret in combat, but
+-- StatusBar:SetValue accepts secrets - the proven health-bar pattern). A PRIMARY
+-- bar for the current displayed power, plus an optional SECONDARY bar for a spec's
+-- point resource (combo points / runes / chi / holy power / soul shards / arcane
+-- charges / essence) as a fullness gauge - the count is secret in combat, but the
+-- fill still renders. Both anchor to the outermost health bar, so they stack in
+-- EVERY health-bar mode (offensive / defensive-cluster / detached) and follow its
+-- resize. UnitPower/UnitPowerMax passthrough; UnitPowerType/PowerBarColor never secret.
+--------------------------------------------------------------------------------
+
+local powerBarFrame = nil           -- primary (current displayed power)
+local secondaryPowerBarFrame = nil  -- secondary point resource
+local lastPowerUpdate = 0
+local UnitPower = UnitPower
+local UnitPowerMax = UnitPowerMax
+local UnitPowerType = UnitPowerType
+
+-- Power-type colors, matched to unit-frame-addon norms (combo points gold, holy power
+-- pale gold, soul shards purple, chi teal, arcane charges blue, runes grey, essence
+-- light blue, etc.). Keyed by numeric power type; built defensively so a missing Enum
+-- field is skipped rather than crashing on a nil table key.
+local POWER_COLOR = {}
+do
+    local P = Enum and Enum.PowerType or {}
+    local function pc(pt, r, g, b) if pt ~= nil then POWER_COLOR[pt] = {r, g, b} end end
+    pc(P.Mana,          0.30, 0.50, 0.85)
+    pc(P.Rage,          0.70, 0.13, 0.15)
+    pc(P.Focus,         1.00, 0.50, 0.25)
+    pc(P.Energy,        1.00, 0.85, 0.10)
+    pc(P.RunicPower,    0.35, 0.45, 0.60)
+    pc(P.LunarPower,    0.30, 0.52, 0.90)
+    pc(P.Maelstrom,     0.00, 0.50, 1.00)
+    pc(P.Insanity,      0.40, 0.00, 0.80)
+    pc(P.Fury,          0.788, 0.259, 0.992)
+    pc(P.Pain,          0.78, 0.05, 0.05)
+    pc(P.ComboPoints,   1.00, 0.80, 0.00)
+    pc(P.HolyPower,     0.95, 0.90, 0.60)
+    pc(P.SoulShards,    0.58, 0.51, 0.79)
+    pc(P.ArcaneCharges, 0.10, 0.10, 0.98)
+    pc(P.Chi,           0.71, 1.00, 0.92)
+    pc(P.Runes,         0.50, 0.50, 0.50)
+    pc(P.Essence,       0.40, 0.80, 1.00)
+end
+
+-- Class -> its secondary point-resource power type. Shown only when the current
+-- spec/form actually has it. Class-keyed with Enum VALUES (a missing Enum field
+-- just yields a nil value -> no secondary, never a nil table key).
+local SECONDARY = {
+    ROGUE       = Enum.PowerType.ComboPoints,
+    DRUID       = Enum.PowerType.ComboPoints,
+    PALADIN     = Enum.PowerType.HolyPower,
+    WARLOCK     = Enum.PowerType.SoulShards,
+    MONK        = Enum.PowerType.Chi,
+    MAGE        = Enum.PowerType.ArcaneCharges,
+    DEATHKNIGHT = Enum.PowerType.Runes,
+    EVOKER      = Enum.PowerType.Essence,
+}
+
+-- The secondary power type for the player's class, or nil.
+local function GetClassSecondary()
+    local _, class = UnitClass("player")
+    return class and SECONDARY[class] or nil
+end
+
+-- Cached segment count for the secondary = readable UnitPowerMax (0 = resource absent
+-- or unknown). Existence/segment-count only changes on a form/spec change (which fires
+-- UNIT_DISPLAYPOWER, where the value is readable), so in combat - where max may be
+-- secret - we reuse the cached count rather than fail-open and show a secondary bar for
+-- a spec that has none (e.g. Balance Druid, Brewmaster Monk). Fail-CLOSED.
+local secondarySegments = 0
+local function RefreshSecondaryCache()
+    if not secondaryPowerBarFrame then secondarySegments = 0; return end
+    local maxP = UnitPowerMax("player", secondaryPowerBarFrame.powerType)
+    local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
+    if maxP and not (IsSecret and IsSecret(maxP)) then
+        secondarySegments = (maxP > 0) and maxP or 0
+    end
+end
+
+-- Reposition segment dividers proportionally along the bar (on size change / rebuild).
+local function PositionSegments(frame)
+    local segs = frame and frame.segments
+    local n = frame and frame.segmentCount or 0
+    if not segs or n <= 1 then return end
+    local sb = frame.statusBar
+    local w, h = sb:GetWidth(), sb:GetHeight()
+    for i = 1, n - 1 do
+        local tex = segs[i]
+        if tex and tex:IsShown() then
+            local frac = i / n
+            tex:ClearAllPoints()
+            if frame.barIsHorizontal then
+                tex:SetSize(1, h > 0 and h or BAR_HEIGHT)
+                tex:SetPoint("LEFT", sb, "LEFT", frac * w, 0)
+            else
+                tex:SetSize(w > 0 and w or BAR_HEIGHT, 1)
+                tex:SetPoint("BOTTOM", sb, "BOTTOM", 0, frac * h)
+            end
+        end
+    end
+end
+
+-- Draw n-1 dividers so the (passthrough-filled) secondary reads as n discrete segments
+-- - combo points / holy power / chi / etc. are point resources, not a continuous pool.
+local function RebuildSegments(frame, n)
+    frame.segments = frame.segments or {}
+    for i = 1, #frame.segments do frame.segments[i]:Hide() end
+    frame.segmentCount = n
+    if n <= 1 then return end
+    for i = 1, n - 1 do
+        local tex = frame.segments[i]
+        if not tex then
+            tex = frame.statusBar:CreateTexture(nil, "OVERLAY", nil, 1)
+            tex:SetTexture("Interface\\Buttons\\WHITE8X8")
+            tex:SetVertexColor(0, 0, 0, 1)  -- solid dark divider between segments
+            frame.segments[i] = tex
+        end
+        tex:Show()
+    end
+    PositionSegments(frame)
+end
+
+-- Color a resource bar from POWER_COLOR. powerType nil = the current displayed power
+-- (UnitPowerType's numeric index is NeverSecret). Falls back to mana-blue. The empty
+-- portion is tinted to a dim wash of the same color (unit-frame convention: the drained
+-- part reads as the resource, not neutral grey), which also makes each unfilled segment
+-- of the point-resource bar glow faintly like an empty pip.
+local MANA_FALLBACK = {0.30, 0.50, 0.85}
+local function ApplyResourceColor(statusBar, powerType)
+    local pt = powerType
+    if pt == nil then pt = UnitPowerType("player") end
+    local c = (pt and POWER_COLOR[pt]) or MANA_FALLBACK
+    statusBar:SetStatusBarColor(c[1], c[2], c[3], 0.9)
+    if statusBar.bg then statusBar.bg:SetVertexColor(c[1], c[2], c[3], 0.22) end
+end
+
+-- Anchor a resource bar to anchorBar (inherits its span/position in every mode and
+-- follows its resize), or to the offensive-queue position when anchorBar is nil.
+local function AnchorResourceBar(frame, mainFrame, profile, anchorBar, flush)
+    local orientation = profile.queueOrientation or "LEFT"
+    if profile.defensives and profile.defensives.detached then
+        orientation = profile.defensives.detachedOrientation or "LEFT"
+    end
+    local barIsHorizontal = (orientation == "LEFT" or orientation == "RIGHT")
+
+    frame:ClearAllPoints()
+    if anchorBar then
+        -- flush = stack directly against the anchor (secondary reads as one bar with
+        -- the primary); otherwise leave the standard gap off the health bar.
+        local gap = flush and 0 or BAR_SPACING
+        if barIsHorizontal then
+            frame:SetHeight(POWER_BAR_HEIGHT)
+            frame:SetPoint("BOTTOMLEFT",  anchorBar, "TOPLEFT",  0, gap)
+            frame:SetPoint("BOTTOMRIGHT", anchorBar, "TOPRIGHT", 0, gap)
+        else
+            frame:SetWidth(POWER_BAR_HEIGHT)
+            frame:SetPoint("BOTTOMLEFT", anchorBar, "BOTTOMRIGHT", gap, 0)
+            frame:SetPoint("TOPLEFT",    anchorBar, "TOPRIGHT",    gap, 0)
+        end
+        return barIsHorizontal
+    end
+
+    local iconSpacing = profile.iconSpacing or 1
+    local grabTabReserve = GrabTabReserve(orientation, iconSpacing)
+    local queueDimension, offset = ComputeOffensiveSpan(profile)
+    if barIsHorizontal then
+        frame:SetSize(queueDimension, POWER_BAR_HEIGHT)
+    else
+        frame:SetSize(POWER_BAR_HEIGHT, queueDimension)
+    end
+    if orientation == "LEFT" then
+        frame:SetPoint("BOTTOMLEFT",  mainFrame, "TOPLEFT",     offset,                    BAR_SPACING)
+    elseif orientation == "RIGHT" then
+        frame:SetPoint("BOTTOMRIGHT", mainFrame, "TOPRIGHT",   -(offset + grabTabReserve), BAR_SPACING)
+    elseif orientation == "DOWN" then
+        frame:SetPoint("TOPLEFT",     mainFrame, "TOPRIGHT",    BAR_SPACING,              -offset)
+    else -- UP
+        frame:SetPoint("BOTTOMLEFT",  mainFrame, "BOTTOMRIGHT", BAR_SPACING,               offset + grabTabReserve)
+    end
+    return barIsHorizontal
+end
+
+-- Build one resource statusBar. powerType nil = current displayed power. Unit-frame
+-- styling: flat fill in the power color over a dim same-color wash for the drained part
+-- (no tube bevel - too heavy on a 3px bar; the color wash carries the look instead).
+local function BuildResourceBar(addon, profile, powerType, anchorBar, flush)
+    local frame = CreateFrame("Frame", nil, addon.mainFrame)
+    local barIsHorizontal = AnchorResourceBar(frame, addon.mainFrame, profile, anchorBar, flush)
+
+    local statusBar = CreateFrame("StatusBar", nil, frame)
+    statusBar:SetAllPoints(frame)
+    statusBar:SetStatusBarTexture(BAR_TEXTURE)
+    statusBar:SetOrientation(barIsHorizontal and "HORIZONTAL" or "VERTICAL")
+    AddBarGloss(statusBar, barIsHorizontal)
+    AddBarBackground(statusBar)          -- sets statusBar.bg, then tinted to the power color
+    ApplyResourceColor(statusBar, powerType)
+
+    -- Flush bar (the secondary): a faint line along the seam so the pair still reads as
+    -- two bars despite touching. Anchored to a static edge, so no reposition needed.
+    if flush then
+        local div = statusBar:CreateTexture(nil, "OVERLAY", nil, 2)
+        div:SetTexture("Interface\\Buttons\\WHITE8X8")
+        div:SetVertexColor(0, 0, 0, 0.5)
+        if barIsHorizontal then
+            div:SetHeight(1)
+            div:SetPoint("BOTTOMLEFT",  statusBar, "BOTTOMLEFT",  0, 0)
+            div:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 0, 0)
+        else
+            div:SetWidth(1)
+            div:SetPoint("BOTTOMLEFT", statusBar, "BOTTOMLEFT", 0, 0)
+            div:SetPoint("TOPLEFT",    statusBar, "TOPLEFT",    0, 0)
+        end
+    end
+
+    frame.statusBar = statusBar
+    frame.powerType = powerType
+    frame.barIsHorizontal = barIsHorizontal
+    statusBar:SetScript("OnSizeChanged", function() PositionSegments(frame) end)
+    frame:Show()
+    return frame
+end
+
+--- Refresh the secondary bar for the current spec/form: cache the segment count, then
+--- show it (rebuilding its segments) only when the resource exists, else hide. Combo
+--- points exist in Cat but not Boomkin, chi for Windwalker only, etc. No recreation.
+function UIHealthBar.RefreshSecondaryPowerVisibility(addon)
+    if not secondaryPowerBarFrame then return end
+    local prev = secondarySegments
+    RefreshSecondaryCache()
+    if secondarySegments > 0 then
+        -- Rebuild only when the count actually changed (form/spec swap, or a talent that
+        -- raises the cap - e.g. a rogue trait taking combo points past 5). Keeps this
+        -- safe to call from high-frequency max-power events.
+        if secondarySegments ~= prev then
+            RebuildSegments(secondaryPowerBarFrame, secondarySegments)
+        end
+        secondaryPowerBarFrame:Show()
+    else
+        secondaryPowerBarFrame:Hide()
+    end
+end
+
+function UIHealthBar.CreatePowerBar(addon)
+    UIHealthBar.DestroyPower()  -- clears primary + secondary
+
+    if not addon or not addon.db or not addon.db.profile then return nil end
+    local profile = addon.db.profile
+    if not (profile.defensives and profile.defensives.showPowerBar) then return nil end
+    if not addon.mainFrame then return nil end
+
+    -- Primary: displayed power, anchored beyond the outermost health bar.
+    powerBarFrame = BuildResourceBar(addon, profile, nil, petHealthBarFrame or healthBarFrame)
+
+    -- Secondary: created when the class HAS a point resource, then shown/hidden (and
+    -- segmented) per spec/form. Stacked one bar-height beyond the primary.
+    local secType = GetClassSecondary()
+    if secType then
+        secondaryPowerBarFrame = BuildResourceBar(addon, profile, secType, powerBarFrame, true)
+        UIHealthBar.RefreshSecondaryPowerVisibility(addon)
+    end
+
+    UIHealthBar.UpdatePower(addon)
+    return powerBarFrame
+end
+
+local function UpdateOneResourceBar(frame)
+    if not frame or not frame:IsVisible() or not frame.statusBar then return end
+    local power = UnitPower("player", frame.powerType)
+    local maxPower = UnitPowerMax("player", frame.powerType)
+    if not power or not maxPower then return end
+    frame.statusBar:SetMinMaxValues(0, maxPower)
+    frame.statusBar:SetValue(power)
+end
+
+-- Update power values on timer / power events. UnitPower is secret in combat but
+-- StatusBar:SetValue accepts it (rendered by the engine).
+function UIHealthBar.UpdatePower(addon)
+    if not powerBarFrame or not powerBarFrame:IsVisible() then return end
+    local now = GetTime()
+    if now - lastPowerUpdate < UPDATE_INTERVAL then return end
+    lastPowerUpdate = now
+    UpdateOneResourceBar(powerBarFrame)
+    UpdateOneResourceBar(secondaryPowerBarFrame)
+end
+
+--- Power-type changed (form/stance): recolor the primary and re-evaluate whether the
+--- secondary is active for the new form, then refresh values.
+function UIHealthBar.UpdatePowerColor(addon)
+    if powerBarFrame and powerBarFrame.statusBar then
+        ApplyResourceColor(powerBarFrame.statusBar, powerBarFrame.powerType)
+    end
+    UIHealthBar.RefreshSecondaryPowerVisibility(addon)
+    lastPowerUpdate = 0  -- force the throttled UpdatePower to apply fresh values now
+    UIHealthBar.UpdatePower(addon)
+end
+
+function UIHealthBar.HidePower()
+    if powerBarFrame then powerBarFrame:Hide() end
+    if secondaryPowerBarFrame then secondaryPowerBarFrame:Hide() end
+end
+
+function UIHealthBar.UpdatePowerSize(addon)
+    if not addon or not addon.db or not addon.db.profile then return end
+    UIHealthBar.DestroyPower()
+    UIHealthBar.CreatePowerBar(addon)
+end
+
+function UIHealthBar.DestroyPower()
+    if secondaryPowerBarFrame then
+        secondaryPowerBarFrame:Hide()
+        secondaryPowerBarFrame:SetParent(nil)
+        secondaryPowerBarFrame = nil
+    end
+    if powerBarFrame then
+        powerBarFrame:Hide()
+        powerBarFrame:SetParent(nil)
+        powerBarFrame = nil
+    end
+    lastPowerUpdate = 0
+end
+
+--------------------------------------------------------------------------------
 -- Target Health Bar (hostile-only). Always spans the OFFENSIVE queue and hugs the
 -- OPPOSITE edge from the player/pet bars (below for horizontal queues, left for
 -- vertical), a fixed BAR_SPACING gap from the queue. No defensive-cluster spanning,
@@ -966,15 +1323,46 @@ end
 local targetHealthBarFrame = nil
 local lastTargetUpdate = 0
 
--- Offensive-queue span (dimension + first-icon offset) read straight from the profile;
--- same math as the player/pet bars, via the shared ComputeBarSpan.
-local function ComputeOffensiveSpan(profile)
-    local iconSize       = profile.iconSize or 42
-    local iconSpacing    = profile.iconSpacing or 1
-    local firstIconScale = profile.firstIconScale or 1.0
-    local maxIcons       = profile.maxIcons or 4
-    return ComputeBarSpan(iconSize * firstIconScale, iconSize, iconSpacing, maxIcons)
+-- ── Execute-range color cue (target bar) ──────────────────────────────────────
+-- When the target's health drops into execute range the bar shifts color as a
+-- "finish it" cue. Health is secret in combat, so we can't read a fraction to
+-- branch on - instead we map the secret fraction through a non-secret color curve
+-- entirely in the engine (Midnight: UnitHealthPercent + C_CurveUtil.CreateColorCurve).
+-- The curve domain is the 0-1 health fraction; below EXECUTE_FRACTION -> execute
+-- color, at/above -> normal hostile red. Feature-detected + pcall'd; without the
+-- API (or on error) the bar keeps its static red. Newer APIs are resolved at CALL
+-- time, never captured at load (they aren't populated this early).
+-- ponytail: single 20% threshold (the common execute / "very low" cue), not the
+-- exact per-spec execute %; make it per-spec if a spec's window feels off.
+local EXECUTE_FRACTION = 0.20
+local executeColorCurve  -- built lazily once the curve API is present
+local function GetExecuteColorCurve()
+    if executeColorCurve then return executeColorCurve end
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    if not (cu and cu.CreateColorCurve and stepType and CreateColor) then return nil end
+    local c = cu.CreateColorCurve()
+    if not c then return nil end
+    c:SetType(stepType)
+    c:AddPoint(0, CreateColor(1.0, 0.55, 0.0, 0.95))                -- execute: bright orange
+    c:AddPoint(EXECUTE_FRACTION, CreateColor(0.55, 0.06, 0.06, 0.9)) -- normal hostile red
+    executeColorCurve = c
+    return c
 end
+
+--- Apply the execute-range color to a target statusBar from its (secret) health
+--- fraction, in-engine. No-op (leaves static red) when the API is unavailable.
+local function ApplyExecuteColor(statusBar, unit)
+    local getPct = UnitHealthPercent ---@diagnostic disable-line: undefined-global
+    if not getPct then return end
+    local curve = GetExecuteColorCurve()
+    if not curve then return end
+    local ok, color = pcall(getPct, unit, false, curve)  -- false = raw health, no absorbs
+    if ok and color and color.GetRGBA then
+        pcall(statusBar.SetStatusBarColor, statusBar, color:GetRGBA())
+    end
+end
+
 
 -- Size + anchor the target bar: spans the offensive queue and hugs the OPPOSITE
 -- mainFrame edge to the player/pet bars (below for horizontal queues, left for
@@ -1045,9 +1433,10 @@ function UIHealthBar.CreateTargetHealthBar(addon)
     -- StatusBar (accepts secrets), shared dark background, red fill.
     local statusBar = CreateFrame("StatusBar", nil, frame)
     statusBar:SetAllPoints(frame)
-    statusBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8X8")
+    statusBar:SetStatusBarTexture(BAR_TEXTURE)
     statusBar:SetOrientation(barIsHorizontal and "HORIZONTAL" or "VERTICAL")
-    statusBar:SetStatusBarColor(0.85, 0.10, 0.10, 0.9)  -- red (hostile target)
+    AddBarGloss(statusBar, barIsHorizontal)
+    statusBar:SetStatusBarColor(0.55, 0.06, 0.06, 0.9)  -- red (hostile target)
 
     AddBarBackground(statusBar)
     AddTubeBevel(statusBar, barIsHorizontal)
@@ -1082,6 +1471,9 @@ function UIHealthBar.UpdateTarget(addon)
     -- SetMinMaxValues/SetValue accept secret values directly (rendered by Blizzard).
     statusBar:SetMinMaxValues(0, maxHealth)
     statusBar:SetValue(health)
+
+    -- Execute-range color cue (engine-side, secret-safe; static red fallback).
+    ApplyExecuteColor(statusBar, "target")
 end
 
 -- Show/hide based on target existence + hostility.

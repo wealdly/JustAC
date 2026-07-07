@@ -196,7 +196,10 @@ end
 --- True when the current target already has this DoT live (so the queue should
 --- sink it). Confirmed instance > early-drop > post-cast window fallback.
 function DotTracker.IsDotActiveOnCurrentTarget(spellID)
-    if not spellID then return false end
+    -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
+    -- This query runs per rotation spell per build, so keeping it free when no DoT
+    -- is active matters for non-DoT specs and between-target lulls.
+    if not spellID or not next(applied) then return false end
     local e = applied[spellID]
     if not e then
         local base = baseOf(spellID)

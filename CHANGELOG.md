@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [4.38.0] - 2026-07-06
+
+### Added
+
+- Resource bar: an optional half-height bar (distinct from the health bar) for your primary resource - mana, energy, rage, runic power, and so on - stacked above your health bar and colored by resource type. Specs with a secondary point resource (combo points, runes, chi, holy power, soul shards, arcane charges, essence) get a second segmented bar stacked flush against the primary, colored to match and shown only in the forms/specs that actually use it - so the pair reads as one health-height bar. Enable it under Standard Queue, Defensive Display. Off by default.
+- The target health bar now shifts to a bright execute color when the target drops into execute range, as a glanceable "finish it" cue.
+
+### Fixed
+
+- Suggestions now refresh immediately when you change specialization, so shapeshift-form abilities are no longer briefly evaluated against the previous spec's data.
+
+### Improved
+
+- Reduced idle CPU: the damage-over-time readiness check is skipped entirely when no tracked DoTs are active (for example, on specs that don't maintain them).
+
 ## [4.37.0] - 2026-07-06
 
 ### Added

@@ -540,6 +540,9 @@ function JustAC:OnEnable()
     if UIHealthBar and UIHealthBar.CreateTargetHealthBar then
         UIHealthBar.CreateTargetHealthBar(self)
     end
+    if UIHealthBar and UIHealthBar.CreatePowerBar then
+        UIHealthBar.CreatePowerBar(self)
+    end
 
     local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
     if PrecombatOverlay and PrecombatOverlay.Init then PrecombatOverlay.Init(self) end
@@ -575,6 +578,9 @@ function JustAC:OnEnable()
     -- filters to player/pet/target at the C level before any Lua runs.
     local UNIT_EVENT_HANDLERS = {
         UNIT_HEALTH                  = "OnHealthChanged",
+        UNIT_POWER_FREQUENT          = "OnPowerChanged",
+        UNIT_DISPLAYPOWER            = "OnPowerTypeChanged",
+        UNIT_MAXPOWER                = "OnPowerTypeChanged",
         UNIT_AURA                    = "OnUnitAura",
         UNIT_SPELLCAST_SUCCEEDED     = "OnSpellcastSucceeded",
         UNIT_SPELLCAST_START         = "OnPlayerCastStart",
@@ -600,6 +606,9 @@ function JustAC:OnEnable()
     end
     local uf = self.unitEventFrame
     uf:RegisterUnitEvent("UNIT_HEALTH", "player", "pet")
+    uf:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
+    uf:RegisterUnitEvent("UNIT_DISPLAYPOWER", "player")
+    uf:RegisterUnitEvent("UNIT_MAXPOWER", "player")
     uf:RegisterUnitEvent("UNIT_AURA", "player", "target")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
     uf:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
@@ -805,6 +814,9 @@ function JustAC:EnterDisabledMode()
     if UIHealthBar and UIHealthBar.HideTarget then
         UIHealthBar.HideTarget()
     end
+    if UIHealthBar and UIHealthBar.HidePower then
+        UIHealthBar.HidePower()
+    end
 
     -- Hide nameplate overlay
     if UINameplateOverlay then UINameplateOverlay.HideAll() end
@@ -932,6 +944,20 @@ function JustAC:OnHealthChanged(event, unit)
     end
     if DefensiveEngine then DefensiveEngine.OnHealthChanged(self, event, unit) end
 end
+
+-- Player power/resource bar: value on UNIT_POWER_FREQUENT, color on UNIT_DISPLAYPOWER
+-- (power-type change, e.g. Druid form). Player-only; throttled inside UIHealthBar.
+function JustAC:OnPowerChanged(event, unit)
+    if unit ~= "player" then return end
+    if UIHealthBar and UIHealthBar.UpdatePower then UIHealthBar.UpdatePower(self) end
+end
+
+function JustAC:OnPowerTypeChanged(event, unit)
+    if unit ~= "player" then return end
+    if UIHealthBar and UIHealthBar.UpdatePowerColor then UIHealthBar.UpdatePowerColor(self) end
+    if UIHealthBar and UIHealthBar.UpdatePower then UIHealthBar.UpdatePower(self) end
+end
+
 function JustAC:InitializeDefensiveSpells()
     if DefensiveEngine then
         DefensiveEngine.InitializeDefensiveSpells(self)
@@ -1328,7 +1354,10 @@ function JustAC:OnSpecChange(event, unit)
         Options.RefreshAllDynamic(self)
     end
 
-    self:InvalidateCaches({spells = true, macros = true, hotkeys = true})
+    -- forms=true: a spec swap can change which form spells you know, so refresh
+    -- FormCache's form-spell map instead of waiting on its 30s TTL / a co-firing
+    -- UPDATE_SHAPESHIFT_FORMS.
+    self:InvalidateCaches({spells = true, macros = true, hotkeys = true, forms = true})
     self:RefreshInterruptSpells()
     self:ForceUpdateAll()
 end
@@ -1460,6 +1489,12 @@ end
 
 function JustAC:OnSpecialBarChanged()
     if ActionBarScanner and ActionBarScanner.OnSpecialBarChanged then ActionBarScanner.OnSpecialBarChanged() end
+    -- Bonus-bar paging (Druid Cat/Bear, etc.) remaps the action slots, so the
+    -- slot-usability cache and its slot->tracked-spell reverse map must refresh -
+    -- OnShapeshiftFormChanged relies on this co-firing handler to do it.
+    if BlizzardAPI and BlizzardAPI.InvalidateSlotUsabilityCache then
+        BlizzardAPI.InvalidateSlotUsabilityCache()
+    end
     self:ForceUpdate()
 end
 
@@ -1944,6 +1979,7 @@ function JustAC:UpdateFrameSize()
     if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
     if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
     if UIHealthBar and UIHealthBar.UpdateTargetSize then UIHealthBar.UpdateTargetSize(self) end
+    if UIHealthBar and UIHealthBar.UpdatePowerSize then UIHealthBar.UpdatePowerSize(self) end
     -- Re-apply target frame anchor after resize (SetSize doesn't move the frame, but
     -- the anchor guard IsShown check may not have fired before the first render)
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end

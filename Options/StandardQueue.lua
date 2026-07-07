@@ -529,6 +529,13 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
                     }),
+                    showPowerBar = W.toggle(addon, "defensives.showPowerBar", {
+                        name = "Show Resource Bar",
+                        desc = "Show a compact bar for your primary resource (mana, energy, combo points, etc.), stacked above your health bar. Colored by resource type.",
+                        order = 14, width = "normal", default = false,
+                        onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
+                        disabled = defensiveDisabled,
+                    }),
                     -- RESET
                     resetHeader = {
                         type = "header",
@@ -552,6 +559,7 @@ function StandardQueue.CreateTabArgs(addon)
                             def.showHealthBar    = true
                             def.showPetHealthBar = true
                             def.showTargetHealthBar = true
+                            def.showPowerBar     = false
                             -- Clear legacy migration keys
                             def.showOnlyInCombat    = nil
                             def.alwaysShowDefensive = nil
