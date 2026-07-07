@@ -30,7 +30,7 @@ local function rebuildNPO(addon)
 end
 
 function Overlay.CreateTabArgs(addon)
-    return {
+    local tab = {
         type = "group",
         name = L["Nameplate Overlay"],
         order = 3,
@@ -53,12 +53,8 @@ function Overlay.CreateTabArgs(addon)
                     queueVisibility = W.select(addon, "nameplateOverlay.queueVisibility", {
                         name = L["Queue Visibility"], desc = L["Queue Visibility desc"],
                         order = 2, width = "double", default = "always",
-                        values = {
-                            always         = L["Always"],
-                            combatOnly     = L["In Combat Only"],
-                            requireHostile = L["Require Hostile Target"],
-                        },
-                        sorting = { "always", "combatOnly", "requireHostile" },
+                        values = W.QUEUE_VISIBILITY_VALUES,
+                        sorting = W.QUEUE_VISIBILITY_SORTING,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = overlayDisabled,
                     }),
@@ -112,31 +108,6 @@ function Overlay.CreateTabArgs(addon)
                         disabled = overlayDisabled,
                     }),
 
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset General desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local npo = addon.db.profile.nameplateOverlay
-                            npo.queueVisibility = "always"
-                            npo.hideWhenMounted = false
-                            npo.reverseAnchor = false
-                            npo.expansion     = "down"
-                            npo.iconSize      = 32
-                            npo.iconSpacing   = 2
-                            npo.opacity       = 1.0
-                            rebuildNPO(addon)
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ═══════════════════════════════════════════════════════════════
@@ -164,13 +135,8 @@ function Overlay.CreateTabArgs(addon)
                     glowMode = W.select(addon, "nameplateOverlay.glowMode", {
                         name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
                         order = 12, width = "normal", default = "all",
-                        values = {
-                            all         = L["All Glows"],
-                            primaryOnly = L["Primary Only"],
-                            procOnly    = L["Proc Only"],
-                            none        = L["No Glows"],
-                        },
-                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        values = W.GLOW_VALUES,
+                        sorting = W.GLOW_SORTING,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = overlayDisabled,
                     }),
@@ -180,30 +146,6 @@ function Overlay.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdate() end,
                         disabled = overlayDisabled,
                     }),
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Offensive Display desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local npo = addon.db.profile.nameplateOverlay
-                            npo.maxIcons              = 3
-                            npo.firstIconScale        = 1.0
-                            npo.glowMode              = "all"
-                            npo.showGlow              = nil  -- clear legacy key
-                            npo.queueIconDesaturation = 0
-                            addon:ForceUpdate()
-                            rebuildNPO(addon)
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ═══════════════════════════════════════════════════════════════
@@ -237,12 +179,8 @@ function Overlay.CreateTabArgs(addon)
                     defensiveDisplayMode = W.select(addon, "nameplateOverlay.defensiveDisplayMode", {
                         name = L["Defensive Display Mode"], desc = L["Defensive Display Mode desc"],
                         order = 2, width = "double", default = "always",
-                        values = {
-                            healthBased = L["When Health Low"],
-                            combatOnly  = L["In Combat Only"],
-                            always      = L["Always"],
-                        },
-                        sorting = { "healthBased", "combatOnly", "always" },
+                        values = W.DEFENSIVE_DISPLAY_VALUES,
+                        sorting = W.DEFENSIVE_DISPLAY_SORTING,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = defDisabled,
                     }),
@@ -264,13 +202,8 @@ function Overlay.CreateTabArgs(addon)
                         desc = L["Highlight Mode desc"],
                         order = 4,
                         width = "normal",
-                        values = {
-                            all         = L["All Glows"],
-                            primaryOnly = L["Primary Only"],
-                            procOnly    = L["Proc Only"],
-                            none        = L["No Glows"],
-                        },
-                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        values = W.GLOW_VALUES,
+                        sorting = W.GLOW_SORTING,
                         get = function()
                             local npo = addon.db.profile.nameplateOverlay
                             return npo.defensiveGlowMode or npo.glowMode or "all"
@@ -298,35 +231,49 @@ function Overlay.CreateTabArgs(addon)
                             return not (SDB and SDB.ClassHasPetDefaults(pc))
                         end,
                     }),
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Defensive Display desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local npo = addon.db.profile.nameplateOverlay
-                            npo.showDefensives       = true
-                            npo.defensiveDisplayMode  = "always"
-                            npo.maxDefensiveIcons     = 3
-                            npo.defensiveIconScale    = 1.0
-                            npo.defensiveGlowMode     = "all"
-                            npo.showHealthBar         = true
-                            npo.showPetHealthBar      = true
-                            addon:ForceUpdateAll()
-                            rebuildNPO(addon)
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
 
         },
     }
+    tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
+        W.resetButton(990, L["Reset General desc"], function()
+            local npo = addon.db.profile.nameplateOverlay
+            npo.queueVisibility = "always"
+            npo.hideWhenMounted = false
+            npo.reverseAnchor = false
+            npo.expansion     = "down"
+            npo.iconSize      = 32
+            npo.iconSpacing   = 2
+            npo.opacity       = 1.0
+            rebuildNPO(addon)
+            W.NotifyChange()
+        end)
+    tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
+        W.resetButton(990, L["Reset Offensive Display desc"], function()
+            local npo = addon.db.profile.nameplateOverlay
+            npo.maxIcons              = 3
+            npo.firstIconScale        = 1.0
+            npo.glowMode              = "all"
+            npo.showGlow              = nil  -- clear legacy key
+            npo.queueIconDesaturation = 0
+            addon:ForceUpdate()
+            rebuildNPO(addon)
+            W.NotifyChange()
+        end)
+    tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
+        W.resetButton(990, L["Reset Defensive Display desc"], function()
+            local npo = addon.db.profile.nameplateOverlay
+            npo.showDefensives       = true
+            npo.defensiveDisplayMode  = "always"
+            npo.maxDefensiveIcons     = 3
+            npo.defensiveIconScale    = 1.0
+            npo.defensiveGlowMode     = "all"
+            npo.showHealthBar         = true
+            npo.showPetHealthBar      = true
+            addon:ForceUpdateAll()
+            rebuildNPO(addon)
+            W.NotifyChange()
+        end)
+    return tab
 end

@@ -21,19 +21,24 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 -- and expose RefreshAllDynamic for batch refresh call sites.
 -------------------------------------------------------------------------------
 local FORWARDERS = {
-    { publicName = "UpdateBlacklistOptions",     libName = "JustAC-OptionsOffensive",       methodName = "UpdateBlacklistOptions"     },
-    { publicName = "UpdateHotkeyOverrideOptions", libName = "JustAC-OptionsHotkeys",         methodName = "UpdateHotkeyOverrideOptions" },
+    { publicName = "UpdateBlacklistOptions",      libName = "JustAC-OptionsOffensive",       methodName = "UpdateBlacklistOptions",      public = true },
+    { publicName = "UpdateHotkeyOverrideOptions", libName = "JustAC-OptionsHotkeys",          methodName = "UpdateHotkeyOverrideOptions", public = true },
     { publicName = "UpdateDefensivesOptions",     libName = "JustAC-OptionsDefensives",      methodName = "UpdateDefensivesOptions"    },
     { publicName = "UpdateGapCloserOptions",      libName = "JustAC-OptionsGapClosers",      methodName = "UpdateGapCloserOptions"     },
     { publicName = "UpdateBurstInjectionOptions", libName = "JustAC-OptionsBurstInjection",  methodName = "UpdateBurstInjectionOptions"},
     { publicName = "UpdateCustomQueueOptions",    libName = "JustAC-OptionsCustomQueue",     methodName = "UpdateCustomQueueOptions"   },
 }
 
+-- Only UpdateBlacklistOptions and UpdateHotkeyOverrideOptions are invoked from
+-- outside the Options module (SpellQueue / JustAC), so only those get exposed as
+-- Options.UpdateX. The rest are driven purely through RefreshAllDynamic below.
 for _, f in ipairs(FORWARDERS) do
-    Options[f.publicName] = function(addon)
-        local mod = LibStub(f.libName, true)
-        if mod and mod[f.methodName] then
-            mod[f.methodName](addon)
+    if f.public then
+        Options[f.publicName] = function(addon)
+            local mod = LibStub(f.libName, true)
+            if mod and mod[f.methodName] then
+                mod[f.methodName](addon)
+            end
         end
     end
 end
@@ -100,6 +105,28 @@ local function CreateOptionsTable(addon)
         args = args,
     }
 end
+
+-------------------------------------------------------------------------------
+-- /jac inspect <topic> dispatch: topic → DebugCommands method. Every method
+-- accepts (addon, topicArg); the no-arg diagnostics simply ignore topicArg.
+-------------------------------------------------------------------------------
+local INSPECT_TOPICS = {
+    modules     = "ModuleDiagnostics",
+    cooldown    = "TestCooldownAPIs",
+    defensives  = "DefensiveDiagnostics",
+    interrupts  = "InterruptDiagnostics",
+    burst       = "BurstDiagnostics",
+    auras       = "AuraDiagnostics",
+    buffs       = "PrecombatBuffDiagnostics",
+    perf        = "PerformanceDiagnostics",
+    rank        = "ContextRankDiagnostics",
+    dots        = "DotDiagnostics",
+    chargediag  = "ChargeDiagnostics",
+    castdiag    = "CastDiagnostics",
+    healthprobe = "HealthProbe",
+    validate    = "ValidateAssumptions",
+}
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, chargediag [spell], castdiag, healthprobe, validate [arm]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler
@@ -180,41 +207,16 @@ local function HandleSlashCommand(addon, input)
         end
         if not topic then
             addon:Print("Usage: /jac inspect <topic>")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, chargediag [spell], castdiag, healthprobe, validate [arm]")
+            addon:Print(INSPECT_USAGE)
             return
         end
         topic = topic:lower()
-        if topic == "modules" then
-            CallDebug("ModuleDiagnostics")
-        elseif topic == "cooldown" then
-            CallDebug("TestCooldownAPIs", topicArg)
-        elseif topic == "defensives" then
-            CallDebug("DefensiveDiagnostics")
-        elseif topic == "interrupts" then
-            CallDebug("InterruptDiagnostics")
-        elseif topic == "burst" then
-            CallDebug("BurstDiagnostics")
-        elseif topic == "auras" then
-            CallDebug("AuraDiagnostics")
-        elseif topic == "buffs" then
-            CallDebug("PrecombatBuffDiagnostics")
-        elseif topic == "perf" then
-            CallDebug("PerformanceDiagnostics", topicArg)
-        elseif topic == "rank" then
-            CallDebug("ContextRankDiagnostics")
-        elseif topic == "dots" then
-            CallDebug("DotDiagnostics")
-        elseif topic == "chargediag" then
-            CallDebug("ChargeDiagnostics", topicArg)
-        elseif topic == "castdiag" then
-            CallDebug("CastDiagnostics")
-        elseif topic == "healthprobe" then
-            CallDebug("HealthProbe")
-        elseif topic == "validate" then
-            CallDebug("ValidateAssumptions", topicArg)
+        local method = INSPECT_TOPICS[topic]
+        if method then
+            CallDebug(method, topicArg)
         else
             addon:Print("Unknown inspect topic: '" .. topic .. "'")
-            addon:Print("Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, chargediag [spell], castdiag, healthprobe, validate [arm]")
+            addon:Print(INSPECT_USAGE)
         end
 
     elseif command == "help" then

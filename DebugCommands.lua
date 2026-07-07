@@ -4,6 +4,21 @@
 local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 21)
 if not DebugCommands then return end
 
+-- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
+-- plain string. Event args and struct fields can be secret in ways IsSecretValue
+-- misses, so force the value through the operations a secret throws on (compare +
+-- concat) inside a pcall and treat any throw as secret.
+local function SafeSecret(v)
+    if v == nil then return "nil" end
+    local ok, s = pcall(function()
+        local str = tostring(v)
+        local _ = (str == "")
+        return str .. ""
+    end)
+    if ok and type(s) == "string" then return s end
+    return "<secret>"
+end
+
 --------------------------------------------------------------------------------
 -- Help
 --------------------------------------------------------------------------------
@@ -1316,19 +1331,8 @@ function DebugCommands.ChargeDiagnostics(addon, spellArg)
         return
     end
 
-    -- Print-safe conversion; "<secret>" for secret values. Event args and struct
-    -- fields can be secret in ways IsSecretValue misses, so force the value
-    -- through compare+concat and catch the throw (same approach as castdiag).
-    local function safe(v)
-        if v == nil then return "nil" end
-        local ok, s = pcall(function()
-            local str = tostring(v)
-            local _ = (str == "")
-            return str .. ""
-        end)
-        if ok and type(s) == "string" then return s end
-        return "<secret>"
-    end
+    -- Print-safe conversion; "<secret>" for secret values (shared helper).
+    local safe = SafeSecret
 
     -- Resolve probe spells: named arg, else every charge spell in the spellbook.
     local probeSpells = {}
@@ -1453,21 +1457,10 @@ function DebugCommands.CastDiagnostics(addon)
 
     local function stamp(label) log[#log + 1] = string.format("%+.3fs %s", GetTime() - armT, label) end
 
-    -- Convert any value to a print-safe string. Returns "<secret>" for secret values,
-    -- secret-tainted strings, or anything tostring can't handle - never lets a secret
-    -- reach AceConsole's concat (which errors on secrets).
-    local function safe(v)
-        if v == nil then return "nil" end
-        -- IsSecretValue misses event-arg secrets, so don't trust it. Instead force the value
-        -- through the operations a secret throws on (compare + concat) and catch the error.
-        local ok, s = pcall(function()
-            local str = tostring(v)
-            local _ = (str == "")  -- comparison throws if str is a secret string
-            return str .. ""       -- concat throws if secret; returns a clean copy otherwise
-        end)
-        if ok and type(s) == "string" then return s end
-        return "<secret>"
-    end
+    -- Convert any value to a print-safe string (shared helper): "<secret>" for secret
+    -- values, secret-tainted strings, or anything tostring can't handle - never lets a
+    -- secret reach AceConsole's concat (which errors on secrets).
+    local safe = SafeSecret
 
     -- Capture .notInterruptible DURING the cast. The field is only valid while casting;
     -- reading it after STOP (as the old report did) always came back false. THIS is the

@@ -306,6 +306,14 @@ function SpellSearch.ClearDynamicArgs(argsTable, staticKeys)
 end
 
 -------------------------------------------------------------------------------
+-- Strip UI color escapes (|cAARRGGBB ... |r) so display names sort by their
+-- visible text. Returns a single value (the gsub match count is discarded).
+-------------------------------------------------------------------------------
+function SpellSearch.StripColor(s)
+    return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+
+-------------------------------------------------------------------------------
 -- Returns a name-function for a class-colored, spec-suffixed inline header.
 -- label: already-localized middle text, e.g. L["Blacklist"].
 -------------------------------------------------------------------------------

@@ -158,7 +158,7 @@ function Labels.CreateTabArgs(addon)
         BOTTOM      = L["Bottom Center"],
     }
 
-    return {
+    local tab = {
         type = "group",
         name = L["Icon Labels"],
         order = 6,
@@ -173,27 +173,6 @@ function Labels.CreateTabArgs(addon)
                     hotkeyGroup   = BuildLabelInlineGroup(addon, "hotkey",   L["Hotkey Text"],   1, 1.0, hotkeyAnchorValues, HOTKEY_ANCHORS, "TOPRIGHT",    "central"),
                     cooldownGroup = BuildLabelInlineGroup(addon, "cooldown", L["Cooldown Text"], 2, 0.5, nil, nil, nil,                                     "central"),
                     chargesGroup  = BuildLabelInlineGroup(addon, "charges",  L["Charge Count"],  3, 1.0, chargeAnchorValues, CHARGE_ANCHORS, "BOTTOMRIGHT", "central"),
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Icon Labels desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            addon.db.profile.textOverlays = {
-                                hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT" },
-                                cooldown = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=0.5} },
-                                charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
-                            }
-                            addon:UpdateFrameSize()
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ── SUB-TAB 2: NAMEPLATE OVERLAY ────────────────────────────
@@ -209,31 +188,31 @@ function Labels.CreateTabArgs(addon)
                     hotkeyGroup   = BuildLabelInlineGroup(addon, "hotkey",   L["Hotkey Text"],   1, 1.0, hotkeyAnchorValues, HOTKEY_ANCHORS, "TOPRIGHT",    "overlay"),
                     cooldownGroup = BuildLabelInlineGroup(addon, "cooldown", L["Cooldown Text"], 2, 0.5, nil, nil, nil,                                     "overlay"),
                     chargesGroup  = BuildLabelInlineGroup(addon, "charges",  L["Charge Count"],  3, 1.0, chargeAnchorValues, CHARGE_ANCHORS, "BOTTOMRIGHT", "overlay"),
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Icon Labels desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            if addon.db.profile.nameplateOverlay then
-                                addon.db.profile.nameplateOverlay.textOverlays = {
-                                    hotkey   = { fontScale = 1.0 },
-                                    cooldown = { fontScale = 1.0 },
-                                    charges  = { fontScale = 1.0 },
-                                }
-                            end
-                            rebuildNPO(addon)
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
         },
     }
+    tab.args.standard.args.resetHeader, tab.args.standard.args.resetDefaults =
+        W.resetButton(990, L["Reset Icon Labels desc"], function()
+            addon.db.profile.textOverlays = {
+                hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT" },
+                cooldown = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=0.5} },
+                charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
+            }
+            addon:UpdateFrameSize()
+            W.NotifyChange()
+        end)
+    tab.args.overlay.args.resetHeader, tab.args.overlay.args.resetDefaults =
+        W.resetButton(990, L["Reset Icon Labels desc"], function()
+            if addon.db.profile.nameplateOverlay then
+                addon.db.profile.nameplateOverlay.textOverlays = {
+                    hotkey   = { fontScale = 1.0 },
+                    cooldown = { fontScale = 1.0 },
+                    charges  = { fontScale = 1.0 },
+                }
+            end
+            rebuildNPO(addon)
+            W.NotifyChange()
+        end)
+    return tab
 end

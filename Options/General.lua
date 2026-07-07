@@ -35,7 +35,7 @@ function General.CreateTabArgs(addon)
     if labelsTab  then labelsTab.order  = 2 end
     if hotkeysTab then hotkeysTab.order = 3 end
 
-    return {
+    local tab = {
         type = "group",
         name = L["General"],
         order = 1,
@@ -305,44 +305,6 @@ function General.CreateTabArgs(addon)
                             return not standardEnabled and not overlayEnabled
                         end,
                     }),
-                    -- RESET (990+)
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset General desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local p = addon.db.profile
-                            p.displayMode         = "queue"
-                            p.interruptMode       = "kickPrefer"
-                            p.showFlash           = true
-                            p.showUsabilityTint   = true
-                            p.showRangeTint       = true
-                            p.showCastingHighlight = true
-                            p.greyOutWhileCasting = true
-                            p.greyOutWhileChanneling = true
-                            p.gamepadIconStyle    = "xbox"
-                            p.inputPreference     = "auto"
-                            p.interruptAlertSound = "None"
-                            -- Offensive queue content
-                            p.includeHiddenAbilities = true
-                            p.showSpellbookProcs     = true
-                            p.hideItemAbilities      = false
-                            -- Defensive queue content
-                            p.defensives.showProcs   = true
-                            local NPO = LibStub("JustAC-UINameplateOverlay", true)
-                            if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ── SUB-TAB 2: ICON LABELS ──────────────────────────────
@@ -351,4 +313,31 @@ function General.CreateTabArgs(addon)
             hotkeyOverrides = hotkeysTab,
         },
     }
+    tab.args.settings.args.resetHeader, tab.args.settings.args.resetDefaults =
+        W.resetButton(990, L["Reset General desc"], function()
+            local p = addon.db.profile
+            p.displayMode         = "queue"
+            p.interruptMode       = "kickPrefer"
+            p.showFlash           = true
+            p.showUsabilityTint   = true
+            p.showRangeTint       = true
+            p.showCastingHighlight = true
+            p.greyOutWhileCasting = true
+            p.greyOutWhileChanneling = true
+            p.gamepadIconStyle    = "xbox"
+            p.inputPreference     = "auto"
+            p.interruptAlertSound = "None"
+            -- Offensive queue content
+            p.includeHiddenAbilities = true
+            p.showSpellbookProcs     = true
+            p.hideItemAbilities      = false
+            -- Defensive queue content
+            p.defensives.showProcs   = true
+            local NPO = LibStub("JustAC-UINameplateOverlay", true)
+            if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
+            addon:UpdateFrameSize()
+            addon:ForceUpdateAll()
+            W.NotifyChange()
+        end)
+    return tab
 end

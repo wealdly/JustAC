@@ -5,13 +5,14 @@ local GapClosers = LibStub:NewLibrary("JustAC-OptionsGapClosers", 1)
 if not GapClosers then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
+local W = LibStub("JustAC-OptionsWidgets")
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local GapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function GapClosers.CreateTabArgs(addon)
-    return {
+    local tab = {
         type = "group",
         name = L["Gap-Closers"],
         order = 3,
@@ -32,80 +33,20 @@ function GapClosers.CreateTabArgs(addon)
                 order = 0,
                 fontSize = "medium",
             },
-            enabled = {
-                type = "toggle",
-                name = L["Enable Gap-Closer Suggestions"],
-                desc = L["Enable Gap-Closer Suggestions desc"],
-                order = 1,
-                width = "full",
-                get = function()
-                    local profile = addon:GetProfile()
-                    return profile and profile.gapClosers and profile.gapClosers.enabled
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.gapClosers then
-                        profile.gapClosers = { enabled = val, classSpells = {} }
-                    else
-                        profile.gapClosers.enabled = val
-                    end
-                    addon:ForceUpdate()
-                end,
-            },
-            showGlow = {
-                type = "toggle",
-                name = L["Show Gap-Closer Glow"],
-                desc = L["Show Gap-Closer Glow desc"],
-                order = 2,
-                width = "full",
-                disabled = function()
-                    local profile = addon:GetProfile()
+            enabled = W.toggle(addon, "gapClosers.enabled", {
+                name = L["Enable Gap-Closer Suggestions"], desc = L["Enable Gap-Closer Suggestions desc"],
+                order = 1, width = "full",
+                onSet = function() addon:ForceUpdate() end,
+            }),
+            showGlow = W.toggle(addon, "gapClosers.showGlow", {
+                name = L["Show Gap-Closer Glow"], desc = L["Show Gap-Closer Glow desc"],
+                order = 2, width = "full",
+                onSet = function() addon:ForceUpdate() end,
+                disabled = function(a)
+                    local profile = a:GetProfile()
                     return not (profile and profile.gapClosers and profile.gapClosers.enabled)
                 end,
-                get = function()
-                    local profile = addon:GetProfile()
-                    return profile and profile.gapClosers and profile.gapClosers.showGlow == true
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.gapClosers then
-                        profile.gapClosers = { enabled = false, showGlow = val, classSpells = {} }
-                    else
-                        profile.gapClosers.showGlow = val
-                    end
-                    addon:ForceUpdate()
-                end,
-            },
-            -- RESET (990+)
-            resetHeader = {
-                type = "header",
-                name = "",
-                order = 990,
-            },
-            resetDefaults = {
-                type = "execute",
-                name = L["Reset to Defaults"],
-                desc = L["Reset Gap-Closers desc"],
-                order = 991,
-                width = "normal",
-                func = function()
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.gapClosers then
-                        profile.gapClosers = { enabled = false, classSpells = {} }
-                    end
-                    profile.gapClosers.enabled = false
-                    profile.gapClosers.showGlow = true  -- default: true (glow on by default)
-                    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-                    if GCE and GCE.InvalidateGapCloserCache then
-                        GCE.InvalidateGapCloserCache()
-                    end
-                    addon:ForceUpdate()
-                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                end,
-            },
+            }),
             -- SPELL LIST (10+)
             spellListGroup = {
                 type = "group",
@@ -147,6 +88,22 @@ function GapClosers.CreateTabArgs(addon)
             },
         },
     }
+    tab.args.resetHeader, tab.args.resetDefaults = W.resetButton(990, L["Reset Gap-Closers desc"], function()
+        local profile = addon:GetProfile()
+        if not profile then return end
+        if not profile.gapClosers then
+            profile.gapClosers = { enabled = false, classSpells = {} }
+        end
+        profile.gapClosers.enabled = false
+        profile.gapClosers.showGlow = true  -- default: true (glow on by default)
+        local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
+        if GCE and GCE.InvalidateGapCloserCache then
+            GCE.InvalidateGapCloserCache()
+        end
+        addon:ForceUpdate()
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+    end)
+    return tab
 end
 
 function GapClosers.UpdateGapCloserOptions(addon)

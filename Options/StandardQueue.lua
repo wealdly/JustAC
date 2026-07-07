@@ -40,7 +40,7 @@ local function defEnabledDisabled(addon)
 end
 
 function StandardQueue.CreateTabArgs(addon)
-    return {
+    local tab = {
         type = "group",
         name = L["Standard Queue"],
         order = 2,
@@ -65,12 +65,8 @@ function StandardQueue.CreateTabArgs(addon)
                     queueVisibility = W.select(addon, "queueVisibility", {
                         name = L["Queue Visibility"], desc = L["Queue Visibility desc"],
                         order = 2, width = "double", default = "always",
-                        values = {
-                            always         = L["Always"],
-                            combatOnly     = L["In Combat Only"],
-                            requireHostile = L["Require Hostile Target"],
-                        },
-                        sorting = { "always", "combatOnly", "requireHostile" },
+                        values = W.QUEUE_VISIBILITY_VALUES,
+                        sorting = W.QUEUE_VISIBILITY_SORTING,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = panelDisabled,
                     }),
@@ -321,43 +317,6 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdate() end,
                         disabled = panelDisabled,
                     }),
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset General desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local p = addon.db.profile
-                            p.queueVisibility      = "always"
-                            p.hideQueueWhenMounted  = false
-                            -- Clear legacy visibility keys
-                            p.hideQueueOutOfCombat  = nil
-                            p.requireHostileTarget  = nil
-                            p.iconSize            = 42
-                            p.iconSpacing         = 1
-                            p.queueOrientation    = "LEFT"
-                            p.targetFrameAnchor   = "DISABLED"
-                            p.defensives.position = "SIDE1"
-                            p.frameOpacity        = 1.0
-                            p.tooltipMode         = "always"
-                            p.panelInteraction    = "unlocked"
-                            p.clickToCastOOC      = true
-                            -- Clear legacy migration keys
-                            p.panelLocked      = nil
-                            p.showTooltips     = nil
-                            p.tooltipsInCombat = nil
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdate()
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ═══════════════════════════════════════════════════════════════
@@ -383,13 +342,8 @@ function StandardQueue.CreateTabArgs(addon)
                     glowMode = W.select(addon, "glowMode", {
                         name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
                         order = 3, width = "normal", default = "all",
-                        values = {
-                            all = L["All Glows"],
-                            primaryOnly = L["Primary Only"],
-                            procOnly = L["Proc Only"],
-                            none = L["No Glows"],
-                        },
-                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        values = W.GLOW_VALUES,
+                        sorting = W.GLOW_SORTING,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = panelDisabled,
                     }),
@@ -399,29 +353,6 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdate() end,
                         disabled = panelDisabled,
                     }),
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Offensive Display desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local p = addon.db.profile
-                            p.maxIcons              = 4
-                            p.firstIconScale        = 1.0
-                            p.glowMode              = "all"
-                            p.queueIconDesaturation = 0
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdate()
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
             -- ═══════════════════════════════════════════════════════════════
@@ -456,12 +387,8 @@ function StandardQueue.CreateTabArgs(addon)
                     displayMode = W.select(addon, "defensives.displayMode", {
                         name = L["Defensive Display Mode"], desc = L["Defensive Display Mode desc"],
                         order = 2, width = "double", default = "always",
-                        values = {
-                            healthBased = L["When Health Low"],
-                            combatOnly = L["In Combat Only"],
-                            always = L["Always"],
-                        },
-                        sorting = {"healthBased", "combatOnly", "always"},
+                        values = W.DEFENSIVE_DISPLAY_VALUES,
+                        sorting = W.DEFENSIVE_DISPLAY_SORTING,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = defEnabledDisabled,
                     }),
@@ -480,13 +407,8 @@ function StandardQueue.CreateTabArgs(addon)
                     glowMode = W.select(addon, "defensives.glowMode", {
                         name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
                         order = 5, width = "normal", default = "all",
-                        values = {
-                            all         = L["All Glows"],
-                            primaryOnly = L["Primary Only"],
-                            procOnly    = L["Proc Only"],
-                            none        = L["No Glows"],
-                        },
-                        sorting = {"all", "primaryOnly", "procOnly", "none"},
+                        values = W.GLOW_VALUES,
+                        sorting = W.GLOW_SORTING,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = defEnabledDisabled,
                     }),
@@ -536,41 +458,66 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
                     }),
-                    -- RESET
-                    resetHeader = {
-                        type = "header",
-                        name = "",
-                        order = 990,
-                    },
-                    resetDefaults = {
-                        type = "execute",
-                        name = L["Reset to Defaults"],
-                        desc = L["Reset Defensive Display desc"],
-                        order = 991,
-                        width = "normal",
-                        func = function()
-                            local def = addon.db.profile.defensives
-                            def.enabled          = true
-                            def.displayMode      = "always"
-                            def.maxIcons         = 4
-                            def.iconScale        = 1.0
-                            def.glowMode         = "all"
-                            def.hideEmergencyUntilLow = false
-                            def.showHealthBar    = true
-                            def.showPetHealthBar = true
-                            def.showTargetHealthBar = true
-                            def.showPowerBar     = false
-                            -- Clear legacy migration keys
-                            def.showOnlyInCombat    = nil
-                            def.alwaysShowDefensive = nil
-                            addon:UpdateFrameSize()
-                            addon:ForceUpdateAll()
-                            W.NotifyChange()
-                        end,
-                    },
                 },
             },
 
         },
     }
+    tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
+        W.resetButton(990, L["Reset General desc"], function()
+            local p = addon.db.profile
+            p.queueVisibility      = "always"
+            p.hideQueueWhenMounted  = false
+            -- Clear legacy visibility keys
+            p.hideQueueOutOfCombat  = nil
+            p.requireHostileTarget  = nil
+            p.iconSize            = 42
+            p.iconSpacing         = 1
+            p.queueOrientation    = "LEFT"
+            p.targetFrameAnchor   = "DISABLED"
+            p.defensives.position = "SIDE1"
+            p.frameOpacity        = 1.0
+            p.tooltipMode         = "always"
+            p.panelInteraction    = "unlocked"
+            p.clickToCastOOC      = true
+            -- Clear legacy migration keys
+            p.panelLocked      = nil
+            p.showTooltips     = nil
+            p.tooltipsInCombat = nil
+            addon:UpdateFrameSize()
+            addon:ForceUpdate()
+            W.NotifyChange()
+        end)
+    tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
+        W.resetButton(990, L["Reset Offensive Display desc"], function()
+            local p = addon.db.profile
+            p.maxIcons              = 4
+            p.firstIconScale        = 1.0
+            p.glowMode              = "all"
+            p.queueIconDesaturation = 0
+            addon:UpdateFrameSize()
+            addon:ForceUpdate()
+            W.NotifyChange()
+        end)
+    tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
+        W.resetButton(990, L["Reset Defensive Display desc"], function()
+            local def = addon.db.profile.defensives
+            def.enabled          = true
+            def.displayMode      = "always"
+            def.maxIcons         = 4
+            def.iconScale        = 1.0
+            def.glowMode         = "all"
+            def.hideEmergencyUntilLow = false
+            def.showHealthBar    = true
+            def.showPetHealthBar = true
+            def.showTargetHealthBar = true
+            def.showPowerBar     = false
+            -- Clear legacy migration keys
+            def.showOnlyInCombat    = nil
+            def.alwaysShowDefensive = nil
+            addon:UpdateFrameSize()
+            addon:ForceUpdateAll()
+            W.NotifyChange()
+        end)
+    return tab
 end

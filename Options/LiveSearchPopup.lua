@@ -4,6 +4,8 @@
 local LiveSearchPopup = LibStub:NewLibrary("JustAC-LiveSearchPopup", 1)
 if not LiveSearchPopup then return end
 
+local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+
 local MAX_ROWS   = 10
 local ROW_HEIGHT = 22
 local FRAME_W    = 340
@@ -118,9 +120,7 @@ local function PopulateRows(results)
         sorted[#sorted + 1] = { id = id, name = displayName }
     end
     table.sort(sorted, function(a, b)
-        local na = a.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        local nb = b.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        return na < nb
+        return SpellSearch.StripColor(a.name) < SpellSearch.StripColor(b.name)
     end)
 
     local count = math.min(#sorted, MAX_ROWS)

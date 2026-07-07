@@ -21,6 +21,7 @@ local W = LibStub:NewLibrary("JustAC-OptionsWidgets", 1)
 if not W then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
+local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 local function notifyChange()
     if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
@@ -112,5 +113,40 @@ end
 function W.toggle(addon, path, opts) return scalar(addon, "toggle", path, opts) end
 function W.range(addon, path, opts)  return scalar(addon, "range",  path, opts) end
 function W.select(addon, path, opts) return scalar(addon, "select", path, opts) end
+
+-- Standard "reset to defaults" scaffold shared by every panel: returns the empty
+-- header spacer (at `order`) and the reset execute button (at `order + 1`) as two
+-- values, so a call site assigns them to its resetHeader/resetDefaults keys. Only
+-- desc and func vary between panels.
+function W.resetButton(order, desc, func)
+    return
+        { type = "header", name = "", order = order },
+        { type = "execute", name = L["Reset to Defaults"], desc = desc, order = order + 1, width = "normal", func = func }
+end
+
+-- Select value/sorting tables duplicated across panels. Locale strings are static
+-- and loaded before this file, so building these once matches the inline copies
+-- byte-for-byte. Read-only - never mutate.
+W.GLOW_VALUES = {
+    all         = L["All Glows"],
+    primaryOnly = L["Primary Only"],
+    procOnly    = L["Proc Only"],
+    none        = L["No Glows"],
+}
+W.GLOW_SORTING = { "all", "primaryOnly", "procOnly", "none" }
+
+W.DEFENSIVE_DISPLAY_VALUES = {
+    healthBased = L["When Health Low"],
+    combatOnly  = L["In Combat Only"],
+    always      = L["Always"],
+}
+W.DEFENSIVE_DISPLAY_SORTING = { "healthBased", "combatOnly", "always" }
+
+W.QUEUE_VISIBILITY_VALUES = {
+    always         = L["Always"],
+    combatOnly     = L["In Combat Only"],
+    requireHostile = L["Require Hostile Target"],
+}
+W.QUEUE_VISIBILITY_SORTING = { "always", "combatOnly", "requireHostile" }
 
 return W

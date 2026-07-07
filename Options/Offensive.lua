@@ -152,9 +152,7 @@ function Offensive.UpdateBlacklistOptions(addon)
     end
 
     table.sort(entryList, function(a, b)
-        local na = a.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        local nb = b.name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        return na < nb
+        return SpellSearch.StripColor(a.name) < SpellSearch.StripColor(b.name)
     end)
 
     if #entryList == 0 then

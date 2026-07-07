@@ -5,13 +5,14 @@ local BurstInjection = LibStub:NewLibrary("JustAC-OptionsBurstInjection", 1)
 if not BurstInjection then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
+local W = LibStub("JustAC-OptionsWidgets")
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local BurstEngine = LibStub("JustAC-BurstInjectionEngine", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function BurstInjection.CreateTabArgs(addon)
-    return {
+    local tab = {
         type = "group",
         name = L["Burst Injection"] .. " |cFFFF8800(" .. L["Experimental"] .. ")|r",
         order = 4,
@@ -28,55 +29,25 @@ function BurstInjection.CreateTabArgs(addon)
                 order = 0.5,
                 fontSize = "medium",
             },
-            enabled = {
-                type = "toggle",
-                name = L["Enable Burst Injection"],
-                desc = L["Enable Burst Injection desc"],
-                order = 1,
-                width = "full",
-                get = function()
-                    local profile = addon:GetProfile()
-                    return profile and profile.burstInjection and profile.burstInjection.enabled
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.burstInjection then
-                        profile.burstInjection = { enabled = val, showGlow = true, triggerSpells = {}, injectionSpells = {} }
-                    else
-                        profile.burstInjection.enabled = val
-                    end
+            enabled = W.toggle(addon, "burstInjection.enabled", {
+                name = L["Enable Burst Injection"], desc = L["Enable Burst Injection desc"],
+                order = 1, width = "full",
+                onSet = function()
                     local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                     if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
                     BurstInjection.UpdateBurstInjectionOptions(addon)
                     addon:ForceUpdate()
                 end,
-            },
-            showGlow = {
-                type = "toggle",
-                name = L["Show Burst Glow"],
-                desc = L["Show Burst Glow desc"],
-                order = 2,
-                width = "full",
-                disabled = function()
-                    local profile = addon:GetProfile()
+            }),
+            showGlow = W.toggle(addon, "burstInjection.showGlow", {
+                name = L["Show Burst Glow"], desc = L["Show Burst Glow desc"],
+                order = 2, width = "full",
+                onSet = function() addon:ForceUpdate() end,
+                disabled = function(a)
+                    local profile = a:GetProfile()
                     return not (profile and profile.burstInjection and profile.burstInjection.enabled)
                 end,
-                get = function()
-                    local profile = addon:GetProfile()
-                    return profile and profile.burstInjection and profile.burstInjection.showGlow == true
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.burstInjection then
-                        profile.burstInjection = { enabled = false, showGlow = val, triggerSpells = {}, injectionSpells = {} }
-                    else
-                        profile.burstInjection.showGlow = val
-                    end
-                    addon:ForceUpdate()
-                end,
-            },
+            }),
             fallbackDuration = {
                 type = "range",
                 name = L["Burst Window Duration"],
@@ -109,34 +80,6 @@ function BurstInjection.CreateTabArgs(addon)
                     local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
                     if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
                     addon:ForceUpdate()
-                end,
-            },
-            -- RESET (990+)
-            resetHeader = {
-                type = "header",
-                name = "",
-                order = 990,
-            },
-            resetDefaults = {
-                type = "execute",
-                name = L["Reset to Defaults"],
-                desc = L["Reset Burst Injection desc"],
-                order = 991,
-                width = "normal",
-                func = function()
-                    local profile = addon:GetProfile()
-                    if not profile then return end
-                    if not profile.burstInjection then
-                        profile.burstInjection = { enabled = false, showGlow = true, triggerSpells = {}, injectionSpells = {} }
-                    end
-                    profile.burstInjection.enabled = false
-                    profile.burstInjection.showGlow = true
-                    profile.burstInjection.fallbackDuration = nil
-
-                    local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
-                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
-                    addon:ForceUpdate()
-                    if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
                 end,
             },
             -- TRIGGER SPELL OVERRIDE LIST (10+)
@@ -261,6 +204,22 @@ function BurstInjection.CreateTabArgs(addon)
             },
         },
     }
+    tab.args.resetHeader, tab.args.resetDefaults = W.resetButton(990, L["Reset Burst Injection desc"], function()
+        local profile = addon:GetProfile()
+        if not profile then return end
+        if not profile.burstInjection then
+            profile.burstInjection = { enabled = false, showGlow = true, triggerSpells = {}, injectionSpells = {} }
+        end
+        profile.burstInjection.enabled = false
+        profile.burstInjection.showGlow = true
+        profile.burstInjection.fallbackDuration = nil
+
+        local engine = BurstEngine or LibStub("JustAC-BurstInjectionEngine", true)
+        if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
+        addon:ForceUpdate()
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+    end)
+    return tab
 end
 
 function BurstInjection.UpdateBurstInjectionOptions(addon)
