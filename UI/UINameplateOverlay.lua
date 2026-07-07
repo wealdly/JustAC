@@ -11,6 +11,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIRenderer = LibStub("JustAC-UIRenderer", true)
+local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -206,12 +207,13 @@ local function CreateOverlayHealthBar(initialWidth)
     bar:SetValue(1)
     bar:EnableMouse(false)
 
-    -- Bright red background so lost health is immediately visible.
-    local bg = bar:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(bar)
-    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-    bg:SetVertexColor(0.8, 0.1, 0.1, 0.9)
-    bar.bg = bg
+    -- Shared dark-neutral background + gloss sheen, so the overlay bar matches the
+    -- standard queue's styling exactly (fill reads as remaining health, missing
+    -- portion dark, lit-tube sheen). AddBarBackground sets bar.bg for later re-tint.
+    UIHealthBar.AddBarBackground(bar)
+    -- ponytail: gloss gradient is fixed to the create-time horizontal orientation;
+    -- on a 5px bar the direction is barely perceptible once the bar renders vertical.
+    UIHealthBar.AddBarGloss(bar, true)
 
     -- 1px black bevel strip on bar's OVERLAY layer; starts hidden (shown per orientation).
     local function bevelStrip(alpha, a, b, ox, oy, horizontal)

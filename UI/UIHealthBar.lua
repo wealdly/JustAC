@@ -139,6 +139,10 @@ local function AddBarGloss(statusBar, barIsHorizontal)
     return gloss
 end
 
+-- Shared with the nameplate overlay so its health bars get identical styling.
+UIHealthBar.AddBarBackground = AddBarBackground
+UIHealthBar.AddBarGloss      = AddBarGloss
+
 function UIHealthBar.CreateHealthBar(addon)
     if healthBarFrame then
         healthBarFrame:Hide()
