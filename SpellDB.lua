@@ -1057,7 +1057,6 @@ SpellDB.CLASS_BURST_DURATION_DEFAULTS = {
 }
 
 SpellDB.BURST_DURATION_FALLBACK = 10  -- seconds
-SpellDB.BURST_TRIGGER_THRESHOLD_DEFAULT = 45  -- seconds; legacy, kept for Options UI compatibility
 
 --------------------------------------------------------------------------------
 -- BURST TRIGGER DEFAULTS

@@ -1252,7 +1252,6 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
     if normalizedSub == "reset" then
         if SpellQueue and SpellQueue.ResetBuildStats then SpellQueue.ResetBuildStats() end
         if DefEngine and DefEngine.ResetBuildStats then DefEngine.ResetBuildStats() end
-        if addon and addon.ResetOOCEventCoalesceStats then addon:ResetOOCEventCoalesceStats() end
         addon:Print("|cff00ff00Build counters reset.|r")
         return
     end
@@ -1281,22 +1280,6 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
 
     local inCombat = UnitAffectingCombat("player")
     addon:Print("In combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
-
-    local coalesceStats = addon and addon.GetOOCEventCoalesceStats and addon:GetOOCEventCoalesceStats()
-    if coalesceStats then
-        local function printCoalesceLine(label, bucket)
-            local applied = (bucket and bucket.applied) or 0
-            local coalesced = (bucket and bucket.coalesced) or 0
-            local total = applied + coalesced
-            local coalescePct = total > 0 and (coalesced * 100 / total) or 0
-            local throttle = (bucket and bucket.throttle) or 0
-            addon:Print(string.format("OOC %s events: applied |cffadd8e6%d|r, coalesced |cffadd8e6%d|r (%.0f%%, throttle %.2fs)",
-                label, applied, coalesced, coalescePct, throttle))
-        end
-        printCoalesceLine("cooldown", coalesceStats.cooldown)
-        printCoalesceLine("usability", coalesceStats.usability)
-        printCoalesceLine("actionbar", coalesceStats.actionbar)
-    end
 
     if profile then
         local updateCVar = GetCVar and GetCVar("assistedCombatIconUpdateRate")

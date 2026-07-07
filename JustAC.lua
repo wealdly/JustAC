@@ -24,11 +24,6 @@ local OOC_EVENT_DIRTY_THROTTLE = 0.2     -- Coalesce OOC cooldown/usability even
 local lastOOCDirtyEvent = 0
 local OOC_ACTIONBAR_THROTTLE = 0.25      -- Coalesce OOC action-bar churn (cities/macros)
 local lastOOCActionBarEvent = 0
-local oocCoalesceStats = {
-    cooldown = { applied = 0, coalesced = 0 },
-    usability = { applied = 0, coalesced = 0 },
-    actionbar = { applied = 0, coalesced = 0 },
-}
 
 -- CVar cache (only needed by OnUpdateTick, but kept here for co-location with the rest)
 local cachedUpdateRate = nil
@@ -1458,13 +1453,11 @@ function JustAC:OnActionBarChanged(event, slot)
     if not inCombat then
         local now = GetTime()
         if (now - lastOOCActionBarEvent) < OOC_ACTIONBAR_THROTTLE then
-            oocCoalesceStats.actionbar.coalesced = oocCoalesceStats.actionbar.coalesced + 1
             spellQueueDirty = true
             defensiveQueueDirty = true
             return
         end
         lastOOCActionBarEvent = now
-        oocCoalesceStats.actionbar.applied = oocCoalesceStats.actionbar.applied + 1
     end
 
     -- ACTIONBAR_SLOT_CHANGED fires constantly in cities (dynamic macro icons
@@ -1621,11 +1614,9 @@ function JustAC:OnActionUsableChanged(_, changes)
     if not inCombat then
         local now = GetTime()
         if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
-            oocCoalesceStats.usability.coalesced = oocCoalesceStats.usability.coalesced + 1
             return
         end
         lastOOCDirtyEvent = now
-        oocCoalesceStats.usability.applied = oocCoalesceStats.usability.applied + 1
     end
 
     spellQueueDirty = true
@@ -1771,11 +1762,9 @@ function JustAC:OnCooldownUpdate()
     if not inCombat then
         local now = GetTime()
         if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
-            oocCoalesceStats.cooldown.coalesced = oocCoalesceStats.cooldown.coalesced + 1
             return
         end
         lastOOCDirtyEvent = now
-        oocCoalesceStats.cooldown.applied = oocCoalesceStats.cooldown.applied + 1
     end
 
     spellQueueDirty = true
@@ -1797,35 +1786,6 @@ end
 
 function JustAC:ForceUpdateAll()
     self:ForceUpdate(true)
-end
-
-function JustAC:GetOOCEventCoalesceStats()
-    return {
-        cooldown = {
-            applied = oocCoalesceStats.cooldown.applied,
-            coalesced = oocCoalesceStats.cooldown.coalesced,
-            throttle = OOC_EVENT_DIRTY_THROTTLE,
-        },
-        usability = {
-            applied = oocCoalesceStats.usability.applied,
-            coalesced = oocCoalesceStats.usability.coalesced,
-            throttle = OOC_EVENT_DIRTY_THROTTLE,
-        },
-        actionbar = {
-            applied = oocCoalesceStats.actionbar.applied,
-            coalesced = oocCoalesceStats.actionbar.coalesced,
-            throttle = OOC_ACTIONBAR_THROTTLE,
-        },
-    }
-end
-
-function JustAC:ResetOOCEventCoalesceStats()
-    oocCoalesceStats.cooldown.applied = 0
-    oocCoalesceStats.cooldown.coalesced = 0
-    oocCoalesceStats.usability.applied = 0
-    oocCoalesceStats.usability.coalesced = 0
-    oocCoalesceStats.actionbar.applied = 0
-    oocCoalesceStats.actionbar.coalesced = 0
 end
 
 function JustAC:OpenOptionsPanel()

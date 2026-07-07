@@ -558,9 +558,6 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     anchorState.chainOffX  = chainOffX
     anchorState.chainOffY  = chainOffY
     anchorState.iconSpacing = iconSpacing
-    if showDefensives then
-        AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
-    end
 
     -- Hide health bars so RenderDefensives can show them at the correct
     -- expansion-aware position. lastDefVisibleCount=0 (set on new nameplate)

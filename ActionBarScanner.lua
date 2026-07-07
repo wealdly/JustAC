@@ -1003,11 +1003,6 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
     return ""
 end
 
--- Exported helper: apply input preference to a GetBindingKey() call.
-function ActionBarScanner.SelectBindingKey(bindingName)
-    return SelectBinding(GetBindingKey(bindingName)) or ""
-end
-
 function ActionBarScanner.InvalidateKeybindCache()
     InvalidateKeybindCache()
 end
@@ -1126,19 +1121,6 @@ end
 function ActionBarScanner.GetSpellbookProccedSpells()
     RebuildProcList()
     return activeProcsList
-end
-
-function ActionBarScanner.IsSpellProcced(spellID)
-    if not spellID or spellID == 0 then return false end
-    if activeProcs[spellID] then return true end
-    -- Proc events may fire with different ID than display ID
-    if BlizzardAPI and BlizzardAPI.GetDisplaySpellID then
-        local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
-        if displayID and displayID ~= spellID and activeProcs[displayID] then
-            return true
-        end
-    end
-    return false
 end
 
 function ActionBarScanner.HasKeybind(spellID)

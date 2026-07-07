@@ -578,9 +578,3 @@ function BurstInjectionEngine.PreCacheRotationCooldowns()
     end
 end
 
---- Return the cached base cooldown for a spell (seconds), or 0 if not cached.
---- Combat-safe: reads from the pre-populated cache, never calls GetSpellBaseCooldown.
-function BurstInjectionEngine.GetCachedBaseCooldown(spellID)
-    if not spellID then return 0 end
-    return baseCooldownCache[spellID] or 0
-end
