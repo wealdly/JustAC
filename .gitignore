@@ -8,6 +8,10 @@ memory/
 .vscode/
 *.code-workspace
 
+# luacheck binary: dev-only static-analysis tool, not committed (platform-specific,
+# ~700KB). Fetch via tools/check.ps1's hint. The .luacheckrc config IS committed.
+tools/luacheck.exe
+
 # Local-only agent instruction file (references agents/tooling; never published)
 CLAUDE.md
 

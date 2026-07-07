@@ -1,0 +1,177 @@
+-- .luacheckrc - static analysis config for JustAC (World of Warcraft addon, Lua 5.1)
+--
+-- Run:  tools/check.ps1            (preferred wrapper, falls back if luacheck absent)
+--   or: tools/luacheck.exe .       (direct)
+--
+-- read_globals below is harvested from the addon's actual API usage. That is the
+-- point of the gate: a NEW undefined global (a typo'd WoW API, or a `local` you
+-- forgot to declare) will NOT be in this list, so luacheck flags it. Do not add a
+-- name here just to silence a warning without confirming the API really exists.
+--
+-- Deliberately NOT whitelisted: C_Spell_GetSpellCooldown - it is a per-file local
+-- in some files but referenced bare-global in UI/UIRenderer.lua (a dead branch).
+-- Leaving it out keeps that latent issue visible.
+
+std = "lua51"
+max_line_length = false
+
+exclude_files = { "Libs/", "dist/", "tools/" }
+
+-- Intentional writable globals: the addon's namespace export, the `_` throwaway,
+-- and StaticPopupDialogs (WoW's global dialog registry that addons add keys to).
+globals = { "JustACGlobal", "_", "StaticPopupDialogs" }
+
+-- Noise codes suppressed (cosmetic or idiomatic for WoW callback code). Kept ON:
+-- 113/143 (undefined global/field - the whole point), 211 (unused local - catches
+-- orphaned code from consolidation), 111/112 (accidental globals).
+ignore = {
+  "212",  -- unused argument (WoW callback signatures pass args we ignore)
+  "213",  -- unused loop variable
+  "421",  -- shadowing a local (WoW code reuses spellID/i heavily)
+  "431",  -- shadowing an upvalue
+  "432",  -- shadowing an upvalue argument
+  "542",  -- empty if branch (deliberate secret-value no-op guards)
+  "611",  -- line contains only whitespace
+  "612",  -- line contains trailing whitespace
+  "614",  -- trailing whitespace in a comment
+}
+
+read_globals = {
+  "ActionButton_ApplyCooldown",
+  "BOOKTYPE_SPELL",
+  "BlizzardAPI",
+  "BreakUpLargeNumbers",
+  "C_ActionBar",
+  "C_AssistedCombat",
+  "C_Container",
+  "C_CooldownViewer",
+  "C_CreatureInfo",
+  "C_CurveUtil",
+  "C_DurationUtil",
+  "C_GamePad",
+  "C_Item",
+  "C_Map",
+  "C_MountJournal",
+  "C_NamePlate",
+  "C_PvP",
+  "C_Secrets",
+  "C_Spell",
+  "C_SpellActivationOverlay",
+  "C_SpellBook",
+  "C_Texture",
+  "C_Timer",
+  "C_UnitAuras",
+  "C_UnitHealth",
+  "CreateColor",
+  "CreateFrame",
+  "Enum",
+  "EventRegistry",
+  "FindBaseSpellByID",
+  "FindSpellOverrideByID",
+  "FocusFrame",
+  "GameTooltip",
+  "GetActionBarPage",
+  "GetActionCooldown",
+  "GetActionInfo",
+  "GetActionText",
+  "GetBindingKey",
+  "GetBonusBarOffset",
+  "GetBuildInfo",
+  "GetCVar",
+  "GetCVarBool",
+  "GetHaste",
+  "GetInstanceInfo",
+  "GetInventoryItemID",
+  "GetItemCooldown",
+  "GetItemCount",
+  "GetItemIcon",
+  "GetItemInfo",
+  "GetItemInfoInstant",
+  "GetItemSpell",
+  "GetMacroInfo",
+  "GetNumShapeshiftForms",
+  "GetNumSpecializations",
+  "GetNumSpellTabs",
+  "GetScreenHeight",
+  "GetScreenWidth",
+  "GetShapeshiftForm",
+  "GetShapeshiftFormID",
+  "GetShapeshiftFormInfo",
+  "GetSpecialization",
+  "GetSpecializationInfo",
+  "GetSpecializationRole",
+  "GetSpellBaseCooldown",
+  "GetSpellBookItemInfo",
+  "GetSpellTabInfo",
+  "GetTime",
+  "GetWeaponEnchantInfo",
+  "HasAction",
+  "HasOverrideActionBar",
+  "HasPetUI",
+  "HasTempShapeshiftActionBar",
+  "HasVehicleActionBar",
+  "InCombatLockdown",
+  "IsActionInRange",
+  "IsAltKeyDown",
+  "IsControlKeyDown",
+  "IsInGroup",
+  "IsInRaid",
+  "IsMounted",
+  "IsMouseButtonDown",
+  "IsPlayerSpell",
+  "IsPossessBarVisible",
+  "IsResting",
+  "IsShiftKeyDown",
+  "IsSpellKnown",
+  "IsSpellKnownOrOverridesKnown",
+  "IsStealthed",
+  "IsUsableAction",
+  "LibStub",
+  "LowHealthFrame",
+  "PlaySoundFile",
+  "PlayerCastingBarFrame",
+  "PlayerFrame",
+  "PlayerHasToy",
+  "RegisterStateDriver",
+  "STANDARD_TEXT_FONT",
+  "SetCVar",
+  "Settings",
+  "StaticPopup_Show",
+  "TargetFrame",
+  "UIParent",
+  "UnitAffectingCombat",
+  "UnitAura",
+  "UnitCanAttack",
+  "UnitCastingDuration",
+  "UnitCastingInfo",
+  "UnitChannelDuration",
+  "UnitChannelInfo",
+  "UnitClass",
+  "UnitClassification",
+  "UnitCreatureType",
+  "UnitExists",
+  "UnitGUID",
+  "UnitGetIncomingHeals",
+  "UnitGetTotalAbsorbs",
+  "UnitHasVehicleUI",
+  "UnitHealth",
+  "UnitHealthMax",
+  "UnitHealthMissing",
+  "UnitHealthPercent",
+  "UnitIsCrowdControlled",
+  "UnitIsDead",
+  "UnitIsDeadOrGhost",
+  "UnitIsMinion",
+  "UnitIsQuestBoss",
+  "UnitIsUnit",
+  "UnitLevel",
+  "UnitName",
+  "UnitPercentHealthFromGUID",
+  "UnitPower",
+  "UnitPowerMax",
+  "UnitPowerType",
+  "bit",
+  "issecretvalue",
+  "strsplit",
+  "wipe",
+}
