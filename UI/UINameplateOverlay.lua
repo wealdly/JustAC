@@ -354,10 +354,16 @@ local function PositionOverlayPowerBars(npo, expansion, isLeft, barWidth, barHei
         RefreshOverlaySecondaryCache()
         if overlaySecondarySegments > 0 then
             AnchorOverlayPowerBar(overlaySecondaryPowerBar, overlayPowerBar, expansion, isLeft, barWidth, barHeight)
+            -- Explicit non-secret dims: the bar anchors into the secret nameplate, so its
+            -- GetWidth/GetHeight are secret. Segments run along the bar's length; the other
+            -- axis is POWER_BAR_HEIGHT. (out = horizontal, up/down = vertical.)
+            local horizontal = (expansion == "out")
+            local segW = horizontal and barWidth or POWER_BAR_HEIGHT
+            local segH = horizontal and POWER_BAR_HEIGHT or barHeight
             if overlaySecondaryPowerBar.segmentCount ~= overlaySecondarySegments then
-                UIHealthBar.RebuildSegments(overlaySecondaryPowerBar, overlaySecondarySegments)
+                UIHealthBar.RebuildSegments(overlaySecondaryPowerBar, overlaySecondarySegments, segW, segH)
             else
-                UIHealthBar.PositionSegments(overlaySecondaryPowerBar)  -- re-lay-out for new size/orientation
+                UIHealthBar.PositionSegments(overlaySecondaryPowerBar, segW, segH)  -- re-lay-out for new size/orientation
             end
             overlaySecondaryPowerBar:SetAlpha(opacity)
             overlaySecondaryPowerBar:Show()

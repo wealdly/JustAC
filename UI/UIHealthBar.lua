@@ -1073,12 +1073,16 @@ local function RefreshSecondaryCache()
 end
 
 -- Reposition segment dividers proportionally along the bar (on size change / rebuild).
-local function PositionSegments(frame)
+local function PositionSegments(frame, w, h)
     local segs = frame and frame.segments
     local n = frame and frame.segmentCount or 0
     if not segs or n <= 1 then return end
     local sb = frame.statusBar
-    local w, h = sb:GetWidth(), sb:GetHeight()
+    -- Explicit dims for callers whose GetWidth/GetHeight are secret: the nameplate
+    -- overlay anchors its bars into the (secret) nameplate, so a live-size read there
+    -- returns a secret number that can't be compared. Standard queue passes neither.
+    w = w or sb:GetWidth()
+    h = h or sb:GetHeight()
     for i = 1, n - 1 do
         local tex = segs[i]
         if tex and tex:IsShown() then
@@ -1098,7 +1102,7 @@ UIHealthBar.PositionSegments = PositionSegments  -- shared with the nameplate ov
 
 -- Draw n-1 dividers so the (passthrough-filled) secondary reads as n discrete segments
 -- - combo points / holy power / chi / etc. are point resources, not a continuous pool.
-local function RebuildSegments(frame, n)
+local function RebuildSegments(frame, n, w, h)
     frame.segments = frame.segments or {}
     for i = 1, #frame.segments do frame.segments[i]:Hide() end
     frame.segmentCount = n
@@ -1113,7 +1117,7 @@ local function RebuildSegments(frame, n)
         end
         tex:Show()
     end
-    PositionSegments(frame)
+    PositionSegments(frame, w, h)
 end
 UIHealthBar.RebuildSegments = RebuildSegments  -- shared with the nameplate overlay
 
