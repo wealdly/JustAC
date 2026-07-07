@@ -185,9 +185,13 @@ function KPD.Create(addon)
         -- can hold its display briefly after a confirmed keypress (prevents the
         -- icon from visually changing right as the player commits to it).
         local now2 = GetTime()
+        local overlayIcons = addon.nameplateIcons
         for _, icon in ipairs(iconsToFlash) do
             StartFlash(icon)
-            if icon == (spellIcons and spellIcons[1]) then
+            -- Stamp lastPressTime on whichever surface's slot-1 icon matched so the
+            -- renderer can hold its display briefly after a confirmed keypress.
+            if icon == (spellIcons and spellIcons[1])
+               or icon == (overlayIcons and overlayIcons[1]) then
                 icon.lastPressTime = now2
             end
         end

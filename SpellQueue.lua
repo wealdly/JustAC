@@ -552,6 +552,15 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(burstInjectedSpells)
     wipe(cooldownSpells)
     local maxIcons = profile.maxIcons or 4
+    -- The nameplate overlay renders from this same array; size it to whichever
+    -- surface shows more icons so a lower standard Max Icons can't starve the
+    -- overlay (which has its own, independently-configured Max Icons).
+    local npo = profile.nameplateOverlay
+    if npo and (profile.displayMode == "overlay" or profile.displayMode == "both") then
+        local npoMax = npo.maxIcons or 3
+        if npoMax > 7 then npoMax = 7 end
+        if npoMax > maxIcons then maxIcons = npoMax end
+    end
     local spellCount = 0
     local hideItems = profile.hideItemAbilities
 

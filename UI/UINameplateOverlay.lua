@@ -890,16 +890,26 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if displayMode ~= "overlay" and displayMode ~= "both" then return end
     if #dpsIcons == 0 then return end
 
-    -- Overlay-specific visibility (independent from the standard queue settings).
+    -- Overlay-specific visibility (independent settings, but the same-named options
+    -- behave identically to the standard queue's SpellQueue.EvaluateQueueVisibility).
     local queueVis = npo.queueVisibility or "always"
     local shouldHide = false
     if queueVis == "combatOnly" and not UnitAffectingCombat("player") then
         shouldHide = true
-    elseif queueVis == "requireHostile" and not UnitCanAttack("player", "target") then
-        shouldHide = true
+    elseif queueVis == "requireHostile" and not UnitAffectingCombat("player") then
+        -- requireHostile only gates out of combat (in combat the queue always shows).
+        if not (UnitExists("target") and UnitCanAttack("player", "target")) then
+            shouldHide = true
+        end
     end
-    if not shouldHide and npo.hideWhenMounted and IsMounted() then
-        shouldHide = true
+    if not shouldHide and npo.hideWhenMounted then
+        local isMounted = IsMounted()
+        if not isMounted then
+            -- Druid travel (3) / flight (27) form counts as mounted, matching the standard queue.
+            local formID = GetShapeshiftFormID()
+            if formID == 3 or formID == 27 then isMounted = true end
+        end
+        if isMounted then shouldHide = true end
     end
     if shouldHide then
         for _, icon in ipairs(dpsIcons) do icon:Hide() end
@@ -1051,7 +1061,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 if castTexture then
                     interruptIcon.castAura.iconTexture:SetTexture(castTexture)
                     if not interruptIcon.castAura:IsShown() then interruptIcon.castAura:Show() end
-                    interruptIcon.castAura:SetAlpha(opacity)
+                    -- No explicit alpha: castAura is a child of interruptIcon and inherits
+                    -- its opacity; setting it again would double-apply (opacity²). Matches
+                    -- the standard queue, which relies on the same inheritance.
                 else
                     if interruptIcon.castAura:IsShown() then interruptIcon.castAura:Hide() end
                 end
@@ -1093,10 +1105,18 @@ function UINameplateOverlay.Render(addon, spellIDs)
             spellInfo = spellID and GetCachedSpellInfo and GetCachedSpellInfo(spellID) or nil
         end
 
-        -- Position stabilization (positions 2+): hold the current spell for
-        -- POSITION_HOLD_TIME before replacing. Prevents rapid position shuffling
-        -- from proc/CD re-categorization. Position 1 always passes through.
-        if i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+        -- Position stabilization (mirrors the standard queue): position 1 holds its
+        -- spell briefly after a confirmed keypress (KeyPressDetector stamps
+        -- lastPressTime) so the icon doesn't change right as the player commits;
+        -- positions 2+ hold the current spell for POSITION_HOLD_TIME before
+        -- replacing, preventing rapid shuffling from proc/CD re-categorization.
+        if i == 1 and spellID and icon.spellID and icon.spellID ~= spellID then
+            if icon.lastPressTime and (now - icon.lastPressTime) < POSITION_HOLD_TIME then
+                spellID = icon.spellID
+                spellInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
+                if not spellInfo then spellID = nil end
+            end
+        elseif i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
             local holdElapsed = now - (icon.lastSpellSetTime or 0)
             if holdElapsed < POSITION_HOLD_TIME then
                 local oldStillQueued = false
@@ -1134,7 +1154,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 if icon.spellID then
                     icon.previousSpellID = icon.spellID
                     icon.spellChangeTime = now
-                    icon.previousNormalizedHotkey = icon.normalizedHotkey
+                    if icon.normalizedHotkey then
+                        icon.previousNormalizedHotkey = icon.normalizedHotkey
+                    end
                 end
                 icon.spellID = spellID
                 icon.lastSpellSetTime = now
@@ -1159,6 +1181,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 icon.cachedIsUsable       = nil
                 icon.cachedNotEnoughResources = nil
                 icon.lastUsabilityCheck   = nil
+            elseif not icon.iconTexture:GetTexture() then
+                -- Reload fallback: re-apply artwork if the texture was lost without a
+                -- spell change (e.g. UI reload), matching the standard queue.
+                icon.iconTexture:SetTexture(spellInfo.iconID)
+                icon.iconTexture:Show()
             end
 
             -- Wait label: Blizzard's "waiting for resources" placeholder (iconID 134377).
@@ -1259,9 +1286,22 @@ function UINameplateOverlay.Render(addon, spellIDs)
                 UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false
             end
 
+            -- "Switch target" arrow: slot 1 only, when AC re-recommends a DoT already
+            -- live on the current target (spread cue from SpellQueue). Mirrors the
+            -- standard queue; the setting is already honored inside IsDotSpreadActive.
+            if icon.spreadArrow then
+                if i == 1 and SpellQueue and SpellQueue.IsDotSpreadActive and SpellQueue.IsDotSpreadActive() then
+                    icon.spreadArrow:Show()
+                elseif icon.spreadArrow:IsShown() then
+                    icon.spreadArrow:Hide()
+                end
+            end
+
             -- Hotkey: look up on spell change or throttle interval; always track
-            -- normalizedHotkey for flash matching even when display is off
-            if spellChanged or shouldUpdateCooldowns or not icon.cachedHotkey then
+            -- normalizedHotkey for flash matching even when display is off.
+            -- Empty ("") results are retried every frame so proc-override hotkeys
+            -- that miss on the first frame resolve promptly (matches standard queue).
+            if spellChanged or shouldUpdateCooldowns or not icon.cachedHotkey or icon.cachedHotkey == "" then
                 local hotkey
                 if isItemEntry then
                     hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(itemID, icon.itemCastSpellID) or ""
