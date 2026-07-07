@@ -1378,24 +1378,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
             -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
             if intShowHotkeys and intIcon.cachedHotkey and intIcon.cachedHotkey ~= "" then
-                do
-                    local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
-                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                        intIcon.cachedOutOfRange = (inRange == false)
-                    else
-                        intIcon.cachedOutOfRange = false
-                    end
-                end
-                local isOutOfRange = intIcon.cachedOutOfRange or false
-                if intIcon.lastOutOfRange ~= isOutOfRange then
-                    if isOutOfRange then
-                        intIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
-                    else
-                        local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
-                        intIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
-                    end
-                    intIcon.lastOutOfRange = isOutOfRange
-                end
+                local isOutOfRange = CheckSpellRange(intIcon, intSpellID, nil)
+                local hkc = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
+                UpdateRangeHotkeyColor(intIcon, isOutOfRange, hkc)
             end
 
             -- No channeling grey-out for interrupts: they are urgent actions the

@@ -67,7 +67,6 @@ local savedShowQuestUnitCircles = nil -- original CVar value before we suppresse
 local questIndicator   = nil  -- our replacement quest "!" texture on the nameplate
 local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
-local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-global
 
 -- Masque support (separate group from standard/defensive queues)
@@ -1010,24 +1009,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
             -- Out-of-range: per-frame (IsSpellInRange is cheap NeverSecret).
             if showHotkey and interruptIcon.cachedHotkey and interruptIcon.cachedHotkey ~= "" then
-                do
-                    local inRange = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(intSpellID)
-                    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-                        interruptIcon.cachedOutOfRange = (inRange == false)
-                    else
-                        interruptIcon.cachedOutOfRange = false
-                    end
-                end
-                local isOutOfRange = interruptIcon.cachedOutOfRange or false
-                if interruptIcon.lastOutOfRange ~= isOutOfRange then
-                    if isOutOfRange then
-                        interruptIcon.hotkeyText:SetTextColor(1, 0, 0, 1)
-                    else
-                        local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-                        interruptIcon.hotkeyText:SetTextColor((hkc and hkc.r) or 1, (hkc and hkc.g) or 1, (hkc and hkc.b) or 1, (hkc and hkc.a) or 1)
-                    end
-                    interruptIcon.lastOutOfRange = isOutOfRange
-                end
+                local isOutOfRange = UIRenderer.CheckSpellRange(interruptIcon, intSpellID, nil)
+                local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+                UIRenderer.UpdateRangeHotkeyColor(interruptIcon, isOutOfRange, hkc)
             end
 
             -- No channeling grey-out for interrupts: they are urgent actions the
