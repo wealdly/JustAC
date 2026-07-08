@@ -437,6 +437,64 @@ local function CheckChargeCorrections()
     end
 end
 
+-- ============================================================================
+-- Secret-safe readiness probes (12.0). Cooldown-remaining and aura durations are
+-- secret in combat, but a DurationObject fed into a scratch Cooldown widget drives
+-- that widget's SHOWN state, and IsShown() is a plain, branchable boolean. So we
+-- read "on cooldown?" / "buff active?" as engine truth without ever touching the
+-- secret numbers. (Verified in combat: numeric startTime SECRET, probe still correct.)
+-- The remaining TIME stays unreadable - only the boolean is exposed, which is all a
+-- gate needs. Reads fail safe: no duration object / no aura -> false.
+-- This is an UNINTENDED workaround Blizzard could close - see
+-- Documentation/SECRET_VALUE_READINESS_PROBE.md for the /jac inspect durprobe
+-- detector and the fallback ladder if it stops working.
+local scratchCooldown
+local function DurationObjectActive(durObj)
+    if durObj == nil then return false end
+    if not scratchCooldown then
+        local holder = CreateFrame("Frame", nil, UIParent)
+        holder:Hide()  -- parent hidden -> the probe frame never renders
+        scratchCooldown = CreateFrame("Cooldown", nil, holder, "CooldownFrameTemplate")
+    end
+    if not scratchCooldown.SetCooldownFromDurationObject then return false end
+    scratchCooldown:SetCooldownFromDurationObject(durObj)
+    local shown = scratchCooldown:IsShown()
+    scratchCooldown:SetCooldown(0, 0)
+    return shown and true or false
+end
+
+--- True while spellID is on a REAL cooldown (GCD excluded), read as engine truth.
+function BlizzardAPI.IsSpellOnCooldown(spellID)
+    if not (spellID and C_Spell and C_Spell.GetSpellCooldownDuration) then return false end
+    return DurationObjectActive(C_Spell.GetSpellCooldownDuration(spellID, true))
+end
+
+--- True while our own self-buff (spellID) is active on the player. The aura's
+--- DurationObject is engine truth - no cast-time bookkeeping or shipped duration DB.
+--- @param spellID number the buff id a SimC buff-window gate references (5217, ...)
+function BlizzardAPI.IsBuffWindowActive(spellID)
+    if not (spellID and C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+            and C_UnitAuras.GetAuraDuration) then
+        return false
+    end
+    local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
+    local instId = aura and aura.auraInstanceID
+    if not instId then return false end
+    return DurationObjectActive(C_UnitAuras.GetAuraDuration("player", instId))
+end
+
+--- Diagnostic: which of the given self-buff ids are active right now.
+--- @param ids number[] spell ids to probe
+--- @return table snapshot array of { id, active }
+function BlizzardAPI.GetBuffWindowSnapshot(ids)
+    local out = {}
+    if type(ids) ~= "table" then return out end
+    for _, id in ipairs(ids) do
+        out[#out + 1] = { id = id, active = BlizzardAPI.IsBuffWindowActive(id) }
+    end
+    return out
+end
+
 local function InitCooldownTracking()
     if cooldownEventFrame then return end
 
@@ -457,7 +515,7 @@ local function InitCooldownTracking()
 
     cooldownEventFrame:SetScript("OnEvent", function(self, event, ...)
         if event == "UNIT_SPELLCAST_SUCCEEDED" then
-            local unit, castGUID, spellID = ...
+            local unit, _, spellID = ...
             if unit == "player" and spellID then
                 RecordSpellCooldown(spellID)
             end
@@ -664,10 +722,19 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- GCD (~1.5s). Check local tracking: if a real CD is ticking underneath,
     -- don't short-circuit - the spell is NOT ready.
     if cd.isOnGCD == true then
-        if not IsLocalCooldownActive(spellID) then
+        -- Is a REAL cooldown ticking under the GCD? The ignore-GCD duration object
+        -- answers this as engine truth - immune to the CDR / proc-reset / refund drift
+        -- the local timer suffers. Fall back to local tracking only if that API is absent.
+        local realCD
+        if C_Spell and C_Spell.GetSpellCooldownDuration then
+            realCD = BlizzardAPI.IsSpellOnCooldown(spellID)
+        else
+            realCD = IsLocalCooldownActive(spellID)
+        end
+        if not realCD then
             return true
         end
-        -- Local CD active under the GCD - real CD is ticking, fall through
+        -- Real CD ticking under the GCD - fall through (not ready).
     end
 
     -- isOnGCD == false → real cooldown running (definitive for flagged spells)

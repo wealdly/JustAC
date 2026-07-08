@@ -16,6 +16,7 @@ local UTILITY_SPELLS = {}
 -- Curated interrupt/CC ability data lives in Data/InterruptAbilities.lua (registered below).
 -- Flat [spellID] = {kind, mech, reach, radius, pri}; see that file for the field contract.
 local INTERRUPT_ABILITIES = {}
+local SOOTHE_ABILITIES    = {}  -- enrage-dispel abilities (Data/InterruptAbilities.lua); see ResolveSootheSpells
 -- Curated range-reference abilities live in Data/RangeReferences.lua (registered below).
 -- [spellID] = max range in yards. On-target harmful abilities (damage + CC) with stable,
 -- known ranges, used as distance probes: IsSpellInRange (a non-secret boolean - only the
@@ -42,6 +43,14 @@ end
 function SpellDB.RegisterInterruptAbilities(t)
     if type(t) ~= "table" then return end
     for id, meta in pairs(t) do INTERRUPT_ABILITIES[id] = meta end
+end
+
+--- Populate the enrage-dispel ("soothe") ability list from Data/InterruptAbilities.lua.
+--- Kept separate from the interrupt/CC table: enrage-triggered (not cast-triggered), and
+--- some entries are talent-gated dual-purpose spells (e.g. Paralysis is also a CC).
+function SpellDB.RegisterSootheAbilities(t)
+    if type(t) ~= "table" then return end
+    for id, meta in pairs(t) do SOOTHE_ABILITIES[id] = meta end
 end
 
 --- Populate the range-reference list from Data/RangeReferences.lua.
@@ -1333,30 +1342,75 @@ end
 --- tier then intra-tier priority. Returns an ordered array, or nil if none.
 --- Each entry: { spellID, type = "interrupt"|"cc", mech, reach, radius }.
 --- Called once during frame/overlay creation; result is cached.
-function SpellDB.ResolveInterruptSpells()
+-- Shared resolver: build sorted {spellID, type, ...} entries for the abilities of the
+-- given kinds that THIS character knows, each registered for local CD tracking.
+local function ResolveAbilitiesByKind(kindSet)
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
     local result = {}
     for spellID, meta in pairs(INTERRUPT_ABILITIES) do
+        if kindSet[meta.kind] then
+            local resolvedID = spellID
+            if FindSpellOverrideByID then
+                local ov = FindSpellOverrideByID(spellID)
+                if ov and ov ~= 0 and ov ~= spellID then resolvedID = ov end
+            end
+            if BlizzardAPI.IsSpellAvailable(resolvedID) then
+                result[#result + 1] = {
+                    spellID = resolvedID, type = meta.kind,
+                    mech = meta.mech, reach = meta.reach, radius = meta.radius, pri = meta.pri,
+                }
+                -- Register for local cooldown tracking so IsSpellReady() can detect
+                -- CD state in combat (isOnGCD is nil for most interrupt spells).
+                if BlizzardAPI.RegisterSpellForTracking then
+                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
+                end
+            end
+        end
+    end
+    if #result == 0 then return nil end
+    table.sort(result, CCSortLess)
+    return result
+end
+
+local INTERRUPT_KINDS = { interrupt = true, cc = true }
+
+function SpellDB.ResolveInterruptSpells()
+    return ResolveAbilitiesByKind(INTERRUPT_KINDS)
+end
+
+--- Resolve the player's usable enrage-dispel ("soothe") abilities from SOOTHE_ABILITIES.
+--- Usually 0 or 1 (class-specific). Talent-gated entries (meta.requires) only count when at
+--- least one enabling talent is known - so a Monk without Pressure Points isn't offered
+--- Paralysis as a soothe. Enrage-triggered (dispel type 9), not cast-triggered.
+function SpellDB.ResolveSootheSpells()
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
+    local result = {}
+    for spellID, meta in pairs(SOOTHE_ABILITIES) do
         local resolvedID = spellID
         if FindSpellOverrideByID then
             local ov = FindSpellOverrideByID(spellID)
             if ov and ov ~= 0 and ov ~= spellID then resolvedID = ov end
         end
         if BlizzardAPI.IsSpellAvailable(resolvedID) then
-            result[#result + 1] = {
-                spellID = resolvedID, type = meta.kind,
-                mech = meta.mech, reach = meta.reach, radius = meta.radius, pri = meta.pri,
-            }
-            -- Register for local cooldown tracking so IsSpellReady() can detect
-            -- CD state in combat (isOnGCD is nil for most interrupt spells).
-            if BlizzardAPI.RegisterSpellForTracking then
-                BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
+            -- Talent gate: at least one `requires` talent must be known (nil = always on).
+            local gated = false
+            if meta.requires then
+                gated = true
+                for _, talentID in ipairs(meta.requires) do
+                    if BlizzardAPI.IsSpellAvailable(talentID) then gated = false; break end
+                end
+            end
+            if not gated then
+                result[#result + 1] = { spellID = resolvedID, type = "soothe", reach = meta.reach }
+                if BlizzardAPI.RegisterSpellForTracking then
+                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "interrupt")
+                end
             end
         end
     end
     if #result == 0 then return nil end
-    table.sort(result, CCSortLess)
     return result
 end
 

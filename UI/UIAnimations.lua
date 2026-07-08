@@ -155,6 +155,10 @@ end
 -- Colored proc glow constants
 local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05  -- Red
 local BURST_PROC_R,     BURST_PROC_G,     BURST_PROC_B     = 0.7, 0.2,  1.0   -- Purple
+-- Enrage cleanse = a heal, not an attack -> green. The flipbook base is gold/yellow, but
+-- ShowColoredProcGlow desaturates it first, so this vertex color tints a grayscale base;
+-- kept vivid (low R/B) so it reads clearly green, not muddy gold*green.
+local SOOTHE_PROC_R,    SOOTHE_PROC_G,    SOOTHE_PROC_B    = 0.1, 0.9,  0.2   -- Green
 
 -- Shared helper: show a desaturated+tinted proc glow on a named frame key.
 -- Set alpha on the frame itself; the internal Alpha animation forces the
@@ -192,6 +196,14 @@ end
 
 local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
+end
+
+local function ShowSootheProcGlow(icon)
+    ShowColoredProcGlow(icon, "SootheProcGlowFrame", SOOTHE_PROC_R, SOOTHE_PROC_G, SOOTHE_PROC_B)
+end
+
+local function HideSootheProcGlow(icon)
+    HideColoredProcGlow(icon, "SootheProcGlowFrame")
 end
 
 local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
@@ -815,6 +827,8 @@ UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
+UIAnimations.ShowSootheProcGlow = ShowSootheProcGlow
+UIAnimations.HideSootheProcGlow = HideSootheProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash

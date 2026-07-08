@@ -121,12 +121,17 @@ local INSPECT_TOPICS = {
     perf        = "PerformanceDiagnostics",
     rank        = "ContextRankDiagnostics",
     dots        = "DotDiagnostics",
+    gates       = "GateDiagnostics",
+    aoe         = "AoeDiagnostics",
+    resource    = "ResourceDiagnostics",
+    enrage      = "EnrageProbe",
+    durprobe    = "DurationProbe",
     chargediag  = "ChargeDiagnostics",
     castdiag    = "CastDiagnostics",
     healthprobe = "HealthProbe",
     validate    = "ValidateAssumptions",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, chargediag [spell], castdiag, healthprobe, validate [arm]"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, enrage, durprobe [spell], chargediag [spell], castdiag, healthprobe, validate [arm]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler
@@ -187,6 +192,14 @@ local function HandleSlashCommand(addon, input)
             addon:SavePosition()
             addon:UpdateTargetFrameAnchor()
             addon:Print("Position reset to center")
+        end
+
+    elseif command == "hud" then
+        local DebugHUD = LibStub("JustAC-DebugHUD", true)
+        if DebugHUD and DebugHUD.Toggle then
+            DebugHUD.Toggle(addon)
+        else
+            addon:Print("Debug HUD module not available")
         end
 
     elseif command == "profile" then

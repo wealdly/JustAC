@@ -20,13 +20,13 @@ Blizzard shows one dim suggestion on your action bar. Simpler addons just echo i
 
 ## What's in the box
 
-**The queue** - Position 1 mirrors Blizzard's pick; follow-ups show your priority next-casts, context-ranked and filtered for cooldowns and redundancy. Optional custom spell/item ordering, per spec. Dynamic inserts for procs, gap-closers, and burst windows.
+**The queue** - Position 1 mirrors Blizzard's pick; follow-ups show your priority next-casts, context-ranked and filtered for cooldowns and redundancy. Order them your own way with a custom per-spec list, or try the experimental SimulationCraft-priority ordering that arranges your follow-ups by community theorycraft for your spec and target count. Dynamic inserts for procs, gap-closers, and burst windows.
 
-**Defensives, interrupts & CC** - Configurable defensive priorities (self-heals, major cooldowns, healthstones, potions) with low-health emergency ordering. Interrupt detection with keybind context and multiple modes. Crowd control that respects immune targets, creature-type restrictions, and stun-vs-silence.
+**Defensives, interrupts & CC** - Configurable defensive priorities (self-heals, major cooldowns, healthstones, potions) with low-health emergency ordering. Interrupt detection with keybind context and multiple modes. Enrage cleanses too: when an enemy enrages and you can remove it - Soothe, Tranquilizing Shot, Shiv, and the like - your dispel surfaces in the interrupt slot with a green glow and the enrage it clears. Crowd control that respects immune targets, creature-type restrictions, and stun-vs-silence.
 
 **Pre-combat buffs** - Out of combat, the buffs you're missing but own appear as clickable icons: flask, food, augment rune, weapon enchants, class buffs like poisons and shields - and Recuperate whenever you're hurt. Click to cast or use, straight from the queue.
 
-**Display & input** - Standard frame, nameplate overlay, or both. Full layout controls (size, count, orientation, labels, glow styles). Smart hotkey detection from bars and macros, plus manual overrides. Keyboard and gamepad support (Xbox, PlayStation, generic). Masque support.
+**Display & input** - Standard frame, nameplate overlay, or both - each with an optional resource bar (your primary power plus a segmented secondary point resource: combo points, runes, chi, holy power, and so on). Full layout controls (size, count, orientation, labels, glow styles). Smart hotkey detection from bars and macros, plus manual overrides. Keyboard and gamepad support (Xbox, PlayStation, generic). Masque support.
 
 **Localization & profiles** - Per-spec profiles. Localized: EN, DE, FR, RU, ES (ES/MX), PT-BR, KO, ZH (CN/TW).
 

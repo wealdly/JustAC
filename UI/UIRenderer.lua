@@ -10,6 +10,7 @@ local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local UISootheCue = LibStub("JustAC-UISootheCue", true)
 local CastInterruptTracker = LibStub("JustAC-CastInterruptTracker", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat", true)
 
@@ -233,7 +234,13 @@ local function UpdateButtonCooldowns(button)
         -- the secret-safe duration object below).
         local lStart, lDuration = BlizzardAPI.GetLocalCooldown(cooldownID)
         if not lStart then lStart, lDuration = BlizzardAPI.GetLocalCooldown(id) end
-        if lStart and lDuration and lDuration > 0 then
+        -- Engine-truth guard: only trust the local cooldown if the spell is actually on
+        -- a real cooldown right now. An override/combo transform (Templar Strike ->
+        -- Templar Slash) can leave a stale local CD from the base that the action bar
+        -- doesn't show; the ignore-GCD duration-object probe (secret-safe) catches it.
+        if BlizzardAPI.IsSpellOnCooldown and not BlizzardAPI.IsSpellOnCooldown(cooldownID or id) then
+            cooldownInfo = nil
+        elseif lStart and lDuration and lDuration > 0 then
             cooldownInfo = { startTime = lStart, duration = lDuration, isEnabled = 1, modRate = 1, isActive = true }
             ciFromNumbers = true
         elseif C_Spell_GetSpellCooldown then
@@ -1211,12 +1218,42 @@ local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow
     return GLOW_NONE
 end
 
+-- Small ST / CLEAVE / AOE readout above the queue (debug mode only) so the active
+-- context is a glance, not guesswork. Lazily created; hidden when debug is off.
+local function UpdateContextIndicator(addon, profile)
+    local mf = addon.mainFrame
+    if not mf then return end
+    if not profile.debugMode then
+        if mf.jacContextTag then mf.jacContextTag:Hide() end
+        return
+    end
+    if not mf.jacContextTag then
+        local fs = mf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("BOTTOMLEFT", mf, "TOPLEFT", 0, 2)
+        mf.jacContextTag = fs
+    end
+    local ctx = SpellQueue.DebugContextState and SpellQueue.DebugContextState()
+    local arch = ctx and ctx.arch
+    local label, color
+    if arch == "aoe" then
+        label, color = "AOE", "ff44ff44"
+    elseif arch == "cleave" then
+        label, color = "CLEAVE", "ffffcc44"
+    else
+        label, color = "ST", "ff8888ff"
+    end
+    mf.jacContextTag:SetText("|c" .. color .. label .. "|r")
+    mf.jacContextTag:Show()
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
 
     local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     if not profile then return end
+
+    UpdateContextIndicator(addon, profile)
 
     local currentTime = GetTime()
     local hasSpells = spellIDs and #spellIDs > 0
@@ -1440,6 +1477,21 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         UIRenderer.HideInterruptIcon(intIcon)
     end
 
+    -- Soothe (enrage-cleanse) cue: a sink-gated green layer over the interrupt slot,
+    -- visible only while the target is ENRAGED (dispel type 9). Independent of the kick's
+    -- own visibility (shows even with no interruptible cast) and drawn above it, so on a
+    -- kick/soothe collision the soothe wins. The cue self-gates on the enrage via its
+    -- per-frame sink; here we only arm/show it when this character has a soothe ability.
+    if intIcon and UISootheCue then
+        local soothe = addon.resolvedSoothe
+        local sid = soothe and soothe[1] and soothe[1].spellID
+        if sid and shouldShowFrame then
+            UISootheCue.Show(UISootheCue.Create(intIcon, sid, intIcon.cachedIconSize))
+        elseif intIcon.sootheCue then
+            UISootheCue.Hide(intIcon.sootheCue)
+        end
+    end
+
     if shouldShowFrame then
     for i = 1, maxIcons do
         local icon = spellIconsRef[i]
@@ -1583,8 +1635,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 -- hysteresis so the blue glow appears instantly.
                 local isDisplaced = SpellQueue.IsDisplacedPrimary and SpellQueue.IsDisplacedPrimary(spellID)
                 if i > 1 then
-                    if spellChanged or isDisplaced then
-                        -- Spell changed or displaced from pos 1: apply immediately
+                    if spellChanged or isDisplaced or not isInCombat then
+                        -- Spell changed, displaced from pos 1, or out of combat: apply
+                        -- immediately. OOC there is no combat proc-flicker to smooth, and
+                        -- holding a glow-OFF change here is what left a proc glow stuck at
+                        -- position 2 after combat when rendering went idle mid-hysteresis.
                         icon.lastRenderedGlow = glowState
                         icon.pendingGlowState = nil
                     elseif icon.lastRenderedGlow and glowState ~= icon.lastRenderedGlow then

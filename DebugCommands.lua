@@ -42,10 +42,15 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect perf reset - Reset build counters")
     addon:Print("/jac inspect rank - Queue context inference and per-spell ordering ranks")
     addon:Print("/jac inspect dots - Maintained-DoT tracking state for the current target")
+    addon:Print("/jac inspect gates - SimC gate layer: buff-window tracker + live gate eval (run in combat)")
+    addon:Print("/jac inspect aoe - Probe secret-safe enemy counting (AC-independent AoE detection)")
+    addon:Print("/jac inspect resource - Probe secret-safe resource inference from usability")
+    addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
     addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
+    addon:Print("/jac hud - Toggle a live diagnostic HUD (context, source, AC pick, buff windows)")
     addon:Print("/jac help - Show this help")
 end
 
@@ -1235,6 +1240,471 @@ function DebugCommands.DotDiagnostics(addon)
             est and (est .. "s") or "unknown"))
     end
     addon:Print("================================")
+end
+
+--------------------------------------------------------------------------------
+-- SimC Gate Diagnostics
+--------------------------------------------------------------------------------
+--- /jac inspect gates - SimC gate layer: the self-buff-window tracker plus a LIVE
+--- per-entry gate evaluation for the current spec. Run it in combat to watch the
+--- secret-safe signals (cooldown / dot / proc / buff-window) actually fire, so we
+--- can tell whether the gate layer works against the 12.0 secret limits or silently
+--- does nothing.
+function DebugCommands.GateDiagnostics(addon)
+    local RI = LibStub("JustAC-RotationImport", true)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local DotTracker = LibStub("JustAC-DotTracker", true)
+    if not (RI and RI.HasRotation and RI.HasRotation()) then
+        addon:Print("|cffff6600No SimC gate data for this spec.|r")
+        return
+    end
+
+    local function nm(id)
+        local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        return (n or "?") .. " (" .. tostring(id) .. ")"
+    end
+
+    addon:Print("|cff00ccff== SimC gate diagnostics ==|r")
+
+    -- Self-buff windows (engine-truth via duration-object probe).
+    local stList = RI.GetRotation and RI.GetRotation("st")
+    local snap = stList and BAPI and BAPI.GetBuffWindowSnapshot and BAPI.GetBuffWindowSnapshot(stList)
+    if snap and #snap > 0 then
+        addon:Print("|cffffff00Self-buffs on the ST list:|r")
+        for _, w in ipairs(snap) do
+            addon:Print(string.format("  %s  %s", nm(w.id),
+                w.active and "|cff00ff00ACTIVE|r" or "|cff888888--|r"))
+        end
+    end
+
+    -- Live per-entry gate evaluation for each context.
+    local function gateStr(e)
+        if not e.gates or #e.gates == 0 then
+            return e.delegated and "|cff888888delegated, no gates|r" or "no gates"
+        end
+        local parts = {}
+        for _, g in ipairs(e.gates) do
+            if g.t == "cd" then
+                local ok = BAPI.IsSpellReady and BAPI.IsSpellReady(e.id)
+                parts[#parts + 1] = "cd=" .. (ok and "|cff00ff00rdy|r" or "|cffff6600cd|r")
+            elseif g.t == "dot" then
+                local live = DotTracker and DotTracker.IsDotActiveOnCurrentTarget
+                    and DotTracker.IsDotActiveOnCurrentTarget(g.id)
+                parts[#parts + 1] = "dot=" .. (live and "|cffff6600up|r" or "|cff00ff00refresh|r")
+            elseif g.t == "proc" then
+                local ok = BAPI.IsSpellProcced and BAPI.IsSpellProcced(e.id)
+                parts[#parts + 1] = "proc=" .. (ok and "|cff00ff00Y|r" or "|cff888888n|r")
+            elseif g.t == "buff" then
+                local ok = BAPI.IsBuffWindowActive and BAPI.IsBuffWindowActive(g.id)
+                parts[#parts + 1] = (g.neg and "!" or "") .. "buff[" .. tostring(g.id) .. "]="
+                    .. (ok and "|cff00ff00up|r" or "|cff888888--|r")
+            elseif g.t == "targets" then
+                parts[#parts + 1] = "|cff888888targets|r"
+            elseif g.t == "execute" then
+                parts[#parts + 1] = "|cff888888execute|r"
+            end
+        end
+        local s = table.concat(parts, " ")
+        if e.delegated then s = s .. " |cff888888[deleg]|r" end
+        return s
+    end
+
+    for _, ctx in ipairs({ "st", "aoe" }) do
+        local entries = RI.GetRotationGated and RI.GetRotationGated(ctx)
+        if entries then
+            addon:Print("|cffffff00" .. ctx:upper() .. ":|r")
+            for _, e in ipairs(entries) do
+                addon:Print("  " .. nm(e.id) .. "  " .. gateStr(e))
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Duration-object boolean probe (secret-safe readiness)
+--------------------------------------------------------------------------------
+--- /jac inspect durprobe [spell] - verify the scratch-Cooldown IsShown() technique:
+--- feed a DurationObject (real cooldown / self-buff aura) into a hidden Cooldown
+--- frame and read IsShown() as a plain, branchable boolean. The remaining TIME stays
+--- secret, but the active/inactive boolean is readable - which is all a gate needs.
+--- Run it in combat with a cooldown down and a self-buff up to confirm both read
+--- correctly; this boolean is the foundation the SimC gate layer will branch on.
+function DebugCommands.DurationProbe(addon, arg)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function sec(v)
+        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
+    end
+
+    if not (C_Spell and C_Spell.GetSpellCooldownDuration) then
+        addon:Print("|cffff6600C_Spell.GetSpellCooldownDuration unavailable - can't probe|r")
+        return
+    end
+
+    -- Reusable Cooldown frame under a HIDDEN holder (never renders). Its shown state
+    -- is driven by SetCooldownFromDurationObject, so IsShown() is a plain boolean =
+    -- "cooldown/aura active" without ever reading the secret remaining time.
+    local scratch = DebugCommands._durScratch
+    if not scratch then
+        local holder = CreateFrame("Frame", nil, UIParent)
+        holder:Hide()
+        scratch = CreateFrame("Cooldown", nil, holder, "CooldownFrameTemplate")
+        DebugCommands._durScratch = scratch
+    end
+    local function durActive(durObj)
+        if durObj == nil or not scratch.SetCooldownFromDurationObject then return nil end
+        scratch:SetCooldownFromDurationObject(durObj)
+        local shown = scratch:IsShown()
+        scratch:SetCooldown(0, 0)
+        return shown
+    end
+    local function boolTag(b, t, f)
+        if b == nil then return "|cff888888nil|r" end
+        return b and ("|cff00ff00" .. t .. "|r") or ("|cffcccccc" .. f .. "|r")
+    end
+    local function nm(id)
+        local n = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        return (n or "?") .. " (" .. tostring(id) .. ")"
+    end
+
+    addon:Print("|cff00ccff== duration-object boolean probe ==|r")
+    addon:Print("combat: " .. (UnitAffectingCombat("player")
+        and "|cff00ff00YES|r" or "|cff888888no (probe is only meaningful in combat)|r"))
+
+    -- Which spells: explicit arg, else AC's rotation list (first 6).
+    local ids = {}
+    if arg and arg ~= "" then
+        local id = tonumber(arg)
+        if not id and C_Spell.GetSpellIDForSpellIdentifier then
+            id = C_Spell.GetSpellIDForSpellIdentifier(arg)
+        end
+        if id then ids[1] = id end
+    end
+    if #ids == 0 and BAPI and BAPI.GetRotationSpells then
+        local list = BAPI.GetRotationSpells()
+        if list then for i = 1, math.min(6, #list) do ids[i] = list[i] end end
+    end
+    if #ids == 0 then
+        addon:Print("no spells to probe - pass a spellID/name, or use a spec with a rotation")
+        return
+    end
+
+    addon:Print("|cffffff00Cooldown (ignore-GCD duration object -> IsShown):|r")
+    for _, id in ipairs(ids) do
+        local onCD = durActive(C_Spell.GetSpellCooldownDuration(id, true))
+        -- Cross-check the numeric API so you can see what is secret vs. what we read.
+        local numStr = "no data"
+        local ci = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(id)
+        if ci then
+            local st, act = ci.startTime, ci.isActive
+            numStr = sec(st) and "|cffff6600startTime SECRET|r" or ("startTime=" .. tostring(st))
+            if not sec(act) and act ~= nil then
+                numStr = numStr .. " isActive=" .. tostring(act)
+            end
+        end
+        local secrecy = C_Secrets and C_Secrets.GetSpellCooldownSecrecy
+            and C_Secrets.GetSpellCooldownSecrecy(id)
+        addon:Print(string.format("  %-26s probe=%s  %s%s", nm(id),
+            boolTag(onCD, "ON-CD", "ready"), numStr,
+            secrecy ~= nil and ("  secrecy=" .. tostring(secrecy)) or ""))
+    end
+
+    addon:Print("|cffffff00Self-buffs present (aura duration object -> IsShown):|r")
+    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID and C_UnitAuras.GetAuraDuration) then
+        addon:Print("  |cffff6600C_UnitAuras.GetAuraDuration unavailable|r")
+        return
+    end
+    local anyAura = false
+    for _, id in ipairs(ids) do
+        local aura = C_UnitAuras.GetPlayerAuraBySpellID(id)
+        local instId = aura and aura.auraInstanceID
+        if instId then
+            anyAura = true
+            local active = durActive(C_UnitAuras.GetAuraDuration("player", instId))
+            addon:Print(string.format("  %-26s probe=%s", nm(id), boolTag(active, "ACTIVE", "expired")))
+        end
+    end
+    if not anyAura then
+        addon:Print("  |cff888888(none of the probed spells are active self-buffs right now)|r")
+    end
+    addon:Print("|cff888888Goal: in combat, numeric SECRET but probe still reads ON-CD/ready + ACTIVE.|r")
+end
+
+--------------------------------------------------------------------------------
+-- Enrage-detection probe
+--------------------------------------------------------------------------------
+--- /jac inspect enrage [off] - validate the DispelType==9 (Enrage) secret-safe path.
+--- dispelName hides Enrage, but GetAuraDispelTypeColor maps an aura's NUMERIC dispel
+--- type (9 = Enrage) through a color curve; auraInstanceID is NeverSecret, and the
+--- combat-secret color sinks into SetVertexColor (AllowedWhenTainted) with no read.
+--- This arms a LIVE on-screen row - one slot per target buff - each slot lit WHITE ==
+--- that buff is a DispelType-9 enrage. Pull a confirmed-soothe-able mob and watch a
+--- slot light up: that is the whole "target enraged -> Soothe cue" chain, proven, with
+--- zero reads. The text scan also decodes each buff's type where readable (OOC) to
+--- calibrate the number line (a Magic buff -> type=1 == its dispelName).
+--- '/jac inspect enrage off' hides the row.
+function DebugCommands.EnrageProbe(addon, arg)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function sec(v)
+        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
+    end
+
+    local cu       = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    local gadtc    = C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor
+    local gadbi    = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not (cu and cu.CreateColorCurve and stepType and CreateColor and gadtc and gadbi) then
+        addon:Print("|cffff6600Missing API (need CreateColorCurve + LuaCurveType.Step + GetAuraDispelTypeColor)|r")
+        return
+    end
+
+    if arg == "off" then
+        if DebugCommands._enrSwatch then DebugCommands._enrSwatch:Hide() end
+        addon:Print("enrage live indicator hidden.")
+        return
+    end
+
+    addon:Print("|cff00ccff== enrage probe (DispelType 9 via GetAuraDispelTypeColor) ==|r")
+
+    -- Selector curve the real feature uses: white/alpha 1 only when dispel type == 9.
+    local sel = cu.CreateColorCurve()
+    sel:SetType(stepType)
+    sel:AddPoint(0,  CreateColor(0, 0, 0, 0))
+    sel:AddPoint(9,  CreateColor(1, 1, 1, 1))
+    sel:AddPoint(10, CreateColor(0, 0, 0, 0))
+
+    -- Identity curve: r = dispelTypeId/32 (Step holds each point), so OOC we can read the
+    -- raw dispel type back for calibration (a Magic buff should decode to 1, etc.).
+    local ident = cu.CreateColorCurve()
+    ident:SetType(stepType)
+    for k = 0, 15 do ident:AddPoint(k, CreateColor(k / 32, 0, 0, 1)) end
+
+    -- Text scan: decode each unit's HELPFUL auras where readable (secret in combat).
+    local function scan(unit)
+        if not UnitExists(unit) then return end
+        addon:Print("|cffffff00" .. unit .. ":|r")
+        local any = false
+        for i = 1, 40 do
+            local a = gadbi(unit, i, "HELPFUL")
+            if not a then break end
+            any = true
+            local decoded, note, idc
+            if pcall(function() idc = gadtc(unit, a.auraInstanceID, ident) end) and idc then
+                if sec(idc.r) then note = "SECRET" else decoded = math.floor((idc.r or 0) * 32 + 0.5) end
+            else
+                note = "call-failed"
+            end
+            local name = (a.name and not sec(a.name)) and tostring(a.name) or "|cff888888?secret?|r"
+            local dn   = a.dispelName
+            local dnStr = (dn and not sec(dn) and dn ~= "") and (" dispelName=" .. dn) or ""
+            local dtStr = decoded and ("type=" .. decoded .. (decoded == 9 and " |cffff3333<ENRAGE>|r" or ""))
+                                  or ("type=|cffff6600" .. tostring(note) .. "|r")
+            addon:Print(string.format("  [%s] %-20s %s%s", tostring(a.auraInstanceID), name, dtStr, dnStr))
+        end
+        if not any then addon:Print("  |cff888888(no HELPFUL auras)|r") end
+    end
+    scan("player")
+    scan("target")
+
+    -- Live on-screen indicator: a slot per target HELPFUL aura, driven each frame by the
+    -- selector via SetVertexColor. A slot lit WHITE == that buff is a DispelType-9 enrage.
+    -- Works IN COMBAT: the secret color sinks straight into the fill; we never read it.
+    local sw = DebugCommands._enrSwatch
+    if not sw then
+        sw = CreateFrame("Frame", nil, UIParent)
+        sw:SetSize(8 * 30 + 12, 54)
+        sw:SetPoint("CENTER", 0, 170)
+        sw:SetFrameStrata("HIGH")
+        local bg = sw:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0, 0, 0, 0.55)
+        local t = sw:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        t:SetPoint("TOP", 0, -3)
+        t:SetText("enrage test: a slot glows = DispelType-9 enrage   (/jac inspect enrage off)")
+        sw.slots = {}
+        for i = 1, 8 do
+            local s = CreateFrame("Frame", nil, sw)
+            s:SetSize(26, 26)
+            s:SetPoint("BOTTOMLEFT", 6 + (i - 1) * 30, 5)
+            local d = s:CreateTexture(nil, "BACKGROUND"); d:SetAllPoints(); d:SetColorTexture(0.16, 0.16, 0.16, 1)
+            local f = s:CreateTexture(nil, "ARTWORK");    f:SetAllPoints(); f:SetColorTexture(1, 1, 1, 1)
+            local l = s:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); l:SetPoint("TOP", s, "BOTTOM", 0, -1)
+            s.fill = f; s.lbl = l
+            sw.slots[i] = s
+        end
+        DebugCommands._enrSwatch = sw
+    end
+    sw.sel = sel
+    sw:SetScript("OnUpdate", function(self, e)
+        self._t = (self._t or 0) + e
+        if self._t < 0.1 then return end
+        self._t = 0
+        for i = 1, 8 do
+            local s = self.slots[i]
+            local a = UnitExists("target") and C_UnitAuras.GetAuraDataByIndex("target", i, "HELPFUL") or nil
+            if a then
+                s:Show()
+                s.lbl:SetText(tostring(a.auraInstanceID))
+                pcall(function()
+                    local c = C_UnitAuras.GetAuraDispelTypeColor("target", a.auraInstanceID, self.sel)
+                    s.fill:SetVertexColor(c.r, c.g, c.b, c.a)
+                end)
+            else
+                s:Hide()
+            end
+        end
+    end)
+    sw:Show()
+
+    addon:Print("|cff888888Live row armed. Pull your confirmed-soothe-able mob - the slot for the enrage buff should glow WHITE (selector fires at type 9): full chain proven, no reads. '/jac inspect enrage off' to hide.|r")
+end
+
+--------------------------------------------------------------------------------
+-- AoE-context probe
+--------------------------------------------------------------------------------
+--- /jac inspect aoe - Test whether we can count nearby enemies DIRECTLY (nameplate
+--- enumeration + per-unit checks) without tripping 12.0 secret values, i.e. an
+--- AC-independent AoE signal. Every value is tested with issecretvalue BEFORE it is
+--- branched on, so the probe itself never trips a secret.
+function DebugCommands.AoeDiagnostics(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function sec(v)
+        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
+    end
+
+    addon:Print("|cff00ccff== AoE-context probe (secret-safe enemy counting) ==|r")
+    local pc = UnitAffectingCombat("player")
+    addon:Print("player in combat: " .. (sec(pc) and "|cffff6600SECRET|r"
+        or "|cff00ff00" .. tostring(pc) .. "|r"))
+
+    if not (C_NamePlate and C_NamePlate.GetNamePlates) then
+        addon:Print("|cffff6600C_NamePlate.GetNamePlates unavailable|r")
+        return
+    end
+    local plates = C_NamePlate.GetNamePlates()
+    local total = plates and #plates or 0
+    addon:Print("nameplates enumerated: " .. total
+        .. "  (count secret=" .. tostring(sec(total)) .. ")")
+
+    -- Nameplate FRAMES are restricted in 12.0 (their fields read secret/nil), so
+    -- resolve via the unit TOKENS directly (nameplate1..40) and filter: hostile,
+    -- then within AoE range. Range - not "in combat" - is the useful AoE proxy,
+    -- since you AoE targets that are NEAR you before they're engaged.
+    local nUnits, nHostile, nRange, nCombat, nThreat = 0, 0, 0, 0, 0
+    local sExists, sHostile, sRange, sCombat, sThreat = false, false, false, false, false
+    local RANGE_PROBE = 1822  -- Rake (melee ~5yd); placeholder AoE-range check
+    for i = 1, 40 do
+        local u = "nameplate" .. i
+        local ex = UnitExists(u)
+        if sec(ex) then
+            sExists = true
+        elseif ex then
+            nUnits = nUnits + 1
+            local ca = UnitCanAttack("player", u)   -- value first, secret-test before branching
+            if sec(ca) then
+                sHostile = true
+            elseif ca then
+                nHostile = nHostile + 1
+                local r = C_Spell and C_Spell.IsSpellInRange and C_Spell.IsSpellInRange(RANGE_PROBE, u)
+                if sec(r) then sRange = true elseif r then nRange = nRange + 1 end
+                local ic = UnitAffectingCombat(u)              -- engaged with anyone
+                if sec(ic) then sCombat = true elseif ic then nCombat = nCombat + 1 end
+                local threatFn = _G.UnitThreatSituation         -- on its threat table = fighting ME
+                if threatFn then
+                    local ts = threatFn("player", u)
+                    if sec(ts) then sThreat = true elseif ts ~= nil then nThreat = nThreat + 1 end
+                end
+            end
+        end
+    end
+
+    local function line(label, n, s)
+        addon:Print(string.format("  %-36s %d  %s", label, n,
+            s and "|cffff6600<hit SECRET>|r" or "|cff00ff00secret-safe|r"))
+    end
+    line("nameplate units", nUnits, sExists)
+    line("hostile (UnitCanAttack)", nHostile, sHostile)
+    line("+ in melee range", nRange, sRange)
+    line("+ engaged (UnitAffectingCombat)", nCombat, sCombat)
+    line("+ fighting me (UnitThreatSituation)", nThreat, sThreat)
+
+    -- Compare with AC's own context signal (the thing we're trying to replicate
+    -- WITHOUT AC). AC's pick + its archetype is exactly how the queue infers AoE today.
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local pick = BAPI and BAPI.GetNextCastSpell and BAPI.GetNextCastSpell()
+    local arch = pick and SpellDB and SpellDB.GetArch and SpellDB.GetArch(pick)
+    addon:Print(string.format("|cffffff00AC view:|r pick=%s  archetype=|cff00ccff%s|r",
+        pick and tostring(pick) or "none", tostring(arch or "?")))
+    addon:Print("|cff888888Pull 1 vs 3+ mobs and re-run: does the direct hostile count track "
+        .. "reality (secret-safe), and does it agree with AC's archetype?|r")
+end
+
+--------------------------------------------------------------------------------
+-- Resource-inference probe
+--------------------------------------------------------------------------------
+--- /jac inspect resource - Test whether we can infer resource availability from
+--- per-ability usability WITHOUT reading the (secret) resource value. Confirms the
+--- direct UnitPower read is secret, then checks C_Spell.IsSpellUsable's
+--- insufficientPower flag per rotation ability (secret-tested before use).
+function DebugCommands.ResourceDiagnostics(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function sec(v)
+        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
+    end
+
+    addon:Print("|cff00ccff== Resource-inference probe ==|r")
+
+    -- 1. The direct read we're routing around (expected SECRET in combat).
+    if UnitPower and UnitPowerType then
+        local pt = UnitPowerType("player")
+        local val = UnitPower("player", pt)
+        addon:Print("UnitPower direct read: " .. (sec(val)
+            and "|cffff6600SECRET (can't read)|r" or "|cff00ff00" .. tostring(val) .. "|r"))
+    end
+
+    -- 2. Per-ability usability: C_Spell.IsSpellUsable -> (usable, insufficientPower).
+    local RI = LibStub("JustAC-RotationImport", true)
+    local list = (RI and RI.GetRotation and RI.GetRotation("st"))
+        or (BAPI and BAPI.GetRotationSpells and BAPI.GetRotationSpells())
+    if not list or #list == 0 then
+        addon:Print("|cffff6600no spell list for this spec|r")
+        return
+    end
+
+    -- Static resource cost per ability (NeverSecret spell data), so the ladder is visible.
+    local function costStr(id)
+        local costs = C_Spell and C_Spell.GetSpellPowerCost and C_Spell.GetSpellPowerCost(id)
+        if type(costs) ~= "table" or #costs == 0 then return "-" end
+        local parts = {}
+        for _, c in ipairs(costs) do
+            local pn = (c.name or ""):lower():gsub("_", ""):sub(1, 6)
+            parts[#parts + 1] = tostring(c.cost or "?") .. (pn ~= "" and (" " .. pn) or "")
+        end
+        return table.concat(parts, "+")
+    end
+
+    local anySecret = false
+    addon:Print("|cffffff00ability | cost | cd | usable | resource|r")
+    for _, id in ipairs(list) do
+        local ready = BAPI.IsSpellReady and BAPI.IsSpellReady(id)
+        local usable, noPower = C_Spell.IsSpellUsable(id)
+        local secHit = sec(usable) or sec(noPower)
+        if secHit then anySecret = true end
+        local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or id
+        local tag
+        if secHit then
+            tag = "|cffff6600SECRET|r"
+        else
+            tag = (ready and "rdy" or "|cff888888cd|r")
+                .. " | " .. (usable and "|cff00ff00usable|r" or "no")
+                .. " | " .. (noPower and "|cffffcc00LOW|r" or "|cff00ff00ok|r")
+        end
+        addon:Print(string.format("  %-20s %-12s %s", tostring(name), costStr(id), tag))
+    end
+    if anySecret then
+        addon:Print("|cffff6600IsSpellUsable returned SECRET - resource inference not viable.|r")
+    else
+        addon:Print("|cff888888'LOW' = blocked by resource specifically. Spend down and re-run: "
+            .. "the costliest ability still 'ok' brackets your resource - no secret read needed. "
+            .. "(Pooled accumulators like combo points don't hard-gate, so they show no floor.)|r")
+    end
 end
 
 --------------------------------------------------------------------------------

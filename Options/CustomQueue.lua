@@ -70,6 +70,53 @@ local function MakeOrderingToggle(addon, field, name, desc, order)
     }
 end
 
+--- The "Context ordering" select for positions 2+: Off / Match Blizzard's pick (the
+--- context-aware heuristic) / SimC priority (imported theorycraft order). The SimC
+--- tier only appears where we have data for the current spec. Reads/writes
+--- profile.contextOrder, migrating the old boolean orderContextAware.
+local function MakeContextOrderSelect(addon, order)
+    local function hasSimc()
+        local RI = LibStub("JustAC-RotationImport", true)
+        return RI and RI.HasRotation and RI.HasRotation()
+    end
+    return {
+        type = "select",
+        name = "Context ordering",
+        desc = "How the abilities after the first are ordered.\n\n"
+            .. "|cffffd100Off|r - source order.\n"
+            .. "|cffffd100Match Blizzard's pick|r - reorder to match what Assisted "
+            .. "Combat is recommending now (target pattern + builder/spender role).\n"
+            .. "|cffffd100SimC priority|r - order by SimulationCraft's theorycraft "
+            .. "priority for your spec and target count.\n\n"
+            .. "SimC priority is tuned for end-game; below max level use Match Blizzard's "
+            .. "pick. (Orderings from SimulationCraft, GPL-3.0.)",
+        order = order,
+        width = "normal",
+        values = function()
+            local v = { off = "Off", ac = "Match Blizzard's pick" }
+            if hasSimc() then v.simc = "SimC priority" end
+            return v
+        end,
+        sorting = function()
+            return hasSimc() and { "off", "ac", "simc" } or { "off", "ac" }
+        end,
+        get = function()
+            local profile = addon:GetProfile()
+            if not profile then return "ac" end
+            if profile.contextOrder then return profile.contextOrder end
+            return (profile.orderContextAware == false) and "off" or "ac"
+        end,
+        set = function(_, val)
+            local profile = addon:GetProfile()
+            if not profile then return end
+            profile.contextOrder = val
+            profile.orderContextAware = nil  -- superseded by contextOrder
+            addon:ForceUpdateAll()
+            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        end,
+    }
+end
+
 --- Snapshot the current Blizzard rotation into the profile (baseline + spells).
 --- Returns true if snapshot was taken, false if no rotation available.
 local function SnapshotRotation(addon, specKey)
@@ -163,12 +210,6 @@ function CustomQueue.CreateTabArgs(addon)
                 order = 0.25,
                 fontSize = "medium",
             },
-            info = {
-                type = "description",
-                name = L["Custom Queue Info"],
-                order = 1,
-                fontSize = "medium",
-            },
             enableCustomQueue = {
                 type = "toggle",
                 name = L["Enable Custom Queue"],
@@ -216,7 +257,7 @@ function CustomQueue.CreateTabArgs(addon)
                         fontSize = "small",
                     },
                     procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2),
-                    contextBias   = MakeOrderingToggle(addon, "orderContextAware", L["Custom Queue Context Aware"], L["Custom Queue Context Aware desc"], 3),
+                    contextOrder  = MakeContextOrderSelect(addon, 3),
                     sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"], L["Custom Queue Sink Cooldowns desc"], 4),
                 },
             },

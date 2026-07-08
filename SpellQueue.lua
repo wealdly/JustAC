@@ -388,15 +388,22 @@ end
 
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
+local rankSortIdx = {}
 local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
-    for rank = 0, RANK_SINK do
-        for i = 1, count do
-            if spellCount >= maxIcons then return spellCount end
-            if ranks[i] == rank then
-                spellCount = spellCount + 1
-                recommendedSpells[spellCount] = bucket[i]
-            end
-        end
+    -- Stable sort by rank (ascending = higher priority), ties keeping insertion order.
+    -- Handles both ContextRank (0..RANK_SINK) and SimC priority ranks (a list index that
+    -- can exceed RANK_SINK, plus a large unranked sentinel) - the old 0..RANK_SINK
+    -- bucket-iteration silently dropped anything ranked above RANK_SINK.
+    wipe(rankSortIdx)
+    for i = 1, count do rankSortIdx[i] = i end
+    table.sort(rankSortIdx, function(a, b)
+        if ranks[a] ~= ranks[b] then return ranks[a] < ranks[b] end
+        return a < b
+    end)
+    for k = 1, count do
+        if spellCount >= maxIcons then break end
+        spellCount = spellCount + 1
+        recommendedSpells[spellCount] = bucket[rankSortIdx[k]]
     end
     return spellCount
 end
@@ -406,16 +413,40 @@ end
 --- buckets, entries are ordered by ContextRank (profile-distance to the AC pick), so the
 --- ability closest to what Assisted Combat is recommending surfaces first. ctxArch is nil
 --- when the AC pick is untagged → uniform rank → no reorder.
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
+local RotationImport = LibStub("JustAC-RotationImport", true)
+
+-- True if any positive SimC buff-window gate is active (engine-truth via the
+-- duration-object probe). A ranked ability with its window up promotes like a proc.
+local function SimcBuffWindowActive(gates)
+    if not gates then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "buff" and not g.neg and g.id
+           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id) then
+            return true
+        end
+    end
+    return false
+end
+
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx)
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
     wipe(normalRank)
     local proccedCount, normalCount, cooldownCount = 0, 0, 0
-    -- rankOf: neutral (1, list order preserved) when the situation bias is toggled off.
-    local function rankOf(spellID)
-        if not contextBias then return 1 end
-        return ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
+    -- rankOf: "off" = neutral (list order); "ac" = ContextRank (distance to AC's pick);
+    -- "simc" = the imported SimC priority rank (theorycraft order), spells not in the
+    -- SimC list sinking below the ranked ones. The SimC entry is pre-fetched per spell
+    -- and passed in to avoid a second lookup.
+    local simcMode = (contextOrder == "simc")
+    local function rankOf(spellID, simcRec)
+        if simcMode then
+            return (simcRec and simcRec.rank) or 900
+        elseif contextOrder == "ac" then
+            return ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
+        end
+        return 1
     end
 
     for i = 1, #rotationList do
@@ -426,7 +457,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                 -- Items are only present via Custom Queue - skip spell filters.
                 local itemID = -spellID
                 addedSpellIDs[spellID] = true
-                local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID)
+                local _, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID)
                 if hasItem then
                     if onCooldown and sinkCooldowns then
                         cooldownCount = cooldownCount + 1
@@ -454,12 +485,28 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     -- so IsSpellReady falls back to stale local charge counts and such a proc
                     -- could sink early. Rare; exempt charge spells here if one ever regresses.
                     local ready = BlizzardAPI.IsSpellReady(displayID)
-                    if not bypassProcs and ready and BlizzardAPI.IsSpellProcced(displayID)
+                    local simcRec = (simcMode and RotationImport and RotationImport.GetEntry)
+                        and RotationImport.GetEntry(spellID, simcCtx) or nil
+                    -- Resource-gated (delegated) SimC entries are spenders: sink them when
+                    -- you can't afford them right now (IsSpellUsable's insufficientPower is
+                    -- NeverSecret), so builders surface while you're starved and the spender
+                    -- rises once you can pay for it. Fail-safe - only sink on a definite "no".
+                    local starved = false
+                    if simcRec and simcRec.delegated then
+                        local _, notEnough = BlizzardAPI.IsSpellUsable(displayID, true)
+                        starved = notEnough and true or false
+                    end
+                    -- A ranked ability whose SimC buff-window is up promotes like a proc, so
+                    -- it surfaces inside its window (e.g. Rip during Tiger's Fury) - but never
+                    -- an unaffordable spender.
+                    if not bypassProcs and ready and not starved
+                       and (BlizzardAPI.IsSpellProcced(displayID)
+                            or (simcRec and SimcBuffWindowActive(simcRec.gates)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
-                        proccedRank[proccedCount] = rankOf(spellID)
-                    elseif sinkCooldowns and (not ready
+                        proccedRank[proccedCount] = rankOf(spellID, simcRec)
+                    elseif sinkCooldowns and (not ready or starved
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
                            or (DotTracker and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
@@ -471,7 +518,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     else
                         normalCount = normalCount + 1
                         normalSpells[normalCount] = displayID
-                        normalRank[normalCount] = rankOf(spellID)
+                        normalRank[normalCount] = rankOf(spellID, simcRec)
                     end
                 else
                     -- Undo claim if filters rejected
@@ -789,6 +836,16 @@ function SpellQueue.GetCurrentSpellQueue()
         ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
         ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
+    -- Direct enemy count (secret-safe, AC-independent): promote the context to
+    -- cleave/aoe from the number of enemies actually engaged with us, catching AoE
+    -- that a single AC-pick archetype misses. Promote-only - never downgrades AC's
+    -- own aoe/cleave read.
+    if inCombat and BlizzardAPI.GetEngagedEnemyCount then
+        local enemies = BlizzardAPI.GetEngagedEnemyCount()
+        if enemies >= 2 then
+            ctxArch = (enemies >= 3 or ctxArch == "aoe") and "aoe" or "cleave"
+        end
+    end
     -- Temporal smoothing of the revealed context (see module-state comment):
     -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
     local stickyApplied, executeLatched = false, false
@@ -834,9 +891,20 @@ function SpellQueue.GetCurrentSpellQueue()
         -- order); "context aware" off neutralizes ContextRank; "cooldowns last" off leaves
         -- on-CD spells in their source slot instead of trailing.
         local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
-        local contextBias  = profile.orderContextAware ~= false
         local sinkCooldowns = profile.orderSinkCooldowns ~= false
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextBias, sinkCooldowns)
+        -- Context ordering: "off" | "ac" (match Blizzard's pick, the old default) |
+        -- "simc" (theorycraft priority). Migrate the old boolean orderContextAware.
+        local contextOrder = profile.contextOrder
+        if not contextOrder then
+            contextOrder = (profile.orderContextAware == false) and "off" or "ac"
+        end
+        -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
+        local simcCtx = (ctxArch == "aoe" and "aoe") or (ctxArch == "cleave" and "cleave") or "st"
+        if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
+           and RotationImport.HasRotation()) then
+            contextOrder = "ac"
+        end
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx)
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but

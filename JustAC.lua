@@ -1211,6 +1211,9 @@ function JustAC:RefreshInterruptSpells()
     if newList then
         self.resolvedInterrupts = newList
     end
+    if SpellDB and SpellDB.ResolveSootheSpells then
+        self.resolvedSoothe = SpellDB.ResolveSootheSpells()  -- nil for non-soothe classes; refreshes on talent change
+    end
     if UINameplateOverlay and UINameplateOverlay.RefreshInterruptSpells then
         UINameplateOverlay.RefreshInterruptSpells()
     end
@@ -1663,6 +1666,11 @@ function JustAC:OnPetChanged(event, unit)
     -- Pet summoned/dismissed/died - update pet health bar visibility and defensive queue
     if UIHealthBar and UIHealthBar.UpdatePetVisibility then
         UIHealthBar.UpdatePetVisibility(self)
+    end
+    -- Pet bar just showed/hid: re-anchor the resource bars to the new outermost shown
+    -- bar so they don't leave a gap over the hidden pet slot (matches the overlay).
+    if UIHealthBar and UIHealthBar.ReanchorPower then
+        UIHealthBar.ReanchorPower(self)
     end
     self:OnHealthChanged(nil, "pet")
     self:ForceUpdate()

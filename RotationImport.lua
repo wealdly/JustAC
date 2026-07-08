@@ -1,0 +1,146 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Copyright (C) 2024-2026 wealdly
+-- JustAC: alternate rotation source.
+--
+-- Consumes imported action priority lists (flattened, per context) and hands the
+-- queue a spell list for positions 2+. Each entry may carry secret-safe GATES
+-- (cooldown / dot / proc / buff-window / execute / targets) classified offline by
+-- tools/gen-simc-rotations.py; the runtime evaluator (SpellQueue) applies them.
+-- This module reads no combat state, so it is safe under 12.0 secret values.
+--
+-- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
+-- action priority lists; provenance in that file and tools/simc-apl/).
+
+local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
+if not RotationImport then return end
+
+-- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...} }
+-- entry = { id = <spellID>, gates = { {t="cd"}, {t="dot",id=..}, {t="proc"},
+--           {t="buff",id=..,neg=bool}, {t="execute"}, {t="targets",..} }, delegated = bool }
+local rotations = RotationImport._rotations or {}
+RotationImport._rotations = rotations
+local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
+
+--- Register GATED rotation tables (the generated format above).
+function RotationImport.RegisterGated(data)
+    if type(data) ~= "table" then return end
+    for specKey, entry in pairs(data) do
+        rotations[specKey] = entry
+        lookupCache[specKey] = nil
+    end
+end
+
+local function EntriesFor(context)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local entry = specKey and rotations[specKey]
+    if not entry then return nil end
+    local list = entry[context or "st"] or entry.st
+    return (type(list) == "table") and list or nil
+end
+
+--- Ordered spell-ID list for the current spec + context, filtered to spells the
+--- player knows/has talented (IsPlayerSpell is static -> secret-safe). nil if none.
+-- @param context string|nil - "st" (default) | "aoe"
+function RotationImport.GetRotation(context)
+    local list = EntriesFor(context)
+    if not list then return nil end
+    local out, n = {}, 0
+    for i = 1, #list do
+        local e = list[i]
+        if e and e.id and (not IsPlayerSpell or IsPlayerSpell(e.id)) then
+            n = n + 1
+            out[n] = e.id
+        end
+    end
+    return n > 0 and out or nil
+end
+
+--- Gated entries for the current spec + context (same IsPlayerSpell filter). The
+--- runtime evaluator uses the gates; the editor uses GetRotation (flat) instead.
+function RotationImport.GetRotationGated(context)
+    local list = EntriesFor(context)
+    if not list then return nil end
+    local out, n = {}, 0
+    for i = 1, #list do
+        local e = list[i]
+        if e and e.id and (not IsPlayerSpell or IsPlayerSpell(e.id)) then
+            n = n + 1
+            out[n] = e
+        end
+    end
+    return n > 0 and out or nil
+end
+
+--- True when this module has data for the current spec.
+function RotationImport.HasRotation()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    return specKey ~= nil and rotations[specKey] ~= nil
+end
+
+--------------------------------------------------------------------------------
+-- Refiner lookup: rank + gates for AC's fixed-queue spells.
+-- The queue hands us AC's rotation spell ids; we return the SimC priority RANK
+-- (list index, lower = higher priority) and the entry's secret-safe gates. Ids are
+-- matched directly AND by talent-base id (BlizzardAPI.ResolveSpellID) so AC's ids
+-- line up with the SimC data ids across override chains.
+--------------------------------------------------------------------------------
+local BlizzardAPI
+local function baseID(id)
+    if not BlizzardAPI then BlizzardAPI = LibStub("JustAC-BlizzardAPI", true) end
+    return (BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(id)) or id
+end
+
+local function BuildLookup(specKey)
+    local rot = rotations[specKey]
+    if not rot then return nil end
+    local byCtx = {}
+    for ctx, list in pairs(rot) do
+        if type(list) == "table" then
+            local m = {}
+            for i = 1, #list do
+                local e = list[i]
+                if e and e.id and not m[e.id] then
+                    local rec = { rank = i, gates = e.gates, delegated = e.delegated }
+                    m[e.id] = rec
+                    local b = baseID(e.id)
+                    if b ~= e.id and not m[b] then m[b] = rec end
+                end
+            end
+            byCtx[ctx] = m
+        end
+    end
+    lookupCache[specKey] = byCtx
+    return byCtx
+end
+
+-- A missing context tier falls back to a broader/base one.
+local CTX_FALLBACK = { st = { "st" }, cleave = { "cleave", "aoe", "st" }, aoe = { "aoe", "st" } }
+
+--- { rank, gates, delegated } for spellID in the current spec + context, or nil.
+--- @param context string|nil "st" (default) | "cleave" | "aoe"
+function RotationImport.GetEntry(spellID, context)
+    if not spellID then return nil end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return nil end
+    local byCtx = lookupCache[specKey] or BuildLookup(specKey)
+    if not byCtx then return nil end
+    -- Use the best AVAILABLE context list, then look up ONLY in it. A spell the
+    -- generator excluded from that context (e.g. a single-target ability absent from
+    -- the AoE list) must sink to unranked - NOT inherit a rank from a broader context.
+    local order = CTX_FALLBACK[context or "st"] or CTX_FALLBACK.st
+    local m
+    for i = 1, #order do
+        if byCtx[order[i]] then m = byCtx[order[i]]; break end
+    end
+    if not m then return nil end
+    return m[spellID] or m[baseID(spellID)]
+end
+
+--- SimC priority rank (list index; lower = higher priority) for spellID, or nil.
+function RotationImport.GetRank(spellID, context)
+    local rec = RotationImport.GetEntry(spellID, context)
+    return rec and rec.rank
+end

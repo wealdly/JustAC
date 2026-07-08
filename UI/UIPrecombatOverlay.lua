@@ -158,7 +158,11 @@ function PrecombatOverlay.OverlayClickLayers(addon)
             if not icons then return end
             for i = 1, #icons do
                 local icon = icons[i]
-                if placed < POOL_SIZE and icon and icon:IsShown()
+                -- IsVisible (not IsShown): an icon whose parent frame is hidden still
+                -- reports IsShown()==true, which would strand a "click" layer floating
+                -- over empty space. The alpha-0 hide path clears spellID/isPrecombatBuff,
+                -- so this only adds the hidden-ancestor case.
+                if placed < POOL_SIZE and icon and icon:IsVisible()
                     and (icon.spellID or (icon.isItem and icon.itemID)) then
                     if ConfigureLayer(layers[placed + 1], icon, eating) then placed = placed + 1 end
                 end

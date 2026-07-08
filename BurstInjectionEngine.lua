@@ -3,6 +3,19 @@
 -- BurstInjectionEngine.lua - Burst injection system: detect burst windows and
 -- inject user-configured priority spells at position 1.
 --
+-- STATUS (2026-07-07): EXPERIMENTAL, opt-in, and largely SUPERSEDED - kept in place
+-- only to validate the SimC path in-game first. The imported SimC priority list now
+-- ranks the burst CDs (cd gates) and SpellQueue's buff-window promotion surfaces the
+-- burst-window abilities (a positive `buff` gate promotes like a proc while that
+-- window is up - engine-truth via BlizzardAPI.IsBuffWindowActive). That is the same
+-- "chain the burst sequence during the window" job, data-driven across all specs,
+-- WITHOUT overriding AC's pick. This engine's one distinctive move - forcing
+-- position 1 during the window - is the last remnant of the Replace-AC pattern
+-- removed elsewhere (AC reads the real, secret resources during a CD chain; we do
+-- not). Once buff-window promotion is confirmed to cover burst in-game, retire the
+-- trigger/injection/timer-fallback machinery and keep at most a minimal
+-- "burst-ready" cue. See SpellQueue.SimcBuffWindowActive + RotationImport.GetEntry.
+--
 -- Two-phase trigger detection:
 --   Phase 1 ("pending"): Blizzard recommends a trigger CD at position 1.
 --     → Show burst glow on the trigger to signal "press this to start burst".

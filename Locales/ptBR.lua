@@ -80,6 +80,7 @@ L["Dn"] = "Baixo"
 
 -- Descriptions
 L["General description"] = "Configurações compartilhadas entre a fila padrão e a sobreposição."
+L["Interrupt"] = "Interrupção"
 L["Shared Behavior"] = "Comportamento compartilhado"
 L["Icon Layout"] = "Layout dos ícones"
 L["Visibility"] = "Visibilidade"
@@ -99,6 +100,8 @@ L["Defensive Display Mode"] = "Visibilidade defensiva"
 L["Defensive Display Mode desc"] = "Vida baixa: Mostrar apenas quando a vida cai abaixo dos limites\nApenas em combate: Sempre mostrar em combate\nSempre: Mostrar o tempo todo"
 L["When Health Low"] = "Vida baixa"
 L["In Combat Only"] = "Apenas em combate"
+L["Hide Emergency Until Low"] = "Segurar curas de emergência até vida baixa"
+L["Hide Emergency Until Low desc"] = "Acima do limite de vida baixa, mantém os botões de pânico - bolhas de imunidade, grandes curas instantâneas e poções de vida - no fim da fila, esmaecidos com uma etiqueta AGRD em vez de exibidos como sugestões ativas. Eles se acendem e sobem ao topo quando a vida cai abaixo do limite. Mitigação e preenchimentos aparecem normalmente. (Curas gratuitas ativadas por proc nunca são seguradas.)"
 
 -- Detailed descriptions
 L["Icon Size desc"] = "Tamanho base dos ícones em pixels"
@@ -119,6 +122,8 @@ L["Panel Interaction desc"] = "Como o painel responde à entrada do mouse.\n\nTr
 L["Unlocked"] = "Desbloqueado"
 L["Locked"] = "Bloqueado"
 L["Click Through"] = "Clique transparente"
+L["Click to Cast"] = "Clicar para conjurar defensivos (fora de combate)"
+L["Click to Cast desc"] = "Clique esquerdo nos ícones da fila defensiva fora de combate para conjurá-los ou usá-los - útil para buffs de pré-pull e preparação. A rotação de DPS é apenas por atalho e nunca é clicável. Oculto em combate e no modo Clique transparente. Conjura a habilidade específica diretamente (sem penalidade de combate assistido); use seus atalhos em combate."
 L["Enable Defensive Suggestions desc"] = "Mostrar defensivos quando a vida está baixa"
 L["Custom Hotkey desc"] = "Texto personalizado (ex: F1, Ctrl+Q)"
 L["Move up desc"] = "Subir prioridade"
@@ -210,6 +215,8 @@ L["Pet Heal Priority desc"] = "Exibido quando a vida do pet está baixa. A vida 
 L["Restore Pet Heal Defaults desc"] = "Redefinir magias de cura de pet para os padrões da classe"
 L["Show Pet Health Bar"] = "Mostrar barra de vida do pet"
 L["Show Pet Health Bar desc"] = "Barra de vida compacta do pet (apenas classes com pet). Oculta-se sem pet ativo."
+L["Show Target Health Bar"] = "Mostrar barra de vida do alvo"
+L["Show Target Health Bar desc"] = "Barra de vida compacta do alvo no lado oposto da fila (oposto às barras do jogador/pet). Apenas alvos hostis; oculta-se automaticamente sem alvo."
 
 -- Item settings (per-item aura link / combat hide)
 L["Link Aura..."] = "Vincular aura..."
@@ -230,6 +237,8 @@ L["Reverse Anchor desc"] = "Por padrão os ícones DPS aparecem à direita da pl
 L["Nameplate Show Defensives desc"] = "Mostrar ícones defensivos no lado oposto da placa."
 L["Interrupt Mode"] = "Lembrete de interrupção"
 L["Interrupt Mode desc"] = "Controla quando o ícone de lembrete de interrupção aparece e qual habilidade sugerir."
+L["Include Fears"] = "Incluir medos"
+L["Include Fears desc"] = "Sugerir controle de grupo do tipo medo (ex: Grito Intimidador, Grito Psíquico) como alternativa de interrupção. Desativado por padrão: medos quebram assim que o alvo sofre dano e espalham os inimigos, o que é disruptivo em grupos."
 L["Sounds"] = "Sons"
 L["Interrupt Alert"] = "Alerta de interrupção"
 L["Interrupt Alert Sound desc"] = "Tocar um som quando o ícone de interrupção aparece pela primeira vez."
@@ -238,6 +247,8 @@ L["Interrupt Mode Kick Only"] = "Apenas Kick: Só interrupções, sem CC"
 L["Interrupt Mode Kick Prefer"] = "Prioridade Kick: Kick primeiro, CC como reserva"
 L["Interrupt Mode CC Prefer"] = "Prioridade CC: CC sobre kicks (gasta CC em conjurações kickáveis)"
 L["Nameplate Show Health Bars desc"] = "Barras de vida compactas acima dos ícones defensivos. Oculta-se automaticamente sem defensivos visíveis."
+L["Show Resource Bar"] = "Mostrar barra de recurso"
+L["Nameplate Show Resource Bar desc"] = "Barra de recurso compacta (poder primário mais um recurso segmentado de pontos) além das barras de vida. Requer barras de vida ativadas."
 
 -- Reset buttons (5 keys)
 L["Reset to Defaults"] = "Redefinir padrões"
@@ -287,9 +298,6 @@ L["Reset Gap-Closers desc"] = "Redefinir configurações de aproximação. A lis
 L["Show Gap-Closer Glow"] = "Brilho de aproximação"
 L["Show Gap-Closer Glow desc"] = "Exibe um brilho dourado nos ícones de aproximação para destacar que estão disponíveis."
 L["Gap-Closer Ranged Spec Note"] = "Sem habilidades de aproximação padrão para esta especialização. Você pode adicionar magias manualmente abaixo se necessário."
-L["Melee Range Reference"] = "Referência de alcance corpo a corpo"
-L["Melee Range Spell desc"] = "Habilidades de aproximação são ativadas quando esta habilidade está fora de alcance. Deve estar na sua barra de ação."
-L["Melee Range Spell Override desc"] = "Substituição do ID de magia (vazio = automático)"
 L["Default"] = "Padrão"
 L["Override"] = "Personalizar"
 L["Clear Override"] = "Limpar personalização"

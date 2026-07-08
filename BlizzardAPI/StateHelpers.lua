@@ -35,6 +35,45 @@ local GetNumShapeshiftForms = GetNumShapeshiftForms
 local GetShapeshiftFormInfo = GetShapeshiftFormInfo
 
 --------------------------------------------------------------------------------
+-- Engaged-enemy count (secret-safe, AC-independent AoE signal)
+--------------------------------------------------------------------------------
+-- Counts hostile nameplate units that have the player on their threat table -
+-- enemies actually fighting YOU. Validated in 12.0 as: camera-immune (combat
+-- nameplates are pinned), group-correct (excludes mobs tanked by others), and
+-- secret-safe (every read is issecretvalue-tested before use). Cached briefly so
+-- the per-frame queue build stays cheap. Nameplate frames are restricted, so we
+-- go through the unit TOKENS, not C_NamePlate.GetNamePlates().
+local UnitCanAttack       = UnitCanAttack
+local UnitThreatSituation = _G.UnitThreatSituation
+local NAMEPLATE_UNITS = {}
+for i = 1, 40 do NAMEPLATE_UNITS[i] = "nameplate" .. i end
+local engagedCount, engagedCountAt = 0, -1
+
+--- @return number enemies currently engaged with the player (0 if unknowable)
+function BlizzardAPI.GetEngagedEnemyCount()
+    local now = GetTime()
+    if now - engagedCountAt < 0.25 then return engagedCount end
+    local n = 0
+    if UnitThreatSituation then
+        for i = 1, 40 do
+            local u = NAMEPLATE_UNITS[i]
+            local ex = UnitExists(u)
+            if not IsSecretValue(ex) and ex then
+                local ca = UnitCanAttack("player", u)
+                if not IsSecretValue(ca) and ca then
+                    local ts = UnitThreatSituation("player", u)
+                    if not IsSecretValue(ts) and ts ~= nil then
+                        n = n + 1
+                    end
+                end
+            end
+        end
+    end
+    engagedCount, engagedCountAt = n, now
+    return n
+end
+
+--------------------------------------------------------------------------------
 -- Defensive Spell State Helper (consolidates common validation pattern)
 --------------------------------------------------------------------------------
 

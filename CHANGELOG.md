@@ -3,6 +3,26 @@
 
 ## [Unreleased]
 
+## [4.39.0] - 2026-07-08
+
+### Added
+
+- Enrage cleanse reminder: when your target is enraged and you can remove it - Soothe, Tranquilizing Shot, Shiv, and the like - the interrupt slot shows your cleanse with a green glow, its keybind, and the enrage it will remove. While the enrage is still being cast you'll get the interrupt instead (interrupting avoids the enrage); the cleanse takes over the moment it lands, and wins when both apply. Works on the standard queue and the nameplate overlay.
+- Nameplate overlay resource bar: the standard queue's optional resource bar is now available on the nameplate overlay too - your primary resource (mana, energy, rage) plus, for specs that use one, a segmented secondary point resource (combo points, runes, chi, and so on) - stacked beyond the overlay health bars and colored by type. Enable it under Nameplate Overlay options; it needs the overlay health bars turned on.
+- Priority ordering by SimulationCraft (experimental): the queue's *Context aware* ordering is now a *Context ordering* choice - Off, *Match Blizzard's pick* (the previous behavior), or *SimC priority*. *SimC priority* orders the abilities after Blizzard's pick by SimulationCraft's community priority for your specialization and target count; Blizzard's Assisted Combat still chooses your first ability. Opt-in and off by default, and tuned for end-game - below max level, *Match Blizzard's pick* is the better fit.
+
+### Improved
+
+- Nameplate overlay health bars now match the standard queue's styling - a neutral darkened background with a subtle sheen instead of a flat red - so the two displays read consistently.
+- The queue recognizes AoE and cleave more reliably, counting the enemies actually engaged with you, so your multi-target abilities surface when you're fighting more than one target.
+- The offensive *Rotation* tab is now named *Priority*, reflecting that it orders a priority queue of suggestions rather than mirroring a fixed rotation.
+
+### Fixed
+
+- The out-of-combat "click" cast helper no longer floats over an empty spot when the icon beneath it is hidden - it only appears on reminders actually shown on screen.
+- A proc glow on a queued ability no longer occasionally gets stuck lit after you leave combat.
+- A queued ability that transforms into a follow-up - such as Templar Strike becoming Templar Slash - no longer shows a phantom cooldown that isn't on your action bar.
+
 ## [4.38.0] - 2026-07-06
 
 ### Added

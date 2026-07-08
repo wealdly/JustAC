@@ -101,3 +101,20 @@ SpellDB.RegisterInterruptAbilities({
     [202719] = { kind="cc", mech=9, reach="pbaoe", radius=8, pri=9 },   -- Arcane Torrent (fury)
     [232633] = { kind="cc", mech=9, reach="pbaoe", radius=8, pri=9 },   -- Arcane Torrent (insanity)
 })
+
+-- Enrage dispels ("soothe" family). Shown as a sink-gated green cue over the interrupt
+-- slot when the target is ENRAGED (dispel type 9). Kept separate from the interrupt/CC
+-- table above because they are enrage-triggered (not cast-triggered) and some are talent-
+-- gated dual-purpose spells (Paralysis is also a CC). Derived from DB2 SpellEffect
+-- Effect=38 (Dispel) + EffectMiscValue_0=9 (Enrage). `requires` = talent spell(s) that must
+-- be known for the dispel to be active (any one satisfies); IsSpellAvailable filters base +
+-- talent to the player's class/build, so the list auto-narrows to this character's soothe.
+if SpellDB.RegisterSootheAbilities then
+    SpellDB.RegisterSootheAbilities({
+        [2908]   = { reach="ranged" },                                    -- Soothe (Druid)
+        [19801]  = { reach="ranged" },                                    -- Tranquilizing Shot (Hunter)
+        [5938]   = { reach="ranged" },                                    -- Shiv (Rogue)
+        [115078] = { reach="ranged", requires={457389, 450432, 287599} }, -- Paralysis (Monk) - dispels w/ Pressure Points
+        [406971] = { reach="ranged", requires={374346} },                 -- Oppressing Roar (Evoker) - dispels w/ Overawe
+    })
+end

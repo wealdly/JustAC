@@ -217,8 +217,10 @@ function GapCloserEngine.InvalidateGapCloserCache()
 end
 
 --- Returns the first usable gap-closer spell ID for the current spec, or nil.
---- "Usable" = known, IsSpellUsable(failOpen=false), on an action bar slot, and
---- not on a real cooldown (isOnGCD ~= false).
+--- "Usable" = known (IsSpellKnown), not blacklisted, not on a real cooldown
+--- (IsSpellReady), and - for the melee-range gate - in range (IsSpellInRange).
+--- No castability/usability check: fail-closed rejects valid spells in combat
+--- (secret values), fail-open adds nothing for a curated list.
 --- Returns: resolvedID, baseID  (resolvedID is the talent-overridden form;
 ---   baseID is the original list entry, e.g. Roll vs Chi Torpedo).
 --- @param addon table              The JustAC addon object

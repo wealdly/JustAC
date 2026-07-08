@@ -1242,6 +1242,15 @@ function UIHealthBar.RefreshSecondaryPowerVisibility(addon)
     end
 end
 
+-- Outermost currently-SHOWN player/pet health bar the resource bars stack beyond. The
+-- IsShown() check (matching the nameplate overlay) means a hidden pet bar - pet class
+-- with the pet bar on but no pet out - doesn't leave a reserved gap; the pair re-anchors
+-- flush to the player bar and shifts back out when a pet is summoned (see ReanchorPower).
+local function OuterHealthBar()
+    if petHealthBarFrame and petHealthBarFrame:IsShown() then return petHealthBarFrame end
+    return healthBarFrame
+end
+
 function UIHealthBar.CreatePowerBar(addon)
     UIHealthBar.DestroyPower()  -- clears primary + secondary
 
@@ -1250,8 +1259,8 @@ function UIHealthBar.CreatePowerBar(addon)
     if not (profile.defensives and profile.defensives.showPowerBar) then return nil end
     if not addon.mainFrame then return nil end
 
-    -- Primary: displayed power, anchored beyond the outermost health bar.
-    powerBarFrame = BuildResourceBar(addon, profile, nil, petHealthBarFrame or healthBarFrame)
+    -- Primary: displayed power, anchored beyond the outermost shown health bar.
+    powerBarFrame = BuildResourceBar(addon, profile, nil, OuterHealthBar())
 
     -- Secondary: created when the class HAS a point resource, then shown/hidden (and
     -- segmented) per spec/form. Stacked one bar-height beyond the primary.
@@ -1263,6 +1272,16 @@ function UIHealthBar.CreatePowerBar(addon)
 
     UIHealthBar.UpdatePower(addon)
     return powerBarFrame
+end
+
+-- Re-anchor the primary to the outermost SHOWN health bar (the secondary follows via its
+-- static SetPoint to the primary). Called when pet-bar visibility flips - summon/dismiss -
+-- so the pair neither floats over a hidden pet slot nor overlaps a freshly shown one.
+function UIHealthBar.ReanchorPower(addon)
+    if not powerBarFrame then return end
+    local profile = addon and addon.db and addon.db.profile
+    if not profile then return end
+    AnchorResourceBar(powerBarFrame, addon.mainFrame, profile, OuterHealthBar())
 end
 
 local function UpdateOneResourceBar(frame)

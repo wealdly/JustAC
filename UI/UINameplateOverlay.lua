@@ -15,6 +15,7 @@ local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local UISootheCue = LibStub("JustAC-UISootheCue", true)
 
 if not BlizzardAPI or not UIAnimations or not UIRenderer then return end
 
@@ -76,6 +77,7 @@ local savedShowQuestUnitCircles = nil -- original CVar value before we suppresse
 local questIndicator   = nil  -- our replacement quest "!" texture on the nameplate
 local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
+local resolvedSoothe     = nil -- player's enrage-dispel ("soothe") abilities (resolved at Create)
 local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-global
 
 -- Masque support (separate group from standard/defensive queues)
@@ -394,6 +396,35 @@ local CC_GAP = 4  -- px between our icons and displaced CC frames
 local BLIZZARD_AURA_HEIGHT = 25   -- NamePlateConstants.AURA_ITEM_HEIGHT
 local BLIZZARD_LOC_SIZE    = 30   -- LossOfControlFrame default size (30×30)
 
+-- Nameplate aura frames (the CC/stun list, LoC, and the enrage buff) are children of the
+-- nameplate, so they inherit the target nameplate's scale — bumped up by default via
+-- nameplateSelectedScale. Our queue icons are UIParent children, so without compensation
+-- the auras render noticeably bigger. Return the UIParent/AurasFrame effective-scale ratio
+-- so a list-frame scale lands the aura item at the intended UIParent-space pixel size.
+-- GetEffectiveScale can be blocked on a restricted nameplate in combat → pcall and reuse
+-- the last good value (the target nameplate's scale is stable across a fight).
+local cachedAuraScaleRatio = nil
+local function AuraFrameScaleRatio(af)
+    local IsSecret = BlizzardAPI.IsSecretValue
+    local ok, ratio = pcall(function()
+        local afEff = af:GetEffectiveScale()
+        local uiEff = UIParent:GetEffectiveScale()
+        if afEff and uiEff and afEff > 0
+           and not (IsSecret and (IsSecret(afEff) or IsSecret(uiEff))) then
+            return uiEff / afEff
+        end
+    end)
+    if ok and ratio and ratio > 0 then cachedAuraScaleRatio = ratio end
+    return cachedAuraScaleRatio or 1
+end
+
+-- List-frame scale that renders one aura item at targetPx (UIParent space), accounting for
+-- Blizzard's per-item auraItemScale and the nameplate scale-space ratio above.
+local function AuraListScaleForQueue(af, targetPx)
+    local auraItemScale = af.auraItemScale or 1
+    return (targetPx / (BLIZZARD_AURA_HEIGHT * auraItemScale)) * AuraFrameScaleRatio(af)
+end
+
 -- Blizzard's default CC anchor from Blizzard_NamePlates.xml:
 --   <Anchor point="LEFT" relativeKey="$parent.$parent.HealthBarsContainer.healthBar" relativePoint="RIGHT" x="5"/>
 -- We hardcode the restore instead of saving/restoring dynamically, because
@@ -408,8 +439,72 @@ local function RestoreBlizzardCCAnchor(frame, healthBar)
     end)
 end
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Enrage indicator (Blizzard's enemy BuffListFrame)
+-- The engine renders enemy important/stealable buffs — ENRAGE among them — in the
+-- nameplate BuffListFrame. We reposition it to sit as "position 0" of the DEFENSIVE
+-- queue (the mirror of the interrupt icon on the offensive queue) and restore it on
+-- detach. This is the only secret-safe enrage signal available: the engine renders it,
+-- we only move the frame — we never read the aura.
+-- ─────────────────────────────────────────────────────────────────────────────
+local savedEnrageFrame       = nil  -- Blizzard BuffListFrame we repositioned (restore on detach)
+local savedEnrageClassAnchor = nil  -- its XML default anchor target (ClassificationFrame)
+local lastEnrageCount        = -1   -- defensive visibleCount at last enrage re-anchor
+
+-- Restore the BuffListFrame to its XML default: RIGHT of ClassificationFrame.LEFT,
+-- scale 1 (Blizzard_NamePlates.xml). Hardcoded because GetPoint() is secret in combat.
+local function RestoreEnrageIndicator()
+    if not savedEnrageFrame then return end
+    pcall(function()
+        savedEnrageFrame:ClearAllPoints()
+        if savedEnrageClassAnchor then
+            savedEnrageFrame:SetPoint("RIGHT", savedEnrageClassAnchor, "LEFT", -5, 0)
+        end
+        savedEnrageFrame:SetScale(1)
+    end)
+    savedEnrageFrame       = nil
+    savedEnrageClassAnchor = nil
+end
+
+-- Position the BuffListFrame as position 0 of the defensive queue, scaled to the queue
+-- icon size so it reads as part of the defensive column.
+--   "down" → inline above defIcons[1]        "up" → inline below defIcons[1]
+--   "out"  → perpendicular pop-out above the health/resource stack (stackTop), so the
+--            enrage never overlaps those bars.
+-- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge —
+-- tune by eye in-game; the structural anchor is what matters here.
+local function PositionEnrageIndicator(npo, expansion, stackTop)
+    local uf        = currentNameplate and currentNameplate.UnitFrame
+    local af        = uf and uf.AurasFrame
+    local buffFrame = af and af.BuffListFrame
+    if not buffFrame or #defIcons == 0 then RestoreEnrageIndicator(); return end
+
+    local iconSize = npo.iconSize or 32
+    local defScale = npo.defensiveIconScale or 1  -- defensive icons render at iconSize * this
+    -- Match the defensive icons' rendered size, compensating for the nameplate scale space.
+    local scale    = AuraListScaleForQueue(af, iconSize * defScale)
+    local spacing  = npo.iconSpacing or ICON_SPACING
+
+    local ok = pcall(function()
+        buffFrame:ClearAllPoints()
+        buffFrame:SetScale(scale)
+        if expansion == "up" then
+            buffFrame:SetPoint("TOP",    defIcons[1], "BOTTOM", 0, -spacing)
+        elseif expansion == "out" then
+            buffFrame:SetPoint("BOTTOM", stackTop,    "TOP",    0,  spacing)
+        else -- "down"
+            buffFrame:SetPoint("BOTTOM", defIcons[1], "TOP",    0,  spacing)
+        end
+    end)
+    if ok then
+        savedEnrageFrame       = buffFrame
+        savedEnrageClassAnchor = uf.ClassificationFrame
+    end
+end
+
 --- Restore all displaced CC/classification frames to their original Blizzard anchoring.
 local function RestoreCCFrames()
+    RestoreEnrageIndicator()  -- independent of savedCCAnchors; always attempt
     if not savedCCAnchors then return end
     local healthBar = savedCCAnchors.healthBar
     if savedCCAnchors.ccList then
@@ -526,9 +621,10 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     --   LossOfControlFrame is a simple 30×30 container, scale = iconSize / 30.
     -- Position: center-aligned with queue icons rather than edge-aligned.
     iconSize = iconSize or 32
-    local auraItemScale = af.auraItemScale or 1
-    local ccScale  = iconSize / (BLIZZARD_AURA_HEIGHT * auraItemScale)
-    local locScale = iconSize / BLIZZARD_LOC_SIZE
+    -- Scale CC/stun + LoC to the queue icon size, compensating for the nameplate scale
+    -- space (see AuraListScaleForQueue) — otherwise both render bigger than our icons.
+    local ccScale  = AuraListScaleForQueue(af, iconSize)
+    local locScale = (iconSize / BLIZZARD_LOC_SIZE) * AuraFrameScaleRatio(af)
 
     local ok, err = pcall(function()
         if expansion == "out" then
@@ -741,6 +837,7 @@ function UINameplateOverlay.Create(addon)
     if interruptMode ~= "disabled" and interruptMode ~= "off" then
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+        resolvedSoothe = SpellDB.ResolveSootheSpells()
 
         -- Cast aura: small icon attached to the interrupt button showing what
         -- the enemy is casting.  Anchors above or below the interrupt icon
@@ -859,6 +956,10 @@ function UINameplateOverlay.Destroy(addon)
     end
 
     if interruptIcon then
+        if interruptIcon.sootheCue then
+            interruptIcon.sootheCue:Hide()
+            interruptIcon.sootheCue:SetParent(nil)
+        end
         if MasqueGroup then
             if inCombat then pendingMasqueRemoval[interruptIcon] = true else MasqueGroup:RemoveButton(interruptIcon) end
         end
@@ -867,6 +968,7 @@ function UINameplateOverlay.Destroy(addon)
     end
     interruptShown = false
     resolvedInterrupts = nil
+    resolvedSoothe = nil
     lastDefVisibleCount = 0
     cachedDefensiveQueue = nil
     wipe(anchorState)
@@ -953,6 +1055,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
     if nameplate then
         currentNameplate = nameplate
         lastDefVisibleCount = 0  -- force health bar re-anchor on new nameplate
+        lastEnrageCount     = -1 -- force enrage-indicator re-anchor on new nameplate
         local anchor       = npo.reverseAnchor and "LEFT" or "RIGHT"
         local iconSize     = npo.iconSize or 32
         -- Health bar is tied to the defensive queue: only show when defensives are enabled
@@ -1234,6 +1337,18 @@ function UINameplateOverlay.Render(addon, spellIDs)
         interruptShown = shouldShowInterrupt
     end
     -- ── End interrupt reminder ───────────────────────────────────────────────
+
+    -- Soothe (enrage-cleanse) cue: sink-gated green layer over the interrupt slot (see
+    -- UIRenderer). Shows only while the target is ENRAGED (dispel type 9); drawn above the
+    -- kick, so on a kick/soothe collision the soothe wins. Self-gates on the enrage sink.
+    if interruptIcon and UISootheCue then
+        local sid = resolvedSoothe and resolvedSoothe[1] and resolvedSoothe[1].spellID
+        if sid then
+            UISootheCue.Show(UISootheCue.Create(interruptIcon, sid, interruptIcon.cachedIconSize))
+        elseif interruptIcon.sootheCue then
+            UISootheCue.Hide(interruptIcon.sootheCue)
+        end
+    end
 
     for i, icon in ipairs(dpsIcons) do
         local spellID  = hasSpells and spellIDs[i] or nil
@@ -1698,6 +1813,28 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
         end
     end
+
+    -- Enrage indicator: place Blizzard's enemy BuffListFrame as position 0 of the
+    -- defensive queue. Re-anchored on visible-count change (same granularity as the
+    -- health bar); horizontal must clear the health/resource stack, so find its top.
+    -- ponytail: a pet/power bar appearing without a count change won't re-nudge it —
+    -- force via lastEnrageCount = -1 (as UpdatePowerColor does for the health bar).
+    if visibleCount > 0 then
+        if visibleCount ~= lastEnrageCount then
+            lastEnrageCount = visibleCount
+            local stackTop = defIcons[1]
+            if npo.showHealthBar and healthBar then
+                stackTop = healthBar
+                if petHealthBar and petHealthBar:IsShown() then stackTop = petHealthBar end
+                if overlayPowerBar and overlayPowerBar:IsShown() then stackTop = overlayPowerBar end
+                if overlaySecondaryPowerBar and overlaySecondaryPowerBar:IsShown() then stackTop = overlaySecondaryPowerBar end
+            end
+            PositionEnrageIndicator(npo, npo.expansion or "down", stackTop)
+        end
+    else
+        lastEnrageCount = 0
+        RestoreEnrageIndicator()
+    end
 end
 
 --- Hide all defensive overlay icons (called when defensive queue is empty).
@@ -1833,6 +1970,9 @@ end
 function UINameplateOverlay.RefreshInterruptSpells()
     if SpellDB and SpellDB.ResolveInterruptSpells then
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+    end
+    if SpellDB and SpellDB.ResolveSootheSpells then
+        resolvedSoothe = SpellDB.ResolveSootheSpells()
     end
 end
 

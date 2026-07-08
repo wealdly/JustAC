@@ -1340,12 +1340,17 @@ local function CreateInterruptIcon(addon, profile)
         if MasqueGroup then
             MasqueGroup:RemoveButton(stdInterruptIcon)
         end
+        if stdInterruptIcon.sootheCue then
+            stdInterruptIcon.sootheCue:Hide()
+            stdInterruptIcon.sootheCue:SetParent(nil)
+        end
         stdInterruptIcon:Hide()
         stdInterruptIcon:SetParent(nil)
         stdInterruptIcon = nil
     end
     addon.interruptIcon = nil
     addon.resolvedInterrupts = nil
+    addon.resolvedSoothe = nil
 
     if (profile.interruptMode or "kickPrefer") == "disabled" then return end
 
@@ -1494,6 +1499,7 @@ local function CreateInterruptIcon(addon, profile)
     stdInterruptIcon = button
     addon.interruptIcon = button
     addon.resolvedInterrupts = SpellDB.ResolveInterruptSpells()
+    addon.resolvedSoothe = SpellDB.ResolveSootheSpells()
 end
 
 function UIFrameFactory.CreateSpellIcons(addon)
