@@ -14,15 +14,22 @@ if not SpellDB or not SpellDB.RegisterTargetDots then return end
 SpellDB.RegisterTargetDots({
 [172]=14,  -- Corruption
 [339]=30,  -- Entangling Roots
+[348]=18,  -- Immolate (script-applies its DoT)
 [589]=16,  -- Shadow Word: Pain
+[703]=18,  -- Garrote
 [772]=15,  -- Rend
+[980]=18,  -- Agony (stacks ramp passively; recast is still a wasted refresh)
 [1079]=24,  -- Rip
 [1822]=15,  -- Rake
+[1943]=24,  -- Rupture
 [8921]=18,  -- Moonfire (base; covers talent variants via GetBaseSpell)
 [14914]=7,  -- Holy Fire
 [25027]=2,  -- Flamethrower
 [27243]=12,  -- Seed of Corruption
+[34914]=21,  -- Vampiric Touch
+[55078]=24,  -- Blood Plague
 [55095]=24,  -- Frost Fever
+[63106]=15,  -- Siphon Life
 [77575]=24,  -- Outbreak
 [102359]=10,  -- Mass Entanglement
 [113344]=6,  -- Bloodbath
@@ -33,10 +40,12 @@ SpellDB.RegisterTargetDots({
 [162487]=20,  -- Steel Trap
 [164812]=18,  -- Moonfire
 [164815]=18,  -- Sunfire
+[195292]=24,  -- Death's Caress
 [196607]=8,  -- Eye of the Tiger
 [202347]=24,  -- Stellar Flare
 [204066]=8,  -- Lunar Beam
 [205023]=8,  -- Conflagration
+[205179]=16,  -- Phantom Singularity
 [205273]=6,  -- Wake of Ashes
 [205545]=4,  -- Odyn's Fury
 [205546]=4,  -- Odyn's Fury
@@ -69,15 +78,17 @@ SpellDB.RegisterTargetDots({
 [385408]=10,  -- Sepsis
 [385424]=0,  -- Serrated Bone Spike
 [385627]=14,  -- Kingsbane
+[386997]=8,  -- Soul Rot
 [391189]=15,  -- Burning Wound
 [393400]=8,  -- Chi Surge
 [394062]=15,  -- Rend
-[431044]=8,  -- Frostfire Bolt
 [444483]=12,  -- Controlled Instincts
+[445468]=18,  -- Wither (stacking false positive)
 [449624]=10,  -- Soul Anathema
 [467741]=6,  -- Shadow Dagger
 [470411]=18,  -- Flame Shock
 [1237885]=12,  -- Thorn Bloom
 [1252871]=8,  -- Red Moon
+[1259790]=8,  -- Unstable Affliction (stacking false positive)
 [1261060]=6,  -- Deep Wounds
 })

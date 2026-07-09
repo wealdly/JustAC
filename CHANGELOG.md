@@ -3,6 +3,12 @@
 
 ## [Unreleased]
 
+## [4.40.0] - 2026-07-09
+
+- More damage-over-time abilities now step to the back of the queue while already active on your target, returning in time to refresh - Agony, Unstable Affliction, Wither, Immolate, Vampiric Touch, Garrote, Rupture, Phantom Singularity, and other previously missed spec DoTs.
+- Abilities whose damage-over-time effect is a minor rider on a direct hit (like Frostfire Bolt) no longer step to the back of the queue after casting.
+- The switch-target arrow is now off by default; turn it on in the options if you use it.
+
 ## [4.39.0] - 2026-07-08
 
 ### Added

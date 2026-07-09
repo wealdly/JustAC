@@ -16,8 +16,9 @@
 --      addedAuras we map the new debuff instance to the cast that produced it;
 --      on removedAuraInstanceIDs we drop it, so a DoT that falls off early (drop,
 --      dispel, immune, miss) un-sinks immediately. Stack count and duration stay
---      secret in combat, so we never read them - the generated list already
---      excludes stacking DoTs, and duration estimates come from static data.
+--      secret in combat, so we never read them - the generated list excludes
+--      recast-to-stack DoTs (passively-ramping ones like Agony are included),
+--      and duration estimates come from static data.
 --
 -- Everything here is scoped to the CURRENT target: UNIT_AURA("target") and the
 -- player's cast both implicitly refer to it, so no per-GUID bookkeeping is needed.

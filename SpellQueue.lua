@@ -626,7 +626,7 @@ function SpellQueue.GetCurrentSpellQueue()
     -- on OTHER targets. IsDotActiveOnCurrentTarget returns false during the pandemic
     -- window, so a genuine refresh-this-target pick does not trigger the arrow.
     dotSpreadActive = false
-    if profile.showDotSpreadArrow ~= false and primarySpellID and primarySpellID > 0
+    if profile.showDotSpreadArrow == true and primarySpellID and primarySpellID > 0
        and DotTracker and DotTracker.IsDotActiveOnCurrentTarget
        and SpellDB and SpellDB.IsTargetDot then
         local pd = BlizzardAPI.GetDisplaySpellID(primarySpellID)

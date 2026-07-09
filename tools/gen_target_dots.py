@@ -18,14 +18,18 @@
 # aura). The DURATION resolves through that link - Rake's 15s comes from its
 # triggered bleed, not the cast. Stacking debuffs are EXCLUDED on purpose (same
 # rule as self-buffs): a stacking DoT must keep being suggested so the player can
-# build stacks. Channeled casts are excluded (a channel is not a maintained DoT).
+# build stacks. DoTs whose stacks ramp PASSIVELY (Agony ticks add its own stacks;
+# recasting is still a wasted refresh) are false positives of that rule - curate
+# them back in below. Channeled casts are excluded (a channel is not a maintained
+# DoT).
 #
 # Script-driven applicators (e.g. Primal Wrath applies Rip via a server-side
 # script effect with no trigger link in the data) are in CURATED below, mapped to
 # the aura spell they apply so the duration still resolves.
 #
 # Inputs (wago.tools CSV exports): SpellEffect, SpellAuraOptions, SpellMisc,
-#   SpellDuration, SkillLineAbility, TraitDefinition, SpellName
+#   SpellDuration, SkillLineAbility, SpecializationSpells, TraitDefinition,
+#   SpellName
 # Run: python tools/gen_target_dots.py [csv_dir] [build]
 
 import csv
@@ -37,7 +41,9 @@ DEFAULT_CSV_DIR = Path(__file__).resolve().parent.parent / "Documentation" / "wo
 EFFECT_APPLY_AURA = 6
 TARGET_UNIT_CASTER = 1
 # Periodic-damage aura sub-types (EffectAura when Effect == APPLY_AURA).
-PERIODIC_DAMAGE_AURAS = {3, 89}  # 3 = periodic damage, 89 = periodic damage %
+# 3 = periodic damage, 53 = periodic leech (drain DoTs: Phantom Singularity,
+# Siphon Life), 89 = periodic damage %.
+PERIODIC_DAMAGE_AURAS = {3, 53, 89}
 # SpellMisc.Attributes_1 channel flags (SPELL_ATTR1_CHANNELED_1 | _2).
 CHANNELED_FLAGS = 0x4 | 0x40
 
@@ -54,10 +60,22 @@ CURATED = {
     285381: 1079,     # Primal Wrath applies Rip to all nearby targets via script
     8921:   164812,   # Moonfire (base) - script-applies its DoT; covers all specs
                       # and talent variants via GetBaseSpell (e.g. 155625 -> 8921)
+    # Passively-stacking DoTs the CumulativeAura rule wrongly drops: their stacks
+    # ramp on their own (ticks / other spells), so recasting while live is still
+    # a wasted refresh - exactly what the sink exists for. The APLs refresh all
+    # three only when refreshable, same as non-stacking DoTs.
+    980:     980,     # Agony (stacks ramp per tick, not per cast)
+    1259790: 1259790, # Unstable Affliction
+    445468:  445474,  # Wither cast -> its stacking DoT aura
+    348:     157736,  # Immolate - script-applies its DoT (no trigger link)
 }
 CURATED_NAMES = {
     285381: "Primal Wrath (applies Rip via script)",
     8921:   "Moonfire (base; covers talent variants via GetBaseSpell)",
+    980:    "Agony (stacks ramp passively; recast is still a wasted refresh)",
+    1259790: "Unstable Affliction (stacking false positive)",
+    445468: "Wither (stacking false positive)",
+    348:    "Immolate (script-applies its DoT)",
 }
 
 # Spells the periodic-damage filter catches but that are owned by another
@@ -65,6 +83,12 @@ CURATED_NAMES = {
 EXCLUDE = {
     2818,   # Deadly Poison (on-hit proc; poison imbue handled by RedundancyFilter)
     2823,   # Deadly Poison (weapon imbue self-buff, hour-long)
+    335467, # Shadow Word: Madness - resource spender, recast while its DoT is
+            # live by design (must keep being suggested, never sink)
+    431044, # Frostfire Bolt - spammable filler whose DoT is a small rider
+            # (~92% of its damage is the direct hit); sinking a filler is wrong.
+            # Rule of thumb: a no-cooldown spell whose direct hit outweighs its
+            # DoT must never sink (CD-gated ones are parked by the CD sink anyway).
 }
 
 
@@ -89,6 +113,13 @@ def main():
         universe.add(int(row["Spell"]))
     for row in read_csv(find("TraitDefinition")):
         for col in ("SpellID", "VisibleSpellID", "OverridesSpellID"):
+            v = int(row[col] or 0)
+            if v > 0:
+                universe.add(v)
+    # Spec-granted spells live here, not in SkillLineAbility (Immolate,
+    # Vampiric Touch, ...).
+    for row in read_csv(find("SpecializationSpells")):
+        for col in ("SpellID", "OverridesSpellID"):
             v = int(row[col] or 0)
             if v > 0:
                 universe.add(v)
