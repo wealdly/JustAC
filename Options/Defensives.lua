@@ -131,6 +131,9 @@ function Defensives.CreateTabArgs(addon)
                 inline = true,
                 name = L["Pre-combat Buffs"],
                 order = 10,
+                -- Pre-combat suggestions render on the defensive bar; with defensives
+                -- disabled they have no surface, so the whole section grays out.
+                disabled = function() return not addon.db.profile.defensives.enabled end,
                 args = {
                     pbEnabled = {
                         type = "toggle",

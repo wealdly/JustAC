@@ -755,7 +755,11 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- click-to-use layer (UIPrecombatOverlay) sits invisibly over these icons, OOC only.
     -- Main panel only (not overrides) - the nameplate overlay has no click layers, and
     -- buffs on a target's nameplate make no sense.
+    -- Explicitly gated on defensives.enabled: pre-combat suggestions are a feature of
+    -- the defensive bar. The current main-panel caller is already behind that flag, but
+    -- the guarantee must hold even if a future caller reaches here without overrides.
     if not inCombat and not overrides
+        and profile.defensives and profile.defensives.enabled
         and profile.precombatBuffs and profile.precombatBuffs.enabled ~= false then
         local PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
         if PrecombatEngine and PrecombatEngine.GetMissingBuffItems then

@@ -11,6 +11,8 @@
 - Burst injection could keep serving the previous spec's spell list in rare spec-switch sequences; talent changes now refresh imported rotation rankings without a reload.
 - Empty queue slots no longer keep a stale charge cooldown ring; pet-summon talent variants are now recognized by the redundancy filter; a disabled cooldown-swipe fallback for off-bar spells works again.
 
+- Pre-combat buff suggestions are now strictly tied to the defensive bar: with defensives disabled they never appear, and their options section grays out to make the dependency clear.
+
 ### Changed
 - Large internal cleanup: duplicated rendering, options, health-bar, and engine logic consolidated and dead code removed (roughly 770 fewer lines). No visual or behavioral changes intended beyond the fixes above.
 - `/jac` spell name lookup no longer freezes the game briefly when a name isn't found.
