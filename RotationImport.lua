@@ -115,6 +115,13 @@ local function BuildLookup(specKey)
     return byCtx
 end
 
+--- Wipe the rank-lookup cache. BuildLookup bakes talent-DEPENDENT override
+--- resolution (baseID via ResolveSpellID) into the map, so a talent change
+--- within the same spec must invalidate it - specKey alone doesn't move.
+function RotationImport.InvalidateLookup()
+    wipe(lookupCache)
+end
+
 -- A missing context tier falls back to a broader/base one.
 local CTX_FALLBACK = { st = { "st" }, cleave = { "cleave", "aoe", "st" }, aoe = { "aoe", "st" } }
 
@@ -139,8 +146,3 @@ function RotationImport.GetEntry(spellID, context)
     return m[spellID] or m[baseID(spellID)]
 end
 
---- SimC priority rank (list index; lower = higher priority) for spellID, or nil.
-function RotationImport.GetRank(spellID, context)
-    local rec = RotationImport.GetEntry(spellID, context)
-    return rec and rec.rank
-end

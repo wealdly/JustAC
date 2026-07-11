@@ -1,14 +1,11 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 15)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 16)
 if not UIFrameFactory then return end
 
-local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
-local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Hot path cache
@@ -21,6 +18,7 @@ local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
+local GRAB_TAB_LENGTH = 12  -- grab-tab thickness along the queue axis
 
 -- Export constants for UIRenderer and UINameplateOverlay
 UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
@@ -155,6 +153,61 @@ local function TogglePanelLock(profile)
         profile.panelInteraction = "unlocked"
     end
     return profile.panelInteraction ~= "unlocked"
+end
+
+-- Shared hotkey tooltip body for icon OnEnter handlers (queue, defensive, interrupt).
+-- Respects tooltipMode; shows spell/item tooltip plus hotkey and right-click hints.
+-- showBlacklistHint adds the queue-only Shift+Right-click line.
+local function ShowIconHotkeyTooltip(addon, icon, showBlacklistHint)
+    local profile = addon:GetProfile()
+    local tooltipMode = profile and profile.tooltipMode or "outOfCombat"
+
+    local inCombat = UnitAffectingCombat("player")
+    local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
+    if not showTooltip then return end
+
+    GameTooltip:SetOwner(icon, "ANCHOR_RIGHT")
+
+    if icon.isItem and icon.itemID then
+        GameTooltip:SetItemByID(icon.itemID)
+    elseif icon.spellID then
+        GameTooltip:SetSpellByID(icon.spellID)
+    end
+
+    if icon.spellID or icon.isItem then
+        local hotkey
+        local isOverride
+        if icon.isItem and icon.itemID then
+            hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(icon.itemID, icon.itemCastSpellID) or ""
+            isOverride = addon:GetHotkeyOverride(-icon.itemID) ~= nil
+        else
+            hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(icon.spellID) or ""
+            isOverride = addon:GetHotkeyOverride(icon.spellID) ~= nil
+        end
+
+        if hotkey and hotkey ~= "" then
+            GameTooltip:AddLine(" ")
+            if isOverride then
+                GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
+            else
+                GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
+            end
+            GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
+        else
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("|cffff6666No hotkey found|r")
+        end
+
+        if not inCombat then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
+            if showBlacklistHint then
+                GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from queue (blacklist)|r")
+            end
+        end
+    end
+
+    GameTooltip:Show()
 end
 
 -- Local state
@@ -479,7 +532,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         -- Mirrors the spell-icon layout in CreateSpellIcons.
         local detachOrientation = profile.defensives.detachedOrientation or "LEFT"
         local iconOffset = index * (actualIconSize + spacing)
-        local GRAB_TAB_LENGTH = 12
         -- Grab tab location per orientation:
         --   LEFT → tab at RIGHT  → icons start at LEFT, no reserve needed
         --   RIGHT → tab at LEFT  → icons start at RIGHT, no reserve needed
@@ -509,7 +561,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         -- Defensive icons must match that shift so they align with the queue icons.
         local grabTabReserve = 0
         if queueOrientation == "RIGHT" or queueOrientation == "UP" then
-            local GRAB_TAB_LENGTH = 12
             local isVert = (queueOrientation == "UP")
             grabTabReserve = spacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
         end
@@ -551,52 +602,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
 
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
-        local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
-
-        local inCombat = UnitAffectingCombat("player")
-        local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
-
-        if showTooltip then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                
-                if self.isItem and self.itemID then
-                    GameTooltip:SetItemByID(self.itemID)
-                elseif self.spellID then
-                    GameTooltip:SetSpellByID(self.spellID)
-                end
-                
-                if self.spellID or self.isItem then
-                    local hotkey
-                    local isOverride = false
-                    if self.isItem and self.itemID then
-                        hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(self.itemID, self.itemCastSpellID) or ""
-                        isOverride = addon:GetHotkeyOverride(-self.itemID) ~= nil
-                    else
-                        hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
-                        isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
-                    end
-                    
-                    if hotkey and hotkey ~= "" then
-                        GameTooltip:AddLine(" ")
-                        if isOverride then
-                            GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
-                        else
-                            GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
-                        end
-                        GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
-                    else
-                        GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|cffff6666No hotkey found|r")
-                    end
-                    
-                    if not inCombat then
-                        GameTooltip:AddLine(" ")
-                        GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
-                    end
-                end
-
-                GameTooltip:Show()
-            end
+        ShowIconHotkeyTooltip(addon, self)
     end)
 
     button:SetScript("OnLeave", function()
@@ -728,39 +734,30 @@ local function CreateDetachedDefensiveFrame(addon)
     frame:Hide()
 end
 
--- Creates the drag handle for the detached defensive frame.
--- Position based on detachedOrientation (mirrors CreateGrabTab for mainFrame).
-local function CreateDefensiveGrabTab(addon)
-    if not addon.defensiveFrame then return end
-    local profile = addon:GetProfile()
-    local orientation = profile and profile.defensives and profile.defensives.detachedOrientation or "LEFT"
-    local isVertical = (orientation == "UP" or orientation == "DOWN")
+-- Shared grab-tab builder for the main queue and the detached defensive frame.
+-- Builds the backdrop, dot textures, drag/click/fade scripts. opts:
+--   frame            - frame the tab attaches to and moves (StartMoving/StopMovingOrSizing)
+--   isVertical       - tab orientation (swaps size and dot arrangement)
+--   anchorPoint      - point on `frame` where the tab sits ("RIGHT"/"LEFT"/"BOTTOM"/"TOP")
+--   onDragStart      - optional; called with (tab, profile) after fades stop, before StartMoving
+--   onDragStop       - called with (tab) after StopMovingOrSizing; saves position, marks dirty
+--   onShiftRightClick - optional; plain right-click always opens the options panel
+--   addTooltipLines  - adds body lines after the "JustAssistedCombat" title
+local function BuildGrabTab(addon, opts)
+    local frame = opts.frame
+    local tab = CreateFrame("Button", nil, frame, "BackdropTemplate")
+    if not tab then return nil end
 
-    local tab = CreateFrame("Button", nil, addon.defensiveFrame, "BackdropTemplate")
-    if not tab then return end
-    addon.defensiveGrabTab = tab
-
-    if isVertical then
-        tab:SetSize(20, 12)
+    if opts.isVertical then
+        tab:SetSize(20, GRAB_TAB_LENGTH)
     else
-        tab:SetSize(12, 20)
+        tab:SetSize(GRAB_TAB_LENGTH, 20)
     end
-    tab:SetHitRectInsets(-6, -6, -6, -6)
 
-    -- Grab tab sits at the "end" of the icon growth direction:
-    --   LEFT  → icons grow left-to-right  → grab tab on RIGHT
-    --   RIGHT → icons grow right-to-left  → grab tab on LEFT
-    --   UP    → icons grow bottom-to-top  → grab tab on BOTTOM
-    --   DOWN  → icons grow top-to-bottom  → grab tab on TOP
-    if orientation == "LEFT" then
-        tab:SetPoint("RIGHT", addon.defensiveFrame, "RIGHT", 0, 0)
-    elseif orientation == "RIGHT" then
-        tab:SetPoint("LEFT", addon.defensiveFrame, "LEFT", 0, 0)
-    elseif orientation == "UP" then
-        tab:SetPoint("BOTTOM", addon.defensiveFrame, "BOTTOM", 0, 0)
-    elseif orientation == "DOWN" then
-        tab:SetPoint("TOP", addon.defensiveFrame, "TOP", 0, 0)
-    end
+    -- Extend the clickable hit area beyond the visible tab (negative insets = larger area)
+    -- Makes the small tab much easier to grab, especially on high-DPI displays
+    tab:SetHitRectInsets(-6, -6, -6, -6)
+    tab:SetPoint(opts.anchorPoint, frame, opts.anchorPoint, 0, 0)
 
     tab:SetBackdrop({
         bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -771,23 +768,16 @@ local function CreateDefensiveGrabTab(addon)
     tab:SetBackdropColor(0.3, 0.3, 0.3, 0.8)
     tab:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
 
-    local dot1 = tab:CreateTexture(nil, "OVERLAY")
-    dot1:SetSize(2, 2)
-    dot1:SetColorTexture(0.8, 0.8, 0.8, 1)
-    local dot2 = tab:CreateTexture(nil, "OVERLAY")
-    dot2:SetSize(2, 2)
-    dot2:SetColorTexture(0.8, 0.8, 0.8, 1)
-    local dot3 = tab:CreateTexture(nil, "OVERLAY")
-    dot3:SetSize(2, 2)
-    dot3:SetColorTexture(0.8, 0.8, 0.8, 1)
-    if isVertical then
-        dot1:SetPoint("CENTER", tab, "CENTER", -4, 0)
-        dot2:SetPoint("CENTER", tab, "CENTER",  0, 0)
-        dot3:SetPoint("CENTER", tab, "CENTER",  4, 0)
-    else
-        dot1:SetPoint("CENTER", tab, "CENTER", 0,  4)
-        dot2:SetPoint("CENTER", tab, "CENTER", 0,  0)
-        dot3:SetPoint("CENTER", tab, "CENTER", 0, -4)
+    -- Three grip dots, arranged across the tab's short axis
+    for i = -1, 1 do
+        local dot = tab:CreateTexture(nil, "OVERLAY")
+        dot:SetSize(2, 2)
+        dot:SetColorTexture(0.8, 0.8, 0.8, 1)
+        if opts.isVertical then
+            dot:SetPoint("CENTER", tab, "CENTER", i * 4, 0)
+        else
+            dot:SetPoint("CENTER", tab, "CENTER", 0, i * 4)
+        end
     end
 
     tab:EnableMouse(true)
@@ -795,30 +785,43 @@ local function CreateDefensiveGrabTab(addon)
     tab:RegisterForClicks("RightButtonUp")
 
     tab:SetScript("OnDragStart", function(self)
-        local p = addon:GetProfile()
-        if p and IsPanelLocked(p) then return end
+        local profile = addon:GetProfile()
+        if not profile or IsPanelLocked(profile) then return end
+
+        -- Mark as dragging (addon-level for OnUpdate freeze, tab-level for fade logic)
         self.isDragging = true
         addon.isDragging = true
+
+        -- Stop any fade animation and ensure fully visible
         if self.fadeOut and self.fadeOut:IsPlaying() then self.fadeOut:Stop() end
         if self.fadeIn  and self.fadeIn:IsPlaying()  then self.fadeIn:Stop()  end
         self:SetAlpha(1)
-        addon.defensiveFrame:StartMoving(true)
+
+        if opts.onDragStart then opts.onDragStart(self, profile) end
+
+        -- Move the owning frame (grab tab follows since it's anchored to it)
+        -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
+        frame:StartMoving(true)
     end)
 
     tab:SetScript("OnDragStop", function(self)
-        addon.defensiveFrame:StopMovingOrSizing()
-        UIFrameFactory.SaveDefensivePosition(addon)
+        frame:StopMovingOrSizing()
         self.isDragging = false
         addon.isDragging = false
-        if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
 
-        if not addon.defensiveFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
+        opts.onDragStop(self)
+
+        -- Fade out if mouse isn't over frame/tab
+        if not frame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
             self.fadeOut:Play()
         end
     end)
 
     tab:SetScript("OnClick", function(_, mouseButton)
-        if mouseButton == "RightButton" then
+        if mouseButton ~= "RightButton" then return end
+        if opts.onShiftRightClick and IsShiftKeyDown() then
+            opts.onShiftRightClick()
+        else
             if addon.OpenOptionsPanel then
                 addon:OpenOptionsPanel()
             else
@@ -832,25 +835,67 @@ local function CreateDefensiveGrabTab(addon)
         self:SetAlpha(1)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("JustAssistedCombat")
-        GameTooltip:AddLine("Defensive Panel - Drag to move", 1, 1, 1)
-        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        opts.addTooltipLines()
         GameTooltip:Show()
     end)
 
     tab:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
-        if not addon.defensiveFrame:IsMouseOver() and not self.isDragging and self.fadeOut then
+        -- Hide grab tab if mouse leaves and isn't over the owning frame or being dragged
+        if not frame:IsMouseOver() and not self.isDragging and self.fadeOut then
             self.fadeOut:Play()
         end
     end)
 
-    -- Fade animations
+    -- Fade animations. Stay shown (alpha=0) so the frame keeps receiving mouse events.
     AddFadeAnims(tab, 0.15, nil, function()
         tab:SetAlpha(0)
     end)
 
+    -- Start invisible but shown so mouse detection works immediately
     tab:SetAlpha(0)
     tab:Show()
+
+    return tab
+end
+
+-- Creates the drag handle for the detached defensive frame.
+-- Position based on detachedOrientation (mirrors CreateGrabTab for mainFrame).
+local function CreateDefensiveGrabTab(addon)
+    if not addon.defensiveFrame then return end
+    local profile = addon:GetProfile()
+    local orientation = profile and profile.defensives and profile.defensives.detachedOrientation or "LEFT"
+    local isVertical = (orientation == "UP" or orientation == "DOWN")
+
+    -- Grab tab sits at the "end" of the icon growth direction:
+    --   LEFT  → icons grow left-to-right  → grab tab on RIGHT
+    --   RIGHT → icons grow right-to-left  → grab tab on LEFT
+    --   UP    → icons grow bottom-to-top  → grab tab on BOTTOM
+    --   DOWN  → icons grow top-to-bottom  → grab tab on TOP
+    local anchorPoint
+    if orientation == "RIGHT" then
+        anchorPoint = "LEFT"
+    elseif orientation == "UP" then
+        anchorPoint = "BOTTOM"
+    elseif orientation == "DOWN" then
+        anchorPoint = "TOP"
+    else -- LEFT (default)
+        anchorPoint = "RIGHT"
+    end
+
+    addon.defensiveGrabTab = BuildGrabTab(addon, {
+        frame = addon.defensiveFrame,
+        isVertical = isVertical,
+        anchorPoint = anchorPoint,
+        onDragStop = function()
+            UIFrameFactory.SaveDefensivePosition(addon)
+            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+        end,
+        addTooltipLines = function()
+            GameTooltip:AddLine("Defensive Panel - Drag to move", 1, 1, 1)
+            GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+        end,
+    })
 end
 
 -- In click-through mode, icons become drag handles when Alt is held for the hold threshold.
@@ -963,12 +1008,11 @@ function UIFrameFactory.UpdateDefensiveFrameSize(addon)
     local iconSpacing = profile.iconSpacing or 1
     local maxIcons    = math.min(profile.defensives.maxIcons or 4, 7)
 
-    local grabTabLength = 12
     local grabTabSpacing
     if isVertical then
-        grabTabSpacing = iconSpacing + grabTabLength
+        grabTabSpacing = iconSpacing + GRAB_TAB_LENGTH
     else
-        grabTabSpacing = iconSpacing + grabTabLength + 1
+        grabTabSpacing = iconSpacing + GRAB_TAB_LENGTH + 1
     end
 
     local totalLength = maxIcons * actualIconSize + (maxIcons - 1) * iconSpacing
@@ -1133,195 +1177,64 @@ function UIFrameFactory.CreateMainFrame(addon)
 end
 
 function UIFrameFactory.CreateGrabTab(addon)
-    addon.grabTab = CreateFrame("Button", nil, addon.mainFrame, "BackdropTemplate")
-    if not addon.grabTab then return end
-    
     local profile = addon:GetProfile()
     local orientation = profile and profile.queueOrientation or "LEFT"
     local isVertical = (orientation == "UP" or orientation == "DOWN")
-    
-    -- Swap dimensions for vertical orientations
-    if isVertical then
-        addon.grabTab:SetSize(20, 12)
-    else
-        addon.grabTab:SetSize(12, 20)
-    end
 
-    -- Extend the clickable hit area beyond the visible tab (negative insets = larger area)
-    -- Makes the small tab much easier to grab, especially on high-DPI displays
-    addon.grabTab:SetHitRectInsets(-6, -6, -6, -6)
-    
     -- Predictable position: always at the right end (horizontal) or bottom (vertical).
     -- For RIGHT/UP orientations the icons are shifted within the frame to make room.
-    if isVertical then
-        addon.grabTab:SetPoint("BOTTOM", addon.mainFrame, "BOTTOM", 0, 0)
-    else
-        addon.grabTab:SetPoint("RIGHT", addon.mainFrame, "RIGHT", 0, 0)
-    end
-    
-    addon.grabTab:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 8,
-        edgeSize = 4,
-        insets = { left = 1, right = 1, top = 1, bottom = 1 }
-    })
-    
-    addon.grabTab:SetBackdropColor(0.3, 0.3, 0.3, 0.8)
-    addon.grabTab:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
-    
-    -- Dots arranged based on orientation (vertical vs horizontal grab tab)
-    local dot1 = addon.grabTab:CreateTexture(nil, "OVERLAY")
-    dot1:SetSize(2, 2)
-    dot1:SetColorTexture(0.8, 0.8, 0.8, 1)
-    
-    local dot2 = addon.grabTab:CreateTexture(nil, "OVERLAY")
-    dot2:SetSize(2, 2)
-    dot2:SetColorTexture(0.8, 0.8, 0.8, 1)
-    
-    local dot3 = addon.grabTab:CreateTexture(nil, "OVERLAY")
-    dot3:SetSize(2, 2)
-    dot3:SetColorTexture(0.8, 0.8, 0.8, 1)
-    
-    if isVertical then
-        -- Horizontal dot arrangement for vertical orientations
-        dot1:SetPoint("CENTER", addon.grabTab, "CENTER", -4, 0)
-        dot2:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 0)
-        dot3:SetPoint("CENTER", addon.grabTab, "CENTER", 4, 0)
-    else
-        -- Vertical dot arrangement for horizontal orientations
-        dot1:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 4)
-        dot2:SetPoint("CENTER", addon.grabTab, "CENTER", 0, 0)
-        dot3:SetPoint("CENTER", addon.grabTab, "CENTER", 0, -4)
-    end
-    
-    addon.grabTab:EnableMouse(true)
-    addon.grabTab:RegisterForDrag("LeftButton")
-    addon.grabTab:RegisterForClicks("RightButtonUp")
-    
-    addon.grabTab:SetScript("OnDragStart", function(self)
-        local profile = addon:GetProfile()
-        if not profile then return end
-        
-        -- Block dragging if locked
-        if IsPanelLocked(profile) then
-            return
-        end
-        
-        -- Mark as dragging (addon-level for OnUpdate freeze, tab-level for fade logic)
-        self.isDragging = true
-        addon.isDragging = true
-        
-        -- Stop any fade animation and ensure fully visible
-        if self.fadeOut and self.fadeOut:IsPlaying() then
-            self.fadeOut:Stop()
-        end
-        if self.fadeIn and self.fadeIn:IsPlaying() then
-            self.fadeIn:Stop()
-        end
-        self:SetAlpha(1)
-        
-        -- Detach from target frame anchor before dragging so position saves correctly
-        if addon.targetframe_anchored then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
-        end
-        
-        -- Move the main frame (grab tab follows since it's anchored to it)
-        -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
-        addon.mainFrame:StartMoving(true)
-    end)
-    
-    addon.grabTab:SetScript("OnDragStop", function(self)
-        addon.mainFrame:StopMovingOrSizing()
-
-        -- User manually dragged - auto-disable target frame anchor so it doesn't snap back
-        local profile = addon:GetProfile()
-        if profile and profile.targetFrameAnchor and profile.targetFrameAnchor ~= "DISABLED" then
-            profile.targetFrameAnchor = "DISABLED"
-            addon.targetframe_anchored = false
-            if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
-        end
-
-        UIFrameFactory.SavePosition(addon)
-
-        self.isDragging = false
-        addon.isDragging = false
-
-        -- Mark queues dirty so icons refresh immediately at new position
-        if addon.MarkQueueDirty then addon:MarkQueueDirty() end
-        if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-
-        -- Fade out if mouse isn't over frame/tab
-        if not addon.mainFrame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
-            self.fadeOut:Play()
-        end
-    end)
-    
-    addon.grabTab:SetScript("OnClick", function(self, mouseButton)
-        if mouseButton == "RightButton" then
-            if IsShiftKeyDown() then
-                -- Safe in combat: only modifies addon db, no restricted API calls
-                local profile = addon:GetProfile()
-                if profile then
-                    local nowLocked = TogglePanelLock(profile)
-                    local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
-                    if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
-                end
-            else
-                if addon.OpenOptionsPanel then
-                    addon:OpenOptionsPanel()
-                else
-                    Settings.OpenToCategory("JustAssistedCombat")
-                end
+    addon.grabTab = BuildGrabTab(addon, {
+        frame = addon.mainFrame,
+        isVertical = isVertical,
+        anchorPoint = isVertical and "BOTTOM" or "RIGHT",
+        onDragStart = function(_, currentProfile)
+            -- Detach from target frame anchor before dragging so position saves correctly
+            if addon.targetframe_anchored then
+                addon.targetframe_anchored = false
+                addon.mainFrame:ClearAllPoints()
+                addon.mainFrame:SetPoint(currentProfile.framePosition.point, currentProfile.framePosition.x, currentProfile.framePosition.y)
             end
-        end
-    end)
+        end,
+        onDragStop = function()
+            -- User manually dragged - auto-disable target frame anchor so it doesn't snap back
+            local currentProfile = addon:GetProfile()
+            if currentProfile and currentProfile.targetFrameAnchor and currentProfile.targetFrameAnchor ~= "DISABLED" then
+                currentProfile.targetFrameAnchor = "DISABLED"
+                addon.targetframe_anchored = false
+                if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
+            end
 
-    addon.grabTab:SetScript("OnEnter", function()
-        if addon.grabTab.fadeOut and addon.grabTab.fadeOut:IsPlaying() then
-            addon.grabTab.fadeOut:Stop()
-        end
-        addon.grabTab:SetAlpha(1)
+            UIFrameFactory.SavePosition(addon)
 
-        local profile = addon:GetProfile()
-        local isLocked = IsPanelLocked(profile)
-        local interactionMode = profile and (profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked"))
-
-        GameTooltip:SetOwner(addon.grabTab, "ANCHOR_RIGHT")
-        GameTooltip:SetText("JustAssistedCombat")
-        GameTooltip:AddLine("Drag to move", 1, 1, 1)
-        GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
-        GameTooltip:AddLine(" ")
-        if isLocked then
-            GameTooltip:AddLine("|cffff6666Panel Locked|r", 1, 1, 1)
-            GameTooltip:AddLine("Shift+Right-click to unlock", 0.7, 0.7, 0.7)
-        else
-            GameTooltip:AddLine("|cff00ff00Panel Unlocked|r", 1, 1, 1)
-            GameTooltip:AddLine("Shift+Right-click to lock", 0.7, 0.7, 0.7)
-        end
-        GameTooltip:Show()
-    end)
-    
-    addon.grabTab:SetScript("OnLeave", function(self)
-        GameTooltip:Hide()
-        -- Hide grab tab if mouse leaves and isn't over main frame or being dragged
-        if not addon.mainFrame:IsMouseOver() and not self.isDragging and addon.grabTab.fadeOut then
-            addon.grabTab.fadeOut:Play()
-        end
-    end)
-    
-    -- Fade animations
-    AddFadeAnims(addon.grabTab, 0.15, nil, function()
-        -- Stay shown (alpha=0) so the frame keeps receiving mouse events
-        addon.grabTab:SetAlpha(0)
-    end)
-    
-    -- Start invisible but shown so mouse detection works immediately
-    addon.grabTab:SetAlpha(0)
-    addon.grabTab:Show()
+            -- Mark queues dirty so icons refresh immediately at new position
+            if addon.MarkQueueDirty then addon:MarkQueueDirty() end
+            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+        end,
+        onShiftRightClick = function()
+            -- Safe in combat: only modifies addon db, no restricted API calls
+            local currentProfile = addon:GetProfile()
+            if currentProfile then
+                local nowLocked = TogglePanelLock(currentProfile)
+                local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
+                if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
+            end
+        end,
+        addTooltipLines = function()
+            local currentProfile = addon:GetProfile()
+            local isLocked = IsPanelLocked(currentProfile)
+            GameTooltip:AddLine("Drag to move", 1, 1, 1)
+            GameTooltip:AddLine("Right-click for options", 0.7, 0.7, 0.7)
+            GameTooltip:AddLine(" ")
+            if isLocked then
+                GameTooltip:AddLine("|cffff6666Panel Locked|r", 1, 1, 1)
+                GameTooltip:AddLine("Shift+Right-click to unlock", 0.7, 0.7, 0.7)
+            else
+                GameTooltip:AddLine("|cff00ff00Panel Unlocked|r", 1, 1, 1)
+                GameTooltip:AddLine("Shift+Right-click to lock", 0.7, 0.7, 0.7)
+            end
+        end,
+    })
+    if not addon.grabTab then return end
 
     -- Wire icon drag mode for click-through (once, guarded against re-registration).
     UIFrameFactory.SetupClickThroughIconDrag(addon)
@@ -1374,12 +1287,10 @@ local function CreateInterruptIcon(addon, profile)
         button:SetPoint("RIGHT", addon.mainFrame, "LEFT", -effectiveSpacing, 0)
     elseif orientation == "RIGHT" then
         -- Queue grows right-to-left; interrupt adjacent to icon 1 (covers grab tab)
-        local GRAB_TAB_LENGTH = 12
         local grabTabReserve = spacing + GRAB_TAB_LENGTH + 1
         button:SetPoint("LEFT", addon.mainFrame, "RIGHT", -(grabTabReserve - effectiveSpacing), 0)
     elseif orientation == "UP" then
         -- Queue grows bottom-to-top; interrupt adjacent to icon 1 (covers grab tab)
-        local GRAB_TAB_LENGTH = 12
         local grabTabReserve = spacing + GRAB_TAB_LENGTH
         button:SetPoint("TOP", addon.mainFrame, "BOTTOM", 0, grabTabReserve - effectiveSpacing)
     elseif orientation == "DOWN" then
@@ -1393,39 +1304,7 @@ local function CreateInterruptIcon(addon, profile)
     -- Tooltip handling
     button:SetScript("OnEnter", function(self)
         if not self.spellID then return end
-
-        local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
-
-        local inCombat = UnitAffectingCombat("player")
-        local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
-
-        if showTooltip then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetSpellByID(self.spellID)
-
-            local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
-            local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
-
-            if hotkey and hotkey ~= "" then
-                GameTooltip:AddLine(" ")
-                if isOverride then
-                    GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
-                else
-                    GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
-                end
-                GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
-            else
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("|cffff6666No hotkey found|r")
-            end
-
-            if not inCombat then
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
-            end
-
-            GameTooltip:Show()
-        end
+        ShowIconHotkeyTooltip(addon, self)
     end)
 
     button:SetScript("OnLeave", function()
@@ -1528,7 +1407,6 @@ function UIFrameFactory.CreateSpellIcons(addon)
     -- can sit at a predictable position (right for horizontal, bottom for vertical)
     local currentOffset = 0
     if orientation == "RIGHT" or orientation == "UP" then
-        local GRAB_TAB_LENGTH = 12
         local isVert = (orientation == "UP")
         currentOffset = profile.iconSpacing + GRAB_TAB_LENGTH + (isVert and 0 or 1)
     end
@@ -1604,39 +1482,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
 
     button:SetScript("OnEnter", function(self)
         if self.spellID then
-            local tooltipMode = addon:GetProfile() and addon:GetProfile().tooltipMode or "outOfCombat"
-
-            local inCombat = UnitAffectingCombat("player")
-            local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
-
-            if showTooltip then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(self.spellID)
-
-                local hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(self.spellID) or ""
-                local isOverride = addon:GetHotkeyOverride(self.spellID) ~= nil
-
-                if hotkey and hotkey ~= "" then
-                    GameTooltip:AddLine(" ")
-                    if isOverride then
-                        GameTooltip:AddLine("|cffadd8e6Hotkey: " .. hotkey .. " (custom)|r")
-                    else
-                        GameTooltip:AddLine("|cff00ff00Hotkey: " .. hotkey .. "|r")
-                    end
-                    GameTooltip:AddLine("|cffffff00Press " .. hotkey .. " to cast|r")
-                else
-                    GameTooltip:AddLine(" ")
-                    GameTooltip:AddLine("|cffff6666No hotkey found|r")
-                end
-
-                if not inCombat then
-                    GameTooltip:AddLine(" ")
-                    GameTooltip:AddLine("|cff66ff66Right-click: Set custom hotkey|r")
-                    GameTooltip:AddLine("|cffff6666Shift+Right-click: Remove from queue (blacklist)|r")
-                end
-
-                GameTooltip:Show()
-            end
+            ShowIconHotkeyTooltip(addon, self, true)
         end
     end)
 
@@ -1697,21 +1543,20 @@ function UIFrameFactory.UpdateFrameSize(addon)
     
     -- Calculate grab tab spacing: always at least as large as icon spacing
     local isVertical = (orientation == "UP" or orientation == "DOWN")
-    local grabTabLength = 12
 
     -- The normalTexture used for icon borders extends 1px beyond the button
     -- width which visually reduces the gap. We want the visual gap between
     -- the last icon and the grab tab to equal `newIconSpacing`.
     --
-    -- Compute grabTabSpacing so that (grabTabSpacing - grabTabLength - visualOverflow) == newIconSpacing
+    -- Compute grabTabSpacing so that (grabTabSpacing - GRAB_TAB_LENGTH - visualOverflow) == newIconSpacing
     local visualOverflow = 1 -- visual overflow of icon borders
     local grabTabSpacing
     if isVertical then
         -- For vertical queues: spacing down/up should equal icon spacing + grab tab length
-        grabTabSpacing = newIconSpacing + grabTabLength
+        grabTabSpacing = newIconSpacing + GRAB_TAB_LENGTH
     else
         -- For horizontal queues: account for 1px icon border overflow
-        grabTabSpacing = newIconSpacing + grabTabLength + visualOverflow
+        grabTabSpacing = newIconSpacing + GRAB_TAB_LENGTH + visualOverflow
     end
 
     -- Expand main frame to include grab tab area + consistent spacing

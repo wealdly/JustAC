@@ -152,9 +152,8 @@ local function HideProcGlow(icon)
     end
 end
 
--- Colored proc glow constants
+-- Colored proc glow constants (burst purple lives in GLOW_CONFIG.BURST)
 local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05  -- Red
-local BURST_PROC_R,     BURST_PROC_G,     BURST_PROC_B     = 0.7, 0.2,  1.0   -- Purple
 -- Enrage cleanse = a heal, not an attack -> green. The flipbook base is gold/yellow, but
 -- ShowColoredProcGlow desaturates it first, so this vertex color tints a grayscale base;
 -- kept vivid (low R/B) so it reads clearly green, not muddy gold*green.
@@ -452,32 +451,6 @@ UpdateFlash = function(button, elapsed)
     if button.flashtime <= 0 then
         StopFlash(button)
         return
-    end
-end
-
-local function HideIconGlows(icon)
-    if not icon then return end
-    StopAssistedGlow(icon)
-    StopDefensiveGlow(icon)
-    StopGapCloserGlow(icon)
-    StopBurstGlow(icon)
-    HideInterruptProcGlow(icon)
-    icon.hasInterruptGlow = false
-    HideProcGlow(icon)
-end
-
-local function HideAllGlows(addon)
-    if not addon then return end
-
-    if addon.spellIcons then
-        for i = 1, #addon.spellIcons do
-            HideIconGlows(addon.spellIcons[i])
-        end
-    end
-    if addon.defensiveIcons then
-        for i = 1, #addon.defensiveIcons do
-            HideIconGlows(addon.defensiveIcons[i])
-        end
     end
 end
 
@@ -832,7 +805,6 @@ UIAnimations.HideSootheProcGlow = HideSootheProcGlow
 UIAnimations.StartFlash = StartFlash
 UIAnimations.StopFlash = StopFlash
 UIAnimations.UpdateFlash = UpdateFlash
-UIAnimations.HideAllGlows = HideAllGlows
 UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows
 UIAnimations.StartChannelFill = StartChannelFill

@@ -466,7 +466,7 @@ function RedundancyFilter.PruneExpiredActivations()
         end
 
         -- Method 3: Pet detection (always works - not secret)
-        if not shouldKeep and PET_SUMMON_SPELLS[spellID] then
+        if not shouldKeep and StaticLookup(PET_SUMMON_SPELLS, spellID) then
             if HasPetUI() then
                 shouldKeep = true  -- Pet still exists
             end
@@ -961,7 +961,7 @@ end
 -- Check if spell is a pet-related ability (known pet-summon table only; the old
 -- name-pattern fallback was removed, so unknown pet summons fail-open).
 local function IsPetSpell(spellID)
-    return spellID ~= nil and PET_SUMMON_SPELLS[spellID] ~= nil
+    return StaticLookup(PET_SUMMON_SPELLS, spellID) ~= nil
 end
 
 -- Check if spell is DPS-relevant for rotation queue
@@ -976,7 +976,7 @@ local function IsDPSRelevant(spellID)
     end
     
     -- Known pet summons: Hide when can't check if pet exists
-    if PET_SUMMON_SPELLS[spellID] then
+    if StaticLookup(PET_SUMMON_SPELLS, spellID) then
         return false
     end
     

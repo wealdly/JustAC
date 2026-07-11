@@ -260,12 +260,10 @@ function StandardQueue.CreateTabArgs(addon)
                                     if not detached then addon.db.profile.defensives.position = "SIDE2" end
                                 end
                             end
-                            if InCombatLockdown() then
-                                addon.pendingLayoutRebuild = true
-                            else
-                                addon:UpdateTargetFrameAnchor()
-                                addon:UpdateFrameSize()
-                            end
+                            -- The control is disabled in combat (see below), so
+                            -- this set never runs under InCombatLockdown.
+                            addon:UpdateTargetFrameAnchor()
+                            addon:UpdateFrameSize()
                         end,
                         disabled = function()
                             if panelDisabled(addon) then return true end
@@ -439,11 +437,7 @@ function StandardQueue.CreateTabArgs(addon)
                         order = 12, width = "normal",
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.ClassHasPetDefaults(pc))
-                        end,
+                        hidden = W.petClassHidden,
                     }),
                     showTargetHealthBar = W.toggle(addon, "defensives.showTargetHealthBar", {
                         name = L["Show Target Health Bar"], desc = L["Show Target Health Bar desc"],

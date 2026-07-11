@@ -12,10 +12,7 @@ local W = LibStub("JustAC-OptionsWidgets")
 local HOTKEY_ANCHORS = {"TOPRIGHT", "TOPLEFT", "TOP", "CENTER", "BOTTOMRIGHT", "BOTTOMLEFT"}
 local CHARGE_ANCHORS = {"BOTTOMRIGHT", "BOTTOMLEFT", "BOTTOM"}
 
-local function rebuildNPO(addon)
-    local NPO = LibStub("JustAC-UINameplateOverlay", true)
-    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-end
+local rebuildNPO = W.rebuildNPO
 
 -- Build a single inline group for one label type within a sub-tab.
 -- source: "central" (profile.textOverlays) or "overlay" (nameplateOverlay.textOverlays with central fallback)

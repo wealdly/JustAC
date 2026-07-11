@@ -154,17 +154,7 @@ function Defensives.CreateTabArgs(addon)
             spellListGroup = {
                 type = "group",
                 inline = true,
-                name = function()
-                    local className, playerClass = UnitClass("player")
-                    local colorCode = (playerClass and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
-                    local specIndex = GetSpecializationInfo and GetSpecialization and GetSpecialization()
-                    local specName
-                    if specIndex then
-                        local _, name = GetSpecializationInfo(specIndex)
-                        specName = name
-                    end
-                    return "|c" .. colorCode .. (className or "Unknown") .. "|r Defensive Spells" .. (specName and (" (" .. specName .. ")") or "")
-                end,
+                name = SpellSearch.SpecHeader("Defensive Spells"),
                 order = 20,
                 args = {
                     selfHealHeader = {

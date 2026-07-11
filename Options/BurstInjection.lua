@@ -12,6 +12,11 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function BurstInjection.CreateTabArgs(addon)
+    -- Shared gate: control is inert while burst injection is disabled.
+    local function biDisabled()
+        local profile = addon:GetProfile()
+        return not (profile and profile.burstInjection and profile.burstInjection.enabled)
+    end
     local tab = {
         type = "group",
         name = L["Burst Injection"] .. " |cFFFF8800(" .. L["Experimental"] .. ")|r",
@@ -43,10 +48,7 @@ function BurstInjection.CreateTabArgs(addon)
                 name = L["Show Burst Glow"], desc = L["Show Burst Glow desc"],
                 order = 2, width = "full",
                 onSet = function() addon:ForceUpdate() end,
-                disabled = function(a)
-                    local profile = a:GetProfile()
-                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                end,
+                disabled = biDisabled,
             }),
             fallbackDuration = {
                 type = "range",
@@ -57,10 +59,7 @@ function BurstInjection.CreateTabArgs(addon)
                 min = 5,
                 max = 30,
                 step = 1,
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                end,
+                disabled = biDisabled,
                 get = function()
                     local profile = addon:GetProfile()
                     if not profile or not profile.burstInjection or not profile.burstInjection.fallbackDuration then
@@ -88,10 +87,7 @@ function BurstInjection.CreateTabArgs(addon)
                 inline = true,
                 name = SpellSearch.SpecHeader(L["Burst Trigger Override"]),
                 order = 10,
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                end,
+                disabled = biDisabled,
                 args = {
                     triggerInfo = {
                         type = "description",
@@ -118,10 +114,7 @@ function BurstInjection.CreateTabArgs(addon)
                         end,
                         order = 11.5,
                         fontSize = "medium",
-                        hidden = function()
-                            local profile = addon:GetProfile()
-                            return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                        end,
+                        hidden = biDisabled,
                     },
                     clearTriggerOverrides = {
                         type = "execute",
@@ -161,10 +154,7 @@ function BurstInjection.CreateTabArgs(addon)
                 inline = true,
                 name = SpellSearch.SpecHeader(L["Burst Injection Spells"]),
                 order = 50,
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.burstInjection and profile.burstInjection.enabled)
-                end,
+                disabled = biDisabled,
                 args = {
                     injectionInfo = {
                         type = "description",
@@ -258,27 +248,17 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
                 end
                 local triggerList = profile.burstInjection.triggerSpells[specKey]
 
-                if #triggerList == 0 then
-                    triggerArgs.emptyNote = {
-                        type = "description",
-                        name = L["No Burst Trigger Overrides"],
-                        order = 12,
-                        fontSize = "medium",
-                    }
+                local triggerUpdate = function()
+                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
+                    BurstInjection.UpdateBurstInjectionOptions(addon)
+                    addon:ForceUpdate()
                 end
-
-                if not SpellSearch then
-                    SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-                end
-                if SpellSearch then
-                    local triggerUpdate = function()
-                        if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
-                        BurstInjection.UpdateBurstInjectionOptions(addon)
-                        addon:ForceUpdate()
-                    end
-                    SpellSearch.CreateSpellListEntries(addon, triggerArgs, triggerList, "bursttrigger", 12, triggerUpdate)
-                    SpellSearch.CreateAddSpellButton(addon, triggerArgs, triggerList, "bursttrigger", 30, L["Burst Trigger Override"], triggerUpdate, true)
-                end
+                SpellSearch.RebuildListSection(addon, triggerArgs, {
+                    spellList = triggerList, listType = "bursttrigger",
+                    baseOrder = 12, addOrder = 30,
+                    listName = L["Burst Trigger Override"], updateFunc = triggerUpdate,
+                    spellsOnly = true, emptyText = L["No Burst Trigger Overrides"],
+                })
             end
         end
     end
@@ -304,27 +284,17 @@ function BurstInjection.UpdateBurstInjectionOptions(addon)
                 end
                 local injectionList = profile.burstInjection.injectionSpells[specKey]
 
-                if #injectionList == 0 then
-                    injectionArgs.emptyNote = {
-                        type = "description",
-                        name = L["No Burst Injection Spells"],
-                        order = 12,
-                        fontSize = "medium",
-                    }
+                local injectionUpdate = function()
+                    if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
+                    BurstInjection.UpdateBurstInjectionOptions(addon)
+                    addon:ForceUpdate()
                 end
-
-                if not SpellSearch then
-                    SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-                end
-                if SpellSearch then
-                    local injectionUpdate = function()
-                        if engine and engine.InvalidateBurstCache then engine.InvalidateBurstCache() end
-                        BurstInjection.UpdateBurstInjectionOptions(addon)
-                        addon:ForceUpdate()
-                    end
-                    SpellSearch.CreateSpellListEntries(addon, injectionArgs, injectionList, "burstinject", 12, injectionUpdate)
-                    SpellSearch.CreateAddSpellButton(addon, injectionArgs, injectionList, "burstinject", 30, L["Burst Injection Spells"], injectionUpdate, true)
-                end
+                SpellSearch.RebuildListSection(addon, injectionArgs, {
+                    spellList = injectionList, listType = "burstinject",
+                    baseOrder = 12, addOrder = 30,
+                    listName = L["Burst Injection Spells"], updateFunc = injectionUpdate,
+                    spellsOnly = true, emptyText = L["No Burst Injection Spells"],
+                })
             end
         end
     end

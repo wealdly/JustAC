@@ -590,29 +590,9 @@ local function OrderByEmergencyTier(list)
     return emergencyOrderBuf
 end
 
--- Base cooldown (seconds) for a spell, cached. MUST be populated OUT of combat -
--- GetSpellBaseCooldown returns secrets in combat, so an unreadable value is NOT cached
--- (it's retried on the next OOC pass). Combat reads go straight to defBaseCdCache below.
-local defBaseCdCache = {}
+-- Base cooldown (seconds), cached OOC-only - shared impl in BlizzardAPI/CooldownTracking.
 local function GetDefBaseCooldownSeconds(spellID)
-    if not spellID or spellID <= 0 then return 0 end
-    local cached = defBaseCdCache[spellID]
-    if cached ~= nil then return cached end
-    local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    if ms == nil or BlizzardAPI.IsSecretValue(ms) then
-        return 0  -- unreadable (in combat): don't cache, let a later OOC pass fill it
-    end
-    local sec = (ms > 0) and (ms / 1000) or 0
-    -- Charge-based spells report 0 base CD but have a per-charge recharge time.
-    if sec == 0 and C_Spell and C_Spell.GetSpellCharges then
-        local ok, charges = pcall(C_Spell.GetSpellCharges, spellID)
-        if ok and charges and charges.cooldownDuration
-           and not BlizzardAPI.IsSecretValue(charges.cooldownDuration) and charges.cooldownDuration > 0 then
-            sec = charges.cooldownDuration
-        end
-    end
-    defBaseCdCache[spellID] = sec
-    return sec
+    return BlizzardAPI.GetBaseCooldownSeconds(spellID)
 end
 
 -- Pre-cache base cooldowns for the current spec's defensive list. MUST run OUT of combat.
@@ -649,7 +629,10 @@ local function IsHoldWorthy(sid, isItem)
     if sid < 0 then return true end
     local tier = TierOf(sid)
     if tier == 1 then return true end                                   -- immunity bubble
-    if tier == 2 then return (defBaseCdCache[sid] or 0) >= HOLD_MIN_COOLDOWN end
+    -- Cache-only peek: this runs per defensive rebuild in combat, and the full
+    -- getter would re-hit GetSpellBaseCooldown on every call while its result
+    -- is secret (misses are deliberately not cached). The OOC precache fills it.
+    if tier == 2 then return BlizzardAPI.PeekBaseCooldownSeconds(sid) >= HOLD_MIN_COOLDOWN end
     return false
 end
 

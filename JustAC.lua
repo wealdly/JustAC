@@ -1291,15 +1291,9 @@ function JustAC:OnCombatEvent(event)
         if self.interruptRefreshPending then
             self:RefreshInterruptSpells()
         end
-        -- Re-apply anchor and rebuild layout if either was changed during combat.
-        -- UpdateFrameSize subsumes UpdateTargetFrameAnchor + ForceUpdateAll.
-        if self.pendingLayoutRebuild then
-            self.pendingLayoutRebuild = false
-            self:UpdateFrameSize()
-        else
-            if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
-            self:ForceUpdateAll()
-        end
+        -- Re-apply anchor in case the target frame moved during combat.
+        if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
+        self:ForceUpdateAll()
         NotifyOptionsChange()
     end
 end

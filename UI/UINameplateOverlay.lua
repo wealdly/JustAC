@@ -4,16 +4,14 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 10)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 11)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIRenderer = LibStub("JustAC-UIRenderer", true)
 local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
-local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local UISootheCue = LibStub("JustAC-UISootheCue", true)
 
@@ -31,8 +29,6 @@ local UnitPower = UnitPower
 local UnitPowerMax = UnitPowerMax
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
-local UnitChannelInfo = UnitChannelInfo
-local UnitCastingInfo = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
 local math_max = math.max
 local math_min = math.min
 local math_floor = math.floor
@@ -55,9 +51,10 @@ local POWER_UPDATE_INTERVAL = 0.1  -- resource-bar value throttle (mirrors UIHea
 local lastCooldownUpdate       = 0
 local COOLDOWN_UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL
 
--- Position stabilization / glow hysteresis (sourced from UIFrameFactory exports)
-local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 50ms before positions 2+ can swap spells
-local GLOW_HOLD_TIME     = UIFrameFactory.GLOW_HOLD_TIME      -- 50ms before glow animation switches
+-- Reused ctx tables for the shared renderers (UIRenderer.RenderQueueIcon /
+-- UIRenderer.RenderInterruptSlot).
+local renderCtx = {}
+local interruptCtx = {}
 
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
@@ -75,7 +72,6 @@ local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
 local savedNameplateShowEnemies = nil  -- original CVar value before we forced it on
 local savedShowQuestUnitCircles = nil -- original CVar value before we suppressed quest indicators
 local questIndicator   = nil  -- our replacement quest "!" texture on the nameplate
-local interruptShown   = false -- whether interruptIcon is currently visible (controls anchor chain)
 local resolvedInterrupts = nil -- ordered array of known interrupt spell IDs (resolved at Create)
 local resolvedSoothe     = nil -- player's enrage-dispel ("soothe") abilities (resolved at Create)
 local UnitIsQuestBoss  = UnitIsQuestBoss ---@diagnostic disable-line: undefined-global
@@ -116,7 +112,6 @@ else
 end
 
 -- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
-local anchorState = {}  -- { dpsPt, dpsEdge, dpsGapX, expansion, chainPt, chainRelPt, chainOffX, chainOffY, iconSpacing }
 
 -- Health bar layout cache: skip re-anchor when nothing changed
 local lastDefVisibleCount = 0
@@ -776,20 +771,7 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
             end
         end
         interruptIcon:Hide()
-        interruptShown = false
     end
-
-    -- Cache anchor params for dynamic re-anchor in Render()
-    anchorState.dpsPt      = dpsPt
-    anchorState.dpsEdge    = dpsEdge
-    anchorState.dpsGapX    = dpsGapX
-    anchorState.dpsChainX  = dpsChainX
-    anchorState.expansion  = expansion
-    anchorState.chainPt    = chainPt
-    anchorState.chainRelPt = chainRelPt
-    anchorState.chainOffX  = chainOffX
-    anchorState.chainOffY  = chainOffY
-    anchorState.iconSpacing = iconSpacing
 
     -- Hide health bars so RenderDefensives can show them at the correct
     -- expansion-aware position. lastDefVisibleCount=0 (set on new nameplate)
@@ -966,12 +948,10 @@ function UINameplateOverlay.Destroy(addon)
         CleanIcon(interruptIcon)
         interruptIcon = nil
     end
-    interruptShown = false
     resolvedInterrupts = nil
     resolvedSoothe = nil
     lastDefVisibleCount = 0
     cachedDefensiveQueue = nil
-    wipe(anchorState)
 
     if healthBar then
         healthBar:ClearAllPoints()
@@ -1132,7 +1112,9 @@ function UINameplateOverlay.UpdateAnchor(addon)
             end
             interruptIcon:ClearAllPoints()
             interruptIcon:Hide()
-            interruptShown = false
+            -- The soothe cue is a sibling pinned over the icon (UIParent-parented),
+            -- so hiding the icon does not hide it.
+            if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
         end
     end
 end
@@ -1173,7 +1155,10 @@ function UINameplateOverlay.Render(addon, spellIDs)
     end
     if shouldHide then
         for _, icon in ipairs(dpsIcons) do icon:Hide() end
-        if interruptIcon then interruptIcon:Hide() end
+        if interruptIcon then
+            interruptIcon:Hide()
+            if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
+        end
         return
     end
 
@@ -1196,13 +1181,6 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if shouldUpdateCooldowns then lastCooldownUpdate = now end
     local inCombat = UnitAffectingCombat("player")
 
-    local GetCachedSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo
-    local IsSyntheticProc    = SpellQueue  and SpellQueue.IsSyntheticProc
-    local IsDisplacedPrimary = SpellQueue  and SpellQueue.IsDisplacedPrimary
-    local IsBurstInjection   = SpellQueue  and SpellQueue.IsBurstInjection
-    local IsSpellProcced_raw = BlizzardAPI and BlizzardAPI.IsSpellProcced
-    local GetSpellHotkey     = ActionBarScanner and ActionBarScanner.GetSpellHotkey
-
     local isChanneling, channelSpellID, isCasting, castSpellID
     if UIRenderer and UIRenderer.ResolvePlayerCastState then
         isChanneling, channelSpellID, isCasting, castSpellID = UIRenderer.ResolvePlayerCastState(profile)
@@ -1220,425 +1198,60 @@ function UINameplateOverlay.Render(addon, spellIDs)
         end
     end
 
-    -- ── Interrupt reminder (position 0) ─────────────────────────────────────
-    -- Detect interruptible cast via the nameplate's cast bar frame state.
-    -- Uses Icon:IsShown() for 12.0-safe interruptibility detection.
-    -- interruptMode: centralized in profile (no longer per-surface)
-    -- "disabled" | "kickOnly" | "kickPrefer" | "ccPrefer"
-    local npoInterruptMode = profile.interruptMode or "kickPrefer"
-    -- Retired modes in saved data → safe fallback.
-    if npoInterruptMode == "importantOnly" then npoInterruptMode = "kickOnly" end
-    if npoInterruptMode == "ccShielded" then npoInterruptMode = "kickPrefer" end
-    if interruptIcon and resolvedInterrupts and npoInterruptMode ~= "disabled" then
-        -- Delegate to UIRenderer.EvaluateInterrupt() - single evaluation shared between
-        -- RenderSpellQueue and UINameplateOverlay.Render so both renderers see identical
-        -- interrupt state and share a single debounce timer (one player, one interrupt).
-        local intResult           = UIRenderer.EvaluateInterrupt(resolvedInterrupts, npoInterruptMode, now)
-        local shouldShowInterrupt = intResult.shouldShow
-        local intSpellID          = intResult.spellID
-        local castBar             = intResult.castBar
-
-        -- De-dup: if the interrupt spell is already shown as overlay DPS position 1, skip it
-        if shouldShowInterrupt and intSpellID and spellIDs and spellIDs[1] == intSpellID then
-            shouldShowInterrupt = false
-        end
-
-        if shouldShowInterrupt and intSpellID then
-            local spellChanged = (interruptIcon.spellID ~= intSpellID)
-            if spellChanged then
-                interruptIcon.spellID = intSpellID
-                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(intSpellID)
-                if info and info.iconID then
-                    interruptIcon.iconTexture:SetTexture(info.iconID)
-                    interruptIcon.iconTexture:Show()
-                end
-                interruptIcon._cooldownShown       = false
-                interruptIcon._chargeCooldownShown = false
-                interruptIcon._cachedMaxCharges    = nil
-                interruptIcon.cachedHotkey         = nil
-            end
-
-            -- Cooldowns
-            if spellChanged or shouldUpdateCooldowns then
-                UIRenderer.UpdateButtonCooldowns(interruptIcon)
-            end
-
-            -- Hotkey
-            if spellChanged or shouldUpdateCooldowns or not interruptIcon.cachedHotkey then
-                local hotkey = GetSpellHotkey and GetSpellHotkey(intSpellID) or ""
-                interruptIcon.cachedHotkey = hotkey
-                UIRenderer.SetIconHotkeyText(interruptIcon, hotkey, showHotkey)
-                UIRenderer.SetIconNormalizedHotkey(interruptIcon, hotkey, nil, false)
-            end
-
-            -- Out-of-range: per-frame (IsSpellInRange is cheap NeverSecret).
-            if showHotkey and interruptIcon.cachedHotkey and interruptIcon.cachedHotkey ~= "" then
-                local isOutOfRange = UIRenderer.CheckSpellRange(interruptIcon, intSpellID, nil)
-                local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-                UIRenderer.UpdateRangeHotkeyColor(interruptIcon, isOutOfRange, hkc)
-            end
-
-            -- No channeling grey-out for interrupts: they are urgent actions the
-            -- player may want to cancel a channel to use.
-
-            -- Glow: red-tinted proc burst for interrupt urgency
-            if not interruptIcon.hasInterruptGlow and UIAnimations then
-                UIAnimations.ShowInterruptProcGlow(interruptIcon)
-                interruptIcon.hasInterruptGlow = true
-            end
-
-            -- Secret-aware target cast-progress bar with a kick-zone (engine-driven).
-            if UIAnimations then UIAnimations.ShowInterruptCastBar(interruptIcon) end
-
-            -- Cast aura: passthrough the enemy cast bar icon texture from the
-            -- nameplate (textures can be secret values in 12.0 - pass directly
-            -- to SetTexture without any comparison; Blizzard handles secrets in UI)
-            if interruptIcon.castAura then
-                local castIcon = castBar and castBar.Icon
-                local castTexture = castIcon and castIcon.GetTexture and castIcon:GetTexture()
-                -- API fallback: when third-party addons hide the Blizzard cast bar,
-                -- retrieve the cast icon directly from UnitCastingInfo / UnitChannelInfo.
-                if not castTexture then
-                    local _, _, tex = UnitCastingInfo("target")
-                    if not tex then _, _, tex = UnitChannelInfo("target") end
-                    castTexture = tex
-                end
-                if castTexture then
-                    interruptIcon.castAura.iconTexture:SetTexture(castTexture)
-                    if not interruptIcon.castAura:IsShown() then interruptIcon.castAura:Show() end
-                    -- No explicit alpha: castAura is a child of interruptIcon and inherits
-                    -- its opacity; setting it again would double-apply (opacity²). Matches
-                    -- the standard queue, which relies on the same inheritance.
-                else
-                    if interruptIcon.castAura:IsShown() then interruptIcon.castAura:Hide() end
-                end
-            end
-
-            if not interruptIcon:IsShown() then
-                UIRenderer.PlayInterruptAlertSound(profile)
-                interruptIcon:Show()
-            end
-            -- Hide a KICK suggestion on a non-interruptible cast via the secret-aware alpha
-            -- sink (works under any cast-bar addon; never reads the secret). CC stays visible.
-            if SpellDB and SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(intSpellID) then
-                BlizzardAPI.ApplyInterruptIconAlpha(interruptIcon, opacity)
-            else
-                interruptIcon:SetAlpha(opacity)
-            end
-            -- Grey the reminder (interrupt or CC) while it's on the GCD; off-GCD
-            -- interrupts stay full-color since IsSpellOnGCD is false for them.
-            interruptIcon.iconTexture:SetDesaturation(BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0)
-        else
-            UIRenderer.HideInterruptIcon(interruptIcon)
-        end
-
-        -- Track interrupt visibility state (no re-anchor needed - interrupt
-        -- icon is at inline position 0, never displaces dpsIcons[1]).
-        interruptShown = shouldShowInterrupt
+    -- ── Interrupt reminder (position 0) + soothe cue (shared renderer) ──────
+    -- interruptMode is centralized in profile (no longer per-surface). The overlay
+    -- is already known-visible here (hidden overlays returned early above), so
+    -- active is always true; per-surface opacity comes from npo.opacity.
+    if interruptIcon then
+        local ictx = interruptCtx
+        ictx.now                = now
+        ictx.updateCooldowns    = shouldUpdateCooldowns
+        ictx.active             = true
+        ictx.resolvedInterrupts = resolvedInterrupts
+        ictx.interruptMode      = profile.interruptMode
+        ictx.spellIDs           = spellIDs
+        ictx.profile            = profile
+        ictx.showHotkeys        = showHotkey
+        ictx.hotkeyColor        = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+        ictx.opacity            = opacity
+        ictx.sootheSpellID      = resolvedSoothe and resolvedSoothe[1] and resolvedSoothe[1].spellID
+        UIRenderer.RenderInterruptSlot(interruptIcon, ictx)
     end
-    -- ── End interrupt reminder ───────────────────────────────────────────────
 
-    -- Soothe (enrage-cleanse) cue: sink-gated green layer over the interrupt slot (see
-    -- UIRenderer). Shows only while the target is ENRAGED (dispel type 9); drawn above the
-    -- kick, so on a kick/soothe collision the soothe wins. Self-gates on the enrage sink.
-    if interruptIcon and UISootheCue then
-        local sid = resolvedSoothe and resolvedSoothe[1] and resolvedSoothe[1].spellID
-        if sid then
-            UISootheCue.Show(UISootheCue.Create(interruptIcon, sid, interruptIcon.cachedIconSize))
-        elseif interruptIcon.sootheCue then
-            UISootheCue.Hide(interruptIcon.sootheCue)
-        end
-    end
+    -- Shared per-icon render (UIRenderer.RenderQueueIcon): position hold, glow
+    -- resolution + hysteresis (including the out-of-combat bypass that prevents a
+    -- proc glow sticking at positions 2+ after combat), hotkey caching, range and
+    -- usability tinting, channel fill, cooldown wiring. ctx carries the overlay's
+    -- per-surface parameters: nameplateOverlay option keys, first-icon scale,
+    -- per-frame opacity, and hidden (not placeholder) empty slots.
+    local ctx = renderCtx
+    ctx.now                 = now
+    ctx.inCombat            = inCombat
+    ctx.updateCooldowns     = shouldUpdateCooldowns
+    ctx.spellIDs            = spellIDs
+    ctx.hasSpells           = hasSpells
+    ctx.showPrimaryGlow     = npoShowPrimaryGlow
+    ctx.showProcGlow        = npoShowProcGlow
+    ctx.showGapCloserGlow   = showGapCloserGlow
+    ctx.showBurstGlow       = showBurstGlow
+    ctx.queueDesaturation   = npoDesaturation
+    ctx.showHotkeys         = showHotkey
+    ctx.lookupHotkeys       = true
+    ctx.refreshHotkeys      = shouldUpdateCooldowns
+    ctx.hotkeyColor         = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
+    ctx.showRangeTint       = showRangeTint
+    ctx.showUsabilityTint   = showUsabilityTint
+    ctx.showCastingHighlight = showCastingHighlight
+    ctx.isChanneling        = isChanneling
+    ctx.channelSpellID      = channelSpellID
+    ctx.isCasting           = isCasting
+    ctx.castSpellID         = castSpellID
+    ctx.firstIconScale      = npoFirstIconScale
+    ctx.opacity             = opacity
+    ctx.hideEmptySlots      = true
 
     for i, icon in ipairs(dpsIcons) do
-        local spellID  = hasSpells and spellIDs[i] or nil
-        local isItemEntry = spellID and spellID < 0
-        local itemID = isItemEntry and -spellID or nil
-        local spellInfo
-        if isItemEntry then
-            local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
-            if itemIcon then spellInfo = { iconID = itemIcon } end
-        else
-            spellInfo = spellID and GetCachedSpellInfo and GetCachedSpellInfo(spellID) or nil
-        end
-
-        -- Position stabilization (mirrors the standard queue): position 1 holds its
-        -- spell briefly after a confirmed keypress (KeyPressDetector stamps
-        -- lastPressTime) so the icon doesn't change right as the player commits;
-        -- positions 2+ hold the current spell for POSITION_HOLD_TIME before
-        -- replacing, preventing rapid shuffling from proc/CD re-categorization.
-        if i == 1 and spellID and icon.spellID and icon.spellID ~= spellID then
-            if icon.lastPressTime and (now - icon.lastPressTime) < POSITION_HOLD_TIME then
-                spellID = icon.spellID
-                spellInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
-                if not spellInfo then spellID = nil end
-            end
-        elseif i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
-            local holdElapsed = now - (icon.lastSpellSetTime or 0)
-            if holdElapsed < POSITION_HOLD_TIME then
-                local oldStillQueued = false
-                local nSpells = spellIDs and #spellIDs or 0
-                for j = 1, nSpells do
-                    if spellIDs[j] == icon.spellID then
-                        oldStillQueued = true
-                        break
-                    end
-                end
-                if oldStillQueued then
-                    local oldInfo
-                    if icon.spellID < 0 then
-                        local oldItemID = -icon.spellID
-                        local oldItemIcon = GetItemIcon and GetItemIcon(oldItemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(oldItemID))
-                        if oldItemIcon then oldInfo = { iconID = oldItemIcon } end
-                    else
-                        oldInfo = GetCachedSpellInfo and GetCachedSpellInfo(icon.spellID)
-                    end
-                    if oldInfo then
-                        spellID = icon.spellID
-                        spellInfo = oldInfo
-                        isItemEntry = spellID < 0
-                        itemID = isItemEntry and -spellID or nil
-                    end
-                end
-            end
-        end
-
-        if spellID and spellInfo then
-            local spellChanged = (icon.spellID ~= spellID)
-
-            if spellChanged then
-                -- Track previous spell for key-press grace period
-                if icon.spellID then
-                    icon.previousSpellID = icon.spellID
-                    icon.spellChangeTime = now
-                    if icon.normalizedHotkey then
-                        icon.previousNormalizedHotkey = icon.normalizedHotkey
-                    end
-                end
-                icon.spellID = spellID
-                icon.lastSpellSetTime = now
-                icon.iconTexture:SetTexture(spellInfo.iconID)
-                icon.iconTexture:Show()
-                -- Track item state for cooldowns and hotkey lookup.
-                if isItemEntry then
-                    icon.isItem = true
-                    icon.itemID = itemID
-                    local _, castSpellID = GetItemSpell(itemID)
-                    icon.itemCastSpellID = castSpellID
-                elseif icon.isItem then
-                    icon.isItem = nil
-                    icon.itemID = nil
-                    icon.itemCastSpellID = nil
-                end
-                -- Reset cooldown state for new spell
-                icon._cooldownShown       = false
-                icon._chargeCooldownShown = false
-                icon._cachedMaxCharges    = nil
-                icon.cachedHotkey         = nil
-                icon.cachedIsUsable       = nil
-                icon.cachedNotEnoughResources = nil
-                icon.lastUsabilityCheck   = nil
-            elseif not icon.iconTexture:GetTexture() then
-                -- Reload fallback: re-apply artwork if the texture was lost without a
-                -- spell change (e.g. UI reload), matching the standard queue.
-                icon.iconTexture:SetTexture(spellInfo.iconID)
-                icon.iconTexture:Show()
-            end
-
-            -- Wait label: Blizzard's "waiting for resources" placeholder (iconID 134377).
-            if spellChanged then
-                icon.isWaitingSpell = not isItemEntry and spellInfo.iconID == 134377
-            end
-            if icon.centerText then
-                if icon.isWaitingSpell then
-                    icon.centerText:SetText(UIRenderer.WAIT_LABEL)
-                    icon.centerText:Show()
-                else
-                    icon.centerText:Hide()
-                end
-            end
-
-            -- Cooldowns (throttled, same interval as main panel)
-            if spellChanged or shouldUpdateCooldowns then
-                UIRenderer.UpdateButtonCooldowns(icon)
-            end
-
-            -- Glows: priority proc > gap-closer > assisted (matches UIRenderer priority).
-            -- Gap-closer glow only applies when the spell was synthetically injected
-            -- by our gap-closer system (IsSyntheticProc). When Blizzard independently
-            -- recommends the same gap-closer at position 1, it gets the blue assisted
-            -- crawl instead - matching standard queue behavior.
-            local isSyntheticProc = IsSyntheticProc and IsSyntheticProc(spellID)
-            local isDisplaced     = IsDisplacedPrimary and IsDisplacedPrimary(spellID)
-            local isBurstInjection = IsBurstInjection and IsBurstInjection(spellID)
-            local isGapCloser     = isSyntheticProc
-            local isRealProc      = IsSpellProcced_raw and IsSpellProcced_raw(spellID)
-            -- Priority: gap-closer > burst > proc > assisted (matches UIRenderer.ResolveGlowState)
-            local wantGapCloserGlow = isGapCloser and showGapCloserGlow
-            local wantBurstGlow     = isBurstInjection and showBurstGlow and not wantGapCloserGlow
-            local wantProcGlow      = isRealProc and npoShowProcGlow and not wantGapCloserGlow and not wantBurstGlow
-            local wantAssistedGlow  = (i == 1 or isDisplaced) and npoShowPrimaryGlow
-                and not wantGapCloserGlow and not wantBurstGlow and not wantProcGlow
-
-            -- Glow hysteresis (positions 2+): require desired glow state to be
-            -- stable for GLOW_HOLD_TIME before switching animations. Prevents
-            -- jarring animation restarts from transient proc toggles.
-            -- Position 1 always reflects current state immediately.
-            -- Displaced primaries (injected down from pos 1) also bypass
-            -- hysteresis so the blue glow appears instantly.
-            -- Encode glow intent as a simple tag for comparison.
-            local desiredGlow = wantGapCloserGlow and "gc" or wantBurstGlow and "burst"
-                or wantProcGlow and "proc" or wantAssistedGlow and "assisted" or "none"
-            if i > 1 then
-                if spellChanged or isDisplaced then
-                    icon.lastRenderedGlow = desiredGlow
-                    icon.pendingGlowState = nil
-                elseif icon.lastRenderedGlow and desiredGlow ~= icon.lastRenderedGlow then
-                    if icon.pendingGlowState == desiredGlow then
-                        if now - (icon.pendingGlowTime or 0) >= GLOW_HOLD_TIME then
-                            icon.lastRenderedGlow = desiredGlow
-                            icon.pendingGlowState = nil
-                        end
-                    else
-                        icon.pendingGlowState = desiredGlow
-                        icon.pendingGlowTime = now
-                    end
-                    -- Keep previous glow state during hold period
-                    desiredGlow = icon.lastRenderedGlow
-                    wantGapCloserGlow = (desiredGlow == "gc")
-                    wantBurstGlow = (desiredGlow == "burst")
-                    wantProcGlow = (desiredGlow == "proc")
-                    wantAssistedGlow = (desiredGlow == "assisted")
-                else
-                    icon.lastRenderedGlow = desiredGlow
-                    icon.pendingGlowState = nil
-                end
-            end
-
-            if wantAssistedGlow then
-                UIAnimations.StartAssistedGlow(icon, inCombat)
-                icon.hasAssistedGlow = true
-            elseif icon.hasAssistedGlow then
-                UIAnimations.StopAssistedGlow(icon)
-                icon.hasAssistedGlow = false
-            end
-
-            if wantProcGlow then
-                if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false end
-                if icon.hasBurstGlow then UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false end
-                if not icon.hasProcGlow then UIAnimations.ShowProcGlow(icon, inCombat); icon.hasProcGlow = true end
-            elseif icon.hasProcGlow then
-                UIAnimations.HideProcGlow(icon); icon.hasProcGlow = false
-            end
-
-            if wantGapCloserGlow then
-                if not icon.hasGapCloserGlow then UIAnimations.StartGapCloserGlow(icon); icon.hasGapCloserGlow = true end
-            elseif icon.hasGapCloserGlow then
-                UIAnimations.StopGapCloserGlow(icon); icon.hasGapCloserGlow = false
-            end
-
-            if wantBurstGlow then
-                if not icon.hasBurstGlow then UIAnimations.StartBurstGlow(icon); icon.hasBurstGlow = true end
-            elseif icon.hasBurstGlow then
-                UIAnimations.StopBurstGlow(icon); icon.hasBurstGlow = false
-            end
-
-            -- "Switch target" arrow: slot 1 only, when AC re-recommends a DoT already
-            -- live on the current target (spread cue from SpellQueue). Mirrors the
-            -- standard queue; the setting is already honored inside IsDotSpreadActive.
-            if icon.spreadArrow then
-                if i == 1 and SpellQueue and SpellQueue.IsDotSpreadActive and SpellQueue.IsDotSpreadActive() then
-                    icon.spreadArrow:Show()
-                elseif icon.spreadArrow:IsShown() then
-                    icon.spreadArrow:Hide()
-                end
-            end
-
-            -- Hotkey: look up on spell change or throttle interval; always track
-            -- normalizedHotkey for flash matching even when display is off.
-            -- Empty ("") results are retried every frame so proc-override hotkeys
-            -- that miss on the first frame resolve promptly (matches standard queue).
-            if spellChanged or shouldUpdateCooldowns or not icon.cachedHotkey or icon.cachedHotkey == "" then
-                local hotkey
-                if isItemEntry then
-                    hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(itemID, icon.itemCastSpellID) or ""
-                else
-                    hotkey = GetSpellHotkey and GetSpellHotkey(spellID) or ""
-                end
-                local hotkeyChanged = (icon.cachedHotkey ~= hotkey)
-                icon.cachedHotkey = hotkey
-
-                UIRenderer.SetIconHotkeyText(icon, hotkey, showHotkey)
-
-                -- Only re-normalize when hotkey actually changed (mirrors UIRenderer optimization)
-                if hotkeyChanged then
-                    UIRenderer.SetIconNormalizedHotkey(icon, hotkey, now, true)
-                end
-            end
-
-            local hasVisibleHotkey = showHotkey and icon.cachedHotkey and icon.cachedHotkey ~= ""
-            local needRangeCheck = showRangeTint or hasVisibleHotkey
-            local needsDirectSlot = needRangeCheck or inCombat
-
-            -- Range/usability support: slot-based with spell fallback (shared helper).
-            local directSlot
-            if needsDirectSlot then
-                if isItemEntry then
-                    directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
-                else
-                    directSlot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell(spellID)
-                end
-            end
-            local isOutOfRange = false
-            if needRangeCheck then
-                isOutOfRange = UIRenderer.CheckSpellRange(icon, spellID, directSlot)
-                if hasVisibleHotkey then
-                    local hkc = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-                    UIRenderer.UpdateRangeHotkeyColor(icon, isOutOfRange, hkc)
-                end
-            end
-
-            local isChanneledSpell, isCastedSpell
-            if isItemEntry then
-                isChanneledSpell, isCastedSpell = false, false
-            else
-                isChanneledSpell, isCastedSpell = UIRenderer.MatchActiveCast(
-                    spellID, isChanneling, channelSpellID, isCasting, castSpellID)
-            end
-
-            local baseDesaturation = (i == 1) and 0 or npoDesaturation
-            local visualState = UIRenderer.ResolveVisualState(icon, spellID,
-                isChanneledSpell, isCastedSpell, isChanneling, isCasting,
-                isOutOfRange, showRangeTint, showUsabilityTint, inCombat, directSlot,
-                hasVisibleHotkey, now)
-            UIRenderer.ApplyVisualState(icon, visualState, baseDesaturation, 1, 1)
-
-            UIRenderer.UpdateCastingHighlight(icon, showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
-
-            -- First icon scale
-            local targetScale = (i == 1) and npoFirstIconScale or 1.0
-            if icon:GetScale() ~= targetScale then
-                icon:SetScale(targetScale)
-            end
-
-            -- Channel fill animation (channels only, not hardcasts).
-            if isChanneledSpell then
-                if not icon._hasChannelFill and UIAnimations then
-                    UIAnimations.StartChannelFill(icon)
-                end
-            elseif icon._hasChannelFill and UIAnimations then
-                UIAnimations.StopChannelFill(icon)
-            end
-
-            if not icon:IsShown() then icon:Show() end
-            icon:SetAlpha(opacity)
-        else
-            -- Empty slot: clear icon
-            if icon.spellID then
-                UIRenderer.ClearIconState(icon)
-            end
-            icon:Hide()
-        end
+        UIRenderer.RenderQueueIcon(icon, i, ctx)
     end
 end
 
@@ -1870,9 +1483,11 @@ function UINameplateOverlay.UpdateHealthBar()
     if not healthBar then return end
 
     -- Drive fill from raw UnitHealth - secret-safe, tracks continuously.
+    -- Truthiness only: UnitHealthMax can be secret in combat and a `> 0`
+    -- comparison throws. StatusBar accepts secret values directly.
     local health    = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
-    if health and maxHealth and maxHealth > 0 then
+    if health and maxHealth then
         healthBar:SetMinMaxValues(0, maxHealth)
         healthBar:SetValue(health)
     end
@@ -1926,9 +1541,10 @@ function UINameplateOverlay.UpdatePetHealthBar()
         return
     end
 
+    -- Truthiness only: UnitHealthMax can be secret in combat (see UpdateHealthBar).
     local health    = UnitHealth("pet")
     local maxHealth = UnitHealthMax("pet")
-    if health and maxHealth and maxHealth > 0 then
+    if health and maxHealth then
         petHealthBar:SetMinMaxValues(0, maxHealth)
         petHealthBar:SetValue(health)
     end
@@ -2024,7 +1640,7 @@ function UINameplateOverlay.HideAll()
             interruptIcon.hasInterruptGlow = false
         end
         interruptIcon:Hide()
-        interruptShown = false
+        if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
     end
 end
 

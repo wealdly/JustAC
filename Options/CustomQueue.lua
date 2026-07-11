@@ -420,27 +420,17 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     if not cq.spells then cq.spells = {} end
     local spellList = cq.spells
 
-    if #spellList == 0 then
-        spellListArgs.emptyNote = {
-            type = "description",
-            name = L["Custom Queue Empty"],
-            order = 12,
-            fontSize = "medium",
-        }
+    local updateFunc = function()
+        InvalidateRotationCache()
+        CustomQueue.UpdateCustomQueueOptions(addon)
+        addon:ForceUpdate()
     end
-
-    if not SpellSearch then
-        SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-    end
-    if SpellSearch then
-        local updateFunc = function()
-            InvalidateRotationCache()
-            CustomQueue.UpdateCustomQueueOptions(addon)
-            addon:ForceUpdate()
-        end
-        SpellSearch.CreateSpellListEntries(addon, spellListArgs, spellList, "customqueue", 12, updateFunc)
-        SpellSearch.CreateAddSpellButton(addon, spellListArgs, spellList, "customqueue", 30, L["Custom Queue Spells"], updateFunc, false)
-    end
+    SpellSearch.RebuildListSection(addon, spellListArgs, {
+        spellList = spellList, listType = "customqueue",
+        baseOrder = 12, addOrder = 30,
+        listName = L["Custom Queue Spells"], updateFunc = updateFunc,
+        spellsOnly = false, emptyText = L["Custom Queue Empty"],
+    })
 
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")

@@ -201,7 +201,6 @@ local function UpdateFormCache()
                 id = i,
                 name = name,
                 icon = icon,
-                available = active ~= nil,
                 current = (stanceIndex == i),
                 spellID = spellID
             }

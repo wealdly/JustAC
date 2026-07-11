@@ -132,14 +132,13 @@ function BlizzardAPI.GetActionBarUsability(spellID)
 
     -- Assisted combat slot fallback: if the spell isn't on any bar but matches
     -- the current assistant recommendation, use that slot for usability checks.
-    if not slot and ABS.GetAssistedCombatSlot then
-        local C_AssistedCombat = C_AssistedCombat
-        if C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
-            local nextCast = C_AssistedCombat.GetNextCastSpell(true)
-            local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
-            if nextCast and (nextCast == spellID or nextCast == displayID) then
-                slot = ABS.GetAssistedCombatSlot()
-            end
+    if not slot and ABS.GetAssistedCombatSlot and BlizzardAPI.GetHighlightCastSpell then
+        -- GetHighlightCastSpell pcalls the API and returns a plain number or nil,
+        -- so the comparisons below never see a secret or non-number value.
+        local nextCast = BlizzardAPI.GetHighlightCastSpell()
+        local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+        if nextCast and (nextCast == spellID or nextCast == displayID) then
+            slot = ABS.GetAssistedCombatSlot()
         end
     end
 

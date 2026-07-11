@@ -177,7 +177,6 @@ end)
 --   searchFunc  = function(filterText, excludeList) → {[id]=displayName}
 --   onSelect    = function(id, displayName)       called on row click
 --   excludeList = optional table (passed through to searchFunc each keystroke)
---   anchor      = optional frame; popup appears to its right (defaults to CENTER)
 -- }
 function LiveSearchPopup.Open(config)
     currentConfig = config

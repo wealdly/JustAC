@@ -560,15 +560,10 @@ function DebugCommands.TestCooldownAPIs(addon, spellArg)
             end
         end
 
-        -- Fallback: brute-force ID search
-        if not spellID and C_Spell and C_Spell.GetSpellInfo then
-            for i = 1, 500000 do
-                local spellInfo = C_Spell.GetSpellInfo(i)
-                if spellInfo and spellInfo.name and spellInfo.name:lower() == spellName:lower() then
-                    spellID = i
-                    break
-                end
-            end
+        -- Fallback: client name→ID resolver (replaces a 500k-ID brute-force scan
+        -- that hitched the client for seconds)
+        if not spellID and C_Spell and C_Spell.GetSpellIDForSpellIdentifier then
+            spellID = C_Spell.GetSpellIDForSpellIdentifier(spellName)
         end
 
         if not spellID then
@@ -892,9 +887,8 @@ function DebugCommands.AuraDiagnostics(addon)
             if not auraData then break end
             count = count + 1
             if count <= 20 then
-                local spellId = auraData.spellId or "?"
-                local name = auraData.name or "SECRET"
-                addon:Print("  [" .. i .. "] ID:" .. tostring(spellId) .. " Name:" .. tostring(name))
+                -- spellId/name are secret in combat; SafeSecret pcalls the tostring.
+                addon:Print("  [" .. i .. "] ID:" .. SafeSecret(auraData.spellId) .. " Name:" .. SafeSecret(auraData.name))
             end
         end
     else
@@ -903,7 +897,7 @@ function DebugCommands.AuraDiagnostics(addon)
             if not name and not spellId then break end
             count = count + 1
             if count <= 20 then
-                addon:Print("  [" .. i .. "] ID:" .. tostring(spellId or "?") .. " Name:" .. tostring(name or "SECRET"))
+                addon:Print("  [" .. i .. "] ID:" .. SafeSecret(spellId) .. " Name:" .. SafeSecret(name))
             end
         end
     end
@@ -2024,6 +2018,7 @@ function DebugCommands.CastDiagnostics(addon)
             probeLines[#probeLines + 1] = string.format("IsTargetCastInterruptible(): isCasting=%s interruptible=%s  via=%s",
                 okc and safe(isCasting) or "ERR", okc and safe(interruptible) or "-", okc and safe(src) or "-")
         end
+        local BlizzardAPI = LibStub and LibStub("JustAC-BlizzardAPI", true)
         local worthy = BlizzardAPI and BlizzardAPI.IsTargetInterruptWorthy and BlizzardAPI.IsTargetInterruptWorthy()
         probeLines[#probeLines + 1] = "IsTargetInterruptWorthy(): " .. tostring(worthy)
         local ic = addon.interruptIcon

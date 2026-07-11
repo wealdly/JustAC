@@ -50,11 +50,12 @@ local cachedTriggerSpells = nil    -- resolved trigger set: { [spellID] = true }
 local cachedTriggerAuraIDs = nil   -- resolved aura set: { [auraSpellID] = true }
 local cachedTriggerSource = nil   -- "explicit", "defaults", or nil
 local cachedInjectionSpells = nil  -- resolved injection list: { spellID, ... }
-local cachedSpecKey = nil
+-- Separate spec keys per cache: with a shared key, whichever resolver ran second
+-- after an invalidation miss would see the new spec already "cached" and return
+-- the old spec's list forever.
+local cachedTriggerSpecKey = nil
+local cachedInjectionSpecKey = nil
 
---- Cache of base cooldown durations (seconds) for spells seen via CheckTrigger.
---- Populated lazily; survives across cache invalidations (spell CDs don't change).
-local baseCooldownCache = {}       -- { [spellID] = seconds }
 
 --- Timer fallback state for non-aura triggers (pet summons, target debuffs).
 --- When a trigger spell is cast but no matching aura appears on the player,
@@ -67,36 +68,11 @@ local timerTriggerCastTime = 0      -- GetTime() when a trigger spell was last c
 -- Internal helpers
 --------------------------------------------------------------------------------
 
---- Return the base cooldown of a spell in seconds (cached).
---- Uses GetSpellBaseCooldown (returns ms) with fallback to C_Spell.GetSpellCharges
---- cooldownDuration for charge-based spells where GetSpellBaseCooldown returns 0.
---- Must be called out of combat - both APIs return secrets in combat.
+--- Base cooldown in seconds, cached OOC-only - shared impl in
+--- BlizzardAPI/CooldownTracking (which, unlike the old local copy, never
+--- caches a secret-read result).
 local function GetBaseCooldownSeconds(spellID)
-    if not spellID or spellID <= 0 then return 0 end
-    local cached = baseCooldownCache[spellID]
-    if cached then return cached end
-
-    local sec = 0
-
-    -- Try GetSpellBaseCooldown first (returns ms)
-    local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
-    if ms and not BlizzardAPI.IsSecretValue(ms) and ms > 0 then
-        sec = ms / 1000
-    end
-
-    -- Fallback: charge-based spells report 0 base CD but have a recharge time
-    if sec == 0 and C_Spell and C_Spell.GetSpellCharges then
-        local ok, charges = pcall(C_Spell.GetSpellCharges, spellID)
-        if ok and charges then
-            local dur = charges.cooldownDuration
-            if dur and not BlizzardAPI.IsSecretValue(dur) and dur > 0 then
-                sec = dur
-            end
-        end
-    end
-
-    baseCooldownCache[spellID] = sec
-    return sec
+    return BlizzardAPI.GetBaseCooldownSeconds(spellID)
 end
 
 --- Build the trigger aura ID set from the trigger spell set.
@@ -132,11 +108,11 @@ local function ResolveTriggerSpells(addon)
     local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey then return nil end
 
-    if cachedTriggerSpells and cachedSpecKey == specKey then
+    if cachedTriggerSpells and cachedTriggerSpecKey == specKey then
         return cachedTriggerSpells
     end
 
-    cachedSpecKey = specKey
+    cachedTriggerSpecKey = specKey
     cachedTriggerSpells = {}
     cachedTriggerAuraIDs = {}
     cachedTriggerSource = nil
@@ -188,11 +164,11 @@ local function ResolveInjectionSpells(addon)
     local specKey = SpellDBGetSpecKey and SpellDBGetSpecKey() or nil
     if not specKey then return nil end
 
-    if cachedInjectionSpells and cachedSpecKey == specKey then
+    if cachedInjectionSpells and cachedInjectionSpecKey == specKey then
         return cachedInjectionSpells
     end
 
-    cachedSpecKey = specKey
+    cachedInjectionSpecKey = specKey
     local spellList
 
     -- Check profile for user-configured list
@@ -232,6 +208,9 @@ local function ResolveInjectionSpells(addon)
                 -- fails-open for unflagged spells that were cast before re-resolve).
                 if BlizzardAPI.SeedLocalCooldownIfActive then
                     BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
+                    if resolvedID ~= sid then
+                        BlizzardAPI.SeedLocalCooldownIfActive(sid)
+                    end
                 end
             end
         end
@@ -452,7 +431,8 @@ function BurstInjectionEngine.InvalidateBurstCache()
     cachedTriggerAuraIDs = nil
     cachedTriggerSource = nil
     cachedInjectionSpells = nil
-    cachedSpecKey = nil
+    cachedTriggerSpecKey = nil
+    cachedInjectionSpecKey = nil
     BurstInjectionEngine.ClearBurstState()
 end
 
@@ -523,33 +503,11 @@ function BurstInjectionEngine.InitializeBurstInjection(addon)
 
     BurstInjectionEngine.InvalidateBurstCache()
 
-    -- Pre-cache base cooldowns AND register for local CD tracking while out
-    -- of combat. GetSpellBaseCooldown and RegisterSpellForTracking both need
-    -- non-secret API values - in combat they fail silently.
-    local injList = profile.burstInjection.injectionSpells[specKey]
-    if injList then
-        for _, sid in ipairs(injList) do
-            if sid and sid > 0 then
-                GetBaseCooldownSeconds(sid)
-                local resolvedID = BlizzardAPI.ResolveSpellID(sid)
-                if BlizzardAPI.RegisterSpellForTracking then
-                    BlizzardAPI.RegisterSpellForTracking(resolvedID, "burst")
-                    if resolvedID ~= sid then
-                        BlizzardAPI.RegisterSpellForTracking(sid, "burst")
-                    end
-                end
-                -- Seed local CD if spell is already on cooldown at init time.
-                -- Without this, spells on CD from a previous session have no
-                -- UNIT_SPELLCAST_SUCCEEDED event, so IsSpellReady fails-open.
-                if BlizzardAPI.SeedLocalCooldownIfActive then
-                    BlizzardAPI.SeedLocalCooldownIfActive(resolvedID)
-                    if resolvedID ~= sid then
-                        BlizzardAPI.SeedLocalCooldownIfActive(sid)
-                    end
-                end
-            end
-        end
-    end
+    -- Resolve now, while out of combat: ResolveInjectionSpells registers every
+    -- injection spell for local CD tracking, pre-caches base cooldowns, and
+    -- seeds already-running CDs - all of which need non-secret API values and
+    -- would fail silently if the first resolve happened in combat.
+    ResolveInjectionSpells(addon)
 
     -- Pre-cache base cooldowns for trigger defaults (for debug display)
     if SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS then

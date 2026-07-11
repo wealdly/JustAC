@@ -42,6 +42,51 @@ local localCharges = {}
 -- Minimum base cooldown to track - ignore GCD-only spells
 local MIN_TRACKABLE_CD_SECS = 3
 
+--- Resolve a display/override spellID to its castable base (override -> base),
+--- trying both APIs and returning the first that actually differs. nil if none.
+function BlizzardAPI.ResolveBaseSpellID(spellID)
+    if C_Spell_GetBaseSpell then
+        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
+        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
+    end
+    if FindBaseSpellByID then
+        local ok, b = pcall(FindBaseSpellByID, spellID)
+        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
+    end
+    return nil
+end
+
+-- Base cooldown (seconds) for a spell, cached. MUST be populated OUT of combat -
+-- GetSpellBaseCooldown returns secrets in combat, so an unreadable value is NOT
+-- cached (it's retried on the next OOC pass). Charge-based spells report 0 base
+-- CD; fall back to their per-charge recharge time. Shared by the engines.
+local baseCdSecondsCache = {}
+function BlizzardAPI.GetBaseCooldownSeconds(spellID)
+    if not spellID or spellID <= 0 then return 0 end
+    local cached = baseCdSecondsCache[spellID]
+    if cached ~= nil then return cached end
+    local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID)
+    if ms == nil or IsSecretValue(ms) then
+        return 0  -- unreadable (in combat): don't cache; a later OOC pass fills it
+    end
+    local sec = (ms > 0) and (ms / 1000) or 0
+    if sec == 0 and C_Spell_GetSpellCharges then
+        local ok, charges = pcall(C_Spell_GetSpellCharges, spellID)
+        if ok and charges and charges.cooldownDuration
+           and not IsSecretValue(charges.cooldownDuration) and charges.cooldownDuration > 0 then
+            sec = charges.cooldownDuration
+        end
+    end
+    baseCdSecondsCache[spellID] = sec
+    return sec
+end
+
+--- Cache-only read of the base cooldown: never touches the API, so it is safe
+--- for per-tick combat checks (returns 0 until an OOC pass has filled the cache).
+function BlizzardAPI.PeekBaseCooldownSeconds(spellID)
+    return (spellID and baseCdSecondsCache[spellID]) or 0
+end
+
 -- Hidden tooltip for parsing traited cooldown values
 local probeTooltip = nil
 
@@ -127,11 +172,9 @@ local function GetBestCooldownDuration(spellID)
         local cdMs = staticData.Get(spellID)
         -- Base-resolve: the static table is keyed by base IDs, but this can be
         -- reached with a talent-override cast ID (first seen mid-combat).
-        if (not cdMs or cdMs == 0) and C_Spell_GetBaseSpell then
-            local ok, base = pcall(C_Spell_GetBaseSpell, spellID)
-            if ok and type(base) == "number" and base > 0 and base ~= spellID then
-                cdMs = staticData.Get(base)
-            end
+        if not cdMs or cdMs == 0 then
+            local base = BlizzardAPI.ResolveBaseSpellID(spellID)
+            if base then cdMs = staticData.Get(base) end
         end
         if cdMs and cdMs > 0 then
             return cdMs / 1000
@@ -211,6 +254,25 @@ local function ClearLocalCooldowns()
     wipe(localCharges)
 end
 
+--- Read the API cooldown for spellID and store it in localCooldowns if a real
+--- (>1.5s, non-GCD) CD is running. OOC only - caller checks AreCooldownsSecret.
+local function SeedCooldownFromAPI(spellID, now)
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not ok or not cd then return end
+    local duration = Unsecret(cd.duration)
+    local startTime = Unsecret(cd.startTime)
+    if duration and duration > 1.5 and startTime and startTime > 0 then
+        local endTime = startTime + duration
+        if endTime > now then
+            localCooldowns[spellID] = {
+                endTime = endTime,
+                duration = duration,
+                startTime = startTime,
+            }
+        end
+    end
+end
+
 --- Resync local cooldowns from the API (out of combat only).
 --- Preserves CD tracking across combat transitions by reading actual CD state
 --- when the data is readable (OOC), instead of wiping it.
@@ -219,21 +281,7 @@ local function ResyncLocalCooldowns()
     local now = GetTime()
     wipe(localCooldowns)
     for spellID in pairs(trackedSpells) do
-        local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-        if ok and cd then
-            local duration = Unsecret(cd.duration)
-            local startTime = Unsecret(cd.startTime)
-            if duration and duration > 1.5 and startTime and startTime > 0 then
-                local endTime = startTime + duration
-                if endTime > now then
-                    localCooldowns[spellID] = {
-                        endTime = endTime,
-                        duration = duration,
-                        startTime = startTime,
-                    }
-                end
-            end
-        end
+        SeedCooldownFromAPI(spellID, now)
     end
     -- Charge state is resynced by ScanCooldownDurations → CacheChargesForSpell
     wipe(localCharges)
@@ -740,10 +788,13 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- isOnGCD == false → real cooldown running (definitive for flagged spells)
     if cd.isOnGCD == false then return false end
 
-    -- Out of combat: duration/startTime are readable
+    -- Out of combat: duration/startTime are readable. Unsecret both together -
+    -- the secret system is volatile enough that one field can read plain while
+    -- the other is still marked.
     local duration = Unsecret(cd.duration)
-    if duration then
-        return cd.startTime == 0 or (cd.startTime + duration) <= GetTime()
+    local startTime = duration and Unsecret(cd.startTime)
+    if duration and startTime then
+        return startTime == 0 or (startTime + duration) <= GetTime()
     end
 
     -- In combat with secreted values and isOnGCD == nil:
@@ -805,20 +856,7 @@ function BlizzardAPI.SeedLocalCooldownIfActive(spellID)
     if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end
     -- Skip if already tracked
     if localCooldowns[spellID] then return end
-    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return end
-    local duration = Unsecret(cd.duration)
-    local startTime = Unsecret(cd.startTime)
-    if duration and duration > 1.5 and startTime and startTime > 0 then
-        local endTime = startTime + duration
-        if endTime > GetTime() then
-            localCooldowns[spellID] = {
-                endTime = endTime,
-                duration = duration,
-                startTime = startTime,
-            }
-        end
-    end
+    SeedCooldownFromAPI(spellID, GetTime())
 end
 
 --- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.

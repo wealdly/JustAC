@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/SpellSearch - Shared spellbook cache, search/filter, spell list management
-local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 2)
+local SpellSearch = LibStub:NewLibrary("JustAC-OptionsSpellSearch", 3)
 if not SpellSearch then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -386,6 +386,11 @@ end
 -------------------------------------------------------------------------------
 -- Helper to create spell list entries for a given list (defensives/etc.)
 -------------------------------------------------------------------------------
+-- Lists whose engines actually read defensives.spellSettings[id].procPriority
+-- (DefensiveEngine for the defensive/pet lists, SpellQueue for the custom queue).
+-- Other lists must neither show the toggle nor wipe the setting on removal.
+local PROC_PRIORITY_LISTS = { defensive = true, petheal = true, petrez = true, customqueue = true }
+
 function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, listType, baseOrder, updateFunc)
     if not spellList then return end
 
@@ -481,8 +486,11 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                             if profile and profile.defensives and profile.defensives.itemSettings then
                                 profile.defensives.itemSettings[itemID] = nil
                             end
-                        else
-                            -- Clean up spell settings when removing a spell entry
+                        elseif PROC_PRIORITY_LISTS[listType] then
+                            -- Clean up spell settings when removing a spell entry.
+                            -- Only for lists that own the setting: removing the same
+                            -- spell from e.g. a gap-closer list must not discard the
+                            -- proc priority it has in the defensive/custom lists.
                             if profile and profile.defensives and profile.defensives.spellSettings then
                                 profile.defensives.spellSettings[entry] = nil
                             end
@@ -636,8 +644,9 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             }
         end
 
-        -- Per-spell controls: Proc Priority toggle (spells only, not items)
-        if not isItemEntry then
+        -- Per-spell controls: Proc Priority toggle (spells only, not items,
+        -- and only on lists whose engine reads the setting)
+        if not isItemEntry and PROC_PRIORITY_LISTS[listType] then
             local spellID = entry
             local entryArgs = defensivesArgs[listType .. "_" .. i].args
 
@@ -687,6 +696,7 @@ function SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, listType,
         order = order,
         width = "normal",
         func  = function()
+            if not spellList then return end
             local LiveSearchPopup = LibStub("JustAC-LiveSearchPopup", true)
             if not LiveSearchPopup then return end
 
@@ -711,4 +721,26 @@ function SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, listType,
             })
         end,
     }
+end
+
+-------------------------------------------------------------------------------
+-- Rebuild one dynamic spell-list section: optional empty-state note, then
+-- list entries, then the "Add..." button. Caller clears dynamic args and
+-- ensures the spec-keyed list table exists first; caller also does the final
+-- AceConfigRegistry:NotifyChange.
+-- opts: { spellList, listType, baseOrder, addOrder, listName, updateFunc,
+--         spellsOnly, emptyText (optional) }
+-------------------------------------------------------------------------------
+function SpellSearch.RebuildListSection(addon, argsTable, opts)
+    local spellList = opts.spellList
+    if opts.emptyText and spellList and #spellList == 0 then
+        argsTable.emptyNote = {
+            type = "description",
+            name = opts.emptyText,
+            order = opts.baseOrder,
+            fontSize = "medium",
+        }
+    end
+    SpellSearch.CreateSpellListEntries(addon, argsTable, spellList, opts.listType, opts.baseOrder, opts.updateFunc)
+    SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, opts.listType, opts.addOrder, opts.listName, opts.updateFunc, opts.spellsOnly)
 end

@@ -28,6 +28,19 @@ local function notifyChange()
 end
 W.NotifyChange = notifyChange
 
+-- Full nameplate-overlay cluster rebuild (most overlay tweaks need it).
+function W.rebuildNPO(addon)
+    local NPO = LibStub("JustAC-UINameplateOverlay", true)
+    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
+end
+
+-- True when the player's class has no pet defaults (hides pet-related controls).
+function W.petClassHidden()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local _, playerClass = UnitClass("player")
+    return not (SpellDB and SpellDB.ClassHasPetDefaults and SpellDB.ClassHasPetDefaults(playerClass))
+end
+
 -- Keys consumed by the builders; everything else in opts is copied to the entry.
 local CONTROL = {
     default = true, onSet = true, notify = true,

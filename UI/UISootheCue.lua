@@ -171,8 +171,10 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
     if not (anchorIcon and UISootheCue.Available()) then return nil end
     local cue = anchorIcon.sootheCue
     if not cue then
-        local sz = (anchorIcon.GetWidth and anchorIcon:GetWidth()) or iconSize or 32
-        if not sz or sz <= 0 then sz = iconSize or 32 end
+        -- GetWidth() is secret on nameplate-parented frames (see UIFrameFactory
+        -- cachedIconSize note); never call it here.
+        local sz = anchorIcon.cachedIconSize or iconSize or 32
+        if sz <= 0 then sz = 32 end
         cue = CreateFrame("Frame", nil, anchorIcon:GetParent())
         cue:SetAllPoints(anchorIcon)                 -- tracks position 0 even when the kick is hidden
         cue:SetFrameStrata(anchorIcon:GetFrameStrata())
@@ -199,9 +201,11 @@ function UISootheCue.Show(cue)
     if cue and not cue:IsShown() then cue:Show() end
 end
 
---- Hide the cue (stops the driver) and blank every slot.
+--- Hide the cue (stops the driver) and blank every slot. Free when already
+--- hidden: a hidden frame renders no children, so blanked-or-not is moot, and
+--- the overlay's hidden-state render path calls this every pass.
 function UISootheCue.Hide(cue)
-    if not cue then return end
+    if not cue or not cue:IsShown() then return end
     if cue.slots then
         for i = 1, MAX_SLOTS do
             local slot = cue.slots[i]

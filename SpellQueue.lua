@@ -850,7 +850,12 @@ function SpellQueue.GetCurrentSpellQueue()
     -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
     local stickyApplied, executeLatched = false, false
     if inCombat then
+        -- UnitGUID("target") is SECRET for NPCs in combat (see DotTracker header);
+        -- treat a secret GUID as no-GUID so the latch never compares a secret.
         local targetGUID = UnitGUID("target")
+        if targetGUID and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(targetGUID) then
+            targetGUID = nil
+        end
         if ctxExecute and targetGUID then
             executeLatchGUID = targetGUID
         elseif executeLatchGUID then
@@ -993,6 +998,13 @@ end
 function SpellQueue.OnSpellsChanged()
     SpellQueue.ClearSpellCache()
     SpellQueue.InvalidateRotationCache()
+    -- SimC rank lookup bakes in talent-dependent override resolution. Invalidate
+    -- HERE (SPELLS_CHANGED fires on every talent change) and not in
+    -- InvalidateRotationCache, which also fires on every target swap and would
+    -- force a full lookup rebuild per target change for no reason.
+    if RotationImport and RotationImport.InvalidateLookup then
+        RotationImport.InvalidateLookup()
+    end
     SpellQueue.ForceUpdate()
 end
 

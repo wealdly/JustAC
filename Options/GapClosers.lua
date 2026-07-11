@@ -12,6 +12,11 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 function GapClosers.CreateTabArgs(addon)
+    -- Shared gate: control is inert while gap-closers are disabled.
+    local function gcDisabled()
+        local profile = addon:GetProfile()
+        return not (profile and profile.gapClosers and profile.gapClosers.enabled)
+    end
     local tab = {
         type = "group",
         name = L["Gap-Closers"],
@@ -42,10 +47,7 @@ function GapClosers.CreateTabArgs(addon)
                 name = L["Show Gap-Closer Glow"], desc = L["Show Gap-Closer Glow desc"],
                 order = 2, width = "full",
                 onSet = function() addon:ForceUpdate() end,
-                disabled = function(a)
-                    local profile = a:GetProfile()
-                    return not (profile and profile.gapClosers and profile.gapClosers.enabled)
-                end,
+                disabled = gcDisabled,
             }),
             -- SPELL LIST (10+)
             spellListGroup = {
@@ -53,10 +55,7 @@ function GapClosers.CreateTabArgs(addon)
                 inline = true,
                 name = SpellSearch.SpecHeader(L["Gap-Closers"]),
                 order = 10,
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    return not (profile and profile.gapClosers and profile.gapClosers.enabled)
-                end,
+                disabled = gcDisabled,
                 args = {
                     gcHeader = {
                         type = "header",
@@ -131,7 +130,6 @@ function GapClosers.UpdateGapCloserOptions(addon)
     }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
-    local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
     local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()
     if not specKey then return end
 
@@ -153,21 +151,6 @@ function GapClosers.UpdateGapCloserOptions(addon)
     end
     local spellList = profile.gapClosers.classSpells[specKey]
 
-    -- Show empty-state description if no spells configured
-    if #spellList == 0 then
-        spellListArgs.emptyNote = {
-            type = "description",
-            name = L["No Gap-Closer Spells"],
-            order = 12,
-            fontSize = "medium",
-        }
-    end
-
-    if not SpellSearch then
-        SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
-    end
-    if not SpellSearch then return end
-
     local updateFunc = function()
         -- Invalidate engine cache so ResolveGapCloserSpells picks up changes
         local engine = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
@@ -179,8 +162,12 @@ function GapClosers.UpdateGapCloserOptions(addon)
     end
 
     -- Gap-closer spells (order 12.0-29.9, allowing 180 entries)
-    SpellSearch.CreateSpellListEntries(addon, spellListArgs, spellList, "gapcloser", 12, updateFunc)
-    SpellSearch.CreateAddSpellButton(addon, spellListArgs, spellList, "gapcloser", 30, "Gap-Closers", updateFunc, true)
+    SpellSearch.RebuildListSection(addon, spellListArgs, {
+        spellList = spellList, listType = "gapcloser",
+        baseOrder = 12, addOrder = 30,
+        listName = "Gap-Closers", updateFunc = updateFunc,
+        spellsOnly = true, emptyText = L["No Gap-Closer Spells"],
+    })
 
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")

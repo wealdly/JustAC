@@ -12,10 +12,7 @@ local function fullyDisabled(addon)
     return (addon.db.profile.displayMode or "queue") == "disabled"
 end
 
-local function rebuildNPO(addon)
-    local NPO = LibStub("JustAC-UINameplateOverlay", true)
-    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-end
+local rebuildNPO = W.rebuildNPO
 
 local function clearScannerCaches()
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -261,7 +258,7 @@ function General.CreateTabArgs(addon)
                     }),
                     showSpellbookProcs = W.toggle(addon, "showSpellbookProcs", {
                         name = L["Insert Procced Abilities"], desc = L["Insert Procced Abilities desc"],
-                        order = 32, width = "normal", default = false,
+                        order = 32, width = "normal", default = true,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = fullyDisabled,
                     }),

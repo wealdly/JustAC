@@ -24,7 +24,6 @@ local UnitHealthMax  = UnitHealthMax
 local UnitExists     = UnitExists
 local UnitIsDead     = UnitIsDead    ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
-local C_Secrets     = C_Secrets
 local UnitGUID      = UnitGUID      ---@diagnostic disable-line: undefined-global
 local strsplit      = strsplit       ---@diagnostic disable-line: undefined-global
 local wipe          = wipe
@@ -99,19 +98,9 @@ end
 -- Returns: isUsable, isRedundant, isProcced
 -- isUsable = spell is known AND NOT redundant (buff already active).
 -- Cooldown gating is handled by the caller via IsSpellReady / IsSpellUsable.
--- Resolve a display/override spellID to its castable base (override -> base),
--- trying both APIs and returning the first that actually differs. nil if none.
-local function ResolveBaseSpellID(spellID)
-    if C_Spell and C_Spell.GetBaseSpell then
-        local ok, b = pcall(C_Spell.GetBaseSpell, spellID)
-        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
-    end
-    if FindBaseSpellByID then
-        local ok, b = pcall(FindBaseSpellByID, spellID)
-        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
-    end
-    return nil
-end
+-- Resolve a display/override spellID to its castable base - shared impl in
+-- BlizzardAPI/CooldownTracking (loads earlier in the .toc).
+local ResolveBaseSpellID = BlizzardAPI.ResolveBaseSpellID
 
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
@@ -600,10 +589,11 @@ function BlizzardAPI.GetPlayerHealthPercent()
     -- (rested areas etc.); every alternative channel (UnitHealthPercent,
     -- UnitPercentHealthFromGUID, frame fill-width/value reads) returns secrets
     -- too, so callers MUST handle nil - see /jac inspect healthprobe.
-    if C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions() then
-        if IsSecretValue(health) or IsSecretValue(maxHealth) then
-            return nil
-        end
+    -- Gate unconditionally (like GetPetHealthPercent): on builds without the
+    -- HasSecretRestrictions predicate, health can still be secret in combat and
+    -- the comparison/arithmetic below would throw.
+    if IsSecretValue(health) or IsSecretValue(maxHealth) then
+        return nil
     end
     if not maxHealth or maxHealth == 0 then return 100 end
     return (health / maxHealth) * 100
@@ -951,12 +941,6 @@ function BlizzardAPI.ResetTargetCastState()
     targetCastActive = false
     targetCastInterruptKnown = false
     targetCastInterruptible = true
-end
-
---- Initialize the target cast tracking frame. Called once from
---- BlizzardAPI initialization or first use.
-function BlizzardAPI.InitTargetCastTracking()
-    InitTargetCastTracking()
 end
 
 -- Auto-initialize at load time (cheap: one hidden frame, 9 event registrations).

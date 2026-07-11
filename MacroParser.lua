@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Macro Parser Module - Resolves macro conditionals to find actionable spells
-local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 24)
+local MacroParser = LibStub:NewLibrary("JustAC-MacroParser", 25)
 if not MacroParser then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -200,80 +200,114 @@ local function DoesSpellMatch(spellPart, targetSpells)
     return false
 end
 
-local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
+-- Shared macro-line walk for AnalyzeMacroExecutionFlow and ParseMacroForSpell.
+-- Invokes callback once per /use, /cast, or /castsequence command line with the
+-- line's clauses pre-split:
+--   entries[i] = { entry = raw clause text, spellPart, conditionGroups }
+-- /cast and /use clauses are semicolon-separated fallbacks with per-clause
+-- [condition] brackets; /castsequence entries are comma-separated, only trimmed,
+-- and all share the sequence-level condition groups (after the reset= clause is
+-- stripped). Comment (#) lines are always skipped. skipInertLines additionally
+-- skips blank and /stopcasting lines: execution-flow analysis skips them, keybind
+-- parsing historically does not (behavior-identical either way, since neither
+-- kind of line can match a command pattern, but the drift is kept explicit).
+-- A non-nil callback return stops the walk and is returned.
+local function ForEachCommandLine(macroBody, skipInertLines, callback)
     local lineNumber = 0
-    local globalExecutionOrder = 0
-    
+    local commandIndex = 0
+
     for line in string_gmatch(macroBody, "[^\r\n]+") do
         lineNumber = lineNumber + 1
         local lowerLine = GetLowercase(line)
-        
-        if not string_match(lowerLine, "^%s*#") and not string_match(lowerLine, "^%s*$") and not string_match(lowerLine, "^%s*/stopcasting") then
+
+        local skipped = string_match(lowerLine, "^%s*#") ~= nil
+        if not skipped and skipInertLines then
+            skipped = string_match(lowerLine, "^%s*$") ~= nil
+                or string_match(lowerLine, "^%s*/stopcasting") ~= nil
+        end
+
+        if not skipped then
             local command = string_match(lowerLine, "/use%s+(.+)") or
-                           string_match(lowerLine, "/cast%s+(.+)")
-            local isCastseq = false
+                            string_match(lowerLine, "/cast%s+(.+)")
+            local castseqGroups  -- sequence-level condition groups for /castsequence
 
             if not command then
                 local castseq = string_match(lowerLine, "/castsequence%s+(.+)")
                 if castseq then
-                    isCastseq = true
-                    local seqSpellPart = StripBracketConditions(castseq)
+                    local seqSpellPart, seqGroups = StripBracketConditions(castseq)
+                    castseqGroups = seqGroups
                     command = seqSpellPart:gsub("^reset=[^,]+,%s*", ""):gsub("^reset=[^%s]+%s*", "")
                 end
             end
 
             if command then
-                globalExecutionOrder = globalExecutionOrder + 1
-                local simultaneousAbilities = {}
-                local clauseEntries = {}
-                local targetSpellFound = false
-                local targetSpellPosition = 0
-                local clausePosition = 0
+                commandIndex = commandIndex + 1
+                local isCastseq = castseqGroups ~= nil
+                local entries = {}
                 local entryPattern = isCastseq and "[^,]+" or "[^;]+"
 
                 for spellEntry in string_gmatch(command, entryPattern) do
-                    clausePosition = clausePosition + 1
-                    local spellPart
+                    local spellPart, conditionGroups
                     if isCastseq then
                         spellPart = spellEntry:match("^%s*(.-)%s*$") or ""
+                        conditionGroups = castseqGroups
                     else
-                        spellPart = StripBracketConditions(spellEntry)
+                        spellPart, conditionGroups = StripBracketConditions(spellEntry)
                     end
-
-                    if spellPart and spellPart ~= "" then
-                        table.insert(simultaneousAbilities, spellPart)
-                        table.insert(clauseEntries, spellEntry)
-
-                        local isMatch = DoesSpellMatch(spellPart, targetSpells)
-                        if isMatch then
-                            targetSpellFound = true
-                            targetSpellPosition = clausePosition
-                        end
-                    end
+                    table_insert(entries, {
+                        entry = spellEntry,
+                        spellPart = spellPart,
+                        conditionGroups = conditionGroups,
+                    })
                 end
 
-                if targetSpellFound then
-                    -- Count [condition] brackets in the matching clause only
-                    local matchingEntry = clauseEntries[targetSpellPosition] or ""
-                    local lineConditions = 0
-                    for _ in string_gmatch(matchingEntry, "%[[^%]]*%]") do
-                        lineConditions = lineConditions + 1
-                    end
-                    return {
-                        order = globalExecutionOrder,
-                        lineNumber = lineNumber,
-                        positionInLine = targetSpellPosition,
-                        totalInLine = #simultaneousAbilities,
-                        simultaneousAbilities = simultaneousAbilities,
-                        conditionCount = lineConditions,
-                        isFirstClause = targetSpellPosition == 1,
-                    }
-                end
+                local result = callback(lineNumber, commandIndex, isCastseq, entries)
+                if result ~= nil then return result end
             end
         end
     end
-    
+
     return nil
+end
+
+local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
+    return ForEachCommandLine(macroBody, true, function(lineNumber, commandIndex, isCastseq, entries)
+        local simultaneousAbilities = {}
+        local clauseEntries = {}
+        local targetSpellFound = false
+        local targetSpellPosition = 0
+
+        for clausePosition, clause in ipairs(entries) do
+            local spellPart = clause.spellPart
+            if spellPart and spellPart ~= "" then
+                table_insert(simultaneousAbilities, spellPart)
+                table_insert(clauseEntries, clause.entry)
+
+                if DoesSpellMatch(spellPart, targetSpells) then
+                    targetSpellFound = true
+                    targetSpellPosition = clausePosition
+                end
+            end
+        end
+
+        if targetSpellFound then
+            -- Count [condition] brackets in the matching clause only
+            local matchingEntry = clauseEntries[targetSpellPosition] or ""
+            local lineConditions = 0
+            for _ in string_gmatch(matchingEntry, "%[[^%]]*%]") do
+                lineConditions = lineConditions + 1
+            end
+            return {
+                order = commandIndex,
+                lineNumber = lineNumber,
+                positionInLine = targetSpellPosition,
+                totalInLine = #simultaneousAbilities,
+                simultaneousAbilities = simultaneousAbilities,
+                conditionCount = lineConditions,
+                isFirstClause = targetSpellPosition == 1,
+            }
+        end
+    end)
 end
 
 local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells, debugMode)
@@ -505,78 +539,53 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
     local bestMatch = nil
 
-    for line in string_gmatch(macroBody, "[^\r\n]+") do
-        local lowerLine = GetLowercase(line)
+    ForEachCommandLine(macroBody, false, function(lineNumber, commandIndex, isCastseq, entries)
+        for _, clause in ipairs(entries) do
+            local spellPart = clause.spellPart
+            local conditionGroups = clause.conditionGroups
 
-        if not string_match(lowerLine, "^%s*#") then
-            local command = string_match(lowerLine, "/use%s+(.+)") or
-                            string_match(lowerLine, "/cast%s+(.+)")
-            local castseqGroups  -- sequence-level condition groups for /castsequence
+            local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
 
-            if not command then
-                local castseq = string_match(lowerLine, "/castsequence%s+(.+)")
-                if castseq then
-                    local seqSpellPart, seqGroups = StripBracketConditions(castseq)
-                    castseqGroups = seqGroups
-                    command = seqSpellPart:gsub("^reset=[^,]+,%s*", ""):gsub("^reset=[^%s]+%s*", "")
+            if isMatch then
+                local now = GetTime()
+                local throttleKey = "match_" .. matchedSpellID
+                if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
+                    lastPrintTime[throttleKey] = now
+                    print("|JAC| Found macro match: '" .. spellPart .. "' -> " .. matchedSpellName .. " (ID: " .. matchedSpellID .. ")")
                 end
-            end
 
-            if command then
-                local entryPattern = castseqGroups and "[^,]+" or "[^;]+"
-                for spellEntry in string_gmatch(command, entryPattern) do
-                    local spellPart, conditionGroups
-                    if castseqGroups then
-                        spellPart = spellEntry:match("^%s*(.-)%s*$") or ""
-                        conditionGroups = castseqGroups
-                    else
-                        spellPart, conditionGroups = StripBracketConditions(spellEntry)
+                local modifiers = {}
+                local conditionsMet = true
+                local requiresModifier = false
+
+                if conditionGroups and #conditionGroups > 0 then
+                    -- OR-cascade: first passing bracket group wins
+                    conditionsMet = false
+                    for _, conditionString in ipairs(conditionGroups) do
+                        if conditionString == "" then
+                            -- bare [] = unconditional fallback
+                            conditionsMet = true
+                            break
+                        end
+                        local groupMet, groupMods, _, groupReq = EvaluateConditions(conditionString, currentSpec, currentForm)
+                        if groupMet then
+                            conditionsMet = true
+                            modifiers = groupMods
+                            requiresModifier = groupReq
+                            break
+                        end
                     end
+                end
 
-                    local isMatch, matchedSpellID, matchedSpellName = DoesSpellMatch(spellPart, targetSpells)
-
-                    if isMatch then
-                        local now = GetTime()
-                        local throttleKey = "match_" .. matchedSpellID
-                        if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > DEBUG_THROTTLE_INTERVAL) then
-                            lastPrintTime[throttleKey] = now
-                            print("|JAC| Found macro match: '" .. spellPart .. "' -> " .. matchedSpellName .. " (ID: " .. matchedSpellID .. ")")
-                        end
-
-                        local modifiers = {}
-                        local conditionsMet = true
-                        local requiresModifier = false
-
-                        if conditionGroups and #conditionGroups > 0 then
-                            -- OR-cascade: first passing bracket group wins
-                            conditionsMet = false
-                            for _, conditionString in ipairs(conditionGroups) do
-                                if conditionString == "" then
-                                    -- bare [] = unconditional fallback
-                                    conditionsMet = true
-                                    break
-                                end
-                                local groupMet, groupMods, _, groupReq = EvaluateConditions(conditionString, currentSpec, currentForm)
-                                if groupMet then
-                                    conditionsMet = true
-                                    modifiers = groupMods
-                                    requiresModifier = groupReq
-                                    break
-                                end
-                            end
-                        end
-
-                        if conditionsMet then
-                            -- Prefer no-modifier clause for default keybind detection
-                            if not bestMatch or (not requiresModifier and bestMatch.requiresModifier) then
-                                bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
-                            end
-                        end
+                if conditionsMet then
+                    -- Prefer no-modifier clause for default keybind detection
+                    if not bestMatch or (not requiresModifier and bestMatch.requiresModifier) then
+                        bestMatch = {modifiers = modifiers, requiresModifier = requiresModifier}
                     end
                 end
             end
         end
-    end
+    end)
 
     if bestMatch then
         return true, bestMatch.modifiers

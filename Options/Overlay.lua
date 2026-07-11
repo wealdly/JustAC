@@ -24,10 +24,7 @@ local function defDisabled(addon)
 end
 
 -- Most overlay tweaks require a full nameplate cluster rebuild.
-local function rebuildNPO(addon)
-    local NPO = LibStub("JustAC-UINameplateOverlay", true)
-    if NPO then NPO.Destroy(addon); NPO.Create(addon) end
-end
+local rebuildNPO = W.rebuildNPO
 
 function Overlay.CreateTabArgs(addon)
     local tab = {
@@ -225,11 +222,7 @@ function Overlay.CreateTabArgs(addon)
                         order = 6, width = "normal",
                         onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
                         disabled = defDisabled,
-                        hidden = function()
-                            local _, pc = UnitClass("player")
-                            local SDB = LibStub("JustAC-SpellDB", true)
-                            return not (SDB and SDB.ClassHasPetDefaults(pc))
-                        end,
+                        hidden = W.petClassHidden,
                     }),
                     showPowerBar = W.toggle(addon, "nameplateOverlay.showPowerBar", {
                         name = L["Show Resource Bar"], desc = L["Nameplate Show Resource Bar desc"],
@@ -280,6 +273,7 @@ function Overlay.CreateTabArgs(addon)
             npo.defensiveGlowMode     = "all"
             npo.showHealthBar         = true
             npo.showPetHealthBar      = true
+            npo.showPowerBar          = false
             addon:ForceUpdateAll()
             rebuildNPO(addon)
             W.NotifyChange()

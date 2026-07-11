@@ -104,13 +104,8 @@ function BlizzardAPI.ClearSpellCache()
 end
 
 -- checkForVisibleButton: true=visible only, false=include hidden (macro conditionals)
-function BlizzardAPI.GetNextCastSpell()
+local function QueryNextCastSpell(checkForVisibleButton)
     if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
-
-    local profile = BlizzardAPI.GetProfile()
-    local includeHidden = profile and profile.includeHiddenAbilities or false
-    local checkForVisibleButton = not includeHidden
-
     local success, result = pcall(C_AssistedCombat.GetNextCastSpell, checkForVisibleButton)
     if success and result and type(result) == "number" and result > 0 then
         return result
@@ -118,18 +113,18 @@ function BlizzardAPI.GetNextCastSpell()
     return nil
 end
 
+function BlizzardAPI.GetNextCastSpell()
+    local profile = BlizzardAPI.GetProfile()
+    local includeHidden = profile and profile.includeHiddenAbilities or false
+    return QueryNextCastSpell(not includeHidden)
+end
+
 --- Highlight-mode lookahead: always calls GetNextCastSpell(true) so the engine
 --- skips spells that have no visible action bar button. When a blacklisted spell
 --- is hidden from bars (removed or behind a modifier macro), this returns the
 --- next spell Blizzard would highlight instead.
 function BlizzardAPI.GetHighlightCastSpell()
-    if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
-
-    local success, result = pcall(C_AssistedCombat.GetNextCastSpell, true)
-    if success and result and type(result) == "number" and result > 0 then
-        return result
-    end
-    return nil
+    return QueryNextCastSpell(true)
 end
 
 function BlizzardAPI.GetRotationSpells()

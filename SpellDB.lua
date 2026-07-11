@@ -999,10 +999,6 @@ end
 -- GetSpecialization() returns the spec index (1-4); compose key as CLASS .. "_" .. specIndex.
 -- Omitted entries = ranged/healer spec → no gap-closer suggestions.
 -- Priority-ordered: first usable spell is shown.
--- Hot-path locals for gap-closer helpers (config-time only, but keep consistent)
-local UnitClass = UnitClass
-local GetSpecialization = GetSpecialization
-
 SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
     -- Death Knight: all specs are melee
     DEATHKNIGHT_1 = {49576},                         -- Blood: Death Grip
@@ -1239,50 +1235,34 @@ SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
 
 --- Return the burst injection default list for the current class+spec, or nil.
 function SpellDB.GetBurstInjectionDefaults()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil end
-    return SpellDB.CLASS_BURST_INJECTION_DEFAULTS[playerClass .. "_" .. spec]
+    local specKey = SpellDB.GetSpecKey()
+    return specKey and SpellDB.CLASS_BURST_INJECTION_DEFAULTS[specKey] or nil
 end
 
 --- Return the burst trigger default list for the current class+spec, or nil.
 function SpellDB.GetBurstTriggerDefaults()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil end
-    return SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[playerClass .. "_" .. spec]
+    local specKey = SpellDB.GetSpecKey()
+    return specKey and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey] or nil
 end
 
 --- Return the default burst window duration for the current class+spec.
 function SpellDB.GetBurstDurationDefault()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return SpellDB.BURST_DURATION_FALLBACK end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return SpellDB.BURST_DURATION_FALLBACK end
-    return SpellDB.CLASS_BURST_DURATION_DEFAULTS[playerClass .. "_" .. spec]
+    local specKey = SpellDB.GetSpecKey()
+    return (specKey and SpellDB.CLASS_BURST_DURATION_DEFAULTS[specKey])
         or SpellDB.BURST_DURATION_FALLBACK
 end
 
 --- Check whether the current spec has gap-closer defaults (i.e. is a melee spec).
 --- Returns true if CLASS_GAPCLOSER_DEFAULTS has an entry for the current class+spec.
 function SpellDB.IsMeleeSpec()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return false end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return false end
-    local key = playerClass .. "_" .. spec
-    return SpellDB.CLASS_GAPCLOSER_DEFAULTS[key] ~= nil
+    local specKey = SpellDB.GetSpecKey()
+    return (specKey and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]) ~= nil
 end
 
 --- Return the gap-closer default list for the current class+spec, or nil.
 function SpellDB.GetGapCloserDefaults()
-    local _, playerClass = UnitClass("player")
-    if not playerClass then return nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil end
-    return SpellDB.CLASS_GAPCLOSER_DEFAULTS[playerClass .. "_" .. spec]
+    local specKey = SpellDB.GetSpecKey()
+    return specKey and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey] or nil
 end
 
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown

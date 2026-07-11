@@ -182,9 +182,13 @@ function Hotkeys.UpdateHotkeyOverrideOptions(addon)
             local entryName, entryIcon
             if spellID < 0 then
                 local itemID = -spellID
-                local itemName, _, _, _, _, _, _, _, _, itemIcon = C_Item.GetItemInfo(itemID)
+                local itemName, itemIcon
+                if C_Item and C_Item.GetItemInfo then
+                    local n, _, _, _, _, _, _, _, _, ic = C_Item.GetItemInfo(itemID)
+                    itemName, itemIcon = n, ic
+                end
                 entryName = itemName or ("Item #" .. itemID)
-                entryIcon = itemIcon or (C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID)) or 134400
+                entryIcon = itemIcon or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID)) or 134400
             else
                 local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID) or C_Spell.GetSpellInfo(spellID)
                 entryName = spellInfo and spellInfo.name or ("Spell #" .. spellID)

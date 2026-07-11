@@ -160,22 +160,25 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
         for i = #pendingCasts, 1, -1 do
             if now - pendingCasts[i].time > BRIDGE_WINDOW then tremove(pendingCasts, i) end
         end
-        local pending = pendingCasts[#pendingCasts]  -- most recent cast on this target
-        if pending then
-            for _, auraData in ipairs(updateInfo.addedAuras) do
-                local instanceID = auraData.auraInstanceID
-                if instanceID then
-                    -- Keep only harmful auras WE cast (engine-side, NeverSecret bool).
-                    -- If the API is unavailable, fall through and match by timing alone.
-                    local mine = true
-                    if IsAuraFilteredOutByInstanceID then
-                        local ok, filtered = pcall(IsAuraFilteredOutByInstanceID, unit, instanceID, PLAYER_DEBUFF_FILTER)
-                        mine = ok and (filtered == false)
-                    end
-                    if mine then
-                        ConfirmInstance(pending.ids, instanceID)
-                        changed = true
-                    end
+        -- Pair each confirmed added aura with one pending cast, oldest first
+        -- (aura batch order follows cast order), consuming the pending entry so
+        -- two DoTs confirming in the same UNIT_AURA batch don't both map to the
+        -- most recent cast.
+        for _, auraData in ipairs(updateInfo.addedAuras) do
+            if #pendingCasts == 0 then break end
+            local instanceID = auraData.auraInstanceID
+            if instanceID then
+                -- Keep only harmful auras WE cast (engine-side, NeverSecret bool).
+                -- If the API is unavailable, fall through and match by timing alone.
+                local mine = true
+                if IsAuraFilteredOutByInstanceID then
+                    local ok, filtered = pcall(IsAuraFilteredOutByInstanceID, unit, instanceID, PLAYER_DEBUFF_FILTER)
+                    mine = ok and (filtered == false)
+                end
+                if mine then
+                    local pending = tremove(pendingCasts, 1)
+                    ConfirmInstance(pending.ids, instanceID)
+                    changed = true
                 end
             end
         end
