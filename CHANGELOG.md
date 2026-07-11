@@ -1292,7 +1292,7 @@
 
 ### Documentation
 - Updated `Documentation/12.0_COMPATIBILITY.md` combat-safe signal reference with all Session 2/2b/2c/2d findings
-- Updated `copilot-instructions.md` NeverSecret sections with verified API behaviors
+- Updated `AGENTS.md` NeverSecret sections with verified API behaviors
 
 ## [4.4.1] - 2026-02-24
 
@@ -1369,7 +1369,7 @@
 
 ### Documentation
 - New "Combat-Safe Signal Reference" section in `Documentation/12.0_COMPATIBILITY.md` - authoritative matrix of all APIs tested in 12.0 combat with verification dates
-- Updated `copilot-instructions.md` NeverSecret section with newly verified target APIs
+- Updated `AGENTS.md` NeverSecret section with newly verified target APIs
 
 ## [4.3.1] - 2026-02-24
 

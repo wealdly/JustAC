@@ -3,7 +3,6 @@ dist/
 
 # Development files
 .luarc.json
-.claude/
 memory/
 .vscode/
 *.code-workspace
@@ -12,8 +11,6 @@ memory/
 # ~700KB). Fetch via tools/check.ps1's hint. The .luacheckrc config IS committed.
 tools/luacheck.exe
 
-# Local-only agent instruction file (references agents/tooling; never published)
-CLAUDE.md
 
 # Stray tool/temp output
 gh_tmp.json

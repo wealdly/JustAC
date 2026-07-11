@@ -8,6 +8,7 @@ ignore:
     - .git
     - .github
     - .gitignore
+    - AGENTS.md
     - .luarc.json
     - .luacheckrc
     - .pkgmeta
