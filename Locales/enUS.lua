@@ -155,6 +155,9 @@ L["Restore Pet Heal Defaults desc"] = "Reset pet heal spells to class defaults"
 -- Per-spell settings
 L["Proc Priority"] = "Proc Priority"
 L["Proc Priority desc"] = "When procced, move this spell to the front of the queue. Uncheck to keep it in its configured position (it will still glow)."
+L["Always Show"] = "Always Show"
+L["Custom Queue Cap Note"] = "%d abilities but only %d queue icons: entries that fall back (on cooldown, out of range, or with their damage-over-time effect running) may not fit. Raise Max Icons in the Standard Queue tab, or trim the list."
+L["Always Show desc"] = "Never hide this ability: it stays in the queue even when its buff is already active or its damage-over-time effect is running on the target. It can still move toward the back while on cooldown or out of range."
 
 -- Item settings (per-item aura link / combat hide)
 L["Link Aura..."] = "Link Aura..."

@@ -745,8 +745,10 @@ end
 --- When isOnGCD is nil in combat, SpellCooldownInfo.isActive (NeverSecret) is
 --- used as ground truth: true → real unflagged CD running; false → spell ready.
 --- Returns true if the spell is known to NOT trigger the global cooldown.
+--- Second return (diagnostics only, e.g. /jac why): a short string naming which
+--- signal decided the verdict. Callers on hot paths ignore it (no allocation).
 function BlizzardAPI.IsSpellReady(spellID)
-    if not spellID or not C_Spell_GetSpellCooldown then return true end
+    if not spellID or not C_Spell_GetSpellCooldown then return true, "no cooldown API" end
 
     -- Charge-based spells are "ready" while any charge remains, even with a charge
     -- recharging underneath (C_Spell.GetSpellCooldown reflects that recharge and
@@ -758,12 +760,12 @@ function BlizzardAPI.IsSpellReady(spellID)
         local cdata = localCharges[spellID]
         if cdata then
             ProcessChargeRecovery(cdata)
-            return cdata.current >= 1
+            return cdata.current >= 1, "local charge tracking"
         end
     end
 
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-    if not ok or not cd then return true end
+    if not ok or not cd then return true, "cooldown query failed (fail-open)" end
 
     -- isOnGCD == true → GCD only for unflagged spells.
     -- However, unflagged spells with real CDs also show isOnGCD=true during
@@ -780,13 +782,13 @@ function BlizzardAPI.IsSpellReady(spellID)
             realCD = IsLocalCooldownActive(spellID)
         end
         if not realCD then
-            return true
+            return true, "isOnGCD (GCD only)"
         end
         -- Real CD ticking under the GCD - fall through (not ready).
     end
 
     -- isOnGCD == false → real cooldown running (definitive for flagged spells)
-    if cd.isOnGCD == false then return false end
+    if cd.isOnGCD == false then return false, "isOnGCD flag (real cooldown)" end
 
     -- Out of combat: duration/startTime are readable. Unsecret both together -
     -- the secret system is volatile enough that one field can read plain while
@@ -794,7 +796,7 @@ function BlizzardAPI.IsSpellReady(spellID)
     local duration = Unsecret(cd.duration)
     local startTime = duration and Unsecret(cd.startTime)
     if duration and startTime then
-        return startTime == 0 or (startTime + duration) <= GetTime()
+        return startTime == 0 or (startTime + duration) <= GetTime(), "cooldown timer (out of combat)"
     end
 
     -- In combat with secreted values and isOnGCD == nil:
@@ -814,7 +816,7 @@ function BlizzardAPI.IsSpellReady(spellID)
     -- isActive is ground truth from Blizzard's state machine; no further
     -- fallback chain needed - local tracking / charge tracking / usability
     -- checks would all be redundant here.
-    return not cd.isActive
+    return not cd.isActive, "isActive (in combat)"
 end
 
 --------------------------------------------------------------------------------

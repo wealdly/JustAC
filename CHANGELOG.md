@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [4.42.0] - 2026-07-11
+
+### Fixed
+- Gap-closer abilities (e.g. Infernal Strike, Fel Rush) were silently removed from the offensive queue even with Gap-Closers turned OFF. With the feature off they now flow through the queue like any other ability; with it on, they are reserved for the out-of-range suggestion as before - unless you pin them with the new Always Show option.
+- Custom Queue abilities no longer vanish after a talent change: a stored ability whose spell ID belongs to a different talent variant now resolves to the version you currently know instead of silently disappearing from the queue.
+
+### Added
+- `/jac why <spell>` explains exactly why an ability is or isn't showing in the queue right now: known, blacklisted, redundant (with the reason), on cooldown (with the source), usable, in range, DoT already running, and whether it simply didn't fit your Max Icons.
+- **Always Show** pin per Custom Queue entry: a pinned ability is never hidden by filtering (active buff, running damage-over-time effect) - it stays in the queue and only steps back while on cooldown or out of range.
+- The Custom Queue options now warn when your list is longer than Max Icons, since abilities that fall back (cooldown, range, active DoT) may not fit on screen.
+
 ## [4.41.0] - 2026-07-11
 
 ### Fixed

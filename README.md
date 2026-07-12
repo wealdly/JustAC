@@ -28,6 +28,9 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - Auto-seeds from Blizzard's rotation on first enable; unavailable or on-cooldown entries collapse automatically
 - Stale queue detection warns when Blizzard's rotation changes - "Merge Changes" preserves custom ordering while syncing additions/removals
 - Supports trinkets and on-use items alongside spells
+- **Talent-proof** - a stored ability whose spell ID belongs to a different talent variant resolves to the version you currently know instead of silently vanishing
+- **Always Show** pin per entry - a pinned ability is never hidden by filtering (active buff, running DoT, gap-closer management); it stays in the queue and only steps back while on cooldown or out of range
+- **`/jac why <spell>`** - explains exactly why an ability is or isn't showing right now, stage by stage (known, blacklisted, redundant, cooldown, range, DoT state, icon cap)
 
 ### Smart Interrupt Reminders
 

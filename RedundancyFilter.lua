@@ -1170,6 +1170,9 @@ end
 -- isDefensiveCheck: optional flag to skip DPS-relevance filter (for defensive spell selection)
 --------------------------------------------------------------------------------
 
+-- Returns redundant, reason. The reason (a constant string, diagnostics only -
+-- /jac why prints it) rides as a second return; hot-path callers truncate it
+-- for free, matching BlizzardAPI.IsSpellReady's pattern.
 function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
 
@@ -1192,7 +1195,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                     local spellName = spellInfo and spellInfo.name or tostring(spellID)
                     print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - already in form " .. targetFormID)
                 end
-                return true
+                return true, "already in that form/stance"
             end
         else
             -- Fallback: spell not in FormCache mapping - compare localized spell name
@@ -1209,7 +1212,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                         lastPrintTime[throttleKey] = now
                         print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
                     end
-                    return true
+                    return true, "already in that form (name match)"
                 end
             end
         end
@@ -1221,7 +1224,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- Covers aura IDs (NEVER_SECRET_AURA_SPELLS) and cast IDs (poison/imbue cast tables).
     if UnitAffectingCombat("player") then
         if StaticLookup(NEVER_SECRET_AURA_SPELLS, spellID) or IsRoguePoisonSpell(spellID) or IsWeaponEnchantSpell(spellID) then
-            return true
+            return true, "maintenance buff suppressed during combat (re-offered after combat)"
         end
     end
 
@@ -1264,7 +1267,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                         local spellName = spellInfo and spellInfo.name or "Unknown"
                         print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ", have trusted cache)")
                     end
-                    return true  -- Hide non-DPS spells
+                    return true, "aura data partly secret; non-rotational spell hidden as a safety measure"
                 else
                     -- No trusted cache - fail-open for safety (avoid hiding valid spells)
                     if GetDebugMode() then
@@ -1307,7 +1310,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                 if debugMode then
                     DebugPrintThrottled("aura_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - unique aura already active (not in pandemic window)")
                 end
-                return true
+                return true, "its buff is already active (reappears in the pandemic refresh window)"
             end
         else
             -- Non-unique aura spells: trust Assisted Combat
@@ -1327,7 +1330,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if debugMode then
                 DebugPrintThrottled("petrez_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Revive Pet but pet is alive")
             end
-            return true
+            return true, "pet is alive"
         end
     else
         -- Pet summon spells: redundant if any pet exists
@@ -1335,7 +1338,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if debugMode then
                 DebugPrintThrottled("petsummon_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Pet summon but pet already exists")
             end
-            return true
+            return true, "pet already exists"
         end
     end
     
@@ -1346,7 +1349,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if debugMode then
                 DebugPrintThrottled("stealth_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Stealth spell but already stealthed")
             end
-            return true
+            return true, "already stealthed"
         end
     end
     
@@ -1358,7 +1361,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if debugMode then
                 DebugPrintThrottled("mount_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: Mount spell but already mounted")
             end
-            return true
+            return true, "already mounted"
         end
     end
     
@@ -1369,7 +1372,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if IsRoguePoisonSpell(spellID) then
         local activePoisons = CountActivePoisonBuffs()
         if activePoisons >= 2 then
-            return true
+            return true, "both poison slots already active"
         end
     end
     
@@ -1381,7 +1384,7 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if debugMode then
                 DebugPrintThrottled("enchant_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - weapon enchant already active with time remaining")
             end
-            return true
+            return true, "weapon enchant already active with time remaining"
         else
             if debugMode then
                 DebugPrintThrottled("enchantok_" .. spellID, "|cff66ccffJAC|r |cff00ff00ALLOWED|r: " .. spellName .. " - weapon enchant needed (missing or expiring)")

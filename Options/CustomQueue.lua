@@ -432,6 +432,19 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
         spellsOnly = false, emptyText = L["Custom Queue Empty"],
     })
 
+    -- Cap transparency: entries that sink (cooldown, out of range, active DoT)
+    -- trail the ready ones, so a list longer than Max Icons silently pushes them
+    -- off the end - the most common "my ability is missing" confusion.
+    local maxIcons = profile.maxIcons or 4
+    if #spellList > maxIcons then
+        spellListArgs.capNote = {
+            type = "description",
+            name = "|cffffcc00" .. string.format(L["Custom Queue Cap Note"], #spellList, maxIcons) .. "|r",
+            order = 31,
+            fontSize = "medium",
+        }
+    end
+
     if AceConfigRegistry then
         AceConfigRegistry:NotifyChange("JustAssistedCombat")
     end

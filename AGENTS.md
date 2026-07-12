@@ -188,6 +188,7 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 /jac inspect healthprobe      - OOC health-detection channel sweep (run while hurt)
 /jac inspect validate [arm]   - Validate every secrecy/API assumption; arm = diff on combat enter/exit
 /jac find [spell]             - Locate spell on action bars (defaults to AC suggestion)
+/jac why <spell>              - Per-stage verdict on why a spell is/isn't in the queue
 ```
 
 ## Defensive Spell System

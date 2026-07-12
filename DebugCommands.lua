@@ -31,6 +31,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac profile <name> - Switch profile")
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac find [spell] - Find spell on action bars (defaults to AC suggestion)")
+    addon:Print("/jac why <spell> - Explain why a spell is or isn't showing in the queue")
     addon:Print("/jac inspect modules - Check module health")
     addon:Print("/jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)")
     addon:Print("/jac inspect defensives - Diagnose defensive system")
@@ -376,6 +377,177 @@ function DebugCommands.FindSpell(addon, spellArg)
     end
     
     addon:Print("=============================")
+end
+
+--------------------------------------------------------------------------------
+-- /jac why <spell> - walk the offensive-queue filter pipeline for one spell and
+-- print a verdict per stage, so "my ability is missing" gets a concrete reason.
+-- Mirrors the real order in SpellQueue.CategorizeAndAssembleRotation; every
+-- possibly-secret read is guarded.
+--------------------------------------------------------------------------------
+function DebugCommands.WhyDiagnostics(addon, spellArg)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
+    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    local DotTracker = LibStub("JustAC-DotTracker", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    if not (BlizzardAPI and SpellQueue) then
+        addon:Print("|cffff6666Required modules not loaded.|r")
+        return
+    end
+    if not spellArg or spellArg == "" then
+        addon:Print("Usage: /jac why <spellID or spell name>")
+        return
+    end
+
+    local spellID = tonumber(spellArg)
+    if not spellID and C_Spell and C_Spell.GetSpellIDForSpellIdentifier then
+        spellID = C_Spell.GetSpellIDForSpellIdentifier(spellArg)
+    end
+    if not spellID then
+        addon:Print("|cffff6666Spell not found:|r " .. tostring(spellArg))
+        return
+    end
+    local profile = addon.db and addon.db.profile
+    if not profile then return end
+
+    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+    local name = (info and info.name) or ("Spell " .. spellID)
+    addon:Print("=== Why: " .. name .. " (" .. spellID .. ") ===")
+
+    local function line(label, ok, detail)
+        addon:Print("  " .. (ok and "|cff2ecc71PASS|r " or "|cffff6666FAIL|r ") .. label
+            .. (detail and (" - " .. detail) or ""))
+    end
+    local function note(text)
+        addon:Print("  |cffaaaaaa....|r " .. text)
+    end
+
+    -- Source: custom queue membership for the current spec
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local cq = specKey and profile.customQueue and profile.customQueue[specKey]
+    local cqLen
+    if cq and cq.enabled and cq.spells and #cq.spells > 0 then
+        cqLen = #cq.spells
+        local pos
+        for i, sid in ipairs(cq.spells) do
+            if sid == spellID then pos = i; break end
+        end
+        addon:Print(pos and ("  Source: Custom Queue entry #" .. pos .. " of " .. cqLen)
+            or "  Source: Custom Queue is active but this spell is NOT in its list - only listed spells appear")
+    else
+        addon:Print("  Source: Blizzard rotation (no Custom Queue for this spec)")
+    end
+
+    -- 1. Availability + variant resolution (full drop when unknown) - the SAME
+    -- resolution the queue's list normalization uses, so verdicts can't drift.
+    local effectiveID, source = spellID, nil
+    if BlizzardAPI.ResolveKnownSpellID then
+        effectiveID, source = BlizzardAPI.ResolveKnownSpellID(spellID)
+    end
+    local avail = effectiveID ~= nil
+    line("Known", avail,
+        (source == "stored" and "known as entered")
+        or (source == "override" and ("known via talent override " .. tostring(effectiveID)))
+        or (source == "base" and ("known via base spell " .. tostring(effectiveID)))
+        or "this character doesn't know it (unlearned, other spec, or a talent-variant ID) - never shown")
+    effectiveID = effectiveID or spellID
+
+    local displayID = (BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(effectiveID)) or effectiveID
+
+    -- 2. Blacklist (full drop)
+    local blk = SpellQueue.IsSpellBlacklisted and SpellQueue.IsSpellBlacklisted(spellID)
+    line("Not blacklisted", not blk, blk and "Shift+Right-click its icon to un-blacklist" or nil)
+
+    -- 2b. Gap-closer management: while the feature is ON, listed gap-closers are
+    -- reserved for the slot-1 out-of-range injection and suppressed from the queue.
+    if SpellQueue.IsGapCloserSpell and SpellQueue.IsGapCloserSpell(spellID) then
+        local gcOn = profile.gapClosers and profile.gapClosers.enabled
+        local pinned = SpellQueue.IsPinnedAlwaysShow
+            and (SpellQueue.IsPinnedAlwaysShow(spellID) or SpellQueue.IsPinnedAlwaysShow(effectiveID))
+        if gcOn and not pinned then
+            line("Not gap-closer-managed", false,
+                "it's in your Gap-Closers list, so it only appears as the slot-1 suggestion when the target is out of melee range. To also keep it in the queue: pin it with Always Show (Custom Queue) or turn Gap-Closers off")
+        elseif gcOn and pinned then
+            note("Gap-closer entry, pinned with Always Show - stays in the queue and still injects at slot 1 out of range")
+        else
+            note("Gap-closer list entry, but the feature is off - flows through the queue normally")
+        end
+    end
+
+    -- 3. Item-ability filter (full drop when off)
+    if BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(displayID) then
+        line("Item abilities allowed", not profile.hideItemAbilities,
+            profile.hideItemAbilities and "General tab: Allow Item Abilities is OFF" or "equipped-item ability")
+    end
+
+    -- 4. Redundancy (full drop)
+    if RedundancyFilter and RedundancyFilter.IsSpellRedundant then
+        local redundant, reason = RedundancyFilter.IsSpellRedundant(displayID, profile)
+        line("Not redundant", not redundant, redundant and (reason or "hidden by the redundancy filter") or nil)
+    end
+
+    -- 5. Sink signals (reorder to the back of the queue, never a drop). Uses the
+    -- queue's OWN exported predicates so this report matches what the build did.
+    local ready, readySource = BlizzardAPI.IsSpellReady(displayID)
+    line("Off cooldown", ready, readySource .. (ready and "" or " - sinks behind ready abilities"))
+    local unusableHard = SpellQueue.IsUnusableNonResource and SpellQueue.IsUnusableNonResource(displayID)
+    local _, noRes = BlizzardAPI.IsSpellUsable(displayID, true)
+    line("Usable", not unusableHard,
+        unusableHard and "form/stance/conditions block it right now - sinks behind usable abilities"
+        or (noRes and "only lacking resources (does not sink)" or nil))
+    local outOfRange = SpellQueue.IsConfirmedOutOfRange and SpellQueue.IsConfirmedOutOfRange(displayID) or false
+    if outOfRange then
+        line("In range of target", false, "sinks behind in-range abilities")
+    else
+        note("Range: in range, no range requirement, or unreadable (does not sink)")
+    end
+    local dotParked = DotTracker and DotTracker.IsDotActiveOnCurrentTarget
+        and DotTracker.IsDotActiveOnCurrentTarget(displayID) or false
+    if dotParked then
+        line("DoT not already on target", false,
+            "active on target - parked at the back; returns for the pandemic refresh window")
+    end
+
+    -- SimC ordering context
+    if profile.contextOrder == "simc" then
+        local RI = LibStub("JustAC-RotationImport", true)
+        local rec = RI and RI.GetEntry and RI.GetEntry(spellID)
+        addon:Print(rec and ("  SimC ordering: priority rank #" .. tostring(rec.rank))
+            or "  SimC ordering: not in the imported list - sorts after every ranked ability")
+    end
+
+    -- Live verdict: where is it right now?
+    local maxIcons = (SpellQueue.GetEffectiveMaxIcons and SpellQueue.GetEffectiveMaxIcons(profile))
+        or profile.maxIcons or 4
+    local queue = SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue()
+    local found
+    if type(queue) == "table" then
+        for i = 1, #queue do
+            local q = queue[i]
+            if not BlizzardAPI.IsSecretValue(q)
+               and (q == spellID or q == displayID or q == effectiveID) then
+                found = i
+                break
+            end
+        end
+    end
+    if found then
+        addon:Print("  |cff2ecc71Currently shown|r at queue position " .. found .. ".")
+    elseif not avail or blk then
+        addon:Print("  |cffff6666Not shown|r - see the FAIL line above.")
+    elseif not ready or unusableHard or outOfRange or dotParked then
+        local capNote = (cqLen and cqLen > maxIcons)
+            and (" Your list has " .. cqLen .. " entries but only " .. maxIcons
+                .. " icons are shown - raise Max Icons (Standard Queue tab) or trim the list.")
+            or ""
+        addon:Print("  |cffff6666Not visible right now|r - it sank to the back (see FAIL lines) and didn't fit the "
+            .. maxIcons .. " shown icons." .. capNote)
+    else
+        addon:Print("  Not in this queue build - it may be the AC slot itself (position 1 is unreadable in combat), "
+            .. "or a duplicate of a spell already shown.")
+    end
+    addon:Print("==============================")
 end
 
 --------------------------------------------------------------------------------

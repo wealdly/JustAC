@@ -208,6 +208,9 @@ local function HandleSlashCommand(addon, input)
     elseif command == "find" then
         CallDebug("FindSpell", arg)
 
+    elseif command == "why" then
+        CallDebug("WhyDiagnostics", arg)
+
     elseif command == "inspect" then
         if not DebugCommands then
             addon:Print("DebugCommands module not available")

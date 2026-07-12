@@ -63,6 +63,12 @@ local normalSpells = {}
 local cooldownSpells = {}
 local addedSpellIDs = {}
 local recommendedSpells = {}
+-- Scratch set for gap-closer suppression marks (filtered by Always Show pins
+-- before merging into addedSpellIDs; wiped per use).
+local gcSuppressScratch = {}
+-- Always Show pins resolved to every ID form (stored/override/base/display),
+-- rebuilt with the rotation-list cache so hot-path checks are one table read.
+local pinnedAlwaysShow = {}
 -- Parallel context-rank buffers for the fixed-queue archetype/range bias.
 local proccedRank = {}
 local normalRank = {}
@@ -207,6 +213,17 @@ local function ProcPriorityEnabled(spellID, profile)
     local ss = profile.defensives and profile.defensives.spellSettings
         and profile.defensives.spellSettings[spellID]
     return not ss or ss.procPriority ~= false
+end
+
+-- Per-entry "Always Show" pin (Custom Queue rows; stored in
+-- profile.defensives.spellSettings[storedID].alwaysShow). A pinned entry
+-- bypasses the redundancy drop, the DoT-park sink, and the gap-closer
+-- suppression - the user asked for it explicitly, so filtering must never
+-- hide it. Cooldown/range sinking still applies (physical truth) and the
+-- icon greys via the normal usability visuals. Consumers read the
+-- pinnedAlwaysShow set (rebuilt with the rotation cache), never the profile.
+function SpellQueue.IsPinnedAlwaysShow(spellID)
+    return pinnedAlwaysShow[spellID] == true
 end
 
 -- Resolve display ID, check dedup, mark both IDs as claimed.
@@ -370,6 +387,7 @@ local function IsUnusableNonResource(spellID)
     local usable, notEnoughResources = BlizzardAPI.IsSpellUsable(spellID, true)
     return usable == false and not notEnoughResources
 end
+SpellQueue.IsUnusableNonResource = IsUnusableNonResource  -- shared with /jac why
 
 --- Confirmed out of range on the current target. Catches range gates usability can't see:
 --- a minimum range (Heroic Throw inside 8yd), melee against a kited target. IsSpellInRange's
@@ -385,6 +403,7 @@ local function IsConfirmedOutOfRange(spellID)
     end
     return r == false
 end
+SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac why
 
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
@@ -470,9 +489,11 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                 end
             elseif not SpellQueue.IsSpellBlacklisted(spellID, blacklist) then
                 local displayID = ClaimSpellID(spellID, addedSpellIDs)
+                local alwaysShow = pinnedAlwaysShow[spellID]
                 if displayID
                    and not (hideItems and BlizzardAPI.IsItemSpell(displayID))
-                   and PassesRotationFilters(displayID, profile) then
+                   and (PassesRotationFilters(displayID, profile)
+                        or (alwaysShow and BlizzardAPI.IsSpellAvailable(displayID))) then
                     -- The proc overlay is Blizzard's NeverSecret "press this now" signal,
                     -- but it lingers on a spell consumed into its own cooldown (an execute
                     -- proc like Shadow Word: Death glows on, then cools down after the cast).
@@ -509,7 +530,8 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     elseif sinkCooldowns and (not ready or starved
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
-                           or (DotTracker and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
+                           or (not alwaysShow and DotTracker
+                               and DotTracker.IsDotActiveOnCurrentTarget(displayID))) then
                         -- On cooldown / uncastable / DoT already live on target: sink to
                         -- the back. A DoT un-sinks on cleanse/expiry or inside its pandemic
                         -- refresh window (DotTracker), and a proc still wins (checked above).
@@ -541,6 +563,21 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
         recommendedSpells[spellCount] = cooldownSpells[i]
     end
     return spellCount
+end
+
+--- Largest icon count any active surface shows - the queue array is built to
+--- this cap. The nameplate overlay renders from the same array, so it is sized
+--- to whichever surface shows more icons (a lower standard Max Icons must not
+--- starve the overlay's independently-configured Max Icons).
+function SpellQueue.GetEffectiveMaxIcons(profile)
+    local maxIcons = profile.maxIcons or 4
+    local npo = profile.nameplateOverlay
+    if npo and (profile.displayMode == "overlay" or profile.displayMode == "both") then
+        local npoMax = npo.maxIcons or 3
+        if npoMax > 7 then npoMax = 7 end
+        if npoMax > maxIcons then maxIcons = npoMax end
+    end
+    return maxIcons
 end
 
 function SpellQueue.GetCurrentSpellQueue()
@@ -598,16 +635,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(displacedPrimary)
     wipe(burstInjectedSpells)
     wipe(cooldownSpells)
-    local maxIcons = profile.maxIcons or 4
-    -- The nameplate overlay renders from this same array; size it to whichever
-    -- surface shows more icons so a lower standard Max Icons can't starve the
-    -- overlay (which has its own, independently-configured Max Icons).
-    local npo = profile.nameplateOverlay
-    if npo and (profile.displayMode == "overlay" or profile.displayMode == "both") then
-        local npoMax = npo.maxIcons or 3
-        if npoMax > 7 then npoMax = 7 end
-        if npoMax > maxIcons then maxIcons = npoMax end
-    end
+    local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local spellCount = 0
     local hideItems = profile.hideItemAbilities
 
@@ -715,8 +743,19 @@ function SpellQueue.GetCurrentSpellQueue()
             end
 
             -- Suppress gap-closers from rotation list - our injection controls placement.
+            -- (MarkGapCloserSpellIDs is a no-op while gap-closers are disabled.) Marks go
+            -- through a scratch set so a user's Always Show pin can beat the suppression:
+            -- a pinned gap-closer stays visible in the queue AND still injects at slot 1
+            -- when the target leaves melee range. pinnedAlwaysShow carries every ID form,
+            -- so this is a pure table read per marked spell.
             if cachedGapCloserEngine.MarkGapCloserSpellIDs then
-                cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, addedSpellIDs)
+                wipe(gcSuppressScratch)
+                cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, gcSuppressScratch)
+                for sid in pairs(gcSuppressScratch) do
+                    if not pinnedAlwaysShow[sid] then
+                        addedSpellIDs[sid] = true
+                    end
+                end
             end
         end
     end
@@ -791,10 +830,19 @@ function SpellQueue.GetCurrentSpellQueue()
             if specKey and cqProfile and cqProfile[specKey]
                and cqProfile[specKey].enabled and cqProfile[specKey].spells
                and #cqProfile[specKey].spells > 0 then
-                -- Copy the user's custom spell list as the rotation source
+                -- Copy the user's custom spell list as the rotation source.
+                -- Variant normalization: a stored ID the player doesn't literally know
+                -- (talent swapped away, or an override ID captured under another build)
+                -- would silently fail IsSpellAvailable and vanish from the queue.
+                -- ResolveKnownSpellID picks the first KNOWN form (stored/override/base);
+                -- never write back - the user's stored list stays theirs.
                 local cq = cqProfile[specKey]
                 cachedRotationList = {}
                 for i, sid in ipairs(cq.spells) do
+                    if sid and sid > 0 and BlizzardAPI.ResolveKnownSpellID then
+                        local known = BlizzardAPI.ResolveKnownSpellID(sid)
+                        if known then sid = known end
+                    end
                     cachedRotationList[i] = sid
                 end
                 useCustom = true
@@ -802,6 +850,29 @@ function SpellQueue.GetCurrentSpellQueue()
         end
         if not useCustom and BlizzardAPI.GetRotationSpells then
             cachedRotationList = BlizzardAPI.GetRotationSpells()
+        end
+        -- Resolve Always Show pins once per list rebuild (cold): the pin lives
+        -- on the user's STORED id, but queue entries may be normalized to a
+        -- known variant and gap-closer marks carry base+override forms - key
+        -- the set by every form so hot-path checks are one table read. The
+        -- options setter invalidates this cache on toggle; at worst one build
+        -- (0.03-0.05s) sees the previous pin state.
+        wipe(pinnedAlwaysShow)
+        local pinStore = cachedAddon and cachedAddon.db and cachedAddon.db.profile
+            and cachedAddon.db.profile.defensives
+            and cachedAddon.db.profile.defensives.spellSettings
+        if pinStore then
+            for id, ss in pairs(pinStore) do
+                if ss and ss.alwaysShow == true and type(id) == "number" and id > 0 then
+                    pinnedAlwaysShow[id] = true
+                    local disp = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id)
+                    if disp then pinnedAlwaysShow[disp] = true end
+                    local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(id)
+                    if base then pinnedAlwaysShow[base] = true end
+                    local known = BlizzardAPI.ResolveKnownSpellID and BlizzardAPI.ResolveKnownSpellID(id)
+                    if known then pinnedAlwaysShow[known] = true end
+                end
+            end
         end
         if cachedRotationList and BlizzardAPI.RegisterSpellForTracking then
             for i = 1, #cachedRotationList do

@@ -339,8 +339,12 @@ end
 --- Mark all gap-closer spell IDs (base + talent-resolved forms) into a set.
 --- Called by SpellQueue to suppress gap-closer spells from the rotation list
 --- when the gap-closer system is enabled - our insertion controls when they appear.
+--- With the feature DISABLED this marks nothing: the spells are then ordinary
+--- rotation abilities and must flow through the queue like any other.
 function GapCloserEngine.MarkGapCloserSpellIDs(addon, spellIDSet)
     if not addon or not spellIDSet then return end
+    local profile = addon.db and addon.db.profile
+    if not (profile and profile.gapClosers and profile.gapClosers.enabled) then return end
     BlizzardAPI.MarkResolvedIDs(ResolveGapCloserSpells(addon), spellIDSet)
 end
 

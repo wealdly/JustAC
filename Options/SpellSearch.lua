@@ -677,6 +677,37 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     profile.defensives.spellSettings[spellID].procPriority = val
                 end,
             }
+
+            -- Custom Queue only: pin the entry so filtering never hides it (active
+            -- buff / running DoT). SpellQueue.AlwaysShowEnabled reads this key.
+            if listType == "customqueue" then
+                entryArgs.alwaysShow = {
+                    type = "toggle",
+                    order = 5,
+                    width = 0.7,
+                    name = L["Always Show"],
+                    desc = L["Always Show desc"],
+                    get = function()
+                        local profile = _addon:GetProfile()
+                        local settings = profile and profile.defensives and profile.defensives.spellSettings
+                            and profile.defensives.spellSettings[spellID]
+                        return settings and settings.alwaysShow == true
+                    end,
+                    set = function(_, val)
+                        local profile = _addon:GetProfile()
+                        if not profile or not profile.defensives then return end
+                        if not profile.defensives.spellSettings then profile.defensives.spellSettings = {} end
+                        if not profile.defensives.spellSettings[spellID] then profile.defensives.spellSettings[spellID] = {} end
+                        -- Store true or nil (default off) to keep the settings table sparse.
+                        profile.defensives.spellSettings[spellID].alwaysShow = val or nil
+                        -- The queue resolves pins into a cached set at list-rebuild time;
+                        -- invalidate so the toggle applies on the next build.
+                        local SQ = LibStub("JustAC-SpellQueue", true)
+                        if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
+                        _addon:ForceUpdate()
+                    end,
+                }
+            end
         end
     end
 end

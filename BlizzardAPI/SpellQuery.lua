@@ -372,6 +372,25 @@ function BlizzardAPI.ResolveSpellID(spellID)
     return spellID
 end
 
+--- Resolve a possibly-stale stored spellID to a form the player actually knows:
+--- the ID itself, its current talent override, or its base spell - in that
+--- order. Returns knownID, source ("stored"|"override"|"base"), or nil when no
+--- known form exists. Cold paths only (list-cache rebuilds, diagnostics) - the
+--- resolution chain pcalls C APIs.
+function BlizzardAPI.ResolveKnownSpellID(spellID)
+    if not spellID or spellID <= 0 then return nil end
+    if BlizzardAPI.IsSpellAvailable(spellID) then return spellID, "stored" end
+    local override = BlizzardAPI.ResolveSpellID(spellID)
+    if override and override ~= spellID and BlizzardAPI.IsSpellAvailable(override) then
+        return override, "override"
+    end
+    local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(spellID)
+    if base and base ~= spellID and BlizzardAPI.IsSpellAvailable(base) then
+        return base, "base"
+    end
+    return nil
+end
+
 --- Mark each spell ID and its talent-resolved variant into a set. Shared by the
 --- gap-closer and burst-injection engines to suppress their spells from the
 --- rotation list (their own insertion controls when they appear).
