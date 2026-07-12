@@ -24,6 +24,9 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 245931, buff = 1235110, stat = "haste" },  -- Fleeting Flask of the Blood Knights
         { id = 245933, buff = 1235108, stat = "mastery" },  -- Fleeting Flask of the Magisters
         { id = 245929, buff = 1235111, stat = "crit" },  -- Fleeting Flask of the Shattered Sun
+        { id = 241310, buff = 1236767, stat = "primary" },  -- Haranir Phial of Finesse
+        { id = 241312, buff = 1239755, stat = "primary" },  -- Haranir Phial of Ingenuity
+        { id = 241316, buff = 1236763, stat = "primary" },  -- Haranir Phial of Perception
         { id = 241321, buff = 1235057, stat = "versatility" },  -- Flask of Thalassian Resistance
         { id = 241325, buff = 1235110, stat = "haste" },  -- Flask of the Blood Knights
         { id = 241323, buff = 1235108, stat = "mastery" },  -- Flask of the Magisters
@@ -32,6 +35,9 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 245930, buff = 1235110, stat = "haste" },  -- Fleeting Flask of the Blood Knights
         { id = 245932, buff = 1235108, stat = "mastery" },  -- Fleeting Flask of the Magisters
         { id = 245928, buff = 1235111, stat = "crit" },  -- Fleeting Flask of the Shattered Sun
+        { id = 241311, buff = 1236767, stat = "primary" },  -- Haranir Phial of Finesse
+        { id = 241313, buff = 1239755, stat = "primary" },  -- Haranir Phial of Ingenuity
+        { id = 241317, buff = 1236763, stat = "primary" },  -- Haranir Phial of Perception
         -- Dragonflight / TWW
         { id = 212283, buff = 432021, stat = "crit" },  -- Flask of Alchemical Chaos
         { id = 212271, buff = 431971, stat = "crit" },  -- Flask of Tempered Aggression
@@ -43,6 +49,10 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 212738, buff = 431974, stat = "mastery" },  -- Fleeting Flask of Tempered Mastery
         { id = 212731, buff = 431972, stat = "haste" },  -- Fleeting Flask of Tempered Swiftness
         { id = 212734, buff = 431973, stat = "versatility" },  -- Fleeting Flask of Tempered Versatility
+        { id = 212316, buff = 432286, stat = "primary" },  -- Phial of Bountiful Seasons
+        { id = 212307, buff = 432306, stat = "primary" },  -- Phial of Concentrated Ingenuity
+        { id = 212313, buff = 432304, stat = "primary" },  -- Phial of Enhanced Ambidexterity
+        { id = 212310, buff = 432265, stat = "primary" },  -- Phial of Truesight
         { id = 212777, buff = 431971, stat = "crit" },  -- zzOldFleeting Flask of Tempered Aggression
         { id = 212282, buff = 432021, stat = "crit" },  -- Flask of Alchemical Chaos
         { id = 212270, buff = 431971, stat = "crit" },  -- Flask of Tempered Aggression
@@ -54,6 +64,10 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 212736, buff = 431974, stat = "mastery" },  -- Fleeting Flask of Tempered Mastery
         { id = 212730, buff = 431972, stat = "haste" },  -- Fleeting Flask of Tempered Swiftness
         { id = 212733, buff = 431973, stat = "versatility" },  -- Fleeting Flask of Tempered Versatility
+        { id = 212315, buff = 432286, stat = "primary" },  -- Phial of Bountiful Seasons
+        { id = 212306, buff = 432306, stat = "primary" },  -- Phial of Concentrated Ingenuity
+        { id = 212312, buff = 432304, stat = "primary" },  -- Phial of Enhanced Ambidexterity
+        { id = 212309, buff = 432265, stat = "primary" },  -- Phial of Truesight
         { id = 212776, buff = 431971, stat = "crit" },  -- zzOldFleeting Flask of Tempered Aggression
         { id = 212281, buff = 432021, stat = "crit" },  -- Flask of Alchemical Chaos
         { id = 212269, buff = 431971, stat = "crit" },  -- Flask of Tempered Aggression
@@ -65,20 +79,36 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 212735, buff = 431974, stat = "mastery" },  -- Fleeting Flask of Tempered Mastery
         { id = 212729, buff = 431972, stat = "haste" },  -- Fleeting Flask of Tempered Swiftness
         { id = 212732, buff = 431973, stat = "versatility" },  -- Fleeting Flask of Tempered Versatility
+        { id = 212314, buff = 432286, stat = "primary" },  -- Phial of Bountiful Seasons
+        { id = 212305, buff = 432306, stat = "primary" },  -- Phial of Concentrated Ingenuity
+        { id = 212311, buff = 432304, stat = "primary" },  -- Phial of Enhanced Ambidexterity
+        { id = 212308, buff = 432265, stat = "primary" },  -- Phial of Truesight
         { id = 212775, buff = 431971, stat = "crit" },  -- zzOldFleeting Flask of Tempered Aggression
         -- Shadowlands
+        { id = 191344, buff = 395803, stat = "primary" },  -- Aerated Phial of Deftness
+        { id = 197722, buff = 395802, stat = "primary" },  -- Aerated Phial of Quick Hands
         { id = 191350, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 191356, buff = 395804, stat = "primary" },  -- Crystalline Phial of Perception
         { id = 204669, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204666, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191341, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
+        { id = 191347, buff = 395805, stat = "primary" },  -- Steaming Phial of Finesse
+        { id = 191343, buff = 395803, stat = "primary" },  -- Aerated Phial of Deftness
+        { id = 197721, buff = 395802, stat = "primary" },  -- Aerated Phial of Quick Hands
         { id = 191349, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 191355, buff = 395804, stat = "primary" },  -- Crystalline Phial of Perception
         { id = 204668, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204665, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191340, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
+        { id = 191346, buff = 395805, stat = "primary" },  -- Steaming Phial of Finesse
+        { id = 191342, buff = 395803, stat = "primary" },  -- Aerated Phial of Deftness
+        { id = 197720, buff = 395802, stat = "primary" },  -- Aerated Phial of Quick Hands
         { id = 191348, buff = 371186, stat = "speed" },  -- Charged Phial of Alacrity
+        { id = 191354, buff = 395804, stat = "primary" },  -- Crystalline Phial of Perception
         { id = 204667, buff = 371186, stat = "speed" },  -- Fleeting Charged Phial of Alacrity
         { id = 204664, buff = 371172, stat = "versatility" },  -- Fleeting Phial of Tepid Versatility
         { id = 191339, buff = 371172, stat = "versatility" },  -- Phial of Tepid Versatility
+        { id = 191345, buff = 395805, stat = "primary" },  -- Steaming Phial of Finesse
         { id = 195580, buff = 379076, stat = "crit" },  -- Suspicious Bottle
         -- Battle for Azeroth
         { id = 171280, buff = 307166, stat = "primary" },  -- Eternal Flask
@@ -145,9 +175,84 @@ SpellDB.RegisterPrecombatBuffs({
     },
     food = {
         -- Midnight / current
+        { id = 242287, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Arcano Cutlets
+        { id = 242296, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Bloodthistle-Wrapped Cutlets
+        { id = 242276, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Braised Blood Hunter
+        { id = 242280, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Buttered Root Crab
+        { id = 242274, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Champion's Bento
+        { id = 242277, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Crimson Calamari
+        { id = 242292, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Eversong Pudding
+        { id = 242286, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Fel-Kissed Filet
+        { id = 242294, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Felberry Figs
+        { id = 255848, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Flora Frenzy
+        { id = 242291, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Fried Bloomtail
+        { id = 242281, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Glitter Skewers
+        { id = 242295, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearthflame Supper
+        { id = 242759, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Arcano Cutlets
+        { id = 242768, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Bloodthistle-Wrapped Cutlets
+        { id = 242769, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Bloom Skewers
+        { id = 242748, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Braised Blood Hunter
+        { id = 242752, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Buttered Root Crab
+        { id = 242746, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Champion's Bento
+        { id = 242749, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Crimson Calamari
+        { id = 242764, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Eversong Pudding
+        { id = 242776, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Farstrider Rations
+        { id = 242758, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Fel-Kissed Filet
+        { id = 242766, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Felberry Figs
+        { id = 268680, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Flora Frenzy
+        { id = 242773, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Forager's Medley
+        { id = 242763, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Fried Bloomtail
+        { id = 242753, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Glitter Skewers
+        { id = 242767, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Hearthflame Supper
+        { id = 268679, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Impossibly Royal Roast
+        { id = 242770, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Mana-Infused Stew
+        { id = 242754, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Null and Void Plate
+        { id = 242775, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Portable Snack
+        { id = 275262, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Puffer Plate
+        { id = 242774, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Quick Sandwich
+        { id = 242747, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Royal Roast
+        { id = 242772, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Silvermoon Standard
+        { id = 242761, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Spellfire Filet
+        { id = 242771, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Spiced Biscuits
+        { id = 242755, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Sun-Seared Lumifin
+        { id = 242765, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Sunwell Delight
+        { id = 275263, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Sweet-And-Sour Skewers
+        { id = 242750, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Tasty Smoked Tetra
+        { id = 242760, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Twilight Angler's Medley
+        { id = 275259, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Venom-Spiced Cutlets
+        { id = 242756, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Void-Kissed Fish Rolls
+        { id = 242757, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Warped Wise Wings
+        { id = 242762, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Hearty Wise Tails
+        { id = 255847, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Impossibly Royal Roast
+        { id = 242282, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Null and Void Plate
+        { id = 275260, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Puffer Plate
+        { id = 242275, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Royal Roast
+        { id = 242289, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Spellfire Filet
+        { id = 242283, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Sun-Seared Lumifin
+        { id = 242293, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Sunwell Delight
+        { id = 275261, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Sweet-And-Sour Skewers
+        { id = 242278, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Tasty Smoked Tetra
+        { id = 242288, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Twilight Angler's Medley
+        { id = 275258, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Venom-Spiced Cutlets
+        { id = 242284, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Void-Kissed Fish Rolls
+        { id = 242285, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Warped Wise Wings
+        { id = 242290, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Wise Tails
+        { id = 242298, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Argentleaf Tea
+        { id = 242301, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Azeroot Tea
+        { id = 242302, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Bloom Skewers
+        { id = 242309, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Farstrider Rations
+        { id = 242306, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Forager's Medley
+        { id = 242297, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Mana Lily Tea
+        { id = 242303, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Mana-Infused Stew
+        { id = 242308, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Portable Snack
+        { id = 242307, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Quick Sandwich
+        { id = 242299, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Sanguithorn Tea
+        { id = 242305, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Silvermoon Standard
+        { id = 242304, buff = 1219179, stat = "crit+haste+mastery+versatility" },  -- Spiced Biscuits
         { id = 245573, buff = 1239149, stat = "versatility" },  -- Salmon
         -- Dragonflight / TWW
         { id = 225592, buff = 455369, stat = "speed" },  -- Exquisitely Eviscerated Muscle
+        { id = 225855, buff = 456406, stat = "primary" },  -- Ghoulfish Delight
         { id = 222740, buff = 382235, stat = "stamina" },  -- Hearty Meals
         -- Shadowlands
         { id = 197783, buff = 382153, stat = "haste+versatility" },  -- Aromatic Seafood Platter
@@ -443,19 +548,24 @@ SpellDB.RegisterPrecombatBuffs({
     weaponEnchant = {
         -- Midnight / current
         { id = 243736, buff = 1237001, stat = "caster", wmask = 983039 },  -- Oil of Dawn
+        { id = 237373, buff = 1224335, stat = "physical" },  -- Refulgent Razorstone
         { id = 237369, buff = 1224333, stat = "physical", wmask = 9264 },  -- Refulgent Weightstone
         { id = 237371, buff = 1224328, stat = "physical", wmask = 41923 },  -- Refulgent Whetstone
         { id = 243734, buff = 1237006, stat = "caster", wmask = 983039 },  -- Thalassian Phoenix Oil
         { id = 243735, buff = 1237002, stat = "caster", wmask = 983039 },  -- Oil of Dawn
+        { id = 237372, buff = 1224334, stat = "physical" },  -- Refulgent Razorstone
         { id = 237367, buff = 1224332, stat = "physical", wmask = 9264 },  -- Refulgent Weightstone
         { id = 237370, buff = 1224331, stat = "physical", wmask = 41923 },  -- Refulgent Whetstone
         { id = 243733, buff = 1237008, stat = "caster", wmask = 983039 },  -- Thalassian Phoenix Oil
         -- Dragonflight / TWW
         { id = 220156, buff = 444755, stat = "caster", wmask = 720883 },  -- Bubbling Wax
+        { id = 222507, buff = 458931, stat = "physical" },  -- Ironclaw Razorstone
         { id = 222510, buff = 458937, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
         { id = 222504, buff = 458934, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
+        { id = 222506, buff = 458930, stat = "physical" },  -- Ironclaw Razorstone
         { id = 222509, buff = 458936, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
         { id = 222503, buff = 458933, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
+        { id = 222505, buff = 458929, stat = "physical" },  -- Ironclaw Razorstone
         { id = 222508, buff = 458935, stat = "physical", wmask = 9264 },  -- Ironclaw Weightstone
         { id = 222502, buff = 458932, stat = "physical", wmask = 41923 },  -- Ironclaw Whetstone
         { id = 224105, buff = 451869, stat = "caster", wmask = 983039 },  -- Algari Mana Oil
@@ -468,10 +578,13 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 224112, buff = 451901, stat = "caster", wmask = 983039 },  -- Oil of Deep Toxins
         { id = 224113, buff = 451902, stat = "caster", wmask = 983039 },  -- Oil of Deep Toxins
         -- Shadowlands
+        { id = 191950, buff = 371681, stat = "physical" },  -- Primal Razorstone
         { id = 191944, buff = 371677, stat = "physical", wmask = 9264 },  -- Primal Weightstone
         { id = 191940, buff = 396157, stat = "physical", wmask = 41923 },  -- Primal Whetstone
+        { id = 191949, buff = 371680, stat = "physical" },  -- Primal Razorstone
         { id = 191945, buff = 371678, stat = "physical", wmask = 9264 },  -- Primal Weightstone
         { id = 191933, buff = 396155, stat = "physical", wmask = 41923 },  -- Primal Whetstone
+        { id = 191948, buff = 371641, stat = "physical" },  -- Primal Razorstone
         { id = 191943, buff = 371676, stat = "physical", wmask = 9264 },  -- Primal Weightstone
         { id = 191939, buff = 396156, stat = "physical", wmask = 41923 },  -- Primal Whetstone
         -- Battle for Azeroth
@@ -487,6 +600,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 28420, buff = 34339, stat = "physical", wmask = 9264 },  -- Fel Weightstone
         { id = 22521, buff = 28013, stat = "caster" },  -- Superior Mana Oil
         -- Classic
+        { id = 31535, buff = 38615, stat = "physical", wmask = 174067 },  -- Bloodboil Poison
         { id = 36899, buff = 47904, stat = "caster" },  -- Exceptional Mana Oil
         { id = 18262, buff = 22756, stat = "physical", wmask = 41923 },  -- Elemental Sharpening Stone
         { id = 23123, buff = 28898, stat = "caster" },  -- Blessed Wizard Oil
@@ -503,6 +617,7 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 7965, buff = 9903, stat = "physical", wmask = 9264 },  -- Solid Weightstone
         { id = 3824, buff = 3594, stat = "caster", wmask = 174067 },  -- Shadow Oil
         { id = 20745, buff = 25118, stat = "caster" },  -- Minor Mana Oil
+        { id = 34861, buff = 45731, stat = "physical" },  -- Sharpened Fish Hook
         { id = 2871, buff = 2830, stat = "physical", wmask = 33731 },  -- Heavy Sharpening Stone
         { id = 3241, buff = 3114, stat = "physical", wmask = 9264 },  -- Heavy Weightstone
         { id = 2863, buff = 2829, stat = "physical", wmask = 33731 },  -- Coarse Sharpening Stone
@@ -551,20 +666,29 @@ if SpellDB.RegisterEatingAuras then
         1137, 2639, 5004, 5006, 5007, 6410, 7737, 10256, 10257, 18124, 18194, 18229,
         18230, 18232, 18233, 18234, 21149, 22731, 22734, 24005, 24355, 24707, 24800, 24869,
         25660, 25694, 25695, 25696, 25702, 25703, 25888, 25889, 25941, 25990, 26260, 26261,
-        26401, 26402, 27089, 27094, 29008, 29073, 32112, 33253, 33255, 33258, 33260, 33262,
-        33264, 33265, 33266, 33269, 33725, 33773, 33774, 34291, 35270, 35271, 40768, 41030,
-        42207, 42311, 42312, 43180, 43182, 43183, 43763, 45020, 45548, 46683, 46755, 46812,
-        46898, 52911, 53283, 61874, 64056, 65420, 65422, 66041, 72623, 80166, 80167, 80168,
-        80169, 87544, 87566, 87567, 87568, 87570, 87571, 87572, 87573, 87577, 87584, 87586,
-        87587, 87588, 87594, 87595, 87597, 87599, 87601, 87602, 87604, 87636, 87648, 87958,
-        87959, 94468, 100365, 100367, 100374, 100376, 100379, 104235, 104262, 104269, 104270, 104934,
-        105230, 105231, 105232, 105233, 108030, 111841, 111842, 118358, 125879, 127843, 148922, 148984,
-        160598, 160599, 170908, 172786, 175780, 175787, 191876, 192000, 192001, 192002, 192128, 195472,
-        201312, 215752, 225737, 225738, 227227, 227229, 257427, 257428, 262265, 262568, 262569, 274910,
-        274911, 274913, 274914, 276030, 279739, 281605, 281606, 297098, 303634, 303680, 305441, 308429,
-        308433, 314646, 314648, 318086, 329593, 340109, 348436, 348439, 359070, 360640, 369156, 369159,
-        369161, 369162, 369166, 394350, 396917, 396918, 396919, 396920, 396921, 398851, 410668, 452276,
-        452319, 452382, 452384, 452389, 456574, 456575, 460938, 462174, 462179, 470480, 473490, 1250721,
-        1256686,
+        26401, 26402, 27089, 27094, 29008, 29055, 29073, 32112, 33253, 33255, 33258, 33260,
+        33262, 33264, 33265, 33266, 33269, 33725, 33773, 33774, 34291, 35270, 35271, 40768,
+        41030, 42207, 42311, 42312, 43180, 43182, 43183, 43763, 45020, 45548, 46683, 46755,
+        46812, 46898, 52911, 53283, 61874, 64056, 65420, 65422, 66041, 72623, 80166, 80167,
+        80168, 80169, 87544, 87566, 87567, 87568, 87570, 87571, 87572, 87573, 87577, 87584,
+        87586, 87587, 87588, 87594, 87595, 87597, 87599, 87601, 87602, 87604, 87636, 87648,
+        87958, 87959, 94468, 100365, 100367, 100374, 100376, 100379, 104235, 104262, 104269, 104270,
+        104934, 105230, 105231, 105232, 105233, 108030, 111841, 111842, 118358, 125879, 127843, 148247,
+        148922, 148984, 160598, 160599, 167152, 170908, 172786, 175780, 175787, 185703, 191876, 192000,
+        192001, 192002, 192128, 195472, 201312, 203443, 215752, 223602, 225737, 225738, 227227, 227229,
+        257427, 257428, 262265, 262568, 262569, 274910, 274911, 274913, 274914, 276030, 276041, 279739,
+        281605, 281606, 297098, 303634, 303680, 305441, 308429, 308433, 314646, 314648, 318086, 329593,
+        340109, 348436, 348439, 359070, 360640, 369156, 369159, 369161, 369162, 369166, 394350, 396381,
+        396621, 396917, 396918, 396919, 396920, 396921, 397012, 398851, 405351, 410668, 450770, 452276,
+        452319, 452382, 452384, 452389, 456574, 456575, 460938, 462174, 462179, 470480, 473490, 1232065,
+        1250721, 1256686, 1269917, 1269920, 1269921, 1269922, 1286535, 1286537, 1290925, 1290926, 1290927, 1290928,
+        1291822, 1291824, 1291825, 1291827, 1291838, 1291839, 1291840, 1291841, 1291842, 1291843, 1291844, 1291845,
+        1291847, 1291848, 1291849, 1291850, 1291851, 1291853, 1291855, 1291857, 1291859, 1291944, 1291945, 1291946,
+    })
+end
+
+if SpellDB.RegisterFoodWellFedBuffs then
+    SpellDB.RegisterFoodWellFedBuffs({
+        19706, 19708, 19709, 19710, 19711, 24870, 33254, 33256, 33257, 33259, 33261, 33263, 33268, 35272, 42293, 43764, 45245, 53284, 57100, 57102, 57107, 57286, 57288, 57291, 57329, 57332, 57334, 57356, 57358, 57360, 57365, 59230, 62349, 65410, 65415, 65416, 87548, 87549, 87550, 87551, 87552, 87554, 87555, 87559, 87560, 87561, 87562, 87563, 87564, 87565, 87634, 87635, 100375, 104278, 104279, 104280, 124151, 124210, 124211, 124212, 124213, 124214, 124215, 124216, 124217, 124218, 124219, 124220, 124221, 125070, 125071, 125102, 125104, 125106, 125108, 125113, 125115, 131828, 145304, 146807, 146809, 160724, 160726, 160778, 160793, 160832, 160839, 160889, 160893, 160895, 160897, 160900, 160902, 168349, 174062, 174077, 174078, 174079, 174080, 175218, 175219, 175220, 175222, 175223, 175785, 177931, 180745, 180746, 180748, 180749, 180750, 185736, 201223, 201330, 201332, 201334, 207076, 225597, 225598, 225599, 225600, 225602, 225603, 225604, 225605, 226805, 226807, 257408, 257410, 257413, 257415, 257418, 257420, 257422, 257424, 294365, 297034, 297035, 297037, 297039, 308430, 308434, 308474, 308488, 308504, 308506, 308509, 308514, 347173, 347520, 382145, 382146, 382149, 382150, 382152, 382153, 382154, 382155, 382156, 382157, 398458, 451916, 451917, 451918, 451920, 454137, 454177, 454178, 454179, 454180, 455369, 457284, 461845, 461853, 461854, 461855, 461856, 461857, 461858, 461859, 461860, 461861, 461922, 461924, 461925, 461927, 461937, 461938, 461939, 461940, 461942, 461943, 461944, 461945, 461946, 461947, 461948, 461949, 461957, 461958, 461959, 461960, 1219182, 1219183, 1219184, 1219185, 1232086, 1232087, 1232089, 1232091, 1232313, 1232316, 1232317, 1232318, 1232320, 1232321, 1232324, 1232325, 1232490, 1232491, 1232492, 1232493, 1232496, 1232498, 1232500, 1232501, 1232582, 1232584, 1232585, 1233400, 1233401, 1233402, 1233403, 1233404, 1233405, 1233406, 1233407, 1233408, 1283372, 1284616, 1284617, 1284618, 1284619, 1294727, 1305151, 1305152, 1305154, 1305156,
     })
 end

@@ -8,6 +8,7 @@ local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local SpellQueue = LibStub("JustAC-SpellQueue", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+local W = LibStub("JustAC-OptionsWidgets")
 
 -- Pre-combat buff options -------------------------------------------------------------
 -- categories[cat]: false = off, a stat string = preference, nil = auto (optimal/recency).
@@ -126,6 +127,30 @@ function Defensives.CreateTabArgs(addon)
         name = L["Defensives"],
         order = 5,
         args = {
+            -- Defensive queue CONTENT behavior (cross-surface: standard queue + overlay).
+            -- Moved out of the General tab. Frame/display settings (enable, health bars,
+            -- display mode, positioning) live in Standard Queue -> Defensive Display.
+            queueContentGroup = {
+                type = "group",
+                inline = true,
+                name = L["Defensive Queue"],
+                order = 5,
+                args = {
+                    showDefensiveProcs = W.toggle(addon, "defensives.showProcs", {
+                        name = L["Insert Procced Defensives"], desc = L["Insert Procced Defensives desc"],
+                        order = 1, width = "full", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = function(a)
+                            local dm = a.db.profile.displayMode or "queue"
+                            if dm == "disabled" then return true end
+                            local standardEnabled = a.db.profile.defensives.enabled
+                            local npo = a.db.profile.nameplateOverlay
+                            local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                            return not standardEnabled and not overlayEnabled
+                        end,
+                    }),
+                },
+            },
             precombatGroup = {
                 type = "group",
                 inline = true,
@@ -144,6 +169,19 @@ function Defensives.CreateTabArgs(addon)
                         get = function() return addon.db.profile.precombatBuffs.enabled ~= false end,
                         set = function(_, v)
                             addon.db.profile.precombatBuffs.enabled = v
+                            pbApply(addon)
+                        end,
+                    },
+                    topoffHeal = {
+                        type = "toggle",
+                        name = L["Health Top-off"],
+                        desc = L["Health Top-off desc"],
+                        order = 2,
+                        width = "full",
+                        disabled = function() return pbDisabled(addon) end,
+                        get = function() return addon.db.profile.precombatBuffs.topoffHeal == true end,
+                        set = function(_, v)
+                            addon.db.profile.precombatBuffs.topoffHeal = v
                             pbApply(addon)
                         end,
                     },

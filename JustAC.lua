@@ -154,6 +154,11 @@ local defaults = {
         -- Pre-combat buff checklist (out of combat only; secure click-to-use overlay)
         precombatBuffs = {
             enabled = true,
+            -- Out-of-combat health top-off reminder: offer a cheap self-heal between pulls
+            -- while below full. OFF by default - it is a reminder-to-heal aid, not everyone
+            -- wants it, and the below-full signal is a proxy in secret zones (see
+            -- PrecombatEngine hurt detection).
+            topoffHeal = false,
             -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
             -- Speed is a food preference (stat="speed"), not its own category. XP is a utility
             -- category - default OFF (explicit false, so "on" must be a truthy value to
@@ -1241,6 +1246,12 @@ function JustAC:OnCombatEvent(event)
         self:ForceUpdateAll()  -- Update both combat and defensive queues
         NotifyOptionsChange()
     elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Open the post-combat bridge window: covers the few-second delay before OOC
+        -- health regen starts ticking, after which sustained-regen detection carries the
+        -- top-off heal reminder (see PrecombatEngine hurt detection / StateHelpers).
+        if BlizzardAPI and BlizzardAPI.NotePlayerLeftCombat then
+            BlizzardAPI.NotePlayerLeftCombat()
+        end
         -- Backfill instance CC cache: if a CC failed on a target whose NPC ID
         -- wasn't known during combat (tab-targeted mid-fight), BackfillCCImmunity
         -- reads the GUID now that combat ended and persists the mob type.

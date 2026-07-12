@@ -307,6 +307,19 @@ function SpellDB.RegisterEatingAuras(ids)
     for i = 1, #ids do EATING_AURAS[ids[i]] = true end
 end
 
+--- Register extra "Well Fed" family aura ids into the food category's buffSet. The adaptive
+--- Midnight feast foods apply their stat by server script (not tied to the item), landing one
+--- of the per-secondary "Well Fed" buffs - so no single food ENTRY can carry the right buff.
+--- Registering the whole family lets the food category detect "fed" regardless of which dish
+--- (and resulting stat) the player ate. Generated into Data/PrecombatBuffs.lua.
+function SpellDB.RegisterFoodWellFedBuffs(ids)
+    if type(ids) ~= "table" then return end
+    local food = PRECOMBAT_BUFFS and PRECOMBAT_BUFFS.food
+    if not food then return end
+    food.buffSet = food.buffSet or {}
+    for i = 1, #ids do food.buffSet[ids[i]] = true end
+end
+
 --- The player's active eating/drinking aura (with timing), or nil.
 --- The set is too large to probe id-by-id, so scan the player's buffs and test set
 --- membership. Combat bail is correctness, not just cost: you can't eat in combat.
@@ -787,57 +800,63 @@ end
 SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Death Knight ────────────────────────────────────────────────────────
     -- Class fallback (Frost/Unholy DPS): quick heal then big CDs
-    DEATHKNIGHT   = {49998, 48792, 48707},                     -- Death Strike, Icebound Fortitude, Anti-Magic Shell
+    DEATHKNIGHT   = {49998, 48743, 48792, 48707, 49039, 327574}, -- Death Strike, Death Pact, Icebound Fortitude, Anti-Magic Shell, Lichborne, Sacrificial Pact
     -- Blood (tank): active mitigation first, Death Strike for heal, then big CDs
-    DEATHKNIGHT_1 = {49998, 55233, 48792, 48707},              -- Death Strike, Vampiric Blood, IBF, AMS  (Rune Tap removed in 12.0)
+    -- (Rune Tap 194679 verified still live in 12.1 DB2 despite older "removed" notes)
+    DEATHKNIGHT_1 = {49998, 55233, 194679, 48743, 48792, 48707, 219809, 49039}, -- Death Strike, Vampiric Blood, Rune Tap, Death Pact, IBF, AMS, Tombstone, Lichborne
 
     -- ── Demon Hunter ────────────────────────────────────────────────────────
-    -- Class fallback (Havoc DPS): Blur, then Darkness
-    DEMONHUNTER   = {198589, 196718},                           -- Blur, Darkness  (Netherwalk removed in 12.0)
-    -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, then Blur
-    DEMONHUNTER_2 = {228477, 203720, 204021, 198589, 263648},  -- Soul Cleave, Demon Spikes, Fiery Brand, Blur, Soul Barrier
+    -- Class fallback (Havoc DPS): Blur, Netherwalk (talent), Darkness
+    DEMONHUNTER   = {198589, 196555, 196718},                   -- Blur, Netherwalk, Darkness
+    -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, Metamorphosis (a
+    -- Vengeance SURVIVAL cd, not a DPS burst - unlike Havoc's), then Blur
+    DEMONHUNTER_2 = {228477, 203720, 204021, 187827, 198589, 263648}, -- Soul Cleave, Demon Spikes, Fiery Brand, Metamorphosis, Blur, Soul Barrier
 
     -- ── Druid ───────────────────────────────────────────────────────────────
-    -- Class fallback (Balance/Resto): Regrowth, Renewal, Barkskin
-    DRUID         = {8936, 108238, 22812},                     -- Regrowth, Renewal, Barkskin
-    -- Feral: Regrowth, Survival Instincts, Barkskin, Renewal
-    DRUID_2       = {8936, 61336, 22812, 108238},              -- Regrowth, Survival Instincts, Barkskin, Renewal
+    -- Class fallback (Balance/Resto): self-heals then CDs. Frenzied Regeneration and
+    -- Survival Instincts are class talents any spec can take - included so a talented
+    -- caster gets them; the runtime known-spell gate drops them when untalented.
+    DRUID         = {8936, 22842, 108238, 61336, 22812},       -- Regrowth, Frenzied Regen, Renewal, Survival Instincts, Barkskin
+    -- Feral: Regrowth, Frenzied Regen (class talent), Survival Instincts, Barkskin, Renewal
+    DRUID_2       = {8936, 22842, 61336, 22812, 108238},       -- Regrowth, Frenzied Regen, Survival Instincts, Barkskin, Renewal
     -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
     DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
-    -- Class fallback (all specs - Renewing Blaze merged into Obsidian Scales in 12.0)
-    EVOKER        = {363916, 360995},                           -- Obsidian Scales, Verdant Embrace
+    -- Class fallback (all specs): self-heals then defensive CDs. Renewing Blaze and
+    -- Emerald Communion are class talents (verified live in 12.1 DB2); dropped by the
+    -- known-spell gate when untalented.
+    EVOKER        = {360995, 374348, 363916, 370960},           -- Verdant Embrace, Renewing Blaze, Obsidian Scales, Emerald Communion
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
-    HUNTER        = {109304, 186265, 388035},                  -- Exhilaration, Aspect of the Turtle, Fortitude of the Bear
+    HUNTER        = {109304, 264735, 281195, 186265, 388035},  -- Exhilaration, Survival of the Fittest, SotF (Lone Wolf), Aspect of the Turtle, Fortitude of the Bear
 
     -- ── Mage ────────────────────────────────────────────────────────────────
     -- Class fallback (spec-appropriate barrier is auto-learned; list all three so
     -- the one the player actually knows will be shown)
-    MAGE          = {11426, 235313, 235450, 45438},            -- Ice/Blazing/Prismatic Barrier, Ice Block  (Greater Invis lost DR in 12.0)
+    MAGE          = {11426, 235313, 235450, 342245, 45438},    -- Ice/Blazing/Prismatic Barrier, Alter Time, Ice Block
 
     -- ── Monk ────────────────────────────────────────────────────────────────
-    -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Diffuse Magic
-    MONK          = {322101, 115203, 122783},                  -- Expel Harm, Fortifying Brew, Diffuse Magic
+    -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
+    MONK          = {322101, 115203, 122278, 122783},          -- Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
     -- Brewmaster (tank): Purifying Brew first (stagger is the real damage signal - the
     -- float hint below surfaces it whenever Moderate/Heavy Stagger is up), then Celestial
-    -- Brew, Expel Harm, Fortifying Brew  (Dampen Harm removed in 12.0; Diffuse Magic merged
-    -- into Fortifying Brew talent)
-    MONK_1        = {119582, 322507, 322101, 120954},          -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew
-    -- Mistweaver: Fortifying Brew, Diffuse Magic  (Expel Harm removed in 12.0)
-    MONK_2        = {115203, 122783},                           -- Fortifying Brew, Diffuse Magic
+    -- Brew, Expel Harm, Fortifying Brew, then class-talent DR (Dampen Harm / Diffuse Magic /
+    -- Zen Meditation - verified live in 12.1 DB2; known-gate drops any untalented)
+    MONK_1        = {119582, 322507, 322101, 120954, 122278, 122783, 115176, 115295}, -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic, Zen Meditation, Guard
+    -- Mistweaver: self-heals then DR CDs
+    MONK_2        = {116670, 243435, 115203, 122278, 122783, 388615, 115295}, -- Vivify, Fortifying Brew (MW), Fortifying Brew, Dampen Harm, Diffuse Magic, Restoral, Guard
     -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
-    MONK_3        = {322101, 122470, 201318, 122783},          -- Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
+    MONK_3        = {322101, 122470, 201318, 122278, 122783, 115295}, -- Expel Harm, Touch of Karma, Fortifying Brew (WW), Dampen Harm, Diffuse Magic, Guard
 
     -- ── Paladin ─────────────────────────────────────────────────────────────
     -- Class fallback (Holy/Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
-    PALADIN       = {85673, 403876, 642, 633},                 -- Word of Glory, Divine Protection, Divine Shield, Lay on Hands
+    PALADIN       = {85673, 403876, 184662, 642, 633},         -- Word of Glory, Divine Protection, Shield of Vengeance, Divine Shield, Lay on Hands
     -- Protection (tank): Word of Glory, Ardent Defender, Guardian of Ancient Kings,
     -- Divine Shield, Lay on Hands.  Shield of the Righteous is deliberately absent -
     -- AC recommends it rotationally, so it lives in the offensive queue.
-    PALADIN_2     = {85673, 31850, 86659, 642, 633},           -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Divine Shield, Lay on Hands
+    PALADIN_2     = {85673, 31850, 86659, 387174, 389539, 378974, 642, 633}, -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Eye of Tyr, Sentinel, Bastion of Light, Divine Shield, Lay on Hands
 
     -- ── Priest ──────────────────────────────────────────────────────────────
     -- Class fallback (Holy/Disc): Desperate Prayer, PW:Shield, Fade
@@ -851,20 +870,21 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
 
     -- ── Shaman ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
-    SHAMAN        = {108271, 8004, 198103},                    -- Astral Shift, Healing Surge, Earth Elemental
+    SHAMAN        = {108271, 8004, 108281, 198103},            -- Astral Shift, Healing Surge, Ancestral Guidance, Earth Elemental
 
     -- ── Warlock ─────────────────────────────────────────────────────────────
     -- Class fallback (all specs share dark pact / drain / UR)
-    WARLOCK       = {108416, 234153, 104773},                  -- Dark Pact, Drain Life, Unending Resolve
+    WARLOCK       = {108416, 234153, 212295, 104773},          -- Dark Pact, Drain Life, Nether Ward, Unending Resolve
 
     -- ── Warrior ─────────────────────────────────────────────────────────────
     -- Class fallback (Arms/Fury DPS). Die by the Sword is Arms-only and Enraged
     -- Regeneration Fury-only - the runtime known-spell gate shows each spec its own wall.
-    WARRIOR       = {34428, 202168, 190456, 118038, 184364, 97462},  -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Enraged Regeneration, Rallying Cry
+    WARRIOR       = {34428, 202168, 190456, 118038, 184364, 23920, 386208, 97462},  -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Enraged Regeneration, Spell Reflection, Defensive Stance, Rallying Cry
     -- Protection (tank): Shield Block first (physical active mitigation, used on CD -
     -- the sink hint below parks it while its buff is already rolling), then Ignore Pain,
-    -- Shield Wall, Rallying Cry, Spell Reflection  (Last Stand is now a passive talent in 12.0)
-    WARRIOR_3     = {2565, 190456, 871, 97462, 23920},         -- Shield Block, Ignore Pain, Shield Wall, Rallying Cry, Spell Reflection
+    -- Impending Victory, Last Stand + Shield Wall (major CDs), Rallying Cry, Spell Reflection.
+    -- (Last Stand 12975 is an active 3-min CD in 12.1 DB2 - the older "passive" note was wrong.)
+    WARRIOR_3     = {2565, 190456, 202168, 12975, 871, 97462, 23920}, -- Shield Block, Ignore Pain, Impending Victory, Last Stand, Shield Wall, Rallying Cry, Spell Reflection
 }
 
 -- Emergency tier for the <35% defensive reorder. Tier 1 = immunity bubble (survives any

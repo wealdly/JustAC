@@ -22,7 +22,7 @@ OUT = os.path.join(ROOT, "Data", "PrecombatBuffs.lua")
 SUBCLASS = {"3": "flask", "5": "food", "8": "enh"}
 
 # Aura types that mean "this spell grants a stat" (so the spell IS the buff we detect).
-STAT_AURAS = {"189", "29", "137", "99", "124"}  # MOD_RATING/STAT/TOTAL_STAT%/AP/RANGED_AP
+STAT_AURAS = {"189", "29", "137", "99", "124", "511"}  # MOD_RATING/STAT/TOTAL_STAT%/AP/RANGED_AP; 511 = new Midnight alchemy-phial stat aura
 # Combat-rating bits (EffectMiscValue on a MOD_RATING aura) -> secondary stat. Verified
 # against this build's buffs: crit 8-10, haste 17-19, mastery 25, versatility 28-30,
 # speed 13 (the Speed secondary stat - a rating that stacks, unlike a flat run-speed %).
@@ -100,6 +100,12 @@ def stat_of(aura, misc):
             return None
         hits = [s for s, bits in RATING_BITS.items() if any(mask & (1 << b) for b in bits)]
         return "+".join(sorted(hits)) if hits else None
+    if aura == "511":
+        # New Midnight alchemy-phial stat aura. Its misc encodes the secondary (dual-stat
+        # phials), but the mapping isn't the old RATING_BITS bit layout and isn't documented
+        # here - so tag it generic ("primary" = surfaces under the Auto preference). Decode
+        # the misc->stat map later if per-stat phial preference is wanted.
+        return "primary"
     return None
 
 
@@ -135,7 +141,10 @@ def on_use(item_id, ie, ix):
 
 # Eating-aura signature: apply-aura effect (6) with OBS_MOD_HEALTH (84) / OBS_MOD_POWER
 # (85) - "restores health/mana while eating". Verified against 5004/396918/452276.
-EAT_AURAS = {"84", "85"}
+# Type 20 is the Midnight eating-regen variant: the new "Food" aura (1269920, on the Warped
+# feast line) uses 20 instead of 84 for the same "restore health while eating" tick - without
+# it those foods have no detectable eating aura, so the 10s eat channel bar never shows.
+EAT_AURAS = {"84", "85", "20"}
 
 
 def trigger_closure(sid, se, depth=0, seen=None):
@@ -162,7 +171,11 @@ def categorize(name, sub):
     if cat == "enh":
         if "Augment Rune" in name:
             return "augmentRune"
-        if any(k in name for k in ("Oil", "Stone", "Whetstone", "Weightstone", "Wax")):
+        # Coarse name pre-filter (case-insensitive; catches compound names like "Razorstone").
+        # The real gate is the effect-54 (ENCHANT_ITEM_TEMPORARY) check at the call site, which
+        # drops any non-enchant that slips through (lures, illusions, lockpicks, etc.).
+        low = name.lower()
+        if any(k in low for k in ("oil", "stone", "wax", "razor", "sharpen", "whet", "weight")):
             return "weaponEnchant"
         return None
     return cat  # flask / food
@@ -185,6 +198,20 @@ def main():
                 continue
             use = on_use(iid, ie, ix)
             buff, stat = (resolve_buff(use, se) or (None, None))
+            # Midnight feast-line foods (Warped Wise Wings, etc.) apply their stat via a server
+            # script routed through the shared "Become Well Fed" (1219179) DUMMY aura, so the
+            # secondary isn't in DBC and resolve_buff finds nothing. Don't drop them - a food is
+            # still worth an out-of-combat Well Fed reminder. Emit with that shared marker buff +
+            # a generic stat (surfaces under the Auto preference). New alchemy phials are handled
+            # up in resolve_buff via aura 511; other one-off script consumables (e.g. some PvP
+            # flasks using a bare dummy aura) are intentionally not force-included here.
+            if cat == "food" and not buff and use and "1219179" in trigger_closure(use, se):
+                # Adaptive feast food: the server script lands one of the per-secondary "Well
+                # Fed" buffs (the data says by the player's best secondary), so the DISH has no
+                # fixed stat. Tag all four secondaries so it satisfies ANY stat preference in the
+                # dropdown (GetBestOwnedBuff does a substring match); detection of "fed" is
+                # handled by the RegisterFoodWellFedBuffs family, not this per-item marker buff.
+                buff, stat = "1219179", "crit+haste+mastery+versatility"
             # flask/food/rune must grant a detectable stat aura; weapon enchants are
             # detected via GetWeaponEnchantInfo so they keep their apply-spell instead -
             # but skip any with no resolvable spell at all (avoids buff = nil entries).
@@ -252,6 +279,21 @@ def main():
         lines.append("        " + ", ".join(str(x) for x in ids[i:i + 12]) + ",")
     lines.append("    })\nend\n")
     print(f"  eatingAuras: {len(ids)} ids", file=sys.stderr)
+
+    # "Well Fed" family: the adaptive Midnight feast foods (buff-marker 1219179) land one of
+    # the per-secondary "Well Fed" buffs via server script - not reachable from the item's spell
+    # chain, so collect them by NAME + a stat-rating aura (189) instead. Registered into the food
+    # buffSet so the food category detects "fed" no matter which dish/stat the player ate.
+    name_by_id = {}
+    with open(find_csv("SpellName"), encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            name_by_id[r["ID"]] = r["Name_lang"]
+    wellfed = sorted(int(sid) for sid, effs in se.items()
+                     if name_by_id.get(sid) == "Well Fed"
+                     and any(e == "6" and a == "189" for e, a, _t, _m in effs))
+    lines.append("if SpellDB.RegisterFoodWellFedBuffs then\n    SpellDB.RegisterFoodWellFedBuffs({\n        "
+                 + ", ".join(str(x) for x in wellfed) + ",\n    })\nend\n")
+    print(f"  wellFed food buffs: {len(wellfed)} ids", file=sys.stderr)
 
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

@@ -21,8 +21,11 @@ local UnitClass = UnitClass
 local UnitIsDeadOrGhost = UnitIsDeadOrGhost
 local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
 
--- Offer Recuperate while player health is below this (exact read, OOC only)
+-- Top-off "between pulls" reminder fires below this (exact read, OOC only) - toggle-gated.
 local RECUPERATE_HEALTH_PCT = 90
+-- Emergency floor: at/below this (the never-secret low-health vignette) the heal ALWAYS
+-- shows, regardless of the top-off toggle - a critical-health survival cue.
+local LOW_HEALTH_PCT = 35
 
 -- True if the player currently has any aura whose spellId is in the set. Iterates the
 -- player's helpful auras (usually < 40), so cost is independent of how big the set is -
@@ -161,7 +164,10 @@ local function HighestQueuedInGroup(group)
     return nil
 end
 
-function PrecombatEngine.GetMissingClassBuffs()
+--- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
+---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
+---   and imbues are unaffected - only the health top-off reminder honors this flag.
+function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
         return cachedClassBuffs
@@ -237,23 +243,30 @@ function PrecombatEngine.GetMissingClassBuffs()
     -- (1231411): a damage tick interrupts the heal but leaves the active aura
     -- (and its animation) running, and that is exactly when a re-cast must be
     -- offered. The click layer cancels the stale aura before re-casting.
+    -- Two tiers, so a critical-health cue can never be accidentally disabled:
+    --   * EMERGENCY (<= ~35%): ALWAYS on, even with the top-off toggle OFF. The low-health
+    --     vignette is never secret (and a low exact read counts too), so a critical-health
+    --     player is always shown the heal.
+    --   * TOP-OFF (35-100%): the opt-in "top off between pulls" reminder, gated by the toggle
+    --     (offerTopoff). Health is secret out of combat in the open world, so detect below-full
+    --     from never-secret signals: the exact read where available (rested/cities), else
+    --     sustained regen ticks (health only regenerates BELOW full - airtight, and it goes
+    --     false the moment you hit full) plus a short post-combat window to bridge the
+    --     regen-start delay.
     if not InCombatLockdown() and not restricted and get and recupKnown
         and not get(SpellDB.RECUPERATE_AURA) then
-        -- Hurt detection, layered by what 12.0.7 lets us read:
-        --   1. exact health percent when readable -> offer below the threshold
-        --   2. low-health vignette (never secret)  -> definitely hurt
-        --   3. player UNIT_HEALTH event activity   -> OOC regen is ticking, so
-        --      health is below full even when the value itself is secret
         local hurt = false
         if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
             local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
-            if pct and pct < RECUPERATE_HEALTH_PCT then
-                hurt = true
-            elseif estimated and BlizzardAPI.HasSustainedPlayerHealthActivity
-                and BlizzardAPI.HasSustainedPlayerHealthActivity() then
-                -- Sustained (not just recent) activity: a couple of scratch-repair
-                -- ticks at near-full must not summon a 30s heal suggestion.
-                hurt = true
+            if pct and pct <= LOW_HEALTH_PCT then
+                hurt = true                                  -- emergency floor: always on
+            elseif offerTopoff then
+                if pct and not estimated then
+                    hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
+                elseif (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
+                    or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime()) then
+                    hurt = true                              -- secret: regen / post-combat
+                end
             end
         end
         if hurt and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"))

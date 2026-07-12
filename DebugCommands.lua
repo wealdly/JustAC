@@ -50,6 +50,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
+    addon:Print("/jac inspect healthgate - Toggle live on-screen swatches proving the curve gate tracks health")
     addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
     addon:Print("/jac hud - Toggle a live diagnostic HUD (context, source, AC pick, buff windows)")
     addon:Print("/jac help - Show this help")
@@ -169,9 +170,127 @@ function DebugCommands.HealthProbe(addon)
         addon:Print("  personal-plate bar: not shown (enable Personal Resource Display to test)")
     end
 
-    addon:Print("F. verdict guide: any GREEN number in E that tracks your real health")
+    -- F. The SANCTIONED secret-safe gate: map the secret health fraction through a
+    --    non-secret step curve to an alpha, then sink that (secret) alpha straight
+    --    into SetAlpha - never read, never branched. This is the exact idiom that
+    --    already ships in UISootheCue (enrage gate) and ApplyExecuteColor (execute
+    --    cue); the only open question is whether it round-trips for the PLAYER, OOC,
+    --    in a secret zone. If it does, the OOC top-off suggestion can be gated on
+    --    TRUE health across the whole 0-99% range, retiring the UNIT_HEALTH cadence
+    --    heuristic (HasSustainedPlayerHealthActivity) and the ~35% vignette entirely.
+    addon:Print("F. curve-gated alpha (UnitHealthPercent + C_CurveUtil -> SetAlpha):")
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    if not (cu and cu.CreateColorCurve and stepType and CreateColor and UnitHealthPercent) then
+        addon:Print("  |cffff6666unavailable|r (C_CurveUtil / UnitHealthPercent / Step missing)")
+    else
+        -- Reused throwaway swatch (never shown) so the probe leaks nothing across runs.
+        DebugCommands._probeSwatch = DebugCommands._probeSwatch or UIParent:CreateTexture(nil, "BACKGROUND")
+        local swatch = DebugCommands._probeSwatch
+        -- ponytail: UnitHealthPercent's curve-input domain is unconfirmed - ApplyExecuteColor
+        -- treats it as the 0-1 fraction, MIDNIGHT research notes 0-100. Test BOTH; the one
+        -- whose swatch alpha tracks real health (visible while hurt) is the live domain.
+        local function buildGate(hidePoint)
+            local c = cu.CreateColorCurve()
+            c:SetType(stepType)
+            c:AddPoint(0,         CreateColor(1, 1, 1, 1))   -- below full -> show (a=1)
+            c:AddPoint(hidePoint, CreateColor(0, 0, 0, 0))   -- at full    -> hide (a=0)
+            return c
+        end
+        for _, dom in ipairs({ { "fraction", 1.0 }, { "0-100", 100 } }) do
+            local label, hide = dom[1], dom[2]
+            local ok, color = pcall(UnitHealthPercent, "player", false, buildGate(hide))
+            if not ok then
+                addon:Print("  " .. label .. " domain: |cffff6666SEALED|r (call threw)")
+            elseif type(color) ~= "table" or not color.GetRGBA then
+                addon:Print("  " .. label .. " domain: returned " .. safe(color) .. " (not a color)")
+            else
+                local aOk = pcall(function() swatch:SetAlpha(color.a) end)
+                addon:Print("  " .. label .. " domain: color OK, .a=" ..
+                    (IsSecret(color.a) and "|cffff6600<secret>|r" or safe(color.a)) ..
+                    "  SetAlpha=" .. (aOk and "|cff00ff00OK|r" or "|cffff6666threw|r"))
+            end
+        end
+        addon:Print("  verdict: 'color OK ... SetAlpha=OK' = the reliable gate works;")
+        addon:Print("  a <secret> .a is EXPECTED and fine (it is what feeds SetAlpha).")
+    end
+
+    addon:Print("G. verdict guide: any GREEN number in E that tracks your real health")
     addon:Print("   percent = a readable channel; all SEALED/<secret> = heuristics stay.")
     addon:Print("=============================================")
+end
+
+--------------------------------------------------------------------------------
+-- Live health-gate preview (toggle)
+-- The one-shot HealthProbe confirms UnitHealthPercent+curve->SetAlpha round-trips
+-- but CANNOT show that the (secret) alpha actually tracks health, nor which curve
+-- input domain is live. This drops two on-screen swatches - one per domain - whose
+-- alpha is driven every frame by the gate curve (alpha 1 below full, 0 at full).
+-- Watch while healing: the swatch VISIBLE while hurt and GONE at full marks the
+-- correct domain and proves the production gate works. Run again to remove.
+--------------------------------------------------------------------------------
+function DebugCommands.HealthGatePreview(addon)
+    if DebugCommands._healthGateFrame then
+        DebugCommands._healthGateFrame:Hide()
+        DebugCommands._healthGateFrame:SetParent(nil)
+        DebugCommands._healthGateFrame = nil
+        addon:Print("Health-gate preview: OFF")
+        return
+    end
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    if not (cu and cu.CreateColorCurve and stepType and CreateColor and UnitHealthPercent) then
+        addon:Print("Health-gate preview: |cffff6666unavailable|r (curve API missing)")
+        return
+    end
+
+    -- Gate curve: alpha 1 below the hide-point, 0 at/above it (one per domain hypothesis).
+    local function gate(hidePoint)
+        local c = cu.CreateColorCurve()
+        c:SetType(stepType)
+        c:AddPoint(0,         CreateColor(1, 1, 1, 1))
+        c:AddPoint(hidePoint, CreateColor(0, 0, 0, 0))
+        return c
+    end
+
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(240, 90)
+    f:SetPoint("CENTER", 0, 220)
+
+    local function swatch(xoff, label, hidePoint)
+        local box = f:CreateTexture(nil, "ARTWORK")
+        box:SetColorTexture(0.1, 0.9, 0.2, 1)  -- solid green; the GATE drives its alpha
+        box:SetSize(96, 56)
+        box:SetPoint("TOPLEFT", xoff, -24)
+        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("BOTTOM", box, "TOP", 0, 2)
+        fs:SetText(label)
+        return { tex = box, curve = gate(hidePoint) }
+    end
+
+    f._swatches = { swatch(8, "fraction", 1.0), swatch(136, "0-100", 100) }
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("BOTTOM", f, "BOTTOM", 0, 0)
+    title:SetText("visible while HURT, gone at FULL = live domain")
+
+    f:SetScript("OnUpdate", function(self, elapsed)
+        self._t = (self._t or 0) + elapsed
+        if self._t < 0.1 then return end
+        self._t = 0
+        for _, s in ipairs(self._swatches) do
+            -- Never read the color; sink its (secret) alpha straight into SetAlpha.
+            local ok, color = pcall(UnitHealthPercent, "player", false, s.curve)
+            if ok and type(color) == "table" then
+                pcall(function() s.tex:SetAlpha(color.a) end)
+            end
+        end
+    end)
+
+    DebugCommands._healthGateFrame = f
+    addon:Print("Health-gate preview: ON (top-center). Take damage, then heal to full.")
+    addon:Print("The swatch VISIBLE while hurt and GONE at full marks the live domain.")
+    addon:Print("Run /jac inspect healthgate again to remove it.")
 end
 
 --------------------------------------------------------------------------------
@@ -1285,7 +1404,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         end
         addon:Print("  health-bar fill-width probe: " .. FillRatio())
         local surfaced = false
-        for _, s in ipairs(Engine.GetMissingClassBuffs() or {}) do
+        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal) or {}) do
             if s == sid then surfaced = true break end
         end
         addon:Print("  would surface: " .. (surfaced and "|cff00ff00YES|r" or "|cffff6666NO|r"))

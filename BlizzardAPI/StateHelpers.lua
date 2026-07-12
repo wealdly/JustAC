@@ -692,6 +692,22 @@ function BlizzardAPI.HasSustainedPlayerHealthActivity()
     return avgGap <= MAX_AVG_TICK_GAP
 end
 
+-- Post-combat bridge window: a short OOC grace period right after leaving combat. Its ONLY
+-- job is to cover the few-second delay before out-of-combat health regen starts ticking -
+-- once regen is flowing, HasSustainedPlayerHealthActivity (an airtight below-full signal,
+-- since health never regenerates at full) carries the top-off reminder and drops it the
+-- moment you hit full. So this stays SHORT: long enough to overlap the onset of a sustained
+-- regen run, no longer (a longer window would keep the reminder up after a no-damage pull).
+-- Combat state is never secret, so the window itself is fully reliable.
+local POSTCOMBAT_WINDOW_SECS = 10
+local combatEndedAt = -1e9
+function BlizzardAPI.NotePlayerLeftCombat()
+    combatEndedAt = GetTime()
+end
+function BlizzardAPI.IsInPostCombatDowntime()
+    return (GetTime() - combatEndedAt) <= POSTCOMBAT_WINDOW_SECS
+end
+
 -- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.
 -- In combat UnitHealth() is secret - only the LowHealthFrame binary (~35% threshold)
 -- is reliable. Health percentages above 35% are indistinguishable in combat.

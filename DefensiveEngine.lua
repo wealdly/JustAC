@@ -778,7 +778,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         -- entirely. GetMissingClassBuffs returns distinct spells, so no in-loop dedupe is
         -- needed; mark alreadyAdded so the later proc/defensive passes don't re-add them.
         if PrecombatEngine and PrecombatEngine.GetMissingClassBuffs then
-            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs()) do
+            local offerTopoff = profile.precombatBuffs.topoffHeal == true
+            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff)) do
                 if #results >= maxIcons then break end
                 results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false, precombat = true }
                 alreadyAdded[spellID] = true

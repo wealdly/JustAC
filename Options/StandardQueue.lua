@@ -452,6 +452,50 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
                         disabled = defensiveDisabled,
                     }),
+                    -- INDEPENDENT FRAME (20-29) - detach defensives to their own draggable
+                    -- frame. Moved from the General tab to sit with the other defensive
+                    -- frame/display settings.
+                    frameHeader = {
+                        type = "header",
+                        name = L["Independent Positioning"],
+                        order = 20,
+                    },
+                    defensiveDetached = W.toggle(addon, "defensives.detached", {
+                        name = L["Independent Positioning"], desc = L["Independent Positioning desc"],
+                        order = 21, width = "full", default = false,
+                        onSet = function() addon:UpdateFrameSize() end,
+                        notify = true,
+                        disabled = function() return defensiveDisabled(addon) end,
+                    }),
+                    detachedOrientation = W.select(addon, "defensives.detachedOrientation", {
+                        name = L["Detached Orientation"], desc = L["Detached Orientation desc"],
+                        order = 22, width = "normal", default = "LEFT",
+                        values = { LEFT = L["Left"], RIGHT = L["Right"], UP = L["Up"], DOWN = L["Down"] },
+                        sorting = { "LEFT", "RIGHT", "UP", "DOWN" },
+                        onSet = function() addon:UpdateFrameSize() end,
+                        notify = true,
+                        hidden = function()
+                            return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
+                        end,
+                    }),
+                    resetDefensivePosition = {
+                        type = "execute",
+                        name = L["Reset Defensive Frame Position"],
+                        order = 23,
+                        func = function()
+                            local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+                            if addon.defensiveFrame then
+                                addon.defensiveFrame:ClearAllPoints()
+                                addon.defensiveFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+                                if UIFrameFactory and UIFrameFactory.SaveDefensivePosition then
+                                    UIFrameFactory.SaveDefensivePosition(addon)
+                                end
+                            end
+                        end,
+                        hidden = function()
+                            return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
+                        end,
+                    },
                 },
             },
 
@@ -506,6 +550,11 @@ function StandardQueue.CreateTabArgs(addon)
             def.showPetHealthBar = true
             def.showTargetHealthBar = true
             def.showPowerBar     = false
+            -- Moved here from the General tab
+            def.showProcs        = true
+            def.detached         = false
+            def.detachedOrientation = "LEFT"
+            def.detachedPosition = { point = "CENTER", x = 0, y = 100 }
             -- Clear legacy migration keys
             def.showOnlyInCombat    = nil
             def.alwaysShowDefensive = nil

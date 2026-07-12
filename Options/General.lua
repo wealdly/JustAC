@@ -82,41 +82,6 @@ function General.CreateTabArgs(addon)
                             W.NotifyChange()
                         end,
                     },
-                    defensiveDetached = W.toggle(addon, "defensives.detached", {
-                        name = L["Independent Positioning"], desc = L["Independent Positioning desc"],
-                        order = 3, width = "full", default = false,
-                        onSet = function() addon:UpdateFrameSize() end,
-                        notify = true,
-                    }),
-                    detachedOrientation = W.select(addon, "defensives.detachedOrientation", {
-                        name = L["Detached Orientation"], desc = L["Detached Orientation desc"],
-                        order = 4, width = "normal", default = "LEFT",
-                        values = { LEFT = L["Left"], RIGHT = L["Right"], UP = L["Up"], DOWN = L["Down"] },
-                        sorting = { "LEFT", "RIGHT", "UP", "DOWN" },
-                        onSet = function() addon:UpdateFrameSize() end,
-                        notify = true,
-                        hidden = function()
-                            return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
-                        end,
-                    }),
-                    resetDefensivePosition = {
-                        type = "execute",
-                        name = L["Reset Defensive Frame Position"],
-                        order = 5,
-                        func = function()
-                            local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
-                            if addon.defensiveFrame then
-                                addon.defensiveFrame:ClearAllPoints()
-                                addon.defensiveFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
-                                if UIFrameFactory and UIFrameFactory.SaveDefensivePosition then
-                                    UIFrameFactory.SaveDefensivePosition(addon)
-                                end
-                            end
-                        end,
-                        hidden = function()
-                            return not (addon.db.profile.defensives and addon.db.profile.defensives.detached)
-                        end,
-                    },
                     -- INTERRUPT (6-9) - own section; not a shared-behavior setting.
                     -- Order 7.5 is reserved for the future "Context Aware" CC toggle.
                     interruptHeader = {
@@ -244,64 +209,6 @@ function General.CreateTabArgs(addon)
                         end,
                         disabled = function() return fullyDisabled(addon) end,
                     },
-                    -- OFFENSIVE QUEUE CONTENT (30-39)
-                    offensiveQueueHeader = {
-                        type = "header",
-                        name = L["Offensive Queue"],
-                        order = 30,
-                    },
-                    includeHiddenAbilities = W.toggle(addon, "includeHiddenAbilities", {
-                        name = L["Include All Available Abilities"], desc = L["Include All Available Abilities desc"],
-                        order = 31, width = "normal", default = true,
-                        onSet = function() addon:ForceUpdate() end,
-                        disabled = fullyDisabled,
-                    }),
-                    showSpellbookProcs = W.toggle(addon, "showSpellbookProcs", {
-                        name = L["Insert Procced Abilities"], desc = L["Insert Procced Abilities desc"],
-                        order = 32, width = "normal", default = true,
-                        onSet = function() addon:ForceUpdate() end,
-                        disabled = fullyDisabled,
-                    }),
-                    hideItemAbilities = {
-                        type = "toggle",
-                        name = L["Allow Item Abilities"],
-                        desc = L["Allow Item Abilities desc"],
-                        order = 33,
-                        width = "normal",
-                        -- Inverted (toggle shows "Allow", stores "hide") - stays raw.
-                        get = function() return not addon.db.profile.hideItemAbilities end,
-                        set = function(_, val)
-                            addon.db.profile.hideItemAbilities = not val
-                            addon:ForceUpdate()
-                        end,
-                        disabled = function() return fullyDisabled(addon) end,
-                    },
-                    showDotSpreadArrow = W.toggle(addon, "showDotSpreadArrow", {
-                        name = "Switch-Target Arrow",
-                        desc = "Show an arrow on the first icon when Assisted Combat keeps recommending a damage-over-time ability that is already active on your target - a cue to apply it to another enemy.",
-                        order = 34, width = "full", default = false,
-                        onSet = function() addon:ForceUpdate() end,
-                        disabled = fullyDisabled,
-                    }),
-                    -- DEFENSIVE QUEUE CONTENT (40-49)
-                    defensiveQueueHeader = {
-                        type = "header",
-                        name = L["Defensive Queue"],
-                        order = 40,
-                    },
-                    showDefensiveProcs = W.toggle(addon, "defensives.showProcs", {
-                        name = L["Insert Procced Defensives"], desc = L["Insert Procced Defensives desc"],
-                        order = 41, width = "full", default = true,
-                        onSet = function() addon:ForceUpdateAll() end,
-                        disabled = function(a)
-                            local dm = a.db.profile.displayMode or "queue"
-                            if dm == "disabled" then return true end
-                            local standardEnabled = a.db.profile.defensives.enabled
-                            local npo = a.db.profile.nameplateOverlay
-                            local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                            return not standardEnabled and not overlayEnabled
-                        end,
-                    }),
                 },
             },
             -- ── SUB-TAB 2: ICON LABELS ──────────────────────────────
@@ -324,12 +231,6 @@ function General.CreateTabArgs(addon)
             p.gamepadIconStyle    = "xbox"
             p.inputPreference     = "auto"
             p.interruptAlertSound = "None"
-            -- Offensive queue content
-            p.includeHiddenAbilities = true
-            p.showSpellbookProcs     = true
-            p.hideItemAbilities      = false
-            -- Defensive queue content
-            p.defensives.showProcs   = true
             local NPO = LibStub("JustAC-UINameplateOverlay", true)
             if NPO then NPO.Destroy(addon) end  -- displayMode reset to "queue"
             addon:UpdateFrameSize()

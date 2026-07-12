@@ -8,19 +8,90 @@ local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
+local W = LibStub("JustAC-OptionsWidgets")
+
+-- displayMode == "disabled" turns off every surface; content toggles gate on it.
+local function fullyDisabled(addon)
+    return (addon.db.profile.displayMode or "queue") == "disabled"
+end
+
+-- Offensive queue CONTENT (what abilities the rotation surfaces). Cross-surface (affects the
+-- standard queue and the nameplate overlay alike), so it lives with the other offensive
+-- content tools here rather than a per-surface display panel. Moved out of the General tab.
+-- Rendered as an inline group at the TOP of the Offensive "General" sub-tab, above the
+-- custom-priority (Custom Queue) controls it now shares that tab with.
+local function queueContentGroup(addon)
+    return {
+        type = "group",
+        inline = true,
+        name = L["Queue Content"],
+        order = 0.1,
+        args = {
+            includeHiddenAbilities = W.toggle(addon, "includeHiddenAbilities", {
+                name = L["Include All Available Abilities"], desc = L["Include All Available Abilities desc"],
+                order = 1, width = "normal", default = true,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = fullyDisabled,
+            }),
+            showSpellbookProcs = W.toggle(addon, "showSpellbookProcs", {
+                name = L["Insert Procced Abilities"], desc = L["Insert Procced Abilities desc"],
+                order = 2, width = "normal", default = true,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = fullyDisabled,
+            }),
+            hideItemAbilities = {
+                type = "toggle",
+                name = L["Allow Item Abilities"],
+                desc = L["Allow Item Abilities desc"],
+                order = 3,
+                width = "normal",
+                -- Inverted (toggle shows "Allow", stores "hide") - stays raw.
+                get = function() return not addon.db.profile.hideItemAbilities end,
+                set = function(_, val)
+                    addon.db.profile.hideItemAbilities = not val
+                    addon:ForceUpdate()
+                end,
+                disabled = function() return fullyDisabled(addon) end,
+            },
+            showDotSpreadArrow = W.toggle(addon, "showDotSpreadArrow", {
+                name = "Switch-Target Arrow",
+                desc = "Show an arrow on the first icon when Assisted Combat keeps recommending a damage-over-time ability that is already active on your target - a cue to apply it to another enemy.",
+                order = 4, width = "normal", default = false,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = fullyDisabled,
+            }),
+        },
+    }
+end
 
 function Offensive.CreateTabArgs(addon)
     local CustomQueue = LibStub("JustAC-OptionsCustomQueue", true)
     local GapClosers = LibStub("JustAC-OptionsGapClosers", true)
     local BurstInjection = LibStub("JustAC-OptionsBurstInjection", true)
-    return {
+
+    -- "General" sub-tab = the queue-content toggles + the custom-priority (Custom Queue)
+    -- controls, merged into one panel (matching the General sub-tab every other top tab
+    -- leads with). We reuse the Custom Queue tab as the base and inject the content group
+    -- at the top; the arg KEY stays "customQueue" so UpdateCustomQueueOptions still resolves it.
+    local generalTab = (CustomQueue and CustomQueue.CreateTabArgs) and CustomQueue.CreateTabArgs(addon)
+    if generalTab then
+        generalTab.name = L["General"]
+        generalTab.order = 1
+        generalTab.args.queueContentGroup = queueContentGroup(addon)
+    else
+        -- Fallback if the Custom Queue module is unavailable: still surface the toggles.
+        generalTab = { type = "group", name = L["General"], order = 1,
+                       args = { queueContentGroup = queueContentGroup(addon) } }
+    end
+
+    local tab = {
         type = "group",
         name = L["Offensive"],
         order = 4,
         childGroups = "tab",
         args = {
-            -- Sub-tab 0: Custom Queue
-            customQueue = (CustomQueue and CustomQueue.CreateTabArgs) and CustomQueue.CreateTabArgs(addon) or nil,
+            -- Sub-tab 1: General (queue content + custom priority)
+            customQueue = generalTab,
             -- Sub-tab 1: Gap-Closers
             gapClosers = (GapClosers and GapClosers.CreateTabArgs) and GapClosers.CreateTabArgs(addon) or nil,
             -- Sub-tab 1.5: Burst Injection
@@ -48,6 +119,7 @@ function Offensive.CreateTabArgs(addon)
             },
         },
     }
+    return tab
 end
 
 -------------------------------------------------------------------------------

@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.43.0] - 2026-07-12
+
+### Added
+- **Health Top-off** reminder (opt-in): between pulls and out of combat, surface a cheap self-heal at the front of the defensive queue while you're below full - detected from your health-regen activity for the times your exact health can't be read. A critical-health heal (below ~35%) always shows regardless of the setting. Off by default; enable under Defensives -> Pre-combat Buffs.
+
+### Changed
+- Defensive suggestion defaults now cover talent-based defensives for every spec - e.g. Frenzied Regeneration on Feral Druid, Dampen Harm across Monk specs, Metamorphosis for Vengeance, Last Stand on Protection Warrior, and many more. Anything you aren't talented into is simply skipped, so the list fills in whatever your build actually has. Use Restore Class Defaults to pick up the additions.
+- Options tabs reorganized so settings live where you'd expect them: offensive queue-content options moved from General into the Offensive tab (which now opens with a combined General sub-tab), and defensive frame positioning moved to Standard Queue -> Defensive Display. General keeps only the genuinely shared settings.
+
+### Fixed
+- Pre-combat buffs now recognize the latest Midnight consumables. The new feast-line foods (e.g. Warped Wise Wings), alchemy phials, and weapon enhancements are offered again; eating one shows the timing bar and registers as Well Fed so the reminder clears; and food stat preferences (Crit, Haste, Mastery, Versatility) resolve correctly.
+
 ## [4.42.0] - 2026-07-11
 
 ### Fixed
