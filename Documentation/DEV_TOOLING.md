@@ -62,3 +62,65 @@ The curated spell data under `Data/` is generated from wago.tools CSV exports by
 the `gen_*.py` / `update_data.py` scripts here. They require Python and a local
 CSV export; see the top of each script. Only the generated `Data/*.lua` output is
 committed, not the multi-MB source CSVs.
+
+### Updating the CSVs
+
+`python tools/update_data.py [build] [--product wow|wowt]` does the whole cycle:
+pull the latest DB2 build for every table already present, diff row counts, swap
+the folder atomically, rerun every generator, and print `git diff --stat Data/`.
+The table set is **self-maintaining** - whatever `<Table>.<build>.csv` files sit
+in `Documentation/wow_spell_csv/` (gitignored) define what gets pulled. To track a
+new table, download it once by hand from
+`https://wago.tools/db2/<Table>/csv?build=<build>` and re-run. Keep the folder on
+**one build**; generators join across tables. Full flag list: the header of
+`tools/update_data.py`.
+
+### CSV source tables (which generator reads what)
+
+Most generators share a resolution **spine**: `SpellName` (id -> name),
+`SpellMisc` (school/attributes), `SkillLineAbility` + `TraitDefinition`
+(talent/override -> base spell), `SpellDuration` (duration index -> ms). On top of
+that spine:
+
+| Generator | Distinctive input tables | Produces |
+|-----------|--------------------------|----------|
+| `gen_precombat_buffs.py` | `Item`, `ItemSparse`, `ItemEffect`, `ItemXItemEffect`, `SpellEffect`, `SpellEquippedItems` | `PrecombatBuffs.lua` (flask/food/rune/imbue + Well Fed) |
+| `gen_healing_items.py` | `Item`, `ItemSparse`, `ItemEffect`, `ItemXItemEffect`, `SpellEffect` | `HealingItems.lua` |
+| `gen_spell_cooldowns.py` | `SpellCategory`, `SpellCategories`, `SpellCooldowns` | `SpellCooldowns.lua` |
+| `gen_aura_stacks.py` | `SpellAuraOptions` (CumulativeAura) | `AuraStacks.lua` |
+| `gen_self_auras.py` | `SpellAuraOptions`, `SpellEffect` | `SelfAuras.lua` |
+| `gen_target_dots.py` | `SpellAuraOptions`, `SpellEffect`, `SpecializationSpells` | `TargetDots.lua` |
+| `gen_aura_durations.py` | `SpellDuration` | *(retained, not shipped - durations are secret in combat)* |
+| `gen_archetypes.sh` | `SpellTargetRestrictions`, `SpellEffect` (role heuristics) | `SpellArchetypes.lua` |
+| `gen_simc_rotations.py` | SimC APL text + `Data/` token bridge (not a straight DB2 read) | `SimcRotations.lua` |
+
+Curated-by-hand (no generator, no CSV): `SpellCategories.lua`,
+`InterruptAbilities.lua`, `RangeReferences.lua`.
+
+## Source & enum mirrors (`<sources>\`)
+
+Dev-local, **outside** the addon repo. Two sparse GitHub mirrors are the ground
+truth for "how does this API actually behave" (see AGENTS.md rule: never guess a
+WoW API):
+
+- **`wow-ui-source`** (branch `live`) - Blizzard's own UI Lua. The generated API
+  surface lives at
+  `wow-ui-source/Interface/AddOns/Blizzard_APIDocumentationGenerated/*.lua`, e.g.
+  `AssistedCombatDocumentation.lua`, `Secret*Documentation.lua` (secret-value
+  predicates), `Spell*Documentation.lua`.
+- **`WowPacketParser`** (branch `master`) - server enum values at
+  `WowPacketParser/WowPacketParser/Enums/*.cs`, e.g. `PowerType.cs`.
+
+**Refresh both:** `.\00-SOURCE\update-sources.ps1` (depth-1 fetch + hard reset per
+mirror). Build-immutable, so it is cheap to run once per patch.
+
+**Looking something up** (grep the mirror instead of guessing):
+
+```
+# an API method or return field
+grep -ri "GetSpellCooldown" 00-SOURCE/wow-ui-source/Interface/AddOns/Blizzard_APIDocumentationGenerated
+# secret-value predicates (Should*BeSecret, etc.)
+grep -ri "ShouldUnitHealth" 00-SOURCE/wow-ui-source/Interface/AddOns/Blizzard_APIDocumentationGenerated
+# an enum's numeric values
+grep -ri "PowerType" 00-SOURCE/WowPacketParser/WowPacketParser/Enums
+```
