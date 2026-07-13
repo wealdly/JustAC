@@ -1,4 +1,4 @@
-# JustAC - AI Agent Instructions
+# JustAC - Contributor Instructions
 
 WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua + WoW API + Ace3.
 
@@ -73,6 +73,7 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 |--------|------|-------------|-----------------|
 | `Locales/*.lua` | AceLocale-3.0 localization (9 languages) | `L` global | N/A (not LibStub) |
 | `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v13 |
+| `RotationImport.lua` | Alternate rotation source (gated import lookup) | `GetRotation()`, `HasRotation()`, `RegisterGated()` | v1 |
 | `BlizzardAPI.lua` | Root: secret value primitives, live secrecy gates, version detection | `IsSecretValue()`, `Unsecret()`, `AreCooldownsSecret()`, `AreAurasSecret()`, `GetActionBarUsability()` | v36 |
 | `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `RegisterSpellForTracking()`, `IsSpellOnLocalCooldown()` | v13 |
 | `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `GetFeatureAvailability()` | v2 |
@@ -84,19 +85,23 @@ BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFil
 | `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v43 |
 | `DotTracker.lua` | Sink maintained enemy DoTs while their debuff is live on the target (cast-observation + `IsAuraFilteredOutByInstanceID` bridge; secret-safe) | `OnCastSucceeded()`, `OnTargetAuraUpdate()`, `IsDotActiveOnCurrentTarget()` | v1 |
 | `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v43 |
-| **UI/** | **UI rendering subsystem (6 files)** | | |
+| **UI/** | **UI rendering subsystem (8 files)** | | |
 | `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v9 |
 | `UI/UIAnimations.lua` | Animation helpers (glow, flash, channel fill) | `StartAssistedGlow()`, `ShowProcGlow()`, `StartFlash()` | v15 |
 | `UI/CastInterruptTracker.lua` | Interrupt debounce, cast bar discovery, LSM sound registration | `EvaluateInterrupt()`, `PlayInterruptAlertSound()`, `NotifyCCApplied()` | v1 |
 | `UI/UIFrameFactory.lua` | Icon/grab-tab frame construction | `CreateSpellIcons()`, `CreateInterruptIcon()` | v16 |
 | `UI/UIRenderer.lua` | Icon rendering + Masque integration (shared per-icon render for both surfaces) | `RenderSpellQueue()`, `RenderQueueIcon()`, `RenderInterruptSlot()` | v25 |
 | `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v11 |
+| `UI/UISootheCue.lua` | Soothe (enrage-cleanse) cue; rides the interrupt slot | `Create()`, `SetSpell()`, `Show()`, `Available()` | v2 |
+| `UI/UIPrecombatOverlay.lua` | OOC click overlay for the defensive queue (pooled click layers) | `Init()`, `Refresh()`, `OverlayClickLayers()` | v1 |
 | `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v2 |
 | `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()`, `InvalidateGapCloserCache()` | v6 |
 | `BurstInjectionEngine.lua` | Two-phase burst injection (trigger → inject priority spells) | `TryActivateBurst()`, `GetBurstStatus()`, `PreCacheRotationCooldowns()` | v5 |
 | `PrecombatEngine.lua` | Out-of-combat buff checklist (flask/food/rune/imbue) | `IsCategorySatisfied()`, maintained-buff offers | v3 |
 | `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v21 |
-| **Options/** | **Modular options panel (13 files)** | | |
+| `DebugHUD.lua` | Movable live overlay of the signals feeding the queue | `Toggle()` | v1 |
+| **Options/** | **Modular options panel (15 files)** | | |
+| `Options/Widgets.lua` | Shared AceConfig entry builders (`JustAC-OptionsWidgets`) | `W.toggle()`, `W.select()`, `W.range()`, `W.resetButton()` | v1 |
 | `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()`, `RebuildListSection()` | v3 |
 | `Options/LiveSearchPopup.lua` | Persistent modal for spell/item selection | `Open()`, `Close()`, `IsOpen()` | v1 |
 | `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v4 |
@@ -206,6 +211,23 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 - **Audits are report-only** (`tools/audit_*.py|sh`): candidate diffs vs curated lists (`audit_topoff_heals.py`, `audit_cooldownset.py` for the client's own per-spec cooldown lists). Human judgment decides what enters curated files.
 - Curated files (`SpellCategories`, `InterruptAbilities`, `RangeReferences`) have no generator - edit by hand, re-run audits per patch.
 
+**Data file → source map** (which generator owns which table - skip the grep):
+
+| `Data/*.lua` | Source | Holds |
+|--------------|--------|-------|
+| `SpellCategories.lua` | curated (hand) | Category tags (defensive/interrupt/etc.) per spell |
+| `InterruptAbilities.lua` | curated (hand) | Interrupt/CC spell reference |
+| `RangeReferences.lua` | curated (hand) | Per-class range-check spell IDs |
+| `SpellArchetypes.lua` | `gen_archetypes.sh` | Role/archetype classification |
+| `AuraStacks.lua` | `gen_aura_stacks.py` | Max-stack counts (secret-charge fallback) |
+| `SelfAuras.lua` | `gen_self_auras.py` | Player buff/form IDs for RedundancyFilter |
+| `TargetDots.lua` | `gen_target_dots.py` | Maintained enemy DoT IDs for DotTracker |
+| `HealingItems.lua` | `gen_healing_items.py` | Usable heal/potion items |
+| `PrecombatBuffs.lua` | `gen_precombat_buffs.py` | Flask/food/rune/imbue + Well Fed families |
+| `SpellCooldowns.lua` | `gen_spell_cooldowns.py` | Per-spec cooldown-set reference |
+| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (34 specs) |
+| *(not shipped)* | `gen_aura_durations.py` | Retained only - durations are secret in combat, superseded by the readiness probe |
+
 ## 12.0 Compatibility & Secret Values
 
 **Safe APIs:** `C_AssistedCombat.*`, `GetBindingKey()`, `C_Spell.GetSpellInfo()`, `C_Spell.IsSpellInRange()`, `C_Spell.IsExternalDefensive()`
@@ -269,9 +291,9 @@ end
 
 ## Reference Docs
 
-- `Documentation/STYLE_GUIDE_JUSTAC.md` - Full coding conventions (843 lines)
-- `Documentation/ASSISTED_COMBAT_API_DEEP_DIVE.md` - C_AssistedCombat reference (717 lines)
-- `Documentation/MACRO_PARSING_DEEP_DIVE.md` - Macro conditional parsing (904 lines)
+- `Documentation/STYLE_GUIDE_JUSTAC.md` - Full coding conventions
+- `Documentation/ASSISTED_COMBAT_API_DEEP_DIVE.md` - C_AssistedCombat reference
+- `Documentation/MACRO_PARSING_DEEP_DIVE.md` - Macro conditional parsing
 - `Documentation/12.0_COMPATIBILITY.md` - API compatibility, secret values, implementation status
 - `Documentation/AURA_DETECTION_ALTERNATIVES.md` - Alternative aura detection methods for 12.0
 - `Documentation/VERSION_CONDITIONALS.md` - Version-conditional patterns for 12.0 compatibility
