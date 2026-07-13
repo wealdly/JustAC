@@ -1,7 +1,7 @@
-# JustAC Style Guide - AI Reference
+# JustAC Style Guide - Developer Reference
 
 **Version:** 2.6  
-**Format:** AI-optimized for quick parsing and rule extraction  
+**Format:** Structured for quick parsing and rule extraction  
 **Addon:** WoW Assisted Combat Enhancement (JustAC)  
 **Last Updated:** 2026-05-10
 
@@ -851,4 +851,4 @@ When creating or editing a module, verify:
 
 ---
 
-**Usage Note:** This guide is optimized for AI agent development working on JustAC. Always verify WoW API behavior with `/script` commands before implementation.
+**Usage Note:** This guide is a reference for development on JustAC. Always verify WoW API behavior with `/script` commands before implementation.

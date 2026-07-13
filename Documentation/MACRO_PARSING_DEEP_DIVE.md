@@ -900,4 +900,4 @@ Users with complex multi-condition macros will see wrong hotkeys or missing spel
 [channeling:spell]      -- Casting/channeling check
 ```
 
-For AI agents: Always verify actual macro syntax with `/script` tests before assuming parsing behavior.
+Note: Always verify actual macro syntax with `/script` tests before assuming parsing behavior.
