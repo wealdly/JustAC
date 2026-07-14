@@ -16,6 +16,9 @@ tools/luacheck.exe
 gh_tmp.json
 *.tmp.json
 
+# Playwright MCP browser snapshots/screenshots (local dev only)
+.playwright-mcp/
+
 # Office lock/temp files (Word leaves ~$ files while a doc is open)
 ~$*
 
