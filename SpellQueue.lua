@@ -408,6 +408,14 @@ SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac wh
 --- Append a bucket's entries to recommendedSpells in profile-distance order
 --- (closest match first), stable within each rank. Returns the new spellCount.
 local rankSortIdx = {}
+-- Comparator hoisted to module scope (reads the sortRanks upvalue set below) so the
+-- hot path doesn't allocate a fresh closure on every call - AppendRankedBucket runs
+-- ~2x per queue build (proc + normal buckets), ~30Hz in combat.
+local sortRanks
+local function rankSortComparator(a, b)
+    if sortRanks[a] ~= sortRanks[b] then return sortRanks[a] < sortRanks[b] end
+    return a < b
+end
 local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spellCount, maxIcons)
     -- Stable sort by rank (ascending = higher priority), ties keeping insertion order.
     -- Handles both ContextRank (0..RANK_SINK) and SimC priority ranks (a list index that
@@ -415,10 +423,8 @@ local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spell
     -- bucket-iteration silently dropped anything ranked above RANK_SINK.
     wipe(rankSortIdx)
     for i = 1, count do rankSortIdx[i] = i end
-    table.sort(rankSortIdx, function(a, b)
-        if ranks[a] ~= ranks[b] then return ranks[a] < ranks[b] end
-        return a < b
-    end)
+    sortRanks = ranks
+    table.sort(rankSortIdx, rankSortComparator)
     for k = 1, count do
         if spellCount >= maxIcons then break end
         spellCount = spellCount + 1
