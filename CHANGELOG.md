@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+## [4.44.0] - 2026-07-15
+
+### Added
+- **On-the-move marker**: a small arrow on suggested abilities you can cast while moving - instants, plus hardcast nukes the moment a proc makes them instant (Hot Streak, Lava Surge, and the like) - so you can grab one at a glance when you need to reposition. Channeled abilities are never marked. Defaults on for ranged and healer specs and off for melee; toggle it under General -> Mark Move-Castable Spells.
+
+### Changed
+- **Weapon enhancements now apply in one click**: clicking a suggested oil, whetstone or weightstone out of combat used to just put it on your cursor, leaving you to find and click your weapon. It now goes straight onto your main hand.
+
+### Fixed
+- **Defensive suggestions no longer vanish while you're stunned**: being stunned, feared, silenced or otherwise controlled made the game report every spell as uncastable, so the defensive queue emptied out for the duration of the effect and refilled when it broke - right when you most wanted to see what to press. Your defensives now stay put and simply grey out until you regain control, keeping the same order throughout.
+- **Druid defensive defaults were missing heals**: Rejuvenation and Heart of the Wild are class talents but weren't suggested. Balance, Feral and Guardian now get Heart of the Wild, and the caster specs get Rejuvenation. Restoration doesn't get Heart of the Wild - it empowers abilities outside your spec, so for a healer it's a damage cooldown rather than a defensive. Existing characters keep their current list; use Restore Defaults under Defensives to pick up the new entries.
+- The target health bar now updates the instant you switch targets in combat, instead of briefly showing the previous target's health until it next changed. The pet health bar refreshes the same way when a pet is summoned.
+
 ## [4.43.0] - 2026-07-12
 
 ### Added

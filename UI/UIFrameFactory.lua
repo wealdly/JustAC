@@ -19,6 +19,12 @@ local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
 local GRAB_TAB_LENGTH = 12  -- grab-tab thickness along the queue axis
+-- Move-cast marker: white fast-forward arrows over a soft white glow. The arrow
+-- atlas carries its own dark edge, so a white tint yields a white glyph with a
+-- built-in outline - legible on any icon (frost, fire, holy). The glow pulses on
+-- its own behind the steady arrows. Each color is a one-line recolor here.
+local MOVE_DOT_COLOR = { r = 1.00, g = 1.00, b = 1.00 }  -- arrow fill
+local MOVE_DOT_GLOW  = { r = 1.00, g = 1.00, b = 1.00 }  -- glow (additive)
 
 -- Export constants for UIRenderer and UINameplateOverlay
 UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
@@ -469,6 +475,71 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
     chargeText:SetText("")
     chargeText:Hide()
     button.chargeText = chargeText
+
+    -- Move-while-casting marker (lower-left): two overlapping right-arrows - a
+    -- fast-forward glyph that reads as movement - on spells castable while moving,
+    -- so ranged players can spot an on-the-move alternate. White arrows: the atlas
+    -- art carries its own dark edge, so a white tint gives a white glyph with a
+    -- built-in outline that reads on any icon. A soft white glow sits behind them in
+    -- its own frame and pulses on its own; the arrows stay steady. A single
+    -- Show/Hide drives it (pulse auto play/stops via OnShow/OnHide). Reuses
+    -- arrowAtlas resolved above. Toggled per spell in UIRenderer.RenderQueueIcon;
+    -- not Masque-managed. glyphW/glyphH/arrowSep tune size + overlap; glow scale/alpha the glow.
+    local glyphH   = math_max(7, math_floor(size * 0.24))
+    local glyphW   = math_floor(glyphH * 0.95)
+    local arrowSep = math_floor(glyphH * 0.28)   -- half the gap between the two arrows
+    local frameW   = glyphW + arrowSep * 2
+    local dotInset = math_max(3, math_floor(size * 0.1))
+    local dotR, dotG, dotB = MOVE_DOT_COLOR.r, MOVE_DOT_COLOR.g, MOVE_DOT_COLOR.b
+    local glwR, glwG, glwB = MOVE_DOT_GLOW.r, MOVE_DOT_GLOW.g, MOVE_DOT_GLOW.b
+    local moveDot = CreateFrame("Frame", nil, hotkeyFrame)
+    moveDot:SetSize(frameW, glyphH)
+    moveDot:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", dotInset, dotInset)
+
+    -- Glow: soft additive white blobs (one per arrow) in their own frame so ONLY the
+    -- glow pulses. A soft round texture - NOT the arrow shape - gives a diffuse halo
+    -- (a real glow, matching the web mock's blur) instead of a hard scaled outline;
+    -- the two overlap additively into one soft glow that follows the arrows.
+    local glowFrame = CreateFrame("Frame", nil, moveDot)
+    glowFrame:SetAllPoints(moveDot)
+    local glowW = math_floor(glyphW * 1.9)
+    local glowH = math_floor(glyphH * 1.9)
+    for _, ox in ipairs({ -arrowSep, arrowSep }) do
+        local g = glowFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+        g:SetTexture("Interface\\COMMON\\Indicator-Gray")
+        g:SetBlendMode("ADD")
+        g:SetVertexColor(glwR, glwG, glwB, 0.7)
+        g:SetSize(glowW, glowH)
+        g:SetPoint("CENTER", glowFrame, "CENTER", ox, 0)
+    end
+
+    -- Crisp arrows on top, in a frame above the glow. Steady (only the glow pulses).
+    local arrowFrame = CreateFrame("Frame", nil, moveDot)
+    arrowFrame:SetAllPoints(moveDot)
+    arrowFrame:SetFrameLevel(glowFrame:GetFrameLevel() + 1)
+    for _, ox in ipairs({ -arrowSep, arrowSep }) do
+        local glyph = arrowFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+        glyph:SetAtlas(arrowAtlas)
+        glyph:SetDesaturated(true)
+        glyph:SetVertexColor(dotR, dotG, dotB, 1)
+        glyph:SetSize(glyphW, glyphH)
+        glyph:SetPoint("CENTER", arrowFrame, "CENTER", ox, 0)
+    end
+
+    -- Pulse ONLY the glow layer.
+    local pulse = glowFrame:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local pulseAnim = pulse:CreateAnimation("Alpha")
+    pulseAnim:SetFromAlpha(1.0)
+    pulseAnim:SetToAlpha(0.3)
+    pulseAnim:SetDuration(0.9)
+    pulseAnim:SetSmoothing("IN_OUT")
+    moveDot.pulse = pulse
+    moveDot:SetScript("OnShow", function(self) self.pulse:Play() end)
+    moveDot:SetScript("OnHide", function(self) self.pulse:Stop() end)
+
+    moveDot:Hide()
+    button.moveDot = moveDot
 
     -- State tracking fields
     button.spellID = nil

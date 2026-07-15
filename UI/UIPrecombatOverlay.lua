@@ -18,7 +18,7 @@
 -- disabled. Out of combat the panel's own icons aren't draggable (the grab tab moves the
 -- frame), so the overlay has nothing else to forward.
 
-local PrecombatOverlay = LibStub:NewLibrary("JustAC-PrecombatOverlay", 1)
+local PrecombatOverlay = LibStub:NewLibrary("JustAC-PrecombatOverlay", 2)
 if not PrecombatOverlay then return end
 
 local InCombatLockdown = InCombatLockdown
@@ -59,6 +59,13 @@ local function EnsurePool()
             if mouseButton == "RightButton" and not down then
                 local f = self.icon and self.icon:GetScript("OnClick")
                 if f then f(self.icon, mouseButton) end
+            elseif mouseButton == "LeftButton" and not down and self.isWeaponEnchant then
+                -- The enchant is in flight; the weapon still reads unenchanted for a beat.
+                -- Latch it applied now so the suggestion clears before a second click can
+                -- spend another stone. See PrecombatEngine.NoteWeaponEnchantApplied.
+                local PE = LibStub("JustAC-PrecombatEngine", true)
+                if PE and PE.NoteWeaponEnchantApplied then PE.NoteWeaponEnchantApplied() end
+                PrecombatOverlay.Refresh()
             end
         end)
         -- Faint centered "click" hint, shown only over inserted pre-combat buff icons (which
@@ -83,6 +90,7 @@ end
 -- secure lookup falls back from "spell1"/"item1" to "spell"/"item".
 local function ConfigureLayer(layer, icon, eating)
     layer.icon = icon
+    layer.isWeaponEnchant = nil  -- pooled: clear before the branches below re-decide
     local SDB = LibStub("JustAC-SpellDB", true)
     local recupName
     if icon.spellID and SDB and icon.spellID == SDB.RECUPERATE and C_Spell.GetSpellInfo then
@@ -90,8 +98,24 @@ local function ConfigureLayer(layer, icon, eating)
         recupName = info and info.name
     end
     if icon.isItem and icon.itemID then
-        layer:SetAttribute("type1", "item")
-        layer:SetAttribute("item", "item:" .. icon.itemID)
+        -- Weapon enhancements (oil / whetstone / weightstone) are a two-step use: the item
+        -- only ARMS an "apply to which item?" cursor - the enchant lands when a weapon slot
+        -- is used while that cursor is held. A plain "item" action performs step one and
+        -- leaves the player holding the cursor, hunting for their weapon, so chain both
+        -- halves into the one click. "/use 16" is INVSLOT_MAINHAND: the slash parser routes
+        -- a bare number to UseInventoryItem, which consumes the armed cursor.
+        -- Main hand only, matching the missing-enchant detection in PrecombatEngine (it
+        -- reads GetWeaponEnchantInfo's main-hand return and nothing else).
+        -- ponytail: off-hand would need the detection side to grow an off-hand check first.
+        layer.isWeaponEnchant = SDB and SDB.GetPrecombatBuffCategory
+            and SDB.GetPrecombatBuffCategory(icon.itemID) == "weaponEnchant" or nil
+        if layer.isWeaponEnchant then
+            layer:SetAttribute("type1", "macro")
+            layer:SetAttribute("macrotext", "/use item:" .. icon.itemID .. "\n/use 16")
+        else
+            layer:SetAttribute("type1", "item")
+            layer:SetAttribute("item", "item:" .. icon.itemID)
+        end
     elseif recupName then
         -- Recuperate: a damage tick interrupts the heal-over-time while the 30s
         -- "active" aura (and its animation) keeps running, and the stale aura

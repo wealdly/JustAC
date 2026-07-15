@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 10
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 11
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -102,6 +102,24 @@ end
 -- BlizzardAPI/CooldownTracking (loads earlier in the .toc).
 local ResolveBaseSpellID = BlizzardAPI.ResolveBaseSpellID
 
+-- Loss of control = stun / fear / silence / incapacitate / disorient etc.
+-- While one is active the client reports the whole spellbook as uncastable for a
+-- NON-resource reason, so the castability gate below would drop every defensive
+-- spell in the same rebuild and blink the queue empty for the CC's duration -
+-- precisely when the player is staring at it waiting to press something. Items
+-- aren't gated on castability, so they'd stay put while the spells vanished:
+-- the queue reshuffles rather than cleanly hiding, which is the flicker.
+-- The active count is a plain number (no SecretWhen* flag on the count function);
+-- if it ever reads secret we return false and the gate behaves as before.
+local C_LossOfControl = C_LossOfControl ---@diagnostic disable-line: undefined-global
+function BlizzardAPI.IsLossOfControlActive()
+    if not (C_LossOfControl and C_LossOfControl.GetActiveLossOfControlDataCount) then return false end
+    local ok, count = pcall(C_LossOfControl.GetActiveLossOfControlDataCount)
+    if not ok or IsSecretValue(count) then return false end
+    return (count or 0) > 0
+end
+local IsLossOfControlActive = BlizzardAPI.IsLossOfControlActive
+
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false
@@ -127,7 +145,12 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     -- static data can't. Hide only when genuinely uncastable for a NON-resource
     -- reason; a pure resource shortfall (e.g. Frenzied Regeneration's 40 energy)
     -- still shows - downstream renders that state. Fail open when unreadable.
-    if C_Spell and C_Spell.IsSpellUsable then
+    -- Skipped entirely under loss of control (see IsLossOfControlActive): the CC,
+    -- not the spell, is why nothing is castable. Entries fall through to the
+    -- caller's ready/on-CD ordering, which stays honest while CC'd; the renderer
+    -- greys the icons off its own usability read, so they hold their place, dimmed,
+    -- and light back up when control returns.
+    if C_Spell and C_Spell.IsSpellUsable and not IsLossOfControlActive() then
         local ok, usable, notEnoughPower = pcall(C_Spell.IsSpellUsable, gateID)
         if ok and not IsSecretValue(usable) and usable == false and notEnoughPower ~= true then
             return false, false, false

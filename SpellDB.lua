@@ -232,6 +232,15 @@ function SpellDB.GetTargetDotDuration(spellID)
     return (d and d > 0) and d or nil
 end
 
+-- Channeled player spells (curated from the SpellMisc channel bit). Channels
+-- report cast time 0 like instants, so the move-cast marker excludes these -
+-- movement breaks a channel. StaticLookup resolves talent-override / base IDs.
+local channeledSpells
+function SpellDB.RegisterChanneledSpells(t) channeledSpells = t end
+function SpellDB.IsChanneled(spellID)
+    return channeledSpells ~= nil and StaticLookup(channeledSpells, spellID) == true
+end
+
 -- Form / stealth / caster-aura CASTABILITY gating was removed: the never-secret
 -- C_Spell.IsSpellUsable evaluates all of it live (form, talents incl. form-bypass
 -- hero talents, stealth, and cast-condition auras), so SpellQueue and the
@@ -763,6 +772,32 @@ function SpellDB.GetSpecKey()
     return playerClass .. "_" .. spec, playerClass
 end
 
+-- Ranged-DPS spec IDs (healers resolve via role below). Everything else - melee
+-- DPS and tanks - is treated as melee. Used to auto-default the move-cast dot on
+-- for specs that actually hardcast (ranged/healers) and off for melee.
+local RANGED_DPS_SPECS = {
+    [253] = true, [254] = true,               -- Hunter: Beast Mastery, Marksmanship
+    [62]  = true, [63]  = true, [64] = true,  -- Mage: Arcane, Fire, Frost
+    [258] = true,                             -- Priest: Shadow
+    [102] = true,                             -- Druid: Balance
+    [262] = true,                             -- Shaman: Elemental
+    [265] = true, [266] = true, [267] = true, -- Warlock: Affliction, Demonology, Destruction
+    [1467] = true, [1473] = true,             -- Evoker: Devastation, Augmentation
+}
+local rangedSpecCacheIdx, rangedSpecCacheVal
+--- True if the current spec is a ranged DPS or a healer (move-cast dot auto-on).
+--- Cached by spec index; recomputed only when the player changes spec.
+function SpellDB.IsRangedOrHealerSpec()
+    local spec = GetSpecialization and GetSpecialization()
+    if not spec then return false end
+    if rangedSpecCacheIdx ~= spec then
+        rangedSpecCacheIdx = spec
+        local specID, _, _, _, role = GetSpecializationInfo(spec)
+        rangedSpecCacheVal = (role == "HEALER") or (RANGED_DPS_SPECS[specID] == true)
+    end
+    return rangedSpecCacheVal
+end
+
 --- Resolve defaults from a table that supports both spec-level and class-level keys.
 --- Tries "CLASS_N" first, then falls back to "CLASS".
 --- @param defaultsTable table - e.g. SpellDB.CLASS_DEFENSIVE_DEFAULTS
@@ -813,14 +848,20 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     DEMONHUNTER_2 = {228477, 203720, 204021, 187827, 198589, 263648}, -- Soul Cleave, Demon Spikes, Fiery Brand, Metamorphosis, Blur, Soul Barrier
 
     -- ── Druid ───────────────────────────────────────────────────────────────
-    -- Class fallback (Balance/Resto): self-heals then CDs. Frenzied Regeneration and
-    -- Survival Instincts are class talents any spec can take - included so a talented
-    -- caster gets them; the runtime known-spell gate drops them when untalented.
-    DRUID         = {8936, 22842, 108238, 61336, 22812},       -- Regrowth, Frenzied Regen, Renewal, Survival Instincts, Barkskin
-    -- Feral: Regrowth, Frenzied Regen (class talent), Survival Instincts, Barkskin, Renewal
-    DRUID_2       = {8936, 22842, 61336, 22812, 108238},       -- Regrowth, Frenzied Regen, Survival Instincts, Barkskin, Renewal
-    -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper
-    DRUID_3       = {22842, 192081, 22812, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
+    -- Class fallback (Balance): self-heals then CDs. Rejuvenation, Frenzied Regeneration,
+    -- Survival Instincts and Heart of the Wild are class talents any spec can take -
+    -- included so a talented caster gets them; the runtime known-spell gate drops them
+    -- when untalented. Heart of the Wild empowers abilities OUTSIDE your spec, so for a
+    -- non-healer it's the button that makes the class-tree heals actually land.
+    DRUID         = {8936, 774, 22842, 108238, 1261867, 61336, 22812},  -- Regrowth, Rejuvenation, Frenzied Regen, Renewal, Heart of the Wild, Survival Instincts, Barkskin
+    -- Feral: Regrowth, Frenzied Regen (class talent), Heart of the Wild, Survival Instincts, Barkskin, Renewal
+    -- (Rejuvenation omitted: castable only out of form, so it self-gates away for most Ferals)
+    DRUID_2       = {8936, 22842, 1261867, 61336, 22812, 108238},       -- Regrowth, Frenzied Regen, Heart of the Wild, Survival Instincts, Barkskin, Renewal
+    -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Heart of the Wild, Survival Instincts, Rage of the Sleeper
+    DRUID_3       = {22842, 192081, 22812, 1261867, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Heart of the Wild, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
+    -- Restoration: the class fallback minus Heart of the Wild - it empowers off-spec
+    -- abilities, which for a healer means damage, not survival.
+    DRUID_4       = {8936, 774, 22842, 108238, 61336, 22812},           -- Regrowth, Rejuvenation, Frenzied Regen, Renewal, Survival Instincts, Barkskin
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs): self-heals then defensive CDs. Renewing Blaze and

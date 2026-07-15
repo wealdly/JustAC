@@ -441,6 +441,10 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     wipe(nonProccedBuffer)
     wipe(unusableBuffer)
 
+    -- Resolved once per build: stun/fear/silence is a state of the PLAYER, not of any
+    -- one spell, so it must not feed the per-spell ordering decisions below.
+    local locActive = BlizzardAPI.IsLossOfControlActive and BlizzardAPI.IsLossOfControlActive()
+
     -- Single pass: categorize spells into three priority tiers:
     --   1. Procced (instant/free cast - highest priority)
     --   2. Castable non-procced (usable, off CD - mid priority, user list order)
@@ -473,10 +477,15 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                     else
                         -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
                         -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
+                        -- Under loss of control the castability check is skipped: the CC
+                        -- reports every spell uncastable, which would collapse the ready vs
+                        -- on-CD split and shuffle the whole queue the moment a stun lands.
+                        -- IsSpellReady is local CD tracking, so it stays honest while CC'd -
+                        -- the order holds and the renderer greys the icons on its own.
                         local unusable, noResources
                         if not BlizzardAPI.IsSpellReady(resolvedID) then
                             unusable, noResources = true, false
-                        else
+                        elseif not locActive then
                             local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
                             if not castable then
                                 unusable, noResources = true, notEnoughResources

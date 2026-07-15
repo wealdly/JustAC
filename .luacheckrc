@@ -50,6 +50,7 @@ read_globals = {
   "C_DurationUtil",
   "C_GamePad",
   "C_Item",
+  "C_LossOfControl",
   "C_Map",
   "C_MountJournal",
   "C_NamePlate",

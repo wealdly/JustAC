@@ -2621,6 +2621,18 @@ local function BuildValidateProbes()
         return d and d:HasSecretValues()
     end)
 
+    -- Loss of control: the defensive queue skips its castability gate while CC'd
+    -- (a stun reports the whole book uncastable). That rests on the active count
+    -- being plainly readable - if this ever classes secret, the queue silently
+    -- reverts to hiding every defensive for the CC's duration.
+    add("loc.activeCount", function()
+        return C_LossOfControl and C_LossOfControl.GetActiveLossOfControlDataCount()
+    end)
+    add("loc.gate", function()
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        return B and B.IsLossOfControlActive and B.IsLossOfControlActive()
+    end)
+
     add("cast.playerName", function() return (UnitCastingInfo("player")) end)
     add("cast.targetName", function() return (UnitCastingInfo("target")) end)
     add("cast.targetNotInterruptible", function() return select(8, UnitCastingInfo("target")) end)

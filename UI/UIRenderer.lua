@@ -696,6 +696,10 @@ local function ClearIconState(icon)
     if icon.spreadArrow then
         icon.spreadArrow:Hide()
     end
+    if icon.moveDot then
+        icon.moveDot:Hide()
+        icon._moveDotShown = false
+    end
     if UIAnimations then
         if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
         if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon) end
@@ -1376,6 +1380,57 @@ end
 --   hideEmptySlots          hide the button on an empty slot (overlay) instead of
 --                           showing an empty placeholder slot (standard queue)
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Move-cast marker classification. A spell is castable while moving when it is
+-- INSTANT right now: base instants always, hardcasts only while a proc has made
+-- them instant (Hot Streak, Lava Surge, ...). Channels are excluded (movement
+-- breaks them) even though they also report cast time 0.
+--
+-- The static class is cached per spell; the proc state is read live per render.
+--   "instant" -> always mark       "hardcast" -> mark only while proc'd
+--   "channel" -> never mark         nil        -> unknown, don't mark (retry)
+-- castTime is static spell metadata (not a live/secret value), but the compare is
+-- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
+local issecretvalue = issecretvalue  -- 12.0 global; nil on older clients
+local C_SpellActivationOverlay_IsSpellOverlayed =
+    C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+local moveCastClassCache = {}
+local function MoveCastClass(spellID, spellInfo)
+    if not spellID then return nil end
+    local cached = moveCastClassCache[spellID]
+    if cached ~= nil then return cached end
+    local SDB = LibStub("JustAC-SpellDB", true)
+    if SDB and SDB.IsChanneled and SDB.IsChanneled(spellID) then
+        moveCastClassCache[spellID] = "channel"
+        return "channel"
+    end
+    local ct = spellInfo and spellInfo.castTime
+    if ct == nil then return nil end               -- no info yet; retry next render
+    if issecretvalue and issecretvalue(ct) then return "hardcast" end  -- unreadable; proc-gate it
+    local class = (ct == 0) and "instant" or "hardcast"
+    moveCastClassCache[spellID] = class
+    return class
+end
+
+-- A hardcast is castable while moving only while a proc has made it instant. Reuse
+-- Blizzard's spell-activation overlay (the same "proc ready" cue that glows the
+-- icon) as the live signal. Fail-safe: any error / secret -> not proc'd (no mark),
+-- never a wrong "cast while moving" claim.
+local function IsSpellProcActive(spellID)
+    if not (spellID and C_SpellActivationOverlay_IsSpellOverlayed) then return false end
+    local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(overlayed) then return false end
+    return overlayed == true
+end
+
+--- True if the spell can be cast while moving right now (for the queue marker).
+local function IsMoveCastableNow(spellID, spellInfo)
+    local class = MoveCastClass(spellID, spellInfo)
+    if class == "instant" then return true end
+    if class == "hardcast" then return IsSpellProcActive(spellID) end
+    return false  -- "channel" / nil
+end
+
 local function RenderQueueIcon(icon, i, ctx)
     local currentTime = ctx.now
     local spellIDs = ctx.spellIDs
@@ -1663,6 +1718,19 @@ local function RenderQueueIcon(icon, i, ctx)
 
         UpdateCastingHighlight(icon, ctx.showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
 
+        -- Move-cast marker: show on spells castable while moving right now - base
+        -- instants always, hardcasts while proc'd instant, channels never.
+        -- ctx.showMoveCastDot folds in the per-spec auto default. Evaluated every
+        -- render (proc state is live); toggled only on change so the pulse holds.
+        if icon.moveDot then
+            local wantMoveDot = ctx.showMoveCastDot and not isItemEntry
+                and not icon.isWaitingSpell and IsMoveCastableNow(spellID, spellInfo)
+            if wantMoveDot ~= icon._moveDotShown then
+                if wantMoveDot then icon.moveDot:Show() else icon.moveDot:Hide() end
+                icon._moveDotShown = wantMoveDot
+            end
+        end
+
         -- First icon scale (overlay only; scale is icon-local, never a secret read).
         if ctx.firstIconScale then
             local targetScale = (i == 1) and ctx.firstIconScale or 1.0
@@ -1869,6 +1937,13 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         UIRenderer.RenderInterruptSlot(intIcon, ictx)
     end
 
+    -- Move-cast dot visibility: explicit profile toggle, or the per-spec auto
+    -- default (ranged DPS / healers on, melee off) when the player hasn't set it.
+    local showMoveCastDot = profile.showMoveCastDot
+    if showMoveCastDot == nil then
+        showMoveCastDot = SDB and SDB.IsRangedOrHealerSpec and SDB.IsRangedOrHealerSpec() or false
+    end
+
     if shouldShowFrame then
         -- Per-pass ctx for the shared icon renderer (see RenderQueueIcon docs).
         local ctx = renderCtx
@@ -1889,6 +1964,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ctx.showRangeTint       = showRangeTint
         ctx.showUsabilityTint   = showUsabilityTint
         ctx.showCastingHighlight = showCastingHighlight
+        ctx.showMoveCastDot     = showMoveCastDot
         ctx.isChanneling        = isChanneling
         ctx.channelSpellID      = channelSpellID
         ctx.isCasting           = isCasting

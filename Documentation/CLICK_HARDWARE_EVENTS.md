@@ -58,9 +58,18 @@ run a multi-line macro. Use the down/up split when:
 
 ## Current usage in JustAC
 
-`UI/UIPrecombatOverlay.lua` (`ConfigureLayer`): the Recuperate click layer
-chains `/cancelaura` + `/cast` via macrotext, because a damage tick can
-interrupt Recuperate's heal-over-time while its 30s active aura (and
-animation) keeps running - the stale aura must be cancelled before a re-cast
-lands. If that macro path regresses, the down/up split above is the documented
-fallback.
+`UI/UIPrecombatOverlay.lua` (`ConfigureLayer`) chains two actions in two places,
+both via macrotext:
+
+- **Recuperate**: `/cancelaura` + `/cast`. A damage tick can interrupt
+  Recuperate's heal-over-time while its 30s active aura (and animation) keeps
+  running - the stale aura must be cancelled before a re-cast lands.
+- **Weapon enhancements** (oil / whetstone / weightstone): `/use item:<id>` +
+  `/use 16`. Using the item only arms an "apply to which item?" cursor; the
+  enchant lands when a weapon slot is used while it's held. `/use 16` is
+  `INVSLOT_MAINHAND` - `SecureCmdItemParse` matches a bare number as a slot, so
+  `SecureCmdUseItem` routes it to `UseInventoryItem(16)`, consuming the cursor.
+
+If either macro path regresses, the down/up split above is the documented
+fallback (for the weapon enhancement: `type1="item"` on the press,
+`typerelease1="macro"` with `/use 16` on the release).

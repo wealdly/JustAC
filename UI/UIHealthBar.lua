@@ -719,6 +719,7 @@ function UIHealthBar.UpdatePetVisibility(addon)
     local exists = UnitExists("pet")
     if exists then
         petHealthBarFrame:Show()
+        lastPetUpdate = 0  -- force fresh values now (pet just (re)summoned / shown)
         UIHealthBar.UpdatePet(addon)
     else
         petHealthBarFrame:Hide()
@@ -1257,7 +1258,10 @@ function UIHealthBar.CreateTargetHealthBar(addon)
     return frame
 end
 
--- Update target health value on timer.
+-- Update target health value (throttled to UPDATE_INTERVAL). Callers reacting to
+-- a target switch / visibility change reset lastTargetUpdate = 0 first so the new
+-- target's health applies immediately instead of being throttled out by a recent
+-- UNIT_HEALTH tick from the old target (same idiom as UpdatePowerColor).
 function UIHealthBar.UpdateTarget(addon)
     if not targetHealthBarFrame or not targetHealthBarFrame:IsVisible() then return end
 
@@ -1290,6 +1294,7 @@ function UIHealthBar.UpdateTargetVisibility(addon)
     if not targetHealthBarFrame then return end
     if ShouldShowTargetBar() then
         targetHealthBarFrame:Show()
+        lastTargetUpdate = 0  -- force fresh values now (target/visibility just changed)
         UIHealthBar.UpdateTarget(addon)
     else
         targetHealthBarFrame:Hide()

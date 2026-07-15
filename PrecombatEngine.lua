@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 3)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 4)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -58,6 +58,22 @@ local function KnownWeaponImbue()
     return nil
 end
 
+-- Optimistic post-click suppression for weapon enhancements. Applying one is a server
+-- round trip, so GetWeaponEnchantInfo keeps reporting "no enchant" for a beat after the
+-- click - long enough that the suggestion lingers, still clickable, and a double-click
+-- burns a second stone (the click applies in one go; it isn't a harmless cursor arm).
+-- Treat the category as satisfied for a moment after a click so the icon clears at once.
+-- Purely a display latch: if the application never landed, the window lapses and the
+-- suggestion returns on the next rebuild.
+local ENCHANT_APPLY_GRACE = 2
+local enchantAppliedAt = -1e9
+
+--- Called by the click overlay the instant a weapon enhancement is used.
+function PrecombatEngine.NoteWeaponEnchantApplied()
+    enchantAppliedAt = GetTime()
+    PrecombatEngine.ClearCache()
+end
+
 --- Is the buff category already satisfied? Weapon enchant is read off the weapon (temp
 --- enchant); every other category from the player's auras. Out of combat only.
 function PrecombatEngine.IsCategorySatisfied(category)
@@ -69,6 +85,7 @@ function PrecombatEngine.IsCategorySatisfied(category)
         return true
     end
     if category == "weaponEnchant" then
+        if GetTime() - enchantAppliedAt < ENCHANT_APPLY_GRACE then return true end
         local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
         return hasMainHand and true or false
     end
