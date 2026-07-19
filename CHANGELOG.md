@@ -3,6 +3,18 @@
 
 ## [Unreleased]
 
+## [4.45.0] - 2026-07-19
+
+### Changed
+- **SimC priority now follows Blizzard's live recommendation**: with the *SimC priority* option on, the abilities after Blizzard's pick are ordered by how well they match what it's recommending right now - single-target vs. multi-target, and whether you're building or spending resources - with SimulationCraft's priority breaking ties between equally-good options. Because Blizzard's pick reads the combat state we can't, this keeps the queue in step with the situation. It also picks up on burst and proc windows from that pick: when Blizzard recommends a window ability, the rest of that window's abilities line up alongside it - even while the buff itself is hidden mid-combat - and an ability you'd hold until the window passes stays back.
+
+### Fixed
+- **Balance Druid: Sunfire no longer stays at the front of the queue while it's already on your target**: Sunfire was never recognized as a damage-over-time you'd already applied, so it kept being suggested in the first slots even with its effect ticking - unlike Moonfire, which correctly moved back. The queue now tracks Sunfire on your target and sinks it until it needs refreshing.
+- **SimC priority now points at the ability you actually press**: with the *SimC priority* ordering option on, some abilities were matched to a non-castable version of themselves - a passive, or an older spell sharing the name - so they never surfaced properly (Balance Druid's Moonfire was one). Others were missing outright: hero-talent and form abilities such as Annihilation and Death Sweep in Metamorphosis, Thunder Blast, Tempest and Reaver's Glaive, plus core buttons like Devouring Plague and Survival Hunter's kit. These now resolve to the real ability for your spec and build.
+- **SimC priority ordering is tidier**: multi-target abilities no longer bleed into your single-target order (or the reverse); fight-opener and end-of-fight-only casts no longer hold the top spots; and interrupts, defensives, personal cooldowns and movement abilities have been dropped from the ability queue, since each already has its own reminder. What's left stays on your actual damage priority.
+- **Emergency Potion now offers your strongest potion**: potions whose healing scales with item level - the current Silvermoon line among them - were being valued from a source that couldn't tell which potion it was being asked about, so they scored far below what they actually heal and a weaker fixed-amount potion could be suggested while a better one sat in your bags. Ranks of the same potion were scored identically too, so the higher-item-level version had no advantage. The tile now reads what each potion really heals for you; its label under Defensives shows which one it picked.
+- The Emergency Potion choice could also lock in during login, before your bags had finished loading, leaving the wrong potion selected until you next picked something up. It now re-checks until your bags are readable.
+
 ## [4.44.0] - 2026-07-15
 
 ### Added

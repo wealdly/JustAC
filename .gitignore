@@ -1,6 +1,10 @@
 # Build artifacts
 dist/
 
+# Python bytecode caches (from tools/*.py generators)
+__pycache__/
+*.pyc
+
 # Development files
 .luarc.json
 memory/

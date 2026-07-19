@@ -46,6 +46,8 @@ TARGET_UNIT_CASTER = 1
 PERIODIC_DAMAGE_AURAS = {3, 53, 89}
 # SpellMisc.Attributes_1 channel flags (SPELL_ATTR1_CHANNELED_1 | _2).
 CHANNELED_FLAGS = 0x4 | 0x40
+# SpellMisc.Attributes_0 passive flag - a passive record is never the cast button.
+SPELL_ATTR0_PASSIVE = 0x40
 
 # Script-driven applicators the effect data can't link: cast spell -> aura spell
 # it applies (the aura supplies the duration). Vetted by hand.
@@ -60,6 +62,10 @@ CURATED = {
     285381: 1079,     # Primal Wrath applies Rip to all nearby targets via script
     8921:   164812,   # Moonfire (base) - script-applies its DoT; covers all specs
                       # and talent variants via GetBaseSpell (e.g. 155625 -> 8921)
+    93402:  164815,   # Sunfire (Balance) - script-applies its DoT, no trigger link;
+                      # mirrors Moonfire. Without this the cast never maps and Sunfire
+                      # never sinks while its debuff is live (only the dead aura id 164815
+                      # was emitted, which UNIT_SPELLCAST_SUCCEEDED never delivers).
     # Passively-stacking DoTs the CumulativeAura rule wrongly drops: their stacks
     # ramp on their own (ticks / other spells), so recasting while live is still
     # a wasted refresh - exactly what the sink exists for. The APLs refresh all
@@ -72,6 +78,7 @@ CURATED = {
 CURATED_NAMES = {
     285381: "Primal Wrath (applies Rip via script)",
     8921:   "Moonfire (base; covers talent variants via GetBaseSpell)",
+    93402:  "Sunfire (script-applies its DoT)",
     980:    "Agony (stacks ramp passively; recast is still a wasted refresh)",
     1259790: "Unstable Affliction (stacking false positive)",
     445468: "Wither (stacking false positive)",
@@ -156,13 +163,16 @@ def main():
         if sid in dot_auras and int(row["CumulativeAura"] or 0) > 1:
             dot_auras.discard(sid)
 
-    # Channeled cast spells (a channel isn't a maintained DoT).
+    # Channeled cast spells (a channel isn't a maintained DoT), and passive records.
     channeled = set()
+    passive = set()
     for row in read_csv(find("SpellMisc")):
         if int(row["DifficultyID"] or 0) != 0:
             continue
         if int(row["Attributes_1"] or 0) & CHANNELED_FLAGS:
             channeled.add(int(row["SpellID"]))
+        if int(row["Attributes_0"] or 0) & SPELL_ATTR0_PASSIVE:
+            passive.add(int(row["SpellID"]))
 
     # cast_aura: cast spell -> the dot aura it applies (for duration lookup).
     # Direct (cast IS a dot aura) takes precedence over triggered.
@@ -216,6 +226,28 @@ def main():
     out_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"{out_path}: {len(cast_aura)} DoT applicators, "
           f"{len(dot_auras)} dot auras, universe {len(universe)}, build {build}")
+
+    # Systematic check for the class of miss that hid Sunfire: a dot aura in the
+    # universe whose CAST is a distinct same-named spell not mapped here. Reported,
+    # never auto-added - some hits are design-excluded (cooldown-parked bursts like
+    # Odyn's Fury, poison imbues). Curate the genuine maintained DoTs in CURATED.
+    import re as _re
+    byslug = {}
+    for s in universe:
+        n = names.get(s)
+        if n:
+            byslug.setdefault(_re.sub(r"[^a-z0-9]+", "_", n.lower().replace("'", "")).strip("_"), set()).add(s)
+    hints = []
+    for a in sorted(dot_auras & universe):
+        sl = _re.sub(r"[^a-z0-9]+", "_", (names.get(a, "")).lower().replace("'", "")).strip("_")
+        sibs = sorted(c for c in byslug.get(sl, ())
+                      if c != a and c not in dot_auras and c not in channeled
+                      and c not in passive and c not in cast_aura)
+        if sibs:
+            hints.append(f"  aura {a} '{names.get(a, '')}' <- unmapped cast {sibs}")
+    if hints:
+        print("possible unmapped script-applied DoT casts (curate the maintained ones):")
+        print("\n".join(hints))
 
 
 if __name__ == "__main__":

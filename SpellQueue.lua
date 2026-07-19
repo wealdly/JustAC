@@ -335,6 +335,12 @@ local ARCH_UNK  = 3   -- one side untagged: neutral middle, neither boost nor bu
 local GEOM_PEN  = 1   -- melee-multi <-> ranged-multi: same AoE need, different delivery
 local ROLE_PEN  = 1   -- builder <-> spender: wrong resource phase
 local RANK_SINK = 9   -- uncastable (melee, target out of range): trails everything
+-- SimC-mode blend: a ranked entry sorts by ctx*CONTEXT_STRIDE + simc, so the ContextRank
+-- fit-bucket (0..RANK_SINK) always dominates and the SimC list index only orders within a
+-- bucket. STRIDE exceeds any SimC rank component; an ability the SimC list omits takes
+-- SIMC_UNRANKED (trails the ranked ones inside its own context bucket, not the whole queue).
+local CONTEXT_STRIDE = 1000
+local SIMC_UNRANKED  = 999
 -- Reduce (archetype, range) to a target pattern. Cleave counts as melee-multi: a cleave
 -- ability is treated as equivalent to a melee/PBAoE AoE. AoE keeps its own geometry
 -- (melee/PBAoE vs ranged/ground); ST is single-target. Untagged -> nil -> neutral.
@@ -434,10 +440,11 @@ local function AppendRankedBucket(bucket, ranks, count, recommendedSpells, spell
 end
 
 --- Categorize rotation spells into procced/normal/cooldown buckets and assemble
---- in priority order: proc > normal > on-cooldown. Within the proc and normal
---- buckets, entries are ordered by ContextRank (profile-distance to the AC pick), so the
---- ability closest to what Assisted Combat is recommending surfaces first. ctxArch is nil
---- when the AC pick is untagged → uniform rank → no reorder.
+--- in priority order: proc > normal > on-cooldown. Within the proc and normal buckets,
+--- entries are ordered by ContextRank (profile-distance to the AC pick) so the ability
+--- closest to what Assisted Combat is recommending surfaces first; SimC mode refines that
+--- ordering with the theorycraft rank as a tiebreaker within each fit. ctxArch is nil when
+--- the AC pick is untagged → uniform rank → no reorder.
 local RotationImport = LibStub("JustAC-RotationImport", true)
 
 -- True if any positive SimC buff-window gate is active (engine-truth via the
@@ -454,20 +461,58 @@ local function SimcBuffWindowActive(gates)
     return false
 end
 
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx)
+-- True if a positive buff-window gate is one the AC pick ALREADY revealed as active. AC only
+-- recommends a window-gated spell inside its window, so its pick launders the window state even
+-- when the buff aura is secret (the aura probe above can't see secret auras). This promotes a
+-- sibling that shares the pick's window that the probe alone would miss.
+local function GateInPickWindows(gates, pickWindows)
+    if not gates or not pickWindows then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "buff" and not g.neg and g.id and pickWindows[g.id] then return true end
+    end
+    return false
+end
+
+-- True if a NEGATIVE buff gate (!buff[Y], "must NOT have Y") is CONFIRMED active - the window
+-- condition is currently violated, so the entry must not promote (e.g. Rip's `!buff.berserk`
+-- during Berserk). Uses the same aura probe; a secret/unreadable Y reads as not-active and fails
+-- OPEN (no block), mirroring how the positive side already treats secrets - so this never sinks a
+-- promotion on an unreadable negative, it only blocks one we can actually see is violated.
+local function SimcNegativeBuffBlocks(gates)
+    if not gates then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "buff" and g.neg and g.id
+           and BlizzardAPI.IsBuffWindowActive and BlizzardAPI.IsBuffWindowActive(g.id) then
+            return true
+        end
+    end
+    return false
+end
+
+local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
     wipe(normalRank)
     local proccedCount, normalCount, cooldownCount = 0, 0, 0
-    -- rankOf: "off" = neutral (list order); "ac" = ContextRank (distance to AC's pick);
-    -- "simc" = the imported SimC priority rank (theorycraft order), spells not in the
-    -- SimC list sinking below the ranked ones. The SimC entry is pre-fetched per spell
-    -- and passed in to avoid a second lookup.
+    -- rankOf: "off" = neutral (source order); "ac" = ContextRank alone (profile-distance to
+    -- the AC pick); "simc" = that SAME context distance REFINED by SimC's theorycraft priority.
+    -- AC owns the AC slot and, able to read the state we can't, carries the real
+    -- context - so even in SimC mode we rank primarily by how well an ability COMPLEMENTS that
+    -- pick (ContextRank), using the SimC rank only to break ties among equally-fitting abilities.
+    -- Encoding ctx*CONTEXT_STRIDE + simc makes context dominate: a better fit outranks a higher
+    -- SimC rank, and a spell the SimC list omits still sorts by context (no longer dumped to the
+    -- back). e.g. fits-pick + SimC #3 -> 3; fits-pick but unlisted -> 999; off-pattern + SimC #1
+    -- -> 1001. The SimC entry is pre-fetched per spell and passed in to avoid a second lookup.
     local simcMode = (contextOrder == "simc")
     local function rankOf(spellID, simcRec)
         if simcMode then
-            return (simcRec and simcRec.rank) or 900
+            local ctx = ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
+            local simc = (simcRec and simcRec.rank) or SIMC_UNRANKED
+            if simc > SIMC_UNRANKED then simc = SIMC_UNRANKED end
+            return ctx * CONTEXT_STRIDE + simc
         elseif contextOrder == "ac" then
             return ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
         end
@@ -526,9 +571,16 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     -- A ranked ability whose SimC buff-window is up promotes like a proc, so
                     -- it surfaces inside its window (e.g. Rip during Tiger's Fury) - but never
                     -- an unaffordable spender.
+                    -- Blizzard's proc overlay is authoritative ("press this now") and promotes
+                    -- outright. A SimC buff-window promotion (probe or pick-implied) is instead
+                    -- vetoed by a confirmed-active negative gate, so a window spender doesn't
+                    -- surface while its "not during X" condition is visibly violated.
                     if not bypassProcs and ready and not starved
                        and (BlizzardAPI.IsSpellProcced(displayID)
-                            or (simcRec and SimcBuffWindowActive(simcRec.gates)))
+                            or (simcRec
+                                and (SimcBuffWindowActive(simcRec.gates)
+                                     or GateInPickWindows(simcRec.gates, pickWindows))
+                                and not SimcNegativeBuffBlocks(simcRec.gates)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
@@ -986,7 +1038,25 @@ function SpellQueue.GetCurrentSpellQueue()
            and RotationImport.HasRotation()) then
             contextOrder = "ac"
         end
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx)
+        -- Buff windows the AC pick IMPLIES: AC only recommends a window-gated spell inside its
+        -- window, so the pick's positive buff gates reveal those windows are up - readable even
+        -- when the buff aura itself is secret (IsBuffWindowActive's aura probe is blind to secret
+        -- auras). Siblings sharing a revealed window then promote like a live proc.
+        local pickWindows
+        if contextOrder == "simc" and RotationImport and RotationImport.GetEntry and primarySpellID then
+            local pickRec = RotationImport.GetEntry(primarySpellID, simcCtx)
+            if pickRec and pickRec.gates then
+                for i = 1, #pickRec.gates do
+                    local g = pickRec.gates[i]
+                    if g.t == "buff" and not g.neg and g.id then
+                        pickWindows = pickWindows or {}
+                        pickWindows[g.id] = true
+                    end
+                end
+            end
+        end
+        lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
+        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but

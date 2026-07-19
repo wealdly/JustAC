@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 21)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 22)
 if not DebugCommands then return end
 
 -- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
@@ -46,6 +46,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect gates - SimC gate layer: buff-window tracker + live gate eval (run in combat)")
     addon:Print("/jac inspect aoe - Probe secret-safe enemy counting (AC-independent AoE detection)")
     addon:Print("/jac inspect resource - Probe secret-safe resource inference from usability")
+    addon:Print("/jac inspect rotation - Probe whether GetRotationSpells' tail is live-ordered (A/B across state)")
     addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -628,12 +629,17 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
             "active on target - parked at the back; returns for the pandemic refresh window")
     end
 
-    -- SimC ordering context
+    -- SimC ordering context (blended: context fit first, SimC theorycraft rank refines)
     if profile.contextOrder == "simc" then
         local RI = LibStub("JustAC-RotationImport", true)
         local rec = RI and RI.GetEntry and RI.GetEntry(spellID)
-        addon:Print(rec and ("  SimC ordering: priority rank #" .. tostring(rec.rank))
-            or "  SimC ordering: not in the imported list - sorts after every ranked ability")
+        local ctx = SpellQueue.DebugRankSpell and SpellQueue.DebugRankSpell(spellID)
+        local ctxNote = ctx and (" (context fit " .. ctx .. ", lower = closer to Blizzard's pick)") or ""
+        addon:Print(rec
+            and ("  SimC ordering: context fit first, then theorycraft rank #" .. tostring(rec.rank)
+                 .. " as a tiebreaker" .. ctxNote)
+            or ("  SimC ordering: not in the imported list - sorts by context fit, after ranked "
+                 .. "abilities in the same fit" .. ctxNote))
     end
 
     -- Live verdict: where is it right now?
@@ -1551,6 +1557,16 @@ function DebugCommands.GateDiagnostics(addon)
 
     addon:Print("|cff00ccff== SimC gate diagnostics ==|r")
 
+    -- Buff windows the AC pick IMPLIES - revealed even when the aura is secret (the probe below
+    -- can't see secret auras). Siblings gated on these promote off the pick.
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
+    local pickWindows = (SpellQueue and SpellQueue.DebugContextState and SpellQueue.DebugContextState() or {}).pickWindows
+    if pickWindows and next(pickWindows) then
+        local names = {}
+        for id in pairs(pickWindows) do names[#names + 1] = nm(id) end
+        addon:Print("|cffffff00AC pick implies window up:|r " .. table.concat(names, ", "))
+    end
+
     -- Self-buff windows (engine-truth via duration-object probe).
     local stList = RI.GetRotation and RI.GetRotation("st")
     local snap = stList and BAPI and BAPI.GetBuffWindowSnapshot and BAPI.GetBuffWindowSnapshot(stList)
@@ -1567,7 +1583,7 @@ function DebugCommands.GateDiagnostics(addon)
         if not e.gates or #e.gates == 0 then
             return e.delegated and "|cff888888delegated, no gates|r" or "no gates"
         end
-        local parts = {}
+        local parts, negBlocked = {}, false
         for _, g in ipairs(e.gates) do
             if g.t == "cd" then
                 local ok = BAPI.IsSpellReady and BAPI.IsSpellReady(e.id)
@@ -1581,8 +1597,11 @@ function DebugCommands.GateDiagnostics(addon)
                 parts[#parts + 1] = "proc=" .. (ok and "|cff00ff00Y|r" or "|cff888888n|r")
             elseif g.t == "buff" then
                 local ok = BAPI.IsBuffWindowActive and BAPI.IsBuffWindowActive(g.id)
-                parts[#parts + 1] = (g.neg and "!" or "") .. "buff[" .. tostring(g.id) .. "]="
-                    .. (ok and "|cff00ff00up|r" or "|cff888888--|r")
+                local viaPick = pickWindows and pickWindows[g.id]
+                local state = ok and "|cff00ff00up|r"
+                    or (viaPick and "|cff00ff00up(pick)|r" or "|cff888888--|r")
+                if g.neg and ok then negBlocked = true end
+                parts[#parts + 1] = (g.neg and "!" or "") .. "buff[" .. tostring(g.id) .. "]=" .. state
             elseif g.t == "targets" then
                 parts[#parts + 1] = "|cff888888targets|r"
             elseif g.t == "execute" then
@@ -1590,6 +1609,7 @@ function DebugCommands.GateDiagnostics(addon)
             end
         end
         local s = table.concat(parts, " ")
+        if negBlocked then s = s .. " |cffff6600[neg-blocked]|r" end
         if e.delegated then s = s .. " |cff888888[deleg]|r" end
         return s
     end
@@ -1990,6 +2010,132 @@ function DebugCommands.ResourceDiagnostics(addon)
             .. "the costliest ability still 'ok' brackets your resource - no secret read needed. "
             .. "(Pooled accumulators like combo points don't hard-gate, so they show no floor.)|r")
     end
+end
+
+--------------------------------------------------------------------------------
+-- Rotation-order probe: is GetRotationSpells' tail LIVE?
+--------------------------------------------------------------------------------
+--- /jac inspect rotation - settle whether C_AssistedCombat.GetRotationSpells() is a LIVE
+--- priority list (positions 2+ re-ordered against the secret state each call) or a static
+--- rotation set where only [1] tracks the live pick. Dumps the current list beside the
+--- GetNextCastSpell pick, then diffs against the previous run so you can A/B it: run, change
+--- state (burn a proc, dump resources, add or drop a target), run again. If positions 2+
+--- reorder between runs, Blizzard is handing us its own "what to press after slot 1" and we
+--- could lean on it directly instead of inferring; if only [1] moves, only the pick is live.
+--- Spell IDs and the pick are NeverSecret, so nothing here reads a secret value.
+local lastRotationSnap  -- { ids = {...}, pick = id } from the previous invocation
+function DebugCommands.RotationOrderProbe(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function nm(id)
+        return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or ("spell " .. tostring(id))
+    end
+    if not (BAPI and BAPI.GetRotationSpells) then
+        addon:Print("GetRotationSpells API unavailable")
+        return
+    end
+    local list = BAPI.GetRotationSpells()
+    local pick = BAPI.GetNextCastSpell and BAPI.GetNextCastSpell()
+    if not list or #list == 0 then
+        addon:Print("|cffff6600GetRotationSpells returned nothing|r - target an enemy / enter combat and retry")
+        return
+    end
+
+    addon:Print(string.format("|cff00ccff== Rotation-order probe ==|r  %d entries   pick (GetNextCastSpell): %s",
+        #list, pick and nm(pick) or "|cff888888none|r"))
+    for i = 1, #list do
+        local mark = (pick and list[i] == pick) and "  |cff2ecc71<- AC pick|r" or ""
+        addon:Print(string.format("  %2d. %-26s (%d)%s", i, nm(list[i]), list[i], mark))
+    end
+    if pick then
+        addon:Print("  [1] tracks the live pick: " .. (list[1] == pick
+            and "|cff2ecc71yes|r" or "|cffff6666NO (list[1] != GetNextCastSpell)|r"))
+    end
+
+    -- Single-run verdict: an ascending-by-spell-ID list is the rotation SET sorted by id, not a
+    -- priority order - so its tail carries no ranking and only GetNextCastSpell is live.
+    local idSorted = true
+    for i = 2, #list do
+        if list[i] < list[i - 1] then idSorted = false break end
+    end
+    if idSorted then
+        addon:Print("  |cffffd100order is ascending by spell ID|r - the id-sorted rotation SET, not a "
+            .. "priority list; only GetNextCastSpell carries live priority (tail unusable for ordering)")
+    end
+
+    -- Diff vs the previous run to expose whether the TAIL re-orders with state.
+    local prev = lastRotationSnap
+    if prev then
+        local now = {}
+        for i = 1, #list do now[list[i]] = i end
+        local prevSet = {}
+        for i = 1, #prev.ids do prevSet[prev.ids[i]] = i end
+        local addedIds, removedIds = {}, {}
+        for i = 1, #list do if not prevSet[list[i]] then addedIds[#addedIds + 1] = list[i] end end
+        for i = 1, #prev.ids do if not now[prev.ids[i]] then removedIds[#removedIds + 1] = prev.ids[i] end end
+        -- Pair a same-NAME add+remove as one form/talent VARIANT swap (Moonfire 8921<->155625 on
+        -- shifting to cat form), so it reads as a swap instead of a spurious add+remove.
+        local swaps, added, removed, usedAdd = {}, {}, {}, {}
+        for _, rid in ipairs(removedIds) do
+            local paired = false
+            for j, aid in ipairs(addedIds) do
+                if not usedAdd[j] and nm(aid) == nm(rid) then
+                    usedAdd[j] = true
+                    swaps[#swaps + 1] = string.format("%s %d->%d", nm(rid), rid, aid)
+                    paired = true
+                    break
+                end
+            end
+            if not paired then removed[#removed + 1] = nm(rid) .. " (" .. rid .. ")" end
+        end
+        for j, aid in ipairs(addedIds) do
+            if not usedAdd[j] then added[#added + 1] = nm(aid) .. " (" .. aid .. ")" end
+        end
+
+        local sameSeq = (#list == #prev.ids)
+        if sameSeq then
+            for i = 1, #list do
+                if list[i] ~= prev.ids[i] then sameSeq = false break end
+            end
+        end
+
+        -- Tail relative-order test: among ids in BOTH prev[2..] and now, did any pair swap
+        -- relative order? (excludes prev's old head, which a cast would legitimately consume).
+        local commonTail = {}
+        for i = 2, #prev.ids do
+            if now[prev.ids[i]] then commonTail[#commonTail + 1] = prev.ids[i] end
+        end
+        local tailReordered = false
+        for a = 1, #commonTail do
+            for b = a + 1, #commonTail do
+                if now[commonTail[a]] > now[commonTail[b]] then tailReordered = true break end
+            end
+            if tailReordered then break end
+        end
+
+        addon:Print("|cffffff00vs last run:|r")
+        addon:Print("  pick: " .. (prev.pick == pick and "unchanged"
+            or ("changed " .. (prev.pick and nm(prev.pick) or "none")
+                .. " -> " .. (pick and nm(pick) or "none"))))
+        if #swaps > 0 then addon:Print("  variant swap (same name, form/talent): " .. table.concat(swaps, ", ")) end
+        if #added > 0 then addon:Print("  added: " .. table.concat(added, ", ")) end
+        if #removed > 0 then addon:Print("  removed: " .. table.concat(removed, ", ")) end
+        if sameSeq then
+            addon:Print("  order: |cff888888identical to last run|r - change your state between runs to test")
+        elseif tailReordered then
+            addon:Print("  order: |cff2ecc71TAIL REORDERED|r - positions 2+ re-prioritized: evidence "
+                .. "GetRotationSpells is LIVE-ordered, so its tail could feed the queue directly")
+        else
+            addon:Print("  order: changed, but positions 2+ kept their relative order (looks like the "
+                .. "head just advanced / set changed) - no live-tail evidence this round")
+        end
+    else
+        addon:Print("|cff888888baseline captured.|r Change your state (burn a proc, dump resources, "
+            .. "add/drop a target) and run |cffffd100/jac inspect rotation|r again to see if positions 2+ move")
+    end
+
+    local ids = {}
+    for i = 1, #list do ids[i] = list[i] end
+    lastRotationSnap = { ids = ids, pick = pick }
 end
 
 --------------------------------------------------------------------------------

@@ -71,17 +71,29 @@ function SpellDB.MarkHealingBagsDirty()
     healingBagsDirty = true
 end
 
--- Reads a healing item's heal from its on-use spell description. Returns the effective
+-- Reads a healing item's heal from its ITEM tooltip's "Use:" line. Returns the effective
 -- heal (for ranking owned pots), whether it is percentage-based, and the raw number
 -- behind it (the percent, or the fixed amount). A percentage pot ("Restores 50% ...")
 -- scales with max health; a fixed pot uses its largest heal number. The '%' symbol and
--- the digits are locale-independent; all-zero if the description can't be read, so an
--- unreadable pot falls back to its recency rank in the list order.
+-- the digits are locale-independent; all-zero if the tooltip can't be read yet (item data
+-- loads async), which keeps the scan dirty rather than ranking the pot at zero.
+--
+-- The ITEM tooltip is the only source carrying item context, and that is load-bearing:
+-- a pot family's variants all share ONE on-use spell whose heal effect is item-level
+-- scaled (zero base points), so C_Spell.GetSpellDescription(spellID) cannot tell a 295
+-- from a 278 and renders neither's real number. Reading the spell ranked every variant
+-- identically and let a flat-heal pot outrank a strictly better scaled one.
+local ONUSE_PREFIX = ITEM_SPELL_TRIGGER_ONUSE or "Use:"  ---@diagnostic disable-line: undefined-global
 local function HealInfo(itemID)
-    local getItemSpell = C_Item and C_Item.GetItemSpell
-    local spellID = getItemSpell and select(2, getItemSpell(itemID))
-    local getDesc = C_Spell and C_Spell.GetSpellDescription
-    local desc = spellID and getDesc and getDesc(spellID)
+    local getItemTooltip = C_TooltipInfo and C_TooltipInfo.GetItemByID
+    local data = getItemTooltip and getItemTooltip(itemID)
+    local desc
+    if data and data.lines then
+        for _, line in ipairs(data.lines) do
+            local text = line.leftText
+            if text and text:find(ONUSE_PREFIX, 1, true) then desc = text; break end
+        end
+    end
     if not desc or desc == "" then return 0, false, 0 end
     local pct = desc:match("(%d+)%s*%%")
     if pct then
@@ -97,24 +109,33 @@ local function HealInfo(itemID)
 end
 
 --- Best health-restoring item the player currently owns, or nil. Scans out of combat
---- (GetItemCount + descriptions are readable there) and caches until bags change. Ranks
+--- (GetItemCount + tooltips are readable there) and caches until bags change. Ranks
 --- by effective heal so a percentage pot is compared correctly against a fixed one;
---- ties / unreadable heals fall back to the list's recency order.
+--- exact ties fall back to the list's recency order. A scan with any owned pot still
+--- unreadable stays dirty and re-runs rather than latching a partial ranking.
 function SpellDB.GetBestHealingItem()
     if healingBagsDirty and not InCombatLockdown() then
         bestHealingItem = nil
         local bestHeal = -1
+        local allReadable = true
         for i = 1, #HEALING_ITEMS do
             local id = HEALING_ITEMS[i]
             if (GetItemCount(id) or 0) > 0 then
                 local heal = HealInfo(id)
+                if heal <= 0 then allReadable = false end
                 if heal > bestHeal then
                     bestHeal = heal
                     bestHealingItem = id
                 end
             end
         end
-        healingBagsDirty = false
+        -- Tooltips load async, so an owned pot that read as 0 is "not loaded yet", not
+        -- "heals nothing" - latching that ranks it below every pot that did load. Stay
+        -- dirty and re-scan on the next OOC build; the pick is still served meanwhile,
+        -- it just isn't final. ponytail: rescans while ANY owned pot is unreadable.
+        -- Bags cache within seconds of login so this converges and then never runs
+        -- again; if a pot ever parses to 0 permanently, cap the retries.
+        healingBagsDirty = not allReadable
     end
     return bestHealingItem
 end

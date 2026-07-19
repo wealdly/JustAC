@@ -31,6 +31,7 @@ SpellDB.RegisterTargetDots({
 [55095]=24,  -- Frost Fever
 [63106]=15,  -- Siphon Life
 [77575]=24,  -- Outbreak
+[93402]=18,  -- Sunfire (script-applies its DoT)
 [102359]=10,  -- Mass Entanglement
 [113344]=6,  -- Bloodbath
 [114923]=12,  -- Nether Tempest

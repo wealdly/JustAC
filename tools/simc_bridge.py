@@ -38,6 +38,16 @@ class SimcBridge:
     def __init__(self, csv_dir):
         self.dir = csv_dir
         self.NM = {r["ID"]: r.get("Name_lang", "") for r in self._rows("SpellName")}
+        # Passive spells (SPELL_ATTR0_PASSIVE) are never rotational buttons and are
+        # never what Assisted Combat suggests, yet the client data files a passive
+        # spec/talent record under the SAME NAME as the castable ability (e.g. the
+        # passive "Moonfire" 326646 shadowing the cast 8921). Excluded from the
+        # resolver universe so a name collision can never pick the passive.
+        self.PASSIVE = {
+            r["SpellID"] for r in self._rows("SpellMisc")
+            if int(r.get("DifficultyID") or 0) == 0
+            and (int(r.get("Attributes_0") or 0) & 0x40)
+        }
         _chrspec = self._rows("ChrSpecialization")
         self.SPEC = {r["ID"]: (r["ClassID"], r["Name_lang"]) for r in _chrspec}
         # spec index within its class (OrderIndex 0-based) -> our spec key uses +1
@@ -85,6 +95,28 @@ class SimcBridge:
                     if cm & (1 << (cid - 1)):
                         self._class_spells.setdefault(str(cid), set()).add(r["Spell"])
 
+        # Actionbar overrides (EffectAura 332 = SPELL_AURA_OVERRIDE_ACTIONBAR_SPELLS): an
+        # aura on OWNER replaces a base button with TARGET (EffectBasePointsF). Hero-talent
+        # and form abilities (Annihilation while in Metamorphosis, Death Sweep, ...) exist in
+        # the data ONLY as these targets - not as a granted/talent spell. The 332 effect sits
+        # on the applied AURA (Metamorphosis buff 162264), which the granted CAST (191427)
+        # reaches via EffectTriggerSpell, so we also index triggers to bridge that hop.
+        self._overrides = {}   # owner -> {target ids}
+        self._triggers = {}    # spell -> {triggered spell ids}
+        for r in self._rows("SpellEffect"):
+            if int(r.get("DifficultyID") or 0) != 0:
+                continue
+            trig = r.get("EffectTriggerSpell")
+            if trig and trig != "0":
+                self._triggers.setdefault(r["SpellID"], set()).add(trig)
+            if r.get("EffectAura") == "332":
+                try:
+                    tgt = str(int(round(float(r.get("EffectBasePointsF") or "0"))))
+                except ValueError:
+                    continue
+                if tgt != "0" and tgt in self.NM:
+                    self._overrides.setdefault(r["SpellID"], set()).add(tgt)
+
         self._uni_cache = {}
         self._prim_cache = {}
 
@@ -129,6 +161,24 @@ class SimcBridge:
         for tree in self._spec_trees.get(spec, ()):
             for sl in self._tree_sl.get(tree, ()):
                 ids |= self._sl_spells.get(sl, set())
+        # Fold in actionbar-override targets reachable from this spec's spells, following up
+        # to two EffectTriggerSpell hops (granted cast -> applied aura -> the aura's override),
+        # so a form/hero override (Annihilation from Metamorphosis) resolves by its own name.
+        # Only the override TARGETS are added to the name universe, not the intermediate auras.
+        targets, frontier, visited = set(), set(ids), set(ids)
+        for _hop in range(3):
+            for s in frontier:
+                targets |= self._overrides.get(s, set())
+            nxt = set()
+            for s in frontier:
+                for t in self._triggers.get(s, ()):
+                    if t not in visited:
+                        visited.add(t)
+                        nxt.add(t)
+            if not nxt:
+                break
+            frontier = nxt
+        ids |= targets
         self._uni_cache[spec] = ids
         return ids
 
@@ -150,6 +200,8 @@ class SimcBridge:
     def _build_index(self, ids):
         index = {}
         for sid in ids:
+            if sid in self.PASSIVE:
+                continue
             nm = self.NM.get(sid)
             if nm:
                 s = slug(nm)

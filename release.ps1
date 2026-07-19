@@ -60,4 +60,9 @@ Write-Host "Review the diff, then cut the release:" -ForegroundColor Cyan
 Write-Host "  git add -A"
 Write-Host "  git commit -m 'release: $Version'"
 Write-Host "  git tag v$Version"
-Write-Host "  git push --follow-tags    # triggers .github/workflows/release.yml"
+Write-Host "  git push"
+# Push the tag BY NAME. Not `git push --follow-tags`: that pushes annotated tags only,
+# and these release tags are lightweight (`git tag` without -a), so it silently skips
+# them - the branch push reports success while the tag never leaves the machine and the
+# CurseForge workflow never fires. Cost a release once; don't reintroduce it.
+Write-Host "  git push origin v$Version    # triggers .github/workflows/release.yml"

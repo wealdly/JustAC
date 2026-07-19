@@ -323,7 +323,10 @@ end
    - Commit version bump
 5. User runs `.\build.ps1` when ready to test locally
 6. When user explicitly requests deploy/release to CurseForge:
-   - `git tag v<version>` + `git push --tags`
+   - `git tag v<version>`, then `git push` and `git push origin v<version>`
+   - Push the tag by name. `--follow-tags` pushes annotated tags only and silently
+     skips these (they're lightweight), so the branch push succeeds while the tag
+     stays local and CI never fires. Verify the tag landed: `git ls-remote --tags origin`
    - This triggers CI → CurseForge upload
 
 **DO NOT auto-tag or auto-deploy to CurseForge** - Only tag and push tags when the user explicitly requests a release/deploy.
