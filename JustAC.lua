@@ -1439,6 +1439,13 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     -- exit in OnUpdate so the queue can re-evaluate IsMounted() / visibility conditions.
     self:MarkQueueDirty()
 
+    -- OOC the pre-combat suggestions and their click layers are AURA-driven (the eating aura,
+    -- Well Fed, flask, poison...), so a player aura change has to rebuild the defensive queue
+    -- too. Without this the mid-eat click disarm waits for the 0.5s idle cycle, leaving exactly
+    -- the spam-click window that restarts the eat. OOC-gated: aura churn in combat is heavy and
+    -- the pre-combat system is inactive there anyway.
+    if not UnitAffectingCombat("player") then defensiveQueueDirty = true end
+
     -- 12.0: Pass updateInfo to RedundancyFilter for incremental instance map updates
     -- This captures addedAuras (new aura identity) and removedAuraInstanceIDs (cleanup)
     -- BEFORE cache invalidation, so the map is current when RefreshAuraCache runs
@@ -1747,26 +1754,41 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     self:ForceUpdateAll()
 end
 
+-- OOC only: PrecombatEngine hides its suggestions while a cast/channel is running, so an extra
+-- click can't cancel the channel (wasting the food) or burn a second consumable. That guard is
+-- only as fast as the next queue rebuild - and out of combat that is the 0.5s idle cycle, which
+-- would leave the icon clickable for up to half a second after the cast begins, exactly the
+-- double-click window the guard exists to close. Rebuild on the transition instead (and on stop,
+-- so an interrupted channel brings the suggestion straight back). In combat the pre-combat
+-- system is inactive, so we skip the extra rebuilds entirely.
+local function MarkPrecombatGuardDirty()
+    if not UnitAffectingCombat("player") then defensiveQueueDirty = true end
+end
+
 -- Event-driven cast/channel spell ID caching - avoids polling UnitCastingInfo/UnitChannelInfo
 -- every render frame. spellID from UNIT_SPELLCAST_* for "player" is NeverSecret.
 function JustAC:OnPlayerCastStart(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(spellID) end
+    MarkPrecombatGuardDirty()
 end
 
 function JustAC:OnPlayerCastStop(event, unit)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetCastSpellID then UIRenderer.SetCastSpellID(nil) end
+    MarkPrecombatGuardDirty()
 end
 
 function JustAC:OnPlayerChannelStart(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(spellID) end
+    MarkPrecombatGuardDirty()
 end
 
 function JustAC:OnPlayerChannelStop(event, unit)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(nil) end
+    MarkPrecombatGuardDirty()
 end
 
 function JustAC:OnCooldownUpdate()

@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 4)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 5)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -19,6 +19,8 @@ local GetTime = GetTime
 local type = type
 local UnitClass = UnitClass
 local UnitIsDeadOrGhost = UnitIsDeadOrGhost
+local UnitCastingInfo = UnitCastingInfo
+local UnitChannelInfo = UnitChannelInfo
 local IsPlayerSpell = IsPlayerSpell or IsSpellKnown
 
 -- Top-off "between pulls" reminder fires below this (exact read, OOC only) - toggle-gated.
@@ -74,6 +76,21 @@ function PrecombatEngine.NoteWeaponEnchantApplied()
     PrecombatEngine.ClearCache()
 end
 
+-- Mid-application guard. Every category here is satisfied by an AURA (or a weapon enchant) that
+-- only lands when the cast/channel COMPLETES - so while you are eating, applying a poison or
+-- imbue, or using an oil, the category still reads "missing" and the suggestion stays up. One
+-- more click then cancels the channel (wasting the food) or burns a second consumable.
+-- ANY cast/channel counts, not just the one that would satisfy the category: clicking ANY
+-- suggestion mid-channel cancels that channel too, so the safe move is to offer nothing until
+-- the current application resolves. This covers the window DURING the cast; the post-click
+-- ENCHANT_APPLY_GRACE latch above still covers the server round trip AFTER one lands.
+-- OOC-only system, and we only test truthiness (never compare/concat), so this is secret-safe.
+local function IsBusyApplying()
+    if UnitCastingInfo and UnitCastingInfo("player") then return true end
+    if UnitChannelInfo and UnitChannelInfo("player") then return true end
+    return false
+end
+
 --- Is the buff category already satisfied? Weapon enchant is read off the weapon (temp
 --- enchant); every other category from the player's auras. Out of combat only.
 function PrecombatEngine.IsCategorySatisfied(category)
@@ -103,6 +120,7 @@ end
 function PrecombatEngine.GetMissingBuffs(settings)
     local out = {}
     if InCombatLockdown() then return out end
+    if IsBusyApplying() then return out end
     if not SpellDB or not SpellDB.GetPrecombatBuffCategories then return out end
     for _, category in ipairs(SpellDB.GetPrecombatBuffCategories()) do
         -- An imbue-using class (Enhancement shaman) fills the main-hand enchant slot with its
@@ -131,6 +149,9 @@ end
 local cachedItems, cachedItemsAt = nil, -1
 local cachedClassBuffs, cachedClassBuffsAt = nil, -1
 function PrecombatEngine.GetMissingBuffItems(settings)
+    -- Mid-application: offer nothing, and leave the cache untouched so the list comes back the
+    -- instant the cast/channel resolves (rather than after a stale-empty cache window).
+    if IsBusyApplying() then return {} end
     local now = GetTime()
     if cachedItems and (now - cachedItemsAt) < 0.5 then
         return cachedItems
@@ -185,6 +206,9 @@ end
 ---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
 ---   and imbues are unaffected - only the health top-off reminder honors this flag.
 function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
+    -- Mid-application: a poison/imbue/heal being cast right now would otherwise still read as
+    -- missing (its aura lands at the end), re-offering the very thing in progress.
+    if IsBusyApplying() then return {} end
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
         return cachedClassBuffs

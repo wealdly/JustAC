@@ -148,6 +148,13 @@ def split_and(expr):
     return [a.strip() for a in atoms if a.strip()]
 
 
+# Discrete (countable) class resources only - see classify_atom for why continuous ones stay
+# delegated. `soul_shards`/`runes` plural forms normalize to the singular token the runtime uses.
+_RESOURCE_ATOM = re.compile(
+    r'(combo_points|holy_power|chi|soul_shards?|runes?|essence|arcane_charges)'
+    r'\s*(>=|<=|>|<|=|!=)\s*(\d+)')
+
+
 def classify_atom(atom, resolve):
     """(gate|None, delegated_bool). Target-count atoms are handled by the tier split,
     so they neither gate nor delegate here."""
@@ -177,7 +184,18 @@ def classify_atom(atom, resolve):
         return None, False  # build gate -> IsPlayerSpell handles it, not a runtime gate
     if re.match(r'(refreshable|ticking)$', a):
         return {"t": "dot", "own": True}, False
-    return None, True  # resources / time / prev_gcd / variable -> delegate
+    # DISCRETE class resources (combo points, holy power, chi, shards, runes, essence, arcane
+    # charges) are readable at runtime WITHOUT a secret: Blizzard's own resource bar branches on
+    # the secret UnitPower in privileged code and leaves per-point `isActive` frame state behind
+    # (BlizzardAPI.GetClassResourcePoints). So these become real gates instead of delegating.
+    # CONTINUOUS resources (energy, rage, mana, astral_power, fury, runic_power) stay delegated -
+    # they are bar-fill, not points, so there is nothing plain to count. A negated form is left
+    # to delegation rather than risking an inverted gate.
+    m = _RESOURCE_ATOM.fullmatch(a)
+    if m and not neg:
+        res = {"soul_shards": "soul_shard", "runes": "rune"}.get(m.group(1), m.group(1))
+        return {"t": "resource", "res": res, "op": m.group(2), "n": int(m.group(3))}, False
+    return None, True  # continuous resources / time / prev_gcd / variable -> delegate
 
 
 def classify_if(expr, resolve):
@@ -336,6 +354,12 @@ def gate_lua(g):
     parts = ['t="%s"' % g["t"]]
     if g.get("id"):
         parts.append("id=%d" % g["id"])
+    if g.get("res"):
+        parts.append('res="%s"' % g["res"])
+    if g.get("op"):
+        parts.append('op="%s"' % g["op"])
+    if g.get("n") is not None:
+        parts.append("n=%d" % g["n"])
     if g.get("neg"):
         parts.append("neg=true")
     return "{" + ",".join(parts) + "}"
@@ -348,7 +372,8 @@ def entry_lua(e):
 
 
 def entry_sig(e):
-    return (e["id"], tuple(sorted((x["t"], x.get("id", 0), x.get("neg", False))
+    return (e["id"], tuple(sorted((x["t"], x.get("id", 0), x.get("neg", False),
+                                   x.get("res", ""), x.get("op", ""), x.get("n", 0))
                                   for x in e["gates"])), e["delegated"])
 
 
@@ -427,6 +452,14 @@ def _selftest():
     assert branch_defer("set_bonus.tww3_4pc&spell_targets=1", {})
     assert branch_defer("variable.t&spell_targets=1", {"t": "hero_tree.x&set_bonus.tww3_4pc"})
     assert not branch_defer("variable.t", {"t": "buff.x.up"}) and not branch_defer("buff.x.up", {})
+    # Discrete resources become real gates; continuous ones and negations stay delegated.
+    g, d = classify_atom("combo_points>=5", lambda t: None)
+    assert g == {"t": "resource", "res": "combo_points", "op": ">=", "n": 5} and not d
+    g, d = classify_atom("soul_shards<3", lambda t: None)
+    assert g == {"t": "resource", "res": "soul_shard", "op": "<", "n": 3} and not d
+    assert classify_atom("energy>=50", lambda t: None) == (None, True)          # continuous
+    assert classify_atom("astral_power>=90", lambda t: None) == (None, True)    # continuous
+    assert classify_atom("!combo_points>=5", lambda t: None) == (None, True)    # negated -> delegate
 
 
 def main():

@@ -479,6 +479,31 @@ end
 -- during Berserk). Uses the same aura probe; a secret/unreadable Y reads as not-active and fails
 -- OPEN (no block), mirroring how the positive side already treats secrets - so this never sinks a
 -- promotion on an unreadable negative, it only blocks one we can actually see is violated.
+-- True when a resource gate is present, EVALUABLE, and NOT satisfied - the entry is not worth
+-- surfacing yet (Shred once you are already at 5 combo points, Hand of Gul'dan under 3 shards).
+-- The count is plain frame state from BlizzardAPI.GetClassResourcePoints, never a secret read.
+-- Unknown - bar hidden (and therefore frozen), secret, or a different resource than this gate
+-- names - FAILS OPEN (false), so the entry keeps its previous delegated behaviour rather than
+-- being buried on a guess.
+local function SimcResourceGateBlocks(gates, resCount, resName)
+    if not gates or not resCount then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "resource" and g.res == resName and g.op and g.n then
+            local ok
+            if     g.op == ">=" then ok = resCount >= g.n
+            elseif g.op == "<=" then ok = resCount <= g.n
+            elseif g.op == ">"  then ok = resCount >  g.n
+            elseif g.op == "<"  then ok = resCount <  g.n
+            elseif g.op == "="  then ok = resCount == g.n
+            elseif g.op == "!=" then ok = resCount ~= g.n
+            end
+            if ok == false then return true end
+        end
+    end
+    return false
+end
+
 local function SimcNegativeBuffBlocks(gates)
     if not gates then return false end
     for i = 1, #gates do
@@ -507,6 +532,14 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
     -- back). e.g. fits-pick + SimC #3 -> 3; fits-pick but unlisted -> 999; off-pattern + SimC #1
     -- -> 1001. The SimC entry is pre-fetched per spell and passed in to avoid a second lookup.
     local simcMode = (contextOrder == "simc")
+    -- Discrete class-resource count once per build (combo points / holy power / chi / shards /
+    -- runes / essence / arcane charges), for the SimC resource gates. nil = unknown -> those
+    -- gates fail open. Only needed in SimC mode, where gates exist.
+    local resCount, resName
+    if simcMode and BlizzardAPI.GetClassResourcePoints then
+        local c, _, r = BlizzardAPI.GetClassResourcePoints()
+        resCount, resName = c, r
+    end
     local function rankOf(spellID, simcRec)
         if simcMode then
             local ctx = ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
@@ -580,12 +613,14 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                             or (simcRec
                                 and (SimcBuffWindowActive(simcRec.gates)
                                      or GateInPickWindows(simcRec.gates, pickWindows))
-                                and not SimcNegativeBuffBlocks(simcRec.gates)))
+                                and not SimcNegativeBuffBlocks(simcRec.gates)
+                                and not SimcResourceGateBlocks(simcRec.gates, resCount, resName)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec)
                     elseif sinkCooldowns and (not ready or starved
+                           or (simcRec and SimcResourceGateBlocks(simcRec.gates, resCount, resName))
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
                            or (not alwaysShow and DotTracker

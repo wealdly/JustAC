@@ -59,7 +59,10 @@ local function EnsurePool()
             if mouseButton == "RightButton" and not down then
                 local f = self.icon and self.icon:GetScript("OnClick")
                 if f then f(self.icon, mouseButton) end
-            elseif mouseButton == "LeftButton" and not down and self.isWeaponEnchant then
+            elseif mouseButton == "LeftButton" and not down and self.isWeaponEnchant
+                and not self.disarmed then
+                -- (disarmed = mid-eat: no secure action fired, so nothing was applied - don't
+                -- latch the enchant as in-flight or the suggestion would vanish for nothing.)
                 -- The enchant is in flight; the weapon still reads unenchanted for a beat.
                 -- Latch it applied now so the suggestion clears before a second click can
                 -- spend another stone. See PrecombatEngine.NoteWeaponEnchantApplied.
@@ -133,6 +136,19 @@ local function ConfigureLayer(layer, icon, eating)
         layer:SetAttribute("spell", icon.spellID)
     else
         return false
+    end
+    -- Mid-eat, ANY click breaks the channel - and re-clicking the food itself restarts the eat,
+    -- burning a second one and resetting the ~10s wait for Well Fed. Eating is AURA-based, not a
+    -- spell channel, so the engine's cast/channel guard can't see it; disarm here instead. The
+    -- layer stays visible so the "wait" hint below still reads, but no secure action is bound,
+    -- so the click resolves nothing. Attributes are only ever set out of combat (this function
+    -- is OOC-only), so clearing them is safe.
+    layer.disarmed = eating or nil
+    if eating then
+        layer:SetAttribute("type1", nil)
+        layer:SetAttribute("macrotext", nil)
+        layer:SetAttribute("item", nil)
+        layer:SetAttribute("spell", nil)
     end
     -- Absolute placement, never SetAllPoints(icon): anchoring a secure button to the icon
     -- makes the icon - and everything its rect depends on, up through the main frame -

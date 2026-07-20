@@ -113,8 +113,8 @@ RotationImport.RegisterGated({
       {id=77575,gates={},delegated=true},  -- outbreak
       {id=85948,gates={},delegated=true},  -- festering_strike
       {id=55090,gates={}},  -- scourge_strike
-      {id=47541,gates={},delegated=true},  -- death_coil
-      {id=207317,gates={},delegated=true},  -- epidemic
+      {id=47541,gates={{t="resource",res="rune",op="<",n=4}},delegated=true},  -- death_coil
+      {id=207317,gates={{t="resource",res="rune",op="<",n=4}},delegated=true},  -- epidemic
       {id=43265,gates={},delegated=true},  -- death_and_decay
     },
   },
@@ -261,7 +261,7 @@ RotationImport.RegisterGated({
   },
   ["DRUID_2"] = {
     st = {
-      {id=1822,gates={},delegated=true},  -- rake
+      {id=1822,gates={{t="resource",res="combo_points",op="=",n=5}},delegated=true},  -- rake
       {id=5217,gates={},delegated=true},  -- tigers_fury
       {id=391888,gates={},delegated=true},  -- adaptive_swarm
       {id=22568,gates={},delegated=true},  -- ferocious_bite
@@ -277,7 +277,7 @@ RotationImport.RegisterGated({
       {id=106785,gates={},delegated=true},  -- swipe_cat
     },
     aoe = {
-      {id=1822,gates={},delegated=true},  -- rake
+      {id=1822,gates={{t="resource",res="combo_points",op="=",n=5}},delegated=true},  -- rake
       {id=5217,gates={},delegated=true},  -- tigers_fury
       {id=391888,gates={},delegated=true},  -- adaptive_swarm
       {id=22568,gates={},delegated=true},  -- ferocious_bite
@@ -341,7 +341,7 @@ RotationImport.RegisterGated({
       {id=194153,gates={},delegated=true},  -- starfire
       {id=78674,gates={},delegated=true},  -- starsurge
       {id=22568,gates={}},  -- ferocious_bite
-      {id=5221,gates={},delegated=true},  -- shred
+      {id=5221,gates={{t="resource",res="combo_points",op="<",n=5}},delegated=true},  -- shred
       {id=5176,gates={}},  -- wrath
     },
   },
@@ -640,7 +640,7 @@ RotationImport.RegisterGated({
   ["MONK_3"] = {
     st = {
       {id=101545,gates={},delegated=true},  -- flying_serpent_kick
-      {id=100780,gates={},delegated=true},  -- tiger_palm
+      {id=100780,gates={{t="resource",res="chi",op="<",n=6}},delegated=true},  -- tiger_palm
       {id=107428,gates={}},  -- rising_sun_kick
       {id=137639,gates={},delegated=true},  -- storm_earth_and_fire
       {id=123904,gates={{t="cd"}},delegated=true},  -- invoke_xuen_the_white_tiger
@@ -659,7 +659,7 @@ RotationImport.RegisterGated({
     },
     cleave = {
       {id=101545,gates={},delegated=true},  -- flying_serpent_kick
-      {id=100780,gates={},delegated=true},  -- tiger_palm
+      {id=100780,gates={{t="resource",res="chi",op="<",n=6}},delegated=true},  -- tiger_palm
       {id=107428,gates={}},  -- rising_sun_kick
       {id=137639,gates={},delegated=true},  -- storm_earth_and_fire
       {id=123904,gates={{t="cd"}},delegated=true},  -- invoke_xuen_the_white_tiger
@@ -756,7 +756,7 @@ RotationImport.RegisterGated({
       {id=406647,gates={},delegated=true},  -- templar_slash
       {id=184575,gates={{t="dot"},{t="cd"}}},  -- blade_of_justice
       {id=255937,gates={},delegated=true},  -- wake_of_ashes
-      {id=375576,gates={},delegated=true},  -- divine_toll
+      {id=375576,gates={{t="resource",res="holy_power",op="<=",n=2}},delegated=true},  -- divine_toll
       {id=24275,gates={},delegated=true},  -- hammer_of_wrath
       {id=407480,gates={}},  -- templar_strike
       {id=20271,gates={}},  -- judgment
@@ -837,7 +837,7 @@ RotationImport.RegisterGated({
   },
   ["ROGUE_2"] = {
     st = {
-      {id=13750,gates={{t="buff",id=13750,neg=true}},delegated=true},  -- adrenaline_rush
+      {id=13750,gates={{t="buff",id=13750,neg=true},{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- adrenaline_rush
       {id=381989,gates={},delegated=true},  -- keep_it_rolling
       {id=1214909,gates={},delegated=true},  -- roll_the_bones
       {id=1856,gates={{t="buff",id=13750},{t="cd"}},delegated=true},  -- vanish
@@ -852,7 +852,7 @@ RotationImport.RegisterGated({
       {id=13877,gates={},delegated=true},  -- blade_flurry
     },
     aoe = {
-      {id=13750,gates={{t="buff",id=13750,neg=true}},delegated=true},  -- adrenaline_rush
+      {id=13750,gates={{t="buff",id=13750,neg=true},{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- adrenaline_rush
       {id=13877,gates={},delegated=true},  -- blade_flurry
       {id=381989,gates={},delegated=true},  -- keep_it_rolling
       {id=1214909,gates={},delegated=true},  -- roll_the_bones
@@ -872,7 +872,7 @@ RotationImport.RegisterGated({
       {id=212283,gates={},delegated=true},  -- symbols_of_death
       {id=121471,gates={{t="buff",id=185313}},delegated=true},  -- shadow_blades
       {id=1298826,gates={{t="buff",id=1298826,neg=true}},delegated=true},  -- thistle_tea
-      {id=323654,gates={},delegated=true},  -- flagellation
+      {id=323654,gates={{t="resource",res="combo_points",op=">=",n=5}},delegated=true},  -- flagellation
       {id=185313,gates={},delegated=true},  -- shadow_dance
       {id=1856,gates={},delegated=true},  -- vanish
       {id=280719,gates={},delegated=true},  -- secret_technique
@@ -1045,32 +1045,32 @@ RotationImport.RegisterGated({
   },
   ["WARLOCK_2"] = {
     st = {
-      {id=105174,gates={{t="cd"}},delegated=true},  -- hand_of_guldan
+      {id=105174,gates={{t="resource",res="soul_shard",op=">=",n=3},{t="cd"}},delegated=true},  -- hand_of_guldan
       {id=265187,gates={},delegated=true},  -- summon_demonic_tyrant
       {id=111898,gates={{t="cd"}}},  -- grimoire_felguard
       {id=264119,gates={{t="cd"}},delegated=true},  -- summon_vilefiend
       {id=104316,gates={},delegated=true},  -- call_dreadstalkers
-      {id=264178,gates={},delegated=true},  -- demonbolt
+      {id=264178,gates={{t="resource",res="soul_shard",op="<=",n=3}},delegated=true},  -- demonbolt
       {id=267171,gates={},delegated=true},  -- demonic_strength
       {id=196277,gates={},delegated=true},  -- implosion
       {id=434635,gates={}},  -- ruination
       {id=264130,gates={},delegated=true},  -- power_siphon
-      {id=434506,gates={},delegated=true},  -- infernal_bolt
+      {id=434506,gates={{t="resource",res="soul_shard",op="<",n=3}}},  -- infernal_bolt
       {id=686,gates={}},  -- shadow_bolt
     },
     aoe = {
-      {id=105174,gates={{t="cd"}},delegated=true},  -- hand_of_guldan
+      {id=105174,gates={{t="resource",res="soul_shard",op=">=",n=3},{t="cd"}},delegated=true},  -- hand_of_guldan
       {id=265187,gates={},delegated=true},  -- summon_demonic_tyrant
       {id=111898,gates={{t="cd"}}},  -- grimoire_felguard
       {id=264119,gates={{t="cd"}},delegated=true},  -- summon_vilefiend
       {id=104316,gates={},delegated=true},  -- call_dreadstalkers
-      {id=264178,gates={},delegated=true},  -- demonbolt
+      {id=264178,gates={{t="resource",res="soul_shard",op="<=",n=3}},delegated=true},  -- demonbolt
       {id=267171,gates={},delegated=true},  -- demonic_strength
       {id=267211,gates={}},  -- bilescourge_bombers
       {id=196277,gates={},delegated=true},  -- implosion
       {id=434635,gates={}},  -- ruination
       {id=264130,gates={},delegated=true},  -- power_siphon
-      {id=434506,gates={},delegated=true},  -- infernal_bolt
+      {id=434506,gates={{t="resource",res="soul_shard",op="<",n=3}}},  -- infernal_bolt
       {id=686,gates={}},  -- shadow_bolt
     },
   },
@@ -1088,11 +1088,11 @@ RotationImport.RegisterGated({
       {id=196447,gates={},delegated=true},  -- channel_demonfire
       {id=348,gates={{t="execute"}},delegated=true},  -- immolate
       {id=387976,gates={}},  -- dimensional_rift
-      {id=434506,gates={},delegated=true},  -- infernal_bolt
+      {id=434506,gates={{t="resource",res="soul_shard",op="<=",n=3}}},  -- infernal_bolt
       {id=29722,gates={}},  -- incinerate
     },
     cleave = {
-      {id=17962,gates={},delegated=true},  -- conflagrate
+      {id=17962,gates={{t="resource",res="soul_shard",op=">=",n=1},{t="resource",res="soul_shard",op="<=",n=4}},delegated=true},  -- conflagrate
       {id=6353,gates={},delegated=true},  -- soul_fire
       {id=152108,gates={},delegated=true},  -- cataclysm
       {id=348,gates={{t="dot",id=348}},delegated=true},  -- immolate
@@ -1111,7 +1111,7 @@ RotationImport.RegisterGated({
     aoe = {
       {id=442726,gates={{t="cd"}},delegated=true},  -- malevolence
       {id=116858,gates={},delegated=true},  -- chaos_bolt
-      {id=17962,gates={},delegated=true},  -- conflagrate
+      {id=17962,gates={{t="resource",res="soul_shard",op=">=",n=1},{t="resource",res="soul_shard",op="<=",n=4}},delegated=true},  -- conflagrate
       {id=6353,gates={},delegated=true},  -- soul_fire
       {id=152108,gates={},delegated=true},  -- cataclysm
       {id=348,gates={{t="dot",id=348}},delegated=true},  -- immolate

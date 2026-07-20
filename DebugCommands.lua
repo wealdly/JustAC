@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 22)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 24)
 if not DebugCommands then return end
 
 -- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
@@ -47,6 +47,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect aoe - Probe secret-safe enemy counting (AC-independent AoE detection)")
     addon:Print("/jac inspect resource - Probe secret-safe resource inference from usability")
     addon:Print("/jac inspect rotation - Probe whether GetRotationSpells' tail is live-ordered (A/B across state)")
+    addon:Print("/jac inspect resourcepoints - Probe whether class resource points (combo/holy power/chi) read plain")
     addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -2136,6 +2137,160 @@ function DebugCommands.RotationOrderProbe(addon)
     local ids = {}
     for i = 1, #list do ids[i] = list[i] end
     lastRotationSnap = { ids = ids, pick = pick }
+end
+
+--------------------------------------------------------------------------------
+-- Class resource-point probe: can we read the resource COUNT without a secret?
+--------------------------------------------------------------------------------
+--- /jac inspect resourcepoints - discrete class resources (combo points, holy power, chi,
+--- soul shards, runes, essence, arcane charges) are drawn as one widget PER POINT. Blizzard's
+--- own bars branch on the secret UnitPower in privileged code - `point:SetActive(i <= count)`
+--- - and leave the answer behind as ORDINARY frame state (an `isActive` field plus shown /
+--- alpha visuals). If those read back PLAIN for an addon we get an exact resource count for
+--- free, no secret touched - the same idiom as the scratch-Cooldown IsShown() readiness probe.
+--- That would let the rotation actually evaluate builder/spender gates instead of delegating.
+--- Dumps every point with its state + secrecy, and the derived count to eyeball against your
+--- real resource. Read-only, so no taint risk.
+-- Mirrors BlizzardAPI.GetClassResourcePoints' per-bar shape table. Enum semantics belong to the
+-- BAR, not the field name: Paladin and DK both use `visualState` with DIFFERENT enums.
+local RESOURCE_BAR_FRAMES = {
+    -- 12.x PRD builds its own class frame as the global `prdClassFrame` (live whenever PRD is on).
+    { "prdClassFrame", class="DRUID",   event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="ROGUE",   event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="MONK",    event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="MAGE",    event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="EVOKER",  event="UNIT_POWER_FREQUENT" },
+    { "prdClassFrame", class="PALADIN", event="UNIT_POWER_FREQUENT", indexed="rune",
+      state="visualState", min=1, max=3, isFilled=function(v) return v > 1 end },
+    { "prdClassFrame", class="DEATHKNIGHT", event="RUNE_POWER_UPDATE", array="Runes",
+      state="visualState", min=1, max=4, isFilled=function(v) return v == 4 end },
+    { "DruidComboPointBarFrame", class="DRUID", event="UNIT_POWER_FREQUENT" }, { "RogueComboPointBarFrame", class="ROGUE", event="UNIT_POWER_FREQUENT" }, { "MonkHarmonyBarFrame", class="MONK", event="UNIT_POWER_FREQUENT" },
+    { "WarlockPowerFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" }, { "MageArcaneChargesFrame", class="MAGE", event="UNIT_POWER_FREQUENT" }, { "EssencePlayerFrame", class="EVOKER", event="UNIT_POWER_FREQUENT" },
+    { "PaladinPowerBarFrame", class="PALADIN", event="UNIT_POWER_FREQUENT", indexed = "rune", state = "visualState", min = 1, max = 3,
+      isFilled = function(v) return v > 1 end },
+    { "RuneFrame", class="DEATHKNIGHT", event="RUNE_POWER_UPDATE", array = "Runes", state = "visualState", min = 1, max = 4,
+      isFilled = function(v) return v == 4 end },
+    -- Personal Resource Display equivalents (separate globals, same shapes). These keep updating
+    -- when an addon that replaces the player unit frame hides Blizzard's own bars.
+    { "ClassNameplateBarFeralDruidFrame", class="DRUID", event="UNIT_POWER_FREQUENT" }, { "ClassNameplateBarRogueFrame", class="ROGUE", event="UNIT_POWER_FREQUENT" },
+    { "ClassNameplateBarWindwalkerMonkFrame", class="MONK", event="UNIT_POWER_FREQUENT" }, { "ClassNameplateBarWarlockFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" },
+    { "ClassNameplateBarMageFrame", class="MAGE", event="UNIT_POWER_FREQUENT" }, { "ClassNameplateBarDracthyrFrame", class="EVOKER", event="UNIT_POWER_FREQUENT" },
+    { "ClassNameplateBarPaladinFrame", class="PALADIN", event="UNIT_POWER_FREQUENT", indexed = "rune", state = "visualState", min = 1, max = 3,
+      isFilled = function(v) return v > 1 end },
+    { "DeathKnightResourceOverlayFrame", class="DEATHKNIGHT", event="RUNE_POWER_UPDATE", array = "Runes", state = "visualState", min = 1, max = 4,
+      isFilled = function(v) return v == 4 end },
+}
+function DebugCommands.ResourcePointProbe(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function sec(v)
+        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
+    end
+    addon:Print("|cff00ccff== Class resource-point probe ==|r")
+
+    -- Context: the personal resource display re-parents these same bars, so note its state.
+    -- GetNamePlateForUnit's 2nd arg is includeForbidden - the personal plate is a FORBIDDEN
+    -- frame, so passing false returns nil and the PRD looks "off" while plainly on screen.
+    -- The CVar is the authoritative switch; also report the 12.x PRD frames directly.
+    local prdOn = GetCVarBool and GetCVarBool("nameplateShowSelf")
+    local function frameState(f) return f and (f:IsShown() and "|cff00ff00shown|r" or "hidden") or "|cff888888nil|r" end
+    addon:Print(string.format("  personal resource display: %s   PersonalResourceDisplayFrame=%s  prdClassFrame=%s",
+        prdOn and "|cff00ff00ON|r" or "|cff888888off|r",
+        frameState(_G.PersonalResourceDisplayFrame), frameState(_G.prdClassFrame)))
+
+    local found, framesSeen = 0, {}
+    local _, playerClass = UnitClass("player")
+    for _, def in ipairs(RESOURCE_BAR_FRAMES) do
+        local name = def[1]
+        -- Only this character's bars; another class's global exists but is never initialised.
+        local bar = (def.class == playerClass) and _G[name] or nil
+        local points = bar and bar.classResourceButtonTable
+        if bar and (not points or #points == 0) and def.array then
+            local a = bar[def.array]
+            if type(a) == "table" and #a > 0 then points = a end
+        end
+        if bar and (not points or #points == 0) and def.indexed then
+            points = {}
+            for i = 1, 10 do
+                local p = bar[def.indexed .. i]
+                if not p then break end
+                points[i] = p
+            end
+        end
+        if bar then framesSeen[#framesSeen + 1] = name end
+        if type(points) == "table" and #points > 0 then
+            found = found + 1
+            local shown = bar:IsShown()
+            local reg = def.event and bar.IsEventRegistered and bar:IsEventRegistered(def.event)
+            addon:Print(string.format("|cffffff00%s|r  points=%d  barShown=%s  %s=%s%s",
+                name, #points, SafeSecret(shown), def.event or "evt", SafeSecret(reg),
+                (shown or reg) and "" or "  |cffff6600(hidden+unregistered -> frozen)|r"))
+            -- Classes store the filled flag under different names (Druid isActive, Monk active,
+            -- Rogue isFull); show whichever reads as a real boolean, and which field it came from.
+            local BOOL_FIELDS = { "isActive", "active", "isFull", "isCharged" }
+            local FILL_FIELDS = { "fillAmount" }   -- numeric 0..1 (Warlock fractional shards)
+            local active, readable, anySecret, usedField = 0, 0, false, nil
+            for i = 1, #points do
+                -- raw = what the widget actually stores; val = the filled-ness we derive from it.
+                -- Showing both matters: a bare "visualState=0" hides whether the enum was 1 or 4.
+                local p, val, from, raw = points[i], nil, nil, nil
+                for _, f in ipairs(BOOL_FIELDS) do
+                    local v = p and p[f]
+                    if sec(v) then anySecret = true end
+                    if val == nil and type(v) == "boolean" then val, from, raw = (v and 1 or 0), f, v end
+                end
+                for _, f in ipairs(FILL_FIELDS) do
+                    local v = p and p[f]
+                    if sec(v) then anySecret = true end
+                    if val == nil and type(v) == "number" and v >= 0 and v <= 1 then val, from, raw = v, f, v end
+                end
+                if val == nil and def.state and def.isFilled then
+                    local v = p and p[def.state]
+                    if sec(v) then anySecret = true end
+                    if type(v) == "number" and v % 1 == 0 and v >= def.min and v <= def.max then
+                        val, from, raw = (def.isFilled(v) and 1 or 0), def.state, v
+                    end
+                end
+                if val ~= nil then
+                    readable = readable + 1
+                    usedField = usedField or from
+                    active = active + val
+                end
+                addon:Print(string.format("   %2d. %s raw=%s -> filled=%s  IsShown=%s  alpha=%s", i,
+                    from or "|cffff6600<no readable field>|r", SafeSecret(raw), SafeSecret(val),
+                    SafeSecret(p and p:IsShown()), SafeSecret(p and p:GetAlpha())))
+            end
+            if anySecret then
+                addon:Print("   |cffff6600a point field reads SECRET - count not derivable|r")
+            elseif readable == #points then
+                -- %.10g, not %d: fractional fills (a partly-charged shard) are real and must show.
+                addon:Print(string.format("   |cff2ecc71derived count = %.10g|r (field '%s')"
+                    .. "  <- compare to your real resource; if it matches, this is readable",
+                    active, tostring(usedField)))
+            else
+                addon:Print(string.format("   |cffff6600only %d/%d points expose a boolean flag|r"
+                    .. " - this bar's shape is unmapped, so the reader returns nil (fails open)",
+                    readable, #points))
+            end
+        end
+    end
+    if found == 0 then
+        if #framesSeen > 0 then
+            -- The frame is a CLASS-wide global, so its existence says nothing about this SPEC:
+            -- it is created for every Monk but only populated for the one with chi. Zero points
+            -- usually means "this spec has no such resource", not a mapping gap. Don't blame a
+            -- "continuous resource" either; that misdiagnoses e.g. Holy Power, which is discrete
+            -- but uses an unmapped widget layout.
+            addon:Print("|cffff6600bar frame(s) present but no readable points|r: "
+                .. table.concat(framesSeen, ", ")
+                .. " - most likely this SPEC has no such resource (the frame is class-wide and"
+                .. " stays empty), or the bar is hidden, or its widget layout is unmapped."
+                .. " Fails open.")
+        else
+            addon:Print("|cffff6600no discrete class-resource bar found|r - this spec likely uses a"
+                .. " continuous resource (energy/rage/mana), which is bar-fill rather than points.")
+        end
+    end
 end
 
 --------------------------------------------------------------------------------

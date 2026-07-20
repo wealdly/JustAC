@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [4.46.0] - 2026-07-19
+
+### Changed
+- **SimC priority now accounts for the resource you actually have**: with the *SimC priority* option on, abilities that need a minimum amount of a point-based resource - combo points, holy power, chi, soul shards or runes - now sink in the queue until you can afford them, instead of sitting up front while you're still building. Spenders surface as you reach the threshold and drop back once you've spent. Where the amount can't be read, ordering is left exactly as it was, so nothing is suggested on a guess.
+
+### Fixed
+- **Out-of-combat suggestions no longer interrupt the food or flask you're already using**: a suggested consumable stayed clickable while you were in the middle of consuming it, so a second click restarted your food and reset the timer - costing you the buff you were waiting on. Anything you're currently eating, drinking or casting is now held until it finishes.
+
 ## [4.45.0] - 2026-07-19
 
 ### Changed

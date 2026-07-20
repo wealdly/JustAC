@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 11
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 12
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -972,6 +972,187 @@ function BlizzardAPI.ApplyInterruptIconAlpha(icon, shownAlpha)
     end
     -- true (can't interrupt) → 0 ; false (interruptible) → shownAlpha ; nil (no cast) → 0
     BlizzardAPI.SetAlphaFromSecretBool(icon, notInt, 0, shownAlpha, 0)
+end
+
+--------------------------------------------------------------------------------
+-- Discrete class resources (combo points, holy power, chi, shards, runes, ...)
+--------------------------------------------------------------------------------
+-- EXACT count without reading a secret. Blizzard's own resource bar branches on the secret
+-- UnitPower in PRIVILEGED code - `point:SetActive(i <= count)` (DruidComboPointBar.lua) - and
+-- leaves the answer behind as ordinary frame state (`point.isActive`), which reads back plain
+-- for an addon. Same idiom as the scratch-Cooldown IsShown() readiness probe: let the engine do
+-- the comparison, then read the frame state it produced. Confirmed in combat via
+-- `/jac inspect resourcepoints` (3 combo points -> 3 actives).
+--
+-- SAFETY - why a hidden bar is never read: ClassResourceBarMixin:Setup UNREGISTERS
+-- UNIT_POWER_FREQUENT / UNIT_MAXPOWER / UNIT_POWER_POINT_CHARGE the moment the bar hides, so a
+-- hidden bar's isActive is FROZEN at its last value (combo points persist out of cat form while
+-- the bar is gone - a stale read would be confidently wrong). Only a SHOWN bar is trusted;
+-- everything else returns nil = UNKNOWN so callers fall back to delegation rather than act on
+-- stale data. `isActive` is a Blizzard-internal field, not an API, so every read is guarded and
+-- any secret or missing value collapses the whole read to nil.
+local RESOURCE_BARS = {
+    -- The 12.x Personal Resource Display builds its OWN class frame from the standard class
+    -- template and names it globally `prdClassFrame` (Blizzard_PersonalResourceDisplay.lua
+    -- SetupClassBar). It is a THIRD source, independent of both the player-frame bars and the
+    -- older nameplate bars, and it stays live whenever the PRD is enabled - including when an
+    -- addon replaces the player unit frame and hides Blizzard's own bars. Listed first for that
+    -- reason; same per-class shapes, so the class filter picks the right one.
+    { frame = "prdClassFrame", class = "DRUID",   res = "combo_points", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "ROGUE",   res = "combo_points", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "MONK",    res = "chi", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "MAGE",    res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "EVOKER",  res = "essence", event = "UNIT_POWER_FREQUENT" },
+    { frame = "prdClassFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
+      state = "visualState", min = 1, max = 3, isFilled = function(v) return v > 1 end },
+    { frame = "prdClassFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
+      state = "visualState", min = 1, max = 4, isFilled = function(v) return v == 4 end },
+
+    { frame = "DruidComboPointBarFrame", class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT" },   -- isActive (boolean)
+    { frame = "RogueComboPointBarFrame", class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT" },   -- isFull   (boolean)
+    { frame = "MonkHarmonyBarFrame", class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT" },            -- active   (boolean)
+    { frame = "WarlockPowerFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },     -- fillAmount (0..1 fractional)
+    { frame = "MageArcaneChargesFrame", class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
+    { frame = "EssencePlayerFrame", class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT" },
+    -- Paladin: runes hang off the bar as rune1..runeN. PaladinPowerBar.VisualState =
+    -- 1 Inactive / 2 Active / 3 SpellReady -> filled when > 1.
+    { frame = "PaladinPowerBarFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
+      state = "visualState", min = 1, max = 3,
+      isFilled = function(v) return v > 1 end },
+    -- Death Knight: runes live in bar.Runes. RuneButtonMixin.VisualState =
+    -- 1 Empty / 2 OnCooldown / 3 CooldownEnding / 4 Ready -> AVAILABLE ONLY at 4. Note this is a
+    -- different enum to Paladin's under the same field name, hence per-bar semantics.
+    { frame = "RuneFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
+      state = "visualState", min = 1, max = 4,
+      isFilled = function(v) return v == 4 end },
+
+    -- Personal Resource Display equivalents. These are SEPARATE globals that reuse the same
+    -- mixins (and therefore the same shapes) as the player-frame bars above. They matter because
+    -- an addon that replaces the player unit frame hides Blizzard's bars, which stops them
+    -- updating - with the PRD enabled these keep running, so a player on a replacement unit-frame
+    -- addon still gets a resource read. Listed after the player-frame bars: whichever is SHOWN
+    -- wins, and both carry identical data when both are up.
+    { frame = "ClassNameplateBarFeralDruidFrame", class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarRogueFrame", class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarWindwalkerMonkFrame", class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarWarlockFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarMageFrame", class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarDracthyrFrame", class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT" },
+    { frame = "ClassNameplateBarPaladinFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
+      state = "visualState", min = 1, max = 3,
+      isFilled = function(v) return v > 1 end },
+    { frame = "DeathKnightResourceOverlayFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
+      state = "visualState", min = 1, max = 4,
+      isFilled = function(v) return v == 4 end },
+}
+
+-- Each class's point widget stores its state under a DIFFERENT name and in one of two shapes:
+--   BOOLEAN "filled" flag - Druid `isActive` (DruidComboPointMixin:SetActive), Monk `active`
+--     (MonkLightEnergyMixin:SetActive), Rogue `isFull` (RogueComboPointMixin:Update).
+--   NUMERIC 0..1 fill     - Warlock `fillAmount` (WarlockShardMixin:Update). Destruction shards
+--     fill fractionally, so summing these reproduces SimC's fractional `soul_shard` exactly.
+-- Paladin is a THIRD shape (rune1..runeN with a visualState enum, not classResourceButtonTable)
+-- and DK/Evoker/Mage are unmapped - all of those simply read as unknown and fail open.
+local POINT_ACTIVE_FIELDS = { "isActive", "active", "isFull" }   -- boolean: filled or not
+local POINT_FILL_FIELDS   = { "fillAmount" }                     -- number 0..1: fractional fill
+
+-- Point-array discovery: most bars use `classResourceButtonTable`; Paladin hangs runes off the
+-- bar as rune1..runeN (`indexed`), DK keeps them in a named sub-table (`array` = "Runes").
+local function BarPoints(bar, def)
+    local pts = bar.classResourceButtonTable
+    if type(pts) == "table" and #pts > 0 then return pts end
+    if def.array then
+        pts = bar[def.array]
+        if type(pts) == "table" and #pts > 0 then return pts end
+    end
+    if def.indexed then
+        local out = {}
+        for i = 1, 10 do
+            local p = bar[def.indexed .. i]
+            if not p then break end
+            out[i] = p
+        end
+        if #out > 0 then return out end
+    end
+    return nil
+end
+
+-- Is this bar still being UPDATED? Gate on event registration, not visibility.
+-- ClassResourceBarMixin registers/unregisters UNIT_POWER_FREQUENT (DK: RUNE_POWER_UPDATE) exactly
+-- in step with whether it refreshes, so registration answers the real question directly. Crucially
+-- a bar can be HIDDEN YET LIVE: with the Personal Resource Display on, the nameplate bar reads the
+-- correct value while IsShown() is false, and gating on visibility would discard it. Conversely an
+-- unregistered bar is the frozen one - confirmed on a Paladin at 2 Holy Power, where the
+-- unregistered player-frame bar still read 0 while the registered nameplate bar read 2.
+-- Falls back to IsShown() only if the API is unavailable.
+local function BarIsLive(bar, def)
+    if def.event and bar.IsEventRegistered then
+        return bar:IsEventRegistered(def.event) and true or false
+    end
+    return (bar.IsShown and bar:IsShown()) and true or false
+end
+
+--- Read one point: 1 / 0 / fractional, or nil when its shape isn't understood.
+--- Enum semantics live on the BAR (def.state/def.isFilled), never on the field name: Paladin and
+--- DK BOTH store `visualState`, but Paladin is 1=Inactive/2=Active/3=SpellReady (filled when >1)
+--- while DK is 1=Empty/2=OnCooldown/3=CooldownEnding/4=Ready (available ONLY at 4). A shared
+--- field-name rule would silently count cooling DK runes as available.
+local function ReadPoint(p, def)
+    if not p then return nil end
+    for k = 1, #POINT_ACTIVE_FIELDS do
+        local v = p[POINT_ACTIVE_FIELDS[k]]
+        if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(v) then return nil, true end
+        if type(v) == "boolean" then return v and 1 or 0 end
+    end
+    for k = 1, #POINT_FILL_FIELDS do
+        local v = p[POINT_FILL_FIELDS[k]]
+        if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(v) then return nil, true end
+        -- Saturate() bounds these to 0..1; outside that is a shape we don't understand.
+        if type(v) == "number" and v >= 0 and v <= 1 then return v end
+    end
+    if def.state and def.isFilled then
+        local v = p[def.state]
+        if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(v) then return nil, true end
+        if type(v) == "number" and v % 1 == 0 and v >= def.min and v <= def.max then
+            return def.isFilled(v) and 1 or 0
+        end
+    end
+    return nil
+end
+
+--- Current discrete class-resource count, or nil when it can't be trusted.
+--- EVERY point must read: a partially-understood bar is not counted. That is the fallback for an
+--- unmapped class and for any future Blizzard rename - "unknown" beats a confident zero, which
+--- would otherwise report 0 resource and permanently sink every `>=`-gated spender. Callers treat
+--- nil as unknown and fail open.
+--- @return number|nil count, number|nil max, string|nil resource (SimC resource token)
+function BlizzardAPI.GetClassResourcePoints()
+    local _, playerClass = UnitClass("player")
+    for i = 1, #RESOURCE_BARS do
+        local def = RESOURCE_BARS[i]
+        -- Only this character's bar: another class's global exists but is never initialised, so
+        -- skipping it avoids both the wasted scan and any chance of reading a foreign resource.
+        local bar = (def.class == playerClass) and _G[def.frame] or nil
+        if bar and BarIsLive(bar, def) then
+            local pts = BarPoints(bar, def)
+            if pts then
+                local count, readable = 0, 0
+                for j = 1, #pts do
+                    local add, secret = ReadPoint(pts[j], def)
+                    if secret then return nil end   -- secret anywhere: trust none of it
+                    if add ~= nil then
+                        readable = readable + 1
+                        count = count + add
+                    end
+                end
+                if readable == #pts then
+                    return count, #pts, def.res
+                end
+            end
+        end
+    end
+    return nil
 end
 
 --- Reset target cast tracking. Called from JustAC:OnTargetChanged and
