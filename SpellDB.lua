@@ -1086,9 +1086,86 @@ end
 -- one costs a gap in mitigation. The countdown SWIPE is engine-drawn and exact regardless - so
 -- never tune `dur` to fix a timer, it only moves the glow.
 SpellDB.MAINTENANCE_DEFENSIVE = {
-    WARRIOR_3     = { cast = 2565,   aura = 132404, dur = 6.0 },  -- Shield Block -> its buff
-    PALADIN_2     = { cast = 53600,  aura = 132403, dur = 4.5 },  -- Shield of the Righteous
-    DEMONHUNTER_2 = { cast = 203720, aura = 203819, dur = 12.0 }, -- Demon Spikes -> its buff
+    -- chargeGated: limited by CHARGES, not resources. These CANNOT be held up perpetually -
+    -- uptime is capped by the recharge rate - so the early "refresh" pre-warning is wrong for
+    -- them: pressing before the buff drops throws away buff time you cannot get back, and the
+    -- charge may not even be available. They cue only once the buff has actually gone, and the
+    -- icon shows the ABILITY (charges + recharge) rather than the aura.
+    -- `dur` is kept because the swipe still wants it; only the pre-warning is suppressed.
+    -- Set it from SpellCategories.ChargeCategory, NOT from resemblance: Shield of the
+    -- Righteous looks like these three and is resource-gated (ChargeCategory=0).
+    -- Charge counts here are TALENT-DEPENDENT, so never hardcode them - the renderer reads
+    -- maxCharges live from C_Spell.GetSpellCharges, which is correct under any build.
+    -- SpellCategory gives only the BASE: Shield Block category 1385 = MaxCharges 1 / 16s
+    -- recharge, Demon Spikes category 1586 = 1 / 20s. A talent adds the second charge -
+    -- confirmed in game for Prot, and visible in DB2 as "Shield Master" (165340) carrying
+    -- EffectAura=411 (modify charges) with EffectMiscValue_0=1385.
+    -- NOTE FOR FUTURE AUDITS: charge modifiers target the CHARGE CATEGORY, not the spell, so
+    -- searching SpellEffect for rows referencing the spell id finds nothing and wrongly reads
+    -- as "no talent adds a charge". Search EffectMiscValue for the category id instead.
+    -- Each spec is a LIST, ordered by priority for ties. The slot shows whichever entry most
+    -- needs pressing right now, so a spec that genuinely maintains two buffs gets both.
+    --
+    -- Protection: IGNORE PAIN ONLY. Shield Block is deliberately NOT here, and the reason is
+    -- SITUATIONAL VALUE, not uptime. Shield Block raises block chance against MELEE attacks -
+    -- it does nothing against magic - so whether it is worth pressing depends on what is
+    -- hitting you. That is a "which defensive suits this situation" question, which is the
+    -- defensive queue's job; it sits at position 1 of the Prot list there. Ignore Pain absorbs
+    -- damage of any school, so it is unconditionally worth keeping up - which is what this
+    -- slot is for. The split is by KIND of decision, not by how often the button is pressed.
+    -- Do NOT restore it on the theory that the offensive queue covers it: active mitigation is
+    -- deliberately excluded from the SimC rotation (see the SKIP set in gen_simc_rotations.py,
+    -- which lists shield_block alongside ignore_pain and ironfur), so it never appears there.
+    -- The defensive queue is its only home, and that is the correct one.
+    -- Contrast DEATHKNIGHT_1 below, where Marrowrend IS in both surfaces on purpose: there the
+    -- two carry different meanings ("spend runes" vs "your stacks are running out"). Shield
+    -- Block carries the same meaning in both places, so a second home adds nothing.
+    WARRIOR_3     = {
+        -- absorb: the buff can end EARLY, when the shield is eaten rather than when the timer
+        -- runs out - so the swipe alone overstates protection.
+        -- OBSERVED in game: the aura carries a count rendered where a stack count normally
+        -- sits. It RISES as you recast (absorb accumulating) and FALLS as damage comes in,
+        -- capping at 100. Measured on one character: 35 ~= 14k absorbed, 100 ~= 37k - linear
+        -- at roughly 370-400 damage per point - so the number is the absorb pool NORMALISED
+        -- to its cap, i.e. a percentage. 100 means capped and further casts waste rage.
+        -- Displaying the normalised 0-100 rather than the raw amount is the right call: the
+        -- absolute values scale with gear and rage, the percentage does not.
+        -- Related mechanic, for anyone reasoning about drain rate: Ignore Pain absorbs at most
+        -- 50% of any single incoming hit, so the pool empties more slowly than raw damage
+        -- taken would suggest. Do not model depletion as 1:1 with damage.
+        -- DB2 cannot settle any of this: there is no SpellAuraOptions row for 190456 at all,
+        -- so the accumulate/cap behaviour is script-driven and invisible to the CSVs.
+        -- We show it anyway, because whatever its unit, it demonstrably tracks depletion - and
+        -- that is the one thing the swipe cannot tell you. We only pass it through to the
+        -- engine; nothing here interprets or compares it, so being wrong about the unit costs
+        -- nothing. Do not build logic on its scale without confirming what it counts.
+        -- `dur` = 12s, the real expiry (SpellDuration id 29). `lead` = 4s.
+        -- Be careful about WHY, because the obvious reason is wrong: the number is a POOL of
+        -- total absorb, not a buff strength, so holding it at 100 does not absorb more than
+        -- letting it sit low. Take 14k of damage and one application covers it exactly as well
+        -- as three. High uptime is not itself the goal, and "keep it capped" is not the advice
+        -- - topping up beyond the damage you will actually take just wastes rage.
+        -- What the lead IS for: absorb left in the pool when the aura expires is absorb thrown
+        -- away, and refreshing rolls it forward instead. The press is close to free (Ignore
+        -- Pain is an off-GCD dump for rage that would otherwise overcap), so pre-warning costs
+        -- little and preserves whatever remains. That is a weaker justification than the
+        -- chargeGated entries have for the opposite choice, and it is deliberately a soft cue.
+        -- The genuinely optimal call - size the pool to incoming damage - needs to know both
+        -- the remaining pool and the damage coming, and we can read neither in combat.
+        -- If the shield is eaten before the timer, the aura drops and the authoritative "down"
+        -- path catches it at rank 1, so that case needs no prediction.
+        { cast = 190456, aura = 190456, dur = 12.0, lead = 4.0, absorb = true, stacks = true },  -- Ignore Pain
+    },
+    PALADIN_2     = {
+        -- NOT chargeGated, despite looking like its Warrior/DH counterparts: SpellCategories
+        -- for 53600 has ChargeCategory=0, i.e. no charge system exists for it. It is a HOLY
+        -- POWER spender, so it behaves like Ignore Pain - generation-limited, not recharge-
+        -- limited - and therefore CAN be held up and DOES want the early pre-warning cue.
+        { cast = 53600,  aura = 132403, dur = 4.5 },  -- Shield of the Righteous
+    },
+    DEMONHUNTER_2 = {
+        { cast = 203720, aura = 203819, dur = 12.0, chargeGated = true },  -- Demon Spikes
+    },
     -- Ironfur casts and buffs under one id. NOTE: SpellAuraOptions says CumulativeAura=1,
     -- but /jac inspect stacks measured it in game as ONE instance with applications=2 - the
     -- real cap is enforced outside that DB2 field. Trust the measurement, not the CSV.
@@ -1096,7 +1173,9 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
     -- barely 2s of warning - too tight to react to mid-pull. Pressing EARLIER than the cue is
     -- always legitimate (stacking Ironfur is a damage-intake call the player makes, not one we
     -- can see), so the cue is a floor, never a "do not press yet".
-    DRUID_3       = { cast = 192081, aura = 192081, dur = 7.0, lead = 3.0, stacks = true },  -- Ironfur
+    DRUID_3       = {
+        { cast = 192081, aura = 192081, dur = 7.0, lead = 3.0, stacks = true },  -- Ironfur
+    },
     -- Blood is deliberately a rotational OFFENSIVE button. Blizzard fused rune-spending and
     -- Bone Shield upkeep into one press, so there is no defensive-only alternative - checked,
     -- Heart Strike has no self-target grant of the right shape. The two slots carry different
@@ -1110,7 +1189,9 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
     -- hard-blocked combat log, so there is no decrement signal, and the Bone Collector talent
     -- (458572) grants stacks with no cast to observe - wrong in both directions at once.
     -- Blood therefore glows only when Bone Shield is fully GONE: a real emergency, not a guess.
-    DEATHKNIGHT_1 = { cast = 195182, aura = 195181, stacks = true },  -- Marrowrend -> Bone Shield
+    DEATHKNIGHT_1 = {
+        { cast = 195182, aura = 195181, stacks = true },  -- Marrowrend -> Bone Shield
+    },
     -- MONK_1 Brewmaster is intentionally ABSENT. Shuffle has two live spell ids (215479 with a
     -- real 5s duration, 322120 wired into the talent tree but durationless and proc-shaped) and
     -- neither Blackout Kick nor Keg Smash shows a grant link in the data - it is a side effect
@@ -1118,11 +1199,21 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
     -- button here is worse than no button.
 }
 
---- The current spec's maintenance defensive, or nil when the spec has none (every non-tank,
---- plus Brewmaster).
-function SpellDB.GetMaintenanceDefensive()
+--- The current spec's maintenance defensives as a LIST, or nil when the spec has none (every
+--- non-tank, plus Brewmaster).
+function SpellDB.GetMaintenanceDefensives()
     local specKey = SpellDB.GetSpecKey()
-    return specKey and SpellDB.MAINTENANCE_DEFENSIVE[specKey] or nil
+    local list = specKey and SpellDB.MAINTENANCE_DEFENSIVE[specKey] or nil
+    if list and #list > 0 then return list end
+    return nil
+end
+
+--- The spec's PRIMARY maintenance defensive. Kept for existence checks and diagnostics that
+--- only need "does this spec have one at all"; anything that tracks state must use the list,
+--- since a spec can maintain more than one buff.
+function SpellDB.GetMaintenanceDefensive()
+    local list = SpellDB.GetMaintenanceDefensives()
+    return list and list[1] or nil
 end
 
 -- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)

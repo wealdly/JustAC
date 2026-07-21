@@ -1170,6 +1170,13 @@ end
 function JustAC:PLAYER_ENTERING_WORLD()
     self:InitializeCaches()
 
+    -- Re-apply the cosmetic Cooldown Manager hide. Blizzard rebuilds those viewers across
+    -- loading screens, so a one-shot at login would be lost on the first zone change.
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    if MT and MT.ApplyViewerVisibility and self.db and self.db.profile then
+        MT.ApplyViewerVisibility(self.db.profile)
+    end
+
     -- Re-evaluate vehicle/possess state after loading screens (may enter a phased vehicle zone).
     self:UpdateAlternateControlState()
 

@@ -1053,10 +1053,8 @@ local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
 local function ClearMaintenanceSlot(icon)
     if not icon then return end
     UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
-    if UIAnimations.StopMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
     icon:SetAlpha(0)
-    -- _maintGlow is a STAGE ("down"/"refresh"/nil), not a bool - nil, not false.
-    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, nil, nil, nil
+    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, false, nil, nil
     icon.maintenanceAuraID = nil
     if icon.chargeText then icon.chargeText:Hide() end
 end
@@ -1113,27 +1111,53 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     icon:SetAlpha(icon.overlayOpacity or 1)
     icon._maintShown = true
 
-    -- Remaining time, in descending order of trust:
-    --   1. exact bind  -> the aura's real DurationObject, engine-drawn. Never read.
-    --   2. bridge bind -> our own cast clock. The bound instance may NOT be our aura, and
-    --      drawing its duration renders a foreign timer (a 20s proc on a 7s buff) - reported
-    --      in game as "wildly wrong cooldown". An estimate that drifts a second or two beats
-    --      a confident number belonging to something else.
-    --   3. no bind     -> nothing.
+    -- TWO fundamentally different kinds of maintenance button, and they want different data:
+    --
+    --   chargeGated (Shield Block, Demon Spikes) - you track the ABILITY. Uptime is capped by
+    --     recharge, so what matters is "have I got a charge, and when does the next one land".
+    --     The buff is a consequence of pressing, not the thing being managed. Show the
+    --     ability's recharge swipe and its CHARGE count.
+    --
+    --   otherwise (Ironfur, Bone Shield, Ignore Pain, Shield of the Righteous) - you track the
+    --     BUFF. The button is limited by RESOURCE generation, not recharge, so it can be held
+    --     up; what matters is whether the buff is still on you and how strong. Show the aura's
+    --     remaining time and its stack count.
+    --
+    -- Conflating them showed a tank the buff timer on a button whose real constraint was the
+    -- charge, which is the wrong question answered precisely.
     local exactBind = MT and MT.IsBindExact and MT.IsBindExact()
     if icon.cooldown then
-        local durObj = exactBind and MT and MT.GetDurationObject and MT.GetDurationObject(inst) or nil
-        if durObj and icon.cooldown.SetCooldownFromDurationObject then
-            pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
+        local applied = false
+        if entry.chargeGated then
+            -- The ability's own recharge. Secret-safe: the DurationObject goes straight to the
+            -- engine, never read. `false` = include the GCD, so a fresh press reads as busy.
+            if C_Spell and C_Spell.GetSpellCooldownDuration
+               and icon.cooldown.SetCooldownFromDurationObject then
+                local okD, durObj = pcall(C_Spell.GetSpellCooldownDuration, displayID, false)
+                if okD and durObj then
+                    pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
+                    applied = true
+                end
+            end
         else
-            local st, len = nil, nil
-            if inst and MT and MT.GetEstimatedCooldown then st, len = MT.GetEstimatedCooldown() end
-            if st and len then
-                icon.cooldown:SetCooldown(st, len)   -- plain numbers, no secret
-            else
-                icon.cooldown:SetCooldown(0, 0)
+            -- The aura's remaining time, in descending order of trust:
+            --   1. exact bind  -> the aura's real DurationObject, engine-drawn. Never read.
+            --   2. bridge bind -> our own cast clock. The bound instance may NOT be our aura,
+            --      and drawing its duration renders a foreign timer (a 20s proc on a 7s buff).
+            --   3. no bind     -> nothing.
+            local durObj = exactBind and MT and MT.GetDurationObject and MT.GetDurationObject(inst) or nil
+            if durObj and icon.cooldown.SetCooldownFromDurationObject then
+                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
+                applied = true
+            elseif inst and MT and MT.GetEstimatedCooldown then
+                local st, len = MT.GetEstimatedCooldown(entry)
+                if st and len then
+                    icon.cooldown:SetCooldown(st, len)   -- plain numbers, no secret
+                    applied = true
+                end
             end
         end
+        if not applied then icon.cooldown:SetCooldown(0, 0) end
     end
 
     -- Stack count, gated on an IDENTITY-EXACT bind. The number itself is never read: the engine
@@ -1147,19 +1171,34 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- SetText marks this FontString's Text aspect secret PERMANENTLY - keep it off any
     -- width-measured layout path. Nothing here measures it.
     if icon.chargeText then
-        local fn = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
-        local exact = MT and MT.IsBindExact and MT.IsBindExact()
-        if entry.stacks and exact and fn and inst then
-            local ok, text = pcall(fn, "player", inst, 2)
-            if ok and text then
-                icon.chargeText:SetText(text)
-                icon.chargeText:Show()
-            else
-                icon.chargeText:Hide()
+        local shown = false
+        if entry.chargeGated then
+            -- CHARGES, not aura stacks. maxCharges is NeverSecret so it is safe to compare;
+            -- currentCharges is SECRET in combat, so it goes straight to SetText and the engine
+            -- renders it - same pass-through rule as everywhere else. No identity gate needed:
+            -- this reads the ABILITY by spell id, which was never ambiguous.
+            if C_Spell and C_Spell.GetSpellCharges then
+                local okC, ci = pcall(C_Spell.GetSpellCharges, displayID)
+                if okC and ci and type(ci.maxCharges) == "number" and ci.maxCharges > 1 then
+                    local okT = pcall(icon.chargeText.SetText, icon.chargeText, ci.currentCharges)
+                    if okT then icon.chargeText:Show() shown = true end
+                end
             end
-        else
-            icon.chargeText:Hide()
+        elseif entry.stacks then
+            -- Aura stacks, gated on a PROVEN bind: the engine renders the true count, but only
+            -- off the right instance. The 3rd arg is an engine-side "only show if >= 2".
+            local fn = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
+            local exact = MT and MT.IsBindExact and MT.IsBindExact(entry)
+            if exact and fn and inst then
+                local ok, text = pcall(fn, "player", inst, 2)
+                if ok and text then
+                    icon.chargeText:SetText(text)
+                    icon.chargeText:Show()
+                    shown = true
+                end
+            end
         end
+        if not shown then icon.chargeText:Hide() end
     end
 
     -- Usability goes through the SHARED ApplyVisualState. IsSpellUsable is never-secret, so it
@@ -1191,33 +1230,33 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
     end
 
-    -- Two-stage cue, ONE colour:
-    --   refresh -> marching-ants crawl. Still up, decaying: "top this up soon."
-    --   down    -> proc burst. Mitigation actually gone: the loud one.
-    -- Both desaturate to greyscale and multiply by the SAME rgb, so the hue is identical; the
-    -- two atlases differ in luminance, so the burst reads brighter. That intensity step IS the
-    -- signal - a single glow could not say "soon" and "now" apart.
+    -- ONE cue: the proc burst, raised at the refresh threshold (~3s before decay) and held if
+    -- the buff actually lapses. A two-stage version was tried - marching-ants crawl for
+    -- "refresh", burst for "down" - and rejected in play: the crawl is too faint to register
+    -- mid-pull, which defeats the point of a cue you must catch at a glance. Do not reintroduce
+    -- a low-contrast stage here; if "soon" and "gone" ever need distinguishing, find a
+    -- difference that survives a busy screen.
     -- Never on "unknown": that state means we could not identify the aura, and glowing there
     -- tells a tank to re-press a buff that may well be live.
-    -- Gated on usable, which is false for BOTH a resource shortfall and a live cooldown.
-    local stage = nil
-    if usable then
-        if state == "down" then stage = "down"
-        elseif state == "refresh" then stage = "refresh" end
+    -- Gated on usable AND ready. `usable` alone is NOT enough: C_Spell.IsSpellUsable reports
+    -- resources and state, never cooldown, so a charge-gated button with every charge spent
+    -- still reads usable and we would cue a press that cannot happen.
+    -- Use IsSpellReady, not IsSpellOnCooldown: it is charge-aware, treating a spell with a
+    -- banked charge as ready even while another recharges. IsSpellOnCooldown would call that
+    -- recharge "on cooldown" and kill the glow on a Shield Block you can press right now.
+    local ready = true
+    if BlizzardAPI and BlizzardAPI.IsSpellReady then
+        ready = BlizzardAPI.IsSpellReady(displayID) and true or false
     end
-    if stage ~= icon._maintGlow then
-        -- Tear the previous stage down unconditionally before raising the next. A fast
-        -- refresh->down transition would otherwise leave the crawl running underneath the
-        -- burst, and two glows on one icon read as a rendering bug.
-        UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
-        if UIAnimations.StopMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
-        if stage == "down" then
+    local wantGlow = (state == "down" or state == "refresh") and usable and ready
+    if wantGlow ~= icon._maintGlow then
+        if wantGlow then
             UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
                 MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-        elseif stage == "refresh" and UIAnimations.StartMaintenanceGlow then
-            UIAnimations.StartMaintenanceGlow(icon, true)
+        else
+            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
         end
-        icon._maintGlow = stage
+        icon._maintGlow = wantGlow
     end
 end
 

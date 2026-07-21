@@ -391,6 +391,10 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
     if MaintenanceTracker and MaintenanceTracker.IsSlotActive then
         local slotActive, mEntry = MaintenanceTracker.IsSlotActive(profile)
+        -- Exclude ONLY the buff currently ON SCREEN in the slot. Excluding every maintained
+        -- buff instead removed the one waiting its turn from the queue as well, so on Prot
+        -- Ignore Pain vanished from both surfaces whenever Shield Block held the slot.
+        -- The slot takes the most urgent; the other still flows through the normal queue.
         if slotActive and mEntry and mEntry.cast then
             dpsQueueExclusions[mEntry.cast] = true
         end

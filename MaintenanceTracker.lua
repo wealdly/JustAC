@@ -58,33 +58,44 @@ local REFRESH_LEAD = 0.30
 -- That estimate DRIFTS if a talent extends the buff (e.g. a +2s Ironfur talent): the cue then
 -- fires early. The engine-exact swipe beside it is the ground truth if the two disagree.
 
--- When we last cast the maintenance button. Distinct from pendingCastAt, which clears as soon
--- as the bridge binds - this one persists for the whole buff so the refresh window can be
--- measured from it.
-local lastCastAt = nil
+-- PER-ENTRY state, keyed by aura id. A spec can maintain more than one buff (Prot rolls both
+-- Shield Block and Ignore Pain), and each needs its own instance binding, cast clock and drop
+-- evidence - a single set of module-level variables silently blended them together.
+local states = {}
+
+--- State bag for one entry, created on demand.
+local function S(entry)
+    local key = entry and entry.aura
+    if not key then return nil end
+    local s = states[key]
+    if not s then
+        s = { trackedInstance = nil, pendingCastAt = nil, lastCastAt = nil,
+              observedDrop = false, bindExact = false, learnedDuration = nil,
+              cooldownIDs = nil }
+        states[key] = s
+    end
+    return s
+end
+
+-- What each per-entry state field means (all live in `states[auraID]`):
+--   trackedInstance - the aura instance we believe is this buff's.
+--   pendingCastAt   - a cast still waiting for the bridge to match it; clears on bind.
+--   lastCastAt      - persists for the whole buff, so the refresh window measures from it.
+--   observedDrop    - did we OBSERVE it drop, versus merely fail to find it? Only observed
+--                     evidence justifies "down" and a glow. Without this, "never bound" and
+--                     "confirmed dropped" were indistinguishable and both glowed - measured in
+--                     game telling a tank to re-press an Ironfur that was already up.
+--   bindExact       - TRUE only from a by-spell-id lookup (proof of identity); FALSE when the
+--                     bridge guessed, which is not proof. Gates the STACK COUNT, because a
+--                     wrong number is actionable misinformation for a tank.
+--   learnedDuration - the real duration read off a live instance, since talents extend these.
+--   cooldownIDs     - every Cooldown Manager id mapping to this spell.
 
 -- Bridge diagnostics for /jac inspect maintenance. Counters only - no gameplay effect. These
 -- exist to answer "is the ambiguity guard starving the bind?" with data instead of a guess.
+-- Shared across entries deliberately: it measures the BRIDGE, not any one buff.
 local diag = { batches = 0, ambiguous = 0, bound = 0, lastCandidates = 0, maxCandidates = 0 }
 function MaintenanceTracker.GetBridgeDiag() return diag end
-
--- Current tracked instance for the spec's maintenance aura.
-local trackedInstance = nil
--- Did we OBSERVE the buff drop, as opposed to merely failing to find it? Only an observed drop
--- justifies claiming "down" and glowing the button. Without this, "never bound" and "confirmed
--- dropped" were indistinguishable and both glowed - measured in game telling a tank to re-press
--- an Ironfur that was already up. Set only by evidence: a removal batch naming our instance, or
--- an instance the engine has stopped knowing. Cleared the moment we hold a live instance again.
-local observedDrop = false
--- How we got the current instance. TRUE only when it came from a by-spell-id lookup, which is
--- proof of identity; FALSE when the cast->instance bridge guessed it, which is not - the bridge
--- can only tell "a player-cast helpful buff" from "some other player-cast helpful buff".
--- This gates the STACK COUNT: a wrong number is actionable misinformation for a tank, so the
--- count renders only on a proven bind. Measured in game, an exact bind made out of combat
--- SURVIVES into the fight - instance 416 held across recasts - so this is not merely academic.
-local bindExact = false
--- Time of the last maintenance cast still awaiting an addedAuras match.
-local pendingCastAt = nil
 
 --- Is this instance one of OUR helpful auras? Engine-evaluated from the NeverSecret
 --- instance id, so it stays readable in combat - unlike aura.spellId.
@@ -123,7 +134,6 @@ end
 --- category it belongs to. Taking the first match (categories scan 0..3) found the Utility id
 --- and never looked at TrackedBar - where these maintenance buffs sit BY DEFAULT. That made the
 --- join look like it required manual setup when it did not: we were hunting the wrong number.
-local cachedCooldownIDs = nil
 
 -- The buff's REAL duration, learned by observation rather than hardcoded. `entry.dur` is a
 -- static book value, but talents extend these buffs (a +2s Ironfur talent exists), and the
@@ -131,12 +141,12 @@ local cachedCooldownIDs = nil
 -- and there is no way to notice, because the true remaining time is secret in combat.
 -- Out of combat the aura's .duration IS readable, so learn it once from a live instance and
 -- keep using it. Cleared on spec change, which is also when a talent build can change.
-local learnedDuration = nil
 
 --- Read the real duration off a known-good instance. Only meaningful where the field is plain;
 --- returns nil in combat rather than a secret, and never compares the value.
-local function LearnDuration(instanceID)
-    if not instanceID then return end
+local function LearnDuration(entry, instanceID)
+    local s = S(entry)
+    if not (s and instanceID) then return end
     local fn = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
     if not fn then return end
     local ok, d = pcall(fn, "player", instanceID)
@@ -145,22 +155,25 @@ local function LearnDuration(instanceID)
     -- Secrecy first, then type, then use. A secret here must not reach the arithmetic in
     -- GetState's refresh window, and 0 means "no duration" rather than "expired".
     if not IsSecret(dur) and type(dur) == "number" and dur > 0 then
-        learnedDuration = dur
+        s.learnedDuration = dur
     end
 end
 
 --- Effective duration for the refresh clock: learned if we have ever seen it, else the static
 --- book value. @return number|nil
 local function EffectiveDuration(entry)
-    return learnedDuration or (entry and entry.dur) or nil
+    local s = S(entry)
+    return (s and s.learnedDuration) or (entry and entry.dur) or nil
 end
 
 local function ResolveCooldownIDs(entry)
-    if cachedCooldownIDs ~= nil then return cachedCooldownIDs end
-    cachedCooldownIDs = {}
+    local s = S(entry)
+    if not s then return nil end
+    if s.cooldownIDs ~= nil then return s.cooldownIDs end
+    s.cooldownIDs = {}
     local CV = C_CooldownViewer
     if not (CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo) then
-        return cachedCooldownIDs
+        return s.cooldownIDs
     end
     local function Matches(info)
         if type(info) ~= "table" then return false end
@@ -182,12 +195,12 @@ local function ResolveCooldownIDs(entry)
             for j = 1, #ids do
                 local okN, info = pcall(CV.GetCooldownViewerCooldownInfo, ids[j])
                 if okN and Matches(info) and type(ids[j]) == "number" then
-                    cachedCooldownIDs[ids[j]] = true
+                    s.cooldownIDs[ids[j]] = true
                 end
             end
         end
     end
-    return cachedCooldownIDs
+    return s.cooldownIDs
 end
 
 --- Path (a0), the only source of EXACT identity in combat: Blizzard's Cooldown Manager.
@@ -243,16 +256,112 @@ local function FindInstanceExact(entry)
     -- (out of combat), learn the real duration. Costs one table read on an already-fetched
     -- aura, and only ever runs on an instance we know is ours - learning off a bridge guess
     -- would cache some other buff's length and silently skew every refresh cue afterwards.
-    if inst then LearnDuration(inst) end
+    if inst then LearnDuration(entry, inst) end
     return inst
+end
+
+--------------------------------------------------------------------------------
+-- Cosmetic hiding of Blizzard's Cooldown Manager viewers
+--------------------------------------------------------------------------------
+-- The viewer must stay SHOWN for us to read it: hiding stops its UNIT_AURA feed and freezes
+-- auraInstanceID, and a hidden one cannot be revived from addon code (RefreshData throws - see
+-- Documentation/AURA_IDENTITY_12.0.md). But "shown" need not mean "visible": alpha 0 with mouse
+-- input off is indistinguishable from hidden to the player while Blizzard keeps updating it.
+-- SetAlpha is AllowedWhenTainted, so unlike the RefreshData route this is legitimate.
+-- We never Show() a viewer the player disabled - that is their setting to make.
+local alphaGuard = {}
+local alphaHooked = {}
+local hiddenViewers = {}   -- [frame] = true while we are holding it invisible
+local lastVisibilityProfile = nil   -- so Edit Mode transitions can re-apply without a caller
+
+-- Profile key per viewer. Four separate booleans rather than a nested table because each binds
+-- directly to its own options toggle. Names are the player-facing panel labels, not the frame
+-- names, which is why TrackedBuff/TrackedBar do not match BuffIcon/BuffBar.
+local VIEWER_OPTION_KEYS = {
+    { frame = "EssentialCooldownViewer", key = "hideCdmEssential" },
+    { frame = "UtilityCooldownViewer",   key = "hideCdmUtility" },
+    { frame = "BuffIconCooldownViewer",  key = "hideCdmTrackedBuff" },
+    { frame = "BuffBarCooldownViewer",   key = "hideCdmTrackedBar" },
+}
+
+local function ApplyViewerAlpha(viewer, hide)
+    if not (viewer and viewer.SetAlpha) then return end
+    -- Edit Mode must always be visible, or the player cannot configure or even find the panel
+    -- they are being asked to enable.
+    local editing = (EditModeManagerFrame and EditModeManagerFrame.IsShown
+                     and EditModeManagerFrame:IsShown()) and true or false
+    local target = (hide and not editing) and 0 or 1
+    alphaGuard[viewer] = true
+    pcall(viewer.SetAlpha, viewer, target)
+    alphaGuard[viewer] = nil
+    -- Stop it eating clicks while invisible.
+    if viewer.GetChildren then
+        local kids = { viewer:GetChildren() }
+        for i = 1, #kids do
+            local c = kids[i]
+            if c and c.SetMouseMotionEnabled then pcall(c.SetMouseMotionEnabled, c, target == 1) end
+        end
+    end
+end
+
+--- Turn Blizzard's Cooldown Manager on or off at the CVar level. This is the ONE thing that
+--- genuinely gates the whole system, and it is a game-wide setting - so it is only ever driven
+--- from an explicit opt-in toggle, never implicitly. Out of combat only: CVar writes can be
+--- refused mid-combat, and a silent failure there would be worse than not trying.
+--- @return boolean applied
+function MaintenanceTracker.SetCooldownManagerEnabled(on)
+    if InCombatLockdown and InCombatLockdown() then return false end
+    if not (C_CVar and C_CVar.SetCVar) then return false end
+    local ok = pcall(C_CVar.SetCVar, "cooldownViewerEnabled", on and "1" or "0")
+    return ok and true or false
+end
+
+--- Apply the per-panel cosmetic hide from the profile. Blizzard resets alpha on layout changes,
+--- so each viewer is re-asserted through a hook - guarded against re-entrancy, since our own
+--- SetAlpha would otherwise recurse.
+--- @param profile table
+function MaintenanceTracker.ApplyViewerVisibility(profile)
+    for i = 1, #VIEWER_OPTION_KEYS do
+        local spec = VIEWER_OPTION_KEYS[i]
+        local viewer = _G[spec.frame]
+        if viewer then
+            local hide = (profile and profile[spec.key]) and true or false
+            hiddenViewers[viewer] = hide
+            if not alphaHooked[viewer] and hooksecurefunc then
+                alphaHooked[viewer] = true
+                hooksecurefunc(viewer, "SetAlpha", function(frame)
+                    if alphaGuard[frame] then return end
+                    if hiddenViewers[frame] then ApplyViewerAlpha(frame, true) end
+                end)
+            end
+            ApplyViewerAlpha(viewer, hide)
+        end
+    end
+
+    -- Entering/leaving Edit Mode changes whether we should be hiding, but nothing else calls
+    -- us at that moment - so re-apply on both transitions. Hooked once, lazily, because
+    -- EditModeManagerFrame may not exist yet at load.
+    lastVisibilityProfile = profile
+    local emf = EditModeManagerFrame
+    if emf and not alphaHooked[emf] and emf.HookScript then
+        alphaHooked[emf] = true
+        local function reapply()
+            if lastVisibilityProfile then
+                MaintenanceTracker.ApplyViewerVisibility(lastVisibilityProfile)
+            end
+        end
+        pcall(emf.HookScript, emf, "OnShow", reapply)
+        pcall(emf.HookScript, emf, "OnHide", reapply)
+    end
 end
 
 --- Drop a bridge request that is never going to be answered. pendingCastAt is cleared on a
 --- successful bind, but a cast can produce no bindable aura at all - then GetState would
 --- answer "unknown" forever instead of "down", and the glow never fires. Time it out.
-local function ExpireStalePendingCast()
-    if pendingCastAt and (GetTime() - pendingCastAt) > BRIDGE_WINDOW then
-        pendingCastAt = nil
+local function ExpireStalePendingCast(entry)
+    local s = S(entry)
+    if s and s.pendingCastAt and (GetTime() - s.pendingCastAt) > BRIDGE_WINDOW then
+        s.pendingCastAt = nil
     end
 end
 
@@ -268,43 +377,54 @@ end
 --- Player cast something. If it is the spec's maintenance button, open a bridge window so
 --- the next OUR-buff instance to appear gets bound to it.
 function MaintenanceTracker.OnCastSucceeded(spellID)
-    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
-    if not entry or not entry.cast or spellID ~= entry.cast then return end
-    lastCastAt = GetTime()
-    pendingCastAt = lastCastAt
+    local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
+    if not list then return end
+    local entry
+    for i = 1, #list do
+        if list[i].cast == spellID then entry = list[i] break end
+    end
+    if not entry then return end
+    local s = S(entry)
+    if not s then return end
+    s.lastCastAt = GetTime()
+    s.pendingCastAt = s.lastCastAt
     -- A successful cast is evidence the buff is (re)applied, even when we cannot identify its
     -- instance. Without this, observedDrop latched true after the first genuine lapse and could
     -- never clear - clearing needs a live bind, and on the degraded path (no Cooldown Manager,
     -- bridge starved by ambiguity) there is none. The slot then claimed "down" for the rest of
     -- the fight and glowed at a tank whose buff was actually up. Cast evidence beats a stale flag.
-    observedDrop = false
+    s.observedDrop = false
     -- Try the exact paths immediately. In combat the Cooldown Manager can answer this outright,
     -- which skips the bridge entirely - and the bridge is measurably wrong (it bound 744/749
     -- while the true instances were 745/750).
     local exact = FindInstanceExact(entry)
     if exact then
-        trackedInstance = exact
-        bindExact = true          -- identity proven
-        pendingCastAt = nil
+        s.trackedInstance = exact
+        s.bindExact = true          -- identity proven
+        s.pendingCastAt = nil
     end
 end
 
 --- Player aura change. Binds a pending cast to its new instance, and clears the tracked
 --- instance the moment the engine says it was removed.
 --- @return boolean changed - true when the up/down state may have flipped (redraw)
-function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
-    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
-    if not entry then return false end
+--- Per-entry half of OnPlayerAuraUpdate. Every buff the spec maintains gets its own binding,
+--- cast clock and drop evidence - blending them would let one buff's removal clear another's
+--- instance.
+--- @return boolean changed
+local function UpdateEntry(entry, updateInfo)
+    local s = S(entry)
+    if not s then return false end
     local changed = false
 
-    ExpireStalePendingCast()
+    ExpireStalePendingCast(entry)
 
     -- Removal first: authoritative "it dropped".
-    if updateInfo and updateInfo.removedAuraInstanceIDs and trackedInstance then
+    if updateInfo and updateInfo.removedAuraInstanceIDs and s.trackedInstance then
         for _, id in ipairs(updateInfo.removedAuraInstanceIDs) do
-            if id == trackedInstance then
-                trackedInstance = nil
-                observedDrop = true   -- authoritative: the engine says it went away
+            if id == s.trackedInstance then
+                s.trackedInstance = nil
+                s.observedDrop = true   -- authoritative: the engine says it went away
                 changed = true
                 break
             end
@@ -313,7 +433,7 @@ function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
 
     -- Bridge: bind a waiting cast to its instance. ADDED and UPDATED both, because re-casting
     -- a live buff refreshes the aura and the engine reports that as an update, not an addition.
-    if updateInfo and pendingCastAt and (GetTime() - pendingCastAt) <= BRIDGE_WINDOW then
+    if updateInfo and s.pendingCastAt and (GetTime() - s.pendingCastAt) <= BRIDGE_WINDOW then
         -- auraInstanceID is documented NeverSecret, but guard anyway: these get compared
         -- against trackedInstance later, and the cost of being wrong is a throw.
         local function IsCandidate(id)
@@ -350,9 +470,9 @@ function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
         diag.lastCandidates = count
         if count > diag.maxCandidates then diag.maxCandidates = count end
         if count == 1 then
-            trackedInstance = only
-            bindExact = false     -- bridge guess: unambiguous in this batch, still not proof
-            pendingCastAt = nil
+            s.trackedInstance = only
+            s.bindExact = false   -- bridge guess: unambiguous in this batch, still not proof
+            s.pendingCastAt = nil
             changed = true
             diag.bound = diag.bound + 1
         elseif count > 1 then
@@ -365,11 +485,11 @@ function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
     -- path works while auras are secret, and the by-spell-id path already returns nil safely
     -- when they are - gating both on a GLOBAL readability flag suppressed the one source that
     -- still works in combat.
-    if not trackedInstance then
+    if not s.trackedInstance then
         local exact = FindInstanceExact(entry)
         if exact then
-            trackedInstance = exact
-            bindExact = true
+            s.trackedInstance = exact
+            s.bindExact = true
             changed = true
         end
     end
@@ -377,17 +497,25 @@ function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
     return changed
 end
 
+--- Player aura change. Runs every maintained buff independently.
+--- @return boolean changed - true when any entry's up/down state may have flipped (redraw)
+function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
+    local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
+    if not list then return false end
+    local changed = false
+    for e = 1, #list do
+        if UpdateEntry(list[e], updateInfo) then changed = true end
+    end
+    return changed
+end
+
 --- Clear tracking. Called on SPEC CHANGE only (JustAC.lua) - deliberately NOT on combat exit:
 --- Bone Shield (30s) and a fast Ironfur re-pull (<7s) both legitimately outlive a combat
 --- boundary, so wiping there would drop a buff that is still up.
 function MaintenanceTracker.Reset()
-    trackedInstance = nil
-    pendingCastAt = nil
-    lastCastAt = nil
-    observedDrop = false
-    bindExact = false
-    cachedCooldownIDs = nil  -- spec change: a different spec has different cooldownIDs
-    learnedDuration = nil    -- ...and a different buff, whose length must be re-learned
+    -- Drop every entry's state wholesale: a different spec has different buffs, different
+    -- cooldownIDs and different durations, so nothing here survives the switch.
+    wipe(states)
 end
 
 --- Local-clock fallback for the swipe: our own cast time plus the entry's static duration.
@@ -395,19 +523,24 @@ end
 --- aura's real DurationObject there can render a completely foreign timer (a 20s trinket proc
 --- on a 7s buff), which reads as "wildly wrong" rather than "slightly off". An estimate that
 --- drifts by a talent's worth of seconds is far better than a confidently wrong other clock.
+--- @param entry table|nil - defaults to the entry the slot is currently showing
 --- @return number|nil startTime, number|nil duration
-function MaintenanceTracker.GetEstimatedCooldown()
-    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
+function MaintenanceTracker.GetEstimatedCooldown(entry)
+    entry = entry or MaintenanceTracker._activeEntry
+    local s = S(entry)
     local effDur = EffectiveDuration(entry)
-    if not (effDur and lastCastAt) then return nil, nil end
-    return lastCastAt, effDur
+    if not (s and effDur and s.lastCastAt) then return nil, nil end
+    return s.lastCastAt, effDur
 end
 
 --- Was the current instance resolved by spell id (proof), or guessed by the bridge?
 --- Gates the stack count: the engine renders the true number, but only off the right instance.
+--- @param entry table|nil - defaults to the entry the slot is currently showing
 --- @return boolean
-function MaintenanceTracker.IsBindExact()
-    return trackedInstance ~= nil and bindExact
+function MaintenanceTracker.IsBindExact(entry)
+    entry = entry or MaintenanceTracker._activeEntry
+    local s = S(entry)
+    return (s and s.trackedInstance ~= nil and s.bindExact) or false
 end
 
 --- Current state of the spec's maintenance buff.
@@ -415,25 +548,31 @@ end
 ---         refresh window - press it) | "down" | "unknown" | "none" (spec has none)
 --- @return table|nil entry - the MAINTENANCE_DEFENSIVE entry
 --- @return number|nil auraInstanceID - live instance, for the duration display
-function MaintenanceTracker.GetState()
-    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
-    if not entry then return "none", nil, nil end
-    ExpireStalePendingCast()
+local function EntryState(entry)
+    local s = S(entry)
+    if not (entry and s) then return "none", nil, nil end
+    local trackedInstance, lastCastAt = s.trackedInstance, s.lastCastAt
+    ExpireStalePendingCast(entry)
 
     if trackedInstance and InstanceAlive(trackedInstance) then
         -- We have the instance, so nothing is waiting on the bridge any more. Clearing here
         -- covers the refresh case, where the recast never produced an addedAuras entry to
         -- bind against because the aura was updated rather than added.
-        pendingCastAt = nil
+        s.pendingCastAt = nil
         -- Single funnel for the drop flag: every bind path (cast, bridge, direct reseed) ends
         -- up here holding a live instance, so clearing it once here beats four call sites.
-        observedDrop = false
+        s.observedDrop = false
         -- Buff is live - but "live" is not the same as "leave it alone". Once it is inside
         -- its refresh window the answer is press it again, so distinguish the two. Only when
         -- the entry carries a duration: Bone Shield deliberately has none, because its stacks
         -- are consumed by damage rather than expiring on a clock, so elapsed time would be a
         -- fabricated warning (see the note on the DEATHKNIGHT_1 entry).
-        local effDur = EffectiveDuration(entry)
+        -- chargeGated: the button is limited by CHARGES, not by resources, so it cannot be held
+        -- up perpetually and pressing early throws away buff time you may not get back. For
+        -- those, skip the early "refresh" cue entirely and only signal once it has actually
+        -- dropped - re-press then, if a charge happens to be banked. The pre-warning only makes
+        -- sense for a resource dump (Ironfur, Marrowrend) where an early press costs nothing.
+        local effDur = entry.chargeGated and nil or EffectiveDuration(entry)
         if effDur and lastCastAt then
             local elapsed = GetTime() - lastCastAt
             -- lead in SECONDS if the entry specifies one, else the proportional fallback.
@@ -449,8 +588,8 @@ function MaintenanceTracker.GetState()
     if trackedInstance then
         -- Held an id the engine no longer knows: it expired without a removal batch. Still
         -- evidence of a drop - we watched a live instance stop existing.
-        trackedInstance = nil
-        observedDrop = true
+        s.trackedInstance = nil
+        s.observedDrop = true
     end
 
     -- One more exact attempt before declaring it down. The Cooldown Manager answers this even
@@ -458,9 +597,9 @@ function MaintenanceTracker.GetState()
     -- out of combat and any aura that is not secreted.
     local direct = FindInstanceExact(entry)
     if direct then
-        trackedInstance = direct
-        bindExact = true
-        observedDrop = false
+        s.trackedInstance = direct
+        s.bindExact = true
+        s.observedDrop = false
         return "up", entry, direct
     end
 
@@ -480,7 +619,7 @@ function MaintenanceTracker.GetState()
     end
     if not auraUnreadable then
         -- This spell's aura reads plain right now, so the miss really does mean it is down.
-        observedDrop = true
+        s.observedDrop = true
         return "down", entry, nil
     end
 
@@ -489,10 +628,64 @@ function MaintenanceTracker.GetState()
     -- ignorance must render as UNKNOWN (icon, no swipe, no glow) rather than a confident cue
     -- to re-press. Measured in game: an unbound tracker reported "down" for minutes while
     -- Ironfur was up, because "never bound" and "confirmed dropped" shared this return.
-    if observedDrop then
+    if s.observedDrop then
         return "down", entry, nil
     end
     return "unknown", entry, nil
+end
+
+--- Urgency of one entry, lower = more deserving of the slot. This is the mini-queue: the slot
+--- is an extension of the defensive queue for buffs a tank KEEPS UP, so it ranks by "which of
+--- my rolling buffs needs a press", not by "which defensive suits this situation" (that is the
+--- defensive queue's job, and the two must not duplicate each other).
+--- Pressability matters as much as state: cueing a charge-gated button with no charge banked is
+--- noise, so an unpressable entry sinks below a pressable one whatever its state.
+local function Urgency(entry, state)
+    -- IsSpellReady is CHARGE-AWARE: a charge spell counts as ready while any charge remains,
+    -- even with another recharging underneath. IsSpellOnCooldown alone reports that recharge
+    -- as "on cooldown" and would sink a Shield Block the player can actually press.
+    local ready = true
+    if BlizzardAPI and BlizzardAPI.IsSpellReady then
+        ready = BlizzardAPI.IsSpellReady(entry.cast) and true or false
+    end
+    -- Resources too: readiness does not cover rage/holy power.
+    if ready and BlizzardAPI and BlizzardAPI.IsSpellUsable then
+        if BlizzardAPI.IsSpellUsable(entry.cast) == false then ready = false end
+    end
+    -- Nothing actionable -> yield the slot outright, below even a healthy buff. Shield Block
+    -- with no charges banked is not upkeep information, it is noise occupying the one slot
+    -- another buff could be using. Only if EVERY entry is unpressable does one of these win,
+    -- and then the icon simply renders greyed.
+    if not ready then return 9 end
+    if state == "down"    then return 1 end
+    if state == "refresh" then return 2 end
+    if state == "unknown" then return 3 end   -- no claim; still beats a buff that is fine
+    return 4                                   -- "up" with time left: nothing to say
+end
+
+--- The entry the slot should show right now, picked across everything the spec maintains.
+--- Falls back to the first entry so the slot always has an icon to draw.
+--- @return string state, table|nil entry, number|nil auraInstanceID
+function MaintenanceTracker.GetState()
+    local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
+    if not list then
+        MaintenanceTracker._activeEntry = nil
+        return "none", nil, nil
+    end
+    local bestState, bestEntry, bestInst, bestRank
+    for i = 1, #list do
+        local st, en, inst = EntryState(list[i])
+        local rank = Urgency(list[i], st)
+        -- Strictly less-than, so ties keep LIST ORDER - the spec's own priority (Shield Block
+        -- before Ignore Pain for Prot), which matches the defensive ordering already curated.
+        if bestRank == nil or rank < bestRank then
+            bestState, bestEntry, bestInst, bestRank = st, en or list[i], inst, rank
+        end
+    end
+    -- Remember it: GetEstimatedCooldown/IsBindExact are called by the renderer without an entry
+    -- argument, and must answer about the buff actually on screen.
+    MaintenanceTracker._activeEntry = bestEntry
+    return bestState or "unknown", bestEntry, bestInst
 end
 
 --- Is the maintenance slot actually on screen right now? Shared by the renderer (which draws
@@ -505,7 +698,12 @@ function MaintenanceTracker.IsSlotActive(profile)
     -- Combat only, matching the renderer - out of combat the ability belongs in the normal
     -- defensive queue like any other, so the exclusion must lift with the slot.
     if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return false, nil end
-    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
+    -- The PICKED entry, not list[1]. This used to return the spec's first entry, so a spec
+    -- maintaining two buffs always drew the first one while GetState reported the other's
+    -- state - the icon said Shield Block while the timer belonged to Ignore Pain. It also
+    -- decides what the defensive queue excludes, so returning the wrong one hid the buff that
+    -- was not being shown from BOTH surfaces.
+    local _, entry = MaintenanceTracker.GetState()
     if not entry then return false, nil end
     return true, entry
 end

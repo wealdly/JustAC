@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [4.50.0] - 2026-07-21
+
+### Fixed
+- **The tank maintenance slot no longer cues a button you can't press**: it now accounts for charges, so an ability with none banked stays quiet instead of glowing at you to press it.
+- **Protection Paladin's Shield of the Righteous gets its early warning back**: it was being treated as charge-limited, which suppressed the cue. It runs on Holy Power, so you *can* keep it up - and you're now told before it lapses rather than after.
+
+### Changed
+- **Protection Warrior's maintenance slot now follows Ignore Pain instead of Shield Block**: Ignore Pain is the buff you genuinely keep rolling, and it absorbs damage of any kind, so it's worth having up whatever you're fighting. The slot shows how much shield is left and warns about 4 seconds before it drops, so you can renew and carry the remainder over instead of losing it and building back up from nothing. Shield Block hasn't gone anywhere - it sits in the defensive queue right beside the slot, which is the better home for it: it blocks melee only, so whether it's worth pressing depends on what's hitting you.
+- **Vengeance's Demon Spikes slot now shows the ability rather than the buff** - charges available and the wait for the next one - because that, not the buff's duration, is what limits how often you can use it.
+- **The maintenance refresh cue is a single clear pulse again**: the two-stage version added last release (a soft crawl, then a pulse) was too faint to catch mid-pull.
+
+### Added
+- **Blizzard's Cooldown Manager can be switched on from JustAC, and its panels hidden** (Defensives → Tank Maintenance Slot). Mid-fight the game conceals which buff is which, and the Cooldown Manager is the only thing that can tell yours apart - with it on, the maintenance slot shows an exact countdown and a live stack count. Each of its four panels can be made invisible separately, so you get the accuracy without the bars on your screen; they reappear while you're in Edit Mode so you can still move them.
+
 ## [4.49.0] - 2026-07-21
 
 ### Fixed

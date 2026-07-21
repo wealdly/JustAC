@@ -418,4 +418,12 @@ L["WAIT"] = "WAIT"
 
 -- Defensive maintenance slot (tank specs)
 L["Maintenance Slot"] = "Tank Maintenance Slot"
-L["Maintenance Slot desc"] = "Show a dedicated slot beside the defensive queue for the one mitigation buff your spec keeps rolling - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, or Bone Shield.\n\nThe swipe counts down your buff's actual remaining time, and the icon glows blue as it nears the end so you can refresh before it lapses - not after.\n\nTank specs only."
+L["Maintenance Slot desc"] = "Show a dedicated slot beside the defensive queue for the one mitigation buff your spec keeps rolling - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, or Bone Shield.\n\nThe swipe counts down your buff's remaining time, and the icon glows blue as it nears the end so you can refresh before it lapses - not after.\n\nFor an exact countdown and a live stack count, turn on Blizzard's Cooldown Manager and leave its Tracked Bars widget enabled - in combat that is the only way to tell your buff apart from everything else on you. Without it the countdown is estimated and no stack count is shown.\n\nTank specs only."
+L["Enable Cooldown Manager"] = "Use Blizzard's Cooldown Manager"
+L["Enable Cooldown Manager desc"] = "Turn on the game's Cooldown Manager (the same switch as Options > Gameplay Enhancements).\n\nIn combat the game hides which buff is which, and the Cooldown Manager is the only thing that can tell your mitigation buff apart from every other buff on you. With it on, the maintenance slot shows an exact countdown and a live stack count. Without it, the countdown is estimated and no stack count is shown.\n\nA panel still has to be enabled in Edit Mode for this to work - Tracked Bars is the useful one, and these buffs are on it by default. You can make the panels invisible below."
+L["Hide Panels desc"] = "Keep the panels working, but out of sight. Each stays active behind the scenes - that is what lets your buff be read exactly - it just becomes invisible and ignores clicks. Panels reappear in Edit Mode so you can still move them."
+L["Hide Essential"] = "Hide Essential Cooldowns"
+L["Hide Utility"] = "Hide Utility Cooldowns"
+L["Hide Tracked Buffs"] = "Hide Tracked Buffs"
+L["Hide Tracked Bars"] = "Hide Tracked Bars"
+L["Cooldown Manager combat warning"] = "Cooldown Manager can't be changed in combat - try again after the fight."

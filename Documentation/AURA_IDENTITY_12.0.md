@@ -105,6 +105,33 @@ frame has `cooldownID == nil`, so no frame carries an instance id. `cooldownView
 and `IsCooldownViewerAvailable() = true` are *not* sufficient - the frame must be laid out in
 Edit Mode.
 
+**A hidden viewer cannot be revived from addon code - tested, do not retry.** `OnHide` only
+unregisters `UNIT_AURA` and clears nothing, which makes it look like the viewer merely needs
+re-feeding. It does not work. Measured in game:
+
+```
+RefreshLayout ok=true  RefreshData ok=false     <- first call
+RefreshLayout ok=false RefreshData ok=false     <- every call afterwards
+```
+
+`CooldownViewerMixin:RefreshData` - the method that actually calls `SetCooldownID` on each
+pooled frame - **throws** when invoked from an addon. Re-registering `UNIT_AURA` on the frame
+succeeds, but is useless without populated ids. Worse, the attempt is destructive: `RefreshLayout`
+begins with `itemFramePool:ReleaseAll()`, so calling it wipes whatever ids the pool was holding,
+and after the first failure even that method starts erroring. A `/reload` restores the viewer.
+
+Note the two halves are split across Blizzard's own call sites - `OnShow` runs `RefreshLayout`,
+`UpdateShownState` runs `RefreshData` - so replicating only the first looks plausible and
+achieves nothing.
+
+**Only ONE widget is needed.** Measured on a Guardian Druid: with `BuffBarCooldownViewer`
+(Tracked Bars) shown and every other viewer hidden, the join resolved exactly. Four independent
+sources agreed on instance 1043 - the direct by-spell-id lookup, the per-instance secrecy route,
+the Cooldown Manager frame, and the tracker's own bind. A maintenance buff carries a different
+cooldownID per category (Ironfur: Utility=177838, TrackedBar=2791), so resolve ALL of them and
+match any - taking the first hit finds the Utility id and misses the TrackedBar one, where these
+buffs sit by default.
+
 **Shown does not mean visible.** A viewer held at `SetAlpha(0)` with mouse motion disabled stays
 fully populated - pool laid out, `RefreshLayout` running, `auraInstanceID` current - while being
 invisible and non-interactive to the player. Only `Hide()` empties the pool. So requiring the

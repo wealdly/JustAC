@@ -114,6 +114,12 @@ local function HasMaintenanceDefensive()
     return (SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive() ~= nil) or false
 end
 
+--- Push the per-panel cosmetic hides to the tracker. Shared by all four toggles.
+local function ApplyCdmVisibility(a)
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    if MT and MT.ApplyViewerVisibility then MT.ApplyViewerVisibility(a.db.profile) end
+end
+
 --- Returns true when the player's class has pet rez/summon defaults.
 local function IsPetRezClass()
     local _, pc = UnitClass("player")
@@ -246,6 +252,55 @@ function Defensives.CreateTabArgs(addon)
                         order = 61,
                         fontSize = "small",
                     },
+                    -- The CVar is the one true gate on the whole Cooldown Manager, and it is a
+                    -- game-wide setting - so it only ever moves from this explicit toggle.
+                    cooldownManagerEnable = W.toggle(addon, "cooldownManagerEnable", {
+                        name = L["Enable Cooldown Manager"],
+                        desc = L["Enable Cooldown Manager desc"],
+                        order = 63, width = "double", default = false,
+                        onSet = function(a)
+                            local MT = LibStub("JustAC-MaintenanceTracker", true)
+                            if MT and MT.SetCooldownManagerEnabled then
+                                local on = a.db.profile.cooldownManagerEnable and true or false
+                                if not MT.SetCooldownManagerEnabled(on) then
+                                    a:Print(L["Cooldown Manager combat warning"])
+                                end
+                            end
+                        end,
+                        disabled = function() return not HasMaintenanceDefensive() end,
+                    }),
+                    -- Cosmetic only, per panel. Each stays SHOWN - that is what keeps its aura
+                    -- data live and readable - and merely becomes invisible and click-through.
+                    -- We never enable a panel the player disabled; this only tidies visible ones.
+                    -- RAW entry, not W.toggle: buildBase only injects `addon` into hidden/disabled
+                    -- for widgets it builds. A raw table's callback receives AceConfig's `info`,
+                    -- so taking an `a` argument here and indexing a.db throws mid-render - which
+                    -- breaks the whole panel's layout, scrollbar included. Close over `addon`.
+                    hideCdmHeader = {
+                        type = "description", order = 64, fontSize = "small",
+                        name = L["Hide Panels desc"],
+                        hidden = function() return not addon.db.profile.cooldownManagerEnable end,
+                    },
+                    hideCdmEssential = W.toggle(addon, "hideCdmEssential", {
+                        name = L["Hide Essential"], order = 65, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmUtility = W.toggle(addon, "hideCdmUtility", {
+                        name = L["Hide Utility"], order = 66, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmTrackedBuff = W.toggle(addon, "hideCdmTrackedBuff", {
+                        name = L["Hide Tracked Buffs"], order = 67, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmTrackedBar = W.toggle(addon, "hideCdmTrackedBar", {
+                        name = L["Hide Tracked Bars"], order = 68, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
                     showMaintenanceSlot = W.toggle(addon, "showMaintenanceSlot", {
                         name = L["Maintenance Slot"],
                         desc = L["Maintenance Slot desc"],
@@ -341,6 +396,8 @@ function Defensives.UpdateDefensivesOptions(addon)
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         maintenanceHeader = true, maintenanceInfo = true, showMaintenanceSlot = true,
+        cooldownManagerEnable = true, hideCdmHeader = true, hideCdmEssential = true,
+        hideCdmUtility = true, hideCdmTrackedBuff = true, hideCdmTrackedBar = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }
