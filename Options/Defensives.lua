@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Defensives - Defensive queue settings tab + spell list management
-local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 1)
+local Defensives = LibStub:NewLibrary("JustAC-OptionsDefensives", 4)
 if not Defensives then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
@@ -105,6 +105,13 @@ local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
             pbApply(addon)
         end,
     }
+end
+
+--- Returns true when the current spec has a maintenance mitigation buff (tank specs with a
+--- curated entry). Brewmaster is a tank but has no entry, so this is spec-level, not role-level.
+local function HasMaintenanceDefensive()
+    local SDB = LibStub("JustAC-SpellDB", true)
+    return (SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive() ~= nil) or false
 end
 
 --- Returns true when the player's class has pet rez/summon defaults.
@@ -220,6 +227,44 @@ function Defensives.CreateTabArgs(addon)
                             Defensives.UpdateDefensivesOptions(addon)
                         end,
                     },
+                    -- TANK MAINTENANCE (60-62) - defensive-only and tank-only, so not "shared".
+                    -- Shown but greyed off-spec, unlike the class-gated pet sections below which
+                    -- hide: spec is switchable, so a Feral still needs to discover it exists.
+                    maintenanceHeader = {
+                        type = "header",
+                        name = L["Maintenance Slot"],
+                        order = 60,
+                    },
+                    maintenanceInfo = {
+                        type = "description",
+                        name = function()
+                            if HasMaintenanceDefensive() then return L["Maintenance Slot desc"] end
+                            return L["Maintenance Slot desc"] .. "\n\n"
+                                .. "|cffff9900Not available on this specialization - switch to a "
+                                .. "tank specialization to use it.|r"
+                        end,
+                        order = 61,
+                        fontSize = "small",
+                    },
+                    showMaintenanceSlot = W.toggle(addon, "showMaintenanceSlot", {
+                        name = L["Maintenance Slot"],
+                        desc = L["Maintenance Slot desc"],
+                        order = 62, width = "normal", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        -- Mirrors the defensive-queue gate used above: dead when every surface
+                        -- is off, or when no defensive display is actually showing, since the
+                        -- slot renders inside that cluster.
+                        disabled = function(a)
+                            if not HasMaintenanceDefensive() then return true end
+                            local dm = a.db.profile.displayMode or "queue"
+                            if dm == "disabled" then return true end
+                            local standardEnabled = a.db.profile.defensives.enabled
+                            local npo = a.db.profile.nameplateOverlay
+                            local overlayEnabled = (dm == "overlay" or dm == "both")
+                                and npo and npo.showDefensives
+                            return not standardEnabled and not overlayEnabled
+                        end,
+                    }),
                     -- Dynamic defensiveSpells entries added by UpdateDefensivesOptions
                     -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
                     petRezHeader = {
@@ -289,9 +334,13 @@ function Defensives.UpdateDefensivesOptions(addon)
     if not spellListGroup then return end
     local spellListArgs = spellListGroup.args
 
-    -- Clear dynamic entries, preserve static ones
+    -- Clear dynamic entries, preserve static ones. ANY statically-declared control in
+    -- spellListGroup must be listed here or it is silently deleted on the next refresh -
+    -- the entry still exists in CreateTabArgs, so it appears once and then vanishes, which
+    -- is a confusing way to lose an option.
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
+        maintenanceHeader = true, maintenanceInfo = true, showMaintenanceSlot = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }

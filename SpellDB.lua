@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell Database - Native spell classification tables for filtering and categorization
-local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 13)
+local SpellDB = LibStub:NewLibrary("JustAC-SpellDB", 20)
 if not SpellDB then return end
 
 --------------------------------------------------------------------------------
@@ -382,19 +382,31 @@ end
 -- it lapses) rather than picking a "best", and suggest `default` only when none is up. Cast
 -- and detect share the same spellID (the ability applies a like-named self-buff). Gated at
 -- runtime by IsPlayerSpell, so only spells the player actually knows ever surface.
+--
+-- raidWide = true marks a group buff: one cast covers the whole party, so it is ALSO
+-- re-offered when the player has it but a party member doesn't (someone who joined,
+-- released, or was out of range when it went out). Entries without the flag are
+-- genuinely personal - poisons, shields, imbues - and are never group-checked.
 --------------------------------------------------------------------------------
 SpellDB.CLASS_MAINTAINED_BUFFS = {
     DRUID = {
-        { group = { 1126 }, default = 1126 },                          -- Mark of the Wild
+        { group = { 1126 }, default = 1126, raidWide = true },         -- Mark of the Wild
     },
     EVOKER = {
-        { group = { 364342 }, default = 364342 },                      -- Blessing of the Bronze
+        -- Blessing of the Bronze does NOT apply its own cast id: the cast triggers one of
+        -- 13 per-class sub-auras, so both the self-check and the party check must match the
+        -- whole family or a fully buffed player reads as missing forever. auraIDs overrides
+        -- `group` for DETECTION only - `default`/`group` stay the id that gets cast.
+        { group = { 364342 }, default = 364342, raidWide = true,       -- Blessing of the Bronze
+          auraIDs = { 381732, 381741, 381746, 381748, 381749,
+                      381750, 381751, 381752, 381753, 381754,
+                      381756, 381757, 381758 } },
     },
     MAGE = {
-        { group = { 1459 }, default = 1459 },                          -- Arcane Intellect
+        { group = { 1459 }, default = 1459, raidWide = true },         -- Arcane Intellect
     },
     PRIEST = {
-        { group = { 21562 }, default = 21562 },                        -- Power Word: Fortitude
+        { group = { 21562 }, default = 21562, raidWide = true },       -- Power Word: Fortitude
     },
     ROGUE = {
         { group = { 315584, 2823, 8679, 381664 }, default = 315584 },  -- Lethal (Instant default)
@@ -402,10 +414,10 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
     },
     SHAMAN = {
         { group = { 192106, 52127, 974 }, default = 192106 },          -- Shield (Lightning/Water/Earth)
-        { group = { 462854 }, default = 462854 },                      -- Skyfury
+        { group = { 462854 }, default = 462854, raidWide = true },     -- Skyfury
     },
     WARRIOR = {
-        { group = { 6673 }, default = 6673 },                          -- Battle Shout
+        { group = { 6673 }, default = 6673, raidWide = true },         -- Battle Shout
     },
     -- No aura-based maintained pre-combat self-buff (or handled by the pet system):
     -- DEATHKNIGHT, DEMONHUNTER, HUNTER, MONK, PALADIN, WARLOCK. Shaman weapon imbues
@@ -1039,9 +1051,20 @@ end
 -- Keyed by base list ID (talent overrides resolve to the same tool).
 -- Ironfur is deliberately absent: stacking it is legitimate play and stack counts are
 -- secret in combat, so buff presence alone can't justify a sink.
+-- Absorb barriers are the clearest sink case: the buff outlasts the cooldown (60s vs 30s),
+-- so the button comes back up while the barrier is still on you, and re-casting REPLACES
+-- the shield - throwing away whatever absorb was left. Each applies an aura with the same
+-- id it is cast under, and none of them stack.
 SpellDB.DEFENSIVE_AURA_HINTS = {
     [2565]   = { sinkAura = 132404 },              -- Shield Block → its own buff
     [203720] = { sinkAura = 203819 },              -- Demon Spikes → its own buff
+    [11426]  = { sinkAura = 11426 },               -- Ice Barrier → its own buff
+    [235313] = { sinkAura = 235313 },              -- Blazing Barrier → its own buff
+    [235450] = { sinkAura = 235450 },              -- Prismatic Barrier → its own buff
+    -- Rune Tap reaches the same problem from the other direction: the buff is SHORT (4s)
+    -- but it carries 2 charges, so the on-cooldown park never fires while one is banked -
+    -- the button stays live and a second press just overwrites the first 4s of mitigation.
+    [194679] = { sinkAura = 194679 },              -- Rune Tap → its own buff
     [119582] = { floatAuras = {124273, 124274} },  -- Purifying Brew → Heavy/Moderate Stagger
 }
 
@@ -1049,6 +1072,50 @@ SpellDB.DEFENSIVE_AURA_HINTS = {
 --- talent-override variants to the base list ID). Returns the hint table or nil.
 function SpellDB.GetDefensiveAuraHint(spellID)
     return StaticLookup(SpellDB.DEFENSIVE_AURA_HINTS, spellID)
+end
+
+-- The ONE mitigation buff each tank spec is expected to keep rolling, for the defensive
+-- maintenance slot. `cast` is the button pressed, `aura` the buff that lands on the PLAYER -
+-- they differ for every spec except Ironfur. `stacks` marks the two buffs whose COUNT is
+-- meaningful (Ironfur, Bone Shield); printing "1" on a non-stacking buff is noise.
+--
+-- Duration and stacks are SECRET in combat - our logic only ever gets the up/down boolean.
+-- `dur` is the aura's BASE duration from client data, used ONLY to lead the refresh glow, and
+-- must be carried statically because remaining time cannot be measured. Talents that extend a
+-- duration make the estimate EARLY, the safe direction: an early cue costs one refresh, a late
+-- one costs a gap in mitigation. The countdown SWIPE is engine-drawn and exact regardless - so
+-- never tune `dur` to fix a timer, it only moves the glow.
+SpellDB.MAINTENANCE_DEFENSIVE = {
+    WARRIOR_3     = { cast = 2565,   aura = 132404, dur = 6.0 },  -- Shield Block -> its buff
+    PALADIN_2     = { cast = 53600,  aura = 132403, dur = 4.5 },  -- Shield of the Righteous
+    DEMONHUNTER_2 = { cast = 203720, aura = 203819, dur = 12.0 }, -- Demon Spikes -> its buff
+    -- Ironfur casts and buffs under one id. NOTE: SpellAuraOptions says CumulativeAura=1,
+    -- but /jac inspect stacks measured it in game as ONE instance with applications=2 - the
+    -- real cap is enforced outside that DB2 field. Trust the measurement, not the CSV.
+    DRUID_3       = { cast = 192081, aura = 192081, dur = 7.0, stacks = true },  -- Ironfur
+    -- Blood is deliberately a rotational OFFENSIVE button. Blizzard fused rune-spending and
+    -- Bone Shield upkeep into one press, so there is no defensive-only alternative - checked,
+    -- Heart Strike has no self-target grant of the right shape. The two slots carry different
+    -- signals, not different buttons: the queue says "spend runes", this says "your stacks are
+    -- running out". Do not "fix" this to some other spell.
+    -- No `dur`, deliberately. Bone Shield nominally lasts 30s per stack, but stacks are eaten
+    -- by incoming DAMAGE, not time - a time-based refresh cue would sit quiet for 21s while
+    -- the stacks were actually consumed in five. Since stack counts are secret and the combat
+    -- log is closed to us, there is no honest early warning here: Blood glows only when Bone
+    -- Shield is fully GONE, which is a real emergency rather than a guess.
+    DEATHKNIGHT_1 = { cast = 195182, aura = 195181, stacks = true },  -- Marrowrend -> Bone Shield
+    -- MONK_1 Brewmaster is intentionally ABSENT. Shuffle has two live spell ids (215479 with a
+    -- real 5s duration, 322120 wired into the talent tree but durationless and proc-shaped) and
+    -- neither Blackout Kick nor Keg Smash shows a grant link in the data - it is a side effect
+    -- of two different buttons. Needs an in-game check before an entry is curated; a wrong
+    -- button here is worse than no button.
+}
+
+--- The current spec's maintenance defensive, or nil when the spec has none (every non-tank,
+--- plus Brewmaster).
+function SpellDB.GetMaintenanceDefensive()
+    local specKey = SpellDB.GetSpecKey()
+    return specKey and SpellDB.MAINTENANCE_DEFENSIVE[specKey] or nil
 end
 
 -- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)

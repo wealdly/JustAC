@@ -69,6 +69,9 @@ local gcSuppressScratch = {}
 -- Always Show pins resolved to every ID form (stored/override/base/display),
 -- rebuilt with the rotation-list cache so hot-path checks are one table read.
 local pinnedAlwaysShow = {}
+--- "Hold until charged" spells resolved to every ID form, rebuilt with the
+--- rotation-list cache alongside pinnedAlwaysShow.
+local maxChargeGated = {}
 -- Parallel context-rank buffers for the fixed-queue archetype/range bias.
 local proccedRank = {}
 local normalRank = {}
@@ -224,6 +227,29 @@ end
 -- pinnedAlwaysShow set (rebuilt with the rotation cache), never the profile.
 function SpellQueue.IsPinnedAlwaysShow(spellID)
     return pinnedAlwaysShow[spellID] == true
+end
+
+-- Per-spell "Hold Until Charged" opt-in (Custom Queue row toggle). True while the
+-- ability is short of full charges - the caller sinks it to the back of the queue
+-- (never drops it), so a charge ability isn't pushed at 1/2 and spent into an
+-- overcap, but stays visible while it banks. For a spell without charges this
+-- degrades to "sink while on cooldown", which is the same intent and matches what
+-- the cooldown sink already does. Both reads are non-secret local tracking, so
+-- this is safe to branch on in combat.
+-- `ready` is passed in because the caller has already computed it for this spell in the
+-- same iteration; re-querying would double the readiness work on every build.
+local function HeldUntilCharged(spellID, displayID, ready)
+    if not (maxChargeGated[spellID] or maxChargeGated[displayID]) then return false end
+    return not (ready and BlizzardAPI.IsSpellAtMaxCharges(displayID))
+end
+
+-- shared with /jac why: report the same sink verdict the build used. Resolves readiness
+-- itself (the diagnostic has no per-iteration value to hand in) and answers false for any
+-- spell that isn't gated, so callers can print a reason only when it fires.
+function SpellQueue.IsHeldUntilCharged(spellID)
+    if not spellID then return false end
+    local displayID = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID) or spellID
+    return HeldUntilCharged(spellID, displayID, BlizzardAPI.IsSpellReady(displayID))
 end
 
 -- Resolve display ID, check dedup, mark both IDs as claimed.
@@ -590,6 +616,14 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     -- so IsSpellReady falls back to stale local charge counts and such a proc
                     -- could sink early. Rare; exempt charge spells here if one ever regresses.
                     local ready = BlizzardAPI.IsSpellReady(displayID)
+                    -- "Hold Until Charged": treat a part-charged ability exactly like one
+                    -- that isn't ready - sink it, never drop it. It keeps its place in the
+                    -- queue rather than being filtered out, though like anything in the
+                    -- cooldown tail it can fall past maxIcons and off screen on a full queue.
+                    -- Gated on sinkCooldowns so the whole feature is genuinely inert when
+                    -- "Unavailable last" is off, which is what the option's tooltip promises -
+                    -- otherwise it would still strip proc promotion below and quietly reorder.
+                    local held = sinkCooldowns and HeldUntilCharged(spellID, displayID, ready)
                     local simcRec = (simcMode and RotationImport and RotationImport.GetEntry)
                         and RotationImport.GetEntry(spellID, simcCtx) or nil
                     -- Resource-gated (delegated) SimC entries are spenders: sink them when
@@ -608,7 +642,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     -- outright. A SimC buff-window promotion (probe or pick-implied) is instead
                     -- vetoed by a confirmed-active negative gate, so a window spender doesn't
                     -- surface while its "not during X" condition is visibly violated.
-                    if not bypassProcs and ready and not starved
+                    if not bypassProcs and ready and not starved and not held
                        and (BlizzardAPI.IsSpellProcced(displayID)
                             or (simcRec
                                 and (SimcBuffWindowActive(simcRec.gates)
@@ -619,7 +653,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec)
-                    elseif sinkCooldowns and (not ready or starved
+                    elseif sinkCooldowns and (not ready or starved or held
                            or (simcRec and SimcResourceGateBlocks(simcRec.gates, resCount, resName))
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
@@ -951,19 +985,34 @@ function SpellQueue.GetCurrentSpellQueue()
         -- options setter invalidates this cache on toggle; at worst one build
         -- (0.03-0.05s) sees the previous pin state.
         wipe(pinnedAlwaysShow)
+        wipe(maxChargeGated)
         local pinStore = cachedAddon and cachedAddon.db and cachedAddon.db.profile
             and cachedAddon.db.profile.defensives
             and cachedAddon.db.profile.defensives.spellSettings
         if pinStore then
+            -- One pass, two sets: both settings live on the user's STORED id and both
+            -- are read per-entry on the hot path, so each resolves to every ID form here.
+            local function markForms(set, id)
+                set[id] = true
+                local disp = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id)
+                if disp then set[disp] = true end
+                local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(id)
+                if base then set[base] = true end
+                local known = BlizzardAPI.ResolveKnownSpellID and BlizzardAPI.ResolveKnownSpellID(id)
+                if known then set[known] = true end
+            end
             for id, ss in pairs(pinStore) do
-                if ss and ss.alwaysShow == true and type(id) == "number" and id > 0 then
-                    pinnedAlwaysShow[id] = true
-                    local disp = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id)
-                    if disp then pinnedAlwaysShow[disp] = true end
-                    local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(id)
-                    if base then pinnedAlwaysShow[base] = true end
-                    local known = BlizzardAPI.ResolveKnownSpellID and BlizzardAPI.ResolveKnownSpellID(id)
-                    if known then pinnedAlwaysShow[known] = true end
+                if ss and type(id) == "number" and id > 0 then
+                    if ss.alwaysShow == true then markForms(pinnedAlwaysShow, id) end
+                    -- Hold Until Charged applies ONLY while the custom queue is the rotation
+                    -- source. The toggle that sets it lives on custom-queue rows, and that
+                    -- whole panel hides when the custom queue is off - so honouring the key
+                    -- outside custom-queue mode would keep demoting a spell with no reachable
+                    -- control to undo it. (alwaysShow needs no such guard: it only ever adds
+                    -- visibility, so a stale one is harmless.)
+                    if useCustom and ss.holdUntilCharged == true then
+                        markForms(maxChargeGated, id)
+                    end
                 end
             end
         end

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Frame Factory Module - Creates and manages all UI frames and buttons
-local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 16)
+local UIFrameFactory = LibStub:NewLibrary("JustAC-UIFrameFactory", 25)
 if not UIFrameFactory then return end
 
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
@@ -19,12 +19,42 @@ local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
 local GRAB_TAB_LENGTH = 12  -- grab-tab thickness along the queue axis
--- Move-cast marker: white fast-forward arrows over a soft white glow. The arrow
--- atlas carries its own dark edge, so a white tint yields a white glyph with a
--- built-in outline - legible on any icon (frost, fire, holy). The glow pulses on
--- its own behind the steady arrows. Each color is a one-line recolor here.
-local MOVE_DOT_COLOR = { r = 1.00, g = 1.00, b = 1.00 }  -- arrow fill
-local MOVE_DOT_GLOW  = { r = 1.00, g = 1.00, b = 1.00 }  -- glow (additive)
+-- Per-ability cue colours now live with the renderer that paints them (CUE_MOVECAST /
+-- CUE_OFFGCD in UIRenderer): they are applied per render to the shared cue dot's halves
+-- rather than baked in at construction, since which colour a half takes depends on how
+-- many cues are active.
+
+--- Where a sub-icon attached to the interrupt slot should sit: the interrupt's cast aura and
+--- the soothe cue's cleansed-aura clone BOTH hang off that slot and must agree, or one of them
+--- lands on top of the maintenance button. Returning the anchor from one place is the point -
+--- they were duplicated and immediately drifted.
+--- The aura always extends AWAY from the queue. The tank maintenance slot (defensive
+--- "position 0") occupies the first row out on the defensive cluster's side, so when a tank
+--- has it the aura clears that row and sits one slot further out again. Non-tanks, and
+--- detached defensives (own frame, cannot collide), keep the original tight spacing.
+--- @return string point, string relativePoint, number yOffset
+function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
+    local shift = 0
+    -- Static reservation: no combat gate (this anchor is set once at creation), but a slot the
+    -- user turned off can never appear, so reserving its row would leave dead space.
+    local hasMaint = (not profile or profile.showMaintenanceSlot ~= false)
+        and SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive() ~= nil
+    local def = profile and profile.defensives
+    if hasMaint and not (def and def.detached) then
+        -- The clash only exists when the defensive cluster sits on the side the aura extends
+        -- toward: the aura goes DOWN for an upward queue, UP for every other orientation.
+        local auraSide = (orientation == "UP") and "SIDE2" or "SIDE1"
+        if (def and def.position or "SIDE1") == auraSide then
+            shift = (iconSize or 0) + ((profile and profile.iconSpacing) or 4)
+        end
+    end
+    if orientation == "UP" then
+        -- Queue grows upward, interrupt is below → aura goes further below.
+        return "TOP", "BOTTOM", -2 - shift
+    end
+    -- LEFT, RIGHT, DOWN → aura goes above the interrupt, away from the queue.
+    return "BOTTOM", "TOP", 2 + shift
+end
 
 -- Export constants for UIRenderer and UINameplateOverlay
 UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
@@ -180,6 +210,19 @@ local function ShowIconHotkeyTooltip(addon, icon, showBlacklistHint)
         GameTooltip:SetSpellByID(icon.spellID)
     end
 
+    -- Maintenance slot: name the BUFF this cast keeps up. The swipe and stack count describe
+    -- the aura, not the cast, so without this the tooltip contradicts the icon - most starkly
+    -- on Blood, where the button is a damage ability and the slot is about Bone Shield.
+    -- Only set when the two ids differ (Ironfur casts and buffs under one id).
+    -- Name only: spell descriptions embed scaling values, which are the secret-value class.
+    if icon.maintenanceAuraID then
+        local auraName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(icon.maintenanceAuraID)
+        if auraName then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("|cff8cc7ffMaintains: " .. auraName .. "|r")
+        end
+    end
+
     if icon.spellID or icon.isItem then
         local hotkey
         local isOverride
@@ -291,6 +334,33 @@ end
 
 UIFrameFactory.CreateRoundedActionIconMask = CreateRoundedActionIconMask
 UIFrameFactory.ApplyActionButtonBorderGeometry = ApplyActionButtonBorderGeometry
+
+--- A small icon pinned to a parent slot, showing an aura related to that slot (what the enemy
+--- is casting, what is about to be soothed). Shared so every surface anchors it the same way.
+--- The caller owns the parts that legitimately differ: frame level, strata, mouse, initial
+--- visibility. Nothing here hides it - a caller that needs it hidden hides it itself.
+--- @return table frame - with .iconTexture, .IconMask and .Border
+function UIFrameFactory.CreateAuraSubIcon(parent, iconSize, profile, orientation)
+    local auraSize = math_floor(iconSize * 0.7)
+    local aura = CreateFrame("Frame", nil, parent)
+    aura:SetSize(auraSize, auraSize)
+    aura:SetFrameLevel(parent:GetFrameLevel() + 2)
+
+    local pt, relPt, y = UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
+    aura:SetPoint(pt, parent, relPt, 0, y)
+
+    local icon = aura:CreateTexture(nil, "ARTWORK")
+    icon:SetAllPoints(aura)
+    aura.iconTexture = icon
+    aura.IconMask = CreateRoundedActionIconMask(aura, auraSize, icon)
+
+    local border = aura:CreateTexture(nil, "OVERLAY")
+    ApplyActionButtonBorderGeometry(border, aura, auraSize)
+    border:SetAtlas("UI-HUD-ActionBar-IconFrame")
+    aura.Border = border
+
+    return aura
+end
 
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, template)
     local button = CreateFrame("Button", nil, parent, template)
@@ -476,70 +546,85 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
     chargeText:Hide()
     button.chargeText = chargeText
 
-    -- Move-while-casting marker (lower-left): two overlapping right-arrows - a
-    -- fast-forward glyph that reads as movement - on spells castable while moving,
-    -- so ranged players can spot an on-the-move alternate. White arrows: the atlas
-    -- art carries its own dark edge, so a white tint gives a white glyph with a
-    -- built-in outline that reads on any icon. A soft white glow sits behind them in
-    -- its own frame and pulses on its own; the arrows stay steady. A single
-    -- Show/Hide drives it (pulse auto play/stops via OnShow/OnHide). Reuses
-    -- arrowAtlas resolved above. Toggled per spell in UIRenderer.RenderQueueIcon;
-    -- not Masque-managed. glyphW/glyphH/arrowSep tune size + overlap; glow scale/alpha the glow.
-    local glyphH   = math_max(7, math_floor(size * 0.24))
-    local glyphW   = math_floor(glyphH * 0.95)
-    local arrowSep = math_floor(glyphH * 0.28)   -- half the gap between the two arrows
-    local frameW   = glyphW + arrowSep * 2
+    -- CUE DOT (lower-left): one indicator carrying every per-ability cue, tinted per render by
+    -- UIRenderer's ApplyCueDot. Indicator-Gray is a plain round texture present on every client,
+    -- so it is tinted here rather than depending on an atlas that might not exist.
+    -- The glow behind pulses on its own; the dot itself stays steady.
     local dotInset = math_max(3, math_floor(size * 0.1))
-    local dotR, dotG, dotB = MOVE_DOT_COLOR.r, MOVE_DOT_COLOR.g, MOVE_DOT_COLOR.b
-    local glwR, glwG, glwB = MOVE_DOT_GLOW.r, MOVE_DOT_GLOW.g, MOVE_DOT_GLOW.b
-    local moveDot = CreateFrame("Frame", nil, hotkeyFrame)
-    moveDot:SetSize(frameW, glyphH)
-    moveDot:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", dotInset, dotInset)
+    local cueSize  = math_max(9, math_floor(size * 0.30))
+    local cueDot = CreateFrame("Frame", nil, hotkeyFrame)
+    cueDot:SetSize(cueSize, cueSize)
+    cueDot:SetPoint("BOTTOMLEFT", button, "BOTTOMLEFT", dotInset, dotInset)
 
-    -- Glow: soft additive white blobs (one per arrow) in their own frame so ONLY the
-    -- glow pulses. A soft round texture - NOT the arrow shape - gives a diffuse halo
-    -- (a real glow, matching the web mock's blur) instead of a hard scaled outline;
-    -- the two overlap additively into one soft glow that follows the arrows.
-    local glowFrame = CreateFrame("Frame", nil, moveDot)
-    glowFrame:SetAllPoints(moveDot)
-    local glowW = math_floor(glyphW * 1.9)
-    local glowH = math_floor(glyphH * 1.9)
-    for _, ox in ipairs({ -arrowSep, arrowSep }) do
-        local g = glowFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-        g:SetTexture("Interface\\COMMON\\Indicator-Gray")
-        g:SetBlendMode("ADD")
-        g:SetVertexColor(glwR, glwG, glwB, 0.7)
-        g:SetSize(glowW, glowH)
-        g:SetPoint("CENTER", glowFrame, "CENTER", ox, 0)
+    -- Soft additive halo, in its own frame so ONLY the glow pulses.
+    local cueGlowFrame = CreateFrame("Frame", nil, cueDot)
+    cueGlowFrame:SetAllPoints(cueDot)
+    local cueGlow = cueGlowFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    cueGlow:SetTexture("Interface\\COMMON\\Indicator-Gray")
+    cueGlow:SetBlendMode("ADD")
+    cueGlow:SetSize(math_floor(cueSize * 2.0), math_floor(cueSize * 2.0))
+    cueGlow:SetPoint("CENTER", cueGlowFrame, "CENTER", 0, 0)
+    cueDot.glowTex = cueGlow
+
+    -- Dark backing disc, slightly larger than the dot: a built-in outline so the cue survives
+    -- being drawn over pale spell art (holy golds, frost whites) where a bright dot alone
+    -- would vanish. Cheaper and more reliable than trying to pick colours that happen to
+    -- contrast with every icon in the game.
+    local cueBackFrame = CreateFrame("Frame", nil, cueDot)
+    cueBackFrame:SetAllPoints(cueDot)
+    cueBackFrame:SetFrameLevel(cueGlowFrame:GetFrameLevel() + 1)
+    local cueBack = cueBackFrame:CreateTexture(nil, "OVERLAY", nil, 1)
+    cueBack:SetTexture("Interface\\COMMON\\Indicator-Gray")
+    cueBack:SetVertexColor(0, 0, 0, 0.85)
+    cueBack:SetSize(math_floor(cueSize * 1.35), math_floor(cueSize * 1.35))
+    cueBack:SetPoint("CENTER", cueBackFrame, "CENTER", 0, 0)
+
+    -- Two halves of one disc. Each is the full round texture clipped to its side, so together
+    -- they form a seamless circle and can be tinted independently.
+    --
+    -- BRIGHTNESS: Indicator-Gray is a GREY source and SetVertexColor MULTIPLIES, so a tint can
+    -- never come out brighter than the texture it is applied to - which is why a single pass
+    -- looked dark and muddy no matter how saturated the colour was. Each half is therefore
+    -- drawn in layers: one normal BLEND pass for the shape, then ADDITIVE passes stacked on
+    -- top that add light rather than replacing it. That is what takes the fill from "tinted
+    -- grey" to neon, and it sits over the dark backing disc so it still has contrast.
+    local cueGlyphFrame = CreateFrame("Frame", nil, cueDot)
+    cueGlyphFrame:SetAllPoints(cueDot)
+    cueGlyphFrame:SetFrameLevel(cueBackFrame:GetFrameLevel() + 1)
+    local halfW = cueSize / 2
+    local CUE_ADD_PASSES = 2   -- additive layers per half; more = brighter
+
+    -- side: "LEFT"/"RIGHT", coords clip the round texture to that half.
+    local function BuildHalf(side, u1, u2)
+        local layers = {}
+        for pass = 0, CUE_ADD_PASSES do
+            local t = cueGlyphFrame:CreateTexture(nil, "OVERLAY", nil, 1 + pass)
+            t:SetTexture("Interface\\COMMON\\Indicator-Gray")
+            t:SetTexCoord(u1, u2, 0, 1)
+            t:SetSize(halfW, cueSize)
+            t:SetPoint(side, cueGlyphFrame, side, 0, 0)
+            -- Pass 0 lays the shape down; the rest add light on top of it.
+            if pass > 0 then t:SetBlendMode("ADD") end
+            layers[#layers + 1] = t
+        end
+        return layers
     end
+    cueDot.leftLayers  = BuildHalf("LEFT",  0,   0.5)
+    cueDot.rightLayers = BuildHalf("RIGHT", 0.5, 1)
 
-    -- Crisp arrows on top, in a frame above the glow. Steady (only the glow pulses).
-    local arrowFrame = CreateFrame("Frame", nil, moveDot)
-    arrowFrame:SetAllPoints(moveDot)
-    arrowFrame:SetFrameLevel(glowFrame:GetFrameLevel() + 1)
-    for _, ox in ipairs({ -arrowSep, arrowSep }) do
-        local glyph = arrowFrame:CreateTexture(nil, "OVERLAY", nil, 1)
-        glyph:SetAtlas(arrowAtlas)
-        glyph:SetDesaturated(true)
-        glyph:SetVertexColor(dotR, dotG, dotB, 1)
-        glyph:SetSize(glyphW, glyphH)
-        glyph:SetPoint("CENTER", arrowFrame, "CENTER", ox, 0)
-    end
+    local cuePulse = cueGlowFrame:CreateAnimationGroup()
+    cuePulse:SetLooping("BOUNCE")
+    local cuePulseAnim = cuePulse:CreateAnimation("Alpha")
+    cuePulseAnim:SetFromAlpha(1.0)
+    cuePulseAnim:SetToAlpha(0.3)
+    cuePulseAnim:SetDuration(0.9)
+    cuePulseAnim:SetSmoothing("IN_OUT")
+    cueDot.pulse = cuePulse
+    cueDot:SetScript("OnShow", function(self) self.pulse:Play() end)
+    cueDot:SetScript("OnHide", function(self) self.pulse:Stop() end)
 
-    -- Pulse ONLY the glow layer.
-    local pulse = glowFrame:CreateAnimationGroup()
-    pulse:SetLooping("BOUNCE")
-    local pulseAnim = pulse:CreateAnimation("Alpha")
-    pulseAnim:SetFromAlpha(1.0)
-    pulseAnim:SetToAlpha(0.3)
-    pulseAnim:SetDuration(0.9)
-    pulseAnim:SetSmoothing("IN_OUT")
-    moveDot.pulse = pulse
-    moveDot:SetScript("OnShow", function(self) self.pulse:Play() end)
-    moveDot:SetScript("OnHide", function(self) self.pulse:Stop() end)
-
-    moveDot:Hide()
-    button.moveDot = moveDot
+    cueDot:Hide()
+    button.cueDot = cueDot
 
     -- State tracking fields
     button.spellID = nil
@@ -1124,6 +1209,17 @@ local function CreateDefensiveIcons(addon, profile)
     addon.defensiveIcons = nil
     addon.defensiveIcon = nil
 
+    -- Tear the maintenance slot down with its siblings, ABOVE the "defensives disabled" early
+    -- return below - otherwise turning defensives off orphans the button on screen and leaks
+    -- it out of the skinning group.
+    if addon.maintenanceIcon then
+        if UIAnimations then UIAnimations.HideColoredProcGlow(addon.maintenanceIcon, "maintenanceGlow") end
+        if MasqueGroup then MasqueGroup:RemoveButton(addon.maintenanceIcon) end
+        addon.maintenanceIcon:Hide()
+        addon.maintenanceIcon:SetParent(nil)
+        addon.maintenanceIcon = nil
+    end
+
     -- Always destroy the detached frame on rebuild; recreated below if still detached.
     if addon.defensiveFrame then
         addon.defensiveFrame:Hide()
@@ -1163,6 +1259,34 @@ local function CreateDefensiveIcons(addon, profile)
             newIcons[i] = button
             defensiveIcons[i] = button  -- Also update module-level for cleanup on next call
         end
+    end
+
+    -- Defensive maintenance slot - "position 0" of the defensive row, the mirror of the
+    -- interrupt slot on the offensive queue. Built at index -1 so it lands one slot BEFORE
+    -- the first defensive icon, reusing the same layout maths for every orientation,
+    -- both sides, and detached mode - no separate anchoring to keep in sync.
+    -- Only tank specs have a maintenance buff, but the button is built regardless: spec can
+    -- change without a frame rebuild, and an unused button simply stays hidden.
+    local maint = CreateSingleDefensiveButton(addon, profile, -1, actualIconSize, defPosition, queueOrientation, spacing)
+    if maint then
+        maint:SetAlpha(0)   -- alpha-driven like its siblings; the renderer reveals it
+
+        -- Restyle the swipe to read "your protection is running out" rather than the default
+        -- "on cooldown, wait" - a dark mask that clears means unavailable, the reverse of what
+        -- a depleting buff means. Blue veil that shrinks, bright leading edge, normal direction
+        -- (reversed would read as charging toward ready), engine countdown numbers on.
+        -- Configured once here, not per render.
+        local cd = maint.cooldown
+        if cd then
+            if cd.SetSwipeColor then cd:SetSwipeColor(0.15, 0.45, 0.95, 0.55) end
+            if cd.SetDrawEdge then cd:SetDrawEdge(true) end
+            if cd.SetEdgeColor then cd:SetEdgeColor(0.75, 0.92, 1.00, 1) end
+            if cd.SetReverse then cd:SetReverse(false) end
+            if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+            if cd.SetDrawBling then cd:SetDrawBling(false) end
+        end
+
+        addon.maintenanceIcon = maint
     end
 
     -- Expose to addon (use the fresh table, not the module-level one)
@@ -1273,6 +1397,14 @@ function UIFrameFactory.CreateGrabTab(addon)
                 currentProfile.targetFrameAnchor = "DISABLED"
                 addon.targetframe_anchored = false
                 if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
+                -- Undocking re-enables the target health bar (it's suppressed while docked,
+                -- where the target frame shows the same readout). Nothing else on this path
+                -- rebuilds it, and UpdateTargetVisibility no-ops while the frame is nil, so
+                -- without this the bar stays missing until a reload or zone change.
+                local UIHealthBarLib = LibStub("JustAC-UIHealthBar", true)
+                if UIHealthBarLib and UIHealthBarLib.UpdateTargetSize then
+                    UIHealthBarLib.UpdateTargetSize(addon)
+                end
             end
 
             UIFrameFactory.SavePosition(addon)
@@ -1415,33 +1547,9 @@ local function CreateInterruptIcon(addon, profile)
     -- Cast aura: small icon showing what the enemy is casting, attached to
     -- the interrupt button.  Always placed on the side away from the queue
     -- so it doesn't overlap icon 1.
-    local auraSize = math.floor(actualIconSize * 0.7)
-    local castAura = CreateFrame("Frame", nil, button)
-    castAura:SetSize(auraSize, auraSize)
-    castAura:SetFrameLevel(button:GetFrameLevel() + 2)
-
-    if orientation == "UP" then
-        -- Queue grows upward, interrupt is below → aura goes further below
-        castAura:SetPoint("TOP", button, "BOTTOM", 0, -2)
-    else
-        -- LEFT, RIGHT, DOWN → aura goes above interrupt (away from queue)
-        castAura:SetPoint("BOTTOM", button, "TOP", 0, 2)
-    end
-
-    local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
-    auraIcon:SetAllPoints(castAura)
-    castAura.iconTexture = auraIcon
-
-    local auraMask = CreateRoundedActionIconMask(castAura, auraSize, auraIcon)
-    castAura.IconMask = auraMask
-
-    local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
-    ApplyActionButtonBorderGeometry(auraBorder, castAura, auraSize)
-    auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
-    castAura.Border = auraBorder
-
+    local castAura = UIFrameFactory.CreateAuraSubIcon(button, actualIconSize, profile, orientation)
     castAura.spellID = nil
-    castAura:Hide()
+    castAura:Hide()  -- shown only while an interruptible cast is up (driven by UIRenderer)
     button.castAura = castAura
 
     button:Hide()  -- Hidden until an interruptible cast is detected

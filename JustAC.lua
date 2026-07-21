@@ -143,7 +143,7 @@ local defaults = {
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
             itemSettings = {},        -- Per-item settings: itemSettings[itemID] = {linkedAura=spellID, combatHide=bool}
-            spellSettings = {},       -- Per-spell settings: spellSettings[spellID] = {procPriority=bool}
+            spellSettings = {},       -- Per-spell settings: spellSettings[spellID] = {procPriority=bool, alwaysShow=bool, holdUntilCharged=bool}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
             hideEmergencyUntilLow = false, -- hold back panic buttons (bubbles/big heals/pots) above the low-health threshold
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
@@ -1192,6 +1192,11 @@ function JustAC:PLAYER_ENTERING_WORLD()
     -- Re-assert target frame anchor after loading screens (WoW can reset frame positions)
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
 
+    -- Docking state decides whether the target health bar is built at all (it would
+    -- duplicate the target frame's own readout), and the re-check above can flip it -
+    -- e.g. a unit-frame addon that loaded since. Rebuild so the bar matches.
+    if UIHealthBar and UIHealthBar.UpdateTargetSize then UIHealthBar.UpdateTargetSize(self) end
+
     self:ForceUpdateAll()
 
     -- API may not return spells immediately after PLAYER_ENTERING_WORLD.
@@ -1318,6 +1323,14 @@ function JustAC:OnSpecChange(event, unit)
 
     self.db.char.lastKnownSpec = newSpec
 
+    -- The tracked aura instance belongs to the OLD spec's maintenance buff; keeping it would
+    -- point the new spec's slot at a buff it does not use.
+    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    if MaintenanceTracker and MaintenanceTracker.Reset then MaintenanceTracker.Reset() end
+    -- Layout anchors are computed once at frame creation; a spec swap can add or drop the
+    -- maintenance slot, so re-seat them here the same way RefreshConfig does.
+    self:UpdateFrameSize()
+
     if self.db.char.specProfilesEnabled and self.db.char.specProfiles then
         local target = self.db.char.specProfiles[newSpec]
 
@@ -1438,6 +1451,15 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
     -- Any player aura change (including mount removal) must break the mainHidden early
     -- exit in OnUpdate so the queue can re-evaluate IsMounted() / visibility conditions.
     self:MarkQueueDirty()
+
+    -- Maintenance buff: bind a pending cast to its new aura instance, and catch removal so
+    -- the button glows the moment the buff actually drops rather than on a guessed timer.
+    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    if MaintenanceTracker and MaintenanceTracker.OnPlayerAuraUpdate then
+        if MaintenanceTracker.OnPlayerAuraUpdate(updateInfo) then
+            defensiveQueueDirty = true
+        end
+    end
 
     -- OOC the pre-combat suggestions and their click layers are AURA-driven (the eating aura,
     -- Well Fed, flask, poison...), so a player aura change has to rebuild the defensive queue
@@ -1644,8 +1666,14 @@ function JustAC:OnActionUsableChanged(_, changes)
     end
 end
 
+-- Both handlers compare FRAMES, not unit tokens: the old UnitIsUnit(nameplateUnit, "target")
+-- threw on addon-restricted maps (raids/dungeons), where plates churn most - see
+-- BlizzardAPI.SafeUnitIsUnit. includeForbidden stays false to match UINameplateOverlay.
 function JustAC:OnNamePlateAdded(_, nameplateUnit)
-    if UINameplateOverlay and UnitIsUnit(nameplateUnit, "target") then ---@diagnostic disable-line: undefined-global
+    local GetPlate = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+    -- `plate and` matters: with no target both lookups return nil and nil == nil would fire.
+    local plate = GetPlate and nameplateUnit and GetPlate(nameplateUnit, false)
+    if UINameplateOverlay and plate and plate == GetPlate("target", false) then
         UINameplateOverlay.UpdateAnchor(self)
         -- ForceUpdateAll so the defensive overlay re-renders as soon as the plate appears.
         -- ForceUpdate (DPS-only) isn't enough - defensive icons are driven by OnHealthChanged.
@@ -1653,11 +1681,13 @@ function JustAC:OnNamePlateAdded(_, nameplateUnit)
     end
 end
 
-function JustAC:OnNamePlateRemoved(_, nameplateUnit)
-    if UINameplateOverlay and UnitIsUnit(nameplateUnit, "target") then ---@diagnostic disable-line: undefined-global
+function JustAC:OnNamePlateRemoved()
+    -- The removed unit's plate is already released, so it cannot be compared to the
+    -- target's. Detach only while anchored and the target no longer has a plate.
+    if UINameplateOverlay and UINameplateOverlay.IsAnchored()
+        and not (C_NamePlate and C_NamePlate.GetNamePlateForUnit("target", false)) then
         UINameplateOverlay.UpdateAnchor(self)
-        -- clear icons immediately when the target plate disappears
-        self:ForceUpdate()
+        self:ForceUpdate()  -- clear icons immediately
     end
 end
 
@@ -1717,6 +1747,13 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- debuff is live on the target (identity from our own NeverSecret cast).
     if UnitAffectingCombat("player") and DotTracker and DotTracker.OnCastSucceeded then
         DotTracker.OnCastSucceeded(spellID)
+    end
+
+    -- Arm the maintenance-buff bridge. NOT combat-gated, unlike the DoT tracker: binding the
+    -- instance out of combat is what gives the button a live timer the moment a pull starts.
+    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    if MaintenanceTracker and MaintenanceTracker.OnCastSucceeded then
+        MaintenanceTracker.OnCastSucceeded(spellID)
     end
 
     -- Defensive item use latch: in-combat item cooldowns are secret, so an
@@ -1976,11 +2013,15 @@ function JustAC:UpdateFrameSize()
     if UIFrameFactory and UIFrameFactory.UpdateFrameSize then UIFrameFactory.UpdateFrameSize(self) end
     if UIHealthBar and UIHealthBar.UpdateSize then UIHealthBar.UpdateSize(self) end
     if UIHealthBar and UIHealthBar.UpdatePetSize then UIHealthBar.UpdatePetSize(self) end
-    if UIHealthBar and UIHealthBar.UpdateTargetSize then UIHealthBar.UpdateTargetSize(self) end
     if UIHealthBar and UIHealthBar.UpdatePowerSize then UIHealthBar.UpdatePowerSize(self) end
     -- Re-apply target frame anchor after resize (SetSize doesn't move the frame, but
     -- the anchor guard IsShown check may not have fired before the first render)
     if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
+    -- AFTER the anchor pass, never before: whether the target bar gets built at all depends
+    -- on targetframe_anchored, and this call is what several config paths (layout reset,
+    -- profile switch) rely on to rebuild it. Reading the flag first would build against the
+    -- OLD dock state and leave a duplicate bar - or no bar - until the next zone change.
+    if UIHealthBar and UIHealthBar.UpdateTargetSize then UIHealthBar.UpdateTargetSize(self) end
     -- ForceUpdateAll (not ForceUpdate) so OnHealthChanged fires → ResizeToCount
     -- runs immediately, keeping health bar width in sync with visible defensive icons.
     self:ForceUpdateAll()

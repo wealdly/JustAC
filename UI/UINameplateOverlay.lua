@@ -4,7 +4,7 @@
 -- An independent display that anchors DPS queue icons (and optional defensives +
 -- player health bar) directly to the target's nameplate.  Completely separate from
 -- the main panel – either feature can be enabled without the other.
-local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 11)
+local UINameplateOverlay = LibStub:NewLibrary("JustAC-UINameplateOverlay", 14)
 if not UINameplateOverlay then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -59,6 +59,7 @@ local interruptCtx = {}
 -- Module state (reset by Destroy)
 local dpsIcons         = {}   -- [1..N] DPS icon buttons
 local defIcons         = {}   -- [1..N] defensive icon buttons
+local maintenanceIcon  = nil  -- tank maintenance slot: defensive "position 0" (see interruptIcon)
 local pendingMasqueRemoval = {} -- icons whose RemoveButton was skipped in combat; cleaned on next OOC Destroy
 local healthBar        = nil  -- player health StatusBar
 local petHealthBar     = nil  -- pet health StatusBar (warm yellow)
@@ -101,8 +102,12 @@ if Masque then
             UIFrameFactory.ApplyTextOverlaySettingsToIcons(dpsIcons, iconSize, mergedOverlays)
             UIFrameFactory.ApplyTextOverlaySettingsToIcons(defIcons, iconSize, mergedOverlays)
         end
+        -- Kept as separate checks, not an ipairs list: a nil singleton would end the loop early.
         if interruptIcon then
             UIFrameFactory.ApplyTextOverlaySettings(interruptIcon, iconSize, mergedOverlays)
+        end
+        if maintenanceIcon then
+            UIFrameFactory.ApplyTextOverlaySettings(maintenanceIcon, iconSize, mergedOverlays)
         end
     end
 
@@ -143,6 +148,10 @@ local function CreateOverlayIcon(iconSize, profile)
     button.chargeCooldown:SetFrameStrata("BACKGROUND")
     button.borderFrame:SetFrameStrata("BACKGROUND")
     button.hotkeyFrame:SetFrameStrata("BACKGROUND")
+    -- The cue dot is a child of hotkeyFrame, but this file deliberately does NOT rely on the
+    -- parent cascade (see the level note below), so it needs forcing like every other subframe
+    -- or it floats above other addons' nameplate UI.
+    if button.cueDot then button.cueDot:SetFrameStrata("BACKGROUND") end
 
     -- Keep frame LEVELS at the engine floor too: strata alone isn't enough against
     -- addon UI (e.g. a unit-frame addon) that also lives at BACKGROUND - it occluded
@@ -158,6 +167,7 @@ local function CreateOverlayIcon(iconSize, profile)
     button.borderFrame:SetFrameLevel(2)
     button.FlashFrame:SetFrameLevel(4)
     button.hotkeyFrame:SetFrameLevel(4)
+    if button.cueDot then button.cueDot:SetFrameLevel(4) end
 
     -- Nameplate-specific: tighter cooldown insets (3 px vs 4 px in base).
     button.cooldown:ClearAllPoints()
@@ -734,6 +744,23 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     AnchorRow(dpsIcons, dpsPt, dpsEdge, dpsGapX, dpsPt, dpsEdge, dpsChainX)
     if showDefensives then
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
+
+        -- Maintenance slot: the defensive row's "position 0". Mirrors the interrupt icon's
+        -- relationship to dpsIcons[1] below, using the same expansion rules, so defIcons[1]
+        -- never shifts when the slot appears or hides.
+        if maintenanceIcon then
+            maintenanceIcon:ClearAllPoints()
+            maintenanceIcon:SetSize(iconSize, iconSize)
+            if #defIcons > 0 then
+                if expansion == "out" then
+                    maintenanceIcon:SetPoint("BOTTOM", defIcons[1], "TOP", 0, iconSpacing)
+                else
+                    maintenanceIcon:SetPoint(chainRelPt, defIcons[1], chainPt, -chainOffX, -chainOffY)
+                end
+            else
+                maintenanceIcon:SetPoint(defPt, anchorFrame, defEdge, defGapX, 0)
+            end
+        end
     end
 
     -- Interrupt icon: "position 0" - sits outside the queue so it never
@@ -813,6 +840,14 @@ function UINameplateOverlay.Create(addon)
     for i = 1, maxDPS do dpsIcons[i] = CreateOverlayIcon(iconSize, profile) end
     for i = 1, maxDef do defIcons[i] = CreateOverlayIcon(iconSize, profile) end
 
+    -- Tank maintenance slot: the defensive row's "position 0", exactly as the interrupt icon
+    -- is the DPS row's. Built whenever defensives are shown rather than gated on spec here -
+    -- spec can change without rebuilding the overlay, and the renderer hides it for anyone
+    -- without a maintenance buff.
+    if maxDef > 0 then
+        maintenanceIcon = CreateOverlayIcon(iconSize, profile)
+    end
+
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)
     -- interruptMode is centralized in profile (no longer per-surface)
     local interruptMode = profile.interruptMode or "kickPrefer"
@@ -821,32 +856,13 @@ function UINameplateOverlay.Create(addon)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
         resolvedSoothe = SpellDB.ResolveSootheSpells()
 
-        -- Cast aura: small icon attached to the interrupt button showing what
-        -- the enemy is casting.  Anchors above or below the interrupt icon
-        -- depending on expansion direction (same direction the interrupt pops).
-        local auraSize = math_floor(iconSize * 0.7)
-        local castAura = CreateFrame("Frame", nil, interruptIcon)
+        -- Cast aura: small icon attached to the interrupt button showing what the enemy is
+        -- casting. The construction-time anchor here is provisional - UpdateAnchor re-seats it
+        -- on every layout from the overlay's own expansion direction.
+        local castAura = UIFrameFactory.CreateAuraSubIcon(
+            interruptIcon, iconSize, profile, profile.queueOrientation or "LEFT")
         castAura:SetFrameStrata("BACKGROUND")
-        castAura:SetSize(auraSize, auraSize)
-        castAura:SetFrameLevel(interruptIcon:GetFrameLevel() + 2)
         castAura:EnableMouse(false)
-
-        -- Aura always sits above the interrupt icon for visual consistency
-        -- regardless of queue orientation or anchor side.
-        castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
-
-        local auraIcon = castAura:CreateTexture(nil, "ARTWORK")
-        auraIcon:SetAllPoints(castAura)
-        castAura.iconTexture = auraIcon
-
-        local auraMask = UIFrameFactory.CreateRoundedActionIconMask(castAura, auraSize, auraIcon)
-        castAura.IconMask = auraMask
-
-        local auraBorder = castAura:CreateTexture(nil, "OVERLAY")
-        UIFrameFactory.ApplyActionButtonBorderGeometry(auraBorder, castAura, auraSize)
-        auraBorder:SetAtlas("UI-HUD-ActionBar-IconFrame")
-        castAura.Border = auraBorder
-
         castAura:Hide()
         interruptIcon.castAura = castAura
     end
@@ -947,6 +963,14 @@ function UINameplateOverlay.Destroy(addon)
         end
         CleanIcon(interruptIcon)
         interruptIcon = nil
+    end
+    if maintenanceIcon then
+        if MasqueGroup then
+            if inCombat then pendingMasqueRemoval[maintenanceIcon] = true
+            else MasqueGroup:RemoveButton(maintenanceIcon) end
+        end
+        CleanIcon(maintenanceIcon)
+        maintenanceIcon = nil
     end
     resolvedInterrupts = nil
     resolvedSoothe = nil
@@ -1095,6 +1119,11 @@ function UINameplateOverlay.UpdateAnchor(addon)
             icon:ClearAllPoints()
             icon:Hide()
         end
+        -- The maintenance slot is anchored off defIcons[1], which was just cleared.
+        if maintenanceIcon then
+            maintenanceIcon:ClearAllPoints()
+            maintenanceIcon:Hide()
+        end
         if healthBar then
             healthBar:ClearAllPoints()
             healthBar:Hide()
@@ -1242,6 +1271,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
     ctx.showRangeTint       = showRangeTint
     ctx.showUsabilityTint   = showUsabilityTint
     ctx.showCastingHighlight = showCastingHighlight
+    ctx.showOffGcdDot       = profile.showOffGcdDot
+    -- Via the shared resolver, not a local copy: the move-cast default is PER-SPEC
+    -- (ranged/healers on, melee off) and duplicating that rule here would let the two
+    -- surfaces disagree about the same setting.
+    ctx.showMoveCastDot     = UIRenderer.MoveCastDotEnabled and UIRenderer.MoveCastDotEnabled(profile)
     ctx.isChanneling        = isChanneling
     ctx.channelSpellID      = channelSpellID
     ctx.isCasting           = isCasting
@@ -1291,6 +1325,14 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             UIRenderer.HideDefensiveIcon(icon)
         end
     end
+
+    -- Maintenance slot rides with the defensive cluster, same as on the standard queue. Scale
+    -- and opacity are stashed BEFORE the call, because the renderer applies overlayOpacity.
+    if maintenanceIcon then
+        if maintenanceIcon:GetScale() ~= npoDefScale then maintenanceIcon:SetScale(npoDefScale) end
+        maintenanceIcon.overlayOpacity = opacity
+    end
+    UIRenderer.RenderMaintenanceSlot(addon, maintenanceIcon)
 
     -- Sync health bar size and position with the visible defensive slot count.
     -- Only re-anchor when visibleCount changes to avoid per-tick repositioning flicker.
@@ -1456,6 +1498,8 @@ function UINameplateOverlay.HideDefensiveIcons()
     for _, icon in ipairs(defIcons) do
         UIRenderer.HideDefensiveIcon(icon)
     end
+    -- The maintenance slot hides with the cluster it belongs to.
+    UIRenderer.ClearMaintenanceSlot(maintenanceIcon)
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
     if overlayPowerBar then overlayPowerBar:Hide() end
@@ -1610,6 +1654,9 @@ function UINameplateOverlay.InvalidateHotkeyCache()
     if interruptIcon then
         interruptIcon.cachedHotkey = nil
     end
+    if maintenanceIcon then
+        maintenanceIcon.cachedHotkey = nil
+    end
 end
 
 --- Hide every overlay element (called from EnterDisabledMode).
@@ -1628,6 +1675,7 @@ function UINameplateOverlay.HideAll()
         end
         icon:Hide()
     end
+    if maintenanceIcon then maintenanceIcon:Hide() end
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
     if overlayPowerBar then overlayPowerBar:Hide() end

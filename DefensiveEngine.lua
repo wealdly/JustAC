@@ -3,7 +3,7 @@
 -- DefensiveEngine.lua - Defensive spell system: health-based queue, proc detection, potions
 -- Gap-closer system extracted to GapCloserEngine.lua.
 
-local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 2)
+local DefensiveEngine = LibStub:NewLibrary("JustAC-DefensiveEngine", 4)
 if not DefensiveEngine then return end
 
 -- Hot path cache
@@ -64,6 +64,21 @@ local function CopySpellList(dest, listKey, source)
     for i, spellID in ipairs(source) do
         dest[listKey][i] = spellID
     end
+end
+
+-- Append the Emergency Potion sentinel to the defensive list unless it is already present.
+-- It is deliberately NOT in CLASS_DEFENSIVE_DEFAULTS - those are spell ids and this is an
+-- item tile - so anything that rebuilds the list from those defaults drops it. Shared by the
+-- first-time seed AND Restore Class Defaults so the two cannot disagree about whether the
+-- tile counts as "default"; restoring defaults previously wiped it permanently, because the
+-- seed is guarded by a once-only flag that was already set.
+local function EnsureEmergencyPotion(cs)
+    if not (SpellDB and SpellDB.EMERGENCY_POTION) then return end
+    cs.defensiveSpells = cs.defensiveSpells or {}
+    for i = 1, #cs.defensiveSpells do
+        if cs.defensiveSpells[i] == SpellDB.EMERGENCY_POTION then return end
+    end
+    cs.defensiveSpells[#cs.defensiveSpells + 1] = SpellDB.EMERGENCY_POTION
 end
 
 -- Hide multi-icon or single-icon defensive frames (handles both layouts).
@@ -209,14 +224,7 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     -- the bottom). The per-spec flag means removing the tile sticks - it won't re-add.
     if SpellDB and SpellDB.EMERGENCY_POTION and not cs.emergencyPotionInit then
         cs.emergencyPotionInit = true
-        cs.defensiveSpells = cs.defensiveSpells or {}
-        local present = false
-        for i = 1, #cs.defensiveSpells do
-            if cs.defensiveSpells[i] == SpellDB.EMERGENCY_POTION then present = true; break end
-        end
-        if not present then
-            cs.defensiveSpells[#cs.defensiveSpells + 1] = SpellDB.EMERGENCY_POTION
-        end
+        EnsureEmergencyPotion(cs)
     end
 
     DefensiveEngine.RegisterDefensivesForTracking(addon)
@@ -287,6 +295,14 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
                 and SpellDB.ResolveDefaults(SpellDB[cfg.defaultsKey], specKey, playerClass)
             if defaults then
                 CopySpellList(cs, cfg.listKey, defaults)
+                -- Restoring DEFAULTS must restore the Emergency Potion tile too: it is on by
+                -- default, but lives outside CLASS_DEFENSIVE_DEFAULTS, so the copy above just
+                -- dropped it. Re-adding here is also what the player asked for - the once-only
+                -- seed flag exists so that manually REMOVING the tile sticks, and an explicit
+                -- "restore defaults" is not a manual removal.
+                if cfg.listKey == "defensiveSpells" then
+                    EnsureEmergencyPotion(cs)
+                end
             end
             break
         end
@@ -366,6 +382,18 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local maxDpsIcons = profile.maxIcons or 4
         for i = 1, math_min(#dpsQueue, maxDpsIcons) do
             if dpsQueue[i] then dpsQueueExclusions[dpsQueue[i]] = true end
+        end
+    end
+
+    -- The tank maintenance slot renders INSIDE the defensive cluster, so an ability shown
+    -- there must not also be listed in the queue beside it - that is the same icon twice in
+    -- one row. (Contrast the DPS queue, which is a separate cluster: Blood's Marrowrend is
+    -- allowed to appear both there and in the slot, because those carry different meanings.)
+    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    if MaintenanceTracker and MaintenanceTracker.IsSlotActive then
+        local slotActive, mEntry = MaintenanceTracker.IsSlotActive(profile)
+        if slotActive and mEntry and mEntry.cast then
+            dpsQueueExclusions[mEntry.cast] = true
         end
     end
 

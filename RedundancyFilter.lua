@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 43)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 44)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -941,6 +941,21 @@ local function IsAuraSpell(spellID)
     if FormCache and FormCache.GetFormIDBySpellID
             and FormCache.GetFormIDBySpellID(spellID) ~= nil then
         return true, true  -- Treat as unique personal aura
+    end
+
+    -- Curated defensive tier: a defensive carrying a sinkAura hint that points at ITS
+    -- OWN id is an explicit statement that re-casting REPLACES the buff rather than
+    -- adding to it (an absorb barrier throws away whatever shield was left). That is
+    -- exactly the judgement this function needs and the one the client data cannot
+    -- make: Ironfur stacks per application and carries no stack data, so it is only
+    -- safe to suppress a defensive we have named by hand. Identity with the cast id is
+    -- required because the redundancy check tests the buff under the CAST id - a hint
+    -- pointing elsewhere (Shield Block -> 132404) would look up an aura that is not there.
+    if SpellDB and SpellDB.GetDefensiveAuraHint then
+        local hint = SpellDB.GetDefensiveAuraHint(spellID)
+        if hint and hint.sinkAura == spellID then
+            return true, true
+        end
     end
 
     -- Client-data tier: spells whose every effect is a non-stacking self-applied

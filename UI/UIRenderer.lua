@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Renderer Module
-local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 25)
+local UIRenderer = LibStub:NewLibrary("JustAC-UIRenderer", 44)
 if not UIRenderer then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -696,9 +696,9 @@ local function ClearIconState(icon)
     if icon.spreadArrow then
         icon.spreadArrow:Hide()
     end
-    if icon.moveDot then
-        icon.moveDot:Hide()
-        icon._moveDotShown = false
+    if icon.cueDot then
+        icon.cueDot:Hide()
+        icon._cueDotKey = nil   -- force a repaint when this pooled icon is reused
     end
     if UIAnimations then
         if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
@@ -717,7 +717,8 @@ end
 function UIRenderer.InvalidateHotkeyCache()
     hotkeysDirty = true
     local addon = BlizzardAPI.GetAddon()
-    if addon and addon.spellIcons then
+    if not addon then return end
+    if addon.spellIcons then
         for i = 1, #addon.spellIcons do
             local icon = addon.spellIcons[i]
             if icon then
@@ -725,6 +726,7 @@ function UIRenderer.InvalidateHotkeyCache()
             end
         end
     end
+    if addon.maintenanceIcon then addon.maintenanceIcon.cachedHotkey = nil end
 end
 
 --------------------------------------------------------------------------------
@@ -926,6 +928,267 @@ local function SetDefensiveIconVisible(defensiveIcon, visible)
     defensiveIcon:SetAlpha(visible and 1 or 0)
 end
 
+--- True if casting this spell starts no global cooldown, so the next ability can be
+--- pressed immediately. Static client data (never a secret read, so this is combat-safe).
+--- The table is keyed on BASE spell ids, so an override/form variant is resolved first -
+--- otherwise a transformed ability would silently lose its marker. Unknown id -> false:
+--- a missing marker is harmless, a wrong one tells the player to clip a real GCD.
+local offGcdCache = {}
+local function IsOffGCDSpell(spellID)
+    if not spellID then return false end
+    local hit = offGcdCache[spellID]
+    if hit ~= nil then return hit end
+    local CD = LibStub("JustAC-CooldownData", true)
+    local result = false
+    if CD and CD.IsOffGCD then
+        result = CD.IsOffGCD(spellID)
+        if not result and BlizzardAPI and BlizzardAPI.ResolveBaseSpellID then
+            local base = BlizzardAPI.ResolveBaseSpellID(spellID)
+            result = base and CD.IsOffGCD(base) or false
+        end
+    end
+    offGcdCache[spellID] = result
+    return result
+end
+
+-- Move-cast marker classification. A spell is castable while moving when it is
+-- INSTANT right now: base instants always, hardcasts only while a proc has made
+-- them instant (Hot Streak, Lava Surge, ...). Channels are excluded (movement
+-- breaks them) even though they also report cast time 0.
+--
+-- The static class is cached per spell; the proc state is read live per render.
+-- castTime is static spell metadata (not a live/secret value), but the compare is
+-- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
+local issecretvalue = issecretvalue  -- 12.0 global; nil on older clients
+local C_SpellActivationOverlay_IsSpellOverlayed =
+    C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+local moveCastClassCache = {}
+local function MoveCastClass(spellID, spellInfo)
+    if not spellID then return nil end
+    local cached = moveCastClassCache[spellID]
+    if cached ~= nil then return cached end
+    local SDB = LibStub("JustAC-SpellDB", true)
+    if SDB and SDB.IsChanneled and SDB.IsChanneled(spellID) then
+        moveCastClassCache[spellID] = "channel"
+        return "channel"
+    end
+    local ct = spellInfo and spellInfo.castTime
+    if ct == nil then return nil end               -- no info yet; retry next render
+    if issecretvalue and issecretvalue(ct) then return "hardcast" end  -- unreadable; proc-gate it
+    local class = (ct == 0) and "instant" or "hardcast"
+    moveCastClassCache[spellID] = class
+    return class
+end
+
+-- A hardcast is castable while moving only while a proc has made it instant. Reuse
+-- Blizzard's spell-activation overlay (the same "proc ready" cue that glows the
+-- icon) as the live signal. Fail-safe: any error / secret -> not proc'd (no mark),
+-- never a wrong "cast while moving" claim.
+local function IsSpellProcActive(spellID)
+    if not (spellID and C_SpellActivationOverlay_IsSpellOverlayed) then return false end
+    local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(overlayed) then return false end
+    return overlayed == true
+end
+
+--- True if the spell can be cast while moving right now (for the queue marker).
+local function IsMoveCastableNow(spellID, spellInfo)
+    local class = MoveCastClass(spellID, spellInfo)
+    if class == "instant" then return true end
+    if class == "hardcast" then return IsSpellProcActive(spellID) end
+    return false  -- "channel" / nil
+end
+
+--- Move-cast marker setting: the explicit profile toggle, or the per-spec auto default
+--- (ranged DPS / healers on, melee off) when the player has never set it. Shared so the
+--- defensive path resolves the default identically to the queue's ctx builder.
+local function MoveCastDotEnabled(profile)
+    local v = profile and profile.showMoveCastDot
+    if v ~= nil then return v end
+    local SDB = LibStub("JustAC-SpellDB", true)
+    return (SDB and SDB.IsRangedOrHealerSpec and SDB.IsRangedOrHealerSpec()) or false
+end
+
+-- Cue-dot colours. FULLY SATURATED on purpose: this is a small solid disc drawn over arbitrary
+-- spell art, so maximum chroma is what keeps it findable (unlike a glow tint, where full chroma
+-- flattens the flipbook). Azure and amber differ in hue AND brightness, so the split disc stays
+-- readable at icon size and for colour-blind players.
+local CUE_MOVECAST = { r = 0.10, g = 0.80, b = 1.00 }   -- azure: movement
+local CUE_OFFGCD   = { r = 1.00, g = 0.72, b = 0.10 }   -- amber: free cast
+
+--- Paint the shared cue dot. Shared by the defensive and queue paths so a cue means the same
+--- thing on every surface. Colours are only re-applied when the ACTIVE SET changes, so the
+--- pulse animation is never restarted mid-flight by a redundant repaint.
+local function ApplyCueDot(icon, moveCast, offGcd)
+    local dot = icon and icon.cueDot
+    if not dot then return end
+    moveCast, offGcd = moveCast and true or false, offGcd and true or false
+
+    local key = (moveCast and "M" or "") .. (offGcd and "G" or "")
+    if key == icon._cueDotKey then return end
+    icon._cueDotKey = key
+
+    if key == "" then
+        dot:Hide()
+        return
+    end
+
+    -- Fixed order (move-cast left, off-GCD right); with one cue both halves take the same
+    -- colour, so it reads as a solid dot.
+    local a = moveCast and CUE_MOVECAST or CUE_OFFGCD
+    local b = offGcd and CUE_OFFGCD or CUE_MOVECAST
+    -- Additive stacking is what makes the fill read neon rather than as a tinted grey disc.
+    for i = 1, #dot.leftLayers do dot.leftLayers[i]:SetVertexColor(a.r, a.g, a.b, 1) end
+    for i = 1, #dot.rightLayers do dot.rightLayers[i]:SetVertexColor(b.r, b.g, b.b, 1) end
+    -- Halo takes the first colour; a single-hue halo behind a split disc beats a gradient.
+    dot.glowTex:SetVertexColor(a.r, a.g, a.b, 0.75)
+    dot:Show()
+end
+
+-- Blue: "this mitigation has lapsed, put it back up". The flipbook base is gold and gets
+-- desaturated before tinting, so the value has to be vivid to survive as a recognisable
+-- blue rather than washing out grey.
+local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
+
+-- Single teardown for the maintenance slot: three call sites (inactive slot, main-panel
+-- cluster hide, nameplate cluster hide) each used to clear a different subset.
+local function ClearMaintenanceSlot(icon)
+    if not icon then return end
+    UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+    icon:SetAlpha(0)
+    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, false, nil, nil
+    icon.maintenanceAuraID = nil
+    if icon.chargeText then icon.chargeText:Hide() end
+end
+UIRenderer.ClearMaintenanceSlot = ClearMaintenanceSlot
+
+--- Render the defensive maintenance slot ("position 0" of the defensive queue).
+--- The split that makes this work: the SWIPE shows the aura's real remaining time, drawn
+--- by the engine from a DurationObject we never read, while our own logic only ever sees
+--- the up/down/unknown boolean. So the player gets an exact timer for a value that is
+--- secret to the addon.
+function UIRenderer.RenderMaintenanceSlot(addon, icon)
+    if not icon then return end
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    local profile = addon.db and addon.db.profile
+
+    -- Visibility comes from MT.IsSlotActive, the SHARED predicate: the defensive queue builder
+    -- excludes this ability using the same call, and if the two disagreed you would get the
+    -- icon twice or an ability that vanished from both. Combat-only, and that gates the DISPLAY
+    -- only - the tracker keeps binding the aura out of combat, so the slot has a correct timer
+    -- from the first second of a pull instead of an empty swipe that fills in late.
+    local active, entry = false, nil
+    if MT and MT.IsSlotActive then active, entry = MT.IsSlotActive(profile) end
+    local state, inst = "none", nil
+    -- Plain assignment, NOT `local` - shadowing `state` here silently kills the glow.
+    if active and MT and MT.GetState then state, _, inst = MT.GetState() end
+
+    if not active or not entry then
+        -- Guard the common case: this runs every render tick and inactive is the norm.
+        if icon._maintShown then ClearMaintenanceSlot(icon) end
+        return
+    end
+
+    -- No `or entry.aura` fallback: a future cast-less entry must fail loudly rather than run
+    -- range and usability checks against an aura id.
+    local displayID = entry.cast
+
+    -- Icon art only changes on a spec change, so refresh it on transition.
+    if icon._maintID ~= displayID then
+        icon._maintID = displayID
+        icon.spellID = displayID
+        icon.currentID = displayID
+        icon.isItem = false
+        -- Tooltip names the buff this cast maintains, when it is a different spell.
+        icon.maintenanceAuraID = (entry.aura ~= displayID) and entry.aura or nil
+        local info = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(displayID)
+        if info and info.iconID then
+            icon.iconTexture:SetTexture(info.iconID)
+            icon.iconTexture:Show()
+        end
+        icon.cachedHotkey = nil
+    end
+
+    SetDefensiveIconVisible(icon, true)
+    icon:SetAlpha(icon.overlayOpacity or 1)
+    icon._maintShown = true
+
+    -- THE POINT OF THE WHOLE FEATURE: exact remaining time, engine-drawn. Never read.
+    local dur = MT and MT.GetDurationObject and MT.GetDurationObject(inst)
+    if icon.cooldown then
+        if dur and icon.cooldown.SetCooldownFromDurationObject then
+            pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, dur)
+        else
+            icon.cooldown:SetCooldown(0, 0)
+        end
+    end
+
+    -- Stack count (Ironfur, Bone Shield). PASS-THROUGH ONLY - never read, compared or used in
+    -- arithmetic: `applications` is secret in combat, but the formatter and SetText both accept
+    -- secrets, so the ENGINE renders a number our logic stays blind to.
+    -- SetText marks this FontString's Text aspect secret PERMANENTLY - it must never reach a
+    -- width-measured layout path. Nothing here measures it.
+    if icon.chargeText then
+        local apps = entry.stacks and MT and MT.GetApplications and MT.GetApplications(inst)
+        local fmt = C_StringUtil and C_StringUtil.RoundToNearestString
+        if apps ~= nil and fmt then
+            local ok, text = pcall(fmt, apps)
+            if ok then
+                icon.chargeText:SetText(text)
+                icon.chargeText:Show()
+            else
+                icon.chargeText:Hide()
+            end
+        else
+            icon.chargeText:Hide()
+        end
+    end
+
+    -- Usability goes through the SHARED ApplyVisualState. IsSpellUsable is never-secret, so it
+    -- reads fine in combat. Desaturation therefore means what it means everywhere else - "you
+    -- cannot press this" - and is NOT reused for "the buff lapsed"; the glow carries that.
+    -- Read once: it drives both the visual state and whether the glow may fire.
+    local usable, noResource = true, false
+    if BlizzardAPI and BlizzardAPI.IsSpellUsable then
+        usable, noResource = BlizzardAPI.IsSpellUsable(displayID)
+    end
+    local vs = VS_NORMAL
+    if not usable then
+        vs = noResource and VS_NO_RESOURCES or VS_UNAVAILABLE
+    end
+    ApplyVisualState(icon, vs, 0, 1, 1)
+
+    -- Hotkey + range colouring, so a rotational button in this slot (Blood's Marrowrend)
+    -- still tells the player whether they can actually reach and afford it.
+    local showHotkeys = profile.textOverlays and profile.textOverlays.hotkey
+        and profile.textOverlays.hotkey.show ~= false
+    if not icon.cachedHotkey then
+        icon.cachedHotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
+            and ActionBarScanner.GetSpellHotkey(displayID)) or ""
+    end
+    SetIconHotkeyText(icon, icon.cachedHotkey, showHotkeys)
+    if showHotkeys and icon.cachedHotkey ~= "" then
+        local outOfRange = CheckSpellRange(icon, displayID, nil)
+        UpdateRangeHotkeyColor(icon, outOfRange,
+            profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
+    end
+
+    -- Glow on "refresh" too, not just "down" - by the time it is down the mitigation has
+    -- already lapsed. Never on "unknown" (would tell a tank to re-press a live buff). Gated
+    -- on usable, which is false for BOTH a resource shortfall and a live cooldown.
+    local wantGlow = (state == "down" or state == "refresh") and usable
+    if wantGlow ~= icon._maintGlow then
+        if wantGlow then
+            UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
+                MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
+        else
+            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+        end
+        icon._maintGlow = wantGlow
+    end
+end
+
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
 -- waiting: held-back emergency heal (above low-health threshold) - render desaturated
 -- with a centered WAIT tag and no glow, instead of showing it as a live suggestion.
@@ -933,8 +1196,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture, name
+    -- Hoisted: the move-cast marker below needs spellInfo.castTime, not just the icon.
+    local defSpellInfo
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
-    
+
     if isItem then
         if C_Item and C_Item.GetItemIconByID then
             iconTexture = C_Item.GetItemIconByID(id)
@@ -949,10 +1214,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         end
         if not iconTexture then return end
     else
-        local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(id)
-        if not spellInfo then return end
-        iconTexture = spellInfo.iconID
-        name = spellInfo.name
+        defSpellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(id)
+        if not defSpellInfo then return end
+        iconTexture = defSpellInfo.iconID
+        name = defSpellInfo.name
     end
     
     defensiveIcon.currentID = id
@@ -965,6 +1230,19 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         local _, spellID = GetItemSpell(id)
         defensiveIcon.itemCastSpellID = spellID
     end
+
+    -- Marker cues, same rules as the offensive queue: spells only (items follow a separate
+    -- use path) and never on a waiting / pre-combat placeholder.
+    --   off-GCD  - defensives are where this matters most: Shield of the Righteous, Rune Tap
+    --              and friends are off the global, so firing one costs no rotation cast.
+    --   move-cast - a defensive you can use while repositioning is exactly the one you want
+    --              when the fight is making you run, so it belongs here as much as on the queue.
+    -- Re-evaluated every render because proc state is live, unlike the static off-GCD data.
+    local profile = addon.db and addon.db.profile
+    local markable = not isItem and not waiting and not isPrecombatEntry
+    ApplyCueDot(defensiveIcon,
+        markable and MoveCastDotEnabled(profile) and IsMoveCastableNow(id, defSpellInfo),
+        markable and profile and profile.showOffGcdDot and IsOffGCDSpell(id))
     
     if idChanged then
         defensiveIcon.iconTexture:SetTexture(iconTexture)
@@ -1062,6 +1340,9 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         defensiveIcon.isItem = nil
         defensiveIcon.isPrecombatBuff = nil
         defensiveIcon.isWaiting = nil
+        -- Clear both markers with the rest of the slot state, or a pooled icon reused for
+        -- an on-GCD / non-move-castable spell keeps a stale cue.
+        ApplyCueDot(defensiveIcon, false, false)
         if defensiveIcon.centerText then defensiveIcon.centerText:Hide() end
         defensiveIcon.iconTexture:Hide()
         -- Ensure clean state on reuse.
@@ -1144,6 +1425,9 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         end
     end
 
+    -- Maintenance slot rides with the defensive cluster: same pass, same visibility rules.
+    UIRenderer.RenderMaintenanceSlot(addon, addon.maintenanceIcon)
+
     -- Re-seat the out-of-combat click layers over any inserted pre-combat buff icons.
     local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
     if PrecombatOverlay and PrecombatOverlay.Refresh then PrecombatOverlay.Refresh() end
@@ -1155,6 +1439,10 @@ function UIRenderer.HideDefensiveIcons(addon)
     for _, icon in ipairs(addon.defensiveIcons) do
         UIRenderer.HideDefensiveIcon(icon)
     end
+
+    -- The maintenance slot hides with the cluster it belongs to - otherwise it would hang
+    -- there alone in vehicle/possess mode with a stale timer.
+    ClearMaintenanceSlot(addon.maintenanceIcon)
 
     -- Hide the detached container frame (covers vehicle/possess mode).
     if addon.defensiveFrame and addon.defensiveFrame:IsShown() then
@@ -1380,57 +1668,6 @@ end
 --   hideEmptySlots          hide the button on an empty slot (overlay) instead of
 --                           showing an empty placeholder slot (standard queue)
 -- ─────────────────────────────────────────────────────────────────────────────
--- Move-cast marker classification. A spell is castable while moving when it is
--- INSTANT right now: base instants always, hardcasts only while a proc has made
--- them instant (Hot Streak, Lava Surge, ...). Channels are excluded (movement
--- breaks them) even though they also report cast time 0.
---
--- The static class is cached per spell; the proc state is read live per render.
---   "instant" -> always mark       "hardcast" -> mark only while proc'd
---   "channel" -> never mark         nil        -> unknown, don't mark (retry)
--- castTime is static spell metadata (not a live/secret value), but the compare is
--- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
-local issecretvalue = issecretvalue  -- 12.0 global; nil on older clients
-local C_SpellActivationOverlay_IsSpellOverlayed =
-    C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local moveCastClassCache = {}
-local function MoveCastClass(spellID, spellInfo)
-    if not spellID then return nil end
-    local cached = moveCastClassCache[spellID]
-    if cached ~= nil then return cached end
-    local SDB = LibStub("JustAC-SpellDB", true)
-    if SDB and SDB.IsChanneled and SDB.IsChanneled(spellID) then
-        moveCastClassCache[spellID] = "channel"
-        return "channel"
-    end
-    local ct = spellInfo and spellInfo.castTime
-    if ct == nil then return nil end               -- no info yet; retry next render
-    if issecretvalue and issecretvalue(ct) then return "hardcast" end  -- unreadable; proc-gate it
-    local class = (ct == 0) and "instant" or "hardcast"
-    moveCastClassCache[spellID] = class
-    return class
-end
-
--- A hardcast is castable while moving only while a proc has made it instant. Reuse
--- Blizzard's spell-activation overlay (the same "proc ready" cue that glows the
--- icon) as the live signal. Fail-safe: any error / secret -> not proc'd (no mark),
--- never a wrong "cast while moving" claim.
-local function IsSpellProcActive(spellID)
-    if not (spellID and C_SpellActivationOverlay_IsSpellOverlayed) then return false end
-    local ok, overlayed = pcall(C_SpellActivationOverlay_IsSpellOverlayed, spellID)
-    if not ok then return false end
-    if issecretvalue and issecretvalue(overlayed) then return false end
-    return overlayed == true
-end
-
---- True if the spell can be cast while moving right now (for the queue marker).
-local function IsMoveCastableNow(spellID, spellInfo)
-    local class = MoveCastClass(spellID, spellInfo)
-    if class == "instant" then return true end
-    if class == "hardcast" then return IsSpellProcActive(spellID) end
-    return false  -- "channel" / nil
-end
-
 local function RenderQueueIcon(icon, i, ctx)
     local currentTime = ctx.now
     local spellIDs = ctx.spellIDs
@@ -1718,18 +1955,19 @@ local function RenderQueueIcon(icon, i, ctx)
 
         UpdateCastingHighlight(icon, ctx.showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
 
-        -- Move-cast marker: show on spells castable while moving right now - base
-        -- instants always, hardcasts while proc'd instant, channels never.
-        -- ctx.showMoveCastDot folds in the per-spec auto default. Evaluated every
-        -- render (proc state is live); toggled only on change so the pulse holds.
-        if icon.moveDot then
-            local wantMoveDot = ctx.showMoveCastDot and not isItemEntry
-                and not icon.isWaitingSpell and IsMoveCastableNow(spellID, spellInfo)
-            if wantMoveDot ~= icon._moveDotShown then
-                if wantMoveDot then icon.moveDot:Show() else icon.moveDot:Hide() end
-                icon._moveDotShown = wantMoveDot
-            end
-        end
+        -- Cue dot: one lower-left indicator carrying both per-ability cues, split into
+        -- halves when both apply.
+        --   move-cast - castable while moving RIGHT NOW: base instants always, hardcasts
+        --               only while a proc has made them instant, channels never. Live state,
+        --               so it is re-evaluated every render.
+        --   off-GCD   - starts no global cooldown, so you can fire it and move straight on.
+        --               Static per spell, but still re-checked because a pooled icon changes
+        --               which spell it shows.
+        -- ctx.showMoveCastDot folds in the per-spec auto default.
+        local markable = not isItemEntry and not icon.isWaitingSpell
+        ApplyCueDot(icon,
+            markable and ctx.showMoveCastDot and IsMoveCastableNow(spellID, spellInfo),
+            markable and ctx.showOffGcdDot and IsOffGCDSpell(spellID))
 
         -- First icon scale (overlay only; scale is icon-local, never a secret read).
         if ctx.firstIconScale then
@@ -1939,10 +2177,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
 
     -- Move-cast dot visibility: explicit profile toggle, or the per-spec auto
     -- default (ranged DPS / healers on, melee off) when the player hasn't set it.
-    local showMoveCastDot = profile.showMoveCastDot
-    if showMoveCastDot == nil then
-        showMoveCastDot = SDB and SDB.IsRangedOrHealerSpec and SDB.IsRangedOrHealerSpec() or false
-    end
+    local showMoveCastDot = MoveCastDotEnabled(profile)
 
     if shouldShowFrame then
         -- Per-pass ctx for the shared icon renderer (see RenderQueueIcon docs).
@@ -1965,6 +2200,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ctx.showUsabilityTint   = showUsabilityTint
         ctx.showCastingHighlight = showCastingHighlight
         ctx.showMoveCastDot     = showMoveCastDot
+        ctx.showOffGcdDot       = profile.showOffGcdDot
         ctx.isChanneling        = isChanneling
         ctx.channelSpellID      = channelSpellID
         ctx.isCasting           = isCasting
@@ -2201,6 +2437,7 @@ function UIRenderer.ResolvePlayerCastState(profile)
 end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
+UIRenderer.MoveCastDotEnabled    = MoveCastDotEnabled
 UIRenderer.NormalizeHotkey       = NormalizeHotkey
 UIRenderer.SetIconHotkeyText     = SetIconHotkeyText
 UIRenderer.SetIconNormalizedHotkey = SetIconNormalizedHotkey

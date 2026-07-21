@@ -707,6 +707,37 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                         _addon:ForceUpdate()
                     end,
                 }
+
+                entryArgs.holdUntilCharged = {
+                    type = "toggle",
+                    order = 6,
+                    width = 0.7,
+                    name = L["Hold Until Charged"],
+                    desc = L["Hold Until Charged desc"],
+                    -- Inert while "Unavailable last" is off (SpellQueue gates the whole
+                    -- feature on sinkCooldowns), so grey it out the way the sibling
+                    -- Proc Priority toggle greys against its own master switch.
+                    disabled = function()
+                        local profile = _addon:GetProfile()
+                        return profile and profile.orderSinkCooldowns == false or false
+                    end,
+                    get = function()
+                        local profile = _addon:GetProfile()
+                        local settings = profile and profile.defensives and profile.defensives.spellSettings
+                            and profile.defensives.spellSettings[spellID]
+                        return settings and settings.holdUntilCharged == true
+                    end,
+                    set = function(_, val)
+                        local profile = _addon:GetProfile()
+                        if not profile or not profile.defensives then return end
+                        if not profile.defensives.spellSettings then profile.defensives.spellSettings = {} end
+                        if not profile.defensives.spellSettings[spellID] then profile.defensives.spellSettings[spellID] = {} end
+                        profile.defensives.spellSettings[spellID].holdUntilCharged = val or nil
+                        local SQ = LibStub("JustAC-SpellQueue", true)
+                        if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
+                        _addon:ForceUpdate()
+                    end,
+                }
             end
         end
     end

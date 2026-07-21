@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Offensive - Offensive queue settings tab + blacklist management
-local Offensive = LibStub:NewLibrary("JustAC-OptionsOffensive", 1)
+local Offensive = LibStub:NewLibrary("JustAC-OptionsOffensive", 3)
 if not Offensive then return end
 
 local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
@@ -60,24 +60,6 @@ local function queueContentGroup(addon)
                 onSet = function() addon:ForceUpdate() end,
                 disabled = fullyDisabled,
             }),
-            markMoveCastable = {
-                type = "toggle",
-                name = L["Mark Move-Castable Spells"], desc = L["Mark Move-Castable Spells desc"],
-                order = 5, width = "normal",
-                -- Raw get/set: no static default, because the default is per-spec
-                -- (ranged DPS / healers on, melee off) until the player sets it.
-                get = function()
-                    local v = addon.db.profile.showMoveCastDot
-                    if v ~= nil then return v end
-                    local SDB = LibStub("JustAC-SpellDB", true)
-                    return SDB and SDB.IsRangedOrHealerSpec and SDB.IsRangedOrHealerSpec() or false
-                end,
-                set = function(_, val)
-                    addon.db.profile.showMoveCastDot = val
-                    addon:ForceUpdate()
-                end,
-                disabled = function() return fullyDisabled(addon) end,
-            },
         },
     }
 end

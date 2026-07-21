@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 12
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 13
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -321,7 +321,8 @@ end
 --   UnitCreatureFamily()- NOT secreted, but only distinguishes Beast from
 --                         everything else (nil for Mechanical/Undead/etc.).
 --   UnitClassification()- NOT secreted. Used for worldboss/boss slot detection.
---   UnitIsUnit(boss1-5) - NOT secreted. Used for boss slot detection.
+--   UnitIsUnit(boss1-5) - SECRET-CAPABLE (SecretWhenUnitComparisonRestricted); returns a bool,
+--     so boolean-testing it THROWS on an addon-restricted map. Route via SafeUnitIsUnit.
 --
 -- DESIGN CONSEQUENCE:
 --   The cache is populated out of combat (TARGET_CHANGED, PLAYER_REGEN_ENABLED).
@@ -522,13 +523,40 @@ function BlizzardAPI.ResetInstanceCCCache()
     wipe(ccImmuneNPCIDs)
 end
 
+--- Secret-safe UnitIsUnit. UnitIsUnit is annotated SecretWhenUnitComparisonRestricted and
+--- returns a BOOL, so its result can be a secret boolean - and boolean-testing a secret
+--- boolean THROWS ("attempt to perform boolean test on a secret boolean value"), it does not
+--- merely return the wrong answer. Two triggers, per SecretPredicatesDocumentation:
+---   • compound unit tokens (eg. "boss1target") - ALWAYS secret, on any map
+---   • any comparison while on an addon-restricted map - i.e. instanced content
+--- `default` is returned whenever the answer cannot be read, so each caller states its own
+--- fail direction explicitly rather than inheriting a silent one.
+--- @param default boolean value to return when the comparison is unreadable
+--- @return boolean
+function BlizzardAPI.SafeUnitIsUnit(unit1, unit2, default)
+    if not (unit1 and unit2 and UnitIsUnit) then return default end
+    -- Ask the engine first: this predicate exists precisely because these go secret.
+    local pred = C_Secrets and C_Secrets.ShouldUnitComparisonBeSecret
+    if pred then
+        local predOk, isSecret = pcall(pred, unit1, unit2)
+        if not predOk or isSecret then return default end
+    end
+    local ok, result = pcall(UnitIsUnit, unit1, unit2)
+    if not ok then return default end
+    -- Belt and braces: the predicate may not exist on every client build.
+    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(result) then return default end
+    return result and true or false
+end
+
 function BlizzardAPI.IsTargetCCImmune()
     -- 1) World bosses and boss-frame mobs are always CC-immune.
     --    UnitClassification: NeverSecret (no SecretWhenUnitIdentityRestricted).
-    --    UnitIsUnit: NeverSecret for boss1-5 comparison (verified 2026-02-23).
+    --    UnitIsUnit is NOT NeverSecret - the "verified 2026-02-23" claim is retracted; the
+    --    generated docs annotate it SecretWhenUnitComparisonRestricted.
+    --    Unreadable defaults to FALSE: lose boss detection, not all CC for the instance.
     if UnitClassification("target") == "worldboss" then return true end
     for i = 1, 5 do
-        if UnitIsUnit("target", BOSS_UNITS[i]) then return true end
+        if BlizzardAPI.SafeUnitIsUnit("target", BOSS_UNITS[i], false) then return true end
     end
 
     -- 2) Minions (pets, totems, treants, guardians) are CC-immune.

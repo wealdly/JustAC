@@ -4,7 +4,7 @@
 -- Centralises all interrupt-detection state, cast-bar discovery, and sound playback.
 -- UIRenderer and UINameplateOverlay both delegate to the public functions here
 -- so there is exactly one debounce timer for the whole addon.
-local CastInterruptTracker = LibStub:NewLibrary("JustAC-CastInterruptTracker", 1)
+local CastInterruptTracker = LibStub:NewLibrary("JustAC-CastInterruptTracker", 2)
 if not CastInterruptTracker then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -138,9 +138,12 @@ end
 --    A cast-bar addon that replaces or reskins (taints) the bar removes this signal.
 --
 -- WHAT IS SECRET / DOES NOT WORK (red herrings - do NOT re-derive "sealed" from these):
---   • bar.notInterruptible field    - coerced/secret, NOT reliable
---   • bar:IsInterruptable()/barType  - secret string; comparing it errors under our taint
---   • BorderShield:IsShown()         - secret (SetShown(notInterruptible) directly)
+--   • bar.notInterruptible field    - never assigned by Blizzard's mixin (local/param only)
+--   • bar:IsInterruptable()/barType  - `barType ~= CastingBarType.Uninterruptable`; comparing
+--                                      those secret-wrapped enums errors under our taint
+--   • BorderShield:IsShown()         - secret, but NOT via SetShown(notInterruptible): it is
+--                                      driven by `showShield and not IsInterruptable()`, so the
+--                                      secrecy comes from that same barType comparison
 --   • cast bar fill atlas / color    - secret;  the cast spellID - secret
 --   • UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE events - do NOT fire for these casts (any unit token)
 --   • a private CastingBarFrame we create - runs in OUR taint → IsInterruptable() coerces wrong
@@ -185,13 +188,24 @@ local function IsTargetCastInterruptible(nameplate)
         -- so IsShown()/GetAlpha() on sub-widgets inherit the secrecy and crash on
         -- boolean tests. Wrap each check in pcall; crash = skip to next check.
 
-        -- Direct field: notInterruptible (secret boolean in combat)
+        -- Direct field: notInterruptible. Blizzard's own mixin NEVER assigns this - it exists
+        -- there only as a local/parameter - so on a stock bar this is always nil and falls
+        -- through. Kept for a replacement bar that does expose it as a field.
         local niOk, ni = pcall(function() return bar.notInterruptible and true or false end)
         if niOk and ni then return true, false, bar end
 
-        -- Icon hidden when not interruptible (IsShown inherits secret from SetShown)
+        -- Icon hidden when not interruptible. CastingBarMixin:ShouldIconBeShown returns false
+        -- from TWO guards BEFORE it ever tests interruptibility: `showIcon` (false when the
+        -- player turns the cast-bar spell icon off) and a `look` other than "UNITFRAME" (set
+        -- by a bar that reskins it). Without checking those first, a hidden icon reads as
+        -- "uninterruptible" for EVERY cast, silently suppressing every kick suggestion for
+        -- that player, permanently. Compare against false, not truthiness: a replacement bar
+        -- may not carry these fields at all, and nil must keep the signal rather than kill it.
         local iconOk, iconHidden = pcall(function()
-            return bar.Icon and bar.HideIconWhenNotInterruptible and not bar.Icon:IsShown()
+            return bar.Icon and bar.HideIconWhenNotInterruptible
+                and bar.showIcon ~= false
+                and (bar.look == nil or bar.look == "UNITFRAME")
+                and not bar.Icon:IsShown()
         end)
         if iconOk and iconHidden then return true, false, bar end
 
@@ -245,7 +259,9 @@ function CastInterruptTracker.DebugInterruptState()
         local b = FindVisibleCastBar(nameplate)
         if not b then src = "no-bar/api" else
             local niOk, ni = pcall(function() return b.notInterruptible and true or false end)
-            local icOk, icHid = pcall(function() return b.Icon and b.HideIconWhenNotInterruptible and not b.Icon:IsShown() end)
+            local icOk, icHid = pcall(function() return b.Icon and b.HideIconWhenNotInterruptible
+                and b.showIcon ~= false and (b.look == nil or b.look == "UNITFRAME")
+                and not b.Icon:IsShown() end)
             local shOk, shShown = pcall(function() return b.BorderShield and b.BorderShield:IsShown() and (b.BorderShield:GetAlpha() or 0) > 0.5 end)
             if niOk and ni then src = "notInterruptible-field"
             elseif icOk and icHid then src = "icon-hidden"

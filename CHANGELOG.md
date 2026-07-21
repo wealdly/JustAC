@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [4.47.0] - 2026-07-20
+
+### Added
+- **Tank maintenance slot**: a dedicated slot beside the defensive queue for the one mitigation buff your spec keeps rolling - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes or Bone Shield. It counts down the buff's real remaining time and glows blue as it runs low, so you refresh before the mitigation drops. Shows the keybind, greys out when you can't reach or afford the cast, and shows your stack count for Ironfur and Bone Shield. Blood's slot points at Marrowrend, so it can sit in your rotation and here at once - your runes and your Bone Shield want the same press. Hovering a slot names the buff it keeps up. Combat only, on the standard queue and the nameplate overlay. Tank specs only, on by default under Defensives -> Tank Maintenance Slot. Brewmaster isn't covered yet.
+- **Off-global-cooldown marker** (opt-in): an amber marker in the lower-left corner of abilities that don't trigger the global cooldown - Tiger's Fury, Fire Blast, Combustion, Shield of the Righteous and the like. When you see it, cast and go straight to the next suggestion instead of pausing for a global. Most valuable on defensives, where firing one off the global costs you nothing. Both queues, both displays. Off by default: General -> Shared Behavior -> Mark Off-Global-Cooldown Spells.
+- **Hold Until Charged** (opt-in, per ability): a toggle beside Always Show on each ability in your custom rotation. The ability is held at the back of the queue until every charge is banked, so a two-charge ability like Judgment or Throw Glaive isn't spent into an overcap. It keeps its place so you can watch it bank, though on a full queue the back may be off screen. An ability without charges is held until it's off cooldown. Off by default; needs the "Unavailable last" ordering toggle on.
+- **Group buff reminders now watch your party**: out of combat, if you have Mark of the Wild, Arcane Intellect, Power Word: Fortitude, Battle Shout, Blessing of the Bronze or Skyfury up but a party member doesn't, the buff is offered again so one re-cast covers everyone. Party only, and only for members alive, online and in range. Personal buffs like poisons and shields are unchanged.
+- **The target health bar steps aside when the queue is docked to the target frame**: docking already puts the game's own target frame beside the queue showing the same health, so JustAC's bar is no longer drawn there and its toggle greys out with a note. Undock and it returns - along with its execute-range colouring, so leave the queue undocked if you rely on that cue.
+
+### Changed
+- **The on-the-move marker is now a dot, and shows on defensives too**: previously a small arrow on the offensive queue only. It's now an azure dot in the lower-left - the same corner as the off-global-cooldown marker, so when both apply the dot splits, half azure and half amber, rather than two marks competing in different corners. It also shows on the defensive queue now, on both displays.
+- **Both ability markers moved to General -> Shared Behavior**: they used to sit under Offensive -> General, back when they only affected the offensive queue. Your existing choices carry over.
+
+### Fixed
+- **Absorb barriers are no longer suggested while the shield is still on you**: Ice Barrier, Blazing Barrier and Prismatic Barrier outlast their own cooldown, so the button came back up while the barrier held and kept being suggested - even though re-casting just replaces the shield and wastes the remaining absorb. They now sink to the back while the barrier holds and return as it runs low, or the moment it drops if its remaining time can't be read mid-fight. Blood's Rune Tap is fixed the same way. Defensives that genuinely stack, like Ironfur and Ignore Pain, are untouched.
+- **Interrupt suggestions could go permanently missing**: JustAC partly judges whether a cast can be kicked from whether the cast bar shows that spell's icon - but the icon also hides for unrelated reasons, such as turning the nameplate cast bar's spell icon off in the game's options, or a cast bar addon restyling it. Either made every enemy cast look un-kickable, so in "interrupts only" mode the kick reminder never appeared. Those cases are now told apart from a genuinely un-kickable cast.
+- **The enrage cleanse reminder was missing its cooldown sweep**: it looked ready to press when it wasn't. It now shows the same sweep as every other suggested ability.
+- **Errors in some instanced content when enemy nameplates appeared**: on certain instance maps JustAC threw an error whenever a nameplate appeared - a stream of them during a busy pull - and the nameplate overlay could stop following your target or fail to recognise a boss as immune to crowd control.
+
 ## [4.46.0] - 2026-07-19
 
 ### Changed

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 24)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 35)
 if not DebugCommands then return end
 
 -- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
@@ -48,6 +48,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect resource - Probe secret-safe resource inference from usability")
     addon:Print("/jac inspect rotation - Probe whether GetRotationSpells' tail is live-ordered (A/B across state)")
     addon:Print("/jac inspect resourcepoints - Probe whether class resource points (combo/holy power/chi) read plain")
+    addon:Print("/jac inspect secrecy - Measure which combat values actually read plain vs secret (run in AND out of combat)")
+    addon:Print("/jac inspect stacks - Out of combat: is a stacking buff N aura instances or one secret counter?")
     addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -628,6 +630,13 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     if dotParked then
         line("DoT not already on target", false,
             "active on target - parked at the back; returns for the pandemic refresh window")
+    end
+    local heldUntilCharged = SpellQueue.IsHeldUntilCharged
+        and SpellQueue.IsHeldUntilCharged(spellID) or false
+    if heldUntilCharged then
+        line("Charges banked", false,
+            "Hold Until Charged is on for this ability - parked at the back until every "
+            .. "charge is back")
     end
 
     -- SimC ordering context (blended: context fit first, SimC theorycraft rank refines)
@@ -2294,6 +2303,337 @@ function DebugCommands.ResourcePointProbe(addon)
 end
 
 --------------------------------------------------------------------------------
+-- Secrecy census: MEASURE what is readable instead of inferring it from source
+--------------------------------------------------------------------------------
+--- /jac inspect secrecy - the empirical answer to "can we read X in combat?".
+--- Reading source tells us what SHOULD be secret; it has twice been wrong in our favour
+--- (the scratch-Cooldown IsShown() readiness probe and the class-resource point read are
+--- both unintended engine behaviour that no amount of source reading would have predicted).
+--- So: actually call each candidate and measure it.
+---
+--- Three columns, because they can DISAGREE and the disagreement is the interesting part:
+---   secret?     - what issecretvalue() claims. Safe to call on anything.
+---   branchable? - whether `if v then end` actually runs. This is the measurement that
+---                 matters: it is what a gate in the queue would really do.
+---   comparable? - whether `v > 0` runs. Ordering is what a threshold test needs, and it
+---                 can fail where plain truthiness succeeds.
+--- Every probe is wrapped in pcall, so an unreadable value reports instead of erroring.
+--- CONTROL CASES are included on purpose and labelled: entries we are confident are plain
+--- and entries we are confident are secret. If a control comes back the wrong way, the
+--- probe itself (or our whole model) is wrong - check those lines first.
+--- Run it OUT of combat and again IN combat; the difference is the whole point.
+-- Built ONCE at file load, deliberately NOT lazily on first probe run. Creating a frame from
+-- a slash-command stack means creating it inside JustAC's taint, and if that happens in
+-- combat the taint can spread through the frame hierarchy - which surfaced as an unrelated
+-- addon being "blocked from an action". Load time is before any of that. Unparented for the
+-- same reason: nothing here is ever shown, so it needs no parent and must not touch UIParent.
+local secrecyScratchBar
+do
+    local f = CreateFrame("Frame")
+    f:Hide()
+    local bar = CreateFrame("StatusBar", nil, f)   -- native StatusBar, NOT SmoothStatusBarMixin
+    bar:SetSize(100, 10)
+    bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    secrecyScratchBar = bar
+end
+
+--- First active Cooldown Manager item frame, or nil. Its OnUpdate only runs while the viewer
+--- is SHOWN, so a nil here means "not laid out", never "secret".
+local function FirstCooldownViewerItem()
+    local VIEWERS = { "EssentialCooldownViewer", "UtilityCooldownViewer",
+                      "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+    for i = 1, #VIEWERS do
+        local v = _G[VIEWERS[i]]
+        local pool = v and v.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                -- Active is not enough: items are assigned an id by layoutIndex, so a pooled
+                -- frame can be active with cooldownID still nil. Require the id.
+                local ok, id = pcall(function() return item and item:GetCooldownID() end)
+                if ok and id then return item end
+            end
+        end
+    end
+    return nil
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- CLOSED 2026-07-20: the combat log is NOT available to us in 12.0.
+-- Registering COMBAT_LOG_EVENT_UNFILTERED produces "AddOn 'JustAC' has been blocked" -
+-- from a slash command AND from addon load, so it is a hard restriction, not taint.
+-- That kills the combat log as a data source, and with it the only route to exact aura
+-- STACK counts (aura.applications reads SECRET in combat; SPELL_AURA_APPLIED_DOSE would
+-- have carried the count plainly). Coherent with the secret-value system: the combat log
+-- would otherwise hand back every exact number secrets exist to hide.
+-- Do not re-add a CLEU listener anywhere in this addon.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+--- How many HELPFUL aura instances are on the player. Counting INSTANCES needs no secret
+--- read: the table's presence is plain even in combat, and auraInstanceID is NeverSecret -
+--- it is only the contents (spellId, applications, duration) that go secret. This is the
+--- test that decides whether a stacking self-buff is countable: an aura that applies as N
+--- separate instances can be counted exactly via the same bridge DotTracker already uses,
+--- while one instance carrying a stack counter cannot, because the counter is secret.
+local function CountPlayerAuraInstances()
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then return nil end
+    local n = 0
+    for i = 1, 60 do
+        local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok or not data then break end
+        n = n + 1
+    end
+    return n
+end
+
+--- Classify one candidate read. Never throws.
+local function ClassifyRead(fn)
+    local ok, v = pcall(fn)
+    if not ok then
+        return string.format("|cffff6600ERROR|r %s", tostring(v):gsub("^.-:%d+: ", ""):sub(1, 52))
+    end
+    if v == nil then return "|cff888888nil|r (absent - not evidence either way)" end
+
+    local isSecret = (issecretvalue and issecretvalue(v)) and true or false
+    -- `if v then` is ALLOWED on a secret NUMBER (its truthiness is always true, so it leaks
+    -- nothing) but THROWS on a secret BOOLEAN (there, truthiness IS the secret). That is the
+    -- whole rule: the engine permits exactly the operations that leak no information. So this
+    -- column is only interesting when the value is a boolean.
+    local branchOk = pcall(function() if v then return 1 end return 0 end)
+    -- Ordering is only meaningful for numbers - `false > 0` is a TYPE error, not secrecy, and
+    -- reporting that as "n" made plain booleans look blocked in the first run of this probe.
+    local isNum = (type(v) == "number") or (isSecret and not pcall(function() return v == true end))
+    local cmpOk = isNum and pcall(function() return v > 0 end) or false
+
+    local shown
+    if isSecret then
+        shown = "|cffff6600SECRET|r"
+    else
+        local s = tostring(v)
+        shown = "|cff2ecc71plain|r=" .. (#s > 24 and (s:sub(1, 24) .. "..") or s)
+    end
+    return string.format("%s [%s] branch:%s cmp:%s", shown, type(v),
+        branchOk and "|cff2ecc71y|r" or "|cffff6600n THROWS|r",
+        isNum and (cmpOk and "|cff2ecc71y|r" or "|cffff6600n|r") or "|cff888888-|r")
+end
+
+--- /jac inspect stacks - settle whether a stacking self-buff is N aura INSTANCES or ONE
+--- instance carrying a counter. Run it OUT OF COMBAT, where spellId and applications are
+--- both plain, so this reads the answer directly instead of inferring it.
+--- Multi-instance -> countable in combat via the instance bridge DotTracker already uses
+--- (auraInstanceID is NeverSecret). One-instance-with-counter -> dead, the counter is secret.
+function DebugCommands.StacksProbe(addon)
+    if InCombatLockdown() then
+        addon:Print("|cffff6600Run this OUT of combat|r - in combat spellId and applications are")
+        addon:Print("secret and the whole point is to read them directly.")
+        return
+    end
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
+        addon:Print("|cffff6600C_UnitAuras unavailable|r")
+        return
+    end
+
+    local bySpell, order = {}, {}
+    for i = 1, 60 do
+        local ok, d = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok or not d then break end
+        local sid = d.spellId
+        if type(sid) == "number" then
+            local e = bySpell[sid]
+            if not e then
+                e = { instances = 0, apps = d.applications, name = d.name, ids = {} }
+                bySpell[sid] = e
+                order[#order + 1] = sid
+            end
+            e.instances = e.instances + 1
+            e.ids[#e.ids + 1] = d.auraInstanceID
+        end
+    end
+
+    addon:Print("== aura stack shape (out of combat) ==")
+    addon:Print("|cff888888apply a stacking buff a few times, then re-run|r")
+    local multi = 0
+    for _, sid in ipairs(order) do
+        local e = bySpell[sid]
+        -- The distinction that decides everything: more than one INSTANCE of the same
+        -- spellId means each application is its own aura (countable via the bridge);
+        -- one instance with applications > 1 means a secret counter (not countable).
+        local shape
+        if e.instances > 1 then
+            shape = string.format("|cff2ecc71MULTI-INSTANCE x%d|r -> countable in combat", e.instances)
+            multi = multi + 1
+        elseif (e.apps or 1) > 1 then
+            shape = string.format("|cffff6600STACKING counter=%d|r -> NOT countable (secret in combat)", e.apps)
+        else
+            shape = "single"
+        end
+        if e.instances > 1 or (e.apps or 1) > 1 then
+            addon:Print(string.format("  %7d %-26s %s", sid, tostring(e.name):sub(1, 26), shape))
+        end
+    end
+    addon:Print(string.format("|cff888888%d spell(s) apply as multiple instances.|r", multi))
+end
+
+function DebugCommands.SecrecyProbe(addon)
+    local pf = _G.PlayerFrame
+    local pfHealth = pf and (pf.healthBar or pf.healthbar)
+    local ct = _G.CombatText
+    local caa = _G.CombatAudioAlertManager
+
+    -- {label, fn, note}. Order groups related hypotheses together.
+    local PROBES = {
+        { "-- CONTROLS (validate the probe itself) --" },
+        { "LowHealthFrame:IsShown()", function() return _G.LowHealthFrame and _G.LowHealthFrame:IsShown() end,
+          "expect PLAIN - we already ship this" },
+        { "UnitHealth('player')", function() return UnitHealth("player") end,
+          "expect SECRET in combat" },
+        { "UnitHealthMax('player')", function() return UnitHealthMax("player") end },
+        { "UnitPower('player')", function() return UnitPower("player") end,
+          "expect SECRET in combat" },
+        { "UnitPowerMax('player')", function() return UnitPowerMax("player") end },
+
+        { "-- CURVE FAMILY (we called this closed - verify) --" },
+        { "UnitHealthPercent(scaleTo100)", function()
+            return UnitHealthPercent and UnitHealthPercent("player", nil,
+                _G.CurveConstants and _G.CurveConstants.ScaleTo100) end },
+        { "UnitPowerPercent(scaleTo100)", function()
+            return UnitPowerPercent and UnitPowerPercent("player", nil,
+                _G.CurveConstants and _G.CurveConstants.ScaleTo100) end },
+
+        { "-- STATUSBAR GEOMETRY (we called this closed - verify) --" },
+        { "PlayerFrame health:GetValue()", function() return pfHealth and pfHealth:GetValue() end },
+        { "PlayerFrame healthTex:GetWidth()", function()
+            return pfHealth and pfHealth:GetStatusBarTexture():GetWidth() end },
+        { "PlayerFrame healthTex:GetTexCoord()", function()
+            local a = { pfHealth:GetStatusBarTexture():GetTexCoord() }; return a[7] end,
+          "the line 12.0_COMPATIBILITY says reads secret" },
+        { "scratch bar GetValue() after SetValue(secret)", function()
+            secrecyScratchBar:SetMinMaxValues(0, 100)
+            secrecyScratchBar:SetValue(UnitHealth("player"))
+            return secrecyScratchBar:GetValue() end },
+        { "scratch bar texture:GetWidth()", function()
+            secrecyScratchBar:SetMinMaxValues(0, UnitHealthMax("player"))
+            secrecyScratchBar:SetValue(UnitHealth("player"))
+            return secrecyScratchBar:GetStatusBarTexture():GetWidth() end,
+          "if PLAIN: narrow the band = chooseable threshold = binary search" },
+        { "scratch bar texture:IsShown()", function()
+            return secrecyScratchBar:GetStatusBarTexture():IsShown() end },
+
+        { "-- AURA TIMING (the pandemic 'close to lapsing' logic rests on this) --" },
+        { "aura[1] table itself", function()
+            return C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL") ~= nil end },
+        { "aura[1].expirationTime", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.expirationTime end,
+          "RedundancyFilter caches this OOC to compute pandemic - is that still possible?" },
+        { "aura[1].duration", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.duration end },
+        { "aura[1].applications (stacks)", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.applications end },
+        { "aura[1].spellId", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.spellId end },
+
+        { "-- AURA INSTANCES (does a stacking buff = N instances or 1 with a counter?) --" },
+        { "player HELPFUL instance count", function() return CountPlayerAuraInstances() end,
+          "cast Ironfur twice: +2 = multi-instance (countable), +1 then +0 = stacking (dead)" },
+        { "aura[1].auraInstanceID", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.auraInstanceID end,
+          "DotTracker relies on this being NeverSecret - verify it holds in combat" },
+        { "IsAuraFilteredOutByInstanceID readable", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+            if not (a and a.auraInstanceID and C_UnitAuras.IsAuraFilteredOutByInstanceID) then return nil end
+            return C_UnitAuras.IsAuraFilteredOutByInstanceID("player", a.auraInstanceID, "HELPFUL|PLAYER") end,
+          "the bridge that identifies an instance as OURS without reading spellId" },
+
+        { "-- SECRET BOOLEANS (branch:n here is the crash class) --" },
+        { "aura[1].canApplyAura (bool field)", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.canApplyAura end,
+          "a secret BOOLEAN throws on `if v then` - unlike a secret number" },
+        { "aura[1].isHelpful (bool field)", function()
+            local a = C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL"); return a and a.isHelpful end },
+        { "party1 aura presence (bool)", function()
+            return C_UnitAuras.GetPlayerAuraBySpellID and
+                (C_UnitAuras.GetAuraDataBySpellName and
+                 C_UnitAuras.GetAuraDataBySpellName("party1", "x", "HELPFUL") ~= nil) end,
+          "the shape that crashed PrecombatEngine:235" },
+
+        { "-- ABSORB GLOWS (if/else Show/Hide -> expect PLAIN) --" },
+        { "which PlayerFrame health bar exists", function()
+            local pfh = _G.PlayerFrame and (_G.PlayerFrame.healthBar or _G.PlayerFrame.healthbar)
+            if not pfh then return "no healthBar/healthbar" end
+            local keys = {}
+            for _, k in ipairs({ "overAbsorbGlow", "overHealAbsorbGlow", "healAbsorbBar",
+                                "totalAbsorb", "myHealPrediction" }) do
+                if pfh[k] ~= nil then keys[#keys + 1] = k end
+            end
+            return (#keys > 0) and table.concat(keys, ",") or "none of the absorb subwidgets"
+            end,
+          "tells us whether the nils below are a wrong path or a real absence" },
+        { "overAbsorbGlow:IsShown()", function()
+            return pfHealth and pfHealth.overAbsorbGlow and pfHealth.overAbsorbGlow:IsShown() end },
+        { "overHealAbsorbGlow:IsShown()", function()
+            return pfHealth and pfHealth.overHealAbsorbGlow and pfHealth.overHealAbsorbGlow:IsShown() end },
+        { "healAbsorbBar.LeftShadow:IsShown()", function()
+            return pfHealth and pfHealth.healAbsorbBar and pfHealth.healAbsorbBar.LeftShadow
+                and pfHealth.healAbsorbBar.LeftShadow:IsShown() end,
+          "SetShown(expr) -> expect SECRET. If plain, our screening rule is WRONG" },
+
+        { "-- COMBAT TEXT (fixed 20%; needs floating combat text ON) --" },
+        { "CombatText:IsVisible()", function() return ct and ct:IsVisible() end,
+          "if false, lowHealth/lowMana never update - false negative" },
+        { "CombatText.lowHealth", function() return ct and ct.lowHealth end },
+        { "CombatText.lowMana", function() return ct and ct.lowMana end,
+          "first branchable MANA signal, if it holds" },
+
+        { "-- COMBAT AUDIO ALERTS (needs the accessibility setting + a party) --" },
+        { "CAA partyHealthInfo.unitCount", function()
+            return caa and caa.partyHealthInfo and caa.partyHealthInfo.unitCount end },
+        { "CAA unitInfo['player'] present", function()
+            return caa and caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
+                and (caa.partyHealthInfo.unitInfo["player"] ~= nil) end },
+        { "CAA unitInfo['player'].frequency", function()
+            return caa.partyHealthInfo.unitInfo["player"].frequency end,
+          "Lerp'd from health % -> expect SECRET. If PLAIN this IS the health number" },
+
+        { "-- COOLDOWN VIEWER pandemic window (needs Cooldown Manager shown) --" },
+        { "cooldown viewer item found", function()
+            local it = FirstCooldownViewerItem(); return it ~= nil end,
+          "if false, everything below is nil for layout reasons, not secrecy" },
+        { "item.PandemicIcon (aura in pandemic)", function()
+            local it = FirstCooldownViewerItem(); return it and (it.PandemicIcon ~= nil) end,
+          "if PLAIN this is a remaining-TIME threshold the cd probe cannot give" },
+        { "item:GetCooldownID()", function()
+            local it = FirstCooldownViewerItem(); return it and it:GetCooldownID() end,
+          "the plain join key - layout data" },
+        { "item:GetSpellID()", function()
+            local it = FirstCooldownViewerItem(); return it and it:GetSpellID() end,
+          "expect SECRET while an aura is active - do NOT join on this" },
+
+        { "-- UNIT API SIBLINGS --" },
+        { "UnitGetTotalAbsorbs('player')", function() return UnitGetTotalAbsorbs("player") end },
+        { "UnitGetTotalHealAbsorbs('player')", function() return UnitGetTotalHealAbsorbs("player") end },
+        { "UnitStagger('player')", function() return UnitStagger("player") end },
+        { "UnitThreatSituation('player','target')", function()
+            return UnitThreatSituation("player", "target") end },
+        { "UnitIsDeadOrGhost('target')", function() return UnitIsDeadOrGhost("target") end },
+    }
+
+    addon:Print("== secrecy census ==  |cff2ecc71plain|r/|cffff6600SECRET|r, branch = `if v then`, cmp = `v > 0`")
+    addon:Print(string.format("  in combat: %s   issecretvalue available: %s",
+        InCombatLockdown() and "|cff2ecc71YES|r" or "|cffff6600no - rerun IN combat|r",
+        issecretvalue and "yes" or "|cffff6600NO|r"))
+
+    for i = 1, #PROBES do
+        local p = PROBES[i]
+        if not p[2] then
+            addon:Print("|cff66ccff" .. p[1] .. "|r")
+        else
+            local note = p[3] and ("  |cff888888// " .. p[3] .. "|r") or ""
+            addon:Print(string.format("  %-38s %s%s", p[1], ClassifyRead(p[2]), note))
+        end
+    end
+    addon:Print("|cff888888Run once OUT of combat and once IN combat - the delta is the finding.|r")
+end
+
+--------------------------------------------------------------------------------
 -- Performance Diagnostics
 --------------------------------------------------------------------------------
 function DebugCommands.PerformanceDiagnostics(addon, subCommand)
@@ -2716,14 +3056,19 @@ function DebugCommands.CastDiagnostics(addon)
     f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "target")
     -- Interruptible events registered BROADLY (no unit filter): the game may fire them with
     -- a "nameplateN" token instead of "target", which a target-filtered registration misses.
-    -- We match back to the current target via UnitIsUnit (non-secret).
+    -- We match back to the current target via SafeUnitIsUnit - UnitIsUnit is NOT non-secret.
     f:RegisterEvent("UNIT_SPELLCAST_INTERRUPTIBLE")
     f:RegisterEvent("UNIT_SPELLCAST_NOT_INTERRUPTIBLE")
 
     f:SetScript("OnEvent", function(_, event, unit, _, spellID)
         if event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
             -- Log only if it pertains to the current target, whatever token the game used.
-            if unit and UnitIsUnit and UnitIsUnit(unit, "target") then
+            -- These events are registered WITHOUT a unit filter, so `unit` can be a COMPOUND
+            -- token (eg. "boss1target") - and the docs say compound comparisons are ALWAYS
+            -- secret, on any map, not just restricted ones. Unreadable defaults to false:
+            -- this is a diagnostic, so skipping an entry beats throwing mid-probe.
+            if unit and BlizzardAPI and BlizzardAPI.SafeUnitIsUnit
+                and BlizzardAPI.SafeUnitIsUnit(unit, "target", false) then
                 stamp(event:gsub("UNIT_SPELLCAST_", "") .. " (target via " .. tostring(unit) .. ")")
             end
             return

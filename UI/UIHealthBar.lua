@@ -1235,6 +1235,12 @@ function UIHealthBar.CreateTargetHealthBar(addon)
     if not addon or not addon.db or not addon.db.profile then return nil end
     local profile = addon.db.profile
     if not (profile.defensives and profile.defensives.showTargetHealthBar) then return nil end
+    -- Docked to Blizzard's target frame: that frame carries the same health readout
+    -- immediately beside the queue, so our bar would be a second copy of it. The
+    -- option is greyed to match while docked. Note this also drops the execute-range
+    -- colour cue (ApplyExecuteColor below), which the target frame has no equivalent
+    -- for - undock, or re-enable the bar here, to get it back.
+    if addon.targetframe_anchored then return nil end
     if not addon.mainFrame then return nil end
 
     local frame = CreateFrame("Frame", nil, addon.mainFrame)

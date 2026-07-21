@@ -180,6 +180,9 @@ L["Show Pet Health Bar"] = "Show Pet Health Bar"
 L["Show Pet Health Bar desc"] = "Show a compact pet health bar (pet classes only). Auto-hides when no pet is active."
 L["Show Target Health Bar"] = "Show Target Health Bar"
 L["Show Target Health Bar desc"] = "Show a compact target health bar on the far side of the queue (opposite the player/pet bars). Hostile targets only; auto-hides with no target."
+L["Hold Until Charged"] = "Hold Until Charged"
+L["Hold Until Charged desc"] = "Push this ability to the back of the queue until every charge is banked, so a two-charge ability isn't suggested at one charge and spent into an overcap.\n\nIt keeps its place in the queue rather than being dropped, so you can watch it bank - though on a full queue the back of the list may not be on screen.\n\nAn ability without charges is held back until it's off cooldown.\n\nNeeds the \"Unavailable last\" ordering toggle on to have any effect."
+L["Target Health Bar Docked"] ="Unavailable while the queue is docked to the target frame - that frame already shows the same health, right next to the queue. Set Target Frame Anchor to Disabled to use this bar again."
 L["Defensive Icon Scale"] = "Icon Scale"
 L["Defensive Icon Scale desc"] = "Scale multiplier for defensive spell icons"
 L["Defensive Max Icons"] = "Max Icons"
@@ -412,3 +415,7 @@ L["Disable Blizzard Highlight"] = "Disable Blizzard Action Bar Highlight"
 L["Disable Blizzard Highlight desc"] = "Disable Blizzard's per-frame action bar glow scan (redundant with JustAC). Improves performance and prevents 'execution time limit' errors under heavy addon load."
 
 L["WAIT"] = "WAIT"
+
+-- Defensive maintenance slot (tank specs)
+L["Maintenance Slot"] = "Tank Maintenance Slot"
+L["Maintenance Slot desc"] = "Show a dedicated slot beside the defensive queue for the one mitigation buff your spec keeps rolling - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, or Bone Shield.\n\nThe swipe counts down your buff's actual remaining time, and the icon glows blue as it nears the end so you can refresh before it lapses - not after.\n\nTank specs only."

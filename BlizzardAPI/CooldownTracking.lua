@@ -722,6 +722,18 @@ function BlizzardAPI.IsChargeSpellOnCooldown(spellID)
     return data.current <= 0
 end
 
+--- Returns true when a charge-based spell has ALL of its charges banked.
+--- Uses the same non-secret local tracking as IsChargeSpellOnCooldown, so it is
+--- readable in combat. A spell with no charge data (single-charge, or not yet
+--- scanned) returns true - callers pair this with IsSpellReady, which supplies
+--- the plain off-cooldown answer for those.
+function BlizzardAPI.IsSpellAtMaxCharges(spellID)
+    local data = localCharges[spellID]
+    if not data then return true end
+    ProcessChargeRecovery(data)
+    return data.current >= data.maxCharges
+end
+
 -- Debug: report a spell's presence in the tracking caches. Diagnoses the sink/readiness
 -- gap where a spell falls outside local CD/charge tracking and IsSpellReady fails open in
 -- combat. Returns: category|nil, maxCharges|nil, currentCharges|nil, localCDActive(bool).

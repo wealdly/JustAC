@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/General - Shared settings that apply to both display surfaces
-local General = LibStub:NewLibrary("JustAC-OptionsGeneral", 4)
+local General = LibStub:NewLibrary("JustAC-OptionsGeneral", 8)
 if not General then return end
 
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
@@ -167,6 +167,33 @@ function General.CreateTabArgs(addon)
                     showCastingHighlight = W.toggle(addon, "showCastingHighlight", {
                         name = L["Show Casting Highlight"], desc = L["Show Casting Highlight desc"],
                         order = 17, width = "normal", default = true, disabled = fullyDisabled,
+                    }),
+                    -- ABILITY MARKERS (17.1-17.2) - shared: both cues render on the offensive and defensive queues.
+                    markMoveCastable = {
+                        type = "toggle",
+                        name = L["Mark Move-Castable Spells"], desc = L["Mark Move-Castable Spells desc"],
+                        order = 17.1, width = "normal",
+                        -- Raw get/set: no static default, because the default is
+                        -- per-spec (see UIRenderer.MoveCastDotEnabled).
+                        get = function()
+                            local R = LibStub("JustAC-UIRenderer", true)
+                            return (R and R.MoveCastDotEnabled and R.MoveCastDotEnabled(addon.db.profile)) or false
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.showMoveCastDot = val
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function() return fullyDisabled(addon) end,
+                    },
+                    showOffGcdDot = W.toggle(addon, "showOffGcdDot", {
+                        name = "Mark Off-Global-Cooldown Spells",
+                        desc = "Show an amber marker in the lower-left corner of abilities that don't "
+                            .. "trigger the global cooldown - you can cast them and move straight "
+                            .. "on to the next suggestion without waiting.\n\n"
+                            .. "Applies to the offensive and defensive queues alike.",
+                        order = 17.2, width = "normal", default = false,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = fullyDisabled,
                     }),
                     gamepadIconStyle = W.select(addon, "gamepadIconStyle", {
                         name = L["Gamepad Icon Style"], desc = L["Gamepad Icon Style desc"],

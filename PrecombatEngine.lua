@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 5)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 6)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -202,6 +202,75 @@ local function HighestQueuedInGroup(group)
     return nil
 end
 
+local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue or function() return false end
+
+-- Unit-state probes (exists / connected / dead / in-range) can return a SECRET BOOLEAN even
+-- out of combat: secrecy is per-CONTEXT, not per-combat, so an instanced context secrets them
+-- while player auras still read fine - which is exactly why the `restricted` aura gate upstream
+-- does NOT cover this. A bare `if UnitInRange(unit) then` on a secret boolean THROWS.
+-- Resolve to a real boolean when readable, nil when secret; every caller treats nil as
+-- "can't tell" and skips the member (fail-silent - never cue what we can't verify).
+local function ReadableBool(v)
+    if v == nil then return nil end
+    if IsSecret(v) then return nil end
+    return v and true or false
+end
+
+-- Does `unit` carry any of `auraIDs` as a HELPFUL aura? Reads the unit's aura list directly -
+-- deliberately NOT BlizzardAPI.IsAuraActive, which serves the player-only RedundancyFilter
+-- cache when it's warm and would report every party member as buffed.
+-- `auraIDs` is a LIST because a buff need not apply its own cast id - some trigger a
+-- per-class sub-aura instead, and matching only the cast id would report a fully buffed
+-- player as missing forever.
+-- Fail-SILENT: an unreadable (secret) spellId means we can't prove the buff is missing, so
+-- we report "has it". Note this bails on the FIRST unreadable entry rather than skipping it:
+-- skipping could walk past the buff itself and produce a false "missing" cue. The cost is
+-- that the party check goes quiet wherever auras are secret - the right trade for a feature
+-- whose only failure mode would otherwise be nagging about a buff that is already up.
+local function UnitHasHelpfulAura(unit, auraIDs)
+    local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not byIndex or not auraIDs then return true end
+    for i = 1, 40 do
+        local ok, data = pcall(byIndex, unit, i, "HELPFUL")
+        if not ok or not data then break end
+        local sid = data.spellId
+        if sid == nil or IsSecret(sid) then return true end
+        for j = 1, #auraIDs do
+            if sid == auraIDs[j] then return true end
+        end
+    end
+    return false
+end
+
+-- True when a PARTY member who could actually receive the buff right now is missing it.
+-- Party only (party1-4): raid scale would be up to 39 unit scans per refresh and would
+-- cue constantly for people out of range or freshly resurrected, so raids are skipped
+-- outright. Dead / disconnected / out-of-range members are excluded so every cue is one
+-- the player can act on immediately. Note UnitInRange is ~40yd while these buffs reach
+-- further - the mismatch errs toward silence, never toward a false cue.
+local function PartyMemberMissingBuff(auraIDs)
+    -- Group-membership probes go through the same readable-boolean gate: anything we can't
+    -- read plainly means we can't establish there's a party to check, so offer nothing.
+    if ReadableBool(IsInGroup and IsInGroup()) ~= true then return false end
+    if ReadableBool(IsInRaid and IsInRaid()) ~= false then return false end
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if ReadableBool(UnitExists(unit)) == true then
+            -- Compare against explicit true/false, never a bare truthiness test: a secret
+            -- probe resolves to nil here and the member is skipped, which is the only safe
+            -- reading of "we cannot tell whether they are buffable".
+            local connected = ReadableBool(UnitIsConnected(unit))
+            local dead      = ReadableBool(UnitIsDeadOrGhost(unit))
+            local inRange   = ReadableBool(UnitInRange(unit))
+            if connected == true and dead == false and inRange == true
+               and not UnitHasHelpfulAura(unit, auraIDs) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 --- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
 ---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
 ---   and imbues are unaffected - only the health top-off reminder honors this flag.
@@ -227,6 +296,16 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
             for _, spellID in ipairs(grp.group) do
                 if IsPlayerSpell(spellID) then
                     local a = get(spellID)
+                    -- A buff that applies a per-class sub-aura instead of its own cast id
+                    -- is invisible to the cast-id probe - fall back to its declared aura
+                    -- family. `active` stays the CAST id (that's what gets suggested);
+                    -- only the detection changes.
+                    if not a and grp.auraIDs then
+                        for _, auraID in ipairs(grp.auraIDs) do
+                            a = get(auraID)
+                            if a then break end
+                        end
+                    end
                     if a then active, aura = spellID, a; break end
                 end
             end
@@ -234,11 +313,23 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 -- 12.0.7: aura timing can be secret even out of combat (arithmetic on a
                 -- secret throws). Secret timing = buff is up but the refresh window is
                 -- unknowable - suggest nothing rather than a premature refresh.
+                local offered = false
                 local dur, exp = aura.duration, aura.expirationTime
                 if not (issecretvalue and (issecretvalue(dur) or issecretvalue(exp))) then
                     dur = dur or 0
                     local rem = (exp or 0) - now
-                    if dur > 0 and rem <= dur * CLASS_BUFF_REFRESH_FRACTION then out[#out + 1] = active end
+                    if dur > 0 and rem <= dur * CLASS_BUFF_REFRESH_FRACTION then
+                        out[#out + 1] = active
+                        offered = true
+                    end
+                end
+                -- Group buff the player already has, but a party member is missing it
+                -- (joined late, released, or was out of range when it went out). One
+                -- re-cast covers everyone, so offer it even though the player's own
+                -- copy is nowhere near lapsing.
+                if not offered and grp.raidWide
+                   and PartyMemberMissingBuff(grp.auraIDs or grp.group) then
+                    out[#out + 1] = active
                 end
             else
                 -- Missing entirely (lapsed/cancelled): offer what the fixed queue ranks
@@ -310,7 +401,10 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 end
             end
         end
-        if hurt and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"))
+        -- Same secret-boolean hazard as the party probes above: UnitIsDeadOrGhost can come
+        -- back secret, and a bare truthiness test on it throws. "Not KNOWN to be dead" is
+        -- the right fail direction here - a secret must not swallow a critical-health cue.
+        if hurt and ReadableBool(UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")) ~= true
             and not HasProccedHeal() then
             -- Prefer the class's own cheap heal (spammable; resource regens OOC).
             -- Ready-check via the local cooldown tracker (never secret); usability

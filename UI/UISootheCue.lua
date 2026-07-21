@@ -11,12 +11,14 @@
 -- texture-swap the kick. Instead: enrage == dispel type 9 (C_UnitAuras.GetAuraDispelTypeColor),
 -- auraInstanceID is NeverSecret, and the (combat-secret) selector alpha sinks straight into
 -- each slot's SetAlpha with no read. One COMPLETE slot per target HELPFUL aura (the OR is
--- done in render), each = soothe icon + border + hotkey + green glow + the cleansed aura's
--- icon. Drawn ABOVE the interrupt icon's hotkey (+15), so a shown slot fully replaces the
+-- done in render). Each slot is built by the SHARED CreateBaseIcon - the same builder the
+-- interrupt and tank-maintenance slots use - so it gets icon, border, hotkey, cooldown swipe
+-- and the rest for free, plus a soothe-specific "cleansed aura" sub-icon.
+-- Drawn ABOVE the interrupt icon's hotkey (+15), so a shown slot fully replaces the
 -- kick (no lingering kick hotkey / missing frame art) and, being on top, wins collisions.
 -- ponytail: N complete slots + N idle glows is the cost of the secret-safe OR (can't collapse
 -- N secret alphas into one). Bounded to soothe classes with an attackable target + shown frame.
-local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 2)
+local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 6)
 if not UISootheCue then return end
 
 local UIAnimations     = LibStub("JustAC-UIAnimations", true)
@@ -30,13 +32,9 @@ local CreateColor  = CreateColor
 local UnitExists   = UnitExists
 local UnitCanAttack = UnitCanAttack
 local pcall        = pcall
-local math_max     = math.max
-local math_floor   = math.floor
-local STANDARD_TEXT_FONT = STANDARD_TEXT_FONT
 local C_UnitAuras  = C_UnitAuras
 local C_Spell      = C_Spell
 local C_CurveUtil  = C_CurveUtil ---@diagnostic disable-line: undefined-global
-local BORDER_ATLAS = "UI-HUD-ActionBar-IconFrame"
 
 local MAX_SLOTS       = 5      -- target HELPFUL auras scanned (the OR); enrage past this is missed
 local UPDATE_INTERVAL = 0.08
@@ -71,13 +69,23 @@ local function DriveCue(cue)
     local sel   = GetSelectorCurve()
     local gadbi = C_UnitAuras.GetAuraDataByIndex
     local gadtc = C_UnitAuras.GetAuraDispelTypeColor
+    -- Cooldown swipe via the SHARED updater (resolved lazily: UIRenderer loads after this
+    -- file). It covers the GCD as well as soothe's own cooldown, which is the whole point -
+    -- a slot with no swipe reads as "press me" while the global is still running.
+    -- Called for every slot because which one is visible is decided by a SECRET alpha, so we
+    -- cannot know which. The updater early-outs when the spell and its cooldown are unchanged,
+    -- so the repeated calls collapse to a compare after the first.
+    local UIRenderer = LibStub("JustAC-UIRenderer", true)
+    local UpdateCooldowns = UIRenderer and UIRenderer.UpdateButtonCooldowns
     local live  = sel and UnitExists("target") and UnitCanAttack("player", "target")
         and not (cue.spellID and SpellDB and SpellDB.IsInterruptOnCooldown
                  and SpellDB.IsInterruptOnCooldown(cue.spellID))
     for i = 1, MAX_SLOTS do
         local slot = cue.slots[i]
-        local a = live and gadbi("target", i, "HELPFUL") or nil
-        if a then
+        local a = slot and live and gadbi("target", i, "HELPFUL") or nil
+        if not slot then
+            -- CreateBaseIcon can fail; skip rather than erroring on every tick.
+        elseif a then
             pcall(function()
                 local c = gadtc("target", a.auraInstanceID, sel)
                 slot:SetAlpha(c.a)  -- secret in combat; 1 iff dispel type 9
@@ -85,72 +93,36 @@ local function DriveCue(cue)
             -- Pass through the cleansed aura's icon (secret texture -> SetTexture, no read),
             -- exactly like the interrupt's castAura clones the cast icon.
             if slot.auraIcon and a.icon then slot.auraIcon:SetTexture(a.icon) end
+            if UpdateCooldowns then UpdateCooldowns(slot) end
         else
             slot:SetAlpha(0)
         end
     end
 end
 
--- Build one COMPLETE soothe slot with the same chrome the queue icons use.
-local function BuildSlot(cue, sz)
-    local slot = CreateFrame("Frame", nil, cue)
+-- Build one COMPLETE soothe slot from the SHARED CreateBaseIcon, so it inherits the cooldown
+-- swipe a hand-built subset kept missing (a soothe on GCD read as castable). Cost: a full
+-- button per slot instead of a light frame, times MAX_SLOTS - the N-slot trade noted up top.
+local function BuildSlot(cue, sz, profile)
+    -- Not clickable: this is a display overlay pinned over the interrupt, never pressed.
+    local slot = UIFrameFactory.CreateBaseIcon(cue, sz, false, true, profile)
+    if not slot then return nil end
     slot:SetAllPoints(cue)
     slot:EnableMouse(false)
-    slot.cachedIconSize = sz
 
-    -- Masked soothe icon.
-    local icon = slot:CreateTexture(nil, "ARTWORK")
-    icon:SetAllPoints(slot)
-    slot.iconTexture = icon
-    if UIFrameFactory.CreateRoundedActionIconMask then
-        slot.IconMask = UIFrameFactory.CreateRoundedActionIconMask(slot, sz, icon)
-    end
-
-    -- Action-button frame art (generic; matches the queue's border).
-    local border = slot:CreateTexture(nil, "OVERLAY")
-    if UIFrameFactory.ApplyActionButtonBorderGeometry then
-        UIFrameFactory.ApplyActionButtonBorderGeometry(border, slot, sz)
-    else
-        border:SetAllPoints(slot)
-    end
-    border:SetAtlas(BORDER_ATLAS)
-    slot.Border = border
-
-    -- Soothe hotkey, top-right, above the border (so it replaces the kick's hotkey rather
-    -- than letting it linger). Set in SetSpell.
-    local hkFrame = CreateFrame("Frame", nil, slot)
-    hkFrame:SetAllPoints(slot)
-    hkFrame:SetFrameLevel(slot:GetFrameLevel() + 3)
-    local hk = hkFrame:CreateFontString(nil, "OVERLAY", nil, 5)
-    hk:SetFont(STANDARD_TEXT_FONT, math_max(8, math_floor(sz * 0.4)), "OUTLINE")
-    hk:SetJustifyH("RIGHT")
-    hk:SetPoint("TOPRIGHT", slot, "TOPRIGHT", -3, -3)
-    slot.hotkeyText = hk
-
-    -- "Cleansed aura" clone: mirrors the interrupt's castAura - a small sub-icon above the
-    -- slot showing the enrage buff we're about to remove (icon set per-frame in DriveCue).
-    local auraSz = math_floor(sz * 0.7)
-    local aura = CreateFrame("Frame", nil, slot)
-    aura:SetSize(auraSz, auraSz)
-    aura:SetPoint("BOTTOM", slot, "TOP", 0, 2)
-    local aicon = aura:CreateTexture(nil, "ARTWORK")
-    aicon:SetAllPoints(aura)
-    slot.auraIcon = aicon
-    if UIFrameFactory.CreateRoundedActionIconMask then
-        UIFrameFactory.CreateRoundedActionIconMask(aura, auraSz, aicon)
-    end
-    local aborder = aura:CreateTexture(nil, "OVERLAY")
-    if UIFrameFactory.ApplyActionButtonBorderGeometry then
-        UIFrameFactory.ApplyActionButtonBorderGeometry(aborder, aura, auraSz)
-    end
-    aborder:SetAtlas(BORDER_ATLAS)
-    slot.auraClone = aura
+    -- "Cleansed aura" clone: a small sub-icon showing the enrage buff about to be removed.
+    -- Stays bespoke because it is soothe-specific, exactly as the interrupt's castAura is
+    -- specific to the interrupt - but it takes its ANCHOR from the shared helper so the two
+    -- cannot disagree about where a sub-icon on this slot belongs.
+    local aura = UIFrameFactory.CreateAuraSubIcon(slot, sz, profile, profile and profile.queueOrientation or "LEFT")
+    aura:SetFrameLevel(slot:GetFrameLevel() + 4)  -- above CreateBaseIcon's borderFrame (+3)
+    slot.auraIcon = aura.iconTexture
 
     slot:SetAlpha(0)
     return slot
 end
 
---- Point the cue at a (new) soothe spell: icon + hotkey text + green cleanse glow.
+--- Point the cue at a (new) soothe spell: icon + hotkey text + cyan cleanse glow.
 function UISootheCue.SetSpell(cue, sootheSpellID)
     if not cue or cue.spellID == sootheSpellID then return end
     cue.spellID = sootheSpellID
@@ -160,9 +132,18 @@ function UISootheCue.SetSpell(cue, sootheSpellID)
                     and ActionBarScanner.GetSpellHotkey(sootheSpellID)) or ""
     for i = 1, MAX_SLOTS do
         local slot = cue.slots[i]
-        if iconID then slot.iconTexture:SetTexture(iconID) end
-        if slot.hotkeyText then slot.hotkeyText:SetText(hotkey) end
-        UIAnimations.ShowSootheProcGlow(slot)  -- renders only when the slot's alpha is 1
+        if slot then
+            if iconID then
+                slot.iconTexture:SetTexture(iconID)
+                slot.iconTexture:Show()   -- CreateBaseIcon leaves it hidden until a spell lands
+            end
+            if slot.hotkeyText then slot.hotkeyText:SetText(hotkey) end
+            -- Lets the shared cooldown updater resolve this slot's swipe (GCD + soothe's own
+            -- cooldown). Without it a soothe on the global looked perfectly castable.
+            slot.spellID = sootheSpellID
+            slot.isItem = false
+            UIAnimations.ShowSootheProcGlow(slot)  -- renders only when the slot's alpha is 1
+        end
     end
 end
 
@@ -182,7 +163,10 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
         local ok, lvl = pcall(function() return anchorIcon:GetFrameLevel() end)
         cue:SetFrameLevel((ok and lvl or 0) + 16)    -- above the kick's hotkeyFrame (+15) -> full replace
         cue.slots = {}
-        for i = 1, MAX_SLOTS do cue.slots[i] = BuildSlot(cue, sz) end
+        local addon = LibStub("AceAddon-3.0", true)
+        addon = addon and addon:GetAddon("JustAssistedCombat", true)
+        local profile = addon and addon.db and addon.db.profile
+        for i = 1, MAX_SLOTS do cue.slots[i] = BuildSlot(cue, sz, profile) end
         cue:SetScript("OnUpdate", function(self, e)
             self._t = (self._t or 0) + e
             if self._t < UPDATE_INTERVAL then return end

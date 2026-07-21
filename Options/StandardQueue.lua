@@ -34,6 +34,14 @@ local function layoutDisabled(addon)
     return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
 end
 
+-- The target health bar is inert while the queue is docked to the target frame:
+-- that frame carries the same readout right beside us, so UIHealthBar skips
+-- building ours. Grey the toggle to match instead of leaving a control that
+-- silently does nothing.
+local function targetBarDisabled(addon)
+    return defensiveDisabled(addon) or addon.targetframe_anchored == true
+end
+
 -- Defensive sub-options gate on the panel being active AND defensives enabled.
 local function defEnabledDisabled(addon)
     return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
@@ -440,10 +448,17 @@ function StandardQueue.CreateTabArgs(addon)
                         hidden = W.petClassHidden,
                     }),
                     showTargetHealthBar = W.toggle(addon, "defensives.showTargetHealthBar", {
-                        name = L["Show Target Health Bar"], desc = L["Show Target Health Bar desc"],
+                        name = L["Show Target Health Bar"],
+                        desc = function()
+                            if addon.targetframe_anchored then
+                                return L["Show Target Health Bar desc"] .. "\n\n|cffffd100"
+                                    .. L["Target Health Bar Docked"] .. "|r"
+                            end
+                            return L["Show Target Health Bar desc"]
+                        end,
                         order = 13, width = "normal",
                         onSet = function() addon:UpdateFrameSize(); addon:ForceUpdateAll() end,
-                        disabled = defensiveDisabled,
+                        disabled = targetBarDisabled,
                     }),
                     showPowerBar = W.toggle(addon, "defensives.showPowerBar", {
                         name = "Show Resource Bar",

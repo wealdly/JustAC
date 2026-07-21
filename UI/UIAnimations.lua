@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: UI Animations Module - Manages glow and flash animations on buttons
-local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 15)
+local UIAnimations = LibStub:NewLibrary("JustAC-UIAnimations", 18)
 if not UIAnimations then return end
 
 local GetTime = GetTime
@@ -152,12 +152,22 @@ local function HideProcGlow(icon)
     end
 end
 
--- Colored proc glow constants (burst purple lives in GLOW_CONFIG.BURST)
+-- Colored proc glow constants (burst purple lives in GLOW_CONFIG.BURST).
+--
+-- SATURATION: ShowColoredProcGlow desaturates the flipbook to greyscale and then multiplies
+-- by these values, so EVERY pixel ends up at the tint's full chroma - which is why fully
+-- saturated values read as flat neon rather than as light. A real glow (including Blizzard's
+-- own gold one) has a near-white core with the colour showing in the falloff, so these are
+-- deliberately pulled toward white: the lowest channel sets how white the core goes, the
+-- highest sets the hue. Red is the exception and stays saturated, because lifting its low
+-- channels turns it pink and pink does not read as "danger".
+-- Do NOT try to fix this with partial SetDesaturation instead: keeping the gold base means
+-- cool tints multiply into muddy olive, which is worse for the cyan and blue cues.
 local INTERRUPT_PROC_R, INTERRUPT_PROC_G, INTERRUPT_PROC_B = 1.0, 0.25, 0.05  -- Red
--- Enrage cleanse = a heal, not an attack -> green. The flipbook base is gold/yellow, but
--- ShowColoredProcGlow desaturates it first, so this vertex color tints a grayscale base;
--- kept vivid (low R/B) so it reads clearly green, not muddy gold*green.
-local SOOTHE_PROC_R,    SOOTHE_PROC_G,    SOOTHE_PROC_B    = 0.1, 0.9,  0.2   -- Green
+-- Soothe is CYAN, not green: it is armed over the SAME slot as the red interrupt glow, so
+-- colour is the only thing telling "kick this" from "soothe this". Red vs green is the most
+-- common colour-vision deficiency, which is why green was rejected for this cue.
+local SOOTHE_PROC_R,    SOOTHE_PROC_G,    SOOTHE_PROC_B    = 0.55, 0.90, 1.00  -- Cyan
 
 -- Shared helper: show a desaturated+tinted proc glow on a named frame key.
 -- Set alpha on the frame itself; the internal Alpha animation forces the
@@ -239,7 +249,7 @@ local GLOW_CONFIG = {
     },
     DEFENSIVE = {
         frameKey    = "DefensiveHighlightFrame",
-        r = 0.3, g = 1.0, b = 0.3,          -- Green for defensive queue
+        r = 0.60, g = 1.00, b = 0.60,       -- Green for defensive queue
         desaturate  = false,
         scaleMul    = 1.0,
         pauseOOC    = true,
@@ -249,7 +259,7 @@ local GLOW_CONFIG = {
     },
     GAP_CLOSER = {
         frameKey    = "GapCloserHighlightFrame",
-        r = 1.0, g = 0.85, b = 0.2,         -- Bright gold (desaturated atlas → grey → gold tint)
+        r = 1.00, g = 0.90, b = 0.55,       -- Gold (desaturated atlas → grey → gold tint)
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
@@ -259,7 +269,7 @@ local GLOW_CONFIG = {
     },
     BURST = {
         frameKey    = "BurstHighlightFrame",
-        r = 0.7, g = 0.2, b = 1.0,          -- Purple for burst injection
+        r = 0.80, g = 0.55, b = 1.00,       -- Purple for burst injection
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention
@@ -269,7 +279,8 @@ local GLOW_CONFIG = {
     },
     PRECOMBAT = {
         frameKey    = "PrecombatHighlightFrame",
-        r = 0.2, g = 1.0, b = 0.4,          -- Vivid green for inserted pre-combat buffs
+        -- Magenta, not green: these render inside the DEFENSIVE cluster next to the green glow.
+        r = 1.00, g = 0.65, b = 0.88,       -- Magenta for inserted pre-combat buffs
         desaturate  = false,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate: these are the OOC call to action
@@ -799,6 +810,10 @@ UIAnimations.StopPrecombatGlow = StopPrecombatGlow
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
+-- Exported for the maintenance slot, which picks its own tint rather than using one of the
+-- fixed wrappers. frameKey scopes the glow so it cannot collide on a pooled icon.
+UIAnimations.ShowColoredProcGlow = ShowColoredProcGlow
+UIAnimations.HideColoredProcGlow = HideColoredProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
 UIAnimations.ShowSootheProcGlow = ShowSootheProcGlow
 UIAnimations.HideSootheProcGlow = HideSootheProcGlow
