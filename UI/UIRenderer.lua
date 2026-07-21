@@ -49,10 +49,7 @@ local C_Spell_IsCurrentSpell = C_Spell and C_Spell.IsCurrentSpell
 local UnitCastingInfo = UnitCastingInfo
 local UnitChannelInfo = UnitChannelInfo
 local pcall = pcall
-local pairs = pairs
 local ipairs = ipairs
-local math_max = math.max
-local math_floor = math.floor
 
 -- Position stabilization: minimum display time before a spell at positions 2+
 -- can be replaced. Prevents visual flicker from rapid proc/CD re-categorization
@@ -1124,26 +1121,15 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         end
     end
 
-    -- Stack count (Ironfur, Bone Shield). PASS-THROUGH ONLY - never read, compared or used in
-    -- arithmetic: `applications` is secret in combat, but the formatter and SetText both accept
-    -- secrets, so the ENGINE renders a number our logic stays blind to.
-    -- SetText marks this FontString's Text aspect secret PERMANENTLY - it must never reach a
-    -- width-measured layout path. Nothing here measures it.
-    if icon.chargeText then
-        local apps = entry.stacks and MT and MT.GetApplications and MT.GetApplications(inst)
-        local fmt = C_StringUtil and C_StringUtil.RoundToNearestString
-        if apps ~= nil and fmt then
-            local ok, text = pcall(fmt, apps)
-            if ok then
-                icon.chargeText:SetText(text)
-                icon.chargeText:Show()
-            else
-                icon.chargeText:Hide()
-            end
-        else
-            icon.chargeText:Hide()
-        end
-    end
+    -- No stack count here, deliberately. Rendering one was pass-through safe (the engine drew a
+    -- number we never read), but SAFE IS NOT CORRECT: in combat the only way to bind this aura is
+    -- the cast->instance bridge, and the bridge cannot prove WHICH aura it bound - spellId is
+    -- secret, and no Blizzard system exposes a spellId->instance map an addon can read (the
+    -- Cooldown Manager does, but only while its viewer is actually displayed). A mis-bind drew
+    -- some proc's count as your mitigation stacks, which for a tank is actionable misinformation.
+    -- Silence beats a confident wrong number; the swipe and glow still carry "up / refresh it".
+    -- Do not re-add without an identity-exact bind - see Documentation/AURA_IDENTITY_12.0.md.
+    if icon.chargeText then icon.chargeText:Hide() end
 
     -- Usability goes through the SHARED ApplyVisualState. IsSpellUsable is never-secret, so it
     -- reads fine in combat. Desaturation therefore means what it means everywhere else - "you
@@ -1195,7 +1181,7 @@ end
 function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride, waiting, isPrecombatEntry)
     if not addon or not id or not defensiveIcon then return end
     
-    local iconTexture, name
+    local iconTexture
     -- Hoisted: the move-cast marker below needs spellInfo.castTime, not just the icon.
     local defSpellInfo
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
@@ -1205,9 +1191,9 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
             iconTexture = C_Item.GetItemIconByID(id)
         end
         if C_Item and C_Item.GetItemInfo then
-            name, _, _, _, _, _, _, _, _, iconTexture = C_Item.GetItemInfo(id)
+            _, _, _, _, _, _, _, _, _, iconTexture = C_Item.GetItemInfo(id)
         elseif GetItemInfo then
-            name, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
+            _, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
         end
         if not iconTexture then
             iconTexture = GetItemIcon and GetItemIcon(id)
@@ -1217,7 +1203,6 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defSpellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(id)
         if not defSpellInfo then return end
         iconTexture = defSpellInfo.iconID
-        name = defSpellInfo.name
     end
     
     defensiveIcon.currentID = id

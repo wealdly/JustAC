@@ -1416,7 +1416,6 @@ end
 
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
-local pcall = pcall
 -- NOTE: cachedBlizzardAPI intentionally resolved lazily inside IsInterruptOnCooldown.
 -- SpellDB.lua loads BEFORE BlizzardAPI.lua in JustAC.toc, so a file-scope
 -- LibStub("JustAC-BlizzardAPI", true) here would always return nil.

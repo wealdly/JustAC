@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 35)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 36)
 if not DebugCommands then return end
 
 -- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
@@ -50,6 +50,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect resourcepoints - Probe whether class resource points (combo/holy power/chi) read plain")
     addon:Print("/jac inspect secrecy - Measure which combat values actually read plain vs secret (run in AND out of combat)")
     addon:Print("/jac inspect stacks - Out of combat: is a stacking buff N aura instances or one secret counter?")
+    addon:Print("/jac inspect maintenance - Can the tank maintenance slot bind its aura exactly? (run IN combat)")
     addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -3460,4 +3461,199 @@ function DebugCommands.ValidateAssumptions(addon, arg)
     end)
     if UnitAffectingCombat("player") then pendingCaptureAt = GetTime() end
     addon:Print("|cff00ff00validate ARMED:|r enter (and leave) combat to capture diffs. 10min window.")
+end
+
+-- SecrecyLevel enum, hoisted: 0 = the direct lookup always works for that spell.
+local SECRECY_LEVEL = { [0] = "NeverSecret", [1] = "AlwaysSecret", [2] = "ContextuallySecret" }
+
+--- /jac inspect maintenance - can the tank maintenance slot bind its aura EXACTLY in combat,
+--- instead of guessing via the cast->instance bridge? Three questions, one call:
+---   Q1 Is this spec's aura secret at all? GetSpellAuraSecrecy == 0 means the direct lookup
+---      always works and the bridge is dead code for that spec.
+---   Q2 Is the spell in the player's Cooldown Manager tracked set? No entry -> no join.
+---   Q3 Does the CDM item frame hand back a PLAIN auraInstanceID? Blizzard's viewer is
+---      untainted, so it legally reads the secret spellId and caches the instance id as an
+---      ordinary field - we read the materialized number, never the secret.
+--- Run it IN COMBAT with the buff up: that is the only state where Q1 and Q3 mean anything.
+function DebugCommands.MaintenanceProbe(addon)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
+    if not entry then
+        addon:Print("|cffff6600No maintenance entry for this spec|r - tank specs only (Brewmaster absent by design)")
+        return
+    end
+
+    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player") and true or false
+    addon:Print("== maintenance slot probe ==")
+    addon:Print(string.format("cast=%d aura=%d stacks=%s combat=%s",
+        entry.cast, entry.aura, tostring(entry.stacks or false), tostring(inCombat)))
+    if not inCombat then
+        addon:Print("|cffff6600Out of combat|r - Q1/Q3 only mean something mid-fight. Re-run with the buff up.")
+    end
+
+    -- Q1: per-spell aura secrecy.
+    local CS = C_Secrets
+    if CS and CS.GetSpellAuraSecrecy then
+        local function Sec(id)
+            local ok, lvl = pcall(CS.GetSpellAuraSecrecy, id)
+            if not ok then return "err" end
+            local label = (type(lvl) == "number" and SECRECY_LEVEL[lvl]) or "?"
+            return SafeSecret(lvl) .. " (" .. label .. ")"
+        end
+        addon:Print("Q1 secrecy: aura -> " .. Sec(entry.aura) .. "   cast -> " .. Sec(entry.cast))
+        addon:Print("|cff888888   0 means no bridge is needed for this spec at all|r")
+        addon:Print("|cff888888   (static per-SPELL property - same answer whether the buff is up or not)|r")
+    else
+        addon:Print("Q1 secrecy: |cffff6600C_Secrets.GetSpellAuraSecrecy unavailable|r")
+    end
+
+    -- The direct path, for contrast: nil in combat is exactly why the bridge exists.
+    local direct
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local okD, d = pcall(C_UnitAuras.GetPlayerAuraBySpellID, entry.aura)
+        direct = okD and d and d.auraInstanceID or nil
+    end
+    addon:Print("direct GetPlayerAuraBySpellID -> " .. SafeSecret(direct))
+
+    -- Q2/Q3. NEVER call item:GetSpellID() - it returns the SECRET auraSpellID first. Only
+    -- GetCooldownInfo (static layout data) and GetAuraSpellInstanceID (already materialized
+    -- plain by untainted code) are safe to touch here.
+    -- Match the WHOLE associated id set against BOTH our ids: 4 of the 5 specs have
+    -- cast ~= aura, so matching on one id alone would silently miss them.
+    local function MatchesEntry(info)
+        if type(info) ~= "table" then return false end
+        local function hit(v)
+            return type(v) == "number" and (v == entry.cast or v == entry.aura)
+        end
+        if hit(info.spellID) or hit(info.overrideSpellID)
+           or hit(info.overrideTooltipSpellID) or hit(info.linkedSpellID) then return true end
+        local ls = info.linkedSpellIDs
+        if type(ls) == "table" then
+            for i = 1, #ls do if hit(ls[i]) then return true end end
+        end
+        return false
+    end
+
+    -- Q2 the FRAME-INDEPENDENT way. GetCooldownViewerCategorySet is pure data - it answers
+    -- "is this spell tracked at all" even when every viewer is hidden, which the frame walk
+    -- below cannot. 4 categories: 0 Essential, 1 Utility, 2 TrackedBuff, 3 TrackedBar.
+    local CV = C_CooldownViewer
+    local trackedCooldownID = nil
+    if CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo then
+        local CATS = { [0] = "Essential", [1] = "Utility", [2] = "TrackedBuff", [3] = "TrackedBar" }
+        local hitCat, total = nil, 0
+        for cat = 0, 3 do
+            local okC, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
+            if okC and type(ids) == "table" then
+                total = total + #ids
+                for j = 1, #ids do
+                    local okN, info = pcall(CV.GetCooldownViewerCooldownInfo, ids[j])
+                    if okN and MatchesEntry(info) and not hitCat then
+                        hitCat = string.format("%s (cooldownID=%s)", CATS[cat], tostring(ids[j]))
+                        -- The real join key. Frames expose GetCooldownID() even when the
+                        -- viewer is hidden (GetCooldownInfo appears not to), so matching on
+                        -- this beats re-deriving identity from spell ids on the frame side.
+                        if type(ids[j]) == "number" then trackedCooldownID = ids[j] end
+                    end
+                end
+            end
+        end
+        if hitCat then
+            addon:Print(string.format("Q2 |cff2ecc71TRACKED|r in %s  |cff888888(%d ids across categories)|r", hitCat, total))
+        else
+            addon:Print(string.format("Q2 |cffff6600NOT in any category set|r |cff888888(%d ids scanned)|r", total))
+            addon:Print("|cff888888   spell genuinely absent from the Cooldown Manager data -> join impossible|r")
+        end
+    else
+        addon:Print("Q2 |cffff6600C_CooldownViewer category API unavailable|r")
+    end
+
+    -- Why the viewers may be hidden. A hidden viewer never computes auraInstanceID at all:
+    -- OnShow registers UNIT_AURA, OnHide unregisters it. So Q3 REQUIRES a shown viewer.
+    local okV, cvarOn = pcall(function()
+        return C_CVar and C_CVar.GetCVarBool and C_CVar.GetCVarBool("cooldownViewerEnabled")
+    end)
+    local okAv, avail, why = pcall(function()
+        if CV and CV.IsCooldownViewerAvailable then return CV.IsCooldownViewerAvailable() end
+    end)
+    addon:Print(string.format("CooldownManager: cvar=%s available=%s %s",
+        okV and tostring(cvarOn) or "err",
+        okAv and tostring(avail) or "err",
+        (okAv and why) and tostring(why) or ""))
+
+    local VIEWERS = { "BuffIconCooldownViewer", "BuffBarCooldownViewer",
+                      "EssentialCooldownViewer", "UtilityCooldownViewer" }
+    local found, scanned = nil, 0
+    local seenIDs = {}
+    for i = 1, #VIEWERS do
+        local name = VIEWERS[i]
+        local v = _G[name]
+        local shown = (v and v.IsShown and v:IsShown()) and true or false
+        local pool = v and v.itemFramePool
+        local n = 0
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                n = n + 1
+                scanned = scanned + 1
+                -- Join on cooldownID (from the category set above), NOT on the frame's spell
+                -- ids: GetCooldownID survives a hidden viewer, GetCooldownInfo appears not to.
+                local okC, cid = pcall(item.GetCooldownID, item)
+                if okC and type(cid) == "number" then
+                    seenIDs[#seenIDs + 1] = cid
+                end
+                local isMatch = okC and type(cid) == "number" and trackedCooldownID
+                                and cid == trackedCooldownID
+                if not isMatch and not trackedCooldownID then
+                    -- No cooldownID to join on: fall back to the spell-id set.
+                    local okI, info = pcall(item.GetCooldownInfo, item)
+                    isMatch = okI and MatchesEntry(info)
+                end
+                if isMatch and not found then
+                    local okA, inst = pcall(item.GetAuraSpellInstanceID, item)
+                    local okU, unit = pcall(item.GetAuraDataUnit, item)
+                    found = {
+                        viewer = name, shown = shown, cid = cid,
+                        inst = (okA and type(inst) == "number") and inst or nil,
+                        instStr = okA and SafeSecret(inst) or "err",
+                        plain = okA and type(inst) == "number",
+                        unit = okU and tostring(unit) or "err",
+                    }
+                end
+            end
+        end
+        addon:Print(string.format("  %-24s shown=%-5s items=%d", name, tostring(shown), n))
+    end
+
+    if not found then
+        addon:Print(string.format("Q3 |cffff6600no live item frame|r (want cooldownID=%s, %d active items walked)",
+            tostring(trackedCooldownID), scanned))
+        addon:Print("|cff888888   active frame cooldownIDs: " .. table.concat(seenIDs, ",") .. "|r")
+        addon:Print("|cff888888   id absent -> not laid out in Edit Mode; id present -> match logic is wrong|r")
+    else
+        addon:Print(string.format("Q3 frame |cff2ecc71MATCH|r in %s (cooldownID=%s shown=%s)",
+            found.viewer, tostring(found.cid), tostring(found.shown)))
+        addon:Print(string.format("Q3 GetAuraSpellInstanceID -> %s  plain=%s  unit=%s",
+            found.instStr, tostring(found.plain), found.unit))
+        if found.plain and found.unit == "player" then
+            addon:Print("|cff2ecc71   IDENTITY AVAILABLE|r - exact bind works, bridge becomes fallback")
+        else
+            addon:Print("|cffff6600   unusable|r - nil/secret instance, or the frame is scanning another unit")
+        end
+    end
+
+    -- Cross-check. A disagreement here IS the wrong-stacks bug, caught in the act.
+    if MT and MT.GetState then
+        local okS, state, _, inst = pcall(MT.GetState)
+        if okS then
+            addon:Print(string.format("tracker: state=%s instance=%s", tostring(state), SafeSecret(inst)))
+            if found and found.plain and type(inst) == "number" then
+                if inst == found.inst then
+                    addon:Print("|cff2ecc71   AGREES with Cooldown Manager|r")
+                else
+                    addon:Print("|cffff0000   DISAGREES - bridge bound the WRONG aura (this is the stacks bug)|r")
+                end
+            end
+        end
+    end
 end

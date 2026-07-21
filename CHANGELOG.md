@@ -3,6 +3,11 @@
 
 ## [Unreleased]
 
+## [4.48.0] - 2026-07-21
+
+### Changed
+- **The tank maintenance slot no longer shows a stack count**: the number could be another buff's. Mid-fight the game hides which buff is which, so the slot works out which one is yours from the moment you cast it - and a trinket or talent proc landing in the same instant could be picked up instead, putting its stack count on your icon. A wrong number there is worse than none, so it's gone; the countdown and the blue refresh glow are unaffected and still tell you when to press it.
+
 ## [4.47.0] - 2026-07-20
 
 ### Added

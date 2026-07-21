@@ -29,7 +29,6 @@ local UnitPower = UnitPower
 local UnitPowerMax = UnitPowerMax
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
-local math_max = math.max
 local math_min = math.min
 local math_floor = math.floor
 local ipairs = ipairs
@@ -631,7 +630,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     local ccScale  = AuraListScaleForQueue(af, iconSize)
     local locScale = (iconSize / BLIZZARD_LOC_SIZE) * AuraFrameScaleRatio(af)
 
-    local ok, err = pcall(function()
+    local ok = pcall(function()
         if expansion == "out" then
             -- Horizontal row: CC goes ABOVE the cluster, centered on first icon
             if ccList then

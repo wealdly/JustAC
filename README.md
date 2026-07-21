@@ -9,6 +9,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **Standard Queue** - Draggable panel with configurable icon count, spacing, and orientation (left/right/up/down). Optional target frame anchoring. Sub-tabs for Layout, Offensive Display, Defensive Display, and Appearance.
 - **Nameplate Overlay** - Icon cluster attached directly to the target nameplate. Mirrors the Standard Queue's sub-tab structure with independent settings. Falls back to the main panel when the nameplate isn't rendered.
 - Either or both surfaces can run simultaneously via the Display Mode setting.
+- **Resource bar** (optional, per surface) - your primary power plus a segmented secondary point resource (combo points, runes, chi, holy power, soul shards, essence). Anchors to the outermost health bar in view; segments render through a display-only path so they stay correct in 12.0 combat.
 
 ### Offensive Queue
 
@@ -17,6 +18,8 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Abilities the game won't let you use sink to the back: out-of-range melee, Cat/Bear-only abilities in the wrong form (skipped when Fluid Form makes them castable anywhere), stealth-only openers while unstealthed (Subterfuge/Shadow Dance respected), and abilities missing their enabling buff (e.g. Arcane Missiles without Clearcasting) - procs always outrank the sink. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; switch it off in the Rotation tab's ordering toggles to keep a fixed order
 - Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
 - **DoT awareness** - a damage-over-time ability already applied to your target sinks to the back of the queue while its debuff is live, reappearing in time to refresh (pandemic window), the moment it drops or is dispelled, or on a target that doesn't have it. When Assisted Combat keeps recommending a DoT that's already up, a switch-target arrow appears on the AC slot as a cue to spread it to another enemy. Stacking DoTs are left alone so you can keep building stacks. On by default; toggle in the General tab
+- **SimC priority ordering** *(opt-in)* - orders the abilities after Blizzard's pick using SimulationCraft's priority for your spec, re-ranked against what Blizzard is recommending right now (single-target vs. multi-target, building vs. spending). It also reads point-based resources - combo points, holy power, chi, soul shards, runes - so spenders sink until you can afford them and surface as you reach the threshold. Where the amount can't be read, ordering is left untouched rather than guessed. Multi-target abilities stay out of your single-target order, and openers, execute-only casts, interrupts, defensives and movement abilities are kept out of the damage queue entirely
+- **Ability markers** - an azure dot marks abilities you can cast while moving; an amber marker (opt-in) marks abilities that don't trigger the global cooldown, so you can fire one and go straight to the next suggestion. Both sit in the lower-left corner and share it when both apply, the dot splitting half azure and half amber. Shown on the offensive and defensive queues alike, on both display surfaces. Configured under General → Shared Behavior
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
 - Configurable: font attributes, icon count, size, orientation, glow modes, charge counts, and more
@@ -30,6 +33,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - Supports trinkets and on-use items alongside spells
 - **Talent-proof** - a stored ability whose spell ID belongs to a different talent variant resolves to the version you currently know instead of silently vanishing
 - **Always Show** pin per entry - a pinned ability is never hidden by filtering (active buff, running DoT, gap-closer management); it stays in the queue and only steps back while on cooldown or out of range
+- **Hold Until Charged** pin per entry - holds an ability at the back of the queue until every charge is banked, so a two-charge ability isn't spent into an overcap. It keeps its place rather than vanishing; an ability without charges is held until it's off cooldown. Off by default, and requires the "Unavailable last" ordering toggle
 - **`/jac why <spell>`** - explains exactly why an ability is or isn't showing right now, stage by stage (known, blacklisted, redundant, cooldown, range, DoT state, icon cap)
 
 ### Smart Interrupt Reminders
@@ -40,11 +44,14 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - **Creature-type-aware CC** - won't suggest a type-restricted CC (e.g. Polymorph, Repentance) on a creature type it can't affect; reads the target's type in combat with an account-wide name→type cache as a fallback
 - Boss-aware: CC abilities automatically filtered against CC-immune targets (with instance-level NPC immunity cache)
 - The interrupt is correctly hidden on casts that can't be interrupted - driven straight from the cast's protected interruptible flag through a display-only path, so it works regardless of which cast-bar or nameplate addon you use. (Auto-substituting a CC for a kick on a non-interruptible cast still needs the Blizzard default cast bar; with a replaced cast bar you simply get no suggestion there instead of a CC - never a wrongly-shown kick)
-- Third-party nameplate support - auto-discovers cast bars from supported nameplate addons and the Blizzard default nameplate
+- **Enrage cleanses** - when an enemy enrages and you carry a dispel that removes it (Soothe, Tranquilizing Shot, Shiv and the like), the dispel surfaces in the interrupt slot with a green glow, named with the enrage it clears. Detected through a display-only colour path, so it works in 12.0 combat without reading the aura
+- Nameplate cast-bar support - auto-discovers cast bars from the Blizzard default nameplate and from nameplate addons that expose a compatible frame structure
 
 ### Defensive Suggestions
 
 - Unified priority list: self-heals and major cooldowns combined with configurable per-class ordering
+- **Tank maintenance slot** - tanks get a dedicated slot beside the defensive queue for the one mitigation buff the spec keeps rolling (Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield). It counts down the buff's real remaining time and glows blue as it runs low, shows the keybind, and greys out when the cast is out of reach or unaffordable. Blood's slot points at Marrowrend, so it can appear in the rotation and here at once. No stack count is shown: in combat the aura can't be identified exactly, so a number risks being another buff's (see [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)). Combat only, tank specs only, on by default under Defensives → Tank Maintenance Slot. Brewmaster isn't covered yet
+- **Absorb-barrier awareness** - a shield that outlasts its own cooldown (Ice Barrier, Blazing Barrier, Prismatic Barrier, Rune Tap) sinks to the back while the barrier holds and returns as it runs low, instead of being re-suggested into a wasted overwrite. Defensives that genuinely stack, like Ironfur and Ignore Pain, are exempt
 - **Low-health emergency ordering** - below the ~35% threshold the queue leads with immunity bubbles, then big instant heals, ahead of mitigation and small fillers; above the threshold fast/free fillers and procs stay first for routine upkeep
 - Procced defensives (Victory Rush, free heals) shown at any health level
 - Usability-aware visuals: icons grey out while channeling, blue-tint when lacking resources, desaturate on cooldown
@@ -59,6 +66,7 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 
 - Out of combat, the defensive queue surfaces the buffs you're **missing but own** as clickable icons with a green glow - flask, food, augment rune, weapon enchant
 - **Class maintained buffs** - rogue poisons, shaman shields and weapon imbues, and the standard party/raid buffs. You're reminded when one is missing or has dropped below half its remaining duration; a lapsed buff is refilled with whatever your rotation ranks highest, and rogues get both a lethal and a non-lethal poison at once
+- **Party-aware group buffs** - if you have a group buff up but a party member doesn't (they joined late, released, or were out of range), the buff is offered again so one re-cast covers everyone. Party only, and only for members who are alive, online and in range, so every reminder is actionable. Personal buffs like poisons and shields are unaffected
 - **Recuperate** - the all-classes out-of-combat self-heal is offered like any other missing buff whenever you're hurt (below 90% where exact health is readable; via never-secret recovery signals where 12.0.7 hides it), and hides while its heal-over-time is running
 - **Click-to-use** - a hover highlight and click-to-use layer sits over every out-of-combat icon (like an action button), casting the spell or using the item straight from the queue
 - **Eating / applying feedback** - while a buff is being applied (eating food and the like) the whole queue greys out with a channel-style progress sweep across the buff window
@@ -120,11 +128,11 @@ Options are organized into 6 tabs:
 
 | Tab | Purpose |
 |-----|--------|
-| **General** | Display mode, visibility rules, queue content toggles (3 sub-tabs: Settings, Icon Labels, Hotkeys) |
-| **Standard Queue** | Layout, offensive display, defensive display, appearance (4 sub-tabs) |
-| **Overlay** | Nameplate overlay layout, offensive display, defensive display (3 sub-tabs) |
-| **Offensive** | Blacklist, custom queue, gap-closers, burst injection, interrupt mode |
-| **Defensives** | Spell priority list, health thresholds, per-item aura linking, pre-combat buffs |
+| **General** | Display mode, visibility rules, queue content toggles, Shared Behavior (ability markers) (3 sub-tabs: Settings, Icon Labels, Hotkeys) |
+| **Standard Queue** | Layout, offensive display, defensive display, appearance, resource bar (4 sub-tabs) |
+| **Overlay** | Nameplate overlay layout, offensive display, defensive display, resource bar (3 sub-tabs) |
+| **Offensive** | Blacklist, custom queue (Always Show / Hold Until Charged), ordering toggles incl. SimC priority, gap-closers, burst injection, interrupt mode |
+| **Defensives** | Spell priority list, health thresholds, per-item aura linking, tank maintenance slot, pre-combat buffs |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
 - **Localization** - English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
@@ -198,6 +206,8 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 /jac reset                    - Reset frame position
 /jac profile [name|list]      - Switch or list profiles
 /jac find [spell]             - Find spell on action bars (defaults to AC suggestion)
+/jac why [spell]              - Explain stage by stage why an ability is or isn't showing
+/jac hud                      - Toggle the diagnostic HUD
 /jac inspect modules          - Check module health
 /jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)
 /jac inspect defensives       - Diagnose defensive system
@@ -208,6 +218,14 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 /jac inspect perf reset       - Reset build counters
 /jac inspect buffs            - Diagnose pre-combat buff checklist (out of combat)
 /jac inspect rank             - Queue context inference and per-spell ordering
+/jac inspect rotation         - Dump the resolved SimC priority list for your spec
+/jac inspect gates            - Show SimC gate evaluation (buff/resource thresholds)
+/jac inspect aoe              - Target-count inference (single-target vs. multi-target)
+/jac inspect dots             - Damage-over-time tracking state on your target
+/jac inspect stacks           - Aura stack counts behind stack-aware filtering
+/jac inspect resource         - Resource bar detection and power channels
+/jac inspect resourcepoints   - Discrete point-resource read (combo points, runes, chi...)
+/jac inspect enrage           - Enrage detection and dispel matching probe
 /jac inspect chargediag [sp]  - Armed charge-event probe (60s window)
 /jac inspect castdiag         - Diagnose in-combat interrupt detection (one-shot probe)
 /jac inspect healthprobe      - Sweep health-detection channels (run while hurt)

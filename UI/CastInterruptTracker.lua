@@ -230,7 +230,7 @@ local function IsTargetCastInterruptible(nameplate)
         castName, _, _, _, _, _, _, notInt = UnitCastingInfo("target")
         -- Cast name is secret in 12.0 combat; secret non-nil = cast exists.
         if not BlizzardAPI.IsSecretValue(castName) and not castName then
-            castName, _, _, _, _, _, notInt = UnitChannelInfo("target")
+            _, _, _, _, _, _, notInt = UnitChannelInfo("target")
         end
         -- notInterruptible is a secret boolean in 12.0 - check before comparing.
         if BlizzardAPI.IsSecretValue(notInt) then

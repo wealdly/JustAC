@@ -85,15 +85,6 @@ local function GetRedundancyFilter()
     return cachedRedundancyFilter or nil
 end
 
--- Cache for SpellDB lookup (lazy-loaded)
-local cachedSpellDB = nil
-local function GetSpellDB()
-    if cachedSpellDB == nil then
-        cachedSpellDB = LibStub("JustAC-SpellDB", true) or false
-    end
-    return cachedSpellDB or nil
-end
-
 -- Check defensive spell usability in one call (avoids repeated API lookups)
 -- Returns: isUsable, isRedundant, isProcced
 -- isUsable = spell is known AND NOT redundant (buff already active).

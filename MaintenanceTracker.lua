@@ -150,24 +150,40 @@ function MaintenanceTracker.OnPlayerAuraUpdate(updateInfo)
     if updateInfo and pendingCastAt and (GetTime() - pendingCastAt) <= BRIDGE_WINDOW then
         -- auraInstanceID is documented NeverSecret, but guard anyway: these get compared
         -- against trackedInstance later, and the cost of being wrong is a throw.
-        local function TryBind(id)
-            if not IsSecret(id) and type(id) == "number" and IsOurs(id) then
-                trackedInstance = id
-                pendingCastAt = nil
-                changed = true
-                return true
+        local function IsCandidate(id)
+            return not IsSecret(id) and type(id) == "number" and IsOurs(id)
+        end
+        -- IsOurs answers "a player-cast helpful buff", NOT "the maintenance buff" - spellId is
+        -- secret in combat, so nothing here can tell two of our own buffs apart. Taking the
+        -- first match meant a trinket/talent proc landing in the same batch could win the bind,
+        -- and the slot then rendered THAT aura's applications as your stack count.
+        -- So: bind only when the batch offers exactly ONE candidate. Two or more is genuinely
+        -- ambiguous, and this module's fail direction is to stay UNKNOWN (icon, no swipe, no
+        -- glow) rather than state a confident wrong number. pendingCastAt is deliberately left
+        -- set so a later, cleaner batch can still bind before ExpireStalePendingCast drops it.
+        local only, count = nil, 0
+        local function Collect(id)
+            if IsCandidate(id) then
+                count = count + 1
+                if only == nil then only = id end
             end
-            return false
         end
         if updateInfo.addedAuras then
             for _, aura in ipairs(updateInfo.addedAuras) do
-                if aura and TryBind(aura.auraInstanceID) then break end
+                if aura then Collect(aura.auraInstanceID) end
             end
         end
-        if not trackedInstance and updateInfo.updatedAuraInstanceIDs then
+        -- Only fall through to updates when ADDED offered nothing; an ambiguous ADDED batch
+        -- must not be rescued by a different aura merely refreshing in the same tick.
+        if count == 0 and updateInfo.updatedAuraInstanceIDs then
             for _, id in ipairs(updateInfo.updatedAuraInstanceIDs) do
-                if TryBind(id) then break end
+                Collect(id)
             end
+        end
+        if count == 1 then
+            trackedInstance = only
+            pendingCastAt = nil
+            changed = true
         end
     end
 
@@ -257,18 +273,6 @@ function MaintenanceTracker.IsSlotActive(profile)
     local entry = SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive()
     if not entry then return false, nil end
     return true, entry
-end
-
---- The aura's stack count, RAW and possibly secret. Never read, compared or defaulted here -
---- the engine renders a number we are not allowed to know. Same division as the duration swipe.
---- @param instanceID number|nil - from GetState's 3rd return
---- @return any|nil applications - opaque; pass to C_StringUtil.RoundToNearestString, nothing else
-function MaintenanceTracker.GetApplications(instanceID)
-    local fn = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
-    if not (fn and instanceID) then return nil end
-    local ok, d = pcall(fn, "player", instanceID)
-    if not ok or not d then return nil end
-    return d.applications
 end
 
 --- The aura's remaining time as a DurationObject for a Cooldown widget. NEVER read the

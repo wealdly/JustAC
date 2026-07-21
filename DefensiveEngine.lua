@@ -13,7 +13,6 @@ local wipe = wipe
 local ipairs = ipairs
 local pairs = pairs
 local math_min = math.min
-local GetSpellBaseCooldown = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 
 -- Module references (resolved at load time - DefensiveEngine loads after all deps in TOC)
 local BlizzardAPI       = LibStub("JustAC-BlizzardAPI", true)
@@ -558,7 +557,7 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
                 end
             end
             if not suppress then
-                local isUsable, hasItem, onCooldown = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+                local isUsable, hasItem = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
                 if hasItem then
                     if isUsable then
                         nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
