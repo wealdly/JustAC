@@ -207,11 +207,11 @@ function SpellDB.GetBaseSpell(spellID)
     return nil
 end
 
--- Aura max stacks: generated table only. The live equivalent
--- (C_UnitAuras.GetSpellMaxCumulativeAuraApplications) THROWS from addon code
--- for every spell tested - non-stacking AND stacking (Ironfur), in-game
--- 12.0.7 2026-07-05 - so there is no live front to prefer. The validate
--- suite keeps a tripwire probe in case a patch makes it callable.
+-- Aura max stacks: generated table only. The earlier "the live API throws" note was WRONG -
+-- it probed C_UnitAuras.GetSpellMaxCumulativeAuraApplications, but the function lives in
+-- C_Spell (SpellDocumentation.lua:423), so that was an attempt-to-call-nil, not a restriction.
+-- The real availability is UNTESTED. The validate suite's tripwire probe now calls the correct
+-- namespace; re-run it before treating the generated table as the only possible source.
 local auraMaxStacks
 function SpellDB.RegisterAuraStacks(t) auraMaxStacks = t end
 function SpellDB.GetAuraMaxStacks(spellID)
@@ -1092,17 +1092,24 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
     -- Ironfur casts and buffs under one id. NOTE: SpellAuraOptions says CumulativeAura=1,
     -- but /jac inspect stacks measured it in game as ONE instance with applications=2 - the
     -- real cap is enforced outside that DB2 field. Trust the measurement, not the CSV.
-    DRUID_3       = { cast = 192081, aura = 192081, dur = 7.0, stacks = true },  -- Ironfur
+    -- lead: glow ~3s before decay. 7s is short enough that the proportional 30% default gives
+    -- barely 2s of warning - too tight to react to mid-pull. Pressing EARLIER than the cue is
+    -- always legitimate (stacking Ironfur is a damage-intake call the player makes, not one we
+    -- can see), so the cue is a floor, never a "do not press yet".
+    DRUID_3       = { cast = 192081, aura = 192081, dur = 7.0, lead = 3.0, stacks = true },  -- Ironfur
     -- Blood is deliberately a rotational OFFENSIVE button. Blizzard fused rune-spending and
     -- Bone Shield upkeep into one press, so there is no defensive-only alternative - checked,
     -- Heart Strike has no self-target grant of the right shape. The two slots carry different
     -- signals, not different buttons: the queue says "spend runes", this says "your stacks are
     -- running out". Do not "fix" this to some other spell.
-    -- No `dur`, deliberately. Bone Shield nominally lasts 30s per stack, but stacks are eaten
-    -- by incoming DAMAGE, not time - a time-based refresh cue would sit quiet for 21s while
-    -- the stacks were actually consumed in five. Since stack counts are secret and the combat
-    -- log is closed to us, there is no honest early warning here: Blood glows only when Bone
-    -- Shield is fully GONE, which is a real emergency rather than a guess.
+    -- No `dur`, deliberately - the duration DATA exists (SpellMisc DurationIndex=9 = 30000ms),
+    -- we decline to use it. Stacks are eaten by incoming DAMAGE, not time (SpellAuraOptions
+    -- 19756: ProcChance=100, ProcCategoryRecovery=2500, ProcTypeMask_0=40), so a time-based
+    -- refresh cue would sit quiet for 21s while the stacks were actually consumed in five.
+    -- The count is also not inferable from our casts: damage-taken events live only in the
+    -- hard-blocked combat log, so there is no decrement signal, and the Bone Collector talent
+    -- (458572) grants stacks with no cast to observe - wrong in both directions at once.
+    -- Blood therefore glows only when Bone Shield is fully GONE: a real emergency, not a guess.
     DEATHKNIGHT_1 = { cast = 195182, aura = 195181, stacks = true },  -- Marrowrend -> Bone Shield
     -- MONK_1 Brewmaster is intentionally ABSENT. Shuffle has two live spell ids (215479 with a
     -- real 5s duration, 322120 wired into the talent tree but durationless and proc-shaped) and

@@ -3,6 +3,19 @@
 
 ## [Unreleased]
 
+## [4.49.0] - 2026-07-21
+
+### Fixed
+- **The tank maintenance slot now tracks the right buff**: mid-fight the game hides which buff is which, so the slot worked out which one was yours from the moment you cast it - and a trinket or talent proc landing in the same instant could be picked up instead. When that happened the countdown showed the other buff's remaining time, which could be wildly wrong. The slot now identifies your mitigation buff exactly wherever the game allows it, and where it can't, the countdown is estimated from your own cast instead of borrowed from something else.
+- **The slot no longer tells you to re-press a buff you already have**: when it couldn't identify your buff it assumed the worst and glowed as though the mitigation had lapsed - sometimes for a whole fight. It now stays quiet unless it has actually seen the buff drop.
+
+### Added
+- **The stack count is back on the maintenance slot** (Ironfur, Bone Shield). It appears whenever your buff can be identified exactly, which needs Blizzard's Cooldown Manager turned on with its panel visible. Without that the slot shows no number rather than risk showing another buff's - the countdown and refresh glow still work either way.
+- **A two-stage refresh cue**: the slot outlines with a slow crawl while the buff is still up but running low, then switches to a brighter pulse once it has actually dropped. Same colour throughout, so it reads as one cue at two levels of urgency rather than two separate warnings.
+
+### Changed
+- **The refresh cue now comes about 3 seconds before the buff decays** instead of 2 - enough time to react while tanking - and it learns your buff's real duration, so talents that extend it no longer make the cue fire early.
+
 ## [4.48.0] - 2026-07-21
 
 ### Changed

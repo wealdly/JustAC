@@ -1053,8 +1053,10 @@ local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
 local function ClearMaintenanceSlot(icon)
     if not icon then return end
     UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+    if UIAnimations.StopMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
     icon:SetAlpha(0)
-    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, false, nil, nil
+    -- _maintGlow is a STAGE ("down"/"refresh"/nil), not a bool - nil, not false.
+    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, nil, nil, nil
     icon.maintenanceAuraID = nil
     if icon.chargeText then icon.chargeText:Hide() end
 end
@@ -1111,25 +1113,54 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     icon:SetAlpha(icon.overlayOpacity or 1)
     icon._maintShown = true
 
-    -- THE POINT OF THE WHOLE FEATURE: exact remaining time, engine-drawn. Never read.
-    local dur = MT and MT.GetDurationObject and MT.GetDurationObject(inst)
+    -- Remaining time, in descending order of trust:
+    --   1. exact bind  -> the aura's real DurationObject, engine-drawn. Never read.
+    --   2. bridge bind -> our own cast clock. The bound instance may NOT be our aura, and
+    --      drawing its duration renders a foreign timer (a 20s proc on a 7s buff) - reported
+    --      in game as "wildly wrong cooldown". An estimate that drifts a second or two beats
+    --      a confident number belonging to something else.
+    --   3. no bind     -> nothing.
+    local exactBind = MT and MT.IsBindExact and MT.IsBindExact()
     if icon.cooldown then
-        if dur and icon.cooldown.SetCooldownFromDurationObject then
-            pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, dur)
+        local durObj = exactBind and MT and MT.GetDurationObject and MT.GetDurationObject(inst) or nil
+        if durObj and icon.cooldown.SetCooldownFromDurationObject then
+            pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
         else
-            icon.cooldown:SetCooldown(0, 0)
+            local st, len = nil, nil
+            if inst and MT and MT.GetEstimatedCooldown then st, len = MT.GetEstimatedCooldown() end
+            if st and len then
+                icon.cooldown:SetCooldown(st, len)   -- plain numbers, no secret
+            else
+                icon.cooldown:SetCooldown(0, 0)
+            end
         end
     end
 
-    -- No stack count here, deliberately. Rendering one was pass-through safe (the engine drew a
-    -- number we never read), but SAFE IS NOT CORRECT: in combat the only way to bind this aura is
-    -- the cast->instance bridge, and the bridge cannot prove WHICH aura it bound - spellId is
-    -- secret, and no Blizzard system exposes a spellId->instance map an addon can read (the
-    -- Cooldown Manager does, but only while its viewer is actually displayed). A mis-bind drew
-    -- some proc's count as your mitigation stacks, which for a tank is actionable misinformation.
-    -- Silence beats a confident wrong number; the swipe and glow still carry "up / refresh it".
-    -- Do not re-add without an identity-exact bind - see Documentation/AURA_IDENTITY_12.0.md.
-    if icon.chargeText then icon.chargeText:Hide() end
+    -- Stack count, gated on an IDENTITY-EXACT bind. The number itself is never read: the engine
+    -- renders it from the instance id, and the 3rd arg is an engine-side "only show if >= 2"
+    -- threshold, so there is no comparison in Lua either. Correctness therefore rests entirely
+    -- on having the RIGHT instance - which the cast->instance bridge cannot prove, since spellId
+    -- is secret (see Documentation/AURA_IDENTITY_12.0.md). So: render only on a by-spell-id
+    -- bind, hide on a bridge guess. Right or absent, never wrong - a mis-drawn mitigation count
+    -- is actionable misinformation for a tank. An exact bind made out of combat survives into
+    -- the fight across refreshes, so this is not a dead branch.
+    -- SetText marks this FontString's Text aspect secret PERMANENTLY - keep it off any
+    -- width-measured layout path. Nothing here measures it.
+    if icon.chargeText then
+        local fn = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
+        local exact = MT and MT.IsBindExact and MT.IsBindExact()
+        if entry.stacks and exact and fn and inst then
+            local ok, text = pcall(fn, "player", inst, 2)
+            if ok and text then
+                icon.chargeText:SetText(text)
+                icon.chargeText:Show()
+            else
+                icon.chargeText:Hide()
+            end
+        else
+            icon.chargeText:Hide()
+        end
+    end
 
     -- Usability goes through the SHARED ApplyVisualState. IsSpellUsable is never-secret, so it
     -- reads fine in combat. Desaturation therefore means what it means everywhere else - "you
@@ -1160,18 +1191,33 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
     end
 
-    -- Glow on "refresh" too, not just "down" - by the time it is down the mitigation has
-    -- already lapsed. Never on "unknown" (would tell a tank to re-press a live buff). Gated
-    -- on usable, which is false for BOTH a resource shortfall and a live cooldown.
-    local wantGlow = (state == "down" or state == "refresh") and usable
-    if wantGlow ~= icon._maintGlow then
-        if wantGlow then
+    -- Two-stage cue, ONE colour:
+    --   refresh -> marching-ants crawl. Still up, decaying: "top this up soon."
+    --   down    -> proc burst. Mitigation actually gone: the loud one.
+    -- Both desaturate to greyscale and multiply by the SAME rgb, so the hue is identical; the
+    -- two atlases differ in luminance, so the burst reads brighter. That intensity step IS the
+    -- signal - a single glow could not say "soon" and "now" apart.
+    -- Never on "unknown": that state means we could not identify the aura, and glowing there
+    -- tells a tank to re-press a buff that may well be live.
+    -- Gated on usable, which is false for BOTH a resource shortfall and a live cooldown.
+    local stage = nil
+    if usable then
+        if state == "down" then stage = "down"
+        elseif state == "refresh" then stage = "refresh" end
+    end
+    if stage ~= icon._maintGlow then
+        -- Tear the previous stage down unconditionally before raising the next. A fast
+        -- refresh->down transition would otherwise leave the crawl running underneath the
+        -- burst, and two glows on one icon read as a rendering bug.
+        UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+        if UIAnimations.StopMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
+        if stage == "down" then
             UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
                 MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-        else
-            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+        elseif stage == "refresh" and UIAnimations.StartMaintenanceGlow then
+            UIAnimations.StartMaintenanceGlow(icon, true)
         end
-        icon._maintGlow = wantGlow
+        icon._maintGlow = stage
     end
 end
 

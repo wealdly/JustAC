@@ -129,6 +129,7 @@ local INSPECT_TOPICS = {
     secrecy = "SecrecyProbe",
     stacks = "StacksProbe",
     maintenance = "MaintenanceProbe",
+    maintlog    = "MaintenanceLog",
     enrage      = "EnrageProbe",
     durprobe    = "DurationProbe",
     chargediag  = "ChargeDiagnostics",
@@ -137,7 +138,7 @@ local INSPECT_TOPICS = {
     healthgate  = "HealthGatePreview",
     validate    = "ValidateAssumptions",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, enrage, durprobe [spell], chargediag [spell], castdiag, healthprobe, healthgate, validate [arm]"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage, durprobe [spell], chargediag [spell], castdiag, healthprobe, healthgate, validate [arm]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler

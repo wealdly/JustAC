@@ -51,6 +51,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect secrecy - Measure which combat values actually read plain vs secret (run in AND out of combat)")
     addon:Print("/jac inspect stacks - Out of combat: is a stacking buff N aura instances or one secret counter?")
     addon:Print("/jac inspect maintenance - Can the tank maintenance slot bind its aura exactly? (run IN combat)")
+    addon:Print("/jac inspect maintlog [on|off|clear] - Record maintenance state 1/s to SavedVariables")
     addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
@@ -3229,7 +3230,10 @@ local function BuildValidateProbes()
     -- maxStacks probes a KNOWN stacking aura (Ironfur): the API throws (SEALED)
     -- for spells without a stacking record - verified 2026-07-05 with Cat Form.
     add("aura.isSelfBuffAPI", function() return C_Spell.IsSelfBuff(sid) end)
-    add("aura.maxStacksIronfur", function() return C_UnitAuras.GetSpellMaxCumulativeAuraApplications(192081) end)
+    -- Lives in C_Spell, NOT C_UnitAuras. Probing the wrong namespace called a nil field, and
+    -- the resulting error was recorded as "the API throws" - a false negative. Verify before
+    -- concluding anything about this function's availability.
+    add("aura.maxStacksIronfur", function() return C_Spell.GetSpellMaxCumulativeAuraApplications(192081) end)
 
     add("cd.probeSpell", function() return sid end)
     add("cd.start", function() return C_Spell.GetSpellCooldown(sid).startTime end)
@@ -3466,6 +3470,73 @@ end
 -- SecrecyLevel enum, hoisted: 0 = the direct lookup always works for that spell.
 local SECRECY_LEVEL = { [0] = "NeverSecret", [1] = "AlwaysSecret", [2] = "ContextuallySecret" }
 
+--------------------------------------------------------------------------------
+-- Maintenance slot recorder (/jac inspect maintlog)
+--------------------------------------------------------------------------------
+-- Samples tracker state to JustACGlobal so a whole fight can be read off disk instead of
+-- pasted out of chat. Intermittent faults - a tracker stuck "down" for minutes, a bind that
+-- never retries - are invisible in a snapshot and obvious in a sequence.
+-- SavedVariables flush on /reload or logout ONLY: play, then /reload, then read the file.
+local MAINTLOG_MAX = 400          -- ~6.5 min at 1s; bounded so it cannot bloat the file
+local maintLogTicker = nil
+
+local function MaintLogStore()
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    g.maintLog = g.maintLog or {}
+    return g.maintLog
+end
+
+--- One compact sample. Only plain values - never persist a secret, and never let a probe
+--- throw: a recorder that breaks combat is worse than no recorder.
+local function MaintLogSample()
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    if not (MT and MT.GetState) then return end
+    local okS, state, _, inst = pcall(MT.GetState)
+    if not okS then return end
+    local d = (MT.GetBridgeDiag and select(2, pcall(MT.GetBridgeDiag))) or nil
+    local log = MaintLogStore()
+    log[#log + 1] = string.format("%.1f %s inst=%s combat=%s b=%s/%s/%s cand=%s",
+        GetTime(),
+        tostring(state),
+        (type(inst) == "number") and tostring(inst) or "nil",
+        (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
+        d and tostring(d.batches or 0) or "?",
+        d and tostring(d.bound or 0) or "?",
+        d and tostring(d.ambiguous or 0) or "?",
+        d and tostring(d.lastCandidates or 0) or "?")
+    -- Ring: drop the oldest half in one pass rather than table.remove per sample (O(n) each).
+    if #log > MAINTLOG_MAX then
+        local keep, half = {}, math.floor(MAINTLOG_MAX / 2)
+        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
+        _G.JustACGlobal.maintLog = keep
+    end
+end
+
+--- /jac inspect maintlog [on|off|clear] - record maintenance-slot state once a second.
+function DebugCommands.MaintenanceLog(addon, arg)
+    arg = arg and arg:lower() or nil
+    if arg == "clear" then
+        if _G.JustACGlobal then _G.JustACGlobal.maintLog = nil end
+        addon:Print("maintlog: |cffffff00cleared|r")
+        return
+    end
+    if arg == "off" or (not arg and maintLogTicker) then
+        if maintLogTicker then maintLogTicker:Cancel() end
+        maintLogTicker = nil
+        local n = (_G.JustACGlobal and _G.JustACGlobal.maintLog and #_G.JustACGlobal.maintLog) or 0
+        addon:Print(string.format("maintlog: |cffff6600OFF|r - %d samples held.", n))
+        addon:Print("|cff888888/reload to flush them to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua|r")
+        return
+    end
+    if not C_Timer or not C_Timer.NewTicker then
+        addon:Print("|cffff6600C_Timer unavailable|r")
+        return
+    end
+    maintLogTicker = C_Timer.NewTicker(1.0, function() pcall(MaintLogSample) end)
+    addon:Print("maintlog: |cff00ff00ON|r - sampling 1/s. Fight, then |cffffff00/jac inspect maintlog off|r and |cffffff00/reload|r.")
+end
+
 --- /jac inspect maintenance - can the tank maintenance slot bind its aura EXACTLY in combat,
 --- instead of guessing via the cast->instance bridge? Three questions, one call:
 ---   Q1 Is this spec's aura secret at all? GetSpellAuraSecrecy == 0 means the direct lookup
@@ -3540,6 +3611,8 @@ function DebugCommands.MaintenanceProbe(addon)
     -- below cannot. 4 categories: 0 Essential, 1 Utility, 2 TrackedBuff, 3 TrackedBar.
     local CV = C_CooldownViewer
     local trackedCooldownID = nil
+    local trackedIDs = {}
+    local trackedViewer = nil
     if CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo then
         local CATS = { [0] = "Essential", [1] = "Utility", [2] = "TrackedBuff", [3] = "TrackedBar" }
         local hitCat, total = nil, 0
@@ -3549,18 +3622,31 @@ function DebugCommands.MaintenanceProbe(addon)
                 total = total + #ids
                 for j = 1, #ids do
                     local okN, info = pcall(CV.GetCooldownViewerCooldownInfo, ids[j])
-                    if okN and MatchesEntry(info) and not hitCat then
-                        hitCat = string.format("%s (cooldownID=%s)", CATS[cat], tostring(ids[j]))
-                        -- The real join key. Frames expose GetCooldownID() even when the
-                        -- viewer is hidden (GetCooldownInfo appears not to), so matching on
-                        -- this beats re-deriving identity from spell ids on the frame side.
-                        if type(ids[j]) == "number" then trackedCooldownID = ids[j] end
+                    -- Collect EVERY category hit. The same spell carries a different
+                    -- cooldownID per category, so stopping at the first found the Utility id
+                    -- and missed TrackedBar, where these buffs live by default.
+                    if okN and MatchesEntry(info) then
+                        hitCat = (hitCat and (hitCat .. ", ") or "")
+                                 .. string.format("%s=%s", CATS[cat], tostring(ids[j]))
+                        if trackedCooldownID == nil and type(ids[j]) == "number" then
+                            trackedCooldownID = ids[j]
+                        end
+                        trackedViewer = trackedViewer or ({ [0] = "EssentialCooldownViewer",
+                                           [1] = "UtilityCooldownViewer",
+                                           [2] = "BuffIconCooldownViewer",
+                                           [3] = "BuffBarCooldownViewer" })[cat]
+                        -- The real join key, as a SET: frames expose GetCooldownID() and the
+                        -- spell can appear on more than one bar under different ids.
+                        if type(ids[j]) == "number" then trackedIDs[ids[j]] = true end
                     end
                 end
             end
         end
         if hitCat then
-            addon:Print(string.format("Q2 |cff2ecc71TRACKED|r in %s  |cff888888(%d ids across categories)|r", hitCat, total))
+            -- "ELIGIBLE", not "tracked": allowUnlearned=true returns everything the category
+            -- COULD contain, not the subset the player put on their bar. Q3 is what decides
+            -- whether a frame actually exists. Conflating the two cost a debugging round.
+            addon:Print(string.format("Q2 |cff2ecc71ELIGIBLE|r for %s  |cff888888(%d ids in category data; Q3 says if it is on the bar)|r", hitCat, total))
         else
             addon:Print(string.format("Q2 |cffff6600NOT in any category set|r |cff888888(%d ids scanned)|r", total))
             addon:Print("|cff888888   spell genuinely absent from the Cooldown Manager data -> join impossible|r")
@@ -3602,9 +3688,8 @@ function DebugCommands.MaintenanceProbe(addon)
                 if okC and type(cid) == "number" then
                     seenIDs[#seenIDs + 1] = cid
                 end
-                local isMatch = okC and type(cid) == "number" and trackedCooldownID
-                                and cid == trackedCooldownID
-                if not isMatch and not trackedCooldownID then
+                local isMatch = okC and type(cid) == "number" and trackedIDs[cid] and true or false
+                if not isMatch and not next(trackedIDs) then
                     -- No cooldownID to join on: fall back to the spell-id set.
                     local okI, info = pcall(item.GetCooldownInfo, item)
                     isMatch = okI and MatchesEntry(info)
@@ -3622,23 +3707,161 @@ function DebugCommands.MaintenanceProbe(addon)
                 end
             end
         end
-        addon:Print(string.format("  %-24s shown=%-5s items=%d", name, tostring(shown), n))
+        -- alpha matters as much as shown: a viewer kept SHOWN at alpha 0 stays populated
+        -- (pool laid out, auraInstanceID live) while being invisible to the player. Hidden
+        -- is what empties the pool, not transparent.
+        local okA, av = pcall(function() return v and v.GetAlpha and v:GetAlpha() end)
+        addon:Print(string.format("  %-24s shown=%-5s alpha=%-4s items=%d",
+            name, tostring(shown), okA and tostring(av) or "?", n))
     end
 
     if not found then
-        addon:Print(string.format("Q3 |cffff6600no live item frame|r (want cooldownID=%s, %d active items walked)",
-            tostring(trackedCooldownID), scanned))
+        local want = {}
+        for id in pairs(trackedIDs) do want[#want + 1] = tostring(id) end
+        table.sort(want)
+        addon:Print(string.format("Q3 |cffff6600no live item frame|r (want any of %s, %d active items walked)",
+            (#want > 0) and table.concat(want, "/") or "none", scanned))
         addon:Print("|cff888888   active frame cooldownIDs: " .. table.concat(seenIDs, ",") .. "|r")
         addon:Print("|cff888888   id absent -> not laid out in Edit Mode; id present -> match logic is wrong|r")
+        if trackedViewer then
+            local v = _G[trackedViewer]
+            local vShown = (v and v.IsShown and v:IsShown()) and true or false
+            if vShown then
+                addon:Print(string.format("|cffffff00   %s IS shown but our id is not on it - add the spell to that bar in Edit Mode|r",
+                    trackedViewer))
+            else
+                addon:Print(string.format("|cffffff00   our id belongs to %s (shown=false) - enable that viewer|r",
+                    trackedViewer))
+            end
+        end
     else
         addon:Print(string.format("Q3 frame |cff2ecc71MATCH|r in %s (cooldownID=%s shown=%s)",
             found.viewer, tostring(found.cid), tostring(found.shown)))
+        if not found.shown then
+            -- Frames keep their cooldownID after hiding (OnHide clears nothing), so a match on
+            -- a hidden viewer is expected - and useless: OnHide also unregisters UNIT_AURA, so
+            -- any auraInstanceID it still holds is FROZEN at hide time. The tracker rejects
+            -- these; a stale id that looks valid is worse than none.
+            addon:Print("|cffff6600   viewer HIDDEN - id retained but aura data is frozen; tracker ignores this|r")
+        end
         addon:Print(string.format("Q3 GetAuraSpellInstanceID -> %s  plain=%s  unit=%s",
             found.instStr, tostring(found.plain), found.unit))
         if found.plain and found.unit == "player" then
             addon:Print("|cff2ecc71   IDENTITY AVAILABLE|r - exact bind works, bridge becomes fallback")
         else
             addon:Print("|cffff6600   unusable|r - nil/secret instance, or the frame is scanning another unit")
+        end
+    end
+
+    -- Q4: the per-instance secrecy route - no Blizzard frame, no UI dependency at all.
+    -- GetUnitAuraInstanceIDs returns a PLAIN table of ids (no secret annotation on its return,
+    -- unlike GetUnitAuras which carries ConditionalSecretContents), and
+    -- ShouldUnitAuraInstanceBeSecret answers per id with a plain bool. For instances it reports
+    -- NON-secret, GetAuraDataByAuraInstanceID's spellId is readable and comparable - which is
+    -- exact identity. sortRule is pinned to Unsorted(0): the other rules order by secret data.
+    local UA, CSec = C_UnitAuras, C_Secrets
+    if UA and UA.GetUnitAuraInstanceIDs and CSec and CSec.ShouldUnitAuraInstanceBeSecret then
+        local okIDs, ids = pcall(UA.GetUnitAuraInstanceIDs, "player", "HELPFUL|PLAYER", nil, 0, 0)
+        if okIDs and type(ids) == "table" then
+            local readable, secretN, hit = 0, 0, nil
+            for i = 1, #ids do
+                local id = ids[i]
+                local okS, isAuraSecret = pcall(CSec.ShouldUnitAuraInstanceBeSecret, "player", id)
+                if okS and isAuraSecret == false then
+                    readable = readable + 1
+                    -- Contractually non-secret, but compare inside pcall anyway: being wrong
+                    -- here throws, and this probe must never be the thing that breaks combat.
+                    local okD, d = pcall(UA.GetAuraDataByAuraInstanceID, "player", id)
+                    if okD and d then
+                        local okC, isOurs = pcall(function()
+                            return d.spellId == entry.aura or d.spellId == entry.cast
+                        end)
+                        if okC and isOurs and not hit then hit = id end
+                    end
+                elseif okS then
+                    secretN = secretN + 1
+                end
+            end
+            addon:Print(string.format("Q4 instances: %d total, %d readable, %d secret",
+                #ids, readable, secretN))
+            if hit then
+                addon:Print(string.format("   |cff2ecc71EXACT IDENTITY|r via instance %d - no frame, no CDM needed", hit))
+            elseif #ids == 0 then
+                addon:Print("   |cffff6600enumerated ZERO|r - auras silently absent, not secret")
+            elseif readable > 0 then
+                addon:Print("   |cffff6600readable instances exist, none is ours|r - ours is among the secret set")
+            else
+                addon:Print("   |cffff6600every instance secret|r - route closed for this unit/filter")
+            end
+        else
+            addon:Print("Q4 |cffff6600GetUnitAuraInstanceIDs call failed|r")
+        end
+    else
+        addon:Print("Q4 |cffff6600per-instance secrecy API unavailable|r (needs GetUnitAuraInstanceIDs + ShouldUnitAuraInstanceBeSecret)")
+    end
+
+    -- Q5: which aura FILTERS does our buff actually match? The bridge currently asks
+    -- "HELPFUL|PLAYER", which every trinket proc also satisfies - that breadth IS the mis-bind.
+    -- If our aura also carries a narrower flag (BIG_DEFENSIVE is the hope), the bridge can ask
+    -- for that instead and stop matching unrelated procs. Run OUT of combat, where we can
+    -- resolve the true instance first: testing filters against a guessed instance proves nothing.
+    do
+        local UAf = C_UnitAuras
+        local known = nil
+        if UAf and UAf.GetPlayerAuraBySpellID then
+            local okD, d = pcall(UAf.GetPlayerAuraBySpellID, entry.aura)
+            known = okD and d and d.auraInstanceID or nil
+        end
+        -- The question is NOT "what does our aura match" - it is "does any narrower filter
+        -- SEPARATE our aura from the other player-helpful auras". That is answerable without
+        -- knowing which instance is ours: count how many of the whole HELPFUL|PLAYER set match
+        -- each narrow token. A token matched by exactly 1 of N is a discriminating filter and
+        -- can replace "HELPFUL|PLAYER" in the bridge; a token matched by all N or none is
+        -- useless. This works IN COMBAT, where the exact-instance version cannot.
+        local TOKENS = { "BIG_DEFENSIVE", "IMPORTANT", "EXTERNAL_DEFENSIVE", "CANCELABLE",
+                         "NOT_CANCELABLE", "RAID", "RAID_IN_COMBAT", "CROWD_CONTROL" }
+        if UAf and UAf.IsAuraFilteredOutByInstanceID and UAf.GetUnitAuraInstanceIDs then
+            local okIDs, ids = pcall(UAf.GetUnitAuraInstanceIDs, "player", "HELPFUL|PLAYER", nil, 0, 0)
+            if okIDs and type(ids) == "table" and #ids > 0 then
+                local parts = {}
+                for t = 1, #TOKENS do
+                    local n, ourHit = 0, false
+                    for i = 1, #ids do
+                        local okF, out = pcall(UAf.IsAuraFilteredOutByInstanceID, "player", ids[i], TOKENS[t])
+                        if okF and out == false then
+                            n = n + 1
+                            if known and ids[i] == known then ourHit = true end
+                        end
+                    end
+                    if n > 0 then
+                        parts[#parts + 1] = string.format("%s=%d%s", TOKENS[t], n, ourHit and "*" or "")
+                    end
+                end
+                addon:Print(string.format("Q5 of %d player-helpful auras: %s", #ids,
+                    (#parts > 0) and table.concat(parts, " ") or "|cffff6600no narrow token matches any|r"))
+                addon:Print("|cff888888   a token matching exactly 1 discriminates -> use it in the bridge"
+                    .. (known and "; * = confirmed ours" or "") .. "|r")
+            else
+                addon:Print("Q5 |cffff6600no player-helpful auras enumerated|r")
+            end
+        else
+            addon:Print("Q5 filters: |cffff6600filter API unavailable|r")
+        end
+    end
+
+    -- Bridge health. If `ambiguous` dominates `bound`, the single-candidate guard is refusing
+    -- every batch and the tracker can never bind in combat - which presents as a false "down".
+    if MT and MT.GetBridgeDiag then
+        local okG, d = pcall(MT.GetBridgeDiag)
+        if okG and type(d) == "table" then
+            addon:Print(string.format("bridge: batches=%d bound=%d ambiguous=%d lastCand=%d maxCand=%d",
+                d.batches or 0, d.bound or 0, d.ambiguous or 0, d.lastCandidates or 0, d.maxCandidates or 0))
+            -- Needs a real sample before crying starvation: measured in game, "1 ambiguous,
+            -- 0 bound" simply means the first clean batch has not arrived yet, and it bound
+            -- normally seconds later. Only a sustained run of ambiguity is evidence.
+            if (d.ambiguous or 0) >= 6 and (d.bound or 0) == 0 then
+                addon:Print("   |cffff0000guard may be starving the bind|r - many batches, never bound")
+            end
         end
     end
 

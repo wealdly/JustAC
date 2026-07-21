@@ -1,8 +1,21 @@
 # Identifying a specific aura in 12.0 combat
 
-**Status: CLOSED.** There is no way for this addon to obtain the `auraInstanceID` of a
-*named* spell's aura on the player during combat. Everything below is settled from the
-client source mirror plus in-game measurement. Do not re-derive it.
+**Status: CONDITIONAL.** Exact identity IS obtainable in combat, by two routes - but neither
+covers a `ContextuallySecret` aura in the default UI configuration, which is why the tank
+maintenance slot shows no stack count. Settled from the client source mirror plus in-game
+measurement (`/jac inspect maintenance`).
+
+> An earlier revision of this document declared the problem CLOSED and stated that the
+> Cooldown Manager join was unavailable. That was **wrong**: it assumed a viewer the player
+> cannot see is unpopulated. A viewer kept *shown at alpha 0* stays fully populated. The
+> correction is in "Route 1" below.
+
+## The two routes, and where each stops
+
+**Route 1 - Cooldown Manager join.** Works. Requires the viewer to be laid out.
+**Route 2 - per-instance secrecy.** Works. Requires the aura not to be secret.
+
+Neither covers Ironfur/Bone Shield by default, so the maintenance slot renders no count.
 
 ## The question
 
@@ -32,6 +45,20 @@ with a secret `spellId` as the value - an anonymous bag, backwards from what is 
 a plain-named `spellID` field sits beside an instance id (`Blizzard_NamePlateAuras.lua:39`,
 `BuffFrame.lua:797`) it holds a *copied secret*; assignment does not launder.
 
+**Tooltips are closed too, both directions.** `C_TooltipInfo.GetUnitBuff`,
+`GetUnitBuffByAuraInstanceID` and `GetUnitDebuffByAuraInstanceID` all carry
+`SecretWhenUnitAuraRestricted = true` (`TooltipInfoDocumentation.lua:1240, :1259, :1294`), so
+scanning tooltips for the aura's NAME returns secret strings - unreadable, uncomparable.
+
+Nor can a value be drawn into a tooltip and read back. That is the system's core invariant:
+anything derived from a secret stays secret. Display sinks (`SetText`,
+`SetCooldownFromDurationObject`, `SetVertexColor`) accept secrets precisely because they are
+TERMINAL - the value enters the engine and never returns to Lua. Render-then-read would launder
+any secret through a hidden FontString and make the whole restriction decorative.
+The Cooldown Manager is not a counter-example: it does not launder. Blizzard's UNTAINTED code
+compares the secret and stores a PLAIN result, and we read that stored number. Borrowed
+privilege, not a leak - which is why it is the only route of its kind.
+
 **The combat log is hard-blocked**, not merely secret - accessors live only in
 `C_CombatLogSecure` (`Environment = "SecureOnly"`). That was the only route to exact stack
 counts. See the do-not-re-add note in `DebugCommands.lua`.
@@ -40,7 +67,28 @@ counts. See the do-not-re-add note in `DebugCommands.lua`.
 stack count readable. It is secret; `GetAuraApplicationDisplayCount` returns a secret string.
 The only payoff from a correct instance is the `DurationObject` for the swipe.
 
-## The one exception, and why it is not usable
+## Route 2: per-instance secrecy (no frames, no UI dependency)
+
+`C_UnitAuras.GetUnitAuraInstanceIDs(unit, filter, maxCount, sortRule, sortDirection)` returns a
+**plain table of instance ids** - its return carries no `SecretWhenUnitAuraRestricted` and no
+`ConditionalSecretContents` (contrast `GetUnitAuras`, `UnitAuraDocumentation.lua:407`, which
+does). `C_Secrets.ShouldUnitAuraInstanceBeSecret(unit, auraInstanceID)` then answers per id with
+a plain bool. For instances it reports NON-secret, `GetAuraDataByAuraInstanceID(...).spellId` is
+readable and directly comparable - **exact identity, no Blizzard frame involved.**
+
+Pin `sortRule = Unsorted (0)`; the Expiration and Name rules order by data we cannot read.
+
+Measured in combat on a Guardian Druid: `14 instances total, 2 readable, 12 secret`. So the
+enumeration works and the partition is real - but Ironfur is `ContextuallySecret`
+(`GetSpellAuraSecrecy = 2`) and therefore always lands in the secret group. **Route 2 gives
+exact identity only for auras that are not secret** - in practice the long-duration ones
+(flask, food, weapon imbue, raid buffs). That subset is genuinely useful elsewhere in this
+addon; it just cannot serve the maintenance slot.
+
+Note this contradicts a claim seen elsewhere that combat aura enumeration returns nothing:
+that applies to `GetAuraDataByIndex`, not to `GetUnitAuraInstanceIDs`.
+
+## Route 1: the Cooldown Manager join, and its real condition
 
 `Blizzard_CooldownViewer` *does* perform the match - it is the only system whose job requires
 it. Untainted, it reads the secret `spellId`, matches it against a tracked cooldown, and
@@ -51,11 +99,27 @@ self.auraInstanceID = auraInstanceID;   -- plain
 self.auraSpellID    = auraSpellID;      -- SECRET, never touch
 ```
 
-Reading `item:GetAuraSpellInstanceID()` would be legitimate laundering. **Measured in game, it
-is unavailable:** with the viewers hidden, every pooled item frame has `cooldownID == nil`, so
-no frame carries an instance id at all. `cooldownViewerEnabled = true` and
-`IsCooldownViewerAvailable() = true` are *not* sufficient - the viewer must actually be
-displayed. That is a UI configuration the addon cannot require of players.
+Reading `item:GetAuraSpellInstanceID()` is legitimate laundering, and it works. The condition is
+that the viewer must be **shown**: measured in game, with the viewers hidden every pooled item
+frame has `cooldownID == nil`, so no frame carries an instance id. `cooldownViewerEnabled = true`
+and `IsCooldownViewerAvailable() = true` are *not* sufficient - the frame must be laid out in
+Edit Mode.
+
+**Shown does not mean visible.** A viewer held at `SetAlpha(0)` with mouse motion disabled stays
+fully populated - pool laid out, `RefreshLayout` running, `auraInstanceID` current - while being
+invisible and non-interactive to the player. Only `Hide()` empties the pool. So requiring the
+viewer is an onboarding question, not an impossibility: the player must place it once, after
+which it can be made to disappear. Defend the alpha with `hooksecurefunc` on the viewer's
+`SetAlpha` (guarded against re-entrancy) and rebuild the spell->frame map on `RefreshLayout`,
+since pooled frames are reshuffled by `layoutIndex`.
+
+Identity comes from `child.cooldownInfo` - `spellID` / `overrideSpellID` /
+`overrideTooltipSpellID` / `linkedSpellIDs` are plain numbers compared with ordinary `==` - then
+`child.auraInstanceID` and `child.auraDataUnit` are read as plain fields. Never call
+`item:GetSpellID()`: it returns the secret `auraSpellID`.
+
+Not implemented here: JustAC would have to require the player to configure a Blizzard UI it
+otherwise has nothing to do with. Revisit if the maintenance slot's stack count is wanted back.
 
 Measured on a Guardian Druid, in combat, Ironfur active:
 

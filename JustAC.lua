@@ -1769,7 +1769,9 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
 
     -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
-    -- spellID from UNIT_SPELLCAST_SUCCEEDED is NeverSecret (player's own cast).
+    -- spellID from UNIT_SPELLCAST_SUCCEEDED reads plain for the player's own cast (the event is
+    -- SecretWhenUnitSpellCastRestricted, which exempts us) - not NeverSecret; a per-spell
+    -- AlwaysSecret override can still apply, so the IsSecretValue guard stays.
     if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
         -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
         -- so one call covers both renderers (debounce state is now shared in UIRenderer).

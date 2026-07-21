@@ -192,9 +192,41 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 /jac inspect castdiag         - Armed one-shot cast-interruptibility probe
 /jac inspect healthprobe      - OOC health-detection channel sweep (run while hurt)
 /jac inspect validate [arm]   - Validate every secrecy/API assumption; arm = diff on combat enter/exit
+/jac inspect maintenance      - Tank maintenance slot: aura secrecy, CDM join, per-instance
+                                identity, bridge counters (run IN combat with the buff up)
 /jac find [spell]             - Locate spell on action bars (defaults to AC suggestion)
 /jac why <spell>              - Per-stage verdict on why a spell is/isn't in the queue
 ```
+
+## Reading in-game results from disk
+
+Probe output does NOT have to be copied out of the chat frame. Two channels exist; prefer them,
+they remove a whole round trip per question.
+
+**SavedVariables (structured, preferred).** `## SavedVariables: JustACDB JustACGlobal`, written to:
+
+```
+WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua
+```
+
+(`.bak` alongside it is the previous session.) Anything parked on `JustACGlobal` is readable
+directly off disk. **It only flushes on `/reload` or logout** - so the loop is
+*play → `/reload` → read the file*, never live tailing. Ask for the `/reload`; without it the
+file still holds the previous session and you will analyse stale data and not notice.
+
+**Chat log (raw, opt-in).** `/chatlog` writes `Logs/WoWChatLog.txt` under the WoW root. Absent
+unless the user enabled it - check before assuming, and prefer SavedVariables anyway since chat
+output is truncated, interleaved with game spam, and unstructured.
+
+**Why this matters for hard bugs.** A pasted snapshot shows one moment. Intermittent faults -
+a tracker stuck in a wrong state for minutes, a bind that never retries, a state that a
+`/reload` silently clears - are only diagnosable from a time series. For those, have the probe
+append to a debug-only ring buffer on `JustACGlobal` (bounded, e.g. 300 entries, gated behind
+`/jac debug` so it never runs for normal players or bloats the file), then read the sequence.
+Prefer that over asking the user to catch the moment by hand.
+
+Debug commands and this tooling are dev-facing: they never appear in `UNRELEASED.md` /
+`CHANGELOG.md` (see Versioning).
 
 ## Defensive Spell System
 
@@ -296,6 +328,9 @@ end
 - `Documentation/MACRO_PARSING_DEEP_DIVE.md` - Macro conditional parsing
 - `Documentation/12.0_COMPATIBILITY.md` - API compatibility, secret values, implementation status
 - `Documentation/AURA_DETECTION_ALTERNATIVES.md` - Alternative aura detection methods for 12.0
+- `Documentation/AURA_IDENTITY_12.0.md` - Identifying a SPECIFIC spell's aura in combat: the two
+  routes that work, their conditions, and the measured dead ends. Read before proposing any
+  "just look up the aura by spell id" solution
 - `Documentation/VERSION_CONDITIONALS.md` - Version-conditional patterns for 12.0 compatibility
 - `README.md` - User-facing docs, installation, credits
 - `CHANGELOG.md` - Release history (GPL-3.0-or-later since v2.95)

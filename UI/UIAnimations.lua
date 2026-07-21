@@ -277,6 +277,24 @@ local GLOW_CONFIG = {
         pauseField  = nil,
         clearsProc  = false,
     },
+    -- Stage 1 of the tank maintenance cue: the buff is still up but decaying. The loud proc
+    -- burst is stage 2 (it has actually lapsed), so this one is the quieter crawl.
+    -- r/g/b MUST stay identical to MAINTENANCE_GLOW in UIRenderer.lua - the two stages are the
+    -- same cue at two intensities, and a hue shift between them reads as a different meaning.
+    -- desaturate = true for the same reason ShowColoredProcGlow desaturates: the atlas base is
+    -- gold, and multiplying a cool tint into gold gives muddy olive.
+    MAINTENANCE = {
+        frameKey    = "MaintenanceHighlightFrame",
+        r = 0.55, g = 0.78, b = 1.00,       -- keep in sync with MAINTENANCE_GLOW
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- the slot is combat-only; always animate
+        flagField   = "hasMaintenanceGlow",
+        pauseField  = nil,
+        -- False deliberately: the proc burst on this same icon is our own stage 2, and the
+        -- renderer sequences the handoff. Letting this clear it would fight that.
+        clearsProc  = false,
+    },
     PRECOMBAT = {
         frameKey    = "PrecombatHighlightFrame",
         -- Magenta, not green: these render inside the DEFENSIVE cluster next to the green glow.
@@ -807,6 +825,12 @@ UIAnimations.StartBurstGlow = StartBurstGlow
 UIAnimations.StopBurstGlow = StopBurstGlow
 UIAnimations.StartPrecombatGlow = StartPrecombatGlow
 UIAnimations.StopPrecombatGlow = StopPrecombatGlow
+UIAnimations.StartMaintenanceGlow = function(icon, isInCombat)
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.MAINTENANCE, isInCombat)
+end
+UIAnimations.StopMaintenanceGlow = function(icon)
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.MAINTENANCE)
+end
 UIAnimations.ShowProcGlow = ShowProcGlow
 UIAnimations.HideProcGlow = HideProcGlow
 UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
