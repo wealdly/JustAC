@@ -1691,9 +1691,3 @@ function UINameplateOverlay.HideAll()
     end
 end
 
--- Called by JustAC when the player successfully casts a CC spell.
--- Delegates to UIRenderer.NotifyCCApplied() so the shared debounce state
--- (now consolidated there) is updated regardless of which renderer is active.
-function UINameplateOverlay.NotifyCCApplied()
-    if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
-end

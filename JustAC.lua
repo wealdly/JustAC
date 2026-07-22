@@ -1780,8 +1780,9 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- SecretWhenUnitSpellCastRestricted, which exempts us) - not NeverSecret; a per-spell
     -- AlwaysSecret override can still apply, so the IsSecretValue guard stays.
     if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
-        -- UINameplateOverlay.NotifyCCApplied() delegates to UIRenderer.NotifyCCApplied() internally,
-        -- so one call covers both renderers (debounce state is now shared in UIRenderer).
+        -- One call covers both renderers: the CC debounce state lives in UIRenderer and the
+        -- overlay reads it from there. (The overlay used to carry a forwarder for this; it had
+        -- no callers and is gone - do not re-add one, call UIRenderer directly.)
         if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
         -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
         -- will check if UnitIsCrowdControlled("target") became true.

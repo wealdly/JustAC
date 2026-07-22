@@ -1154,7 +1154,7 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
         -- the remaining pool and the damage coming, and we can read neither in combat.
         -- If the shield is eaten before the timer, the aura drops and the authoritative "down"
         -- path catches it at rank 1, so that case needs no prediction.
-        { cast = 190456, aura = 190456, dur = 12.0, lead = 4.0, absorb = true, stacks = true },  -- Ignore Pain
+        { cast = 190456, aura = 190456, dur = 12.0, lead = 4.0, stacks = true },  -- Ignore Pain
     },
     PALADIN_2     = {
         -- NOT chargeGated, despite looking like its Warrior/DH counterparts: SpellCategories

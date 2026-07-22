@@ -130,6 +130,7 @@ local INSPECT_TOPICS = {
     stacks = "StacksProbe",
     maintenance = "MaintenanceProbe",
     maintlog    = "MaintenanceLog",
+    locwatch    = "LossOfControlWatch",
     enrage      = "EnrageProbe",
     durprobe    = "DurationProbe",
     chargediag  = "ChargeDiagnostics",

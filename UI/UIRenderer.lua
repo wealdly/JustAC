@@ -1075,13 +1075,83 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- icon twice or an ability that vanished from both. Combat-only, and that gates the DISPLAY
     -- only - the tracker keeps binding the aura out of combat, so the slot has a correct timer
     -- from the first second of a pull instead of an empty swipe that fills in late.
+    -- CROWD-CONTROL ESCAPE. This is not a sub-feature of upkeep - it is the frame's OTHER use,
+    -- and it can claim the slot on its own. Any spec can be held, so it does not require a
+    -- maintenance entry or even a tank spec; a caster with upkeep disabled still gets it.
+    -- Resolved FIRST because being stunned outranks any upkeep decision, and because the slot
+    -- may be live for this reason alone (entry will be nil then).
+    -- Offered only when there is something to PRESS: with no counter ready the slot falls back
+    -- to upkeep rather than spending itself telling the player they are stuck.
+    -- Nothing here is secret - C_LossOfControl reads plain in combat - so unlike the aura path
+    -- there is no identity gate, no estimate and no unknown state.
+    local ccSpellID, ccDurObj
+    local ccMacro
+    if profile and profile.showCCBreak and MT then
+        if MT.GetCCBreak then
+            local sid, _, durObj = MT.GetCCBreak()
+            ccSpellID, ccDurObj = sid, durObj
+        end
+        -- Macro escape is the fallback for root/snare/slow, where a real breaker spell often
+        -- does not exist - prefer a spell breaker when one is ready (it does not drop a druid's
+        -- form), else fall back to the player's /cancelform macro.
+        if not ccSpellID and MT.GetCCBreakMacro then
+            local name, durObj = MT.GetCCBreakMacro(profile)
+            if name then ccMacro, ccDurObj = name, durObj end
+        end
+    end
+
+    -- MACRO ESCAPE render: fully self-contained, because a macro has no spellID and every spell
+    -- API below (usability, charges, range, GetSpellHotkey) would be wrong for it. Icon + key
+    -- come from macro APIs, the swipe is the CC's remaining time, and it always glows - it is
+    -- only ever offered while the player is actually held.
+    if ccMacro then
+        local mIcon = select(2, GetMacroInfo(ccMacro))
+        local key = ActionBarScanner and ActionBarScanner.GetMacroHotkey
+            and ActionBarScanner.GetMacroHotkey(ccMacro) or ""
+        -- No bound slot => no key to press => the escape is not actionable, so show nothing
+        -- rather than an unpressable icon. The option UI warns about this case.
+        if not mIcon or key == "" then
+            if icon._maintShown then ClearMaintenanceSlot(icon) end
+            return
+        end
+        SetDefensiveIconVisible(icon, true)
+        icon:SetAlpha(icon.overlayOpacity or 1)
+        icon._maintShown = true
+        icon._maintID = nil                 -- spell-path change detection must re-fire after this
+        icon.spellID, icon.isItem = nil, false
+        icon.maintenanceAuraID = nil
+        icon.iconTexture:SetTexture(mIcon)
+        icon.iconTexture:Show()
+        icon.iconTexture:SetDesaturation(0)
+        if icon.cooldown then
+            if ccDurObj and icon.cooldown.SetCooldownFromDurationObject then
+                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, ccDurObj)
+            else
+                icon.cooldown:SetCooldown(0, 0)
+            end
+        end
+        if icon.chargeText then icon.chargeText:Hide() end
+        local to = profile.textOverlays
+        local showHotkeys = not to or not to.hotkey or to.hotkey.show ~= false
+        icon.cachedHotkey = key
+        SetIconHotkeyText(icon, key, showHotkeys)
+        if not icon._maintGlow then
+            UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
+                MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
+            icon._maintGlow = true
+        end
+        return
+    end
+
     local active, entry = false, nil
     if MT and MT.IsSlotActive then active, entry = MT.IsSlotActive(profile) end
     local state, inst = "none", nil
     -- Plain assignment, NOT `local` - shadowing `state` here silently kills the glow.
-    if active and MT and MT.GetState then state, _, inst = MT.GetState() end
+    if active and entry and MT and MT.GetState then state, _, inst = MT.GetState() end
 
-    if not active or not entry then
+    -- Live if EITHER use has something to show. `entry` may legitimately be nil (CC escape with
+    -- no maintenance buff), so it can no longer gate the whole slot.
+    if not active or (not entry and not ccSpellID) then
         -- Guard the common case: this runs every render tick and inactive is the norm.
         if icon._maintShown then ClearMaintenanceSlot(icon) end
         return
@@ -1089,7 +1159,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
 
     -- No `or entry.aura` fallback: a future cast-less entry must fail loudly rather than run
     -- range and usability checks against an aura id.
-    local displayID = entry.cast
+    local displayID = ccSpellID or entry.cast
 
     -- Icon art only changes on a spec change, so refresh it on transition.
     if icon._maintID ~= displayID then
@@ -1097,8 +1167,10 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         icon.spellID = displayID
         icon.currentID = displayID
         icon.isItem = false
-        -- Tooltip names the buff this cast maintains, when it is a different spell.
-        icon.maintenanceAuraID = (entry.aura ~= displayID) and entry.aura or nil
+        -- Tooltip names the buff this cast maintains, when it is a different spell. Nil in the
+        -- CC-escape case: `entry` may not exist at all there, and the tooltip should describe
+        -- the escape ability itself rather than an unrelated maintenance buff.
+        icon.maintenanceAuraID = (entry and entry.aura ~= displayID) and entry.aura or nil
         local info = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(displayID)
         if info and info.iconID then
             icon.iconTexture:SetTexture(info.iconID)
@@ -1128,7 +1200,14 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     local exactBind = MT and MT.IsBindExact and MT.IsBindExact()
     if icon.cooldown then
         local applied = false
-        if entry.chargeGated then
+        if ccSpellID then
+            -- The CC's OWN remaining time, engine-drawn: how long until you're free, which is
+            -- the only clock that matters while you cannot act.
+            if ccDurObj and icon.cooldown.SetCooldownFromDurationObject then
+                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, ccDurObj)
+                applied = true
+            end
+        elseif entry.chargeGated then
             -- The ability's own recharge. Secret-safe: the DurationObject goes straight to the
             -- engine, never read. `false` = include the GCD, so a fresh press reads as busy.
             if C_Spell and C_Spell.GetSpellCooldownDuration
@@ -1172,7 +1251,9 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- width-measured layout path. Nothing here measures it.
     if icon.chargeText then
         local shown = false
-        if entry.chargeGated then
+        if ccSpellID then
+            shown = false   -- an escape button has no meaningful count
+        elseif entry.chargeGated then
             -- CHARGES, not aura stacks. maxCharges is NeverSecret so it is safe to compare;
             -- currentCharges is SECRET in combat, so it goes straight to SetText and the engine
             -- renders it - same pass-through rule as everywhere else. No identity gate needed:
@@ -1188,8 +1269,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             -- Aura stacks, gated on a PROVEN bind: the engine renders the true count, but only
             -- off the right instance. The 3rd arg is an engine-side "only show if >= 2".
             local fn = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
-            local exact = MT and MT.IsBindExact and MT.IsBindExact(entry)
-            if exact and fn and inst then
+            -- Reuse exactBind from above: same entry, same frame, same answer.
+            if exactBind and fn and inst then
                 local ok, text = pcall(fn, "player", inst, 2)
                 if ok and text then
                     icon.chargeText:SetText(text)
@@ -1217,8 +1298,13 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
 
     -- Hotkey + range colouring, so a rotational button in this slot (Blood's Marrowrend)
     -- still tells the player whether they can actually reach and afford it.
-    local showHotkeys = profile.textOverlays and profile.textOverlays.hotkey
-        and profile.textOverlays.hotkey.show ~= false
+    -- Same polarity as every other surface: a MISSING textOverlays table means "not configured",
+    -- which defaults to SHOW. The inverted form (`overlays and overlays.hotkey and ...`) read
+    -- naturally but defaulted this one slot to HIDE, so a profile without the table would have
+    -- lost its keybind here alone. AceDB supplies a default today, which is the only reason that
+    -- never surfaced - do not "simplify" this back.
+    local to = profile.textOverlays
+    local showHotkeys = not to or not to.hotkey or to.hotkey.show ~= false
     if not icon.cachedHotkey then
         icon.cachedHotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
             and ActionBarScanner.GetSpellHotkey(displayID)) or ""
@@ -1248,7 +1334,18 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     if BlizzardAPI and BlizzardAPI.IsSpellReady then
         ready = BlizzardAPI.IsSpellReady(displayID) and true or false
     end
-    local wantGlow = (state == "down" or state == "refresh") and usable and ready
+    -- A CC break always glows: it is only ever offered when the player is actually held AND
+    -- owns a counter that is ready, so there is no state in which showing it quietly is right.
+    local wantGlow = ccSpellID and true
+        or ((state == "down" or state == "refresh") and usable and ready)
+
+    -- Marker cues, same rules as the other surfaces. Off-GCD is the valuable one here:
+    -- Ignore Pain and Shield of the Righteous are off the global, so topping up your
+    -- mitigation costs nothing from the rotation - exactly the call this slot exists to
+    -- prompt. Always a spell, never an item or placeholder, so no markable gate is needed.
+    ApplyCueDot(icon,
+        MoveCastDotEnabled(profile) and IsMoveCastableNow(displayID, nil),
+        profile and profile.showOffGcdDot and IsOffGCDSpell(displayID))
     if wantGlow ~= icon._maintGlow then
         if wantGlow then
             UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
@@ -1623,6 +1720,15 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
 
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.
+
+            -- Marker cues, same rules as the other surfaces. Both matter here:
+            --   off-GCD   - several kicks and CCs are off the global, so you can fire one
+            --               without giving up a rotation cast. That is worth knowing on the
+            --               most time-critical button on screen.
+            --   move-cast - interrupts and CCs frequently need to be used mid-reposition.
+            ApplyCueDot(intIcon,
+                MoveCastDotEnabled(ctx.profile) and IsMoveCastableNow(intSpellID, nil),
+                ctx.profile and ctx.profile.showOffGcdDot and IsOffGCDSpell(intSpellID))
 
             if not intIcon.hasInterruptGlow then
                 UIAnimations.ShowInterruptProcGlow(intIcon)

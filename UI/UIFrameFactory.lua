@@ -37,8 +37,11 @@ function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
     local shift = 0
     -- Static reservation: no combat gate (this anchor is set once at creation), but a slot the
     -- user turned off can never appear, so reserving its row would leave dead space.
-    local hasMaint = (not profile or profile.showMaintenanceSlot ~= false)
-        and SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive() ~= nil
+    -- The slot serves two independent purposes, so reserve its row for EITHER. The CC-escape
+    -- use is not tank-gated: any spec can be stunned, so it does not require a maintenance entry.
+    local hasMaint = ((not profile or profile.showMaintenanceSlot ~= false)
+            and SpellDB and SpellDB.GetMaintenanceDefensive and SpellDB.GetMaintenanceDefensive() ~= nil)
+        or (profile and profile.showCCBreak) or false
     local def = profile and profile.defensives
     if hasMaint and not (def and def.detached) then
         -- The clash only exists when the defensive cluster sits on the side the aura extends

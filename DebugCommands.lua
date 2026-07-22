@@ -3879,4 +3879,99 @@ function DebugCommands.MaintenanceProbe(addon)
             end
         end
     end
+
+    -- Q6: loss-of-control readout. Answers "why no CC break" directly - what the game reports
+    -- while you are held, whether locType reads plain or secret, and what the tracker resolves.
+    local LOC = C_LossOfControl
+    if LOC and LOC.GetActiveLossOfControlDataCount then
+        local okC, n = pcall(LOC.GetActiveLossOfControlDataCount)
+        addon:Print(string.format("Q6 loss-of-control: count=%s", okC and SafeSecret(n) or "err"))
+        if okC and type(n) == "number" and n > 0 and LOC.GetActiveLossOfControlData then
+            for i = 1, n do
+                local okD, d = pcall(LOC.GetActiveLossOfControlData, i)
+                if okD and d then
+                    local lt = d.locType
+                    addon:Print(string.format("   [%d] locType=%s%s displayType=%s",
+                        i, SafeSecret(lt),
+                        BlizzardAPI and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(lt)
+                            and " |cffff6600(SECRET)|r" or "",
+                        SafeSecret(d.displayType)))
+                end
+            end
+        end
+        local sid, item = nil, nil
+        if MT and MT.GetCCBreak then sid, item = MT.GetCCBreak() end
+        local macro = MT and MT.GetCCBreakMacro and MT.GetCCBreakMacro(addon.db.profile)
+        addon:Print(string.format("   resolved: spell=%s item=%s macro=%s",
+            tostring(sid), tostring(item), tostring(macro)))
+        -- The selected macro and whether it actually yields a keybind: "" means it is not on a
+        -- bound action-bar slot, so the slot correctly shows nothing. This is the other half of
+        -- "macro set but nothing appears".
+        local chosen = addon.db.profile.ccBreakMacro
+        if chosen and chosen ~= "" then
+            local ABS = LibStub("JustAC-ActionBarScanner", true)
+            local key = ABS and ABS.GetMacroHotkey and ABS.GetMacroHotkey(chosen) or "?"
+            addon:Print(string.format("   macro '%s' keybind=%s%s", chosen,
+                (key ~= "" and key ~= "?") and key or "|cffff6600(none - not on a bound action bar slot)|r",
+                (key == "?") and " (scanner unavailable)" or ""))
+        end
+        if not sid and not macro then
+            addon:Print("|cff888888   nothing resolved. If locType above shows a string I don't map")
+            addon:Print("|cff888888   (STUN/ROOT/FEAR are UNVERIFIED guesses), that is the bug - report it.|r")
+        end
+    else
+        addon:Print("Q6 loss-of-control: |cffff6600C_LossOfControl unavailable|r")
+    end
+end
+
+--- /jac inspect locwatch - ARM a loss-of-control capture. CC is a 2-4s window that a hand-run
+--- probe keeps missing, so listen for the event instead and dump the REAL data the instant it
+--- lands: the actual locType string (which the source cannot confirm), whether it reads secret,
+--- and whether any of our mappings/breakers resolve. This is what settles "macro set, nothing
+--- shows" - get CC'd once and it prints the truth.
+function DebugCommands.LossOfControlWatch(addon)
+    if DebugCommands._locWatch then
+        DebugCommands._locWatch:UnregisterAllEvents()
+        DebugCommands._locWatch:SetScript("OnEvent", nil)
+        DebugCommands._locWatch = nil
+        addon:Print("|cffffff00locwatch: disarmed.|r")
+        return
+    end
+    local f = CreateFrame("Frame")
+    DebugCommands._locWatch = f
+    local armT = GetTime()
+    local fires = 0
+    local LOC = C_LossOfControl
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+
+    f:RegisterEvent("LOSS_OF_CONTROL_ADDED")
+    f:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
+    f:SetScript("OnEvent", function()
+        if not (LOC and LOC.GetActiveLossOfControlDataCount) then return end
+        local okC, n = pcall(LOC.GetActiveLossOfControlDataCount)
+        if not okC or type(n) ~= "number" or n < 1 then return end
+        fires = fires + 1
+        addon:Print(string.format("|cff00ff00LOC fired|r count=%d", n))
+        for i = 1, n do
+            local okD, d = pcall(LOC.GetActiveLossOfControlData, i)
+            if okD and d then
+                local lt = d.locType
+                local secret = BlizzardAPI and BlizzardAPI.IsSecretValue
+                    and BlizzardAPI.IsSecretValue(lt)
+                addon:Print(string.format("  [%d] locType=%s%s displayType=%s spellID=%s",
+                    i, SafeSecret(lt), secret and " |cffff6600SECRET|r" or "",
+                    SafeSecret(d.displayType), SafeSecret(d.spellID)))
+            end
+        end
+        local sid = MT and MT.GetCCBreak and MT.GetCCBreak()
+        local macro = MT and MT.GetCCBreakMacro and MT.GetCCBreakMacro(addon.db.profile)
+        addon:Print(string.format("  -> resolves: spell=%s macro=%s", tostring(sid), tostring(macro)))
+        if fires >= 20 or GetTime() - armT > 600 then
+            f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
+            DebugCommands._locWatch = nil
+            addon:Print("|cffffff00locwatch: window ended.|r")
+        end
+    end)
+    addon:Print("|cff00ff00=== locwatch ARMED (10min) ===|r get stunned/rooted; it prints the real locType on the spot.")
+    addon:Print("|cff888888  run again to disarm early.|r")
 end

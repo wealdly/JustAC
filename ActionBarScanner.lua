@@ -1008,6 +1008,30 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
     return ""
 end
 
+--- Keybind for a MACRO by name. Macros the normal scanner can't resolve because they cast no
+--- spell - /cancelform is the case this exists for - are still bound like any action: find the
+--- slot whose action text is this macro, read its key. "" when the macro is on no bound slot
+--- (macro-window-only), which is a real state the caller must treat as "cannot surface".
+--- @param macroName string
+--- @return string abbreviated keybind, or ""
+function ActionBarScanner.GetMacroHotkey(macroName)
+    if not macroName or macroName == "" or not GetActionText then return "" end
+    local slotMapping = GetCachedSlotMapping()
+    for slot in pairs(slotMapping) do
+        if HasAction(slot) then
+            local ok, text = pcall(GetActionText, slot)
+            if ok and text == macroName then
+                local baseKey = GetOptimizedKeybind(slot)
+                if baseKey and baseKey ~= "" then
+                    return AbbreviateKeybind(baseKey)
+                end
+                return ""   -- on a slot, but that slot has no key bound
+            end
+        end
+    end
+    return ""
+end
+
 function ActionBarScanner.InvalidateKeybindCache()
     InvalidateKeybindCache()
 end

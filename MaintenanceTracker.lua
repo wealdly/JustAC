@@ -63,6 +63,15 @@ local REFRESH_LEAD = 0.30
 -- evidence - a single set of module-level variables silently blended them together.
 local states = {}
 
+-- Per-frame memo for GetState. It is called several times a frame - IsSlotActive uses it, the
+-- renderer uses it, and the defensive queue builder uses it through IsSlotActive - and each
+-- call runs the full pick: EntryState per entry (Cooldown Manager frame walks included) plus
+-- readiness and usability queries. GetTime() is constant within a frame, so keying on it
+-- collapses those to one. It also removes a correctness wrinkle: the repeat calls each carried
+-- the binding side effects, and two picks in one frame could disagree if state moved between.
+-- Declared HERE, above Reset, which invalidates it - declaring it lower made that a global read.
+local pickCache = { t = nil }
+
 --- State bag for one entry, created on demand.
 local function S(entry)
     local key = entry and entry.aura
@@ -162,8 +171,14 @@ end
 --- Effective duration for the refresh clock: learned if we have ever seen it, else the static
 --- book value. @return number|nil
 local function EffectiveDuration(entry)
+    -- No `dur` means "this buff is NEVER time-based", not "we lack a number" - Bone Shield omits
+    -- it because stacks are eaten by damage, so any clock fabricates the warning. Learning the
+    -- real duration must NOT resurrect that: the aura genuinely reports 30s, which would fire a
+    -- refresh cue 21s after Marrowrend, precisely what the curation forbids. Learned values only
+    -- ever CORRECT a book value that exists (talent-extended Ironfur), never supply a missing one.
+    if not (entry and entry.dur) then return nil end
     local s = S(entry)
-    return (s and s.learnedDuration) or (entry and entry.dur) or nil
+    return (s and s.learnedDuration) or entry.dur
 end
 
 local function ResolveCooldownIDs(entry)
@@ -516,6 +531,10 @@ function MaintenanceTracker.Reset()
     -- Drop every entry's state wholesale: a different spec has different buffs, different
     -- cooldownIDs and different durations, so nothing here survives the switch.
     wipe(states)
+    -- And invalidate the per-frame pick, or a spec change inside one frame would keep serving
+    -- the OLD spec's entry until the next tick.
+    pickCache.t = nil
+    MaintenanceTracker._activeEntry = nil
 end
 
 --- Local-clock fallback for the swipe: our own cast time plus the entry's static duration.
@@ -667,10 +686,26 @@ end
 --- Falls back to the first entry so the slot always has an icon to draw.
 --- @return string state, table|nil entry, number|nil auraInstanceID
 function MaintenanceTracker.GetState()
+    local now = GetTime()
+    if pickCache.t == now then return pickCache.state, pickCache.entry, pickCache.inst end
+    -- Store on EVERY exit, not just the timestamp: setting `t` alone made the second call in a
+    -- frame hit the cache and return nils, blanking the slot.
+    local function memo(state, entry, inst)
+        pickCache.t, pickCache.state, pickCache.entry, pickCache.inst = now, state, entry, inst
+        MaintenanceTracker._activeEntry = entry
+        return state, entry, inst
+    end
     local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
     if not list then
-        MaintenanceTracker._activeEntry = nil
-        return "none", nil, nil
+        return memo("none", nil, nil)
+    end
+    -- Single-entry specs are the norm (currently all of them), and ranking one candidate can
+    -- only ever pick that candidate - so skip Urgency entirely, which also skips its readiness
+    -- and usability queries. The ranking stays for when a spec maintains two buffs again; it
+    -- just stops costing anything while it cannot discriminate.
+    if #list == 1 then
+        local st, en, inst = EntryState(list[1])
+        return memo(st or "unknown", en or list[1], inst)
     end
     local bestState, bestEntry, bestInst, bestRank
     for i = 1, #list do
@@ -682,10 +717,130 @@ function MaintenanceTracker.GetState()
             bestState, bestEntry, bestInst, bestRank = st, en or list[i], inst, rank
         end
     end
-    -- Remember it: GetEstimatedCooldown/IsBindExact are called by the renderer without an entry
-    -- argument, and must answer about the buff actually on screen.
-    MaintenanceTracker._activeEntry = bestEntry
-    return bestState or "unknown", bestEntry, bestInst
+    -- memo also records _activeEntry: GetEstimatedCooldown/IsBindExact are called by the
+    -- renderer without an entry argument, and must answer about the buff actually on screen.
+    return memo(bestState or "unknown", bestEntry, bestInst)
+end
+
+--------------------------------------------------------------------------------
+-- Crowd-control break: what can I press to get out of THIS?
+--------------------------------------------------------------------------------
+-- Unlike everything else in this file, none of it is secret. C_LossOfControl's index-based
+-- reads carry no SecretWhen* flag (only the ByUnit variant is restricted), so the type of CC
+-- on the player, its spell and its duration are all plainly readable in combat. No bridge, no
+-- instance binding, no exact-bind gate - the engine simply answers.
+--
+-- locType is a cstring from the engine; SpellMechanic ids are what the breaker data is keyed
+-- on, so this maps between them. Several types share a mechanic set on purpose (a fear break
+-- generally also covers horrify/turn). An unrecognised locType yields nothing rather than a
+-- guess: suggesting the wrong escape to a stunned tank is worse than suggesting none.
+local LOC_TYPE_MECHANICS = {
+    STUN            = { 12, 13 },       -- stunned, frozen
+    STUN_MECHANIC   = { 12, 13 },
+    FEAR            = { 5, 23, 24 },    -- fleeing, turned, horrified
+    FEAR_MECHANIC   = { 5, 23, 24 },
+    HORROR          = { 24, 23 },
+    ROOT            = { 7, 13 },        -- rooted, frozen
+    SNARE           = { 11, 8 },        -- snared, slowed
+    CHARM           = { 1 },            -- charmed
+    POSSESS         = { 1 },
+    CONFUSE         = { 2 },            -- disoriented
+    SLEEP           = { 10 },           -- asleep
+    INCAPACITATE    = { 14, 17, 2 },    -- incapacitated, polymorphed, disoriented
+    DISARM          = { 3 },            -- disarmed
+    -- SILENCE / PACIFYSILENCE / SCHOOL_INTERRUPT are deliberately absent: almost nothing
+    -- breaks them, and an empty result is the honest answer.
+}
+
+--- Mechanics for one loss-of-control entry, or nil.
+--- IMPORTANT: locType is NOT flagged NeverSecret in LossOfControlData (only priority,
+--- displayType and auraInstanceID are), so it CAN be a secret value - the restricted PvP
+--- context is the likely case. Indexing a table with a secret key throws, so guard it: a
+--- secret locType yields nil (no break shown) rather than breaking combat. The player's own
+--- CC via the non-ByUnit GetActiveLossOfControlData reads plain in normal play, so this only
+--- fails safe in the edge case, never in the common one.
+local function MechanicsFromLoC(data)
+    local lt = data and data.locType
+    if IsSecret(lt) or type(lt) ~= "string" then return nil end
+    return LOC_TYPE_MECHANICS[lt]
+end
+
+--- The CC currently on the player that we can actually do something about.
+--- @return number|nil spellID to press
+--- @return number|nil itemID non-zero when an item grants it
+--- @return any|nil durationObject the CC's remaining time, for the swipe
+function MaintenanceTracker.GetCCBreak()
+    local LOC = C_LossOfControl
+    if not (LOC and LOC.GetActiveLossOfControlDataCount and LOC.GetActiveLossOfControlData) then
+        return nil
+    end
+    local okC, count = pcall(LOC.GetActiveLossOfControlDataCount)
+    if not okC or IsSecret(count) or (count or 0) < 1 then return nil end
+
+    local CCB = LibStub("JustAC-CCBreakers", true)
+    if not (CCB and CCB.GetBreakers) then return nil end
+
+    for i = 1, count do
+        local okD, data = pcall(LOC.GetActiveLossOfControlData, i)
+        local mechanics = okD and MechanicsFromLoC(data)
+        if mechanics then
+            for m = 1, #mechanics do
+                local breakers = CCB.GetBreakers(mechanics[m])
+                if breakers then
+                    for spellID, itemID in pairs(breakers) do
+                        -- Castability is also the passive filter: the generated table is
+                        -- sourced from mechanic-immunity effects, which includes passives and
+                        -- abilities that are only immune mid-cast. Requiring "known and ready
+                        -- right now" drops those without hand-maintaining an exclusion list.
+                        if itemID == 0 and BlizzardAPI
+                           and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
+                           and (not BlizzardAPI.IsSpellReady or BlizzardAPI.IsSpellReady(spellID)) then
+                            local okDur, dur = pcall(LOC.GetActiveLossOfControlDuration, "player", i)
+                            return spellID, 0, okDur and dur or nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Mechanics a druid form-cancel escapes AND that we can actually DETECT. Shifting breaks roots,
+-- snares and slows - but C_LossOfControl only reports hard loss-of-control, and a pure movement
+-- slow is not one: measured in game, a slow gave count=0. There is no non-secret fallback either
+-- (GetUnitSpeed is SecretWhenUnitStatsRestricted). So of the three, ONLY roots are detectable,
+-- and only roots can be offered. Do not re-add 8/11 without a detection path that exists.
+local FORM_ESCAPABLE = { [7] = true }  -- rooted (the only form-escapable CC C_LossOfControl reports)
+
+--- A druid-only escape via the player's selected /cancelform macro, for the root/snare/slow
+--- cases the breaker table misses. Returns the macro's name + duration when the player is held
+--- by a form-escapable mechanic AND has designated a macro. Kept separate from GetCCBreak: that
+--- returns a spell to render, this returns a MACRO, which the renderer draws differently.
+--- @param profile table
+--- @return string|nil macroName, any|nil durationObject
+function MaintenanceTracker.GetCCBreakMacro(profile)
+    local macroName = profile and profile.ccBreakMacro
+    if not macroName or macroName == "" then return nil end
+    local LOC = C_LossOfControl
+    if not (LOC and LOC.GetActiveLossOfControlDataCount and LOC.GetActiveLossOfControlData) then
+        return nil
+    end
+    local okC, count = pcall(LOC.GetActiveLossOfControlDataCount)
+    if not okC or IsSecret(count) or (count or 0) < 1 then return nil end
+    for i = 1, count do
+        local okD, data = pcall(LOC.GetActiveLossOfControlData, i)
+        local mechanics = okD and MechanicsFromLoC(data)
+        if mechanics then
+            for m = 1, #mechanics do
+                if FORM_ESCAPABLE[mechanics[m]] then
+                    local okDur, dur = pcall(LOC.GetActiveLossOfControlDuration, "player", i)
+                    return macroName, okDur and dur or nil
+                end
+            end
+        end
+    end
+    return nil
 end
 
 --- Is the maintenance slot actually on screen right now? Shared by the renderer (which draws
@@ -694,10 +849,20 @@ end
 --- @param profile table
 --- @return boolean active, table|nil entry
 function MaintenanceTracker.IsSlotActive(profile)
-    if not profile or profile.showMaintenanceSlot == false then return false, nil end
+    if not profile then return false, nil end
     -- Combat only, matching the renderer - out of combat the ability belongs in the normal
     -- defensive queue like any other, so the exclusion must lift with the slot.
     if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return false, nil end
+    -- The frame has TWO independent uses, not one feature with a sub-feature: upkeep, and
+    -- escaping crowd control. Either can claim it alone. A caster with no maintenance buff can
+    -- still want the escape button, and a tank can want upkeep without it - so the slot is live
+    -- if EITHER is enabled and has something to say.
+    -- No entry is returned for the CC case: nothing is being maintained, so the defensive queue
+    -- has nothing to exclude.
+    if profile.showCCBreak and MaintenanceTracker.GetCCBreak and MaintenanceTracker.GetCCBreak() then
+        return true, nil
+    end
+    if profile.showMaintenanceSlot == false then return false, nil end
     -- The PICKED entry, not list[1]. This used to return the spec's first entry, so a spec
     -- maintaining two buffs always drew the first one while GetState reported the other's
     -- state - the icon said Shield Block while the timer belonged to Ignore Pain. It also

@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [4.51.0] - 2026-07-21
+
+### Added
+- **Escape from crowd control** *(Experimental, off by default)*: while you're held by something you can break - a stun, root or fear with a racial, trinket or class ability ready to counter it - the tank maintenance slot turns into that escape button, counting down the effect and glowing until you're free. It works on any specialization. This is experimental: it can only offer an escape for crowd control the game reports to addons, and movement slows in particular can't be detected in combat, so it won't cover everything. Turn it on under Defensives → Crowd Control Escape.
+
+### Changed
+- **The on-the-move and off-global-cooldown markers now show on interrupts, crowd control and the tank maintenance slot**, not just the offensive and defensive queues. The off-global marker earns its place on the maintenance slot especially: every tank upkeep button is off the global cooldown, so topping your mitigation back up costs nothing from your rotation.
+
+### Fixed
+- **Blood Death Knight's maintenance slot no longer asks for Bone Shield on a timer**: it glowed about 21 seconds after Marrowrend as though the buff were running down, but Bone Shield's stacks are spent by damage taken rather than by time, so that warning meant nothing. It now glows only when Bone Shield has actually gone.
+
 ## [4.50.0] - 2026-07-21
 
 ### Fixed

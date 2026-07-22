@@ -320,6 +320,81 @@ function Defensives.CreateTabArgs(addon)
                             return not standardEnabled and not overlayEnabled
                         end,
                     }),
+                    -- CROWD-CONTROL ESCAPE (70-71) - its OWN section, not part of tank
+                    -- maintenance above. It borrows that slot's frame when active, but it works
+                    -- for any spec whether or not the maintenance slot is enabled, so grouping
+                    -- it under maintenance would wrongly imply it needs a tank.
+                    ccBreakHeader = {
+                        type = "header",
+                        name = L["CC Escape"],
+                        order = 70,
+                    },
+                    ccBreakInfo = {
+                        type = "description",
+                        name = L["CC Escape info"],
+                        order = 70.5,
+                        fontSize = "small",
+                    },
+                    showCCBreak = W.toggle(addon, "showCCBreak", {
+                        name = L["CC Break"],
+                        desc = L["CC Break desc"],
+                        order = 71, width = "normal", default = false,
+                        onSet = function(a) a:ForceUpdateAll() end,
+                    }),
+                    -- DRUID ONLY. Roots, snares and slows are broken by shapeshifting, but that
+                    -- break is engine behaviour attached to the shift action, not a spell effect,
+                    -- so no generated table can find it. The player designates their /cancelform
+                    -- macro; the slot then surfaces ITS keybind. A select (not auto-detect) is the
+                    -- point: the player owns which macro, so a macro that also casts something is
+                    -- their informed choice - and the description shows the body so it is visible.
+                    ccBreakMacro = {
+                        type = "select",
+                        name = L["CC Break Macro"],
+                        desc = L["CC Break Macro desc"],
+                        order = 72,
+                        width = "double",
+                        hidden = function()
+                            return select(2, UnitClass("player")) ~= "DRUID"
+                                or not addon.db.profile.showCCBreak
+                        end,
+                        values = function()
+                            local out = { [""] = NONE or "None" }
+                            if not GetMacroInfo then return out end
+                            -- Global macros then per-character; names are what the runtime matches
+                            -- against action slots, so store names, not shifting indices.
+                            for idx = 1, 138 do
+                                local name, _, body = GetMacroInfo(idx)
+                                if name and body and body:lower():find("/cancelform", 1, true) then
+                                    out[name] = name
+                                end
+                            end
+                            return out
+                        end,
+                        get = function() return addon.db.profile.ccBreakMacro or "" end,
+                        set = function(_, val)
+                            addon.db.profile.ccBreakMacro = (val ~= "" and val) or nil
+                            addon:ForceUpdateAll()
+                        end,
+                    },
+                    ccBreakMacroBody = {
+                        type = "description",
+                        order = 72.5,
+                        fontSize = "small",
+                        hidden = function()
+                            return select(2, UnitClass("player")) ~= "DRUID"
+                                or not addon.db.profile.showCCBreak
+                                or not addon.db.profile.ccBreakMacro
+                        end,
+                        name = function()
+                            local m = addon.db.profile.ccBreakMacro
+                            local body
+                            if m and GetMacroInfo then
+                                body = select(3, GetMacroInfo(m))
+                            end
+                            if not body then return L["CC Break Macro missing"] end
+                            return "|cff888888" .. body:gsub("\n", " | ") .. "|r"
+                        end,
+                    },
                     -- Dynamic defensiveSpells entries added by UpdateDefensivesOptions
                     -- PET REZ/SUMMON PRIORITY LIST (80+, pet classes only)
                     petRezHeader = {
@@ -396,6 +471,8 @@ function Defensives.UpdateDefensivesOptions(addon)
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
         maintenanceHeader = true, maintenanceInfo = true, showMaintenanceSlot = true,
+        ccBreakHeader = true, ccBreakInfo = true, showCCBreak = true,
+        ccBreakMacro = true, ccBreakMacroBody = true,
         cooldownManagerEnable = true, hideCdmHeader = true, hideCdmEssential = true,
         hideCdmUtility = true, hideCdmTrackedBuff = true, hideCdmTrackedBar = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
