@@ -18,7 +18,7 @@
 -- kick (no lingering kick hotkey / missing frame art) and, being on top, wins collisions.
 -- ponytail: N complete slots + N idle glows is the cost of the secret-safe OR (can't collapse
 -- N secret alphas into one). Bounded to soothe classes with an attackable target + shown frame.
-local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 6)
+local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 7)
 if not UISootheCue then return end
 
 local UIAnimations     = LibStub("JustAC-UIAnimations", true)
@@ -37,7 +37,9 @@ local C_Spell      = C_Spell
 local C_CurveUtil  = C_CurveUtil ---@diagnostic disable-line: undefined-global
 
 local MAX_SLOTS       = 5      -- target HELPFUL auras scanned (the OR); enrage past this is missed
-local UPDATE_INTERVAL = 0.08
+-- The addon-wide widget-refresh cadence, not a private number: the cue's sink pass should
+-- tick at the same rate as every other cooldown/urgency widget.
+local UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL or 0.08
 
 -- Selector curve (built once): alpha 1 ONLY at dispel type 9 (Enrage), else 0.
 local selectorCurve

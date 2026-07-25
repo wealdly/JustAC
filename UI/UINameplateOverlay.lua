@@ -107,6 +107,8 @@ if Masque then
         end
         if maintenanceIcon then
             UIFrameFactory.ApplyTextOverlaySettings(maintenanceIcon, iconSize, mergedOverlays)
+            -- Masque owns the Cooldown element and resets the swipe to its skin's defaults.
+            UIFrameFactory.ApplyMaintenanceSwipeStyle(maintenanceIcon)
         end
     end
 
@@ -845,6 +847,9 @@ function UINameplateOverlay.Create(addon)
     -- without a maintenance buff.
     if maxDef > 0 then
         maintenanceIcon = CreateOverlayIcon(iconSize, profile)
+        -- Same blue "running out" swipe the standard-queue slot gets: it is the same button on
+        -- a different surface, and this was previously only applied there.
+        UIFrameFactory.ApplyMaintenanceSwipeStyle(maintenanceIcon)
     end
 
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)

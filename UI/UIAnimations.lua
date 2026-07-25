@@ -588,7 +588,15 @@ local function CreateChannelFillFrame(icon)
     local frame = CreateFrame("Frame", nil, parent)
     frame:SetSize(128, 128)
     frame:SetPoint("CENTER", icon, "CENTER")
-    frame:SetFrameLevel(icon:GetFrameLevel() + 2)
+    -- Derived from the border, not from the icon: "one below the border" is the actual intent,
+    -- and the two surfaces pack their levels differently (standard queue icon+3, nameplate
+    -- overlay absolute 2). The old icon+2 happened to be right on the standard queue and TIED
+    -- the border on nameplates, letting the fill draw over it.
+    -- ponytail: still ties the cooldown swipe one level down, resolved by creation order - the
+    -- fill is built later, and Masque does not manage it. Give the border its own level if that
+    -- ever stops holding.
+    frame:SetFrameLevel(icon.borderFrame and (icon.borderFrame:GetFrameLevel() - 1)
+        or (icon:GetFrameLevel() + 2))
     if icon.isOverlayIcon then frame:SetFrameStrata("BACKGROUND") end
 
     -- Inner glow (soft light behind the fill bar)

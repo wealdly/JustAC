@@ -121,4 +121,79 @@ function BlizzardAPI.GetAuraTiming(unit, index, filter)
     return Unsecret(aura.duration), Unsecret(aura.expirationTime)
 end
 
+--------------------------------------------------------------------------------
+-- Batch aura reads (12.0 C_UnitAuras.GetUnitAuras)
+--
+-- MEASURED in combat with restrictions latched (follower-dungeon boss, 12.0.7):
+-- the returned TABLE and its length are PLAIN; only the per-aura FIELDS are
+-- secret. That is the documented `ConditionalSecretContents` behaviour, and it
+-- means one C call replaces the up-to-40 GetAuraDataByIndex calls every caller
+-- used to make. Field-level secrecy is unchanged, so each caller keeps its own
+-- secret handling - this helper only supplies the list.
+--------------------------------------------------------------------------------
+
+local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
+
+--- Array of AuraData for unit/filter, or nil if auras can't be enumerated at all.
+--- Falls back to the index loop on clients without the batch call.
+function BlizzardAPI.GetAuras(unit, filter)
+    if not unit then return nil end
+    if GetUnitAuras then
+        local ok, list = pcall(GetUnitAuras, unit, filter)
+        if ok and type(list) == "table" then return list end
+        -- Fall through to the index loop: a throw here means this unit/filter
+        -- combination is rejected, not that the API is missing.
+    end
+    local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if not byIndex then return nil end
+    local list = {}
+    for i = 1, 40 do
+        local ok, data = pcall(byIndex, unit, i, filter)
+        if not ok or not data then break end
+        list[i] = data
+    end
+    return list
+end
+
+-- Unknown category tokens FAIL OPEN: the engine silently IGNORES a token it does
+-- not recognise and returns the unfiltered set rather than erroring (measured -
+-- a bogus token returned all 31 helpful auras while BIG_DEFENSIVE returned 1).
+-- So a token retired by a future patch would degrade into a permanently-true
+-- gate instead of a visible failure. Guard: if a narrowed filter ever returns
+-- exactly as many auras as its own base filter - with more than one aura in
+-- play, since a single aura could legitimately be the match - the token is not
+-- being honoured and that filter is abandoned for the session.
+local filterVerdict = {}   -- filter string -> true (honoured) | false (ignored)
+
+--- Count of auras matching an engine category filter, or nil when the filter
+--- cannot be trusted. nil means "unknown" - callers fail open.
+function BlizzardAPI.CountAuras(unit, filter)
+    unit = unit or "player"
+    if filterVerdict[filter] == false then return nil end
+    local list = BlizzardAPI.GetAuras(unit, filter)
+    if not list then return nil end
+    local n = #list
+    -- Only a narrowed filter can be ignored, and only a multi-aura sample can
+    -- reveal it. Once proven honoured, stop paying for the second call.
+    local base = filter and filter:match("^[^|]+")
+    if n > 1 and base and base ~= filter and filterVerdict[filter] == nil then
+        local all = BlizzardAPI.GetAuras(unit, base)
+        if all and #all == n then
+            filterVerdict[filter] = false
+            return nil
+        end
+        filterVerdict[filter] = true
+    end
+    return n
+end
+
+--- True when the unit has a major defensive cooldown up. The engine does the
+--- classification, so this needs no curated list and reads no secret: only the
+--- COUNT is consulted, never an aura's identity. nil = unknown (fail open).
+function BlizzardAPI.HasBigDefensive(unit)
+    local n = BlizzardAPI.CountAuras(unit or "player", "HELPFUL|BIG_DEFENSIVE")
+    if n == nil then return nil end
+    return n > 0
+end
+
 

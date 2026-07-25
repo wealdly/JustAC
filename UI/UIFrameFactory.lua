@@ -267,6 +267,23 @@ local spellIcons = {}
 local defensiveIcons = {}  -- Array of defensive icon buttons (1-3)
 local stdInterruptIcon = nil  -- Standard queue interrupt icon ("position 0")
 
+--- Restyle the maintenance slot's swipe to read "your protection is running out" rather than
+--- the default "on cooldown, wait" - a dark mask that clears means unavailable, the reverse of
+--- what a depleting buff means. Blue veil that shrinks, bright leading edge, normal direction
+--- (reversed would read as charging toward ready), engine countdown numbers on.
+--- Must be re-applied after every Masque re-skin: Masque owns the Cooldown element and resets
+--- these to its skin's defaults, which silently reverted the slot to a plain black swipe.
+function UIFrameFactory.ApplyMaintenanceSwipeStyle(icon)
+    local cd = icon and icon.cooldown
+    if not cd then return end
+    if cd.SetSwipeColor then cd:SetSwipeColor(0.15, 0.45, 0.95, 0.55) end
+    if cd.SetDrawEdge then cd:SetDrawEdge(true) end
+    if cd.SetEdgeColor then cd:SetEdgeColor(0.75, 0.92, 1.00, 1) end
+    if cd.SetReverse then cd:SetReverse(false) end
+    if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
+    if cd.SetDrawBling then cd:SetDrawBling(false) end
+end
+
 -- Masque support (single group for all standard queue icons)
 local Masque = LibStub("Masque", true)
 local GetMasqueGroup
@@ -299,6 +316,12 @@ if Masque then
         local defScale = profile.defensives and profile.defensives.iconScale or 1.0
         local defSz = profile.iconSize * defScale
         UIFrameFactory.ApplyTextOverlaySettingsToIcons(defensiveIcons, defSz, overlays)
+        -- The maintenance slot is not in defensiveIcons, so it needs both passes by name:
+        -- its text anchors like its siblings, and its swipe restyle is Masque's to clobber.
+        if addon.maintenanceIcon then
+            UIFrameFactory.ApplyTextOverlaySettings(addon.maintenanceIcon, defSz, overlays)
+            UIFrameFactory.ApplyMaintenanceSwipeStyle(addon.maintenanceIcon)
+        end
     end
 
     MasqueGroup:RegisterCallback(OnStandardQueueSkinChanged)
@@ -452,14 +475,19 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
     chargeCooldown:SetDrawEdge(true)   -- Edge ring shows recharge progress (matches Blizzard 12.0)
     chargeCooldown:SetDrawBling(false)
     chargeCooldown:SetHideCountdownNumbers(true)
-    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel() + 1)
+    -- Same level as the main cooldown, NOT +1: at +1 it tied borderFrame (L+3) and the z-order
+    -- fell back to creation order, which a Masque re-skin (it owns both Cooldown elements)
+    -- reorders - the swipe/edge then draws over the border and reads as a flicker. The two
+    -- never draw together anyway (the ring is suppressed at 0 charges, where the recharge is
+    -- promoted to the main swipe), so the +1 bought nothing.
+    chargeCooldown:SetFrameLevel(cooldown:GetFrameLevel())
     chargeCooldown:Clear()
     chargeCooldown:Hide()
     button.chargeCooldown = chargeCooldown
 
-    -- Border overlay frame: sits ABOVE cooldowns (L+3) but BELOW glow animations (L+4+).
+    -- Border overlay frame: sits ABOVE cooldowns (both L+2) but BELOW glow animations (L+4+).
     -- The border texture's opaque corners physically cover any cooldown swipe corner bleed.
-    -- NOTE: created after chargeCooldown so creation order puts it on top at the same level.
+    -- Strictly above by LEVEL, never by creation order - see the chargeCooldown note.
     local borderFrame = CreateFrame("Frame", nil, button)
     borderFrame:SetFrameLevel(button:GetFrameLevel() + 3)
     borderFrame:SetAllPoints(button)
@@ -1273,22 +1301,8 @@ local function CreateDefensiveIcons(addon, profile)
     local maint = CreateSingleDefensiveButton(addon, profile, -1, actualIconSize, defPosition, queueOrientation, spacing)
     if maint then
         maint:SetAlpha(0)   -- alpha-driven like its siblings; the renderer reveals it
-
-        -- Restyle the swipe to read "your protection is running out" rather than the default
-        -- "on cooldown, wait" - a dark mask that clears means unavailable, the reverse of what
-        -- a depleting buff means. Blue veil that shrinks, bright leading edge, normal direction
-        -- (reversed would read as charging toward ready), engine countdown numbers on.
-        -- Configured once here, not per render.
-        local cd = maint.cooldown
-        if cd then
-            if cd.SetSwipeColor then cd:SetSwipeColor(0.15, 0.45, 0.95, 0.55) end
-            if cd.SetDrawEdge then cd:SetDrawEdge(true) end
-            if cd.SetEdgeColor then cd:SetEdgeColor(0.75, 0.92, 1.00, 1) end
-            if cd.SetReverse then cd:SetReverse(false) end
-            if cd.SetHideCountdownNumbers then cd:SetHideCountdownNumbers(false) end
-            if cd.SetDrawBling then cd:SetDrawBling(false) end
-        end
-
+        -- Applied here and again from the Masque skin-changed callback, never per render.
+        UIFrameFactory.ApplyMaintenanceSwipeStyle(maint)
         addon.maintenanceIcon = maint
     end
 

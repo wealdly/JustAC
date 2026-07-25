@@ -33,19 +33,17 @@ local LOW_HEALTH_PCT = 35
 -- player's helpful auras (usually < 40), so cost is independent of how big the set is -
 -- which matters because the food set can hold a few hundred Well Fed buff ids.
 local function HasAnyAura(buffSet)
-    if not buffSet or not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then
-        return false
-    end
-    local i = 1
-    while true do
-        local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-        if not aura then return false end
+    if not buffSet or not BlizzardAPI or not BlizzardAPI.GetAuras then return false end
+    local auras = BlizzardAPI.GetAuras("player", "HELPFUL")
+    if not auras then return false end
+    for i = 1, #auras do
+        local spellId = auras[i].spellId
         -- 12.0.7: some aura spellIds are secret even out of combat; a secret table
         -- key throws, so skip those auras (their identity is unknowable here).
-        if aura.spellId and not (issecretvalue and issecretvalue(aura.spellId))
-           and buffSet[aura.spellId] then return true end
-        i = i + 1
+        if spellId and not (issecretvalue and issecretvalue(spellId))
+           and buffSet[spellId] then return true end
     end
+    return false
 end
 
 -- The weapon imbue the player knows (in preference order), or nil. Shaman only - IsPlayerSpell
@@ -228,12 +226,11 @@ end
 -- that the party check goes quiet wherever auras are secret - the right trade for a feature
 -- whose only failure mode would otherwise be nagging about a buff that is already up.
 local function UnitHasHelpfulAura(unit, auraIDs)
-    local byIndex = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
-    if not byIndex or not auraIDs then return true end
-    for i = 1, 40 do
-        local ok, data = pcall(byIndex, unit, i, "HELPFUL")
-        if not ok or not data then break end
-        local sid = data.spellId
+    if not auraIDs or not BlizzardAPI or not BlizzardAPI.GetAuras then return true end
+    local auras = BlizzardAPI.GetAuras(unit, "HELPFUL")
+    if not auras then return true end
+    for i = 1, #auras do
+        local sid = auras[i].spellId
         if sid == nil or IsSecret(sid) then return true end
         for j = 1, #auraIDs do
             if sid == auraIDs[j] then return true end

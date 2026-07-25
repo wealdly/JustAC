@@ -30,7 +30,7 @@
 -- which is worse than showing nothing - so unknown renders the icon with no swipe and no
 -- glow. That state is bounded, never indefinite: it lasts only while a cast is still waiting
 -- on the bridge (BRIDGE_WINDOW), after which the pending flag is expired rather than leaked.
-local MaintenanceTracker = LibStub:NewLibrary("JustAC-MaintenanceTracker", 7)
+local MaintenanceTracker = LibStub:NewLibrary("JustAC-MaintenanceTracker", 8)
 if not MaintenanceTracker then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -275,6 +275,38 @@ local function FindInstanceExact(entry)
     return inst
 end
 
+--- Plain up/down for the entry's aura from the Cooldown Manager BUFF viewers, or nil.
+--- item.isActive is an ordinary boolean assigned by untainted control flow
+--- (CooldownViewerBuffItemMixin:ShouldBeActive -> SetIsActive), so it reads plain in
+--- combat - validated 2026-07-24: Ironfur true mid-boss-fight under latched
+--- restrictions, false when the buff was down. BUFF viewers only: on Essential/
+--- Utility items isActive means "tracked/known" and reads true regardless of the aura.
+local BUFF_VIEWER_NAMES = { "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+local function ViewerBuffActive(entry)
+    local wantIDs = ResolveCooldownIDs(entry)
+    if not (wantIDs and next(wantIDs)) then return nil end
+    local sawFalse = false
+    for v = 1, #BUFF_VIEWER_NAMES do
+        local viewer = _G[BUFF_VIEWER_NAMES[v]]
+        -- Same rule as the instance path: only a SHOWN viewer keeps updating.
+        local pool = viewer and viewer.IsShown and viewer:IsShown() and viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                local okC, cid = pcall(item.GetCooldownID, item)
+                if okC and type(cid) == "number" and wantIDs[cid] then
+                    local active = item.isActive
+                    if not IsSecret(active) then
+                        if active == true then return true end
+                        if active == false then sawFalse = true end
+                    end
+                end
+            end
+        end
+    end
+    if sawFalse then return false end
+    return nil
+end
+
 --------------------------------------------------------------------------------
 -- Cosmetic hiding of Blizzard's Cooldown Manager viewers
 --------------------------------------------------------------------------------
@@ -391,16 +423,21 @@ end
 
 --- Player cast something. If it is the spec's maintenance button, open a bridge window so
 --- the next OUR-buff instance to appear gets bound to it.
+--- @return boolean matched - true when this WAS the maintenance button, so the caller can
+---         redraw immediately. The aura path cannot report this: on a REFRESH the instance is
+---         already bound, so OnPlayerAuraUpdate sees nothing change and returns false - the
+---         swipe then sat on the old remaining time until the periodic defensive rebuild
+---         (up to half a second later), which reads as the button lagging the press.
 function MaintenanceTracker.OnCastSucceeded(spellID)
     local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
-    if not list then return end
+    if not list then return false end
     local entry
     for i = 1, #list do
         if list[i].cast == spellID then entry = list[i] break end
     end
-    if not entry then return end
+    if not entry then return false end
     local s = S(entry)
-    if not s then return end
+    if not s then return false end
     s.lastCastAt = GetTime()
     s.pendingCastAt = s.lastCastAt
     -- A successful cast is evidence the buff is (re)applied, even when we cannot identify its
@@ -418,6 +455,10 @@ function MaintenanceTracker.OnCastSucceeded(spellID)
         s.bindExact = true          -- identity proven
         s.pendingCastAt = nil
     end
+    -- Also invalidate the per-frame pick: the cast may have happened AFTER GetState already
+    -- ran this frame, and the renderer would then draw the pre-cast state one more time.
+    pickCache.t = nil
+    return true
 end
 
 --- Player aura change. Binds a pending cast to its new instance, and clears the tracked
@@ -562,6 +603,22 @@ function MaintenanceTracker.IsBindExact(entry)
     return (s and s.trackedInstance ~= nil and s.bindExact) or false
 end
 
+--- Live-buff verdict: "refresh" once inside the refresh window (when the entry has a
+--- clock), else "up". Shared by the instance path and the viewer-boolean path.
+--- chargeGated entries never pre-warn (pressing early throws away buff time); lead in
+--- SECONDS if the entry specifies one, else the proportional fallback.
+local function LiveVerdict(entry, s)
+    local effDur = entry.chargeGated and nil or EffectiveDuration(entry)
+    if effDur and s.lastCastAt then
+        local elapsed = GetTime() - s.lastCastAt
+        local fireAt = entry.lead and (effDur - entry.lead)
+                       or (effDur * (1 - REFRESH_LEAD))
+        if fireAt < 0 then fireAt = 0 end
+        if elapsed >= fireAt then return "refresh" end
+    end
+    return "up"
+end
+
 --- Current state of the spec's maintenance buff.
 --- @return string state - "up" (live, plenty of time) | "refresh" (live but inside its
 ---         refresh window - press it) | "down" | "unknown" | "none" (spec has none)
@@ -570,7 +627,7 @@ end
 local function EntryState(entry)
     local s = S(entry)
     if not (entry and s) then return "none", nil, nil end
-    local trackedInstance, lastCastAt = s.trackedInstance, s.lastCastAt
+    local trackedInstance = s.trackedInstance
     ExpireStalePendingCast(entry)
 
     if trackedInstance and InstanceAlive(trackedInstance) then
@@ -591,18 +648,7 @@ local function EntryState(entry)
         -- those, skip the early "refresh" cue entirely and only signal once it has actually
         -- dropped - re-press then, if a charge happens to be banked. The pre-warning only makes
         -- sense for a resource dump (Ironfur, Marrowrend) where an early press costs nothing.
-        local effDur = entry.chargeGated and nil or EffectiveDuration(entry)
-        if effDur and lastCastAt then
-            local elapsed = GetTime() - lastCastAt
-            -- lead in SECONDS if the entry specifies one, else the proportional fallback.
-            local fireAt = entry.lead and (effDur - entry.lead)
-                           or (effDur * (1 - REFRESH_LEAD))
-            if fireAt < 0 then fireAt = 0 end
-            if elapsed >= fireAt then
-                return "refresh", entry, trackedInstance
-            end
-        end
-        return "up", entry, trackedInstance
+        return LiveVerdict(entry, s), entry, trackedInstance
     end
     if trackedInstance then
         -- Held an id the engine no longer knows: it expired without a removal batch. Still
@@ -620,6 +666,20 @@ local function EntryState(entry)
         s.bindExact = true
         s.observedDrop = false
         return "up", entry, direct
+    end
+
+    -- Engine-truth up/down WITHOUT an instance: the buff-viewer isActive boolean.
+    -- true = the buff is live (no swipe to draw, but the slot must not glow "press
+    -- me"); false = the engine itself watched it drop - the confident re-press cue
+    -- this module otherwise only earns by observing a bound instance die.
+    local viewerUp = ViewerBuffActive(entry)
+    if viewerUp == true then
+        s.pendingCastAt = nil
+        s.observedDrop = false
+        return LiveVerdict(entry, s), entry, nil
+    elseif viewerUp == false then
+        s.observedDrop = true
+        return "down", entry, nil
     end
 
     -- Was the lookup above AUTHORITATIVE? That is a per-SPELL question, not a global one.

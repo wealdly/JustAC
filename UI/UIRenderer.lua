@@ -1221,14 +1221,31 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         else
             -- The aura's remaining time, in descending order of trust:
             --   1. exact bind  -> the aura's real DurationObject, engine-drawn. Never read.
-            --   2. bridge bind -> our own cast clock. The bound instance may NOT be our aura,
-            --      and drawing its duration renders a foreign timer (a 20s proc on a 7s buff).
-            --   3. no bind     -> nothing.
+            --   2. anything but a confirmed "down" -> our own cast clock. The bound instance
+            --      may NOT be our aura, and drawing ITS duration would render a foreign timer
+            --      (a 20s proc on a 7s buff) - so the fallback is deliberately our own numbers,
+            --      never the instance's. Keyed on STATE, not on holding an instance: a
+            --      successful cast already tells us the buff started and how long it lasts,
+            --      and neither fact needs an aura binding.
+            --   3. confirmed "down" -> nothing. Telling a tank they are covered when they are
+            --      not is actionable misinformation, and every "down" verdict comes from a
+            --      source more authoritative than our own clock.
+            --
+            -- "unknown" is included deliberately, and it is the case that matters most.
+            -- Measured in a follower dungeon on Ironfur (/jac inspect maintenance): the aura is
+            -- ContextuallySecret, GetPlayerAuraBySpellID returns nil in combat, and with no
+            -- Cooldown Manager viewer enabled BOTH exact paths are dead - so every bind comes
+            -- from the cast bridge, which refused 8 of 15 batches as ambiguous. Between the
+            -- cast and a clean batch the state is "unknown", and gating the swipe on a positive
+            -- up/refresh left it blank for exactly that window. "unknown" means we never saw it
+            -- drop, not that it is gone; an expired estimate draws nothing anyway, so a stale
+            -- lastCastAt is self-limiting rather than a lingering false timer.
             local durObj = exactBind and MT and MT.GetDurationObject and MT.GetDurationObject(inst) or nil
             if durObj and icon.cooldown.SetCooldownFromDurationObject then
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
                 applied = true
-            elseif inst and MT and MT.GetEstimatedCooldown then
+            elseif (state == "up" or state == "refresh" or state == "unknown")
+                   and MT and MT.GetEstimatedCooldown then
                 local st, len = MT.GetEstimatedCooldown(entry)
                 if st and len then
                     icon.cooldown:SetCooldown(st, len)   -- plain numbers, no secret

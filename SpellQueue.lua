@@ -511,6 +511,22 @@ end
 -- Unknown - bar hidden (and therefore frozen), secret, or a different resource than this gate
 -- names - FAILS OPEN (false), so the entry keeps its previous delegated behaviour rather than
 -- being buried on a guess.
+--- Does this spell spend power? Plain metadata (GetSpellPowerCost is unannotated),
+--- used only while the primary resource is capped, so the extra call is rare.
+local function IsSpenderSpell(spellID)
+    if not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+    if not ok or type(costs) ~= "table" then return false end
+    for i = 1, #costs do
+        local c = costs[i]
+        local amt = c and c.cost
+        if type(amt) == "number" and not (issecretvalue and issecretvalue(amt)) and amt > 0 then
+            return true
+        end
+    end
+    return false
+end
+
 local function SimcResourceGateBlocks(gates, resCount, resName)
     if not gates or not resCount then return false end
     for i = 1, #gates do
@@ -566,6 +582,10 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
         local c, _, r = BlizzardAPI.GetClassResourcePoints()
         resCount, resName = c, r
     end
+    -- Primary resource capped (engine full-power pulse, plain - validated in combat
+    -- 2026-07-24): promote ready, affordable spenders so regen stops going to waste.
+    -- Read once per build; false for power types without a full-power animation.
+    local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
     local function rankOf(spellID, simcRec)
         if simcMode then
             local ctx = ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
@@ -635,6 +655,18 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         local _, notEnough = BlizzardAPI.IsSpellUsable(displayID, true)
                         starved = notEnough and true or false
                     end
+                    -- Loss-of-control lockout: THIS spell can't be cast right now (a stun
+                    -- locks everything, a kick locks one school). NeverSecret boolean,
+                    -- validated both states in-game 2026-07-24. Sinks with the cooldowns
+                    -- and blocks proc promotion; costs one count read when not CC'd.
+                    local locLocked = BlizzardAPI.IsSpellLoCLocked
+                        and BlizzardAPI.IsSpellLoCLocked(displayID) or false
+                    -- Capped charges idle the recharge timer - surfacing the spell gets a
+                    -- charge spent. Promotes through the proc bucket under the same
+                    -- ProcPriorityEnabled gate, so users who disable proc jumps keep
+                    -- their ordering.
+                    local chargeCapped = not locLocked and BlizzardAPI.IsSpellChargeCapped
+                        and BlizzardAPI.IsSpellChargeCapped(displayID) or false
                     -- A ranked ability whose SimC buff-window is up promotes like a proc, so
                     -- it surfaces inside its window (e.g. Rip during Tiger's Fury) - but never
                     -- an unaffordable spender.
@@ -642,8 +674,10 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                     -- outright. A SimC buff-window promotion (probe or pick-implied) is instead
                     -- vetoed by a confirmed-active negative gate, so a window spender doesn't
                     -- surface while its "not during X" condition is visibly violated.
-                    if not bypassProcs and ready and not starved and not held
+                    if not bypassProcs and ready and not starved and not held and not locLocked
                        and (BlizzardAPI.IsSpellProcced(displayID)
+                            or chargeCapped
+                            or (powerCapped and IsSpenderSpell(displayID))
                             or (simcRec
                                 and (SimcBuffWindowActive(simcRec.gates)
                                      or GateInPickWindows(simcRec.gates, pickWindows))
@@ -653,7 +687,7 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec)
-                    elseif sinkCooldowns and (not ready or starved or held
+                    elseif sinkCooldowns and (not ready or starved or held or locLocked
                            or (simcRec and SimcResourceGateBlocks(simcRec.gates, resCount, resName))
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
@@ -710,6 +744,16 @@ end
 function SpellQueue.GetCurrentSpellQueue()
     local profile = BlizzardAPI.GetProfile()
     if not profile or profile.isManualMode then
+        return lastSpellIDs or {}
+    end
+
+    -- Channel-hold: while channeling, the current suggestion IS being executed - rebuilding
+    -- mid-channel only flickers the queue as the engine's pick churns. Freeze CONTENT here,
+    -- at the single source every caller shares, so rendering keeps running and the channel
+    -- grey-out/fill actually paints. (This hold used to live in the main loop, where it
+    -- skipped the whole render pass - the channeled spell then still LOOKED available.)
+    -- Own-channel info is plain in combat (validated 2026-07-24).
+    if BlizzardAPI.IsPlayerChanneling and BlizzardAPI.IsPlayerChanneling() then
         return lastSpellIDs or {}
     end
 

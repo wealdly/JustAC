@@ -133,19 +133,38 @@ end
 -- either way. Levels above 35% stay indistinguishable in restricted contexts.
 local LOW_HEALTH_PCT, CRITICAL_HEALTH_PCT = 35, 20
 ResolveHealthState = function()
+    local isLow
     if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
         local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
         if pct and estimated == false then
             healthIsCritical = pct <= CRITICAL_HEALTH_PCT
-            return pct <= LOW_HEALTH_PCT
+            isLow = pct <= LOW_HEALTH_PCT
         end
     end
-    local isLow, isCritical
-    if BlizzardAPI and BlizzardAPI.GetLowHealthState then
-        isLow, isCritical = BlizzardAPI.GetLowHealthState()
+    if isLow == nil then
+        local low, isCritical
+        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
+            low, isCritical = BlizzardAPI.GetLowHealthState()
+        end
+        healthIsCritical = isCritical == true
+        isLow = low == true
     end
-    healthIsCritical = isCritical == true
-    return isLow == true
+    -- Escalation (validated in combat 2026-07-24): low health while STILL taking
+    -- unabsorbed hits promotes to the critical tier - a stable 30% and a dropping
+    -- 30% are different emergencies. The signal is suppressed while any absorb is
+    -- up, so a shielded player never escalates on this path.
+    -- A major defensive already rolling is the same kind of "already mitigated" as
+    -- an absorb, so it blocks escalation too. The engine classifies it (validated
+    -- in a follower-dungeon boss pull 12.0.7): only the COUNT of BIG_DEFENSIVE
+    -- auras is read, never an aura's identity, so this survives combat secrecy
+    -- where a curated spellId check cannot. nil = couldn't tell, so escalate as
+    -- before rather than silently swallowing a real emergency.
+    if isLow and not healthIsCritical and BlizzardAPI and BlizzardAPI.IsActivelyTakingDamage
+       and BlizzardAPI.IsActivelyTakingDamage()
+       and not (BlizzardAPI.HasBigDefensive and BlizzardAPI.HasBigDefensive("player") == true) then
+        healthIsCritical = true
+    end
+    return isLow
 end
 
 

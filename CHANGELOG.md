@@ -3,6 +3,27 @@
 
 ## [Unreleased]
 
+## [4.52.0] - 2026-07-25
+
+### Added
+- **The queue now knows when you're crowd-controlled**: while you're stunned, feared, or locked out of a spell school, abilities you can't actually press sink to the back of the queue instead of holding a front slot. The moment you're free, the queue snaps back.
+- **Capped charges surface with proc priority**: an ability sitting at maximum charges is wasting its recharge timer, so it steps forward until you spend one.
+- **Capped resources push spenders forward**: when your primary resource is full, ready spenders surface so regeneration stops going to waste.
+- **The queue holds steady while you channel** instead of flickering through upcoming suggestions mid-channel, and the suggestions grey out for the duration so nothing looks pressable while you're committed; it updates the moment the channel ends.
+- **No more overlapping crowd control**: CC suggestions are suppressed while the target is already crowd-controlled, using the game's own aura classification rather than a spell list.
+- **Defensives escalate when it's actually an emergency**: being low while still taking unshielded hits jumps defensive suggestions to emergency priority - a stable 30% and a dropping 30% are different situations, and only the second one is urgent. A major defensive already running counts as handled, so it won't escalate on top of one.
+
+### Changed
+- **Class resources are now read straight from the game** (combo points, holy power, chi, soul shards, arcane charges, essence), making resource-based suggestion ordering more reliable - including with a replacement unit-frame addon installed, where the old reading could go quiet.
+- **The tank maintenance slot trusts the Cooldown Manager's own buff state**: with a tracked-buff bar enabled (Edit Mode), the "buff dropped - press it" cue is exact in combat instead of estimated, and a buff the game confirms is still up never asks to be re-pressed. That bar also supplies the exact remaining time and the stack count, and JustAC can keep it hidden if you would rather not see it on screen.
+
+### Fixed
+- **The tank maintenance slot reacts the instant you press it**: its timer sweep used to lag up to half a second behind the button, most noticeably when topping the buff up before it dropped.
+- **The tank maintenance sweep no longer starts out blank**: it used to show nothing at all until the game confirmed which buff was yours. It now runs from your cast and switches to the game's exact timer as soon as one is available.
+- **The tank maintenance slot no longer flickers**: its timer sweep could draw over the icon's border instead of underneath it, which read as the icon flashing.
+- **The maintenance timer keeps its look after a skin change**: its blue "running out" sweep no longer reverts to a plain dark one, and the nameplate version now matches the main queue's.
+- **Cast and channel fill no longer spills over the icon border** on the nameplate overlay.
+
 ## [4.51.0] - 2026-07-21
 
 ### Added

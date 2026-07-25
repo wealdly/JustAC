@@ -325,7 +325,11 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
 
         if isCasting then
             local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
-            local targetAlreadyCC = UnitIsCrowdControlled and UnitIsCrowdControlled("target") or false
+            -- Engine-classified CC check (plain instance-ID count, validated 2026-07-24)
+            -- backs the speculative global, which has never been confirmed to exist.
+            local targetAlreadyCC = (UnitIsCrowdControlled and UnitIsCrowdControlled("target"))
+                or (BlizzardAPI.IsUnitCrowdControlled and BlizzardAPI.IsUnitCrowdControlled("target"))
+                or false
             local canCC = not targetCCImmune and not targetAlreadyCC
             -- kickPrefer / ccPrefer: when cast is shielded, only CC spells can stop it.
             local ccOnly = not interruptible and canCC

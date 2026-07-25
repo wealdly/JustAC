@@ -1760,7 +1760,11 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- instance out of combat is what gives the button a live timer the moment a pull starts.
     local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
     if MaintenanceTracker and MaintenanceTracker.OnCastSucceeded then
-        MaintenanceTracker.OnCastSucceeded(spellID)
+        -- Pressing the upkeep button changes what the slot must draw RIGHT NOW (fresh swipe,
+        -- glow off), so redraw on the next tick instead of waiting for the periodic defensive
+        -- rebuild. The aura event cannot cover this: refreshing an already-bound buff changes
+        -- nothing the tracker can see, so it reports no change and never marks us dirty.
+        if MaintenanceTracker.OnCastSucceeded(spellID) then defensiveQueueDirty = true end
     end
 
     -- Defensive item use latch: in-combat item cooldowns are secret, so an
@@ -1829,12 +1833,16 @@ end
 function JustAC:OnPlayerChannelStart(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(spellID) end
+    -- OOC the loop only ticks when dirty: without this the channel grey-out/fill
+    -- doesn't paint (or clear, below) until some other event happens to fire.
+    self:MarkQueueDirty()
     MarkPrecombatGuardDirty()
 end
 
 function JustAC:OnPlayerChannelStop(event, unit)
     if unit ~= "player" then return end
     if UIRenderer and UIRenderer.SetChannelSpellID then UIRenderer.SetChannelSpellID(nil) end
+    self:MarkQueueDirty()
     MarkPrecombatGuardDirty()
 end
 
@@ -1899,10 +1907,13 @@ end
 -- All rendering is driven by a single OnUpdate loop. No synchronous rendering
 -- occurs in event handlers - they only set dirty flags and reset the timer.
 --
--- Tier 1 (spell queue):    CVar rate, min 0.03s  (~20-33Hz) - rotation + render
--- Tier 2 (cooldown swipes): 0.08s fixed           (~12Hz)   - CD widget params
--- Tier 3 (defensives):      2× CVar rate           (~10Hz)  - health evaluation
--- Tier 4 (idle/OOC):       0.5s                    (2Hz)    - nothing happening
+-- Tier 1 (spell queue):     combat: CVar rate clamped to 0.03-0.05s (20-33Hz);
+--                           OOC: event-dirty at max(CVar, 0.15s), else idle
+-- Tier 2 (widget refresh):  UIFrameFactory.COOLDOWN_UPDATE_INTERVAL (0.08s, ~12Hz)
+--                           inside the render pass - CD swipes, charges, hotkey re-lookup
+-- Tier 3 (defensive rebuild): event-dirty (health/aura/cooldown/usability/cast events),
+--                           with a periodic fallback: 0.5s in combat, 1.0s OOC
+-- Tier 4 (idle/OOC):        0.5s - nothing happening
 --
 -- ForceUpdate() / ForceUpdateAll() set dirty flags + updateTimeLeft = 0
 -- so the next frame processes. Multiple calls per frame are idempotent.
@@ -1973,15 +1984,22 @@ local function OnUpdateTick(_, elapsed)
 
     -- Combat keeps polling (Blizzard doesn't provide reliable rotation-change events).
     -- Out of combat, skip queue rebuild/render unless an event marked it dirty.
+    -- The mid-channel hold lives in SpellQueue.GetCurrentSpellQueue (content freezes,
+    -- rendering continues so the channel grey-out/fill paints). Rendering must NOT be
+    -- skipped here while channeling - that was how the channeled spell kept looking
+    -- available for the whole channel. Dirty is preserved through the hold so the
+    -- first post-channel tick rebuilds immediately even out of combat.
+    local channeling = BlizzardAPI and BlizzardAPI.IsPlayerChanneling
+        and BlizzardAPI.IsPlayerChanneling()
     local shouldUpdateSpellQueue = inCombat or spellQueueDirty
     if shouldUpdateSpellQueue then
         -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
         -- get the same low-latency path as explicit ForceUpdate() calls.
-        if spellQueueDirty and SpellQueue and SpellQueue.ForceUpdate then
+        if spellQueueDirty and not channeling and SpellQueue and SpellQueue.ForceUpdate then
             SpellQueue.ForceUpdate()
         end
         JustAC:UpdateSpellQueue()
-        spellQueueDirty = false
+        if not channeling then spellQueueDirty = false end
     end
 
     -- Only update defensive cooldowns if dirty or periodic check

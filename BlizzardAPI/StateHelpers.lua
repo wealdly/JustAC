@@ -111,6 +111,22 @@ function BlizzardAPI.IsLossOfControlActive()
 end
 local IsLossOfControlActive = BlizzardAPI.IsLossOfControlActive
 
+--- Is this specific spell locked out by an active loss-of-control effect?
+--- GetSpellLossOfControlCooldownInfo().isActive is NeverSecret - validated in-game
+--- 2026-07-24 in both states: true for every spell during a stun, false when free.
+--- Covers full CC (stun/fear locks everything) AND school lockouts (a kick locks
+--- one school). Gated on an active LoC entry so the common case costs one count
+--- read; fail-open - any doubt reads as "not locked".
+function BlizzardAPI.IsSpellLoCLocked(spellID)
+    if not spellID or not IsLossOfControlActive() then return false end
+    if not (C_Spell and C_Spell.GetSpellLossOfControlCooldownInfo) then return false end
+    local ok, info = pcall(C_Spell.GetSpellLossOfControlCooldownInfo, spellID)
+    if not ok or not info then return false end
+    local v = info.isActive
+    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(v) then return false end
+    return v == true
+end
+
 function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     if not spellID or spellID == 0 then
         return false, false, false
@@ -258,11 +274,11 @@ function BlizzardAPI.IsAuraActive(unit, auraSpellID)
     end
 
     -- Fallback: direct scan (works OOC when aura fields are readable)
-    if unit and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 40 do
-            local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if not ok or not data then break end
-            if data.spellId and not IsSecretValue(data.spellId) and data.spellId == auraSpellID then
+    if unit and BlizzardAPI.GetAuras then
+        local auras = BlizzardAPI.GetAuras(unit, "HELPFUL")
+        for i = 1, (auras and #auras or 0) do
+            local spellId = auras[i].spellId
+            if spellId and not IsSecretValue(spellId) and spellId == auraSpellID then
                 return true
             end
         end
@@ -291,6 +307,59 @@ function BlizzardAPI.GetLowHealthState()
     local isCritical = alpha > 0.5
 
     return true, isCritical, alpha
+end
+
+--- Primary resource at cap, via the player-frame full-power pulse: the engine
+--- branches on the secret amount and Plays/Stops the animation, leaving a plain
+--- IsPlaying() (validated in combat 2026-07-24 - oscillates exactly with
+--- energy/rage capping). Animations do not run on hidden frames, so a unit-frame
+--- replacement addon yields a permanent false (fail-open), never a frozen true.
+--- Only power types Blizzard gives a full-power animation ever report true.
+function BlizzardAPI.IsPrimaryPowerCapped()
+    local pf = PlayerFrame ---@diagnostic disable-line: undefined-global
+    local f = pf and pf.PlayerFrameContent and pf.PlayerFrameContent.PlayerFrameContentMain
+    f = f and f.ManaBarArea and f.ManaBarArea.ManaBar and f.ManaBarArea.ManaBar.FullPowerFrame
+    local anim = f and f.PulseFrame and f.PulseFrame.PulseAnim
+    if not (anim and anim.IsPlaying) then return false end
+    local ok, playing = pcall(anim.IsPlaying, anim)
+    return ok and playing == true
+end
+
+--- Engine-classified "unit currently has a crowd-control aura". The instance-ID
+--- list is plain and countable in combat (validated 2026-07-24, incl. on a delve
+--- boss), and CROWD_CONTROL is the engine's own classification - no curated list.
+--- Fail-open: any doubt reads as "not CC'd".
+function BlizzardAPI.IsUnitCrowdControlled(unit)
+    if not (C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs) then return false end
+    local ok, t = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, "HARMFUL|CROWD_CONTROL")
+    if not ok or type(t) ~= "table" then return false end
+    local okN, n = pcall(function() return #t end)
+    if not okN or type(n) ~= "number" then return false end
+    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(n) then return false end
+    return n > 0
+end
+
+--- Channeling right now? Own-unit channel info is fully plain in combat -
+--- SecretWhenUnitSpellCastRestricted fires only for OTHER units (validated in
+--- combat 2026-07-24, every field plain).
+function BlizzardAPI.IsPlayerChanneling()
+    return (UnitChannelInfo("player")) ~= nil
+end
+
+--- "Took unabsorbed damage within the last ~0.25s". The PlayerFrame animated-loss
+--- bar is Show()n/Hide()n by privileged control flow on secret health deltas, so its
+--- visibility reads plain - validated in combat 2026-07-24: flaps at ~1s cadence
+--- under sustained damage, and stays hidden entirely while an absorb is up (its
+--- OnUpdate cancels on any absorb). IsVisible, NOT IsShown: a unit-frame replacement
+--- addon that hides PlayerFrame stops the bar updating, and IsVisible reads false
+--- through the hidden ancestor instead of serving a frozen true.
+function BlizzardAPI.IsActivelyTakingDamage()
+    local pf = PlayerFrame ---@diagnostic disable-line: undefined-global
+    local f = pf and pf.PlayerFrameContent and pf.PlayerFrameContent.PlayerFrameContentMain
+    f = f and f.HealthBarsContainer and f.HealthBarsContainer.PlayerFrameHealthBarAnimatedLoss
+    if not (f and f.IsVisible) then return false end
+    local ok, vis = pcall(f.IsVisible, f)
+    return ok and vis == true
 end
 
 --------------------------------------------------------------------------------
@@ -1140,7 +1209,47 @@ local function ReadPoint(p, def)
     return nil
 end
 
+-- FAST PATH (validated in combat 2026-07-24, build 68887): the discrete power types are
+-- flagged NeverSecret at the data level, so a direct UnitPower read stays plain even with
+-- combat restrictions latched (measured on Feral: 3 CP at +4s, 5 CP at +10s, while
+-- GetSpellCastCount read SECRET in the same snapshots). Gated per-type at RUNTIME via
+-- GetPowerTypeSecrecy - if Blizzard ever unflags a type this falls back to the point-widget
+-- reader below instead of reading a secret. Avoids the widget path's frozen-hidden-bar
+-- hazard and its per-class field/enum mapping entirely.
+-- DEATHKNIGHT deliberately absent: UnitPower's ready-rune semantics are unverified in-game,
+-- and a wrong-but-plain number would mislead gates; runes keep the widget reader until a DK
+-- session probes it (/jac inspect frames prints the raw read).
+local DIRECT_POWER = {
+    DRUID       = { pt = 4,  res = "combo_points" },
+    ROGUE       = { pt = 4,  res = "combo_points" },
+    WARLOCK     = { pt = 7,  res = "soul_shard", fractional = true },
+    PALADIN     = { pt = 9,  res = "holy_power" },
+    MONK        = { pt = 12, res = "chi" },
+    MAGE        = { pt = 16, res = "arcane_charges" },
+    EVOKER      = { pt = 19, res = "essence" },
+}
+
+local function DirectPowerRead(playerClass)
+    local def = DIRECT_POWER[playerClass]
+    if not def then return nil end
+    if not (C_Secrets and C_Secrets.GetPowerTypeSecrecy) then return nil end
+    local okS, lv = pcall(C_Secrets.GetPowerTypeSecrecy, def.pt)
+    if not okS or lv ~= 0 then return nil end   -- 0 = Enum.SecrecyLevel.NeverSecret
+    -- unmodified=true for fractional types: Destruction shards come back in tenths,
+    -- preserving SimC's fractional soul_shard exactly as the widget fillAmount sum did.
+    local okC, cur = pcall(UnitPower, "player", def.pt, def.fractional or nil)
+    local okM, max = pcall(UnitPowerMax, "player", def.pt)
+    if not (okC and okM) then return nil end
+    if BlizzardAPI.IsSecretValue and (BlizzardAPI.IsSecretValue(cur) or BlizzardAPI.IsSecretValue(max)) then
+        return nil   -- flag said plain but the read didn't: trust the read, fall back
+    end
+    if type(cur) ~= "number" or type(max) ~= "number" or max <= 0 then return nil end
+    if def.fractional then cur = cur / 10 end
+    return cur, max, def.res
+end
+
 --- Current discrete class-resource count, or nil when it can't be trusted.
+--- Direct UnitPower first (NeverSecret-gated); the point-widget reader below is the fallback.
 --- EVERY point must read: a partially-understood bar is not counted. That is the fallback for an
 --- unmapped class and for any future Blizzard rename - "unknown" beats a confident zero, which
 --- would otherwise report 0 resource and permanently sink every `>=`-gated spender. Callers treat
@@ -1148,6 +1257,8 @@ end
 --- @return number|nil count, number|nil max, string|nil resource (SimC resource token)
 function BlizzardAPI.GetClassResourcePoints()
     local _, playerClass = UnitClass("player")
+    local cur, max, res = DirectPowerRead(playerClass)
+    if cur ~= nil then return cur, max, res end
     for i = 1, #RESOURCE_BARS do
         local def = RESOURCE_BARS[i]
         -- Only this character's bar: another class's global exists but is never initialised, so

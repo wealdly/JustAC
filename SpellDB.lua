@@ -358,15 +358,18 @@ end
 --- called per render frame while a food suggestion is displayed.
 local eatCache, eatCacheAt = nil, 0
 function SpellDB.GetActiveEatingAura()
-    local get = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
-    if not get or UnitAffectingCombat("player") then return nil end
+    if UnitAffectingCombat("player") then return nil end
+    -- Lazy resolve: SpellDB loads BEFORE BlizzardAPI in the TOC, so this cannot
+    -- be an upvalue (same reason as IsInterruptOnCooldown below).
+    local api = LibStub("JustAC-BlizzardAPI", true)
+    if not (api and api.GetAuras) then return nil end
     local now = GetTime()
     if now - eatCacheAt < 0.2 then return eatCache end
     eatCacheAt = now
     eatCache = nil
-    for i = 1, 60 do
-        local a = get("player", i, "HELPFUL")
-        if not a then break end
+    local auras = api.GetAuras("player", "HELPFUL")
+    for i = 1, (auras and #auras or 0) do
+        local a = auras[i]
         if a.spellId and not (issecretvalue and issecretvalue(a.spellId))
            and EATING_AURAS[a.spellId] then
             eatCache = a

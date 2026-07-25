@@ -633,14 +633,15 @@ RefreshAuraCache = function()
         -- Flag for trusted cache merge (covers auras not in instance maps)
         cachedAuras.hasSecrets = true
     -- Modern API (11.0+)
-    elseif C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, 40 do
-            -- pcall protection: GetAuraDataByIndex may throw on compound unit tokens
-            -- or unexpected 12.0.x hotfix changes. On failure, break the loop and use
-            -- whatever auras we've already resolved + trustedOutOfCombatCache as fallback.
-            local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
-            if not ok or not auraData then break end
-            
+    elseif BlizzardAPI.GetAuras then
+        -- One batch call instead of up to 40 index reads. The table and its length
+        -- are plain even in combat; only the fields below are secret, so the
+        -- per-aura secret handling is unchanged. GetAuras absorbs the throw risk
+        -- (compound tokens, hotfixes) and falls back to the index loop itself.
+        local playerAuras = BlizzardAPI.GetAuras("player", "HELPFUL") or {}
+        for i = 1, #playerAuras do
+            local auraData = playerAuras[i]
+
             -- auraInstanceID is NeverSecret in 12.0 - always readable
             local instanceID = auraData.auraInstanceID
             local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
@@ -825,23 +826,23 @@ RefreshAuraCache = function()
         end
         lastTrustedCacheTime = now
         
-        -- Out of combat, we have authoritative data - prune stale entries
-        local activeInstances = {}
-        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            for i = 1, 40 do
-                local auraData = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-                if not auraData then break end
-                if auraData.auraInstanceID then
-                    activeInstances[auraData.auraInstanceID] = true
-                end
+        -- Out of combat, we have authoritative data - prune stale entries.
+        -- Only prune against a list we actually got: treating a failed enumeration
+        -- as "nothing is active" would wipe every instance map wholesale.
+        local liveAuras = BlizzardAPI.GetAuras and BlizzardAPI.GetAuras("player", "HELPFUL")
+        if liveAuras then
+            local activeInstances = {}
+            for i = 1, #liveAuras do
+                local instanceID = liveAuras[i].auraInstanceID
+                if instanceID then activeInstances[instanceID] = true end
             end
-        end
-        for instanceID in pairs(instanceToSpellMap) do
-            if not activeInstances[instanceID] then
-                instanceToSpellMap[instanceID] = nil
-                instanceToNameMap[instanceID] = nil
-                instanceToIconMap[instanceID] = nil
-                instanceToTimingMap[instanceID] = nil
+            for instanceID in pairs(instanceToSpellMap) do
+                if not activeInstances[instanceID] then
+                    instanceToSpellMap[instanceID] = nil
+                    instanceToNameMap[instanceID] = nil
+                    instanceToIconMap[instanceID] = nil
+                    instanceToTimingMap[instanceID] = nil
+                end
             end
         end
     end

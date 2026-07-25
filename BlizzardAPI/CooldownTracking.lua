@@ -294,6 +294,21 @@ local function ClearCachedDurations()
     wipe(localCharges)
 end
 
+--- At maximum charges right now (charge regen idle, so holding it wastes recharge
+--- time)? maxCharges and isActive are NeverSecret - validated in combat 2026-07-24:
+--- isActive false == not recharging, which with maxCharges > 1 means capped.
+--- Fail-open: any doubt reads as "not capped".
+function BlizzardAPI.IsSpellChargeCapped(spellID)
+    if not spellID or not C_Spell_GetSpellCharges then return false end
+    local ok, ci = pcall(C_Spell_GetSpellCharges, spellID)
+    if not ok or not ci then return false end
+    local maxC = Unsecret(ci.maxCharges)
+    if not maxC or maxC < 2 then return false end
+    local active = ci.isActive
+    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(active) then return false end
+    return active == false
+end
+
 --- Cache maxCharges and current charge state for a spell.
 --- Call out of combat only - currentCharges, cooldownStartTime, cooldownDuration,
 --- chargeModRate are SECRET in combat. maxCharges and isActive are NeverSecret

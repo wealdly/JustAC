@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Debug Commands Module - Provides diagnostic commands for testing and troubleshooting
-local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 36)
+local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 37)
 if not DebugCommands then return end
 
 -- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
@@ -52,12 +52,22 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect stacks - Out of combat: is a stacking buff N aura instances or one secret counter?")
     addon:Print("/jac inspect maintenance - Can the tank maintenance slot bind its aura exactly? (run IN combat)")
     addon:Print("/jac inspect maintlog [on|off|clear] - Record maintenance state 1/s to SavedVariables")
-    addon:Print("/jac inspect enrage - Probe secret-safe enrage detection (DispelType 9 color curve)")
+    addon:Print("/jac inspect enrage [off] - Probe secret-safe enrage detection (DispelType 9 color curve)")
+    addon:Print("/jac inspect durprobe [spell] - Verify the scratch-Cooldown readiness probe on a spell")
+    addon:Print("/jac inspect locwatch - Arm a 10min loss-of-control capture (get CC'd; prints real locType)")
     addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
     addon:Print("/jac inspect healthgate - Toggle live on-screen swatches proving the curve gate tracks health")
     addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
+    addon:Print("/jac inspect audit [off|clear] - ARM the 68887 probe battery: auto-snapshots on combat enter/exit to SavedVariables")
+    addon:Print("/jac inspect selfcast - Arm a capture of own-cast info secrecy (cast + channel something)")
+    addon:Print("/jac inspect auraids - One-shot: are aura instance-ID lists plain/countable in combat?")
+    addon:Print("/jac inspect cdfields - One-shot: NeverSecret cooldown fields + proc overlay per rotation spell")
+    addon:Print("/jac inspect secrecymap - One-shot OOC: per-spell/power SecrecyLevel exemption dump")
+    addon:Print("/jac inspect frames - One-shot: laundered frame booleans (low HP, capped power, absorbs)")
+    addon:Print("/jac inspect cvitems - One-shot: Cooldown Manager item booleans (CD flash, buff active, pandemic)")
+    addon:Print("/jac inspect enginesig - One-shot: unused engine signals (batch auras, spell classifiers, cast-on-me, absorb clamps)")
     addon:Print("/jac hud - Toggle a live diagnostic HUD (context, source, AC pick, buff windows)")
     addon:Print("/jac help - Show this help")
 end
@@ -1725,6 +1735,41 @@ function DebugCommands.DurationProbe(addon, arg)
             secrecy ~= nil and ("  secrecy=" .. tostring(secrecy)) or ""))
     end
 
+    -- Direct method sweep (68887 audit): the docs claim IsActive/IsZero/HasStarted/
+    -- HasExpired/HasSecretValues return PLAIN booleans even on a secret-backed
+    -- duration object. If IsActive() reads plain in combat and agrees with the
+    -- scratch probe, it supersedes the scratch-Cooldown technique entirely.
+    local function methodSweep(label, durObj, scratchResult)
+        if durObj == nil then
+            addon:Print("  " .. label .. ": |cff888888no duration object|r")
+            return
+        end
+        local parts = {}
+        for _, m in ipairs({ "IsActive", "IsZero", "HasStarted", "HasExpired", "HasSecretValues" }) do
+            local fn = durObj[m]
+            if type(fn) ~= "function" then
+                parts[#parts + 1] = m .. "=|cff888888absent|r"
+            else
+                local ok, v = pcall(fn, durObj)
+                if not ok then
+                    parts[#parts + 1] = m .. "=|cffff6600THREW|r"
+                elseif sec(v) then
+                    parts[#parts + 1] = m .. "=|cffff6600SECRET|r"
+                else
+                    parts[#parts + 1] = m .. "=|cff00ff00" .. tostring(v) .. "|r"
+                end
+            end
+        end
+        addon:Print(string.format("  %s: %s  (scratch says %s)", label,
+            table.concat(parts, " "), tostring(scratchResult)))
+    end
+    addon:Print("|cffffff00DurationObject method sweep (plain per 68887 docs - verify):|r")
+    do
+        local id = ids[1]
+        local durObj = C_Spell.GetSpellCooldownDuration(id, true)
+        methodSweep("cd " .. nm(id), durObj, durActive(durObj))
+    end
+
     addon:Print("|cffffff00Self-buffs present (aura duration object -> IsShown):|r")
     if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID and C_UnitAuras.GetAuraDuration) then
         addon:Print("  |cffff6600C_UnitAuras.GetAuraDuration unavailable|r")
@@ -1735,9 +1780,13 @@ function DebugCommands.DurationProbe(addon, arg)
         local aura = C_UnitAuras.GetPlayerAuraBySpellID(id)
         local instId = aura and aura.auraInstanceID
         if instId then
-            anyAura = true
-            local active = durActive(C_UnitAuras.GetAuraDuration("player", instId))
+            local durObj = C_UnitAuras.GetAuraDuration("player", instId)
+            local active = durActive(durObj)
             addon:Print(string.format("  %-26s probe=%s", nm(id), boolTag(active, "ACTIVE", "expired")))
+            if not anyAura then -- method sweep on the first aura duration object only
+                methodSweep("aura " .. nm(id), durObj, active)
+            end
+            anyAura = true
         end
     end
     if not anyAura then
@@ -3479,6 +3528,7 @@ local SECRECY_LEVEL = { [0] = "NeverSecret", [1] = "AlwaysSecret", [2] = "Contex
 -- SavedVariables flush on /reload or logout ONLY: play, then /reload, then read the file.
 local MAINTLOG_MAX = 400          -- ~6.5 min at 1s; bounded so it cannot bloat the file
 local maintLogTicker = nil
+local lastMaintPayload = nil   -- change-only guard for MaintLogSample
 
 local function MaintLogStore()
     if not _G.JustACGlobal then _G.JustACGlobal = {} end
@@ -3489,22 +3539,42 @@ end
 
 --- One compact sample. Only plain values - never persist a secret, and never let a probe
 --- throw: a recorder that breaks combat is worse than no recorder.
+---
+--- `dur` is the field that localises a swipe delay. The renderer can only draw a swipe once
+--- GetDurationObject returns something, and that needs a bound instance - so:
+---   inst=nil                -> the bind is late (bridge/exact-path problem)
+---   inst set but dur=nil    -> bound to an instance with no duration object (wrong instance,
+---                              or the aura went away)
+---   inst set and dur=1      -> the data was ready and any remaining lag is the RENDERER
+--- Emitted change-only by the caller, so these lines are transitions with real timestamps.
 local function MaintLogSample()
     local MT = LibStub("JustAC-MaintenanceTracker", true)
     if not (MT and MT.GetState) then return end
     local okS, state, _, inst = pcall(MT.GetState)
     if not okS then return end
     local d = (MT.GetBridgeDiag and select(2, pcall(MT.GetBridgeDiag))) or nil
-    local log = MaintLogStore()
-    log[#log + 1] = string.format("%.1f %s inst=%s combat=%s b=%s/%s/%s cand=%s",
-        GetTime(),
+    local hasDur = "?"
+    if MT.GetDurationObject and type(inst) == "number" then
+        local okD, dur = pcall(MT.GetDurationObject, inst)
+        hasDur = (okD and dur ~= nil) and "1" or "0"
+    elseif type(inst) ~= "number" then
+        hasDur = "-"
+    end
+    local payload = string.format("%s inst=%s dur=%s combat=%s b=%s/%s/%s cand=%s",
         tostring(state),
         (type(inst) == "number") and tostring(inst) or "nil",
+        hasDur,
         (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
         d and tostring(d.batches or 0) or "?",
         d and tostring(d.bound or 0) or "?",
         d and tostring(d.ambiguous or 0) or "?",
         d and tostring(d.lastCandidates or 0) or "?")
+    -- Change-only: at 10/s a clock-sampled log would be all duplicates and would ring out
+    -- of the interesting window in 40s. Transitions are what a latency question needs.
+    if payload == lastMaintPayload then return end
+    lastMaintPayload = payload
+    local log = MaintLogStore()
+    log[#log + 1] = string.format("%.2f %s", GetTime(), payload)
     -- Ring: drop the oldest half in one pass rather than table.remove per sample (O(n) each).
     if #log > MAINTLOG_MAX then
         local keep, half = {}, math.floor(MAINTLOG_MAX / 2)
@@ -3533,8 +3603,12 @@ function DebugCommands.MaintenanceLog(addon, arg)
         addon:Print("|cffff6600C_Timer unavailable|r")
         return
     end
-    maintLogTicker = C_Timer.NewTicker(1.0, function() pcall(MaintLogSample) end)
-    addon:Print("maintlog: |cff00ff00ON|r - sampling 1/s. Fight, then |cffffff00/jac inspect maintlog off|r and |cffffff00/reload|r.")
+    -- 10/s: the reported lag is sub-second, which 1/s sampling cannot resolve at all.
+    -- Cheap because the sample is change-only (see MaintLogSample).
+    lastMaintPayload = nil
+    maintLogTicker = C_Timer.NewTicker(0.1, function() pcall(MaintLogSample) end)
+    addon:Print("maintlog: |cff00ff00ON|r - sampling 10/s, transitions only. Press the buff a few")
+    addon:Print("times (first application AND refreshes), then |cffffff00/jac inspect maintlog off|r and |cffffff00/reload|r.")
 end
 
 --- /jac inspect maintenance - can the tank maintenance slot bind its aura EXACTLY in combat,
@@ -3944,34 +4018,832 @@ function DebugCommands.LossOfControlWatch(addon)
     local LOC = C_LossOfControl
     local MT = LibStub("JustAC-MaintenanceTracker", true)
 
+    -- Scratch Cooldown for laundering a DurationObject into a plain shown-boolean.
+    local function scratchShown(durObj)
+        if durObj == nil then return "|cff888888nil-dur|r" end
+        local sc = DebugCommands._locScratch
+        if not sc then
+            local holder = CreateFrame("Frame", nil, UIParent)
+            holder:Hide()
+            sc = CreateFrame("Cooldown", nil, holder, "CooldownFrameTemplate")
+            DebugCommands._locScratch = sc
+        end
+        if not sc.SetCooldownFromDurationObject then return "|cff888888no-api|r" end
+        sc:SetCooldownFromDurationObject(durObj)
+        local shown = sc:IsShown()
+        sc:SetCooldown(0, 0)
+        return tostring(shown)
+    end
+    -- First few rotation spells for the per-spell lockout boolean check.
+    local lockoutIds = {}
+    do
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        local list = BAPI and BAPI.GetRotationSpells and BAPI.GetRotationSpells()
+        if list then for i = 1, math.min(3, #list) do lockoutIds[i] = list[i] end end
+    end
+
     f:RegisterEvent("LOSS_OF_CONTROL_ADDED")
     f:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
-    f:SetScript("OnEvent", function()
+    f:RegisterEvent("PLAYER_CONTROL_LOST")
+    f:RegisterEvent("PLAYER_CONTROL_GAINED")
+    f:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_CONTROL_LOST" or event == "PLAYER_CONTROL_GAINED" then
+            addon:Print(string.format("|cff00ccff%s|r  UIParent.isOutOfControl=%s", event,
+                ClassifyRead(function() return UIParent.isOutOfControl end)))
+            return
+        end
         if not (LOC and LOC.GetActiveLossOfControlDataCount) then return end
         local okC, n = pcall(LOC.GetActiveLossOfControlDataCount)
         if not okC or type(n) ~= "number" or n < 1 then return end
         fires = fires + 1
-        addon:Print(string.format("|cff00ff00LOC fired|r count=%d", n))
+        addon:Print(string.format("|cff00ff00LOC fired|r (%s) count=%d combat=%s", event, n,
+            tostring(UnitAffectingCombat("player"))))
         for i = 1, n do
             local okD, d = pcall(LOC.GetActiveLossOfControlData, i)
             if okD and d then
-                local lt = d.locType
-                local secret = BlizzardAPI and BlizzardAPI.IsSecretValue
-                    and BlizzardAPI.IsSecretValue(lt)
-                addon:Print(string.format("  [%d] locType=%s%s displayType=%s spellID=%s",
-                    i, SafeSecret(lt), secret and " |cffff6600SECRET|r" or "",
-                    SafeSecret(d.displayType), SafeSecret(d.spellID)))
+                addon:Print(string.format("  [%d] locType=%s displayType=%s spellID=%s priority=%s auraInst=%s",
+                    i, SafeSecret(d.locType), SafeSecret(d.displayType), SafeSecret(d.spellID),
+                    SafeSecret(d.priority), SafeSecret(d.auraInstanceID)))
+                addon:Print(string.format("      timeRemaining=%s duration=%s lockoutSchool=%s",
+                    ClassifyRead(function() return d.timeRemaining end),
+                    ClassifyRead(function() return d.duration end),
+                    ClassifyRead(function() return d.lockoutSchool end)))
             end
+        end
+        -- Duration object route + slows: speed is expected SECRET in combat
+        -- (SecretWhenUnitStatsRestricted) - measure, don't assume.
+        if LOC.GetActiveLossOfControlDuration then
+            local okDur, durObj = pcall(LOC.GetActiveLossOfControlDuration, "player", 1)
+            if okDur and durObj then
+                addon:Print(string.format("  durObj[1]: HasSecretValues=%s scratchShown=%s",
+                    ClassifyRead(function() return durObj:HasSecretValues() end), scratchShown(durObj)))
+            end
+        end
+        addon:Print("  GetUnitSpeed(player)=" .. ClassifyRead(function() return (GetUnitSpeed("player")) end))
+        for _, id in ipairs(lockoutIds) do
+            local okL, li = pcall(C_Spell.GetSpellLossOfControlCooldownInfo, id)
+            addon:Print(string.format("  lockout %s: isActive=%s", tostring(id),
+                (okL and li) and ClassifyRead(function() return li.isActive end) or "|cff888888no-info|r"))
         end
         local sid = MT and MT.GetCCBreak and MT.GetCCBreak()
         local macro = MT and MT.GetCCBreakMacro and MT.GetCCBreakMacro(addon.db.profile)
         addon:Print(string.format("  -> resolves: spell=%s macro=%s", tostring(sid), tostring(macro)))
-        if fires >= 20 or GetTime() - armT > 600 then
+        if fires >= 120 or GetTime() - armT > 1800 then
             f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
             DebugCommands._locWatch = nil
             addon:Print("|cffffff00locwatch: window ended.|r")
         end
     end)
-    addon:Print("|cff00ff00=== locwatch ARMED (10min) ===|r get stunned/rooted; it prints the real locType on the spot.")
-    addon:Print("|cff888888  run again to disarm early.|r")
+    addon:Print("|cff00ff00=== locwatch ARMED (30min) ===|r get stunned/rooted/DAZED; it prints the real locType on the spot.")
+    addon:Print("|cff888888  ALL entries dump (a snare may hide behind displayType NONE). Run again to disarm early.|r")
+end
+
+--------------------------------------------------------------------------------
+-- 68887 signal-audit probes (Documentation/PROBE_PLAN_68887.md, Session 1)
+--------------------------------------------------------------------------------
+
+--- Rotation ids helper for the audit probes (first n, fail-open to empty).
+local function RotationIds(n)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local list = BAPI and BAPI.GetRotationSpells and BAPI.GetRotationSpells()
+    local ids = {}
+    if list then for i = 1, math.min(n, #list) do ids[i] = list[i] end end
+    return ids
+end
+
+--- /jac inspect selfcast - ARM a capture of the player's own cast info. Claim
+--- (68887 docs): SecretWhenUnitSpellCastRestricted only fires for non-player
+--- units, so UnitCastingInfo/UnitChannelInfo("player") read PLAIN in combat.
+--- Cast anything (hardcast + a channel) in AND out of combat; disarm = run again.
+function DebugCommands.SelfCastProbe(addon)
+    if DebugCommands._selfCast then
+        DebugCommands._selfCast:UnregisterAllEvents()
+        DebugCommands._selfCast:SetScript("OnEvent", nil)
+        DebugCommands._selfCast = nil
+        addon:Print("|cffffff00selfcast: disarmed.|r")
+        return
+    end
+    local f = CreateFrame("Frame")
+    DebugCommands._selfCast = f
+    local armT, fires, kicks = GetTime(), 0, 0
+    f:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_START", "player")
+    -- 4th payload arg. MEASURED 2026-07-25 - it is two different things depending on
+    -- the event, which is why both are captured and labelled separately:
+    --   UNIT_SPELLCAST_STOP        -> a PLAIN small integer (castBarID). Always
+    --                                 present, so it says nothing about interrupts.
+    --   UNIT_SPELLCAST_INTERRUPTED -> nil, or a SECRET string (the interrupter's
+    --                                 GUID). THIS is the real signal: non-nil means
+    --                                 the cast was actually interrupted rather than
+    --                                 having merely ended. Both cases were observed
+    --                                 in one fight, so the distinction is live.
+    -- The value stays sealed, but presence-vs-nil is readable without reading it
+    -- (issecretvalue(arg) or arg ~= nil) - which is all CastInterruptTracker needs
+    -- to replace its 1s debounce guess. Channels fire CHANNEL_STOP, not INTERRUPTED.
+    f:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "target")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "target")
+    f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "target")
+    f:SetScript("OnEvent", function(_, event, _, _, _, interruptedBy)
+        if event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_STOP"
+            or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+            if kicks >= 20 then return end
+            kicks = kicks + 1
+            -- Never branch on the value: only ask whether the slot is occupied.
+            local occupied = (issecretvalue and issecretvalue(interruptedBy)) or interruptedBy ~= nil
+            local meaning = (event == "UNIT_SPELLCAST_STOP")
+                and "castBarID - expect always-present, NOT an interrupt signal"
+                or "interrupter GUID - occupied=true means genuinely interrupted"
+            addon:Print(string.format("|cff00ccff%s|r combat=%s arg4-occupied=%s (%s) [%s]",
+                event, tostring(UnitAffectingCombat("player")), tostring(occupied),
+                ClassifyRead(function() return interruptedBy end), meaning))
+            return
+        end
+        fires = fires + 1
+        local isChannel = event ~= "UNIT_SPELLCAST_START"
+        addon:Print(string.format("|cff00ff00%s|r combat=%s", event, tostring(UnitAffectingCombat("player"))))
+        local info = { (isChannel and UnitChannelInfo or UnitCastingInfo)("player") }
+        -- UnitCastingInfo: name,text,texture,startTimeMs,endTimeMs,isTradeskill,castID,notInterruptible,spellID
+        -- UnitChannelInfo: name,text,texture,startTimeMs,endTimeMs,isTradeskill,notInterruptible,spellID,isEmpowered,numEmpowerStages
+        local FIELDS = isChannel
+            and { "name", 4, "startTimeMs", 5, "endTimeMs", 7, "notInterruptible", 8, "spellID", 9, "isEmpowered", 10, "numEmpowerStages" }
+            or  { "name", 4, "startTimeMs", 5, "endTimeMs", 7, "castID", 8, "notInterruptible", 9, "spellID" }
+        addon:Print("  name=" .. ClassifyRead(function() return info[1] end))
+        for i = 2, #FIELDS, 2 do
+            local idx, fname = FIELDS[i], FIELDS[i + 1]
+            addon:Print(string.format("  %s=%s", fname, ClassifyRead(function() return info[idx] end)))
+        end
+        -- The doc asymmetry: UnitCastingDuration SecretReturns=true, UnitChannelDuration unannotated.
+        if UnitCastingDuration then
+            addon:Print("  castDur:HasSecretValues=" .. ClassifyRead(function()
+                local d = UnitCastingDuration("player"); return d and d:HasSecretValues() end))
+        end
+        if UnitChannelDuration then
+            addon:Print("  chanDur:HasSecretValues=" .. ClassifyRead(function()
+                local d = UnitChannelDuration("player"); return d and d:HasSecretValues() end))
+        end
+        local sid = info[isChannel and 8 or 9]
+        if sid and C_Spell.IsCurrentSpell then
+            addon:Print("  IsCurrentSpell=" .. ClassifyRead(function() return C_Spell.IsCurrentSpell(sid) end))
+        end
+        if fires >= 12 or GetTime() - armT > 300 then
+            f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
+            DebugCommands._selfCast = nil
+            addon:Print("|cffffff00selfcast: window ended.|r")
+        end
+    end)
+    addon:Print("|cff00ff00=== selfcast ARMED (5min/12 casts) ===|r hardcast + channel something, in and out of combat.")
+    addon:Print("|cff888888  Also logs target STOP vs INTERRUPTED arg4 - kick a target's cast to see the two differ.|r")
+end
+
+--- /jac inspect auraids - one-shot: is C_UnitAuras.GetUnitAuraInstanceIDs a plain,
+--- countable, iterable list in combat? (Claim: yes.) Run OOC for baseline, then in
+--- combat, then dungeon. GetUnitAuras - the batch call whose docs say the TABLE is
+--- plain and only the fields are secret - is measured by `enginesig` instead.
+function DebugCommands.AuraInstanceIdsProbe(addon)
+    if not (C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs) then
+        addon:Print("|cffff6600GetUnitAuraInstanceIDs unavailable|r")
+        return
+    end
+    addon:Print(string.format("|cff00ccff== auraids ==|r combat=%s", tostring(UnitAffectingCombat("player"))))
+    for _, unit in ipairs({ "player", "target" }) do
+        if unit == "player" or UnitExists(unit) then
+            for _, filter in ipairs({ "HELPFUL", "HARMFUL", "HARMFUL|CROWD_CONTROL" }) do
+                local ok, t = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter)
+                if not ok then
+                    addon:Print(string.format("  %s %s: |cffff6600THREW|r", unit, filter))
+                elseif t == nil then
+                    addon:Print(string.format("  %s %s: nil", unit, filter))
+                else
+                    local cnt = ClassifyRead(function() return #t end)
+                    local first = ClassifyRead(function() return t[1] end)
+                    addon:Print(string.format("  %s %s: count=%s first=%s", unit, filter, cnt, first))
+                    if t[1] and C_UnitAuras.GetAuraDuration then
+                        addon:Print("    dur[1]:HasSecretValues=" .. ClassifyRead(function()
+                            local d = C_UnitAuras.GetAuraDuration(unit, t[1]); return d and d:HasSecretValues() end))
+                    end
+                end
+            end
+        end
+    end
+    addon:Print("|cff888888Goal: count/first read plain in combat -> plain aura counts for gates.|r")
+end
+
+--- /jac inspect cdfields - one-shot: the NeverSecret fields inside otherwise-secret
+--- cooldown structs (maxCharges, charge isActive, isEnabled, isOnGCD) plus
+--- IsSpellOverlayed proc boolean and GetSpellCastCount. Run OOC, then in combat.
+function DebugCommands.CooldownFieldsProbe(addon)
+    local ids = RotationIds(8)
+    if #ids == 0 then
+        addon:Print("no rotation spells - use a spec with a rotation")
+        return
+    end
+    addon:Print(string.format("|cff00ccff== cdfields ==|r combat=%s", tostring(UnitAffectingCombat("player"))))
+    addon:Print("|cff888888isOnGCD is only trustworthy inside SPELL_UPDATE_COOLDOWN - treat as indicative here.|r")
+    for _, id in ipairs(ids) do
+        local nmS = (C_Spell.GetSpellName and C_Spell.GetSpellName(id) or "?") .. "(" .. id .. ")"
+        local ch = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(id)
+        local cd = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(id)
+        addon:Print("  " .. nmS)
+        if ch then
+            addon:Print(string.format("    charges: maxCharges=%s isActive=%s",
+                ClassifyRead(function() return ch.maxCharges end),
+                ClassifyRead(function() return ch.isActive end)))
+        end
+        if cd then
+            addon:Print(string.format("    cooldown: isEnabled=%s isOnGCD=%s",
+                ClassifyRead(function() return cd.isEnabled end),
+                ClassifyRead(function() return cd.isOnGCD end)))
+        end
+        if C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed then
+            addon:Print("    overlayed=" .. ClassifyRead(function() return C_SpellActivationOverlay.IsSpellOverlayed(id) end))
+        end
+        if C_Spell.GetSpellCastCount then
+            addon:Print("    castCount=" .. ClassifyRead(function() return C_Spell.GetSpellCastCount(id) end))
+        end
+    end
+end
+
+--- /jac inspect secrecymap - one-shot, OOC: per-spell SecrecyLevel from C_Secrets
+--- (NeverSecret=0 / AlwaysSecret=1 / ContextuallySecret=2). The predicate docs say
+--- individual spells/power types may be flagged NeverSecret, overriding combat
+--- restrictions - any hit gets a plain fast path forever. Dumps exceptions only.
+function DebugCommands.SecrecyMapProbe(addon)
+    if not (C_Secrets and C_Secrets.GetSpellCooldownSecrecy) then
+        addon:Print("|cffff6600C_Secrets.GetSpell*Secrecy unavailable|r")
+        return
+    end
+    local counts, exceptions, total = { [0] = 0, [1] = 0, [2] = 0 }, {}, 0
+    local seen = {}
+    local function probeSpell(id)
+        if not id or seen[id] then return end
+        seen[id] = true
+        total = total + 1
+        local levels = {}
+        for tag, fn in pairs({ cd = C_Secrets.GetSpellCooldownSecrecy,
+                               aura = C_Secrets.GetSpellAuraSecrecy,
+                               cast = C_Secrets.GetSpellCastSecrecy }) do
+            local ok, lv = pcall(fn, id)
+            if ok and type(lv) == "number" then
+                counts[lv] = (counts[lv] or 0) + 1
+                if lv ~= 2 then levels[#levels + 1] = tag .. "=" .. lv end
+            end
+        end
+        if #levels > 0 then
+            exceptions[#exceptions + 1] = string.format("%s(%d): %s",
+                C_Spell.GetSpellName and C_Spell.GetSpellName(id) or "?", id, table.concat(levels, " "))
+        end
+    end
+    -- Spellbook sweep (player bank) + rotation list.
+    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo and Enum.SpellBookSpellBank then
+        for i = 1, 400 do
+            local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, Enum.SpellBookSpellBank.Player)
+            if not ok or not info then break end
+            probeSpell(info.spellID)
+        end
+    end
+    for _, id in ipairs(RotationIds(20)) do probeSpell(id) end
+    addon:Print(string.format("|cff00ccff== secrecymap ==|r %d spells: Never=%d Always=%d Contextual=%d",
+        total, counts[0] or 0, counts[1] or 0, counts[2] or 0))
+    if #exceptions == 0 then
+        addon:Print("  no per-spell exemptions found (everything ContextuallySecret)")
+    else
+        for i = 1, math.min(#exceptions, 30) do addon:Print("  " .. exceptions[i]) end
+        if #exceptions > 30 then addon:Print(string.format("  ...and %d more", #exceptions - 30)) end
+    end
+    -- Power types 0..29.
+    if C_Secrets.GetPowerTypeSecrecy then
+        local pt = {}
+        for p = 0, 29 do
+            local ok, lv = pcall(C_Secrets.GetPowerTypeSecrecy, p)
+            if ok and type(lv) == "number" and lv ~= 2 then pt[#pt + 1] = p .. "=" .. lv end
+        end
+        addon:Print("  power-type exemptions: " .. (#pt > 0 and table.concat(pt, " ") or "none"))
+    end
+end
+
+--- /jac inspect frames - one-shot triples for the laundered frame-state booleans
+--- found at 68887 (control-flow Show/Hide -> plain IsShown). Run while: hurt <35%,
+--- resource capped, absorb up, in a party with a hurt member. Spam it as state
+--- changes; every read is guarded. MUST be re-run with a unit-frame replacement
+--- addon enabled before any feature ships on these (frozen-frame precedent).
+function DebugCommands.FrameStateProbe(addon)
+    local function walk(root, ...)
+        local node = _G[root]
+        for i = 1, select("#", ...) do
+            if node == nil then return nil end
+            node = node[select(i, ...)]
+        end
+        return node
+    end
+    local function report(label, fn)
+        addon:Print("  " .. label .. " = " .. ClassifyRead(fn))
+    end
+    addon:Print(string.format("|cff00ccff== frames ==|r combat=%s", tostring(UnitAffectingCombat("player"))))
+
+    report("LowHealthFrame:IsShown (<=35% hp)", function() return LowHealthFrame and LowHealthFrame:IsShown() end)
+    report("cvar doNotFlashLowHealthWarning", function() return GetCVarBool("doNotFlashLowHealthWarning") end)
+
+    local main = { "PlayerFrame", "PlayerFrameContent", "PlayerFrameContentMain" }
+    report("AnimatedLoss:IsShown (dmg<0.25s & no absorb)", function()
+        local f = walk(main[1], main[2], main[3], "HealthBarsContainer", "PlayerFrameHealthBarAnimatedLoss")
+        return f and f:IsShown()
+    end)
+    report("HealAbsorbBar:IsShown", function()
+        local f = walk(main[1], main[2], main[3], "HealthBarsContainer", "HealthBar", "HealAbsorbBar")
+        return f and f:IsShown()
+    end)
+    local function manaChild(...)
+        return walk(main[1], main[2], main[3], "ManaBarArea", "ManaBar", ...)
+    end
+    report("FullPowerFrame.active", function() local f = manaChild("FullPowerFrame") return f and f.active end)
+    report("FullPowerFrame pulse (capped)", function()
+        local f = manaChild("FullPowerFrame", "PulseFrame", "PulseAnim") return f and f:IsPlaying()
+    end)
+    report("FullPowerFrame:GetAlpha", function() local f = manaChild("FullPowerFrame") return f and f:GetAlpha() end)
+    report("FeedbackFrame gain glow (>10% gain)", function()
+        local t = manaChild("FeedbackFrame", "GainGlowTexture") return t and t:IsShown()
+    end)
+    report("FeedbackFrame loss glow (>10% spend)", function()
+        local t = manaChild("FeedbackFrame", "LossGlowTexture") return t and t:IsShown()
+    end)
+    report("cvar showBuilderFeedback", function() return GetCVarBool("showBuilderFeedback") end)
+    report("cvar showSpenderFeedback", function() return GetCVarBool("showSpenderFeedback") end)
+
+    if IsInGroup() then
+        for i = 1, 4 do
+            local pf = walk("PartyFrame", "MemberFrame" .. i)
+            if pf and pf:IsShown() then
+                report("Party" .. i .. " portrait rgb (red=(1,0,0) -> <=20%)", function()
+                    local r, g, b = pf.Portrait:GetVertexColor()
+                    return string.format("%.2f,%.2f,%.2f", r, g, b)
+                end)
+            end
+        end
+    else
+        addon:Print("  |cff888888party portrait probes skipped (not in a group)|r")
+    end
+
+    -- 2026-07-24 secrecymap found power types 4,5,7,9,12,16,19 (combo points, runes,
+    -- shards, holy power, chi, arcane charges, essence) flagged NeverSecret. If a
+    -- direct UnitPower read on those is truly plain in combat, it supersedes the
+    -- whole point-widget frame reader. Only types the class actually has print.
+    if UnitPower and UnitHasPowerType then
+        for _, pt in ipairs({ 4, 5, 7, 9, 12, 16, 19 }) do
+            local okH, has = pcall(UnitHasPowerType, "player", pt)
+            if okH and has == true then
+                report("UnitPower(player," .. pt .. ") [NeverSecret-flagged discrete]",
+                    function() return UnitPower("player", pt) end)
+            end
+        end
+        -- Slows post-mortem (15:22 session: slows provably NOT in LoC data): the only
+        -- conceivable in-combat speed signal left is position-delta dead reckoning.
+        -- Record UnitPosition's per-context behavior (known nil in instances; secrecy
+        -- in combat unmeasured) so that route can be judged before building anything.
+        report("UnitPosition(player) [slow-detect dead-reckoning feasibility]", function()
+            local y, x = UnitPosition("player")
+            if y == nil then return "nil (instanced?)" end
+            return string.format("%.1f,%.1f", y, x)
+        end)
+        -- LoC lockout counterfactual: validated TRUE during a stun (14:5x session);
+        -- this samples the not-CC'd baseline so we know it reads false when free.
+        report("LoC count / lockout[rot1].isActive (expect 0/false when free)", function()
+            local n = C_LossOfControl and C_LossOfControl.GetActiveLossOfControlDataCount
+                and C_LossOfControl.GetActiveLossOfControlDataCount() or "?"
+            local ids = RotationIds(1)
+            local li = ids[1] and C_Spell.GetSpellLossOfControlCooldownInfo
+                and C_Spell.GetSpellLossOfControlCooldownInfo(ids[1])
+            return tostring(n) .. " / " .. tostring(li and li.isActive)
+        end)
+        -- Cross-check vs the shipped reader (direct fast path where wired, point
+        -- widgets otherwise - notably DK, where UnitPower read a constant 6 in
+        -- combat 2026-07-24, i.e. total runes not ready runes).
+        report("GetClassResourcePoints (shipped reader)", function()
+            local BAPI = LibStub("JustAC-BlizzardAPI", true)
+            if not (BAPI and BAPI.GetClassResourcePoints) then return nil end
+            local c, m, r = BAPI.GetClassResourcePoints()
+            if c == nil then return "unknown" end
+            return string.format("%s/%s %s", tostring(c), tostring(m), tostring(r))
+        end)
+    end
+end
+
+--- /jac inspect cvitems - one-shot over Cooldown Manager viewer items: the
+--- laundered per-spell booleans (CooldownFlash:IsShown = on real non-GCD CD,
+--- isActive = tracked buff up, PandemicIcon = engine pandemic window on target
+--- debuffs). Requires the Cooldown Manager enabled in Edit Mode.
+function DebugCommands.CooldownViewerItemsProbe(addon)
+    -- Buff viewers FIRST: their isActive/PandemicIcon are the interesting bits, and
+    -- the 2026-07-24 session showed Essential/Utility items exhausting the cap
+    -- (their isActive just means "spell known/tracked", always true).
+    local VIEWERS = { "BuffIconCooldownViewer", "BuffBarCooldownViewer",
+                      "EssentialCooldownViewer", "UtilityCooldownViewer" }
+    addon:Print(string.format("|cff00ccff== cvitems ==|r combat=%s", tostring(UnitAffectingCombat("player"))))
+    local any, printed = false, 0
+    for _, vName in ipairs(VIEWERS) do
+        local v = _G[vName]
+        local pool = v and v.itemFramePool
+        if pool and pool.EnumerateActive then
+            local shown = v:IsShown()
+            addon:Print(string.format("  %s shown=%s", vName, tostring(shown)))
+            for item in pool:EnumerateActive() do
+                local ok, cdID = pcall(function() return item:GetCooldownID() end)
+                if ok and cdID and printed < 20 then
+                    any = true
+                    printed = printed + 1
+                    local info = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
+                        and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                    local sid = info and info.spellID
+                    local nmS = sid and (C_Spell.GetSpellName(sid) or "?") .. "(" .. sid .. ")" or "cd" .. cdID
+                    addon:Print(string.format("    %s flash=%s isActive=%s pandemic=%s", nmS,
+                        ClassifyRead(function() return item.CooldownFlash and item.CooldownFlash:IsShown() end),
+                        ClassifyRead(function() return item.isActive end),
+                        ClassifyRead(function() return item.PandemicIcon and item.PandemicIcon:IsShown() end)))
+                end
+            end
+        end
+    end
+    if not any then
+        addon:Print("  |cffff6600no active viewer items - enable the Cooldown Manager in Edit Mode|r")
+    elseif printed >= 20 then
+        addon:Print("  |cff888888(truncated at 20 items)|r")
+    end
+end
+
+--- /jac inspect enginesig - one-shot over four engine-side signals the addon does
+--- not use yet. Each is cheap to adopt IF it measures the way the docs read, and
+--- each is worthless if it does not, so they get measured before anything is built:
+---
+---  1. C_UnitAuras.GetUnitAuras(unit, filter) - the BATCH aura call. Docs mark the
+---     return ConditionalSecretContents, i.e. the table (and #length) plain with only
+---     the FIELDS secret. If so it replaces the 40x GetAuraDataByIndex index loops in
+---     RedundancyFilter/PrecombatEngine/StateHelpers, and #auras under a category
+---     filter becomes a plain, branchable count ("target has a big defensive up").
+---  2. C_Spell.IsSpellImportant / IsSpellCrowdControl / C_UnitAuras.AuraIsBigDefensive
+---     - engine spell classifiers, all SecretArguments=AllowedWhenTainted, so they
+---     accept a SECRET spellID. IsSpellImportant is Blizzard's own "lethal if not
+---     interrupted" flag - exactly what interrupt ranking wants and cannot get from a
+---     secret cast id. Probed with both a plain id and a secret one.
+---  3. PlayerIsSpellTarget(unit) - "this unit's cast is aimed at the player".
+---     SecretReturns=true unconditionally, so display-sink only (SetAlphaFromBoolean),
+---     never a gate. Confirm it does not throw and is genuinely secret.
+---  4. CreateUnitHealPredictionCalculator - a secret-aware arithmetic object. Its
+---     `clamped` second returns are ENGINE-COMPUTED comparisons between two secret
+---     numbers (absorb vs missing health, heal-absorb vs current health), which we
+---     cannot derive ourselves at any price. Secret booleans, so display-only.
+---
+--- Run OOC for a baseline, then in combat, ideally targeting something with a
+--- defensive up and something crowd-controlled.
+function DebugCommands.EngineSignalsProbe(addon)
+    local function report(label, fn)
+        addon:Print("  " .. label .. " = " .. ClassifyRead(fn))
+    end
+    addon:Print(string.format("|cff00ccff== enginesig ==|r combat=%s",
+        tostring(UnitAffectingCombat("player"))))
+
+    -- 1. Batch aura call. The count is the whole point: a plain # under a narrow
+    -- filter is a gate we can branch on with zero secret reads.
+    local UA = C_UnitAuras
+    if not (UA and UA.GetUnitAuras) then
+        addon:Print("  |cffff6600GetUnitAuras unavailable|r")
+    else
+        local FILTERS = { "HELPFUL", "HARMFUL", "HELPFUL|BIG_DEFENSIVE",
+                          "HELPFUL|EXTERNAL_DEFENSIVE", "HARMFUL|CROWD_CONTROL",
+        -- Control row. 2026-07-25 run: every category filter returned 0 on both
+        -- units in every sample, which is ambiguous - either nothing matched, or
+        -- the token is unrecognised and the engine silently returns an empty list.
+        -- A deliberately bogus token settles it: if this returns the same count as
+        -- plain HELPFUL, extra tokens are being IGNORED and every 0 above is
+        -- meaningless; if it returns 0, tokens really are parsed and the 0s are real.
+                          "HELPFUL|JAC_NOT_A_REAL_TOKEN" }
+        for _, unit in ipairs({ "player", "target" }) do
+            if unit == "player" or UnitExists(unit) then
+                for _, filter in ipairs(FILTERS) do
+                    local ok, t = pcall(UA.GetUnitAuras, unit, filter)
+                    if not ok then
+                        addon:Print(string.format("  getUnitAuras %s %s: |cffff6600THREW|r", unit, filter))
+                    elseif type(t) ~= "table" then
+                        addon:Print(string.format("  getUnitAuras %s %s: %s", unit, filter, tostring(t)))
+                    else
+                        addon:Print(string.format("  getUnitAuras %s %s: count=%s spellId[1]=%s",
+                            unit, filter,
+                            ClassifyRead(function() return #t end),
+                            ClassifyRead(function() return t[1] and t[1].spellId end)))
+                    end
+                end
+            end
+        end
+    end
+
+    -- 1b. The shipped helpers built on the above. This is the check on the
+    -- ignored-token guard in CountAuras: if a category token ever stops being
+    -- honoured, CountAuras must return nil (not a full-set count) and
+    -- HasBigDefensive must go nil rather than silently reading true forever.
+    -- Cross-read against the raw count so a divergence is visible in one line.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.CountAuras then
+        addon:Print(string.format("  shipped: GetAuras#=%s CountAuras(BIG_DEFENSIVE)=%s HasBigDefensive=%s",
+            ClassifyRead(function()
+                local l = BAPI.GetAuras("player", "HELPFUL") return l and #l end),
+            ClassifyRead(function() return BAPI.CountAuras("player", "HELPFUL|BIG_DEFENSIVE") end),
+            ClassifyRead(function() return BAPI.HasBigDefensive("player") end)))
+        addon:Print("  |cff888888(CountAuras nil + HasBigDefensive nil = the ignored-token guard tripped)|r")
+    end
+
+    -- 2. Classifiers, each against a KNOWN-YES / KNOWN-NO pair rather than whatever
+    -- the rotation happens to hand over. The 2026-07-25 run fed IsSpellCrowdControl
+    -- the first rotation id - Cat Form(768) - and got `true`, which is either a
+    -- broken classifier or a semantic we have guessed wrong; with one uncalibrated
+    -- sample there is no way to tell. A pair answers it: yes+no = the classifier
+    -- works and we can trust it; yes+yes (or no+no) = it does not mean what the
+    -- name says and nothing may be built on it. Ids are hardcoded on purpose - they
+    -- need not be known by the player, only to exist.
+    local CLASSIFIERS = {
+        { "IsSpellImportant", C_Spell and C_Spell.IsSpellImportant,
+          -- No universally-castable "lethal if not interrupted" spell exists to pin
+          -- this against; a raid/dungeon boss cast is the real calibration. Pair is
+          -- a floor check only: a plain damage spell must NOT read important.
+          yes = { 118, "Polymorph" }, no = { 8921, "Moonfire" } },
+        { "IsSpellCrowdControl", C_Spell and C_Spell.IsSpellCrowdControl,
+          yes = { 118, "Polymorph" }, no = { 8921, "Moonfire" } },
+        { "AuraIsBigDefensive", UA and UA.AuraIsBigDefensive,
+          yes = { 871, "Shield Wall" }, no = { 8921, "Moonfire" } },
+    }
+    local secretID = nil
+    if UA and UA.GetAuraDataByIndex then
+        local okA, d = pcall(UA.GetAuraDataByIndex, "target", 1, "HARMFUL")
+        if okA and d then secretID = d.spellId end
+    end
+    for _, c in ipairs(CLASSIFIERS) do
+        local name, fn = c[1], c[2]
+        if not fn then
+            addon:Print("  |cffff6600" .. name .. " unavailable|r")
+        else
+            for _, leg in ipairs({ "yes", "no" }) do
+                local id, label = c[leg][1], c[leg][2]
+                report(string.format("%s(%d %s) [expect %s]", name, id, label, leg:upper()),
+                    function() return fn(id) end)
+            end
+            if secretID ~= nil then
+                report(name .. "(target aura id) [secret id]", function() return fn(secretID) end)
+            end
+        end
+    end
+    if secretID == nil then
+        addon:Print("  |cff888888secret-id leg skipped (no target debuff) - re-run on a debuffed target in combat|r")
+    end
+
+    -- 3. Cast-on-me. Only meaningful while the target is mid-cast; nil otherwise is
+    -- not evidence, so the label says which read it was.
+    if PlayerIsSpellTarget then
+        local casting = UnitExists("target")
+            and (UnitCastingInfo("target") ~= nil or UnitChannelInfo("target") ~= nil)
+        report(string.format("PlayerIsSpellTarget(target) [target casting=%s]", tostring(casting)),
+            function() return PlayerIsSpellTarget("target") end)
+    else
+        addon:Print("  |cffff6600PlayerIsSpellTarget unavailable|r")
+    end
+
+    -- 4. Heal-prediction calculator. HasSecretValues is documented ReturnsNeverSecret,
+    -- so it is the one plain read here and tells us whether the engine actually
+    -- populated the object with secrets - without it, a plain `clamped` would be
+    -- ambiguous (genuinely unrestricted, or silently never filled?).
+    if not (CreateUnitHealPredictionCalculator and UnitGetDetailedHealPrediction) then
+        addon:Print("  |cffff6600UnitHealPredictionCalculator unavailable|r")
+    else
+        local calc = DebugCommands._healPredCalc
+        if not calc then
+            local okC
+            okC, calc = pcall(function()
+                local c = CreateUnitHealPredictionCalculator()
+                -- MissingHealth is the mode that makes `clamped` mean "the absorb
+                -- exceeds the health actually missing" - the comparison of two secret
+                -- numbers we have no other way to obtain.
+                c:SetDamageAbsorbClampMode(Enum.UnitDamageAbsorbClampMode.MissingHealth)
+                return c
+            end)
+            if not okC then
+                addon:Print("  |cffff6600healPred setup failed:|r " .. tostring(calc):sub(1, 60))
+                return
+            end
+            DebugCommands._healPredCalc = calc
+        end
+        for _, unit in ipairs({ "player", "target" }) do
+            if unit == "player" or UnitExists(unit) then
+                local okP = pcall(UnitGetDetailedHealPrediction, unit, nil, calc)
+                if not okP then
+                    addon:Print(string.format("  healPred %s: |cffff6600THREW|r", unit))
+                else
+                    addon:Print(string.format("  healPred %s: hasSecrets=%s absorbClamped=%s healAbsorbClamped=%s incomingClamped=%s",
+                        unit,
+                        ClassifyRead(function() return calc:HasSecretValues() end),
+                        ClassifyRead(function() local _, c = calc:GetDamageAbsorbs() return c end),
+                        ClassifyRead(function() local _, c = calc:GetHealAbsorbs() return c end),
+                        ClassifyRead(function() local _, _, _, c = calc:GetIncomingHeals() return c end)))
+                end
+            end
+        end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect audit [off|clear] - the whole Session-1 battery, hands-free.
+-- Arm it once, then just fight: it snapshots every probe OOC (baseline), on
+-- every combat enter, 10s into combat, and on combat exit. Output goes to
+-- SavedVariables (JustACGlobal.probeLog), color codes stripped, so after
+-- '/jac inspect audit off' + /reload the full transcript is readable directly
+-- from WTF/.../SavedVariables/JustAC.lua. Also arms locwatch + selfcast with
+-- their output redirected into the same log.
+--------------------------------------------------------------------------------
+local PROBE_LOG_MAX = 8000
+
+local function ProbeLogStore()
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    g.probeLog = g.probeLog or {}
+    return g.probeLog
+end
+
+local function ProbeLogEmit(msg)
+    local log = ProbeLogStore()
+    log[#log + 1] = tostring(msg or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    if #log > PROBE_LOG_MAX then
+        local keep, half = {}, math.floor(PROBE_LOG_MAX / 2)
+        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
+        _G.JustACGlobal.probeLog = keep
+    end
+end
+
+--- Proxy addon whose Print goes to the log instead of chat; everything else
+--- falls through to the real addon (db, methods).
+local function LogProxy(addon)
+    return setmetatable({ Print = function(_, msg) ProbeLogEmit(msg) end }, { __index = addon })
+end
+
+local PROBE_BATTERY = { "DurationProbe", "AuraInstanceIdsProbe", "CooldownFieldsProbe",
+                        "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe" }
+
+local function RunProbeBattery(addon, tag, includeStatic)
+    ProbeLogEmit(string.format("===== %s @ %.1f combat=%s hp-context: dead=%s =====",
+        tag, GetTime(), tostring(UnitAffectingCombat("player")), tostring(UnitIsDeadOrGhost("player"))))
+    local proxy = LogProxy(addon)
+    if includeStatic then pcall(DebugCommands.SecrecyMapProbe, proxy) end
+    for _, m in ipairs(PROBE_BATTERY) do
+        pcall(DebugCommands[m], proxy)
+    end
+    addon:Print(string.format("audit: |cff00ff00%s|r snapshot captured (%d log lines held).",
+        tag, #ProbeLogStore()))
+end
+
+function DebugCommands.ProbeSession(addon, arg)
+    arg = arg and arg:lower() or nil
+    if arg == "clear" then
+        if _G.JustACGlobal then _G.JustACGlobal.probeLog = nil end
+        addon:Print("audit: |cffffff00log cleared|r")
+        return
+    end
+    if arg == "off" or (not arg and DebugCommands._probeSession) then
+        local f = DebugCommands._probeSession
+        if f then
+            f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
+            DebugCommands._probeSession = nil
+        end
+        if DebugCommands._probeTicker then
+            DebugCommands._probeTicker:Cancel()
+            DebugCommands._probeTicker = nil
+        end
+        -- Disarm the event captures we armed (they toggle).
+        if DebugCommands._locWatch then DebugCommands.LossOfControlWatch(LogProxy(addon)) end
+        if DebugCommands._selfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
+        addon:Print(string.format("audit: |cffff6600OFF|r - %d log lines held.", #ProbeLogStore()))
+        addon:Print("|cff888888/reload to flush to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua (JustACGlobal.probeLog)|r")
+        return
+    end
+
+    local f = CreateFrame("Frame")
+    DebugCommands._probeSession = f
+    local cycles = 0
+    f:RegisterEvent("PLAYER_REGEN_DISABLED")
+    f:RegisterEvent("PLAYER_REGEN_ENABLED")
+    f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    f:RegisterEvent("PLAYER_ENTERING_WORLD") -- instanced content (delves) loads via this, not ZONE_CHANGED
+    f:SetScript("OnEvent", function(_, event)
+        if event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_ENTERING_WORLD" then
+            -- Restricted-map baseline: SecretOnRestrictedMaps applies OOC too,
+            -- so entering a delve/dungeon deserves its own out-of-combat snapshot.
+            if not UnitAffectingCombat("player") then
+                RunProbeBattery(addon, "ZONE:" .. (GetZoneText() or "?"))
+            end
+        elseif event == "PLAYER_REGEN_DISABLED" then
+            cycles = cycles + 1
+            -- No battery at entry: measured 2026-07-24 that secrecy latches
+            -- mid-combat, so at-entry reads look plain and prove nothing.
+            ProbeLogEmit(string.format("===== COMBAT-ENTER#%d @ %.1f (marker only) =====", cycles, GetTime()))
+            -- +4s catches short pulls (a 7.5s pull missed the +10s window entirely);
+            -- castCount going SECRET inside the same snapshot marks whether
+            -- restrictions had latched, so an early read cannot mislead.
+            for _, delay in ipairs({ 4, 10 }) do
+                C_Timer.After(delay, function()
+                    if DebugCommands._probeSession and UnitAffectingCombat("player") then
+                        RunProbeBattery(addon, "COMBAT+" .. delay .. "s#" .. cycles)
+                    end
+                end)
+            end
+        else
+            RunProbeBattery(addon, "COMBAT-EXIT#" .. cycles)
+            if cycles >= 20 then
+                addon:Print("audit: 20 combat cycles captured - auto-stopping.")
+                DebugCommands.ProbeSession(addon, "off")
+            end
+        end
+    end)
+
+    -- Change-only 1/s watcher for rare-edge booleans: a 110s boss fight gets only
+    -- +4s/+10s battery snapshots, so a mid-fight low-health dip or damage edge is
+    -- invisible to sampling. This logs TRANSITIONS only (a handful of lines/fight).
+    local edgeState = {}
+    local function edgeSample()
+        local function walk2(root, ...)
+            local node = _G[root]
+            for i = 1, select("#", ...) do
+                if node == nil then return nil end
+                node = node[select(i, ...)]
+            end
+            return node
+        end
+        local reads = {
+            lowHealth = function() return LowHealthFrame and LowHealthFrame:IsShown() end,
+            animLoss = function()
+                local fr = walk2("PlayerFrame", "PlayerFrameContent", "PlayerFrameContentMain",
+                    "HealthBarsContainer", "PlayerFrameHealthBarAnimatedLoss")
+                return fr and fr:IsShown()
+            end,
+            powerCapped = function()
+                local a = walk2("PlayerFrame", "PlayerFrameContent", "PlayerFrameContentMain",
+                    "ManaBarArea", "ManaBar", "FullPowerFrame", "PulseFrame", "PulseAnim")
+                return a and a:IsPlaying()
+            end,
+            -- Polled, not event-driven: settles whether slows appear in the LoC data
+            -- at all. Locwatch is armed on LOSS_OF_CONTROL_ADDED - if slows never
+            -- fire that event, only a poll can see them. If this stays 0 while the
+            -- player is visibly slowed, slows are NOT in LoC data and the fallback
+            -- ladder (DB2 aura-type-33 list) is the only route.
+            locCount = function()
+                return C_LossOfControl and C_LossOfControl.GetActiveLossOfControlDataCount
+                    and C_LossOfControl.GetActiveLossOfControlDataCount() or 0
+            end,
+            -- IsPlayerMoving: unannotated in the 68887 docs = plain always (verify -
+            -- annotation gaps have lied before). Pairs with speedBand: moving+slow<5
+            -- sustained = slowed; roots don't need this (ROOT is a real LoC type).
+            moving = function() return IsPlayerMoving() end,
+            -- Dead-reckoning speed band (validated feasible 15:31 session: UnitPosition
+            -- plain+live in delve combat). Base run 7 yd/s, cat ~9.8; a slow while
+            -- trying to move shows as run->slow band transitions. Heuristic only -
+            -- backpedal (~4.5 yd/s) and /walk also land in slow<5, so a feature
+            -- trigger must require the band to persist while moving.
+            speedBand = function()
+                local y, x = UnitPosition("player")
+                local t = GetTime()
+                local movingNow = IsPlayerMoving() == true
+                local prev = edgeState._pos
+                edgeState._pos = y and { y = y, x = x, t = t, moving = movingNow } or nil
+                if not (y and prev) then return "n/a" end
+                -- Only a delta whose WHOLE window was spent moving measures travel
+                -- speed. Measured 18:56 session: combat stutter-stepping at 1s
+                -- sampling aliases into phantom slow/still readings - a window with
+                -- a stationary half-second reads as slow<5 while unimpaired.
+                if not (movingNow and prev.moving) then return "idle" end
+                local dt = t - prev.t
+                if dt <= 0 or dt > 3 then return "idle" end
+                local v = math.sqrt((y - prev.y) ^ 2 + (x - prev.x) ^ 2) / dt
+                if v < 5 then return "slow<5"
+                elseif v < 9 then return "run5-9"
+                else return "fast>9" end
+            end,
+        }
+        for key, fn in pairs(reads) do
+            local ok, v = pcall(fn)
+            if not ok then v = false end
+            -- numbers and strings (speedBand) compare as-is; everything else -> boolean
+            if type(v) ~= "number" and type(v) ~= "string" then v = (v == true) end
+            if edgeState[key] ~= nil and edgeState[key] ~= v then
+                ProbeLogEmit(string.format("EDGE %.1f %s: %s -> %s combat=%s",
+                    GetTime(), key, tostring(edgeState[key]), tostring(v),
+                    tostring(UnitAffectingCombat("player"))))
+            end
+            edgeState[key] = v
+        end
+    end
+    DebugCommands._probeTicker = C_Timer.NewTicker(1.0, function() pcall(edgeSample) end)
+
+    ProbeLogEmit(string.format("========== AUDIT SESSION ARMED %s (build %s) ==========",
+        date("%Y-%m-%d %H:%M:%S"), (GetBuildInfo())))
+    RunProbeBattery(addon, "BASELINE", true)
+    -- Arm the event captures with output into the log.
+    if not DebugCommands._locWatch then DebugCommands.LossOfControlWatch(LogProxy(addon)) end
+    if not DebugCommands._selfCast then DebugCommands.SelfCastProbe(LogProxy(addon)) end
+    addon:Print("|cff00ff00=== audit ARMED ===|r Baseline captured. Now just fight: enter/exit combat a few times,")
+    addon:Print("get CC'd/dazed if you can, cast + channel, get hurt, cap a resource. Snapshots are automatic.")
+    addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
+    addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
 end
