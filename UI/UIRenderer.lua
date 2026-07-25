@@ -1220,27 +1220,23 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             end
         else
             -- The aura's remaining time, in descending order of trust:
-            --   1. exact bind  -> the aura's real DurationObject, engine-drawn. Never read.
-            --   2. anything but a confirmed "down" -> our own cast clock. The bound instance
-            --      may NOT be our aura, and drawing ITS duration would render a foreign timer
-            --      (a 20s proc on a 7s buff) - so the fallback is deliberately our own numbers,
-            --      never the instance's. Keyed on STATE, not on holding an instance: a
-            --      successful cast already tells us the buff started and how long it lasts,
-            --      and neither fact needs an aura binding.
+            --   1. exact bind -> the aura's real DurationObject, engine-drawn, never read.
+            --      SKIPPED for stacking projected entries: an exact instance is still only ONE
+            --      stack, so its timer hops as stacks expire - the exact bug the projection
+            --      exists to fix. Our own clock is worse in precision and better in meaning.
+            --   2. anything but a confirmed "down" -> our own cast clock. Keyed on STATE, not on
+            --      holding an instance: a successful cast already tells us the buff started and
+            --      how long it lasts, and neither fact needs an aura binding. Note this is
+            --      deliberately OUR numbers, never the bound instance's - drawing that would
+            --      render a foreign timer (a 20s proc on a 7s buff) whenever the bind is wrong.
             --   3. confirmed "down" -> nothing. Telling a tank they are covered when they are
             --      not is actionable misinformation, and every "down" verdict comes from a
             --      source more authoritative than our own clock.
-            --
-            -- "unknown" is included deliberately, and it is the case that matters most.
-            -- Measured in a follower dungeon on Ironfur (/jac inspect maintenance): the aura is
-            -- ContextuallySecret, GetPlayerAuraBySpellID returns nil in combat, and with no
-            -- Cooldown Manager viewer enabled BOTH exact paths are dead - so every bind comes
-            -- from the cast bridge, which refused 8 of 15 batches as ambiguous. Between the
-            -- cast and a clean batch the state is "unknown", and gating the swipe on a positive
-            -- up/refresh left it blank for exactly that window. "unknown" means we never saw it
-            -- drop, not that it is gone; an expired estimate draws nothing anyway, so a stale
-            -- lastCastAt is self-limiting rather than a lingering false timer.
-            local durObj = exactBind and MT and MT.GetDurationObject and MT.GetDurationObject(inst) or nil
+            -- "unknown" is included on purpose: it means we never saw it drop, not that it is
+            -- gone. An expired estimate draws nothing anyway, so a stale clock is self-limiting.
+            local preferProjection = entry.project and entry.stacks
+            local durObj = (not preferProjection) and exactBind and MT and MT.GetDurationObject
+                           and MT.GetDurationObject(inst) or nil
             if durObj and icon.cooldown.SetCooldownFromDurationObject then
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
                 applied = true
@@ -1281,6 +1277,17 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
                     local okT = pcall(icon.chargeText.SetText, icon.chargeText, ci.currentCharges)
                     if okT then icon.chargeText:Show() shown = true end
                 end
+            end
+        elseif entry.project and entry.stacks and MT and MT.GetProjectedStacks then
+            -- Projected stacks: one per unexpired cast of ours. A PLAIN number we computed, so
+            -- unlike the engine path it needs no instance and no identity proof - the count is
+            -- exact as long as the casts landed, which for a self-buff that cannot miss is
+            -- always. Same ">= 2" threshold as the engine path so a single stack stays quiet.
+            local okN, n = pcall(MT.GetProjectedStacks, entry)
+            if okN and type(n) == "number" and n >= 2 then
+                icon.chargeText:SetText(n)
+                icon.chargeText:Show()
+                shown = true
             end
         elseif entry.stacks then
             -- Aura stacks, gated on a PROVEN bind: the engine renders the true count, but only

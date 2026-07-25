@@ -1157,27 +1157,46 @@ SpellDB.MAINTENANCE_DEFENSIVE = {
         -- the remaining pool and the damage coming, and we can read neither in combat.
         -- If the shield is eaten before the timer, the aura drops and the authoritative "down"
         -- path catches it at rank 1, so that case needs no prediction.
-        { cast = 190456, aura = 190456, dur = 12.0, lead = 4.0, stacks = true },  -- Ignore Pain
+        -- project: same cast-timestamp model as Ironfur. dur verified against the DB2 exports
+        -- (SpellMisc DurationIndex 29 -> 12000ms). The absorb-eaten-early case is NOT projected
+        -- away: a confirmed drop clears the projection, per the note above.
+        { cast = 190456, aura = 190456, dur = 12.0, lead = 4.0, stacks = true, project = true },  -- Ignore Pain
     },
     PALADIN_2     = {
         -- NOT chargeGated, despite looking like its Warrior/DH counterparts: SpellCategories
         -- for 53600 has ChargeCategory=0, i.e. no charge system exists for it. It is a HOLY
         -- POWER spender, so it behaves like Ignore Pain - generation-limited, not recharge-
         -- limited - and therefore CAN be held up and DOES want the early pre-warning cue.
-        { cast = 53600,  aura = 132403, dur = 4.5 },  -- Shield of the Righteous
+        -- project WITHOUT stacks = refresh semantics: a recast replaces the timer instead of
+        -- adding a stack, so the sweep anchors on the NEWEST cast. Being cast-driven means the
+        -- sweep no longer waits on an aura bind. Unlike Ironfur this buff has one instance, so
+        -- that instance dying is still honoured as a real drop (see the note in EntryState) -
+        -- an early removal cannot be outlived by the projected clock.
+        -- UNMEASURED: whether a recast mints a new auraInstanceID here as Ironfur does. If it
+        -- does, this also fixes the same stack-hopping sweep; if it refreshes one instance, the
+        -- gain is only the removed bind latency. Either way the projection is not worse.
+        { cast = 53600,  aura = 132403, dur = 4.5, project = true },  -- Shield of the Righteous
     },
     DEMONHUNTER_2 = {
         { cast = 203720, aura = 203819, dur = 12.0, chargeGated = true },  -- Demon Spikes
     },
-    -- Ironfur casts and buffs under one id. NOTE: SpellAuraOptions says CumulativeAura=1,
-    -- but /jac inspect stacks measured it in game as ONE instance with applications=2 - the
-    -- real cap is enforced outside that DB2 field. Trust the measurement, not the CSV.
+    -- Ironfur casts and buffs under one id. NOTE: SpellAuraOptions says CumulativeAura=1, and an
+    -- earlier /jac inspect stacks run read it as ONE instance with applications=2 - so the cap
+    -- is enforced outside that DB2 field either way. SUPERSEDED for anything about instances:
+    -- a 2026-07-25 maintlog run recorded 94 casts producing 94 DISTINCT auraInstanceIDs, with
+    -- older ids still alive after newer ones appeared. Whatever the applications field shows,
+    -- the stacks are separate aura instances with independent expiries - which is why this entry
+    -- projects from casts instead of tracking one instance.
     -- lead: glow ~3s before decay. 7s is short enough that the proportional 30% default gives
     -- barely 2s of warning - too tight to react to mid-pull. Pressing EARLIER than the cue is
     -- always legitimate (stacking Ironfur is a damage-intake call the player makes, not one we
     -- can see), so the cue is a floor, never a "do not press yet".
     DRUID_3       = {
-        { cast = 192081, aura = 192081, dur = 7.0, lead = 3.0, stacks = true },  -- Ironfur
+        -- project: each cast is its own aura instance with its own expiry (measured: 94 casts,
+        -- 94 distinct instance ids, older ones outliving newer). Tracked by cast timestamps
+        -- instead of by instance, so the sweep and stack count stop hopping between stacks.
+        -- dur verified against the DB2 exports (SpellMisc DurationIndex 165 -> 7000ms).
+        { cast = 192081, aura = 192081, dur = 7.0, lead = 3.0, stacks = true, project = true },  -- Ironfur
     },
     -- Blood is deliberately a rotational OFFENSIVE button. Blizzard fused rune-spending and
     -- Bone Shield upkeep into one press, so there is no defensive-only alternative - checked,

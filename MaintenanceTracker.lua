@@ -51,6 +51,15 @@ local BRIDGE_WINDOW = 2.0
 -- entire job is to be permanently up. Estimated from cast time + static duration, since the
 -- real remaining time is secret; the swipe beside it stays engine-exact.
 local REFRESH_LEAD = 0.30
+
+-- Projection runs slightly short of the book duration. The projected clock starts when the
+-- CAST SUCCEEDS, but the aura lands slightly later, and the player reacts to the sweep rather
+-- than to the aura - so a projection run to the full duration reads as "still covered" during
+-- the window where the buff is actually about to lapse. Erring early costs a marginally early
+-- re-press; erring late costs uptime on a mitigation buff, which is the expensive direction.
+-- Applies to PROJECTED values only (sweep, stack count, and when the projection stops claiming
+-- the buff is up). It deliberately does NOT move `lead`, which pre-warns off the true duration.
+local PROJECTION_SAFETY = 0.25
 -- Per-entry `lead` (SECONDS before decay) overrides the fraction where a spec wants a specific
 -- window rather than a proportion - Ironfur's 7s means 30% is barely 2s of warning, too tight to
 -- react to while tanking. Seconds are also what a player reasons in ("give me ~3s").
@@ -80,7 +89,7 @@ local function S(entry)
     if not s then
         s = { trackedInstance = nil, pendingCastAt = nil, lastCastAt = nil,
               observedDrop = false, bindExact = false, learnedDuration = nil,
-              cooldownIDs = nil }
+              cooldownIDs = nil, casts = nil }
         states[key] = s
     end
     return s
@@ -99,6 +108,8 @@ end
 --                     wrong number is actionable misinformation for a tank.
 --   learnedDuration - the real duration read off a live instance, since talents extend these.
 --   cooldownIDs     - every Cooldown Manager id mapping to this spell.
+--   casts           - `project` entries only: one timestamp per application, oldest first. This
+--                     IS the stack list (see the projection note below).
 
 -- Bridge diagnostics for /jac inspect maintenance. Counters only - no gameplay effect. These
 -- exist to answer "is the ambiguity guard starving the bind?" with data instead of a guess.
@@ -164,7 +175,15 @@ local function LearnDuration(entry, instanceID)
     -- Secrecy first, then type, then use. A secret here must not reach the arithmetic in
     -- GetState's refresh window, and 0 means "no duration" rather than "expired".
     if not IsSecret(dur) and type(dur) == "number" and dur > 0 then
-        s.learnedDuration = dur
+        -- Learned values may only ever EXTEND the book value. Talents lengthen these buffs;
+        -- nothing shortens them, so a shorter reading is not a talent - it is a wrong aura or
+        -- a remaining-time value that got through, and caching it silently poisons every clock
+        -- built on EffectiveDuration. Measured 2026-07-25: Ironfur's refresh cue was firing
+        -- 1.2s after each cast instead of 4s, which only fits an effective duration near 4.2s
+        -- against a true 7.0s (DB2 Duration=7000). Clamp rather than trust.
+        if not entry.dur or dur >= entry.dur then
+            s.learnedDuration = dur
+        end
     end
 end
 
@@ -179,6 +198,57 @@ local function EffectiveDuration(entry)
     if not (entry and entry.dur) then return nil end
     local s = S(entry)
     return (s and s.learnedDuration) or entry.dur
+end
+
+--------------------------------------------------------------------------------
+-- Cast projection (`project` entries)
+--------------------------------------------------------------------------------
+-- MEASURED 2026-07-25 (Guardian, in combat, /jac inspect maintlog at 10/s): 94 casts of
+-- Ironfur produced 94 DISTINCT auraInstanceIDs, and older ids were still alive after newer
+-- ones appeared (id 2216 seen, then 2204 again). These buffs do not refresh one aura - each
+-- application is its own instance with its own expiry. A tracker that holds ONE instance
+-- therefore hops between stacks, and clears the swipe whenever the stack it happened to be
+-- holding lapses while the buff is still on you. That is unfixable by improving the bind.
+--
+-- So project from the one signal we own outright: our own successful casts. The cast list IS
+-- the stack list - each entry expires effDur after it was made, independently, exactly like
+-- the real auras. Base durations verified against the DB2 exports (Ironfur 7000ms, Ignore
+-- Pain 12000ms), and learnedDuration still corrects a talent-extended value.
+--
+-- This does NOT replace authoritative down evidence. A confirmed drop (the Cooldown Manager
+-- watching it lapse, or a live instance we held dying) still wins and clears the projection -
+-- which matters for Ignore Pain, an absorb that can be eaten long before its timer. Projection
+-- supplies the clock; it never overrules the engine saying the buff is gone.
+
+--- Live cast timestamps for a projecting entry, oldest first, pruned in place.
+--- @return table|nil casts
+--- @return number|nil effDur
+local function LiveCasts(entry, s)
+    if not (entry and entry.project and s and s.casts) then return nil, nil end
+    local effDur = EffectiveDuration(entry)
+    if not effDur then return nil, nil end
+    -- Run the projection slightly short (see PROJECTION_SAFETY). Guarded so a buff shorter than
+    -- the margin cannot project to zero or negative and vanish the instant it is cast.
+    if effDur > PROJECTION_SAFETY * 2 then
+        effDur = effDur - PROJECTION_SAFETY
+    end
+    local now = GetTime()
+    local casts = s.casts
+    -- Appended in cast order, so the list is oldest-first and expiries always come off the
+    -- FRONT. Pruned in place: this runs twice a frame from the renderer, and rebuilding the
+    -- table each time would allocate on a hot path for no reason. A stacking maintenance buff
+    -- holds a handful of stacks, so the shift is cheaper than the garbage.
+    -- Elapsed against OUR OWN timestamps only - never a secret, so this arithmetic is safe.
+    while casts[1] and (now - casts[1]) >= effDur do
+        table.remove(casts, 1)
+    end
+    return casts, effDur
+end
+
+--- Forget the projection. Called only on evidence the buff is actually gone, so a projected
+--- clock can never outlive a confirmed drop.
+local function ClearProjection(s)
+    if s then s.casts = nil end
 end
 
 local function ResolveCooldownIDs(entry)
@@ -440,6 +510,14 @@ function MaintenanceTracker.OnCastSucceeded(spellID)
     if not s then return false end
     s.lastCastAt = GetTime()
     s.pendingCastAt = s.lastCastAt
+    -- Projection: this application is a stack in its own right, with its own expiry. Recorded
+    -- before anything else so the swipe and the count are correct on the very next frame,
+    -- with no bind, no bridge and no Cooldown Manager involved.
+    if entry.project then
+        s.casts = s.casts or {}
+        s.casts[#s.casts + 1] = s.lastCastAt
+        LiveCasts(entry, s)   -- prune in the same breath so the list cannot grow unbounded
+    end
     -- A successful cast is evidence the buff is (re)applied, even when we cannot identify its
     -- instance. Without this, observedDrop latched true after the first genuine lapse and could
     -- never clear - clearing needs a live bind, and on the degraded path (no Cooldown Manager,
@@ -578,19 +656,51 @@ function MaintenanceTracker.Reset()
     MaintenanceTracker._activeEntry = nil
 end
 
---- Local-clock fallback for the swipe: our own cast time plus the entry's static duration.
---- Plain numbers, no secret involved. Used ONLY when the bind is unproven - drawing the bound
---- aura's real DurationObject there can render a completely foreign timer (a 20s trinket proc
---- on a 7s buff), which reads as "wildly wrong" rather than "slightly off". An estimate that
---- drifts by a talent's worth of seconds is far better than a confidently wrong other clock.
+--- Local clock for the swipe: our own cast time plus the entry's static duration. Plain
+--- numbers, no secret involved.
+--- For `project` entries this is the PRIMARY source, not a fallback - see the projection note
+--- above. For everything else it is the fallback used when the bind is unproven, because
+--- drawing an unproven instance's real DurationObject can render a completely foreign timer
+--- (a 20s trinket proc on a 7s buff), which reads as "wildly wrong" rather than "slightly off".
+--- An estimate that drifts by a talent's worth of seconds beats a confidently wrong other clock.
 --- @param entry table|nil - defaults to the entry the slot is currently showing
 --- @return number|nil startTime, number|nil duration
 function MaintenanceTracker.GetEstimatedCooldown(entry)
     entry = entry or MaintenanceTracker._activeEntry
     local s = S(entry)
     local effDur = EffectiveDuration(entry)
-    if not (s and effDur and s.lastCastAt) then return nil, nil end
+    if not (s and effDur) then return nil, nil end
+    -- Which application the sweep should follow depends on how the buff behaves:
+    --   stacks - anchor on the OLDEST live one, so the answer is "when do I lose a stack".
+    --            Anchoring on the newest would restart the sweep on every press and never warn
+    --            about the stack actually about to fall off.
+    --   refresh - anchor on the NEWEST, because a recast replaces the timer rather than adding
+    --            to it. Using the oldest there would expire the sweep while the buff is fresh.
+    -- No projecting entry of the refresh kind exists yet; the branch is here because getting it
+    -- wrong is silent, and the difference is two lines.
+    if entry.project then
+        -- Take LiveCasts' duration, not the outer one: it carries PROJECTION_SAFETY, and the
+        -- sweep is the main thing that margin exists for. Returning the full duration here
+        -- would shorten the stack pruning while leaving the sweep running to the full length -
+        -- the exact opposite of the intent, and invisible without reading both.
+        local casts, projDur = LiveCasts(entry, s)
+        if casts and #casts > 0 and projDur then
+            return (entry.stacks and casts[1] or casts[#casts]), projDur
+        end
+        return nil, nil
+    end
+    if not s.lastCastAt then return nil, nil end
     return s.lastCastAt, effDur
+end
+
+--- Projected stack count for a `project` entry, or nil when the entry does not project.
+--- Plain arithmetic over our own cast timestamps - nothing here reads an aura.
+--- @return number|nil
+function MaintenanceTracker.GetProjectedStacks(entry)
+    entry = entry or MaintenanceTracker._activeEntry
+    if not (entry and entry.project) then return nil end
+    local casts = LiveCasts(entry, S(entry))
+    return casts and #casts or 0
 end
 
 --- Was the current instance resolved by spell id (proof), or guessed by the bridge?
@@ -653,7 +763,22 @@ local function EntryState(entry)
     if trackedInstance then
         -- Held an id the engine no longer knows: it expired without a removal batch. Still
         -- evidence of a drop - we watched a live instance stop existing.
+        -- EXCEPT for projecting STACKING entries, where it is evidence of nothing. Those buffs
+        -- put every application in its OWN instance, so the one we held lapsing is the normal
+        -- case while other stacks are still on you. Latching observedDrop here is what cleared
+        -- the swipe and glowed at a tank mid-uptime; the projection is the authority instead.
+        -- A projecting entry that REFRESHES rather than stacks is deliberately excluded: it has
+        -- only ever one instance, so that instance dying really does mean the buff is gone, and
+        -- suppressing it would let a projected clock outlive an early removal.
         s.trackedInstance = nil
+        if entry.project and entry.stacks then
+            local casts = LiveCasts(entry, s)
+            -- Only while the projection still holds an unexpired application. With none left,
+            -- fall through so the viewer / observed-drop / unknown ladder decides as usual.
+            if casts and #casts > 0 then
+                return LiveVerdict(entry, s), entry, nil
+            end
+        end
         s.observedDrop = true
     end
 
@@ -678,7 +803,11 @@ local function EntryState(entry)
         s.observedDrop = false
         return LiveVerdict(entry, s), entry, nil
     elseif viewerUp == false then
+        -- The engine watched it lapse. This is the one signal that must beat the projection:
+        -- Ignore Pain is an absorb and can be eaten long before its timer, and a projected
+        -- clock has no way to see that. Confirmed drop wins, so forget the projection too.
         s.observedDrop = true
+        ClearProjection(s)
         return "down", entry, nil
     end
 
@@ -699,7 +828,18 @@ local function EntryState(entry)
     if not auraUnreadable then
         -- This spell's aura reads plain right now, so the miss really does mean it is down.
         s.observedDrop = true
+        ClearProjection(s)
         return "down", entry, nil
+    end
+
+    -- Unreadable, no instance, no viewer - the degraded path, and where projecting entries earn
+    -- their keep. Our own casts are still perfectly good evidence: nothing above contradicted
+    -- them, so an unexpired application means the buff is on us.
+    if entry.project then
+        local casts = LiveCasts(entry, s)
+        if casts and #casts > 0 then
+            return LiveVerdict(entry, s), entry, nil
+        end
     end
 
     -- The aura is unreadable and we hold no instance, so the lookup proves nothing. Claim

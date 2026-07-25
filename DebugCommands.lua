@@ -3560,10 +3560,25 @@ local function MaintLogSample()
     elseif type(inst) ~= "number" then
         hasDur = "-"
     end
-    local payload = string.format("%s inst=%s dur=%s combat=%s b=%s/%s/%s cand=%s",
+    -- eff = the effective duration the clock is actually using (2nd return of
+    -- GetEstimatedCooldown). Logged because every projected timer is built on it, and a
+    -- poisoned learnedDuration silently shortens the sweep and fires the refresh cue early -
+    -- measured once at ~4.2s against Ironfur's true 7.0s. nc = projected stack count.
+    local eff, nc = "-", "-"
+    if MT.GetEstimatedCooldown then
+        local okE, _, len = pcall(MT.GetEstimatedCooldown)
+        if okE and type(len) == "number" then eff = string.format("%.1f", len) end
+    end
+    if MT.GetProjectedStacks then
+        local okN, n = pcall(MT.GetProjectedStacks)
+        if okN and type(n) == "number" then nc = tostring(n) end
+    end
+    local payload = string.format("%s inst=%s dur=%s eff=%s nc=%s combat=%s b=%s/%s/%s cand=%s",
         tostring(state),
         (type(inst) == "number") and tostring(inst) or "nil",
         hasDur,
+        eff,
+        nc,
         (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
         d and tostring(d.batches or 0) or "?",
         d and tostring(d.bound or 0) or "?",

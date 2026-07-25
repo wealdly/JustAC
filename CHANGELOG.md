@@ -3,6 +3,13 @@
 
 ## [Unreleased]
 
+## [4.53.0] - 2026-07-25
+
+### Fixed
+- **The tank upkeep timer no longer flickers or empties while the buff is still on you**: buffs you stack, like Ironfur and Ignore Pain, put every press on its own separate timer, and the slot used to follow just one of them - so it jumped between them and went blank whenever the one it was watching ran out. It now tracks your presses directly: the sweep counts down to your next stack falling off, and the number shows how many you are holding. If the game confirms the buff is actually gone, that still wins.
+- **The tank upkeep sweep starts immediately for Shield of the Righteous too**: it now runs from your press rather than waiting for the game to confirm the buff, so there is no dead moment at the start of it.
+- **The tank upkeep refresh cue no longer fires early**: it could warn you to re-press only a second after a press, because it had latched onto a buff length shorter than the real one.
+
 ## [4.52.0] - 2026-07-25
 
 ### Added
