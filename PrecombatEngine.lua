@@ -280,6 +280,11 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
         return cachedClassBuffs
     end
     local out = {}
+    -- Which spell (if any) this pass offered as the health top-off, so the renderer can tell it
+    -- apart from the poisons/imbues alongside it and drive its alpha from the health curve.
+    -- Cleared on RECOMPUTE only: an early return from the cache above must keep the value that
+    -- produced that cache, or the cue would blink off for the rest of the cache window.
+    PrecombatEngine.offeredTopoffHeal = nil
     local groups = (not InCombatLockdown()) and SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS
     local class = groups and select(2, UnitClass("player"))
     groups = class and SpellDB.CLASS_MAINTAINED_BUFFS[class]
@@ -418,6 +423,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 and (not BAPI.IsSpellUsable or BAPI.IsSpellUsable(heal, true))
                 and (not BAPI.IsSpellReady or BAPI.IsSpellReady(heal)) then
                 out[#out + 1] = heal
+                PrecombatEngine.offeredTopoffHeal = heal
             else
                 -- Recuperate (1231411) is a universal all-class heal, castable in
                 -- any form; druids see it DISPLAYED as Frenzied Regeneration in
@@ -425,6 +431,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 -- a valid recovery offer. (Do NOT gate on the display override's
                 -- legacy bear requirement - that hides a castable heal.)
                 out[#out + 1] = SpellDB.RECUPERATE
+                PrecombatEngine.offeredTopoffHeal = SpellDB.RECUPERATE
             end
         end
     end

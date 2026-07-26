@@ -390,3 +390,21 @@ L["Custom Queue Context Aware desc"] = "Reordena la cola para que coincida con l
 L["Custom Queue Blacklist Note"] = "Eliminar aquí afecta solo a la cola. Para ocultar un hechizo en todas partes (incluida la ranura AC), ponlo en lista negra: |cffff6666Shift+Clic derecho|r en su icono de la cola, o usa la pestaña Lista negra."
 L["Enable Custom Queue desc"] = "Cuando está activado, tu Rotación personalizada define la cola. Desactívalo para usar la rotación de Blizzard."
 L["Custom Queue Spells desc"] = "Tu orden de habilidades para la cola. Usa Arriba / Abajo para reordenar; las opciones de Ordenación de arriba siguen aplicándose."
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "Disrupción"
+L["Disruption desc"] = "Una casilla para todo lo que le quita al enemigo lo que está haciendo: interrupciones, control de masas y disipación de furia. Cada uno es independiente: puedes usar cualquiera sin los demás."
+L["Show Soothe Cue"] = "Mostrar disipación de furia"
+L["Show Soothe Cue desc"] = "Muestra tu habilidad para disipar furia (Aplacar y equivalentes) en la casilla de Disrupción mientras tu objetivo está enfurecido. Solo aparece si tu especialización tiene una. Independiente del recordatorio de interrupción: comparten la casilla, pero puedes usar cualquiera sin el otro."
+L["Sustain"] = "Sostenimiento"
+L["Sustain desc"] = "Una casilla dedicada junto a la cola defensiva para lo que te mantiene rindiendo en vez de solo con vida: la reducción de daño que un tanque mantiene activa, y tu escape de aturdimientos, miedos y raíces. Estar controlado te cuesta tanto tiempo útil como dejar caducar un efecto, así que ambos van aquí."
+
+L["Pet Heal Cue"] = "Recordatorio de sanación de mascota"
+L["Pet Heal Cue desc"] = "Muestra la sanación de tu mascota en la casilla de Sostenimiento cuando está malherida, dentro y fuera de combate. Solo cazadores y brujos."
+
+L["Cooldown Manager"] = "Gestor de reutilización"
+L["Pet Heal Threshold"] = "Mostrar sanación de mascota por debajo de"
+L["Pet Heal Threshold desc"] = "Cuánto debe estar herida tu mascota antes de que aparezca el recordatorio. Valores bajos esperan al peligro real; valores altos la curan antes."
+
+L["Health Top-off Threshold"] = "Rellenar por debajo de"
+L["Health Top-off Threshold desc"] = "Cuánto por debajo de la salud máxima aparece el recordatorio de curación entre combates. El aviso de emergencia con salud crítica es aparte y siempre está activo."

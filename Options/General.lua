@@ -14,6 +14,12 @@ end
 
 local rebuildNPO = W.rebuildNPO
 
+--- Push the per-panel cosmetic hides to the tracker. Shared by all four toggles.
+local function ApplyCdmVisibility(a)
+    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    if MT and MT.ApplyViewerVisibility then MT.ApplyViewerVisibility(a.db.profile) end
+end
+
 local function clearScannerCaches()
     local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
     if ActionBarScanner and ActionBarScanner.ClearAllCaches then
@@ -86,8 +92,14 @@ function General.CreateTabArgs(addon)
                     -- Order 7.5 is reserved for the future "Context Aware" CC toggle.
                     interruptHeader = {
                         type = "header",
-                        name = L["Interrupt"],
+                        name = L["Disruption"],
                         order = 6,
+                    },
+                    disruptionInfo = {
+                        type = "description",
+                        name = L["Disruption desc"],
+                        order = 6.5,
+                        fontSize = "small",
                     },
                     interruptMode = W.select(addon, "interruptMode", {
                         name = L["Interrupt Mode"], desc = L["Interrupt Mode desc"],
@@ -111,6 +123,19 @@ function General.CreateTabArgs(addon)
                             -- Only relevant when CC can be suggested (kickPrefer / ccPrefer).
                             return fullyDisabled(addon) or m == "disabled" or m == "kickOnly"
                         end,
+                    }),
+                    -- DISRUPTION MEMBER 2: enrage cleanse. Ordered AFTER the interrupt member and
+                    -- its alert sound, so the panel reads one member at a time rather than
+                    -- interleaving a second feature into the interrupt's own settings.
+                    showSootheCue = W.toggle(addon, "showSootheCue", {
+                        name = L["Show Soothe Cue"], desc = L["Show Soothe Cue desc"],
+                        order = 8.5, width = "double", default = true,
+                        -- Deliberately NOT disabled when the interrupt reminder is off: the two
+                        -- share an icon but are independent choices, and the slot is now built
+                        -- for either one. Recreate the frames, since this decides whether that
+                        -- slot exists at all.
+                        onSet = function() addon:UpdateFrameSize(); rebuildNPO(addon) end,
+                        disabled = fullyDisabled,
                     }),
                     interruptAlertSound = W.select(addon, "interruptAlertSound", {
                         name = L["Interrupt Alert"], desc = L["Interrupt Alert Sound desc"],
@@ -218,6 +243,75 @@ function General.CreateTabArgs(addon)
                         disabled = fullyDisabled,
                     }),
                     -- PERFORMANCE (20-22)
+                    -- COOLDOWN MANAGER (19.5-19.56). Lives here, not under a defensive
+                    -- sub-section, because it is a GAME-WIDE client setting: the enable toggle
+                    -- writes the same CVar as Options > Gameplay Enhancements, and the hide
+                    -- toggles affect Blizzard's own panels everywhere, not just JustAC's display.
+                    -- The tank maintenance slot is the feature that benefits most, but it is not
+                    -- the scope of the setting.
+                    cooldownManagerHeader = {
+                        type = "header",
+                        name = L["Cooldown Manager"],
+                        order = 19.5,
+                    },
+                    cooldownManagerEnable = W.toggle(addon, "cooldownManagerEnable", {
+                        name = L["Enable Cooldown Manager"],
+                        desc = L["Enable Cooldown Manager desc"],
+                        order = 19.51, width = "double", default = false,
+                        onSet = function(a)
+                            local MT = LibStub("JustAC-MaintenanceTracker", true)
+                            if MT and MT.SetCooldownManagerEnabled then
+                                local on = a.db.profile.cooldownManagerEnable and true or false
+                                if not MT.SetCooldownManagerEnabled(on) then
+                                    a:Print(L["Cooldown Manager combat warning"])
+                                end
+                                -- Opting in also warns about any panel left on Edit Mode's
+                                -- "Hidden", which otherwise reads to us as the system being off.
+                                if on and MT.ApplyViewerVisibility then
+                                    MT.ApplyViewerVisibility(a.db.profile)
+                                end
+                            end
+                        end,
+                        -- Deliberately NOT gated on having a maintenance buff. It used to be,
+                        -- back when this lived in a tank-branded defensive section - but it
+                        -- writes a GAME-WIDE CVar, so greying it for non-tanks told most of the
+                        -- player base that a client setting was unavailable to them, and took
+                        -- the hide-panel toggles below down with it (they are gated on this
+                        -- being on). Any spec may legitimately want Blizzard's panels on, or on
+                        -- and hidden; only the extra precision it buys is tank-specific.
+                    }),
+                    -- Cosmetic only, per panel. Each stays SHOWN - that is what keeps its aura
+                    -- data live and readable - and merely becomes invisible and click-through.
+                    -- We never enable a panel the player disabled; this only tidies visible ones.
+                    -- RAW entry, not W.toggle: buildBase only injects `addon` into hidden/disabled
+                    -- for widgets it builds. A raw table's callback receives AceConfig's `info`,
+                    -- so taking an `a` argument here and indexing a.db throws mid-render - which
+                    -- breaks the whole panel's layout, scrollbar included. Close over `addon`.
+                    hideCdmHeader = {
+                        type = "description", order = 19.52, fontSize = "small",
+                        name = L["Hide Panels desc"],
+                        hidden = function() return not addon.db.profile.cooldownManagerEnable end,
+                    },
+                    hideCdmEssential = W.toggle(addon, "hideCdmEssential", {
+                        name = L["Hide Essential"], order = 19.53, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmUtility = W.toggle(addon, "hideCdmUtility", {
+                        name = L["Hide Utility"], order = 19.54, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmTrackedBuff = W.toggle(addon, "hideCdmTrackedBuff", {
+                        name = L["Hide Tracked Buffs"], order = 19.55, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
+                    hideCdmTrackedBar = W.toggle(addon, "hideCdmTrackedBar", {
+                        name = L["Hide Tracked Bars"], order = 19.56, width = "normal", default = false,
+                        onSet = ApplyCdmVisibility,
+                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    }),
                     performanceHeader = {
                         type = "header",
                         name = L["Performance"],
@@ -249,6 +343,7 @@ function General.CreateTabArgs(addon)
             local p = addon.db.profile
             p.displayMode         = "queue"
             p.interruptMode       = "kickPrefer"
+            p.showSootheCue       = true
             p.showFlash           = true
             p.showUsabilityTint   = true
             p.showRangeTint       = true

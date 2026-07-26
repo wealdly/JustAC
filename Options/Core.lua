@@ -146,8 +146,10 @@ local INSPECT_TOPICS = {
     cvitems     = "CooldownViewerItemsProbe",
     enginesig   = "EngineSignalsProbe",
     audit       = "ProbeSession",
+    errors      = "ErrorCapture",
+    enragelog   = "EnrageLog",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, validate [arm], selfcast, auraids, cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear]"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, validate [arm], selfcast, auraids, cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler

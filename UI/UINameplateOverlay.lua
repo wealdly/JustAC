@@ -854,8 +854,12 @@ function UINameplateOverlay.Create(addon)
 
     -- Interrupt reminder icon (position 0, hidden until interruptible cast detected)
     -- interruptMode is centralized in profile (no longer per-surface)
+    -- Same rule as the standard queue's slot: the enrage cleanse cue shares this icon but is
+    -- an independent choice, so build it when either feature wants it. The kick self-gates on
+    -- interruptMode in RenderInterruptSlot, so "off + cleanse on" shows only the cleanse.
     local interruptMode = profile.interruptMode or "kickPrefer"
-    if interruptMode ~= "disabled" and interruptMode ~= "off" then
+    local kickWanted = interruptMode ~= "disabled" and interruptMode ~= "off"
+    if kickWanted or (profile.showSootheCue ~= false and SpellDB.ResolveSootheSpells() ~= nil) then
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
         resolvedSoothe = SpellDB.ResolveSootheSpells()

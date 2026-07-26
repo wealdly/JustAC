@@ -114,12 +114,6 @@ local function HasMaintenanceDefensive()
     return (SDB and SDB.GetMaintenanceDefensive and SDB.GetMaintenanceDefensive() ~= nil) or false
 end
 
---- Push the per-panel cosmetic hides to the tracker. Shared by all four toggles.
-local function ApplyCdmVisibility(a)
-    local MT = LibStub("JustAC-MaintenanceTracker", true)
-    if MT and MT.ApplyViewerVisibility then MT.ApplyViewerVisibility(a.db.profile) end
-end
-
 --- Returns true when the player's class has pet rez/summon defaults.
 local function IsPetRezClass()
     local _, pc = UnitClass("player")
@@ -162,6 +156,28 @@ function Defensives.CreateTabArgs(addon)
                             return not standardEnabled and not overlayEnabled
                         end,
                     }),
+                    -- CONTENT behaviour, not display: it reorders which defensives the queue
+                    -- recommends. Lived under Standard Queue -> Defensive Display, which was
+                    -- wrong on the tab's own stated split, and worse than untidy - it is read in
+                    -- GetDefensiveSpellQueue, the SHARED builder, so it governs the nameplate
+                    -- overlay too. An overlay-only player had to open the Standard Queue tab to
+                    -- change how their overlay behaves.
+                    hideEmergencyUntilLow = W.toggle(addon, "defensives.hideEmergencyUntilLow", {
+                        name = L["Hide Emergency Until Low"], desc = L["Hide Emergency Until Low desc"],
+                        order = 2, width = "full", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        -- Same cross-surface gate as the toggle above (the old one only knew
+                        -- about the standard queue), plus: meaningless in "When Health Low"
+                        -- mode, where everything is already gated on health.
+                        disabled = function(a)
+                            local dm = a.db.profile.displayMode or "queue"
+                            if dm == "disabled" then return true end
+                            local npo = a.db.profile.nameplateOverlay
+                            local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+                            if not a.db.profile.defensives.enabled and not overlayEnabled then return true end
+                            return (a.db.profile.defensives.displayMode or "always") == "healthBased"
+                        end,
+                    }),
                 },
             },
             precombatGroup = {
@@ -195,6 +211,27 @@ function Defensives.CreateTabArgs(addon)
                         get = function() return addon.db.profile.precombatBuffs.topoffHeal == true end,
                         set = function(_, v)
                             addon.db.profile.precombatBuffs.topoffHeal = v
+                            pbApply(addon)
+                        end,
+                    },
+                    -- Only meaningful since the cue moved onto a health curve: before that the
+                    -- threshold was honoured solely where an exact health read works (rested
+                    -- areas), and degraded to "below full" everywhere else - so a slider would
+                    -- have been a lie in the open world. Stepped in 5s for the same reason as
+                    -- the pet slider: each distinct value builds and caches its own curve.
+                    topoffThreshold = {
+                        type = "range",
+                        name = L["Health Top-off Threshold"],
+                        desc = L["Health Top-off Threshold desc"],
+                        order = 2.1, width = "full",
+                        min = 50, max = 95, step = 5,
+                        disabled = function()
+                            return pbDisabled(addon)
+                                or addon.db.profile.precombatBuffs.topoffHeal ~= true
+                        end,
+                        get = function() return addon.db.profile.precombatBuffs.topoffThreshold or 90 end,
+                        set = function(_, v)
+                            addon.db.profile.precombatBuffs.topoffThreshold = v
                             pbApply(addon)
                         end,
                     },
@@ -233,73 +270,54 @@ function Defensives.CreateTabArgs(addon)
                             Defensives.UpdateDefensivesOptions(addon)
                         end,
                     },
-                    -- TANK MAINTENANCE (60-62) - defensive-only and tank-only, so not "shared".
+                    -- SUSTAIN (60-79) - defensive "position 0". NOT tank-only: the tank mitigation
+                    -- buff is one member, crowd-control escape (below) is another and works on any
+                    -- spec, and the pet-heal cue is a third. Only the mitigation-buff TOGGLE is
+                    -- tank-gated; the section is not.
                     -- Shown but greyed off-spec, unlike the class-gated pet sections below which
                     -- hide: spec is switchable, so a Feral still needs to discover it exists.
                     maintenanceHeader = {
                         type = "header",
-                        name = L["Maintenance Slot"],
+                        name = L["Sustain"],
                         order = 60,
                     },
                     maintenanceInfo = {
                         type = "description",
+                        -- The section is universal - crowd-control escape claims this slot on
+                        -- ANY spec - so the tank-only caveat belongs to the mitigation-buff
+                        -- toggle below, not to the header. Attaching it here told every
+                        -- non-tank the whole slot was unavailable to them, which was wrong.
                         name = function()
-                            if HasMaintenanceDefensive() then return L["Maintenance Slot desc"] end
-                            return L["Maintenance Slot desc"] .. "\n\n"
-                                .. "|cffff9900Not available on this specialization - switch to a "
-                                .. "tank specialization to use it.|r"
+                            if HasMaintenanceDefensive() then return L["Sustain desc"] end
+                            return L["Sustain desc"] .. "\n\n"
+                                .. "|cffff9900The mitigation-buff part is tank-only; your escape "
+                                .. "from crowd control still uses this slot.|r"
                         end,
                         order = 61,
                         fontSize = "small",
                     },
-                    -- The CVar is the one true gate on the whole Cooldown Manager, and it is a
-                    -- game-wide setting - so it only ever moves from this explicit toggle.
-                    cooldownManagerEnable = W.toggle(addon, "cooldownManagerEnable", {
-                        name = L["Enable Cooldown Manager"],
-                        desc = L["Enable Cooldown Manager desc"],
-                        order = 63, width = "double", default = false,
-                        onSet = function(a)
-                            local MT = LibStub("JustAC-MaintenanceTracker", true)
-                            if MT and MT.SetCooldownManagerEnabled then
-                                local on = a.db.profile.cooldownManagerEnable and true or false
-                                if not MT.SetCooldownManagerEnabled(on) then
-                                    a:Print(L["Cooldown Manager combat warning"])
-                                end
-                            end
-                        end,
-                        disabled = function() return not HasMaintenanceDefensive() end,
+                    -- SUSTAIN MEMBER 3: pet heal (69). Hidden rather than greyed for non-pet
+                    -- classes - class is not switchable, so there is nothing to discover, unlike
+                    -- the mitigation buff above which a Feral might switch into.
+                    -- No AceDB default: same convention as showMaintenanceSlot/showCCBreak -
+                    -- `default = true` here plus `~= false` at the read site.
+                    showPetHealCue = W.toggle(addon, "showPetHealCue", {
+                        name = L["Pet Heal Cue"],
+                        desc = L["Pet Heal Cue desc"],
+                        order = 69, width = "double", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = function() return not IsPetHealClass() end,
                     }),
-                    -- Cosmetic only, per panel. Each stays SHOWN - that is what keeps its aura
-                    -- data live and readable - and merely becomes invisible and click-through.
-                    -- We never enable a panel the player disabled; this only tidies visible ones.
-                    -- RAW entry, not W.toggle: buildBase only injects `addon` into hidden/disabled
-                    -- for widgets it builds. A raw table's callback receives AceConfig's `info`,
-                    -- so taking an `a` argument here and indexing a.db throws mid-render - which
-                    -- breaks the whole panel's layout, scrollbar included. Close over `addon`.
-                    hideCdmHeader = {
-                        type = "description", order = 64, fontSize = "small",
-                        name = L["Hide Panels desc"],
-                        hidden = function() return not addon.db.profile.cooldownManagerEnable end,
-                    },
-                    hideCdmEssential = W.toggle(addon, "hideCdmEssential", {
-                        name = L["Hide Essential"], order = 65, width = "normal", default = false,
-                        onSet = ApplyCdmVisibility,
-                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
-                    }),
-                    hideCdmUtility = W.toggle(addon, "hideCdmUtility", {
-                        name = L["Hide Utility"], order = 66, width = "normal", default = false,
-                        onSet = ApplyCdmVisibility,
-                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
-                    }),
-                    hideCdmTrackedBuff = W.toggle(addon, "hideCdmTrackedBuff", {
-                        name = L["Hide Tracked Buffs"], order = 67, width = "normal", default = false,
-                        onSet = ApplyCdmVisibility,
-                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
-                    }),
-                    hideCdmTrackedBar = W.toggle(addon, "hideCdmTrackedBar", {
-                        name = L["Hide Tracked Bars"], order = 68, width = "normal", default = false,
-                        onSet = ApplyCdmVisibility,
-                        hidden = function(a) return not a.db.profile.cooldownManagerEnable end,
+                    -- Stepped in 5s deliberately: the threshold becomes a curve point, and each
+                    -- distinct value builds and caches its own curve. A continuous slider would
+                    -- mint one per pixel dragged; 5% steps cap it at ~16 for the whole session.
+                    petHealThreshold = W.range(addon, "petHealThreshold", {
+                        name = L["Pet Heal Threshold"],
+                        desc = L["Pet Heal Threshold desc"],
+                        order = 69.1, width = "double", min = 10, max = 90, step = 5, default = 50,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = function() return not IsPetHealClass() end,
+                        disabled = function(a) return a.db.profile.showPetHealCue == false end,
                     }),
                     showMaintenanceSlot = W.toggle(addon, "showMaintenanceSlot", {
                         name = L["Maintenance Slot"],
@@ -320,10 +338,12 @@ function Defensives.CreateTabArgs(addon)
                             return not standardEnabled and not overlayEnabled
                         end,
                     }),
-                    -- CROWD-CONTROL ESCAPE (70-71) - its OWN section, not part of tank
-                    -- maintenance above. It borrows that slot's frame when active, but it works
-                    -- for any spec whether or not the maintenance slot is enabled, so grouping
-                    -- it under maintenance would wrongly imply it needs a tank.
+                    -- CROWD-CONTROL ESCAPE (70-71) - a MEMBER of Sustain above, not a rival
+                    -- section. It used to be kept separate because that section was branded as
+                    -- tank maintenance and grouping the two would have implied CC escape needed a
+                    -- tank; naming the slot Sustain removed that reason. It keeps its own header
+                    -- purely as a visual divider - the toggles below are its own, and it works on
+                    -- any spec whether or not the mitigation-buff toggle is on.
                     ccBreakHeader = {
                         type = "header",
                         name = L["CC Escape"],
@@ -473,8 +493,9 @@ function Defensives.UpdateDefensivesOptions(addon)
         maintenanceHeader = true, maintenanceInfo = true, showMaintenanceSlot = true,
         ccBreakHeader = true, ccBreakInfo = true, showCCBreak = true,
         ccBreakMacro = true, ccBreakMacroBody = true,
-        cooldownManagerEnable = true, hideCdmHeader = true, hideCdmEssential = true,
-        hideCdmUtility = true, hideCdmTrackedBuff = true, hideCdmTrackedBar = true,
+        -- (Cooldown Manager controls moved to General -> Settings; they are a game-wide client
+        -- setting, not a defensive one, and this tab no longer declares them.)
+        showPetHealCue = true, petHealThreshold = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }

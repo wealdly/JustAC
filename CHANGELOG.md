@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [4.54.0] - 2026-07-25
+
+### Added
+- **Pet heal threshold is now yours to set** (Defensives → Sustain). Choose how hurt your pet has to be before the reminder appears, anywhere from 10% to 90%. Defaults to 50%, which is what it always used.
+- **Pet heal reminder now works in combat.** Hunters and Warlocks previously only got a pet-heal suggestion out of combat, because the game hides your pet's health once a fight starts. It now appears in the Sustain slot the moment your pet drops low, in combat or out - the one time it was actually needed.
+- **Execute-range cue.** When your target drops into execute range, your finisher (Kill Shot, Touch of Death and the like) lights up with an orange glow wherever it appears in the queue - so you can see the window has opened even before it gets recommended.
+- **Show Enrage Cleanse toggle** (General → Disruption). Turns the enrage-removal reminder on or off. On by default, and only ever appears if your specialization actually has an enrage cleanse. It shares the interrupt icon but is now independent of it - you can run the cleanse reminder with interrupt reminders switched off, or the other way round.
+
+### Fixed
+- **The enrage cleanse cue works again.** The soothe reminder on the interrupt icon stopped appearing entirely after an internal rework of how those icons are built - it was being created in a state where it could never draw, no matter what your target was doing.
+- **Hidden Cooldown Manager panels no longer pop tooltips.** A panel JustAC was keeping invisible still reacted to your cursor, so moving the mouse over empty screen space could bring up a spell tooltip from a panel you could not see.
+- **The Emergency Potion tile no longer goes missing from your defensive list.** Reordering or removing entries could drop the tile, and once it was gone the only way back was Restore Class Defaults. Reordering is now safe, and a tile that disappears for any reason other than you removing it comes back on the next load. Removing it yourself still sticks, exactly as before. If you had already lost it, it returns automatically - remove it once more if you didn't want it.
+
+### Changed
+- **Emergency heals are now held back by default, and your walls never are.** Above the low-health threshold, panic buttons - immunity bubbles, big instant heals and health potions - sit parked at the end of the queue instead of being suggested while you are healthy. Damage-reduction cooldowns like Shield Wall, Ardent Defender and Pain Suppression are deliberately excluded and stay live at any health: those are meant to be pressed before a hit lands, not after you are already low. The setting also moved to Defensives → Defensive Queue, since it affects the nameplate overlay too.
+- **Cooldown Manager settings moved to General → Settings**, under their own heading, and are no longer greyed out for non-tank specs. They turn on the game's own Cooldown Manager and hide its panels, which any specialization may want - the extra precision it buys is what's tank-specific, not the setting.
+- **Better starting defensive lists for a lot of specs.** Discipline, Holy, Arcane, Holy Paladin and Restoration Shaman now get their own lists instead of a shared one that ignored their biggest defensive - Pain Suppression, Guardian Spirit, Greater Invisibility, Aura Mastery, Spirit Link and Ancestral Protection Totem are all there now. Mistweaver gets Life Cocoon, Restoration Druid gets Ironbark, Protection Paladin gets Blessing of Spellwarding, and Bitter Immunity, Anti-Magic Zone, Zephyr and Earth Shield were added class-wide. Netherwalk, Last Stand, Rage of the Sleeper, Metamorphosis and the new additions are now recognised as emergency buttons, so they rise to the front when you are about to die. A few entries that could never actually be cast were removed: Frenzied Regeneration off the Balance and Restoration lists (it needs Bear Form) and an ability the Monk lists carried that no longer exists in the game. Cast-time heals - Regrowth, Healing Surge and Vivify - now sit at the bottom of their lists instead of the top: standing still to cast is rarely the right answer mid-fight, and when one of them procs into an instant it jumps to the front on its own anyway. Your existing lists are left alone - use Restore Class Defaults on a spec if you want its new list.
+- **JustAC now tells you when a Cooldown Manager panel is switched off**: a panel left on "Hidden" in Edit Mode is genuinely switched off as far as the game is concerned, so JustAC can read nothing from it - which looks like the feature simply not working. You now get a one-time message telling you to set it to "Always" in Edit Mode, and JustAC keeps it invisible for you from there.
+
 ## [4.53.0] - 2026-07-25
 
 ### Fixed

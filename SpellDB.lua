@@ -868,13 +868,23 @@ end
 -- Resolution order: spec key → class key.  Spec entries are only added where the
 -- defaults diverge meaningfully from the class fallback (primarily tank specs and
 -- specs with unique defensive tools).  All other specs use the class fallback.
+-- ORDERING RULE - cast-time heals go BELOW instants, always.
+-- List order is the above-threshold "what should I press now" order, and in combat a heal
+-- you have to stand still for is the wrong answer while any instant is available. The case
+-- where a cast-time heal IS right - its proc is up, making it instant and free - needs no
+-- help from this list: a proc promotes a spell to the front tier ahead of even position 1
+-- (see the procced/non-procced split in DefensiveEngine.GetUsableDefensiveSpells), so
+-- ranking it high only makes it a slow hardcast sitting at the top the rest of the time.
+-- Verified against the DB2 exports: exactly three entries in this whole table are non-
+-- instant (SpellMisc CastingTimeIndex ~= 1) - Regrowth, Healing Surge and Vivify - and all
+-- three are last in their lists. Re-run that check before adding a heal.
 SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Death Knight ────────────────────────────────────────────────────────
     -- Class fallback (Frost/Unholy DPS): quick heal then big CDs
-    DEATHKNIGHT   = {49998, 48743, 48792, 48707, 49039, 327574}, -- Death Strike, Death Pact, Icebound Fortitude, Anti-Magic Shell, Lichborne, Sacrificial Pact
+    DEATHKNIGHT   = {49998, 48743, 48792, 48707, 51052, 49039, 327574}, -- Death Strike, Death Pact, Icebound Fortitude, Anti-Magic Shell, Anti-Magic Zone, Lichborne, Sacrificial Pact
     -- Blood (tank): active mitigation first, Death Strike for heal, then big CDs
     -- (Rune Tap 194679 verified still live in 12.1 DB2 despite older "removed" notes)
-    DEATHKNIGHT_1 = {49998, 55233, 194679, 48743, 48792, 48707, 219809, 49039}, -- Death Strike, Vampiric Blood, Rune Tap, Death Pact, IBF, AMS, Tombstone, Lichborne
+    DEATHKNIGHT_1 = {49998, 55233, 194679, 48743, 48792, 48707, 51052, 219809, 49039}, -- Death Strike, Vampiric Blood, Rune Tap, Death Pact, IBF, AMS, AMZ, Tombstone, Lichborne
 
     -- ── Demon Hunter ────────────────────────────────────────────────────────
     -- Class fallback (Havoc DPS): Blur, Netherwalk (talent), Darkness
@@ -884,35 +894,55 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     DEMONHUNTER_2 = {228477, 203720, 204021, 187827, 198589, 263648}, -- Soul Cleave, Demon Spikes, Fiery Brand, Metamorphosis, Blur, Soul Barrier
 
     -- ── Druid ───────────────────────────────────────────────────────────────
-    -- Class fallback (Balance): self-heals then CDs. Rejuvenation, Frenzied Regeneration,
-    -- Survival Instincts and Heart of the Wild are class talents any spec can take -
-    -- included so a talented caster gets them; the runtime known-spell gate drops them
-    -- when untalented. Heart of the Wild empowers abilities OUTSIDE your spec, so for a
-    -- non-healer it's the button that makes the class-tree heals actually land.
-    DRUID         = {8936, 774, 22842, 108238, 1261867, 61336, 22812},  -- Regrowth, Rejuvenation, Frenzied Regen, Renewal, Heart of the Wild, Survival Instincts, Barkskin
-    -- Feral: Regrowth, Frenzied Regen (class talent), Heart of the Wild, Survival Instincts, Barkskin, Renewal
+    -- Class fallback (Balance): self-heals then CDs. Rejuvenation, Survival Instincts and
+    -- Heart of the Wild are class talents any spec can take - included so a talented caster
+    -- gets them; the runtime known-spell gate drops them when untalented. Heart of the Wild
+    -- empowers abilities OUTSIDE your spec, so for a non-healer it's the button that makes
+    -- the class-tree heals actually land.
+    -- Frenzied Regeneration is deliberately ABSENT here and from Resto, for the mirror of
+    -- the reason Rejuvenation is absent from Feral: DB2 SpellShapeshift gives it
+    -- ShapeshiftMask_0 = 16, i.e. Bear Form only. A form-gated button is not dropped by the
+    -- queue - unusable entries are pushed to the end and rendered greyed - so leaving it in
+    -- costs a permanent dead slot out of the four the queue shows by default. Feral keeps it
+    -- because bear-weaving to Frenzied Regen is real play there; a caster shifting to Bear
+    -- has already stopped doing its job.
+    DRUID         = {774, 108238, 1261867, 61336, 22812, 8936},         -- Rejuvenation, Renewal, Heart of the Wild, Survival Instincts, Barkskin, Regrowth
+    -- Feral: Frenzied Regen (class talent, Bear-only - see above) leads, and Regrowth is
+    -- deliberately near the BOTTOM despite being the bigger heal. In combat Regrowth is only
+    -- worth pressing when Predatory Swiftness makes it instant, and that case needs no help
+    -- from list order: a proc promotes it to the front tier ahead of everything, above even
+    -- position 1. Ranking it high would only make it a slow hardcast sitting at the top of
+    -- the queue the rest of the time. Frenzied Regen has no proc to wait for, so list order
+    -- is the only thing that can rank it, and it is pressable whenever it is off cooldown.
     -- (Rejuvenation omitted: castable only out of form, so it self-gates away for most Ferals)
-    DRUID_2       = {8936, 22842, 1261867, 61336, 22812, 108238},       -- Regrowth, Frenzied Regen, Heart of the Wild, Survival Instincts, Barkskin, Renewal
+    DRUID_2       = {22842, 1261867, 61336, 22812, 8936, 108238},       -- Frenzied Regen, Heart of the Wild, Survival Instincts, Barkskin, Regrowth, Renewal
     -- Guardian (tank): Frenzied Regen, Ironfur, Barkskin, Heart of the Wild, Survival Instincts, Rage of the Sleeper
     DRUID_3       = {22842, 192081, 22812, 1261867, 61336, 200851},     -- Frenzied Regen, Ironfur, Barkskin, Heart of the Wild, Survival Instincts, Rage of the Sleeper  (Renewal removed in 12.0)
     -- Restoration: the class fallback minus Heart of the Wild - it empowers off-spec
-    -- abilities, which for a healer means damage, not survival.
-    DRUID_4       = {8936, 774, 22842, 108238, 61336, 22812},           -- Regrowth, Rejuvenation, Frenzied Regen, Renewal, Survival Instincts, Barkskin
+    -- abilities, which for a healer means damage, not survival - plus Ironbark, which is a
+    -- Resto button that happens to be self-targetable and is its only real damage-reduction
+    -- cooldown. (Frenzied Regen omitted: Bear-only, see the class note above.)
+    DRUID_4       = {774, 108238, 102342, 61336, 22812, 8936},          -- Rejuvenation, Renewal, Ironbark, Survival Instincts, Barkskin, Regrowth
 
     -- ── Evoker ──────────────────────────────────────────────────────────────
-    -- Class fallback (all specs): self-heals then defensive CDs. Renewing Blaze and
+    -- Class fallback (all specs): self-heals then defensive CDs. Renewing Blaze, Zephyr and
     -- Emerald Communion are class talents (verified live in 12.1 DB2); dropped by the
     -- known-spell gate when untalented.
-    EVOKER        = {360995, 374348, 363916, 370960},           -- Verdant Embrace, Renewing Blaze, Obsidian Scales, Emerald Communion
+    EVOKER        = {360995, 374348, 363916, 374227, 370960},   -- Verdant Embrace, Renewing Blaze, Obsidian Scales, Zephyr, Emerald Communion
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
     HUNTER        = {109304, 264735, 281195, 186265, 388035},  -- Exhilaration, Survival of the Fittest, SotF (Lone Wolf), Aspect of the Turtle, Fortitude of the Bear
 
     -- ── Mage ────────────────────────────────────────────────────────────────
-    -- Class fallback (spec-appropriate barrier is auto-learned; list all three so
-    -- the one the player actually knows will be shown)
+    -- Class fallback (Fire/Frost). The spec-appropriate barrier is auto-learned; all three
+    -- are listed so the one the player actually knows will be shown.
     MAGE          = {11426, 235313, 235450, 342245, 45438},    -- Ice/Blazing/Prismatic Barrier, Alter Time, Ice Block
+    -- Arcane: its barrier is Prismatic, so the other two are dropped rather than carried as
+    -- known-gated filler, making room for Greater Invisibility - Arcane's signature wall
+    -- (heavy damage reduction plus a threat drop) and the one defensive the class fallback
+    -- cannot cover, since no other spec has it.
+    MAGE_1        = {235450, 110959, 342245, 45438},           -- Prismatic Barrier, Greater Invisibility, Alter Time, Ice Block
 
     -- ── Monk ────────────────────────────────────────────────────────────────
     -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
@@ -921,23 +951,43 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- float hint below surfaces it whenever Moderate/Heavy Stagger is up), then Celestial
     -- Brew, Expel Harm, Fortifying Brew, then class-talent DR (Dampen Harm / Diffuse Magic /
     -- Zen Meditation - verified live in 12.1 DB2; known-gate drops any untalented)
-    MONK_1        = {119582, 322507, 322101, 120954, 122278, 122783, 115176, 115295}, -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic, Zen Meditation, Guard
-    -- Mistweaver: self-heals then DR CDs
-    MONK_2        = {116670, 243435, 115203, 122278, 122783, 388615, 115295}, -- Vivify, Fortifying Brew (MW), Fortifying Brew, Dampen Harm, Diffuse Magic, Restoral, Guard
+    -- Guard (115295) was removed from all three lists: it is a MoP-era ability the DB2
+    -- exports still carry a name row for, but it has no SkillLineAbility row and no
+    -- TraitDefinition entry, while every live Monk talent checked alongside it (Dampen
+    -- Harm, Diffuse Magic, Zen Meditation, Celestial Brew, Purifying Brew) has both.
+    -- The known-spell gate was hiding it, so this costs nothing and removes the pretence
+    -- of coverage. Do not restore it without a SkillLineAbility or TraitDefinition row.
+    MONK_1        = {119582, 322507, 322101, 120954, 122278, 122783, 115176}, -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic, Zen Meditation
+    -- Mistweaver: Life Cocoon leads - a big instant absorb it can cast on ITSELF, and the
+    -- spec's single strongest defensive - then the DR CDs. Vivify is last: it is a hardcast,
+    -- and the case where it is the right button - instant off its own proc - is promoted
+    -- automatically without needing a high slot here.
+    MONK_2        = {116849, 243435, 115203, 122278, 122783, 388615, 116670}, -- Life Cocoon, Fortifying Brew (MW), Fortifying Brew, Dampen Harm, Diffuse Magic, Restoral, Vivify
     -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
-    MONK_3        = {322101, 122470, 201318, 122278, 122783, 115295}, -- Expel Harm, Touch of Karma, Fortifying Brew (WW), Dampen Harm, Diffuse Magic, Guard
+    MONK_3        = {322101, 122470, 201318, 122278, 122783}, -- Expel Harm, Touch of Karma, Fortifying Brew (WW), Dampen Harm, Diffuse Magic
 
     -- ── Paladin ─────────────────────────────────────────────────────────────
-    -- Class fallback (Holy/Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
-    PALADIN       = {85673, 403876, 184662, 642, 633},         -- Word of Glory, Divine Protection, Shield of Vengeance, Divine Shield, Lay on Hands
+    -- Class fallback (Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
+    PALADIN       = {85673, 403876, 184662, 1022, 642, 633},   -- Word of Glory, Divine Protection, Shield of Vengeance, Blessing of Protection, Divine Shield, Lay on Hands
+    -- Holy: Ret's list is the wrong shape - Shield of Vengeance is Ret-only, and Holy's own
+    -- Divine Protection is a different spell id (498, not 403876; both are live in 12.1).
+    -- Aura Mastery is the spec's major cooldown and is self-covering.
+    PALADIN_1     = {85673, 498, 31821, 1022, 642, 633},       -- Word of Glory, Divine Protection (Holy), Aura Mastery, Blessing of Protection, Divine Shield, Lay on Hands
     -- Protection (tank): Word of Glory, Ardent Defender, Guardian of Ancient Kings,
     -- Divine Shield, Lay on Hands.  Shield of the Righteous is deliberately absent -
     -- AC recommends it rotationally, so it lives in the offensive queue.
-    PALADIN_2     = {85673, 31850, 86659, 387174, 389539, 378974, 642, 633}, -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Eye of Tyr, Sentinel, Bastion of Light, Divine Shield, Lay on Hands
+    -- Blessing of Spellwarding is self-castable and is the spec's only true magic wall.
+    PALADIN_2     = {85673, 31850, 86659, 387174, 389539, 378974, 204018, 642, 633}, -- Word of Glory, Ardent Defender, Guardian of Ancient Kings, Eye of Tyr, Sentinel, Bastion of Light, Blessing of Spellwarding, Divine Shield, Lay on Hands
 
     -- ── Priest ──────────────────────────────────────────────────────────────
-    -- Class fallback (Holy/Disc): Desperate Prayer, PW:Shield, Fade
+    -- Class fallback: Desperate Prayer, PW:Shield, Fade. Every spec has a major cooldown
+    -- of its own on top of this - all three are self-castable - so all three get an entry
+    -- and this list is a floor, not the expected shape for anyone.
     PRIEST        = {19236, 17, 586},                          -- Desperate Prayer, PW:Shield, Fade
+    -- Discipline: Pain Suppression, its big damage-reduction cooldown, self-cast.
+    PRIEST_1      = {19236, 17, 33206, 586},                   -- Desperate Prayer, PW:Shield, Pain Suppression, Fade
+    -- Holy: Guardian Spirit, a cheat-death that works perfectly well aimed at yourself.
+    PRIEST_2      = {19236, 17, 47788, 586},                   -- Desperate Prayer, PW:Shield, Guardian Spirit, Fade
     -- Shadow: Desperate Prayer, PW:Shield, Dispersion, Fade
     PRIEST_3      = {19236, 17, 47585, 586},                   -- Desperate Prayer, PW:Shield, Dispersion, Fade
 
@@ -946,8 +996,16 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     ROGUE         = {185311, 1966, 31224, 5277},               -- Crimson Vial, Feint, Cloak of Shadows, Evasion
 
     -- ── Shaman ──────────────────────────────────────────────────────────────
-    -- Class fallback (all specs)
-    SHAMAN        = {108271, 8004, 108281, 198103},            -- Astral Shift, Healing Surge, Ancestral Guidance, Earth Elemental
+    -- Class fallback (Elemental/Enhancement). Earth Shield is talent-gated for them and
+    -- self-castable; the known-spell gate drops it when untalented.
+    -- Healing Surge is last: it is a hardcast, and the case where it is the right button -
+    -- Enhancement with Maelstrom Weapon stacked, making it instant - arrives as a proc and
+    -- is promoted automatically.
+    SHAMAN        = {108271, 974, 108281, 198103, 8004},       -- Astral Shift, Earth Shield, Ancestral Guidance, Earth Elemental, Healing Surge
+    -- Restoration: Earth Shield is baseline and belongs on the player between casts, and the
+    -- spec owns two panic totems the other specs have no access to. Earth Elemental is
+    -- dropped - a healer under pressure is not stopping to summon one.
+    SHAMAN_3      = {108271, 974, 98008, 207399, 108281, 8004}, -- Astral Shift, Earth Shield, Spirit Link Totem, Ancestral Protection Totem, Ancestral Guidance, Healing Surge
 
     -- ── Warlock ─────────────────────────────────────────────────────────────
     -- Class fallback (all specs share dark pact / drain / UR)
@@ -956,12 +1014,14 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- ── Warrior ─────────────────────────────────────────────────────────────
     -- Class fallback (Arms/Fury DPS). Die by the Sword is Arms-only and Enraged
     -- Regeneration Fury-only - the runtime known-spell gate shows each spec its own wall.
-    WARRIOR       = {34428, 202168, 190456, 118038, 184364, 23920, 386208, 97462},  -- Victory Rush, Impending Victory, Ignore Pain, Die by the Sword, Enraged Regeneration, Spell Reflection, Defensive Stance, Rallying Cry
+    -- Bitter Immunity is a class talent all three specs can take (instant self-heal plus a
+    -- dispel), so it sits with the other quick heals.
+    WARRIOR       = {34428, 202168, 383762, 190456, 118038, 184364, 23920, 386208, 97462},  -- Victory Rush, Impending Victory, Bitter Immunity, Ignore Pain, Die by the Sword, Enraged Regeneration, Spell Reflection, Defensive Stance, Rallying Cry
     -- Protection (tank): Shield Block first (physical active mitigation, used on CD -
     -- the sink hint below parks it while its buff is already rolling), then Ignore Pain,
     -- Impending Victory, Last Stand + Shield Wall (major CDs), Rallying Cry, Spell Reflection.
     -- (Last Stand 12975 is an active 3-min CD in 12.1 DB2 - the older "passive" note was wrong.)
-    WARRIOR_3     = {2565, 190456, 202168, 12975, 871, 97462, 23920}, -- Shield Block, Ignore Pain, Impending Victory, Last Stand, Shield Wall, Rallying Cry, Spell Reflection
+    WARRIOR_3     = {2565, 190456, 202168, 383762, 12975, 871, 97462, 23920}, -- Shield Block, Ignore Pain, Impending Victory, Bitter Immunity, Last Stand, Shield Wall, Rallying Cry, Spell Reflection
 }
 
 -- Emergency tier for the <35% defensive reorder. Tier 1 = immunity bubble (survives any
@@ -990,6 +1050,8 @@ local DEFENSE_TIER = {
     [45438]  = 1,  -- Ice Block (Mage)
     [186265] = 1,  -- Aspect of the Turtle (Hunter)
     [31224]  = 1,  -- Cloak of Shadows (Rogue, magic immunity)
+    [196555] = 1,  -- Netherwalk (Demon Hunter, full damage immunity - a true bubble, not
+                   -- the partial avoidance Blur gives, which is why only this one is tiered)
     -- Tier 2 - big instant heals
     [633]    = 2,  -- Lay on Hands (Paladin, 100%)
     [19236]  = 2,  -- Desperate Prayer (Priest, 25%)
@@ -1001,28 +1063,52 @@ local DEFENSE_TIER = {
     [85673]  = 2,  -- Word of Glory (Paladin)
     [360995] = 2,  -- Verdant Embrace (Evoker)
     [228477] = 2,  -- Soul Cleave (Demon Hunter, instant spender-heal like Death Strike)
-    -- Tier 2 - major damage-reduction cooldowns (survival buttons; all have long base
-    -- CDs, so the hold-worthy logic also parks them as emergencies when healthy).
-    -- NOT tiered on purpose: semi-rotational short DR (Blur, Barkskin, Ignore Pain),
-    -- school-limited walls (AMS, Spell Reflection, Diffuse Magic), situational
+    [383762] = 2,  -- Bitter Immunity (Warrior, instant % heal - Desperate Prayer's shape)
+    [116849] = 2,  -- Life Cocoon (Mistweaver, instant absorb, self-castable)
+    -- Tier 4 - PRE-EMPTIVE walls: major damage reduction, plus cheat-deaths that have to be up
+    -- before the hit resolves. Split out of tier 2 because the two behave oppositely when you
+    -- are HEALTHY: a heal at 90% is wasted, so parking it costs nothing, but a wall at 90% is
+    -- correct play - you press Shield Wall on the telegraphed slam BEFORE it lands, not after
+    -- you are at 30%. Parking these coached reactive-only cooldown use, backwards, and it hit
+    -- tanks hardest since they own most of this list.
+    -- The NUMBER is a label, not a rank: TIER_ORDER_LOW/CRITICAL in DefensiveEngine permute
+    -- them explicitly, so 4 is not "less urgent than 3". Tier 3 remains the untagged default.
+    -- Whenever you add a value here you MUST add it to both order arrays, or the spell drops
+    -- out of the low-health ordering entirely.
+    -- Life Cocoon is deliberately NOT here despite being an absorb: JustAC only ever renders it
+    -- self-cast, and self-cast it is the spec's panic button, not a pre-applied shield.
+    -- NOT tiered at all, on purpose: semi-rotational short DR (Blur, Barkskin, Ignore Pain, Ironbark),
+    -- school-limited walls (AMS, Anti-Magic Zone, Spell Reflection, Diffuse Magic, and both
+    -- Blessings - Protection stops physical only, Spellwarding magic only, so neither
+    -- "survives any hit" the way a tier 1 bubble does), group utility that is not a personal
+    -- answer (Zephyr, Spirit Link Totem), maintenance buffs (Earth Shield), and situational
     -- avoidance (Feint, Evasion) - parking or floating those would miscoach.
-    [871]    = 2,  -- Shield Wall (Warrior)
-    [61336]  = 2,  -- Survival Instincts (Druid)
-    [31850]  = 2,  -- Ardent Defender (Paladin)
-    [86659]  = 2,  -- Guardian of Ancient Kings (Paladin)
-    [115203] = 2,  -- Fortifying Brew (Monk)
-    [120954] = 2,  -- Fortifying Brew (Brewmaster variant)
-    [201318] = 2,  -- Fortifying Brew (Windwalker variant)
-    [55233]  = 2,  -- Vampiric Blood (Death Knight)
-    [48792]  = 2,  -- Icebound Fortitude (Death Knight)
-    [204021] = 2,  -- Fiery Brand (Demon Hunter)
-    [108271] = 2,  -- Astral Shift (Shaman)
-    [104773] = 2,  -- Unending Resolve (Warlock)
-    [47585]  = 2,  -- Dispersion (Shadow Priest)
-    [363916] = 2,  -- Obsidian Scales (Evoker)
-    [118038] = 2,  -- Die by the Sword (Arms Warrior)
-    [184364] = 2,  -- Enraged Regeneration (Fury Warrior; heal-over-time BUT 30% DR while
+    [871] = 4,  -- Shield Wall (Warrior)
+    [61336] = 4,  -- Survival Instincts (Druid)
+    [31850] = 4,  -- Ardent Defender (Paladin)
+    [86659] = 4,  -- Guardian of Ancient Kings (Paladin)
+    [115203] = 4,  -- Fortifying Brew (Monk)
+    [120954] = 4,  -- Fortifying Brew (Brewmaster variant)
+    [201318] = 4,  -- Fortifying Brew (Windwalker variant)
+    [55233] = 4,  -- Vampiric Blood (Death Knight)
+    [48792] = 4,  -- Icebound Fortitude (Death Knight)
+    [204021] = 4,  -- Fiery Brand (Demon Hunter)
+    [108271] = 4,  -- Astral Shift (Shaman)
+    [104773] = 4,  -- Unending Resolve (Warlock)
+    [47585] = 4,  -- Dispersion (Shadow Priest)
+    [363916] = 4,  -- Obsidian Scales (Evoker)
+    [118038] = 4,  -- Die by the Sword (Arms Warrior)
+    [184364] = 4,  -- Enraged Regeneration (Fury Warrior; heal-over-time BUT 30% DR while
                    -- active - the DR component makes it Fury's wall, not a trickle heal)
+    [12975] = 4,  -- Last Stand (Warrior; Shield Wall's partner, tiered for the same reason)
+    [200851] = 4,  -- Rage of the Sleeper (Guardian Druid)
+    [187827] = 4,  -- Metamorphosis (Vengeance DH survival CD - id is Vengeance-only, Havoc's
+                   -- damage version is 191427 and is deliberately not listed anywhere)
+    [33206] = 4,  -- Pain Suppression (Discipline Priest)
+    [47788] = 4,  -- Guardian Spirit (Holy Priest)
+    [31821] = 4,  -- Aura Mastery (Holy Paladin)
+    [110959] = 4,  -- Greater Invisibility (Arcane Mage)
+    [207399] = 4,  -- Ancestral Protection Totem (Restoration Shaman, cheat death)
 }
 
 -- Per-spec overrides layered over DEFENSE_TIER ("CLASS_N" → { [spellID] = tier }).
@@ -1032,9 +1118,13 @@ local DEFENSE_TIER_SPEC = {
     PALADIN_2 = { [642] = 3 },  -- Divine Shield
 }
 
---- Emergency tier for the low-health defensive reorder: 1 = bubble, 2 = survival button
---- (big instant heal or major DR cooldown), 3 = everything else. Looks up the base list
---- ID (talent overrides resolve to the same tool); spec overrides win over class tiers.
+--- Emergency tier for the low-health defensive reorder: 1 = immunity bubble, 2 = big instant
+--- heal, 4 = pre-emptive wall (major DR / cheat-death), 3 = everything else (the default for
+--- anything untagged). The numbers are LABELS, not ranks - DefensiveEngine's TIER_ORDER_LOW /
+--- TIER_ORDER_CRITICAL permute them - which is why 4 sits above 3 in urgency.
+--- Only tiers 1 and 2 are held back when healthy; 4 stays live because a wall pressed after
+--- you are already low is a wall pressed too late.
+--- Looks up the base list ID (talent overrides resolve to the same tool); spec overrides win.
 --- Negative IDs are heal items (potion/healthstone): instant burst heals, tier 2 - they
 --- must float when low just like they park as emergencies when healthy (IsHoldWorthy).
 function SpellDB.GetDefenseTier(spellID)

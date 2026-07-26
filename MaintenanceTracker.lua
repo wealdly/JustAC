@@ -382,8 +382,8 @@ end
 --------------------------------------------------------------------------------
 -- The viewer must stay SHOWN for us to read it: hiding stops its UNIT_AURA feed and freezes
 -- auraInstanceID, and a hidden one cannot be revived from addon code (RefreshData throws - see
--- Documentation/AURA_IDENTITY_12.0.md). But "shown" need not mean "visible": alpha 0 with mouse
--- input off is indistinguishable from hidden to the player while Blizzard keeps updating it.
+-- Documentation/AURA_IDENTITY_12.0.md). But "shown" need not mean "visible": alpha 0 with
+-- tooltips off is indistinguishable from hidden to the player while Blizzard keeps updating it.
 -- SetAlpha is AllowedWhenTainted, so unlike the RefreshData route this is legitimate.
 -- We never Show() a viewer the player disabled - that is their setting to make.
 local alphaGuard = {}
@@ -411,12 +411,33 @@ local function ApplyViewerAlpha(viewer, hide)
     alphaGuard[viewer] = true
     pcall(viewer.SetAlpha, viewer, target)
     alphaGuard[viewer] = nil
-    -- Stop it eating clicks while invisible.
-    if viewer.GetChildren then
-        local kids = { viewer:GetChildren() }
-        for i = 1, #kids do
-            local c = kids[i]
-            if c and c.SetMouseMotionEnabled then pcall(c.SetMouseMotionEnabled, c, target == 1) end
+    -- Alpha 0 does not stop mouse input, so an invisible panel still throws tooltips under the
+    -- cursor. The item frames are pooled onto viewer:GetItemContainerFrame(), so they are
+    -- GRANDchildren - a one-level viewer:GetChildren() walk never reaches them, which is why an
+    -- earlier attempt here silently did nothing.
+    --
+    -- DO NOT "fix" this by calling viewer:SetTooltipsShown(). It is the obvious answer, it is
+    -- Blizzard's own API, and it is catastrophic here: it assigns self.tooltipsShown on the
+    -- viewer, and CooldownViewer.lua:1768 reads that field back inside RefreshData on every item
+    -- acquire. A field written by addon code carries our taint into RefreshData, and under 12.0
+    -- TAINTED EXECUTION CANNOT READ SECRET VALUES - so Blizzard's own aura reads start throwing.
+    -- Measured: ~1350 errors in one fight ("attempt to compare a secret number value (execution
+    -- tainted by 'JustAC')" from GetAuraData / RefreshTotemData / NeedsAddedAuraUpdate).
+    -- The same trap applies to ANY mixin method that stores state on these frames.
+    --
+    -- Calling the widget C methods directly avoids it: SetMouseMotionEnabled writes no Lua
+    -- field, so nothing tainted is left behind for Blizzard's code to read. Enumerating the pool
+    -- is a pure read. Re-applied on every call because freshly acquired frames default to
+    -- mouse-enabled and we deliberately do not hook Blizzard's acquire path.
+    local pool = viewer.itemFramePool
+    if pool and pool.EnumerateActive then
+        local ok, iter = pcall(pool.EnumerateActive, pool)
+        if ok and iter then
+            for itemFrame in iter do
+                if itemFrame.SetMouseMotionEnabled then
+                    pcall(itemFrame.SetMouseMotionEnabled, itemFrame, target == 1)
+                end
+            end
         end
     end
 end
@@ -433,11 +454,65 @@ function MaintenanceTracker.SetCooldownManagerEnabled(on)
     return ok and true or false
 end
 
+--- A panel whose Edit Mode visibility is "Hidden" is genuinely HIDDEN, and a hidden viewer
+--- serves no auraInstanceIDs and cannot be revived from addon code (tested - see
+--- Documentation/AURA_IDENTITY_12.0.md). That makes it indistinguishable, from our side, from
+--- the Cooldown Manager being switched off entirely, which is a confusing state for a player who
+--- believes they enabled it. So we DETECT that state and tell them - we no longer fix it.
+---
+--- We used to lift the panel ourselves via viewer:UpdateSystemSettingValue(SETTING, Always).
+--- It worked, and it was a bug: that mixin writes to the viewer's own tables, which carries our
+--- taint into a frame whose whole job is reading SECRET values, and under 12.0 tainted execution
+--- cannot read a secret at all. The result was Blizzard's own CooldownViewer throwing on every
+--- refresh (measured ~1350 errors in a single fight). Reading systemInfo is a pure read and stays
+--- safe; WRITING through any mixin on these frames does not. Do not reintroduce it - there is no
+--- pcall or combat guard that makes it safe, because the damage is the taint, not the call.
+---
+--- Only reports panels set to Hidden - an InCombat/OutOfCombat choice is a real preference.
+--- @param profile table
+--- @return boolean anyHidden
+local function ReportHiddenViewers(profile)
+    if not (profile and profile.cooldownManagerEnable) then return false end
+    local SETTING = Enum and Enum.EditModeCooldownViewerSetting
+                    and Enum.EditModeCooldownViewerSetting.VisibleSetting
+    local VIS = Enum and Enum.CooldownViewerVisibleSetting
+    if not (SETTING and VIS and VIS.Hidden) then return false end
+    local anyHidden = false
+    for i = 1, #VIEWER_OPTION_KEYS do
+        local viewer = _G[VIEWER_OPTION_KEYS[i].frame]
+        if viewer and viewer.systemInfo then
+            -- Read the current value straight off systemInfo: there is no public getter.
+            local current = nil
+            local okR = pcall(function()
+                for _, s in pairs(viewer.systemInfo.settings or {}) do
+                    if s.setting == SETTING then current = s.value return end
+                end
+            end)
+            if okR and current == VIS.Hidden then anyHidden = true end
+        end
+    end
+    return anyHidden
+end
+
+--- Warn once per session when a panel the player set to "Hidden" is starving the feature.
+local warnedHiddenViewers = false
+local function WarnIfHiddenViewers(profile)
+    if warnedHiddenViewers then return end
+    if not ReportHiddenViewers(profile) then return end
+    warnedHiddenViewers = true
+    print("|cff33ff99JustAC|r: a Cooldown Manager panel is set to |cffffff00Hidden|r in Edit Mode, "
+        .. "so the game stops updating it and JustAC cannot read it. Set it to |cffffff00Always|r "
+        .. "in Edit Mode - JustAC will keep it invisible for you.")
+end
+
 --- Apply the per-panel cosmetic hide from the profile. Blizzard resets alpha on layout changes,
 --- so each viewer is re-asserted through a hook - guarded against re-entrancy, since our own
 --- SetAlpha would otherwise recurse.
 --- @param profile table
 function MaintenanceTracker.ApplyViewerVisibility(profile)
+    -- A panel the player left on "Hidden" in Edit Mode feeds us nothing, and we cannot fix that
+    -- for them without tainting the frame (see ReportHiddenViewers) - so say so instead.
+    WarnIfHiddenViewers(profile)
     for i = 1, #VIEWER_OPTION_KEYS do
         local spec = VIEWER_OPTION_KEYS[i]
         local viewer = _G[spec.frame]

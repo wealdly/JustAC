@@ -386,3 +386,21 @@ L["Custom Queue Context Aware desc"] = "Réordonner la file pour correspondre à
 L["Custom Queue Blacklist Note"] = "Retirer ici n'affecte que la file. Pour masquer un sort partout (y compris la case AC), mettez-le en liste noire : |cffff6666Maj+Clic droit|r sur son icône de file, ou utilisez l'onglet Liste noire."
 L["Enable Custom Queue desc"] = "Si activé, votre Rotation personnalisée définit la file. Désactivez pour utiliser la rotation de Blizzard."
 L["Custom Queue Spells desc"] = "Votre ordre de capacités pour la file. Utilisez Haut / Bas pour réordonner ; les options d'Ordre ci-dessus s'appliquent toujours."
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "Perturbation"
+L["Disruption desc"] = "Un emplacement pour tout ce qui retire a l'ennemi ce qu'il est en train de faire : interruptions, controle et dissipation d'enrager. Chacun est independant - vous pouvez utiliser l'un sans les autres."
+L["Show Soothe Cue"] = "Afficher la dissipation d'enrager"
+L["Show Soothe Cue desc"] = "Affiche votre capacite de dissipation d'enrager (Apaisement et equivalents) dans l'emplacement Perturbation tant que votre cible est enragee. N'apparait que si votre specialisation en possede une. Independant du rappel d'interruption : ils partagent l'emplacement, mais chacun fonctionne sans l'autre."
+L["Sustain"] = "Maintien"
+L["Sustain desc"] = "Un emplacement dedie a cote de la file defensive pour ce qui vous garde operationnel plutot qu'en vie : l'effet de reduction qu'un tank maintient, et votre echappatoire aux etourdissements, peurs et racines. Etre immobilise vous coute autant de temps utile qu'un effet expire, donc les deux vivent ici."
+
+L["Pet Heal Cue"] = "Rappel de soin du familier"
+L["Pet Heal Cue desc"] = "Affiche votre soin de familier dans l emplacement Maintien lorsque votre familier est gravement blesse, en combat comme hors combat. Chasseurs et demonistes uniquement."
+
+L["Cooldown Manager"] = "Gestionnaire de temps de recharge"
+L["Pet Heal Threshold"] = "Afficher le soin du familier sous"
+L["Pet Heal Threshold desc"] = "A quel point votre familier doit etre blesse avant que le rappel apparaisse. Une valeur basse attend un vrai danger, une valeur haute le soigne plus tot."
+
+L["Health Top-off Threshold"] = "Recharger en dessous de"
+L["Health Top-off Threshold desc"] = "A quel point sous la sante maximale le rappel de soin entre les pulls apparait. Le rappel d urgence a sante critique est separe et toujours actif."

@@ -391,6 +391,16 @@ end
 -- Other lists must neither show the toggle nor wipe the setting on removal.
 local PROC_PRIORITY_LISTS = { defensive = true, petheal = true, petrez = true, customqueue = true }
 
+-- Every row button below closes over the index it was BUILT with. If the list changed
+-- since - another row acted, defaults were restored, the spec swapped - that index now
+-- points at a different entry, or past the end. Re-checking that the captured entry is
+-- still sitting at the captured index makes acting on a stale row a no-op instead of a
+-- silent edit to the wrong one. Shared by every list this builds (defensives, pet lists,
+-- gap-closers, custom queue), so the guard lands once for all of them.
+local function StillAt(list, i, entry)
+    return list and i and list[i] == entry
+end
+
 function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, listType, baseOrder, updateFunc)
     if not spellList then return end
 
@@ -457,6 +467,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     width = 0.3,
                     disabled = function() return i == 1 end,
                     func = function()
+                        if not StillAt(spellList, i, entry) or i <= 1 then return end
                         spellList[i - 1], spellList[i] = spellList[i], spellList[i - 1]
                         updateFunc()
                     end
@@ -469,6 +480,14 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     width = 0.3,
                     disabled = function() return i == #spellList end,
                     func = function()
+                        -- The bounds test is the real guard, not `disabled`: that closure
+                        -- compares a build-time index against a live length, so a tree the
+                        -- dialog has not refreshed yet can enable this on the LAST row. The
+                        -- swap would then read a nil neighbour and write nil back into
+                        -- spellList[i] - a HOLE, which truncates every later entry at save
+                        -- time. The Emergency Potion tile is appended last, so it is always
+                        -- the first thing such a hole eats.
+                        if not StillAt(spellList, i, entry) or i >= #spellList then return end
                         spellList[i + 1], spellList[i] = spellList[i], spellList[i + 1]
                         updateFunc()
                     end
@@ -479,7 +498,16 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     order = 3,
                     width = 0.5,
                     func = function()
+                        if not StillAt(spellList, i, entry) then return end
                         local profile = _addon:GetProfile()
+                        if isEmergency then
+                            -- Record the intent, so the tile stays gone. Everything else
+                            -- that can drop it is treated as accidental and re-seeded.
+                            local DE = LibStub("JustAC-DefensiveEngine", true)
+                            if DE and DE.MarkEmergencyPotionRemoved then
+                                DE.MarkEmergencyPotionRemoved(_addon)
+                            end
+                        end
                         -- Clean up item settings when removing an item entry
                         if isItemEntry then
                             local itemID = -entry

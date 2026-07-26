@@ -387,3 +387,21 @@ L["Custom Queue Context Aware desc"] = "Reordena a fila para corresponder à hab
 L["Custom Queue Blacklist Note"] = "Remover aqui afeta apenas a fila. Para ocultar uma magia em todos os lugares (incluindo o espaço AC), coloque-a na lista negra: |cffff6666shift+clique direito|r no ícone da fila, ou use a aba Lista negra."
 L["Enable Custom Queue desc"] = "Quando ativado, sua Rotação personalizada define a fila. Desative para usar a rotação da Blizzard."
 L["Custom Queue Spells desc"] = "Sua ordem de habilidades para a fila. Use Cima / Baixo para reordenar; as opções de Ordenação acima ainda se aplicam."
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "Disrupção"
+L["Disruption desc"] = "Um espaço para tudo que tira do inimigo o que ele está fazendo: interrupções, controle de grupo e remoção de fúria. Cada um é independente - você pode usar qualquer um sem os outros."
+L["Show Soothe Cue"] = "Mostrar remoção de fúria"
+L["Show Soothe Cue desc"] = "Mostra sua habilidade de remover fúria (Acalmar e equivalentes) no espaço de Disrupção enquanto seu alvo está enfurecido. Só aparece se sua especialização tiver uma. Independente do lembrete de interrupção: eles dividem o espaço, mas você pode usar qualquer um sem o outro."
+L["Sustain"] = "Sustentação"
+L["Sustain desc"] = "Um espaço dedicado ao lado da fila defensiva para o que mantém você rendendo em vez de apenas vivo: a redução de dano que um tanque mantém ativa, e sua saída de atordoamentos, medos e enraizamentos. Ficar preso custa tanto tempo útil quanto deixar um efeito expirar, então ambos ficam aqui."
+
+L["Pet Heal Cue"] = "Lembrete de cura do familiar"
+L["Pet Heal Cue desc"] = "Mostra a cura do seu familiar no espaço de Sustentação quando ele está muito ferido, em combate e fora dele. Apenas caçadores e bruxos."
+
+L["Cooldown Manager"] = "Gerenciador de recarga"
+L["Pet Heal Threshold"] = "Mostrar cura do familiar abaixo de"
+L["Pet Heal Threshold desc"] = "O quanto seu familiar precisa estar ferido antes de o lembrete aparecer. Valores baixos esperam o perigo real; valores altos curam mais cedo."
+
+L["Health Top-off Threshold"] = "Completar abaixo de"
+L["Health Top-off Threshold desc"] = "Quanto abaixo da vida cheia o lembrete de cura entre pulls aparece. O aviso de emergência com vida crítica é separado e está sempre ativo."

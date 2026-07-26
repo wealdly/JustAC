@@ -383,3 +383,21 @@ L["Custom Queue Context Aware desc"] = "重新排序队列，使其匹配辅助�
 L["Custom Queue Blacklist Note"] = "在此移除仅影响队列。要在所有位置隐藏某个法术（包括 AC 槽），请将其加入黑名单：|cffff6666Shift+右键点击|r 其队列图标，或使用黑名单标签页。"
 L["Enable Custom Queue desc"] = "启用后，您的自定义循环将设定队列。禁用则使用 Blizzard 的循环。"
 L["Custom Queue Spells desc"] = "您的队列技能顺序。使用 上 / 下 重新排序；上方的排序选项仍然适用。"
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "干扰"
+L["Disruption desc"] = "一个位置容纳所有能打断敌人行动的手段：打断、控制和激怒驱散。三者相互独立，可以只启用其中任意一项。"
+L["Show Soothe Cue"] = "显示激怒驱散"
+L["Show Soothe Cue desc"] = "当目标处于激怒状态时，在干扰位置显示你的激怒驱散技能（抚慰及同类技能）。仅在你的专精拥有该技能时出现。与打断提醒相互独立：二者共用同一位置，但可以单独使用其中任意一项。"
+L["Sustain"] = "维持"
+L["Sustain desc"] = "防御队列旁的专用位置，用于那些让你保持输出而非仅仅活着的手段：坦克需要持续维持的减伤效果，以及你摆脱昏迷、恐惧和定身的手段。被控制损失的时间与减伤断档一样多，因此二者放在一起。"
+
+L["Pet Heal Cue"] = "宠物治疗提醒"
+L["Pet Heal Cue desc"] = "当你的宠物受重伤时，在维持位置显示宠物治疗技能，战斗内外均有效。仅限猎人和术士。"
+
+L["Cooldown Manager"] = "冷却管理器"
+L["Pet Heal Threshold"] = "宠物生命值低于此值时显示"
+L["Pet Heal Threshold desc"] = "宠物需要受多重的伤才会出现提醒。数值越低越等到真正危险时才提示，数值越高则越早补血。"
+
+L["Health Top-off Threshold"] = "生命值低于此值时补血"
+L["Health Top-off Threshold desc"] = "战斗间隙的补血提醒在生命值低于多少时出现。危急生命值时的紧急提示是独立的，始终开启。"

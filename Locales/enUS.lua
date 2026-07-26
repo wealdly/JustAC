@@ -85,6 +85,12 @@ L["Dn"] = "Dn"
 -- Descriptions
 L["General description"] = "Settings that apply to both Standard Queue and Nameplate Overlay."
 L["Interrupt"] = "Interrupt"
+-- The shared "position 0" slot. Named for what its members have in common - taking away what
+-- the enemy is doing - rather than for any one of them. Deliberately not "Intervention"
+-- (Intervene is a Warrior ability, and a protective one, so it reads backwards) and not
+-- "Stops" (the real M+ term, but it means casts only and excludes enrage removal).
+L["Disruption"] = "Disruption"
+L["Disruption desc"] = "One slot for everything that takes away what the enemy is doing: interrupts, crowd control, and enrage removal. Each is independent - you can run any of them without the others."
 L["Shared Behavior"] = "Shared Behavior"
 L["Icon Layout"] = "Icon Layout"
 L["Visibility"] = "Visibility"
@@ -105,7 +111,7 @@ L["Defensive Display Mode desc"] = "When Health Low: Show only when health drops
 L["When Health Low"] = "When Health Low"
 L["In Combat Only"] = "In Combat Only"
 L["Hide Emergency Until Low"] = "Hold Emergency Heals Until Low Health"
-L["Hide Emergency Until Low desc"] = "Above the low-health threshold, park panic buttons - immunity bubbles, big instant heals, and health potions - at the bottom of the queue, greyed out with a WAIT tag instead of shown as live suggestions. They light up and float to the top once health drops below the threshold. Mitigation and fillers show normally. (Procced free heals are never held back.)"
+L["Hide Emergency Until Low desc"] = "Above the low-health threshold, park panic buttons - immunity bubbles, big instant heals, and health potions - at the bottom of the queue, greyed out with a WAIT tag instead of shown as live suggestions. They light up and float to the top once health drops below the threshold.\n\nYour damage-reduction cooldowns are never parked: walls like Shield Wall, Ardent Defender and Pain Suppression are meant to be pressed before a hit lands, so they stay live at any health. Mitigation and fillers show normally, and procced free heals are never held back."
 
 -- Detailed descriptions
 L["Max Icons desc"] = "Maximum spell icons to display (first = the AC slot, rest = the queue)"
@@ -354,6 +360,8 @@ L["Reverse Anchor desc"] = "By default DPS icons appear on the right side of the
 L["Nameplate Show Defensives desc"] = "Show defensive queue icons on the opposite side of the nameplate."
 L["Interrupt Mode"] = "Interrupt Reminder"
 L["Interrupt Mode desc"] = "Controls when the interrupt reminder icon appears and which ability to suggest. Kick Priority is recommended; kicks lock out the spell school and have shorter cooldowns than CC."
+L["Show Soothe Cue"] = "Show Enrage Cleanse"
+L["Show Soothe Cue desc"] = "Show your enrage-removal ability (Soothe and equivalents) in the Disruption slot while your target is enraged. Only appears if your specialization has one. Independent of the interrupt reminder: they share the slot, but you can run either one without the other."
 L["Include Fears"] = "Include Fears"
 L["Include Fears desc"] = "Suggest fear-type crowd control (e.g. Intimidating Shout, Psychic Scream) as an interrupt fallback. Off by default: fears break the moment the target takes damage and scatter enemies, which is disruptive in groups."
 L["Sounds"] = "Sounds"
@@ -416,21 +424,36 @@ L["Disable Blizzard Highlight desc"] = "Disable Blizzard's per-frame action bar 
 
 L["WAIT"] = "WAIT"
 
--- Defensive maintenance slot (tank specs)
+-- Sustain: defensive "position 0". NOT tank-only - the tank mitigation buff is one member,
+-- crowd-control escape and the pet-heal cue are the others. Only the buff toggle is tank-gated.
+-- Defensive "position 0", named for what its members have in common: everything here keeps you
+-- CONTRIBUTING rather than reducing damage. A dropped mitigation buff, a stun and a dying pet
+-- all cost you the same thing - uptime - which is why crowd-control escape belongs here and
+-- not with the survival cooldowns in the queue proper.
+L["Sustain"] = "Sustain"
+L["Sustain desc"] = "A dedicated slot beside the defensive queue for the things that keep you going rather than keep you alive: the mitigation buff a tank keeps rolling, and your escape from stuns, fears and roots. Being held costs you as much uptime as letting a buff lapse, so both live here."
+L["Pet Heal Cue"] = "Pet Heal Reminder"
+L["Pet Heal Cue desc"] = "Show your pet heal in the Sustain slot while your pet is badly hurt, in combat as well as out. Hunters and Warlocks only."
+L["Pet Heal Threshold"] = "Show Pet Heal Below"
+L["Pet Heal Threshold desc"] = "How hurt your pet has to be before the reminder appears. Lower values wait for real danger; higher values top the pet up sooner."
 L["Maintenance Slot"] = "Tank Maintenance Slot"
-L["Maintenance Slot desc"] = "Show a dedicated slot beside the defensive queue for the one mitigation buff your spec keeps rolling - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, or Bone Shield.\n\nThe swipe counts down your buff's remaining time, and the icon glows blue as it nears the end so you can refresh before it lapses - not after.\n\nFor an exact countdown and a live stack count, turn on Blizzard's Cooldown Manager and leave its Tracked Bars widget enabled - in combat that is the only way to tell your buff apart from everything else on you. Without it the countdown is estimated and no stack count is shown.\n\nTank specs only."
+L["Maintenance Slot desc"] = "Show the one mitigation buff your spec keeps rolling in the Sustain slot - Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, or Bone Shield.\n\nThe swipe counts down your buff's remaining time, and the icon glows blue as it nears the end so you can refresh before it lapses - not after.\n\nFor an exact countdown and a live stack count, turn on Blizzard's Cooldown Manager and leave its Tracked Bars widget enabled - in combat that is the only way to tell your buff apart from everything else on you. Without it the countdown is estimated and no stack count is shown.\n\nTank specs only."
 L["CC Escape"] = "Crowd Control Escape (Experimental)"
-L["CC Escape info"] = "|cffff9900Experimental - still being tested, and it can only offer an escape for the crowd control the game actually reports to addons (stuns, roots, fears and the like) when you also carry something that breaks it. Movement slows can't be detected at all. Off by default.|r\n\nAny specialization, tank or not. When you're held, this borrows the tank maintenance slot's position - it takes that spot, and hands it straight back."
+L["CC Escape info"] = "|cffff9900Experimental - still being tested, and it can only offer an escape for the crowd control the game actually reports to addons (stuns, roots, fears and the like) when you also carry something that breaks it. Movement slows can't be detected at all. Off by default.|r\n\nAny specialization, tank or not. It uses the Sustain slot: being held costs you uptime the same way a lapsed mitigation buff does, so both belong in the same place."
 L["CC Break"] = "Show Escape From Crowd Control"
 L["CC Break Macro"] = "Cancelform Macro (Druid)"
 L["CC Break Macro desc"] = "Shapeshifting frees you from roots - but the game does this as part of the shift, not as a spell, so JustAC can't find it on its own.\n\nPick one of your macros that contains /cancelform. When you're rooted, the slot shows that macro's keybind. It must be placed on an action bar and bound to a key, or there's nothing to show.\n\nRoots only: the game doesn't report movement slows to addons, so those can't be detected. Whatever else is in the macro is up to you - the line below shows exactly what it does. Note: for a tank, /cancelform drops your form and its mitigation, so choose deliberately."
 L["CC Break Macro missing"] = "|cffff6600That macro no longer exists - pick another.|r"
-L["CC Break desc"] = "|cffff9900Experimental.|r While you're stunned, feared, rooted or otherwise held, show the button that frees you - if you have one ready.\n\nIt counts down how long the effect lasts and glows so it's hard to miss. If nothing you own breaks that effect, nothing is shown; you won't be told you're stuck. Movement slows are not detectable in combat, so those can't be covered.\n\nWorks on any specialization, tank or not. It shares the tank maintenance icon's position: while you're held it takes that spot, and hands it back the moment you're free."
+L["CC Break desc"] = "|cffff9900Experimental.|r While you're stunned, feared, rooted or otherwise held, show the button that frees you - if you have one ready.\n\nIt counts down how long the effect lasts and glows so it's hard to miss. If nothing you own breaks that effect, nothing is shown; you won't be told you're stuck. Movement slows are not detectable in combat, so those can't be covered.\n\nWorks on any specialization, tank or not. It uses the Sustain slot, alongside the tank mitigation buff: a stun costs you as much uptime as a buff you let lapse, so both live there."
+L["Cooldown Manager"] = "Cooldown Manager"
 L["Enable Cooldown Manager"] = "Use Blizzard's Cooldown Manager"
-L["Enable Cooldown Manager desc"] = "Turn on the game's Cooldown Manager (the same switch as Options > Gameplay Enhancements).\n\nIn combat the game hides which buff is which, and the Cooldown Manager is the only thing that can tell your mitigation buff apart from every other buff on you. With it on, the maintenance slot shows an exact countdown and a live stack count. Without it, the countdown is estimated and no stack count is shown.\n\nA panel still has to be enabled in Edit Mode for this to work - Tracked Bars is the useful one, and these buffs are on it by default. You can make the panels invisible below."
+L["Enable Cooldown Manager desc"] = "Turn on the game's Cooldown Manager (the same switch as Options > Gameplay Enhancements).\n\nIn combat the game hides which buff is which, and the Cooldown Manager is the only thing that can tell your mitigation buff apart from every other buff on you. With it on, the maintenance slot shows an exact countdown and a live stack count. Without it, the countdown is estimated and no stack count is shown.\n\nA panel still has to be enabled in Edit Mode for this to work - Tracked Bars is the useful one, and these buffs are on it by default. You can make the panels invisible below.\n\nAvailable on any specialization: this is the game's own setting. The extra precision above only applies to tank mitigation buffs, but you may want the panels on - or on and hidden - regardless."
 L["Hide Panels desc"] = "Keep the panels working, but out of sight. Each stays active behind the scenes - that is what lets your buff be read exactly - it just becomes invisible and ignores clicks. Panels reappear in Edit Mode so you can still move them."
 L["Hide Essential"] = "Hide Essential Cooldowns"
 L["Hide Utility"] = "Hide Utility Cooldowns"
 L["Hide Tracked Buffs"] = "Hide Tracked Buffs"
 L["Hide Tracked Bars"] = "Hide Tracked Bars"
 L["Cooldown Manager combat warning"] = "Cooldown Manager can't be changed in combat - try again after the fight."
+
+L["Health Top-off Threshold"] = "Top Off Below"
+L["Health Top-off Threshold desc"] = "How far below full health the between-pulls heal reminder appears. Your emergency heal cue at critical health is separate and always on."

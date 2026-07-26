@@ -80,6 +80,7 @@ local defaults = {
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "kickPrefer",      -- Interrupt reminder mode: "disabled", "kickOnly", "kickPrefer", "ccPrefer"
+        showSootheCue = true,              -- Enrage-cleanse cue on the interrupt icon (soothe classes only)
         interruptAlertSound = "None",       -- Alert sound (LSM key); "None" = disabled
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
@@ -145,7 +146,12 @@ local defaults = {
             itemSettings = {},        -- Per-item settings: itemSettings[itemID] = {linkedAura=spellID, combatHide=bool}
             spellSettings = {},       -- Per-spell settings: spellSettings[spellID] = {procPriority=bool, alwaysShow=bool, holdUntilCharged=bool}
             displayMode = "always", -- "healthBased" (show when low), "combatOnly" (always in combat), "always"
-            hideEmergencyUntilLow = false, -- hold back panic buttons (bubbles/big heals/pots) above the low-health threshold
+            -- Hold back panic buttons (bubbles / big instant heals / potions) above the
+            -- low-health threshold. ON by default: at 80% health a bubble or a Lay on Hands is
+            -- never the right press, so listing it live is bad advice. Safe to default on only
+            -- since pre-emptive walls were exempted (SpellDB.IsPreemptiveDefensive) - before
+            -- that this also parked Shield Wall and friends, which you press BEFORE the hit.
+            hideEmergencyUntilLow = true,
             glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
             detached = false,                                    -- Give defensives their own independent draggable frame
             detachedPosition = { point = "CENTER", x = 0, y = 100 }, -- Saved position of the detached defensive frame

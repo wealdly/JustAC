@@ -1871,6 +1871,55 @@ function DebugCommands.EnrageProbe(addon, arg)
     scan("player")
     scan("target")
 
+    -- Feature-path gates. The scans above answer "is this enrage DETECTABLE"; they say nothing
+    -- about why the cue is not on screen, which is a different question with six separate ways
+    -- to fail. Walk them in the order the real code does and name the first one that is false.
+    addon:Print("|cff00ccff== soothe cue gates ==|r")
+    local function gate(label, ok, detail)
+        addon:Print(string.format("  %s %s%s", ok and "|cff00ff00PASS|r" or "|cffff3333FAIL|r",
+            label, detail and (" |cff888888(" .. detail .. ")|r") or ""))
+        return ok
+    end
+
+    local UISootheCue = LibStub("JustAC-UISootheCue", true)
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local profile = addon.db and addon.db.profile
+
+    gate("UISootheCue library loaded", UISootheCue ~= nil)
+    if UISootheCue then
+        gate("UISootheCue.Available() (API + selector curve)", UISootheCue.Available())
+    end
+
+    -- interruptMode "disabled" destroys the interrupt icon, and the cue is parented to it -
+    -- so a disabled kick reminder silently takes the soothe cue with it.
+    local mode = profile and profile.interruptMode or "kickPrefer"
+    gate("interruptMode ~= disabled", mode ~= "disabled", "mode=" .. tostring(mode))
+    local dm = profile and profile.displayMode or "queue"
+    addon:Print(string.format("  |cff888888displayMode=%s (the standard-queue cue needs queue/both; "
+        .. "overlay has its own)|r", tostring(dm)))
+
+    local soothe = addon.resolvedSoothe
+    local sid = soothe and soothe[1] and soothe[1].spellID
+    if gate("ResolveSootheSpells() returned a spell", sid ~= nil,
+            sid and ("spellID=" .. sid) or "nil - no known soothe for this spec") and SDB then
+        -- The `live` gate inside DriveCue: an on-cooldown soothe blanks every slot, so a stuck
+        -- cooldown state looks exactly like "detection broken".
+        local onCD = SDB.IsInterruptOnCooldown and SDB.IsInterruptOnCooldown(sid)
+        gate("soothe not on cooldown (DriveCue 'live' gate)", not onCD,
+             onCD and "IsSpellReady says NOT ready" or "ready")
+    end
+
+    local intIcon = addon.interruptIcon
+    gate("interrupt icon exists (cue anchor)", intIcon ~= nil)
+    if intIcon then
+        local cue = intIcon.sootheCue
+        gate("cue frame created", cue ~= nil)
+        if cue then gate("cue frame shown", cue:IsShown()) end
+    end
+
+    gate("target exists", UnitExists("target"))
+    gate("target attackable", UnitExists("target") and UnitCanAttack("player", "target") or false)
+
     -- Live on-screen indicator: a slot per target HELPFUL aura, driven each frame by the
     -- selector via SetVertexColor. A slot lit WHITE == that buff is a DispelType-9 enrage.
     -- Works IN COMBAT: the secret color sinks straight into the fill; we never read it.
@@ -3811,7 +3860,7 @@ function DebugCommands.MaintenanceProbe(addon)
         addon:Print(string.format("Q3 |cffff6600no live item frame|r (want any of %s, %d active items walked)",
             (#want > 0) and table.concat(want, "/") or "none", scanned))
         addon:Print("|cff888888   active frame cooldownIDs: " .. table.concat(seenIDs, ",") .. "|r")
-        addon:Print("|cff888888   id absent -> not laid out in Edit Mode; id present -> match logic is wrong|r")
+        addon:Print("|cff888888   id absent -> the viewer is not feeding ids; id present -> match logic is wrong|r")
         if trackedViewer then
             local v = _G[trackedViewer]
             local vShown = (v and v.IsShown and v:IsShown()) and true or false
@@ -3819,8 +3868,17 @@ function DebugCommands.MaintenanceProbe(addon)
                 addon:Print(string.format("|cffffff00   %s IS shown but our id is not on it - add the spell to that bar in Edit Mode|r",
                     trackedViewer))
             else
-                addon:Print(string.format("|cffffff00   our id belongs to %s (shown=false) - enable that viewer|r",
-                    trackedViewer))
+                -- shown=false has TWO causes and they need different fixes. This message used to
+                -- assert "not laid out", which cost a debugging session when the real cause was
+                -- the panel's visibility dropdown set to Always Hidden - the panel WAS laid out.
+                -- JustAC is never a candidate: its own cosmetic hide only ever sets alpha 0
+                -- (MaintenanceTracker.ApplyViewerAlpha), which leaves IsShown() true.
+                addon:Print(string.format("|cffffff00   our id belongs to %s, which is HIDDEN. Two causes:|r", trackedViewer))
+                addon:Print("|cffffff00     1. the panel's Edit Mode visibility is set to Always Hidden -> set it to Always Show|r")
+                addon:Print("|cffffff00     2. the panel is not enabled in this Edit Mode layout -> enable it|r")
+                addon:Print("|cff888888     Either way a hidden viewer serves no ids and cannot be revived from addon|r")
+                addon:Print("|cff888888     code (Documentation/AURA_IDENTITY_12.0.md). JustAC's own hide is alpha-only|r")
+                addon:Print("|cff888888     and keeps it feeding, so hide it there rather than in Edit Mode.|r")
             end
         end
     else
@@ -4695,6 +4753,115 @@ local function LogProxy(addon)
     return setmetatable({ Print = function(_, msg) ProbeLogEmit(msg) end }, { __index = addon })
 end
 
+--------------------------------------------------------------------------------
+-- /jac inspect enragelog [off|clear] - does the enrage signal actually fire in combat?
+--
+-- The colour-sink the feature uses is UNVERIFIABLE by construction: we hand a secret
+-- alpha straight to SetAlpha and never read it, and GetAlpha is secret-aspect
+-- protected, so there is no way to log "did it light up". The swatch in
+-- '/jac inspect enrage' is eyes-only, which cannot prove reliability over a fight.
+--
+-- So this measures a DIFFERENT, readable signal and correlates it with the cue:
+--   HELPFUL|RAID_PLAYER_DISPELLABLE = "auras with a dispel type the player can dispel"
+--   (AuraUtil.AuraFilters). On a HOSTILE target for a soothe class that should mean
+--   enrage specifically, and an aura COUNT is plain even in combat.
+-- If that holds, it is a branchable enrage boolean and strictly better than the sink.
+--
+-- FAIL-OPEN GUARD, mandatory: an unrecognised filter token returns the UNFILTERED set
+-- rather than erroring (measured - see the JAC_NOT_A_REAL_TOKEN line in enginesig).
+-- A narrowed count that equals its base count is therefore "token ignored", NOT "every
+-- aura is dispellable" - without this check the probe would confidently report an
+-- enrage on every target that has any buff at all.
+--
+-- Change-only sampling: a whole fight collapses to a handful of transitions.
+--------------------------------------------------------------------------------
+local function EnrageSample()
+    local api = LibStub("JustAC-BlizzardAPI", true)
+    if not (api and api.GetAuras) or not UnitExists("target") then return nil end
+    local base = api.GetAuras("target", "HELPFUL")
+    local disp = api.GetAuras("target", "HELPFUL|RAID_PLAYER_DISPELLABLE")
+    if not (base and disp) then return nil end
+    local nb, nd = #base, #disp
+    -- Token honoured only if it actually narrowed something at least once.
+    local ignored = (nb > 1 and nd == nb)
+    return nb, nd, ignored, base
+end
+
+--- Per-aura dispel-type decode for the log. Uses the IDENTITY curve (r = type/32), so a
+--- readable context yields the raw type number and 9 == Enrage. In combat this reads SECRET,
+--- which is itself the answer to "can we ever branch on this" - no.
+--- Kept separate from the counts so a decode failure cannot break the sampling line.
+local identCurve
+local function DecodeDispelTypes(auras)
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local gadtc = C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    if not (cu and gadtc and stepType and CreateColor and auras) then return "" end
+    if not identCurve then
+        identCurve = cu.CreateColorCurve()
+        identCurve:SetType(stepType)
+        for k = 0, 15 do identCurve:AddPoint(k, CreateColor(k / 32, 0, 0, 1)) end
+    end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local out = {}
+    for i = 1, #auras do
+        local id = auras[i].auraInstanceID
+        local part = "?"
+        local c
+        if pcall(function() c = gadtc("target", id, identCurve) end) and c then
+            if BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(c.r) then
+                part = "SECRET"
+            else
+                local t = math.floor((c.r or 0) * 32 + 0.5)
+                part = tostring(t) .. (t == 9 and "<ENRAGE>" or "")
+            end
+        end
+        out[#out + 1] = tostring(id) .. ":" .. part
+    end
+    return " types=[" .. table.concat(out, " ") .. "]"
+end
+
+function DebugCommands.EnrageLog(addon, arg)
+    arg = arg and arg:lower() or nil
+    if arg == "clear" then
+        if _G.JustACGlobal then _G.JustACGlobal.probeLog = nil end
+        addon:Print("enragelog: |cffffff00log cleared|r")
+        return
+    end
+    if arg == "off" or (not arg and DebugCommands._enrageLog) then
+        if DebugCommands._enrageLog then
+            DebugCommands._enrageLog:Cancel()
+            DebugCommands._enrageLog = nil
+        end
+        addon:Print(string.format("enragelog: |cffff6600OFF|r - %d log lines held.", #ProbeLogStore()))
+        addon:Print("|cff888888/reload to flush (JustACGlobal.probeLog)|r")
+        return
+    end
+
+    ProbeLogEmit(string.format("===== ENRAGELOG armed @ %.1f =====", GetTime()))
+    local last = nil
+    DebugCommands._enrageLog = C_Timer.NewTicker(0.2, function()
+        local nb, nd, ignored, auras = EnrageSample()
+        -- Frame state is plain, so the cue's own verdict IS readable even though the
+        -- alpha that drives it is not - this is the correlation that matters.
+        local intIcon = addon.interruptIcon
+        local cue = intIcon and intIcon.sootheCue
+        local cueShown = (cue and cue:IsShown()) and true or false
+        local key = string.format("%s|%s|%s|%s", tostring(nb), tostring(nd),
+            tostring(ignored), tostring(cueShown))
+        if key == last then return end
+        last = key
+        ProbeLogEmit(string.format(
+            "ENR %.1f combat=%s target=%s helpful=%s dispellable=%s%s cueShown=%s",
+            GetTime(), tostring(UnitAffectingCombat("player")),
+            tostring(UnitName("target")), tostring(nb), tostring(nd),
+            ignored and " |TOKEN-IGNORED|" or "", tostring(cueShown))
+            .. DecodeDispelTypes(auras))
+    end)
+    addon:Print("enragelog: |cff00ff00ON|r - sampling target dispellable-aura count 5/s (changes only).")
+    addon:Print("|cff888888Pull the mob that always enrages, then '/jac inspect enragelog off' and /reload.|r")
+end
+
 local PROBE_BATTERY = { "DurationProbe", "AuraInstanceIdsProbe", "CooldownFieldsProbe",
                         "FrameStateProbe", "CooldownViewerItemsProbe", "EngineSignalsProbe" }
 
@@ -4708,6 +4875,122 @@ local function RunProbeBattery(addon, tag, includeStatic)
     end
     addon:Print(string.format("audit: |cff00ff00%s|r snapshot captured (%d log lines held).",
         tag, #ProbeLogStore()))
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect errors [off|clear|show] - capture Lua errors AND taint blocks to
+-- SavedVariables (JustACGlobal.errorLog), so a fight's worth of errors can be read
+-- off disk after a /reload instead of copied out of a chat frame.
+--
+-- TWO channels, deliberately: a tainted-execution failure NEVER reaches
+-- seterrorhandler - the client fires ADDON_ACTION_BLOCKED/FORBIDDEN as an event
+-- carrying (addonName, functionName) instead. Capturing only the Lua handler is
+-- how a taint problem looks like "no errors at all" while the screen fills up.
+--
+-- Entries are DEDUPED by message and counted. One bad call inside a combat-frequency
+-- hook produces thousands of identical errors; storing each one buries the single
+-- other error that actually matters and bloats the saved file for nothing.
+--------------------------------------------------------------------------------
+local ERRORLOG_MAX = 250      -- distinct entries, not occurrences
+
+local function ErrorLogStore()
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    g.errorLog = g.errorLog or {}
+    return g.errorLog
+end
+
+--- Record one error/block, collapsing repeats into a count + last-seen time.
+local function ErrorLogRecord(kind, msg, stack)
+    local log = ErrorLogStore()
+    local key = kind .. "|" .. tostring(msg or "?")
+    for i = 1, #log do
+        if log[i].key == key then
+            local e = log[i]
+            e.count = e.count + 1
+            e.last = GetTime()
+            e.lastCombat = UnitAffectingCombat("player") and true or false
+            return
+        end
+    end
+    if #log >= ERRORLOG_MAX then return end   -- full: keep the first N, they came first
+    log[#log + 1] = {
+        key = key, kind = kind, count = 1,
+        msg = tostring(msg or "?"):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""),
+        stack = stack and tostring(stack):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") or nil,
+        first = GetTime(), last = GetTime(),
+        firstCombat = UnitAffectingCombat("player") and true or false,
+    }
+end
+
+function DebugCommands.ErrorCapture(addon, arg)
+    arg = arg and arg:lower() or nil
+
+    if arg == "clear" then
+        if _G.JustACGlobal then _G.JustACGlobal.errorLog = nil end
+        addon:Print("errors: |cffffff00log cleared|r")
+        return
+    end
+
+    if arg == "show" then
+        local log = ErrorLogStore()
+        if #log == 0 then addon:Print("errors: none captured.") return end
+        addon:Print(string.format("errors: |cffffff00%d distinct|r", #log))
+        for i = 1, math.min(#log, 10) do
+            local e = log[i]
+            addon:Print(string.format("|cffff6600%d.|r [%s x%d%s] %s",
+                i, e.kind, e.count, e.firstCombat and " COMBAT" or "", e.msg))
+        end
+        if #log > 10 then addon:Print(string.format("|cff888888... %d more; /reload and read the file|r", #log - 10)) end
+        return
+    end
+
+    if arg == "off" or (not arg and DebugCommands._errorCapture) then
+        local f = DebugCommands._errorCapture
+        if f then
+            f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
+            DebugCommands._errorCapture = nil
+        end
+        -- The Lua handler stays chained: seterrorhandler has no unregister, and
+        -- restoring a stale handler would clobber whatever installed itself after us.
+        -- The flag below is what actually gates recording.
+        DebugCommands._errorCaptureOn = false
+        addon:Print(string.format("errors: |cffff6600OFF|r - %d distinct entries held.", #ErrorLogStore()))
+        addon:Print("|cff888888/reload to flush to WTF/Account/<ACCOUNT>/SavedVariables/JustAC.lua (JustACGlobal.errorLog)|r")
+        return
+    end
+
+    DebugCommands._errorCaptureOn = true
+
+    -- Chain the Lua error handler once per session; the flag gates recording so
+    -- toggling off/on never stacks handlers.
+    if not DebugCommands._errorHandlerHooked then
+        DebugCommands._errorHandlerHooked = true
+        local prev = geterrorhandler and geterrorhandler()
+        if seterrorhandler then
+            seterrorhandler(function(msg)
+                if DebugCommands._errorCaptureOn then
+                    -- debugstack(2) skips this closure and the handler frame.
+                    ErrorLogRecord("LUA", msg, debugstack and debugstack(2, 12, 12))
+                end
+                if prev then return prev(msg) end
+            end)
+        end
+    end
+
+    local f = CreateFrame("Frame")
+    DebugCommands._errorCapture = f
+    f:RegisterEvent("ADDON_ACTION_BLOCKED")
+    f:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+    f:SetScript("OnEvent", function(_, event, addonName, funcName)
+        if not DebugCommands._errorCaptureOn then return end
+        ErrorLogRecord(event == "ADDON_ACTION_FORBIDDEN" and "FORBIDDEN" or "BLOCKED",
+            string.format("%s tried to call %s", tostring(addonName), tostring(funcName)))
+    end)
+
+    addon:Print("errors: |cff00ff00ON|r - capturing Lua errors and taint blocks.")
+    addon:Print("|cff888888Fight, then '/jac inspect errors off' and /reload. '/jac inspect errors show' for a quick look.|r")
+    addon:Print("|cff888888Repeats are collapsed into a count, so a flood shows as one line xN.|r")
 end
 
 function DebugCommands.ProbeSession(addon, arg)

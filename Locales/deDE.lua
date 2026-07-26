@@ -390,3 +390,21 @@ L["Custom Queue Context Aware desc"] = "Die Warteschlange so umsortieren, dass s
 L["Custom Queue Blacklist Note"] = "Ein Entfernen hier betrifft nur die Warteschlange. Um einen Zauber überall auszublenden (einschließlich des AC-Platzes), sperre ihn: |cffff6666Umschalt+Rechtsklick|r auf sein Warteschlangen-Symbol oder verwende den Reiter Sperrliste."
 L["Enable Custom Queue desc"] = "Wenn aktiviert, bestimmt deine Eigene Rotation die Warteschlange. Deaktivieren, um Blizzards Rotation zu verwenden."
 L["Custom Queue Spells desc"] = "Deine Fähigkeitsreihenfolge für die Warteschlange. Verwende Hoch / Runter zum Umsortieren; die Reihenfolge-Optionen oben gelten weiterhin."
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "Störung"
+L["Disruption desc"] = "Ein Platz für alles, was dem Gegner nimmt, was er gerade tut: Unterbrechungen, Kontrolle und Wutbannung. Jedes ist unabhängig - du kannst jedes davon ohne die anderen nutzen."
+L["Show Soothe Cue"] = "Wutbannung anzeigen"
+L["Show Soothe Cue desc"] = "Zeigt deine Fähigkeit zum Entfernen von Wut (Besänftigen und Vergleichbares) im Störungsplatz, während dein Ziel wütend ist. Erscheint nur, wenn deine Spezialisierung eine besitzt. Unabhängig von der Unterbrechungserinnerung: Sie teilen sich den Platz, aber du kannst beide einzeln nutzen."
+L["Sustain"] = "Aufrechterhaltung"
+L["Sustain desc"] = "Ein eigener Platz neben der Defensivleiste für das, was dich am Wirken hält statt am Leben: der Minderungseffekt, den ein Tank aufrechterhält, und dein Ausbruch aus Betäubungen, Ängsten und Wurzeln. Festgehalten zu werden kostet dich genauso viel Zeit wie ein ausgelaufener Effekt, darum gehört beides hierher."
+
+L["Pet Heal Cue"] = "Erinnerung fuer Begleiterheilung"
+L["Pet Heal Cue desc"] = "Zeigt deine Begleiterheilung im Aufrechterhaltungsplatz, wenn dein Begleiter schwer verletzt ist - im Kampf wie ausserhalb. Nur Jaeger und Hexenmeister."
+
+L["Cooldown Manager"] = "Abklingzeit-Manager"
+L["Pet Heal Threshold"] = "Begleiterheilung anzeigen unter"
+L["Pet Heal Threshold desc"] = "Wie stark dein Begleiter verletzt sein muss, bevor die Erinnerung erscheint. Niedrigere Werte warten auf echte Gefahr, hoehere Werte heilen frueher auf."
+
+L["Health Top-off Threshold"] = "Auffuellen unter"
+L["Health Top-off Threshold desc"] = "Wie weit unter voller Gesundheit die Erinnerung zwischen den Pulls erscheint. Der Notfall-Hinweis bei kritischer Gesundheit ist davon getrennt und immer aktiv."

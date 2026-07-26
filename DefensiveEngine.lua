@@ -80,6 +80,19 @@ local function EnsureEmergencyPotion(cs)
     cs.defensiveSpells[#cs.defensiveSpells + 1] = SpellDB.EMERGENCY_POTION
 end
 
+--- Record that the player deliberately removed the Emergency Potion tile from the current
+--- spec's defensive list, so the seed in InitializeDefensiveSpells stops re-adding it.
+--- Called only from the tile's own Remove button - nothing else may set this, or a lost
+--- tile becomes permanent again.
+function DefensiveEngine.MarkEmergencyPotionRemoved(addon)
+    local profile = addon and addon.GetProfile and addon:GetProfile()
+    local def = profile and profile.defensives
+    if not (def and def.classSpells) then return end
+    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    local cs = def.classSpells[specKey or playerClass]
+    if cs then cs.emergencyPotionRemoved = true end
+end
+
 -- Hide multi-icon or single-icon defensive frames (handles both layouts).
 local function HideDefensiveIconFrames(addon)
     if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
@@ -238,9 +251,13 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
         end
     end
 
-    -- Emergency Potion tile: add its sentinel to the defensive list once (default on, at
-    -- the bottom). The per-spec flag means removing the tile sticks - it won't re-add.
-    if SpellDB and SpellDB.EMERGENCY_POTION and not cs.emergencyPotionInit then
+    -- Emergency Potion tile: default on, appended at the bottom. Removing it must STICK,
+    -- so the suppressor is an explicit record of the player REMOVING it, not a record of
+    -- us having added it once. The older "added once" flag could not tell a deliberate
+    -- removal from a tile the list lost some other way, so any loss was permanent and
+    -- Restore Class Defaults was the only way back. Absent the removal record we re-add,
+    -- which means an accidental loss now heals itself on the next load.
+    if SpellDB and SpellDB.EMERGENCY_POTION and not cs.emergencyPotionRemoved then
         cs.emergencyPotionInit = true
         EnsureEmergencyPotion(cs)
     end
@@ -319,6 +336,7 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
                 -- seed flag exists so that manually REMOVING the tile sticks, and an explicit
                 -- "restore defaults" is not a manual removal.
                 if cfg.listKey == "defensiveSpells" then
+                    cs.emergencyPotionRemoved = nil
                     EnsureEmergencyPotion(cs)
                 end
             end
@@ -381,10 +399,12 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     local inCombat = UnitAffectingCombat("player")
     local isLow = ResolveHealthState()
 
-    -- 12.0: UnitHealth("pet") is secret in combat → GetPetHealthPercent() returns nil.
-    -- Pet heals only trigger out of combat (between pulls, open world). This is by design.
-    local petHealthPercent = BlizzardAPI and BlizzardAPI.GetPetHealthPercent and BlizzardAPI.GetPetHealthPercent()
-    local petNeedsHeal = petHealthPercent and petHealthPercent <= 50
+    -- Pet HEAL no longer lives in this queue at all - it moved to the Sustain slot, which can
+    -- show it in combat. 12.0 makes UnitHealth("pet") secret, and a ranked list cannot hold a
+    -- secret (ordering needs a comparison), so the queue could only ever offer it out of combat.
+    -- The slot has no such limit: it hands the pet's health fraction to the engine as a curve
+    -- index and lets the alpha decide, so the cue finally works when it actually matters.
+    -- Pet REZ stays here - UnitIsDead/UnitExists are not secret, so it ranks normally.
 
     -- UnitIsDead/UnitExists are NOT secret - pet rez/summon works reliably in combat.
     -- Suppress when the player is petless on purpose (Lone Wolf / sacrificed pet) so
@@ -430,11 +450,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
             AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #defensiveQueue + 1, mainAddedSet)
         end
 
-        -- Pet heals: LOWER priority - out-of-combat only (health is secret in combat)
-        if petNeedsHeal and not petNeedsRez and #defensiveQueue < maxIcons then
-            AppendUsableSpells(addon, defensiveQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), #defensiveQueue + 1, mainAddedSet)
-        end
-
+        -- (Pet heals are rendered by the Sustain slot now - see the note above.)
         ApplyMainPanelQueue(addon, defensiveQueue)
     else
         -- Defensives disabled on main panel: ensure icons are hidden
@@ -449,12 +465,11 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
         local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
 
-        -- Pet rez/heal: parity with main panel (same priority order, capped at one icon)
+        -- Pet rez: parity with main panel (capped at one icon). Pet HEAL is the Sustain slot's
+        -- now, on both surfaces - the overlay has its own maintenance icon and renders through
+        -- the same RenderMaintenanceSlot, so it picks the cue up without a second code path.
         if petNeedsRez and #npoQueue < npoMaxIcons then
             AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petRezSpells"), #npoQueue + 1, npoAddedSet)
-        end
-        if petNeedsHeal and not petNeedsRez and #npoQueue < npoMaxIcons then
-            AppendUsableSpells(addon, npoQueue, DefensiveEngine.GetClassSpellList(addon, "petHealSpells"), #npoQueue + 1, npoAddedSet)
         end
 
         ApplyOverlayQueue(addon, npoQueue)
@@ -633,12 +648,14 @@ end
 -- used only below the low-health threshold. ponytail: builds one small table per
 -- low-health rebuild - fine, rebuilds are cached/throttled.
 local emergencyOrderBuf = {}
-local TIER_ORDER_LOW      = { 2, 1, 3 }  -- big heal -> bubble -> rest
-local TIER_ORDER_CRITICAL = { 1, 2, 3 }  -- bubble -> big heal -> rest
+-- Every tier value MUST appear in both arrays: the loop below builds its output by walking
+-- these, so an unlisted tier is silently dropped from the queue rather than mis-sorted.
+local TIER_ORDER_LOW      = { 2, 4, 1, 3 }  -- big heal -> wall -> bubble -> rest
+local TIER_ORDER_CRITICAL = { 1, 2, 4, 3 }  -- bubble -> big heal -> wall -> rest
 local function OrderByEmergencyTier(list)
     wipe(emergencyOrderBuf)
     local order = healthIsCritical and TIER_ORDER_CRITICAL or TIER_ORDER_LOW
-    for i = 1, 3 do
+    for i = 1, #order do
         local tier = order[i]
         for _, sid in ipairs(list) do
             if (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid) or 3) == tier then
@@ -688,6 +705,8 @@ local function IsHoldWorthy(sid, isItem)
     if sid < 0 then return true end
     local tier = TierOf(sid)
     if tier == 1 then return true end                                   -- immunity bubble
+    -- Tier 4 (pre-emptive walls) falls through to false below: they are meant to be pressed
+    -- BEFORE the damage lands, so parking them until low health inverts the advice.
     -- Cache-only peek: this runs per defensive rebuild in combat, and the full
     -- getter would re-hit GetSpellBaseCooldown on every call while its result
     -- is secret (misses are deliberately not cached). The OOC precache fills it.
@@ -840,7 +859,13 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             local offerTopoff = profile.precombatBuffs.topoffHeal == true
             for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff)) do
                 if #results >= maxIcons then break end
-                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false, precombat = true }
+                -- topoff: the health top-off heal specifically, not the poisons/imbues beside
+                -- it. Flagged because the renderer drives ITS alpha from a health curve - out
+                -- of combat in the open world health is secret, so the arming signal ("regen
+                -- is running") can only prove below FULL, not below the configured threshold.
+                -- Without this the reminder nags at 99%.
+                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false,
+                    precombat = true, topoff = (spellID == PrecombatEngine.offeredTopoffHeal) or nil }
                 alreadyAdded[spellID] = true
             end
         end

@@ -18,7 +18,7 @@
 -- kick (no lingering kick hotkey / missing frame art) and, being on top, wins collisions.
 -- ponytail: N complete slots + N idle glows is the cost of the secret-safe OR (can't collapse
 -- N secret alphas into one). Bounded to soothe classes with an attackable target + shown frame.
-local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 7)
+local UISootheCue = LibStub:NewLibrary("JustAC-UISootheCue", 8)
 if not UISootheCue then return end
 
 local UIAnimations     = LibStub("JustAC-UIAnimations", true)
@@ -120,6 +120,15 @@ local function BuildSlot(cue, sz, profile)
     aura:SetFrameLevel(slot:GetFrameLevel() + 4)  -- above CreateBaseIcon's borderFrame (+3)
     slot.auraIcon = aura.iconTexture
 
+    -- SHOWN, at alpha 0 - not hidden. The whole cue works by handing a SECRET alpha to
+    -- SetAlpha and letting the engine decide; a hidden frame draws nothing whatever its alpha,
+    -- so hiding a slot does not "hide it harder", it permanently disables it.
+    -- CreateBaseIcon ends with button:Hide(), which is right for every other caller (they call
+    -- Show() when a spell lands) and silently wrong here - visibility is not ours to decide.
+    -- This is the one line that has to differ from the shared builder's contract; without it
+    -- the cue is invisible while every gate still reports healthy, because the CONTAINER is
+    -- shown and only the slots inside are dead.
+    slot:Show()
     slot:SetAlpha(0)
     return slot
 end

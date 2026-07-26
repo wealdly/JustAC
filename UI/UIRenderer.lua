@@ -1048,6 +1048,89 @@ end
 -- blue rather than washing out grey.
 local MAINTENANCE_GLOW = { r = 0.55, g = 0.78, b = 1.00 }
 
+-- Orange: "the target is in execute range, this is the button". Health is SECRET in combat, so
+-- this can never be a branch - the glow frame is SHOWN and its alpha handed to the engine via
+-- the health curve, exactly as the enrage cue hands over its dispel-type alpha. We never learn
+-- whether the target is low; the engine decides whether the glow is visible.
+-- DISPLAY ONLY, by construction: a secret cannot be compared, so this can never promote the
+-- spell up the queue. SpellQueue's ctxExecute keeps its own branchable inference (AC
+-- recommending an execute-gated spell at position 1) for the ranking job - the two are
+-- deliberately separate, and this one is the direct read the other can only infer.
+local EXECUTE_GLOW = { r = 1.00, g = 0.45, b = 0.10 }
+local EXECUTE_GLOW_KEY = "ExecuteGlowFrame"
+
+-- Pet-heal cue threshold, as a 0-1 fraction. User-configurable (Defensives -> Sustain); 50 is
+-- the default because it matches what the out-of-combat path used before this moved to the
+-- Sustain slot, so an untouched profile behaves exactly as it did.
+-- The value IS the curve's step point, and SetAlphaFromHealthBelow caches one curve per
+-- distinct fraction - which is why the slider steps in 5s rather than being continuous.
+local PET_HEAL_DEFAULT_PCT = 50
+local function PetHealFraction(profile)
+    local pct = profile and profile.petHealThreshold
+    if type(pct) ~= "number" then pct = PET_HEAL_DEFAULT_PCT end
+    return pct / 100
+end
+
+-- Health top-off bands. BOTH of the precombat heal's tiers in one curve, because the alpha it
+-- returns is secret and cannot be compared - so the tiers cannot be an `if`. Graded alpha does
+-- the job instead: the DIMMING is what distinguishes "top off between pulls" from "you are about
+-- to die", with no branch anywhere.
+--   below 35%  - emergency, full brightness. Matches PrecombatEngine's LOW_HEALTH_PCT.
+--   35% - 90%  - the opt-in top-off nudge, dimmed. Matches RECUPERATE_HEALTH_PCT.
+--   above 90%  - invisible.
+-- This is what stops the open-world nag at 99%: out of combat health is secret there, so the
+-- engine's arming signal (regen is running) can only prove below FULL. The curve is the only
+-- thing that can honour 90% outside a rested area.
+-- The upper band is user-configurable; the emergency band is NOT, deliberately - it is the
+-- "you are about to die" tier and must not be reachable by a slider that could switch it off.
+-- One cached points table per threshold, so SetAlphaFromHealthCurve's identity caching holds.
+local TOPOFF_EMERGENCY_FRACTION = 0.35
+local TOPOFF_DEFAULT_PCT = 90
+local topoffBands = {}
+local function TopoffBands(profile)
+    local pb = profile and profile.precombatBuffs
+    local pct = pb and pb.topoffThreshold
+    if type(pct) ~= "number" then pct = TOPOFF_DEFAULT_PCT end
+    -- Clamp above the emergency band: the option's own min is 50, but a hand-edited saved
+    -- variable must not produce out-of-order curve points.
+    if pct < 40 then pct = 40 end
+    local bands = topoffBands[pct]
+    if not bands then
+        bands = { {0, 1.0}, {TOPOFF_EMERGENCY_FRACTION, 0.55}, {pct / 100, 0} }
+        topoffBands[pct] = bands
+    end
+    return bands
+end
+
+local function ClearExecuteCue(icon)
+    if not icon._executeCue then return end
+    UIAnimations.HideColoredProcGlow(icon, EXECUTE_GLOW_KEY)
+    icon._executeCue = false
+end
+
+--- Light the execute cue on an icon showing an HP-gated finisher, while a hostile target is
+--- below the execute threshold. No-op for every other spell.
+local function ApplyExecuteCue(icon, spellID)
+    local isExecute = spellID and SpellDB and SpellDB.GetGate
+        and SpellDB.GetGate(spellID) == "execute"
+    if not (isExecute and UnitExists("target") and UnitCanAttack("player", "target")) then
+        ClearExecuteCue(icon)
+        return
+    end
+    UIAnimations.ShowColoredProcGlow(icon, EXECUTE_GLOW_KEY,
+        EXECUTE_GLOW.r, EXECUTE_GLOW.g, EXECUTE_GLOW.b)
+    icon._executeCue = true
+    -- ShowColoredProcGlow leaves the frame at alpha 1; the curve immediately overrides that,
+    -- so the glow is only actually visible inside execute range.
+    local glow = icon[EXECUTE_GLOW_KEY]
+    if not (glow and UIFrameFactory.SetAlphaFromHealthBelow(glow, "target",
+            UIFrameFactory.EXECUTE_FRACTION)) then
+        -- Technique unavailable on this build: hide it rather than leave a glow stuck on,
+        -- which would tell the player "execute now" for the whole fight.
+        ClearExecuteCue(icon)
+    end
+end
+
 -- Single teardown for the maintenance slot: three call sites (inactive slot, main-panel
 -- cluster hide, nameplate cluster hide) each used to clear a different subset.
 local function ClearMaintenanceSlot(icon)
@@ -1143,15 +1226,58 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         return
     end
 
+    -- PET HEAL, the Sustain slot's third claimant. Pet health is SECRET in combat, so unlike
+    -- upkeep and CC escape this one can never be decided by us: the icon is shown unconditionally
+    -- while a live pet exists, and its ALPHA is handed to the engine keyed on the pet's health
+    -- fraction. We never learn whether the pet is hurt.
+    --
+    -- Ranked lists cannot hold a secret (ordering needs a comparison), which is exactly why this
+    -- moved out of the defensive queue and into a slot of its own.
+    --
+    -- Priority: CC escape outranks it, and that arbitration is only possible because CC escape is
+    -- the PLAIN claimant - a normal `if` suppresses the secret layer. It would be unsolvable the
+    -- other way round. Upkeep never collides: pet-heal classes (Hunter, Warlock) have no tank
+    -- spec, so the slot is otherwise dead space for them.
+    local petSpellID
+    if not ccSpellID and profile and profile.showPetHealCue ~= false
+       and profile.defensives and profile.defensives.enabled
+       and UnitExists("pet") and not UnitIsDeadOrGhost("pet") then
+        local DE = LibStub("JustAC-DefensiveEngine", true)
+        local getList = DE and DE.GetClassSpellList
+        local list = getList and getList(addon, "petHealSpells")
+        -- Skip any pet heal that is ALSO in the player's own defensive list - Exhilaration is
+        -- the only one today (it heals hunter and pet), and the queue is already showing it.
+        -- Two identical icons on two surfaces is worse than one, and the queue is the right
+        -- home for it: unlike the tank maintenance buff, this is a genuine personal defensive,
+        -- so excluding it from the QUEUE instead would delete a hunter's main self-heal for as
+        -- long as a pet is out. Nothing is lost here - the button is still on screen.
+        -- Linear scan, no table build: both lists are tiny and this runs every render tick.
+        local ownList = getList and getList(addon, "defensiveSpells")
+        for i = 1, (list and #list or 0) do
+            local sid = list[i]
+            local dual = false
+            for j = 1, (ownList and #ownList or 0) do
+                if ownList[j] == sid then dual = true break end
+            end
+            if sid and sid > 0 and not dual
+               and BlizzardAPI.CheckDefensiveSpellState(sid, profile) then
+                petSpellID = sid
+                break
+            end
+        end
+    end
+
     local active, entry = false, nil
     if MT and MT.IsSlotActive then active, entry = MT.IsSlotActive(profile) end
+    -- A pet-heal claim makes the slot live on its own, exactly as CC escape does.
+    if petSpellID then active = true end
     local state, inst = "none", nil
     -- Plain assignment, NOT `local` - shadowing `state` here silently kills the glow.
     if active and entry and MT and MT.GetState then state, _, inst = MT.GetState() end
 
     -- Live if EITHER use has something to show. `entry` may legitimately be nil (CC escape with
     -- no maintenance buff), so it can no longer gate the whole slot.
-    if not active or (not entry and not ccSpellID) then
+    if not active or (not entry and not ccSpellID and not petSpellID) then
         -- Guard the common case: this runs every render tick and inactive is the norm.
         if icon._maintShown then ClearMaintenanceSlot(icon) end
         return
@@ -1159,7 +1285,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
 
     -- No `or entry.aura` fallback: a future cast-less entry must fail loudly rather than run
     -- range and usability checks against an aura id.
-    local displayID = ccSpellID or entry.cast
+    local displayID = ccSpellID or petSpellID or entry.cast
 
     -- Icon art only changes on a spec change, so refresh it on transition.
     if icon._maintID ~= displayID then
@@ -1182,6 +1308,15 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     SetDefensiveIconVisible(icon, true)
     icon:SetAlpha(icon.overlayOpacity or 1)
     icon._maintShown = true
+
+    -- Pet-heal claim: hand the alpha we just set straight over to the engine, keyed on the pet's
+    -- health. SHOWN at whatever alpha the curve returns - never hidden, because a hidden frame
+    -- draws nothing regardless of alpha (the bug that silently killed the enrage cue for weeks).
+    -- If the technique is unavailable on this build the icon simply stays visible at the opacity
+    -- above, which is the old out-of-combat behaviour and a safe fallback.
+    if petSpellID then
+        UIFrameFactory.SetAlphaFromHealthBelow(icon, "pet", PetHealFraction(profile))
+    end
 
     -- TWO fundamentally different kinds of maintenance button, and they want different data:
     --
@@ -1206,6 +1341,18 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             if ccDurObj and icon.cooldown.SetCooldownFromDurationObject then
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, ccDurObj)
                 applied = true
+            end
+        elseif petSpellID then
+            -- The heal's OWN cooldown (Mend Pet and friends). `entry` is nil on this path -
+            -- every branch below reads it, which is why pet heal is handled here rather than
+            -- being allowed to fall through.
+            if C_Spell and C_Spell.GetSpellCooldownDuration
+               and icon.cooldown.SetCooldownFromDurationObject then
+                local okD, durObj = pcall(C_Spell.GetSpellCooldownDuration, displayID, false)
+                if okD and durObj then
+                    pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
+                    applied = true
+                end
             end
         elseif entry.chargeGated then
             -- The ability's own recharge. Secret-safe: the DurationObject goes straight to the
@@ -1264,8 +1411,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- width-measured layout path. Nothing here measures it.
     if icon.chargeText then
         local shown = false
-        if ccSpellID then
-            shown = false   -- an escape button has no meaningful count
+        if ccSpellID or petSpellID then
+            shown = false   -- neither an escape button nor a pet heal has a meaningful count
         elseif entry.chargeGated then
             -- CHARGES, not aura stacks. maxCharges is NeverSecret so it is safe to compare;
             -- currentCharges is SECRET in combat, so it goes straight to SetText and the engine
@@ -1360,7 +1507,12 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     end
     -- A CC break always glows: it is only ever offered when the player is actually held AND
     -- owns a counter that is ready, so there is no state in which showing it quietly is right.
-    local wantGlow = ccSpellID and true
+    -- Pet heal glows like the escape does, and for the same reason: it is only ever resolved
+    -- when the spell is actually usable, so there is no "glowing at a button you can't press"
+    -- case to guard. Safe despite the secret gate because frame alpha cascades to children -
+    -- with the icon at alpha 0 the glow is invisible too, so it can only appear once the engine
+    -- has decided the pet is actually hurt.
+    local wantGlow = (ccSpellID or petSpellID) and true
         or ((state == "down" or state == "refresh") and usable and ready)
 
     -- Marker cues, same rules as the other surfaces. Off-GCD is the valuable one here:
@@ -1589,6 +1741,12 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         if entry and entry.spellID then
             local showGlow = (i == 1)
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, nil, nil, entry.waiting, entry.precombat)
+            -- Health top-off: hand the alpha ShowDefensiveIcon just set straight to the engine.
+            -- Must come AFTER it, since that call sets alpha itself.
+            if entry.topoff then
+                UIFrameFactory.SetAlphaFromHealthCurve(icon, "player",
+                    TopoffBands(addon.db and addon.db.profile), true)
+            end
             anyVisible = true
         else
             UIRenderer.HideDefensiveIcon(icon, hasReal)
@@ -1814,6 +1972,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
     -- per-frame sink; here we only arm/show it when this character has a soothe ability.
     if UISootheCue then
         local sid = ctx.sootheSpellID
+        if ctx.profile and ctx.profile.showSootheCue == false then sid = nil end
         if sid and ctx.active then
             UISootheCue.Show(UISootheCue.Create(intIcon, sid, intIcon.cachedIconSize))
         elseif intIcon.sootheCue then
@@ -2186,6 +2345,8 @@ local function RenderQueueIcon(icon, i, ctx)
             UIAnimations.StopChannelFill(icon)
         end
 
+        ApplyExecuteCue(icon, spellID)
+
         if not icon:IsShown() then
             icon:Show()
         end
@@ -2193,6 +2354,7 @@ local function RenderQueueIcon(icon, i, ctx)
             icon:SetAlpha(ctx.opacity)
         end
     else
+        ClearExecuteCue(icon)
         if icon.spellID then
             ClearIconState(icon)
         end

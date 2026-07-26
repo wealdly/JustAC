@@ -284,6 +284,91 @@ function UIFrameFactory.ApplyMaintenanceSwipeStyle(icon)
     if cd.SetDrawBling then cd:SetDrawBling(false) end
 end
 
+--------------------------------------------------------------------------------
+-- Secret health-threshold alpha gate
+--
+-- The same engine trick the enrage cue uses, generalised: a SECRET number is handed to the
+-- engine as an INDEX into a curve we authored, and the resulting colour is sunk straight into
+-- a display property. We never read the number, never compare it, never branch on it - the
+-- engine decides what is visible.
+-- For the enrage cue the index is a dispel type; here it is the unit's health fraction.
+-- UnitHealthPercent is the only other API that takes a curve and a unit (plus UnitPowerPercent
+-- for power), so this covers every health-gated cue we can ever build.
+--
+-- Consequences worth knowing before using this:
+--   * DISPLAY ONLY. The result is secret, so it can never feed ordering, ranking or any `if`.
+--     A cue built on this can light a frame; it cannot change what the queue recommends.
+--   * The frame must be SHOWN at alpha 0, never hidden - a hidden frame draws nothing whatever
+--     its alpha, which is exactly the bug that silently killed the enrage cue.
+-- Resolved at CALL time, never captured at load: these APIs are not populated that early.
+--------------------------------------------------------------------------------
+-- Shared so the target health bar's colour shift and the queue icon's cue agree about when
+-- "execute range" starts. Two copies of this number would drift and read as a bug.
+-- ponytail: single 20% threshold, not the exact per-spec window; make it per-spec if one feels
+-- off (Kill Shot and Hammer of Wrath are 20%, Touch of Death differs).
+UIFrameFactory.EXECUTE_FRACTION = 0.20
+
+-- Curves are cached by the IDENTITY of the points table, so callers must pass a module-level
+-- constant rather than building one per call. Points are { fraction, alpha } pairs in ascending
+-- fraction order; Step holds each until the next, so a point means "from here up, this alpha".
+local healthCurves = {}       -- [pointsTable] = curve, or false once known unavailable
+local belowPoints  = {}       -- [fraction] = the 2-point table for SetAlphaFromHealthBelow
+
+local function GetHealthCurve(points)
+    local cached = healthCurves[points]
+    if cached ~= nil then return cached or nil end
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+    if not (cu and cu.CreateColorCurve and stepType and CreateColor) then
+        healthCurves[points] = false
+        return nil
+    end
+    local c = cu.CreateColorCurve()
+    if not c then healthCurves[points] = false return nil end
+    c:SetType(stepType)
+    -- Domain is the 0-1 health fraction (matches the target bar's execute curve, validated
+    -- in game). Colour is always white; only the ALPHA channel carries the signal.
+    for i = 1, #points do
+        c:AddPoint(points[i][1], CreateColor(1, 1, 1, points[i][2]))
+    end
+    healthCurves[points] = c
+    return c
+end
+
+--- Drive `frame`'s alpha from `unit`'s health through a multi-band curve.
+--- Graded rather than on/off: intermediate alphas let ONE evaluation express several
+--- thresholds at once - e.g. bright below 35%, dim between 35% and 90%, invisible above -
+--- so urgency is communicated without any comparison we are not allowed to make.
+--- @param points table module-level constant, { {fraction, alpha}, ... } ascending
+--- @param predicted boolean|nil true counts incoming heals (a healer already topping you up
+---        stops the cue before it fires); false reads raw health.
+function UIFrameFactory.SetAlphaFromHealthCurve(frame, unit, points, predicted)
+    if not (frame and frame.SetAlpha and unit and points) then return false end
+    local getPct = UnitHealthPercent ---@diagnostic disable-line: undefined-global
+    if not getPct then return false end
+    local curve = GetHealthCurve(points)
+    if not curve then return false end
+    local ok, color = pcall(getPct, unit, predicted and true or false, curve)
+    if not (ok and color and color.a ~= nil) then return false end
+    pcall(frame.SetAlpha, frame, color.a)
+    return true
+end
+
+--- Set `frame`'s alpha from `unit`'s health: opaque below `fraction`, invisible at or above.
+--- The simple on/off case of SetAlphaFromHealthCurve.
+--- Returns false when the technique is unavailable, so callers can fall back rather than
+--- leaving a frame stuck at whatever alpha it last had.
+--- @param fraction number 0-1 health fraction threshold (0.2 = "below 20%")
+function UIFrameFactory.SetAlphaFromHealthBelow(frame, unit, fraction)
+    local points = belowPoints[fraction]
+    if not points then
+        points = { {0, 1}, {fraction, 0} }
+        belowPoints[fraction] = points   -- stable identity, so the curve caches
+    end
+    -- Raw health, not predicted: an incoming heal must not flicker an execute cue off.
+    return UIFrameFactory.SetAlphaFromHealthCurve(frame, unit, points, false)
+end
+
 -- Masque support (single group for all standard queue icons)
 local Masque = LibStub("Masque", true)
 local GetMasqueGroup
@@ -1485,7 +1570,18 @@ local function CreateInterruptIcon(addon, profile)
     addon.resolvedInterrupts = nil
     addon.resolvedSoothe = nil
 
-    if (profile.interruptMode or "kickPrefer") == "disabled" then return end
+    -- The icon is the shared "position 0" slot, not the kick's private property: the enrage
+    -- cleanse cue rides it too, and those are independent choices. Build it when EITHER wants
+    -- it. Existing does not mean visible - the kick self-gates on interruptMode inside
+    -- RenderInterruptSlot, so a player who turned interrupt reminders off but kept the cleanse
+    -- cue gets a slot that only ever shows the cleanse.
+    -- ResolveSootheSpells is spec-dependent, so this also means no wasted frame for the many
+    -- specs that have no cleanse at all.
+    if (profile.interruptMode or "kickPrefer") == "disabled" then
+        local wantSoothe = profile.showSootheCue ~= false
+            and SpellDB.ResolveSootheSpells() ~= nil
+        if not wantSoothe then return end
+    end
 
     local firstIconScale = profile.firstIconScale or 1.0
     local actualIconSize = profile.iconSize * firstIconScale

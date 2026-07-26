@@ -388,3 +388,21 @@ L["Custom Queue Context Aware desc"] = "重新排列佇列以配合輔助戰鬥�
 L["Custom Queue Blacklist Note"] = "在此移除只會影響佇列。若要在所有位置隱藏法術（包含 AC 格），請封鎖它：|cffff6666Shift+右鍵點擊|r其佇列圖示，或使用黑名單頁籤。"
 L["Enable Custom Queue desc"] = "啟用後，你的自訂循環會設定佇列。停用則使用暴雪的循環。"
 L["Custom Queue Spells desc"] = "你的佇列技能順序。使用上 / 下重新排序；上方的排序選項仍然適用。"
+
+-- Position-0 slots (Disruption / Sustain)
+L["Disruption"] = "干擾"
+L["Disruption desc"] = "一個位置容納所有能打斷敵人行動的手段：打斷、控制和激怒驅散。三者相互獨立，可以只啟用其中任意一項。"
+L["Show Soothe Cue"] = "顯示激怒驅散"
+L["Show Soothe Cue desc"] = "當目標處於激怒狀態時，在干擾位置顯示你的激怒驅散技能（撫慰及同類技能）。僅在你的專精擁有該技能時出現。與打斷提醒相互獨立：兩者共用同一位置，但可以單獨使用其中任意一項。"
+L["Sustain"] = "維持"
+L["Sustain desc"] = "防禦佇列旁的專用位置，用於那些讓你保持輸出而非僅僅活著的手段：坦克需要持續維持的減傷效果，以及你擺脫昏迷、恐懼和定身的手段。被控制損失的時間與減傷斷檔一樣多，因此兩者放在一起。"
+
+L["Pet Heal Cue"] = "寵物治療提醒"
+L["Pet Heal Cue desc"] = "當你的寵物受重傷時，在維持位置顯示寵物治療技能，戰鬥內外皆有效。僅限獵人和術士。"
+
+L["Cooldown Manager"] = "冷卻管理器"
+L["Pet Heal Threshold"] = "寵物生命值低於此值時顯示"
+L["Pet Heal Threshold desc"] = "寵物需要受多重的傷才會出現提醒。數值越低越等到真正危險時才提示，數值越高則越早補血。"
+
+L["Health Top-off Threshold"] = "生命值低於此值時補血"
+L["Health Top-off Threshold desc"] = "戰鬥間隙的補血提醒在生命值低於多少時出現。危急生命值時的緊急提示是獨立的，始終開啟。"

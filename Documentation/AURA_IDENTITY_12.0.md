@@ -105,6 +105,38 @@ frame has `cooldownID == nil`, so no frame carries an instance id. `cooldownView
 and `IsCooldownViewerAvailable() = true` are *not* sufficient - the frame must be laid out in
 Edit Mode.
 
+### Never write a Lua field on a CooldownViewer frame - tested, ~1350 errors per fight
+
+Separate from reviving a hidden viewer, and more dangerous because it *appears* to work.
+**Under 12.0, tainted execution cannot read a secret value at all.** These frames exist to read
+secrets, so any taint we introduce does not degrade them - it detonates them. Measured in game
+2026-07-25 via `/jac inspect errors`:
+
+```
+CooldownViewerItemData.lua:382: attempt to compare a secret number value
+                               (execution tainted by 'JustAC')
+CooldownViewerItemData.lua:454: ...secret boolean 'hasTotem'...
+CooldownViewer.lua:425:        ...secret string 'sourceUnit'...
+```
+
+748 + 590 + 8 occurrences in one fight, all three stacks running through `RefreshData`.
+
+Two vectors, both of which look like the obvious correct API:
+
+- `viewer:SetTooltipsShown(v)` - assigns `self.tooltipsShown`, which Blizzard reads back at
+  `CooldownViewer.lua:1768` inside `RefreshData` on every item acquire. Our taint enters
+  `RefreshData`; its secret reads then throw.
+- `viewer:UpdateSystemSettingValue(...)` - the Edit Mode route for lifting a panel off
+  "Hidden". Writes `systemInfo.settings`. Same failure.
+
+**The damage is the taint, not the call**, so no `pcall` and no `InCombatLockdown` guard helps.
+
+Safe: **reads** (`viewer.systemInfo`, `itemFramePool:EnumerateActive()`) and **widget C
+methods** (`SetAlpha`, `SetMouseMotionEnabled`) - those store no Lua field. To suppress
+tooltips on an alpha-hidden viewer, enumerate the pool and call `SetMouseMotionEnabled(false)`
+per item frame directly. Note the item frames are pooled onto `viewer:GetItemContainerFrame()`,
+so they are *grandchildren* - a one-level `GetChildren()` walk silently reaches nothing.
+
 **A hidden viewer cannot be revived from addon code - tested, do not retry.** `OnHide` only
 unregisters `UNIT_AURA` and clears nothing, which makes it look like the viewer merely needs
 re-feeding. It does not work. Measured in game:
