@@ -3,6 +3,21 @@
 
 ## [Unreleased]
 
+## [4.55.0] - 2026-07-27
+
+### Changed
+- **Crowd control stops being suggested the moment a target shrugs it off.** When your CC comes back "Immune", JustAC now takes the game at its word and drops CC suggestions for that target immediately, instead of working it out a moment later from the missing debuff. As before, the lesson sticks: the same mob won't be offered CC again for the rest of the instance.
+
+### Fixed
+- **Locking the panel now says so.** Shift+right-click toggles the panel lock, which is one small miss away from the shift+right-click that blacklists a spell - and it used to happen in total silence, leaving the panel refusing to be dragged with nothing on screen to say why. It now announces the lock, and tells you how to undo it.
+- **`/jac reset` now actually rescues a lost panel.** It moved the panel back to the centre but left it locked, so it still wouldn't drag - and if you had it docked to the target frame, the dock immediately pulled it away again and the new position was never saved. It now unlocks, undocks and re-centres, which is what you need when the panel can't be reached with the mouse at all.
+- **The panel no longer drifts off the top of the screen.** Saved positions dropped part of the anchor, so a panel that WoW had anchored corner-to-opposite-corner after a drag reloaded measured from the wrong edge - which could throw it off the top of the screen, where the off-screen safety check (see below) then failed to rescue it.
+- **The panel no longer jumps back to the centre on its own.** The off-screen safety check, which exists to rescue a panel stranded by a resolution or UI-scale change, measured the panel's position in a way that only held if it was anchored from its middle. Dragged somewhere it wasn't, the check could decide a perfectly visible panel had been lost and move it - or leave a genuinely stranded one out of reach. It now measures where the panel actually is.
+- **Clicking a pre-combat buff now always applies the one you clicked.** Out of combat the clickable icons could briefly lag the queue behind them, so a click just after the list shifted would apply the buff you had *just* used - a second helping of food, a second weapon stone. Icons whose item was still loading could also carry the previous slot's ability. Clicking now tracks the queue as it changes, so what you click is what you get.
+- **Clicks on empty space no longer cast anything.** When the defensive queue was cleared while you weren't in combat - vehicles, possessed control, an emptied queue - the invisible click areas stayed behind over the vacated slots, so a click there fired whatever had last been suggested.
+- **Pre-combat reminders stay on screen while you eat.** Sitting down to food - or applying a poison, imbue or weapon oil - made the whole out-of-combat reminder list vanish until it finished, including the food you were in the middle of and its timing bar. The reminders now stay put, greyed out with a "wait" hint, and simply can't be clicked until what you're doing has finished.
+- **Only one pet summon in the queue at a time.** With no pet out, a Warlock could see Felguard, Imp and Felhunter queued together, and a Hunter every Call Pet slot they own. They are alternatives to the same problem, so only the first is shown now. Summoned cooldowns like Army of the Dead, Feral Spirit and the elementals are unaffected and still queue alongside each other.
+
 ## [4.54.0] - 2026-07-25
 
 ### Added

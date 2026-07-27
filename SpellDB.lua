@@ -1799,6 +1799,28 @@ SpellDB.PET_SUMMON_SPELLS = {
     [192249] = true,  -- Storm Elemental
 }
 
+-- MUTUALLY EXCLUSIVE pet summons: picking any one of these makes the rest pointless, because
+-- they all solve the same problem ("you have no pet"). The queue keeps only the first.
+--
+-- Deliberately a SEPARATE, much smaller table than PET_SUMMON_SPELLS above. That one means
+-- "this spell summons something", which sweeps in Army of the Dead, Summon Gargoyle, Feral
+-- Spirit and the three elementals - major DPS cooldowns that are meant to be queued together
+-- and alongside a real pet summon. Excluding those against each other would be a far worse bug
+-- than the duplicate summons this exists to stop, so do NOT be tempted to reuse that set here.
+--
+-- Death Knight lists only the two Raise Dead variants, which are alternatives to each other;
+-- Army and Gargoyle are separate cooldowns and stay out.
+SpellDB.PET_SUMMON_EXCLUSIVE = {
+    -- Hunter: any Call Pet slot gets you a pet, so one is enough
+    [883] = true, [83242] = true, [83243] = true, [83244] = true, [83245] = true,
+    -- Warlock: five demons, one decision
+    [688] = true, [697] = true, [712] = true, [691] = true, [30146] = true,
+    -- Death Knight: permanent + temporary ghoul
+    [46584] = true, [46585] = true,
+    -- Mage: only one exists, listed for completeness
+    [31687] = true,
+}
+
 -- Unique aura spell IDs: buffs that can only have one active instance at a time.
 -- These are filtered when already active (outside pandemic window).
 -- Raid buff IDs are merged in below so this table is the authoritative union.

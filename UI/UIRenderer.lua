@@ -1201,7 +1201,9 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         icon:SetAlpha(icon.overlayOpacity or 1)
         icon._maintShown = true
         icon._maintID = nil                 -- spell-path change detection must re-fire after this
-        icon.spellID, icon.isItem = nil, false
+        -- itemID with the rest: leaving it behind is a stale identity waiting for the first
+        -- reader that trusts it on its own rather than checking isItem first.
+        icon.spellID, icon.isItem, icon.itemID = nil, false, nil
         icon.maintenanceAuraID = nil
         icon.iconTexture:SetTexture(mIcon)
         icon.iconTexture:Show()
@@ -1544,15 +1546,30 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     local defSpellInfo
     local idChanged = (defensiveIcon.currentID ~= id) or (defensiveIcon.isItem ~= isItem)
 
+    -- Clear identity before anything can bail out below. These slots are pooled, so a
+    -- bail-out otherwise leaves the icon still claiming its PREVIOUS occupant - and
+    -- everything that reads these fields (tooltip, hotkey handler, and the out-of-combat
+    -- click layer, which binds a real cast to them) would act on a spell this slot no
+    -- longer offers. The success path re-assigns all four a few lines down.
+    defensiveIcon.currentID = nil
+    defensiveIcon.spellID = nil
+    defensiveIcon.itemID = nil
+    defensiveIcon.isItem = nil
+
     if isItem then
         if C_Item and C_Item.GetItemIconByID then
             iconTexture = C_Item.GetItemIconByID(id)
         end
+        -- Into a temp, not straight onto iconTexture: GetItemInfo returns nil for an item
+        -- the client hasn't cached yet, which would erase the icon GetItemIconByID already
+        -- resolved from the ID alone and send us down the bail-out path for nothing.
+        local cachedIcon
         if C_Item and C_Item.GetItemInfo then
-            _, _, _, _, _, _, _, _, _, iconTexture = C_Item.GetItemInfo(id)
+            _, _, _, _, _, _, _, _, _, cachedIcon = C_Item.GetItemInfo(id)
         elseif GetItemInfo then
-            _, _, _, _, _, _, _, _, _, iconTexture = GetItemInfo(id)
+            _, _, _, _, _, _, _, _, _, cachedIcon = GetItemInfo(id)
         end
+        iconTexture = cachedIcon or iconTexture
         if not iconTexture then
             iconTexture = GetItemIcon and GetItemIcon(id)
         end
@@ -1792,6 +1809,12 @@ function UIRenderer.HideDefensiveIcons(addon)
     -- The maintenance slot hides with the cluster it belongs to - otherwise it would hang
     -- there alone in vehicle/possess mode with a stale timer.
     ClearMaintenanceSlot(addon.maintenanceIcon)
+
+    -- Tell the click overlay the icons are gone. Without this the secure layers stay
+    -- shown and armed over slots that no longer exist, so a click on empty space fires
+    -- whatever was last suggested there.
+    local PrecombatOverlay = LibStub("JustAC-PrecombatOverlay", true)
+    if PrecombatOverlay and PrecombatOverlay.Refresh then PrecombatOverlay.Refresh() end
 
     -- Hide the detached container frame (covers vehicle/possess mode).
     if addon.defensiveFrame and addon.defensiveFrame:IsShown() then

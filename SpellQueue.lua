@@ -1192,8 +1192,23 @@ function SpellQueue.GetCurrentSpellQueue()
     -- stays visible with stale icons instead of hiding entirely.
     if spellCount > 0 then
         wipe(lastSpellIDs)
+        -- Pet summons are ALTERNATIVES, so only the first survives. Every summon you know is
+        -- individually non-redundant while you have no pet out, and the per-spell filter is
+        -- stateless, so nothing upstream can notice they are the same decision offered three
+        -- times (measured: Felguard, Imp and Felhunter queued together on a petless Warlock).
+        -- Done here rather than in the filter because "is one already queued" is a property of
+        -- the queue, not of the spell. Keeping the FIRST preserves the engine's own pick.
+        local haveSummon = false
         for i = 1, spellCount do
-            lastSpellIDs[i] = recommendedSpells[i]
+            local sid = recommendedSpells[i]
+            local isSummon = RedundancyFilter and RedundancyFilter.IsPetSummonSpell
+                and RedundancyFilter.IsPetSummonSpell(sid)
+            if isSummon and haveSummon then
+                -- skip: a second way to solve a problem already solved at position 1
+            else
+                if isSummon then haveSummon = true end
+                lastSpellIDs[#lastSpellIDs + 1] = sid
+            end
         end
     end
     return lastSpellIDs

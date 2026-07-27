@@ -14,47 +14,44 @@ within the rules - each action is backed by its own genuine input transition,
 so it is not automation; it is the same mechanism Blizzard's own press-and-hold
 casting uses.
 
-## Wiring two actions onto one click (secure buttons)
+## What a MOUSE click actually resolves
 
-`RegisterForClicks` decides which transitions fire the button:
-
-```lua
-button:RegisterForClicks("AnyDown", "AnyUp")   -- BOTH transitions fire, separately
-```
-
-With both registered, the secure template resolves a separate attribute set per
-phase (added alongside Blizzard's press-and-hold support):
-
-| Phase | Type attribute | Fires on |
-|-------|----------------|----------|
-| press | `type1` | mouse-down |
-| release | `typerelease1` | mouse-up |
-
-Example - cancel a stale aura on the press, re-cast the spell on the release,
-from one physical click:
+The two-hardware-events model above is real, but it does **not** give a mouse
+click two secure actions. Traced through `Blizzard_FrameXML/SecureTemplates.lua`
+(`SecureActionButton_OnClick`), a genuine mouse press on a secure button arrives
+with `isKeyPress = false, isSecureAction = true`, so:
 
 ```lua
-button:RegisterForClicks("AnyDown", "AnyUp")
-button:SetAttribute("type1", "cancelaura")      -- down: clear the stale aura
-button:SetAttribute("unit", "player")
-button:SetAttribute("spell", spellName)
-button:SetAttribute("typerelease1", "spell")    -- up: re-cast
+isSecureMousePress = not isKeyPress and isSecureAction   -- true
+useOnKeyDown       = not isSecureMousePress and (...)    -- forced FALSE
+clickAction        = (down and useOnKeyDown) or (not down and not useOnKeyDown)
+                   -- reduces to: not down
 ```
+
+So for mouse input the action fires **once, on the release, reading `type1`**.
+The press does nothing. `typerelease1` is *not* consulted here: the type
+attribute is chosen by `(pressType == PRESS_TYPE_HOLD_RELEASE) and "typerelease"
+or "type"`, and `PRESS_TYPE_HOLD_RELEASE` is only reached via
+`OnActionButtonPressAndHoldRelease`, which needs the `pressAndHoldAction`
+attribute or the `ActionButtonUseKeyHeldSpell` CVar.
+
+Consequences for this codebase:
+
+- `RegisterForClicks("AnyDown", "AnyUp")` on the overlay layers is still correct.
+  It guarantees the button receives whichever phase resolves, and costs nothing:
+  the press is a no-op for the secure action, and it does **not** double-fire.
+- A press/release split is **not** available as a mouse-click fallback. Chaining
+  two actions onto one mouse click means a secure macro, full stop.
 
 All attributes must be set out of combat (secure frame rules apply as usual).
 
-## When to reach for this
+## Chaining two actions
 
-The first choice for chaining two actions is a secure macro
-(`type1="macro"` + `macrotext` with two slash lines) - one hardware event may
-run a multi-line macro. Use the down/up split when:
-
-- macro chaining misbehaves on a given button (this codebase has previously
-  seen left-click-only macros fail to activate reliably on overlay click
-  layers - see the header comment in `UI/UIPrecombatOverlay.lua`), or
-- the two actions must not share one macro body (e.g. the second action needs
-  its own targeting resolution), or
-- press/release semantics are genuinely wanted (hold-to-preview patterns).
+Use a secure macro: `type1="macro"` + `macrotext` with two slash lines. One
+hardware event may run a multi-line macro, and per the section above this is the
+only option for mouse-driven buttons. Keybound buttons can additionally use the
+`useOnKeyDown` / press-and-hold paths, which is what the split above was written
+for - it applies to key presses, not clicks.
 
 ## Current usage in JustAC
 
@@ -70,6 +67,7 @@ both via macrotext:
   `INVSLOT_MAINHAND` - `SecureCmdItemParse` matches a bare number as a slot, so
   `SecureCmdUseItem` routes it to `UseInventoryItem(16)`, consuming the cursor.
 
-If either macro path regresses, the down/up split above is the documented
-fallback (for the weapon enhancement: `type1="item"` on the press,
-`typerelease1="macro"` with `/use 16` on the release).
+Both must stay macros: these layers are mouse-driven, and per "What a MOUSE
+click actually resolves" a press/release split would simply never fire its
+release half. If a macro path regresses, debug the macro - do not reach for
+`typerelease1`.

@@ -14,6 +14,24 @@ local math_max = math.max
 -- Screen bounds check
 -------------------------------------------------------------------------------
 
+-- Default position, matching the profile defaults in JustAC.lua. framePosition can be
+-- absent on a fresh or reset profile, and every restore path below would otherwise index
+-- straight through it.
+local DEFAULT_POINT, DEFAULT_X, DEFAULT_Y = "CENTER", 0, -150
+
+--- Put the main frame back where the user last left it. Shared by every path that stops
+--- docking to the target frame, so they can't drift apart.
+local function RestoreSavedPosition(addon, profile)
+    local pos = profile.framePosition
+    local point = pos and pos.point or DEFAULT_POINT
+    addon.targetframe_anchored = false
+    addon.mainFrame:ClearAllPoints()
+    -- Five-argument form to carry the saved relativePoint, matching how the frame is
+    -- anchored at creation - the short form would quietly force relativePoint == point.
+    addon.mainFrame:SetPoint(point, UIParent, pos and pos.relativePoint or point,
+        pos and pos.x or DEFAULT_X, pos and pos.y or DEFAULT_Y)
+end
+
 -- Lightweight bounds check: if the saved position puts the frame entirely
 -- off-screen (resolution change, UI scale change, etc.), reset to center.
 -- Only touches framePosition in the profile; does NOT fight with target
@@ -23,33 +41,37 @@ function TFA.ClampFrameToScreen(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.framePosition then return end
 
-    local scale = addon.mainFrame:GetEffectiveScale()
-    if not scale or scale <= 0 then return end
-
     local screenW, screenH = GetScreenWidth(), GetScreenHeight()
     if not screenW or screenW == 0 then return end
 
-    -- Convert saved offset to approximate screen position
-    -- (most anchor points use UIParent center as reference)
-    local pos = profile.framePosition
-    local x, y = pos.x or 0, pos.y or 0
-    local fw = (addon.mainFrame:GetWidth() or 0) * 0.5
-    local fh = (addon.mainFrame:GetHeight() or 0) * 0.5
-    local halfW, halfH = screenW * 0.5, screenH * 0.5
+    -- Measure where the frame actually is rather than reconstructing it from the saved
+    -- offset. The saved point is whatever GetPoint() returned after the last drag, which
+    -- need not be CENTER - and an offset measured from a corner means something entirely
+    -- different from one measured from the middle, so reconstructing it misjudges by up to
+    -- half a screen. That cuts both ways: dragging a perfectly visible frame back to the
+    -- centre, or leaving a genuinely lost one out of reach. The frame is already positioned
+    -- by the time this runs, so just ask it.
+    local f = addon.mainFrame
+    local left, right, bottom, top = f:GetLeft(), f:GetRight(), f:GetBottom(), f:GetTop()
+    if not left or not bottom then return end   -- not laid out yet: nothing to judge
 
-    -- Rough center-of-frame in screen coords (works for CENTER-based points)
-    local cx, cy = halfW + x, halfH + y
+    -- GetLeft() and friends report in the frame's own coordinate space; GetScreenWidth() is
+    -- in UIParent's. Normalise before comparing, or a scaled frame is measured against the
+    -- wrong ruler.
+    local scale = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    left, right, bottom, top = left * scale, right * scale, bottom * scale, top * scale
 
-    -- Allow partial overlap (at least 20 px visible on any edge)
+    -- Allow partial overlap (at least 20 px of the frame stays reachable on every edge)
     local margin = 20
-    if cx + fw < margin or cx - fw > screenW - margin
-       or cy + fh < margin or cy - fh > screenH - margin then
+    if right < margin or left > screenW - margin
+       or top < margin or bottom > screenH - margin then
         -- Off-screen: reset to default
-        pos.point = "CENTER"
-        pos.x = 0
-        pos.y = -150
+        local pos = profile.framePosition
+        -- relativePoint with the rest: leaving the old one behind would have the next
+        -- restore anchor CENTER-to-something-else and land nowhere near the centre.
+        pos.point, pos.relativePoint, pos.x, pos.y = DEFAULT_POINT, DEFAULT_POINT, DEFAULT_X, DEFAULT_Y
         addon.mainFrame:ClearAllPoints()
-        addon.mainFrame:SetPoint("CENTER", 0, -150)
+        addon.mainFrame:SetPoint(DEFAULT_POINT, UIParent, DEFAULT_POINT, DEFAULT_X, DEFAULT_Y)
         addon:DebugPrint("Frame was off-screen - reset to center")
     end
 end
@@ -159,9 +181,7 @@ function TFA.UpdateTargetFrameAnchor(addon)
     if not anchor or anchor == "DISABLED" then
         -- Restore to saved position if we were previously anchored
         if addon.targetframe_anchored then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+            RestoreSavedPosition(addon, profile)
         end
         return
     end
@@ -169,9 +189,7 @@ function TFA.UpdateTargetFrameAnchor(addon)
     -- Whitelist: only anchor to the genuine Blizzard TargetFrame
     if not TFA.IsStandardTargetFrame(addon) then
         if addon.targetframe_anchored then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+            RestoreSavedPosition(addon, profile)
         end
         return
     end
@@ -181,9 +199,7 @@ function TFA.UpdateTargetFrameAnchor(addon)
     local buffsOnTop = TargetFrame.buffsOnTop
     if (buffsOnTop == true and anchor == "TOP") or (buffsOnTop == false and anchor == "BOTTOM") then
         if addon.targetframe_anchored then
-            addon.targetframe_anchored = false
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+            RestoreSavedPosition(addon, profile)
         end
         return
     end

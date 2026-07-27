@@ -204,13 +204,38 @@ local function HandleSlashCommand(addon, input)
         end
 
     elseif command == "reset" then
-        if addon.mainFrame then
-            addon.mainFrame:ClearAllPoints()
-            addon.mainFrame:SetPoint("CENTER", 0, -150)
-            addon:SavePosition()
-            addon:UpdateTargetFrameAnchor()
-            addon:Print("Position reset to center")
+        -- The last way back when the panel can't be reached with the mouse, so it has to
+        -- undo everything that strands it, not just the position. Moving it alone was not
+        -- enough: a locked panel still refuses to drag once it arrives, click-through mode
+        -- stops it taking mouse input at all, and target-frame docking used to re-anchor it
+        -- away again on the very next line - which also meant SavePosition declined to
+        -- record the rescue, since it refuses to save while docked.
+        local p = addon.db and addon.db.profile
+        if not p then return end
+        p.panelInteraction  = "unlocked"
+        p.panelLocked       = nil            -- legacy key: left set, it re-locks on next load
+        p.targetFrameAnchor = "DISABLED"
+        p.framePosition = { point = "CENTER", relativePoint = "CENTER", x = 0, y = -150 }
+        if p.defensives then
+            p.defensives.detachedPosition = { point = "CENTER", relativePoint = "CENTER", x = 0, y = 100 }
         end
+        addon.targetframe_anchored = false
+
+        local UIFF = LibStub("JustAC-UIFrameFactory", true)
+        if addon.mainFrame and UIFF and UIFF.ApplySavedPosition then
+            addon.mainFrame:ClearAllPoints()
+            UIFF.ApplySavedPosition(addon, p)
+        end
+        if addon.defensiveFrame then
+            addon.defensiveFrame:ClearAllPoints()
+            addon.defensiveFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+        end
+        if addon.UpdateFrameSize then addon:UpdateFrameSize() end
+        if addon.ForceUpdateAll then addon:ForceUpdateAll() end
+        -- The options panel may be open on the very settings just changed underneath it.
+        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+        if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        addon:Print("Panel unlocked, undocked and moved back to the centre of the screen.")
 
     elseif command == "hud" then
         local DebugHUD = LibStub("JustAC-DebugHUD", true)

@@ -453,6 +453,17 @@ end
 -- detach. This is the only secret-safe enrage signal available: the engine renders it,
 -- we only move the frame — we never read the aura.
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Where the defensive row meets the nameplate, captured while AnchorToNameplate lays the
+-- row out. PositionEnrageIndicator needs it to anchor against the NAMEPLATE rather than
+-- against one of our own icons - see the note there. Cleared on detach so a nameplate swap
+-- can never place the indicator against the frame the previous one used.
+local defRowAnchor = {}
+
+-- Likewise for whichever row ends up on the RIGHT of the nameplate - that's where the
+-- crowd-control and loss-of-control frames get displaced to, and DisplaceCCFrames has the
+-- same problem: it must reach that spot without anchoring Blizzard's frames to ours.
+local rightRowAnchor = {}
+
 local savedEnrageFrame       = nil  -- Blizzard BuffListFrame we repositioned (restore on detach)
 local savedEnrageClassAnchor = nil  -- its XML default anchor target (ClassificationFrame)
 local lastEnrageCount        = -1   -- defensive visibleCount at last enrage re-anchor
@@ -472,18 +483,40 @@ local function RestoreEnrageIndicator()
     savedEnrageClassAnchor = nil
 end
 
+-- A frame's edges and centre in UIParent space, so two of our frames can be compared even
+-- when they carry different scales. Only ever called on OUR frames: the nameplate side is
+-- restricted and GetRect on it is what we're going out of our way to avoid needing.
+local function RectInUISpace(f)
+    local l, b, w, h = f:GetRect()
+    if not l or not w or w == 0 then return nil end
+    local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    return {
+        right = (l + w) * s, top = (b + h) * s,
+        cx = (l + w * 0.5) * s, cy = (b + h * 0.5) * s,
+    }
+end
+
 -- Position the BuffListFrame as position 0 of the defensive queue, scaled to the queue
 -- icon size so it reads as part of the defensive column.
 --   "down" → inline above defIcons[1]        "up" → inline below defIcons[1]
 --   "out"  → perpendicular pop-out above the health/resource stack (stackTop), so the
 --            enrage never overlaps those bars.
+--
+-- Anchored to the nameplate, never to defIcons[1] - even though the icon is what we're
+-- lining up with. This frame is Blizzard's and restricted; anchoring it to one of ours
+-- would make that icon, and everything its rect depends on, geometry-protected in combat,
+-- and the anchor dependency isn't suspended while the frame is hidden. Our icons get moved
+-- every frame, so that trade is not available. Same reasoning as the out-of-combat click
+-- overlay, which copies rects rather than anchoring across the boundary.
+--
 -- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge —
 -- tune by eye in-game; the structural anchor is what matters here.
 local function PositionEnrageIndicator(npo, expansion, stackTop)
     local uf        = currentNameplate and currentNameplate.UnitFrame
     local af        = uf and uf.AurasFrame
     local buffFrame = af and af.BuffListFrame
-    if not buffFrame or #defIcons == 0 then RestoreEnrageIndicator(); return end
+    local anchorFrame = defRowAnchor.frame
+    if not buffFrame or not anchorFrame or #defIcons == 0 then RestoreEnrageIndicator(); return end
 
     local iconSize = npo.iconSize or 32
     local defScale = npo.defensiveIconScale or 1  -- defensive icons render at iconSize * this
@@ -491,15 +524,39 @@ local function PositionEnrageIndicator(npo, expansion, stackTop)
     local scale    = AuraListScaleForQueue(af, iconSize * defScale)
     local spacing  = npo.iconSpacing or ICON_SPACING
 
+    -- SetPoint offsets are read in the positioned frame's own (scaled) space, while every
+    -- distance below is measured in UIParent space. One conversion factor covers all of them.
+    local perPx = AuraFrameScaleRatio(af) / (scale > 0 and scale or 1)
+
+    -- Horizontal centre of the defensive row as an offset from the nameplate edge it hangs
+    -- off. defIcons[1] anchors LEFT/RIGHT (so, vertically centred) at exactly this gap, which
+    -- puts its centre half an icon further along and its top half an icon above.
+    local half = (defRowAnchor.iconSize or iconSize) * 0.5
+    local cx   = (defRowAnchor.gapX or 0) + (defRowAnchor.isLeft and half or -half)
+
+    -- "out" stacks the indicator above the health/resource bars instead of the icon row.
+    -- Those are all our own frames, so measuring them is safe - unlike the nameplate side,
+    -- where GetRect is restricted. Fold the gap into the offset and the anchor itself still
+    -- lands on the nameplate.
+    local dx, dy = 0, 0
+    if expansion == "out" and stackTop and stackTop ~= defIcons[1] then
+        local s, i = RectInUISpace(stackTop), RectInUISpace(defIcons[1])
+        if not s or not i then RestoreEnrageIndicator(); return end  -- not laid out yet
+        dy, dx = s.top - i.top, s.cx - i.cx
+    end
+
     local ok = pcall(function()
         buffFrame:ClearAllPoints()
         buffFrame:SetScale(scale)
         if expansion == "up" then
-            buffFrame:SetPoint("TOP",    defIcons[1], "BOTTOM", 0, -spacing)
-        elseif expansion == "out" then
-            buffFrame:SetPoint("BOTTOM", stackTop,    "TOP",    0,  spacing)
-        else -- "down"
-            buffFrame:SetPoint("BOTTOM", defIcons[1], "TOP",    0,  spacing)
+            -- One slot below the row: the indicator's TOP meets icon 1's BOTTOM.
+            buffFrame:SetPoint("TOP", anchorFrame, defRowAnchor.edge,
+                cx * perPx, -(half + spacing) * perPx)
+        else
+            -- "down" and "out": the indicator's BOTTOM sits above icon 1, or above the stack
+            -- when one is measured (dx/dy are zero when stackTop IS icon 1, so they agree).
+            buffFrame:SetPoint("BOTTOM", anchorFrame, defRowAnchor.edge,
+                (cx + dx) * perPx, (half + dy + spacing) * perPx)
         end
     end)
     if ok then
@@ -632,45 +689,59 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     local ccScale  = AuraListScaleForQueue(af, iconSize)
     local locScale = (iconSize / BLIZZARD_LOC_SIZE) * AuraFrameScaleRatio(af)
 
+    -- Everything below anchors to the NAMEPLATE, never to our own icons or bars. These are
+    -- Blizzard's restricted frames, and anchoring one to ours makes ours - plus everything
+    -- its rect depends on - geometry-protected in combat, while we move these icons every
+    -- frame. topAnchorFrame is still what we line up WITH; it is measured rather than
+    -- anchored to, which is safe because it belongs to us. Same approach as
+    -- PositionEnrageIndicator.
+    local npAnchor = rightRowAnchor.frame
+    if not npAnchor then return end
+    local rowGapX  = rightRowAnchor.gapX or 0
+    local rowIcon  = rightRowAnchor.iconSize or iconSize
+
+    -- Offset from the row's first icon to whatever we're lining up with (zero when they are
+    -- the same frame). Both are ours, so this measurement is always available to us.
+    local topRect, iconRect = RectInUISpace(topAnchorFrame), RectInUISpace(rightIcons[1])
+    if not topRect or not iconRect then return end  -- not laid out yet; the next pass retries
+
+    -- SetPoint offsets are read in the positioned frame's own scaled space, and each of
+    -- these frames carries a different scale, so the conversion is per frame.
+    local uiRatio = AuraFrameScaleRatio(af)
+    local function Place(frame, frameScale, point, x, y)
+        local per = uiRatio / (frameScale > 0 and frameScale or 1)
+        frame:ClearAllPoints()
+        frame:SetScale(frameScale)
+        frame:SetPoint(point, npAnchor, rightRowAnchor.edge, x * per, y * per)
+    end
+
     local ok = pcall(function()
+        local point, x, y
         if expansion == "out" then
-            -- Horizontal row: CC goes ABOVE the cluster, centered on first icon
-            if ccList then
-                ccList:ClearAllPoints()
-                ccList:SetScale(ccScale)
-                ccList:SetPoint("BOTTOM", topAnchorFrame, "TOP", 0, CC_GAP)
-            end
-            if locFrame then
-                locFrame:ClearAllPoints()
-                locFrame:SetScale(locScale)
-                if ccList then
-                    locFrame:SetPoint("BOTTOM", ccList, "TOP", 0, 2)
-                else
-                    locFrame:SetPoint("BOTTOM", topAnchorFrame, "TOP", 0, CC_GAP)
-                end
-            end
+            -- Horizontal row: CC goes ABOVE the cluster, centred on the anchor frame.
+            point = "BOTTOM"
+            x = rowGapX + rowIcon * 0.5 + (topRect.cx - iconRect.cx)
+            y = rowIcon * 0.5 + (topRect.top - iconRect.top) + CC_GAP
         else
             -- Vertical column ("up"/"down"): CC goes to the RIGHT, vertically
-            -- centered on the first icon.
+            -- centred on the anchor frame.
+            point = "LEFT"
+            x = rowGapX + rowIcon + (topRect.right - iconRect.right) + CC_GAP
+            y = topRect.cy - iconRect.cy
+        end
+        if ccList then Place(ccList, ccScale, point, x, y) end
+        if locFrame then
             if ccList then
-                ccList:ClearAllPoints()
-                ccList:SetScale(ccScale)
-                if rightHasHealthBar and healthBar then
-                    ccList:SetPoint("LEFT", healthBar, "RIGHT", CC_GAP, 0)
-                else
-                    ccList:SetPoint("LEFT", rightIcons[1], "RIGHT", CC_GAP, 0)
-                end
-            end
-            if locFrame then
+                -- Blizzard frame to Blizzard frame: chaining these two is already safe.
                 locFrame:ClearAllPoints()
                 locFrame:SetScale(locScale)
-                if ccList then
-                    locFrame:SetPoint("LEFT", ccList, "RIGHT", 2, 0)
-                elseif rightHasHealthBar and healthBar then
-                    locFrame:SetPoint("LEFT", healthBar, "RIGHT", CC_GAP, 0)
+                if expansion == "out" then
+                    locFrame:SetPoint("BOTTOM", ccList, "TOP", 0, 2)
                 else
-                    locFrame:SetPoint("LEFT", rightIcons[1], "RIGHT", CC_GAP, 0)
+                    locFrame:SetPoint("LEFT", ccList, "RIGHT", 2, 0)
                 end
+            else
+                Place(locFrame, locScale, point, x, y)
             end
         end
     end)
@@ -743,8 +814,24 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
     end
 
     AnchorRow(dpsIcons, dpsPt, dpsEdge, dpsGapX, dpsPt, dpsEdge, dpsChainX)
+
+    -- The right-hand row, for the CC frames. Both layouts put a row on the right attached
+    -- by its LEFT edge to the nameplate's RIGHT - it's the DPS row by default and the
+    -- defensive row when the clusters are reversed.
+    rightRowAnchor.frame    = anchorFrame
+    rightRowAnchor.edge     = isLeft and defEdge or dpsEdge
+    rightRowAnchor.gapX     = isLeft and defGapX or dpsGapX
+    rightRowAnchor.iconSize = iconSize
+
     if showDefensives then
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
+
+        -- Hand the row's nameplate attachment to the enrage indicator, which has to reach
+        -- the same spot without anchoring to our icons. Captured here so the two can't drift
+        -- apart: whatever the row attaches to is what it attaches to.
+        defRowAnchor.frame,  defRowAnchor.edge     = anchorFrame, defEdge
+        defRowAnchor.gapX,   defRowAnchor.isLeft   = defGapX, isLeft
+        defRowAnchor.iconSize = iconSize
 
         -- Maintenance slot: the defensive row's "position 0". Mirrors the interrupt icon's
         -- relationship to dpsIcons[1] below, using the same expansion rules, so defIcons[1]
@@ -1025,6 +1112,8 @@ function UINameplateOverlay.Destroy(addon)
     wipe(dpsIcons)
     wipe(defIcons)
     currentNameplate = nil
+    defRowAnchor.frame = nil
+    rightRowAnchor.frame = nil
 
     -- Restore the user's original nameplateShowEnemies CVar.
     -- Only restore when we actually saved a value (Create was called).
@@ -1095,6 +1184,8 @@ function UINameplateOverlay.UpdateAnchor(addon)
         end
     else
         currentNameplate = nil
+        defRowAnchor.frame = nil
+    rightRowAnchor.frame = nil
         RestoreCCFrames()  -- put CC frames back when we detach
 
         -- Hide quest indicator when no valid nameplate

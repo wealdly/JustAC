@@ -36,6 +36,7 @@ end
 -- See SpellDB.RAID_BUFF_SPELLS / PET_SUMMON_SPELLS / UNIQUE_AURA_SPELLS for contents.
 local RAID_BUFF_SPELLS   = SpellDB and SpellDB.RAID_BUFF_SPELLS   or {}
 local PET_SUMMON_SPELLS  = SpellDB and SpellDB.PET_SUMMON_SPELLS  or {}
+local PET_SUMMON_EXCLUSIVE = SpellDB and SpellDB.PET_SUMMON_EXCLUSIVE or {}
 local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
 local ROGUE_POISON_CAST_IDS = SpellDB and SpellDB.ROGUE_POISON_CAST_IDS or {}
 local WEAPON_ENCHANT_SPELLS = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS or {}
@@ -978,6 +979,18 @@ end
 -- name-pattern fallback was removed, so unknown pet summons fail-open).
 local function IsPetSpell(spellID)
     return StaticLookup(PET_SUMMON_SPELLS, spellID) ~= nil
+end
+
+--- True for one of the interchangeable pet summons. Public so the queue builder can enforce
+--- that only one ever appears: they are alternatives, not a sequence, and per-spell redundancy
+--- cannot see that - with no pet out, every summon you know is individually non-redundant,
+--- which is how a Warlock ended up with Felguard, Imp and Felhunter queued at once.
+--- Reads PET_SUMMON_EXCLUSIVE, NOT the broader PET_SUMMON_SPELLS: the latter includes Army of
+--- the Dead, Feral Spirit and the elementals, which are cooldowns that belong in the queue
+--- together. See the note on that table.
+function RedundancyFilter.IsPetSummonSpell(spellID)
+    if not spellID then return false end
+    return StaticLookup(PET_SUMMON_EXCLUSIVE, spellID) ~= nil
 end
 
 -- Check if spell is DPS-relevant for rotation queue

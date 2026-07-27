@@ -2,7 +2,7 @@
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Defensive/Item State, Health Detection, Target Analysis, Shapeshift Forms
 -- Extends the JustAC-BlizzardAPI library. Loaded by JustAC.toc after SpellQuery.lua.
-local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 13
+local SUBMAJOR, SUBMINOR = "JustAC-BlizzardAPI-StateHelpers", 14
 local Sub = LibStub:NewLibrary(SUBMAJOR, SUBMINOR)
 if not Sub then return end
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
@@ -465,6 +465,26 @@ local ccCastTime = 0                -- GetTime() when player cast a CC
 local ccFailureObserved = false     -- true = current target resisted/immune
 local ccFailureChecked  = false     -- true = we already checked this cast
 
+-- Direct immunity signals (wired up in InitTargetCastTracking below).  The engine
+-- announces a shrugged-off spell outright - that beats inferring immunity from a
+-- crowd-control aura that never showed up.  Both signals are only trusted inside a
+-- short window after a CC attempt, so an unrelated damage immunity (a shielded mob,
+-- a phase where the boss ignores damage) can't condemn a target that CC would land on.
+local CC_IMMUNE_SIGNAL_WINDOW = 1.5 -- seconds a CC attempt counts as "just tried"
+local ccAttemptTime = 0             -- GetTime() when the player SENT a CC
+local ccImmuneSignal = nil          -- which signal marked the target immune (diagnostics)
+
+--- Single sink for "this target shrugged off crowd control", whatever noticed it.
+--- Persists the immunity per mob TYPE when the NPC ID is known so later pulls of the
+--- same mob skip re-learning entirely.
+local function MarkTargetCCImmune(source)
+    ccFailureObserved = true
+    ccImmuneSignal = source
+    if currentTargetNPCID then
+        ccImmuneNPCIDs[currentTargetNPCID] = true
+    end
+end
+
 function BlizzardAPI.RefreshTargetCreatureType()
     -- Clear per-target state first; a stale NPC ID is worse than nil (nil fails open).
     currentTargetNPCID = nil
@@ -473,6 +493,8 @@ function BlizzardAPI.RefreshTargetCreatureType()
     ccCastTime = 0
     ccFailureObserved = false
     ccFailureChecked  = false
+    ccAttemptTime = 0
+    ccImmuneSignal = nil
     local ct = UnitCreatureType and UnitCreatureType("target")
     if ct and not IsSecretValue(ct) then
         -- Pre-warm the persistent name->type cache while the type is readable, keyed
@@ -552,6 +574,15 @@ function BlizzardAPI.ResetCCFailureLearning()
     ccCastTime = 0
     ccFailureObserved = false
     ccFailureChecked  = false
+    ccAttemptTime = 0
+    ccImmuneSignal = nil
+end
+
+--- Diagnostics only: which signal condemned the current target, or nil.
+--- One of "unit-combat" (engine combat feedback), "ui-error" (cast rejected
+--- outright), "aura-poll" (no crowd-control aura appeared), or "npc-cache".
+function BlizzardAPI.GetCCImmuneSignal()
+    return ccImmuneSignal
 end
 
 --- Called on PLAYER_REGEN_ENABLED BEFORE ResetCCFailureLearning to backfill the
@@ -636,6 +667,7 @@ function BlizzardAPI.IsTargetCCImmune()
     -- 3) Instance-level NPC ID cache: if we previously learned that this mob
     --    TYPE is CC-immune (on a prior pull), suppress CC immediately.
     if currentTargetNPCID and ccImmuneNPCIDs[currentTargetNPCID] then
+        ccImmuneSignal = "npc-cache"
         return true
     end
 
@@ -652,12 +684,7 @@ function BlizzardAPI.IsTargetCCImmune()
             if IsSecretValue(isCCd) then
                 -- Secret value - can't determine, fail-open
             elseif not isCCd then
-                ccFailureObserved = true
-                -- Persist to instance cache if NPC ID is known (target was
-                -- acquired out of combat or NPC ID was populated earlier).
-                if currentTargetNPCID then
-                    ccImmuneNPCIDs[currentTargetNPCID] = true
-                end
+                MarkTargetCCImmune("aura-poll")
                 return true
             end
         end
@@ -931,6 +958,36 @@ local function ProbeTargetCast()
     end
 end
 
+--- True only for spells that apply an actual crowd-control mechanic.  Pure interrupts
+--- are excluded: they impose a lockout rather than a CC, so their own immunity replies
+--- would condemn targets that a real CC would land on just fine.
+local SpellDBRef = nil
+local function IsCCMechanicSpell(spellID)
+    if not spellID then return false end
+    if not SpellDBRef then SpellDBRef = LibStub("JustAC-SpellDB", true) end
+    if not (SpellDBRef and SpellDBRef.IsCrowdControlSpell) then return false end
+    if not SpellDBRef.IsCrowdControlSpell(spellID) then return false end
+    return not (SpellDBRef.IsInterruptTypeSpell and SpellDBRef.IsInterruptTypeSpell(spellID))
+end
+
+local function CCAttemptIsRecent()
+    return ccAttemptTime > 0 and (GetTime() - ccAttemptTime) <= CC_IMMUNE_SIGNAL_WINDOW
+end
+
+-- Locale-safe by construction: the message and the string we match it against both
+-- come from the running client, so no English text is hardcoded.
+local immuneErrorText = nil
+local function IsImmuneErrorText(msg)
+    if not msg or msg == "" then return false end
+    if not immuneErrorText then
+        immuneErrorText = {}
+        local a, b = _G.SPELL_FAILED_IMMUNE, _G.IMMUNE
+        if a then immuneErrorText[a] = true end
+        if b then immuneErrorText[b] = true end
+    end
+    return immuneErrorText[msg] == true
+end
+
 local function InitTargetCastTracking()
     if castEventFrame then return end
     castEventFrame = CreateFrame("Frame")
@@ -952,7 +1009,18 @@ local function InitTargetCastTracking()
     -- PLAYER_TARGET_CHANGED is a global event (not unit-filterable)
     castEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 
-    castEventFrame:SetScript("OnEvent", function(_, event)
+    -- Direct CC-immunity signals.  UNIT_COMBAT carries no SecretPayloads annotation in
+    -- 12.0, so its feedback string is plain and branchable - this is the same signal that
+    -- paints the "Immune" text over the mob, i.e. the engine stating the spell did nothing.
+    castEventFrame:RegisterUnitEvent("UNIT_COMBAT", "target")
+    -- The other half: some targets reject the cast outright rather than resolving it, and
+    -- that path reports through the red error line instead of combat feedback.
+    castEventFrame:RegisterEvent("UI_ERROR_MESSAGE")
+    -- Arms the window both signals are trusted in.  SENT rather than SUCCEEDED because a
+    -- rejected cast never succeeds - which is exactly the case we're here to catch.
+    castEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
+
+    castEventFrame:SetScript("OnEvent", function(_, event, _, arg2, _, arg4)
         if event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
             -- Event name IS the data (the event itself carries it) - never secret
             targetCastInterruptible = true
@@ -999,6 +1067,24 @@ local function InitTargetCastTracking()
             targetCastInterruptKnown = false
             targetCastInterruptible = true
             ProbeTargetCast()
+        elseif event == "UNIT_SPELLCAST_SENT" then
+            -- arg4 = spellID, plain for our own casts (the event is
+            -- SecretWhenUnitSpellCastRestricted, which exempts the player).
+            if not IsSecretValue(arg4) and IsCCMechanicSpell(arg4) then
+                ccAttemptTime = GetTime()
+            end
+        elseif event == "UNIT_COMBAT" then
+            -- arg2 = the feedback string behind the floating "Immune" over the mob.
+            if arg2 == "IMMUNE" and CCAttemptIsRecent() then
+                MarkTargetCCImmune("unit-combat")
+            end
+        elseif event == "UI_ERROR_MESSAGE" then
+            -- arg2 = the error text. Gated on a recent CC attempt so an immunity raised
+            -- against something else (a damage spell into a shield) doesn't cost the
+            -- target its CC suggestions.
+            if CCAttemptIsRecent() and IsImmuneErrorText(arg2) then
+                MarkTargetCCImmune("ui-error")
+            end
         end
     end)
 end

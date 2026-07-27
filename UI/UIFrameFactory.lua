@@ -1410,18 +1410,29 @@ local function CreateDefensiveIcons(addon, profile)
     end
 end
 
+--- Anchor the main frame to its saved position. Explicit five-argument SetPoint so the
+--- saved relativePoint survives the round-trip, and every field defaulted because
+--- framePosition can be absent on a fresh or reset profile.
+function UIFrameFactory.ApplySavedPosition(addon, profile)
+    if not addon.mainFrame then return end
+    local pos = profile and profile.framePosition
+    local point = pos and pos.point or "CENTER"
+    addon.mainFrame:SetPoint(point, UIParent, pos and pos.relativePoint or point,
+        pos and pos.x or 0, pos and pos.y or -150)
+end
+local ApplySavedPosition = UIFrameFactory.ApplySavedPosition
+
 function UIFrameFactory.CreateMainFrame(addon)
     local profile = addon:GetProfile()
     if not profile then return end
-    
+
     addon.mainFrame = CreateFrame("Frame", "JustACFrame", UIParent)
     if not addon.mainFrame then return end
-    
+
     UIFrameFactory.UpdateFrameSize(addon)
-    
-    local pos = profile.framePosition
-    addon.mainFrame:SetPoint(pos.point, pos.x, pos.y)
-    
+
+    ApplySavedPosition(addon, profile)
+
     addon.mainFrame:EnableMouse(true)
     addon.mainFrame:SetMovable(true)   -- Required: grab tab delegates StartMoving() to mainFrame
     addon.mainFrame:SetClampedToScreen(true)
@@ -1445,8 +1456,15 @@ function UIFrameFactory.CreateMainFrame(addon)
             
             if IsShiftKeyDown() then
                 local nowLocked = TogglePanelLock(profile)
-                local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
-                if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
+                -- Announced out loud, not to the debug channel. Locking removes the only way
+                -- to move the panel, and shift+right-click on an icon means "blacklist this
+                -- spell" - so a near-miss on an icon lands here instead and silently takes
+                -- dragging away, leaving nothing on screen to explain why.
+                if nowLocked then
+                    addon:Print("Panel |cffff6666LOCKED|r - it can't be dragged. Shift+right-click it again to unlock, or type /jac reset.")
+                else
+                    addon:Print("Panel |cff00ff00UNLOCKED|r - drag it by the handle at its end.")
+                end
             else
                 if addon.OpenOptionsPanel then
                     addon:OpenOptionsPanel()
@@ -1489,7 +1507,7 @@ function UIFrameFactory.CreateGrabTab(addon)
             if addon.targetframe_anchored then
                 addon.targetframe_anchored = false
                 addon.mainFrame:ClearAllPoints()
-                addon.mainFrame:SetPoint(currentProfile.framePosition.point, currentProfile.framePosition.x, currentProfile.framePosition.y)
+                ApplySavedPosition(addon, currentProfile)
             end
         end,
         onDragStop = function()
@@ -1867,11 +1885,17 @@ function UIFrameFactory.SavePosition(addon)
     -- Guard: don't save while anchored to TargetFrame - GetPoint() would return
     -- TargetFrame-relative offsets which are meaningless as a saved position.
     if addon.targetframe_anchored then return end
-    
-    local point, _, _, x, y = addon.mainFrame:GetPoint()
+
+    -- relativePoint is kept, not discarded: the restore below re-anchors with the explicit
+    -- five-argument form, and the short form would silently force relativePoint == point.
+    -- Those agree for everything we set today, so dropping it happened to round-trip - but
+    -- it makes the save lossy, and the day something leaves the frame anchored corner-to-
+    -- centre it reloads somewhere else entirely.
+    local point, _, relativePoint, x, y = addon.mainFrame:GetPoint()
     if not point then return end
     profile.framePosition = {
         point = point,
+        relativePoint = relativePoint or point,
         x = x or 0,
         y = y or -150,
     }

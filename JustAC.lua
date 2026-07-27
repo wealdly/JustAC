@@ -881,7 +881,7 @@ function JustAC:RefreshConfig()
     if self.mainFrame then
         local profile = self:GetProfile()
         self.mainFrame:ClearAllPoints()
-        self.mainFrame:SetPoint(profile.framePosition.point, profile.framePosition.x, profile.framePosition.y)
+        UIFrameFactory.ApplySavedPosition(self, profile)
         -- Save before anchoring so we preserve UIParent-relative coords as fallback
         self:SavePosition()
         if TargetFrameAnchor then TargetFrameAnchor.UpdateTargetFrameAnchor(self) end
