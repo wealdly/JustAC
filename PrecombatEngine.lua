@@ -84,13 +84,15 @@ end
 --- is what tells you what you're waiting on); it's the CLICK that has to stop. The click
 --- overlay disarms every layer while this is true - see UIPrecombatOverlay.
 ---
---- Eating counts even though it is aura-based (no cast bar, no UnitChannelInfo).
+--- Eating counts even though it is aura-based (no cast bar, no UnitChannelInfo) - but only
+--- for the ~10s it takes Well Fed to land, not the whole meal. The buff persists once you
+--- stand up, so waiting out the rest of the food aura buys nothing.
 --- OOC-only system, and we only test truthiness (never compare/concat), so this is secret-safe.
 function PrecombatEngine.IsBusyApplying()
     if UnitCastingInfo and UnitCastingInfo("player") then return true end
     if UnitChannelInfo and UnitChannelInfo("player") then return true end
-    if SpellDB and SpellDB.GetActiveEatingAura then
-        return SpellDB.GetActiveEatingAura() ~= nil
+    if SpellDB and SpellDB.IsEatingForBuff then
+        return SpellDB.IsEatingForBuff()
     end
     return false
 end

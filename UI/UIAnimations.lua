@@ -233,7 +233,7 @@ end
 -- |-------------|----------------------------|---------------|-------|--------|-----------|-------------------|-------------|
 -- | Assisted    | JustACAssistedGlow         | 1, 1, 1       | no    | ×1.02  | yes       | hasAssistedGlow   | yes         |
 -- | Defensive   | DefensiveHighlightFrame    | 0.3, 1.0, 0.3 | no    | ×1.0   | yes       | hasDefensiveGlow  | yes         |
--- | Gap-closer  | GapCloserHighlightFrame    | 1.0, 0.95, 0.4| yes   | ×1.0   | no        | hasGapCloserGlow  | no          |
+-- | Gap-closer  | GapCloserHighlightFrame    | 1.0, 0.35, 0.8| yes   | ×1.0   | no        | hasGapCloserGlow  | no          |
 
 -- Per-type configuration tables (avoid allocations on hot path)
 local GLOW_CONFIG = {
@@ -259,7 +259,11 @@ local GLOW_CONFIG = {
     },
     GAP_CLOSER = {
         frameKey    = "GapCloserHighlightFrame",
-        r = 1.00, g = 0.90, b = 0.55,       -- Gold (desaturated atlas → grey → gold tint)
+        -- Magenta, not gold: gold is the native proc glow, and a pale-gold ring next to it
+        -- read as the same cue. Magenta is the furthest hue from gold that the offensive row
+        -- has left, and it stays legible with red-green colour deficiency (the red interrupt
+        -- glow shares this row, which is why lime was rejected).
+        r = 1.00, g = 0.35, b = 0.80,       -- Magenta (desaturated atlas → grey → magenta tint)
         desaturate  = true,
         scaleMul    = 1.0,
         pauseOOC    = false,                 -- Always animate to draw attention

@@ -53,7 +53,7 @@ local syntheticProcs = {}
 local displacedPrimary = {}
 
 -- Spells injected by the burst injection system.  Separate from syntheticProcs
--- so UIRenderer can apply a distinct purple glow instead of the gap-closer gold.
+-- so UIRenderer can apply a distinct purple glow instead of the gap-closer magenta.
 local burstInjectedSpells = {}
 
 -- ── Reusable scratch buffers (wiped at start of each GetCurrentSpellQueue call) ────────────────

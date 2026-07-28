@@ -379,6 +379,24 @@ function SpellDB.GetActiveEatingAura()
     return eatCache
 end
 
+--- Well Fed lands after ~10s of eating, not at the end of the ~20s food aura. Past that
+--- point the rest of the meal is only health/mana regen, so nothing should still be told
+--- to wait on it - you are free to move on, and standing up keeps the buff.
+--- True only inside that window; false once the buff has been granted (or is not being
+--- eaten for). Callers: the mid-application wait/disarm and the queue grey-out.
+local WELL_FED_SECONDS = 10
+function SpellDB.IsEatingForBuff()
+    local a = SpellDB.GetActiveEatingAura()
+    if not a then return false end
+    local dur, exp = a.duration, a.expirationTime
+    -- Secret timing (aura-restricted contexts): elapsed is unmeasurable, so hold the
+    -- conservative answer - the whole meal counts, exactly as before.
+    if issecretvalue and (issecretvalue(dur) or issecretvalue(exp)) then return true end
+    if not dur or not exp or dur <= 0 then return true end
+    local elapsed = GetTime() - (exp - dur)
+    return elapsed < math.min(dur, WELL_FED_SECONDS)
+end
+
 --------------------------------------------------------------------------------
 -- CLASS MAINTAINED BUFFS: self-buffs the player keeps up pre-combat (poisons, imbues...).
 -- Each group holds interchangeable options; we maintain whichever is ACTIVE (refresh before

@@ -2010,7 +2010,7 @@ end
 local GLOW_NONE       = 0   -- no glow
 local GLOW_ASSISTED   = 1   -- blue/white crawl (position-1 primary suggestion)
 local GLOW_PROC       = 2   -- gold burst (spell is procced / critically available)
-local GLOW_GAP_CLOSER = 3   -- gold crawl (gap-closer, target out of melee range)
+local GLOW_GAP_CLOSER = 3   -- magenta crawl (gap-closer, target out of melee range)
 local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window active)
 
 --- Priority: gap-closer > burst > proc > assisted > none.
@@ -2462,12 +2462,14 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     isChanneling, channelSpellID, isCasting, castSpellID = ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
 
     -- Eating is aura-based, NOT a spell channel (no cast bar, no UnitChannelInfo), and uses a
-    -- generic "Food" aura distinct from the food's on-use spell. When it's active, treat the
-    -- shown food buff icon as the channel target so the queue greys out and it shows the fill.
+    -- generic "Food" aura distinct from the food's on-use spell. While it's granting the buff,
+    -- treat the shown food buff icon as the channel target so the queue greys out and it shows
+    -- the fill. Ends when Well Fed lands (~10s), not when the meal does - same window the fill
+    -- sweep runs to, so the grey-out lifts exactly as the sweep completes.
     local SDB = LibStub("JustAC-SpellDB", true)
     if not isChanneling and not isCasting and addon.defensiveIcons
             and profile.greyOutWhileChanneling ~= false
-            and SDB and SDB.GetActiveEatingAura and SDB.GetActiveEatingAura() then
+            and SDB and SDB.IsEatingForBuff and SDB.IsEatingForBuff() then
         for _, dicon in ipairs(addon.defensiveIcons) do
             if dicon:IsShown() and dicon.isItem and dicon.itemCastSpellID
                     and SDB.GetPrecombatBuffCategory

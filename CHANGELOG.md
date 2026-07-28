@@ -3,6 +3,30 @@
 
 ## [Unreleased]
 
+## [4.56.0] - 2026-07-28
+
+### Changed
+
+- **The gap-closer glow is now magenta.** The old pale gold sat right next to the
+  game's own proc glow and read as the same cue at a glance. Magenta is the one
+  colour on the offensive row that can't be mistaken for either that or the red
+  interrupt glow.
+- **Pre-combat suggestions stop saying "wait" once Well Fed lands.** That happens
+  about ten seconds in, not when the food runs out - the buff sticks when you stand
+  up, so the rest of the meal is only health and mana. The icons go clickable again
+  the moment there is nothing left to wait for.
+
+### Fixed
+
+- **Custom Queue no longer keeps warning that Blizzard's rotation has changed.**
+  Shapeshifting (and similar form swaps) reports the same ability under a different
+  spell ID, which the check mistook for one spell added and one removed - so the
+  warning came back no matter how often you refreshed it.
+- **Hidden Cooldown Manager panels no longer show tooltips.** Passing the cursor
+  over where a hidden panel used to be popped up its tooltips, and the panel could
+  quietly wake back up after a spec change, a zone or a Cooldown Manager settings
+  change. It now stays out of the way for good.
+
 ## [4.55.0] - 2026-07-27
 
 ### Changed

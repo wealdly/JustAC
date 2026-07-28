@@ -429,11 +429,14 @@ local function ApplyViewerAlpha(viewer, hide)
     -- field, so nothing tainted is left behind for Blizzard's code to read. Enumerating the pool
     -- is a pure read. Re-applied on every call because freshly acquired frames default to
     -- mouse-enabled and we deliberately do not hook Blizzard's acquire path.
+    -- EnumerateActive returns the whole pairs() triple (next, activeObjects, nil). Capturing only
+    -- the first of those - as `local ok, iter = pcall(...)` did - throws away the state table, and
+    -- the loop then calls next(nil) and dies on its first step, so nothing was ever un-moused.
     local pool = viewer.itemFramePool
     if pool and pool.EnumerateActive then
-        local ok, iter = pcall(pool.EnumerateActive, pool)
-        if ok and iter then
-            for itemFrame in iter do
+        local ok, iter, state, ctrl = pcall(pool.EnumerateActive, pool)
+        if ok and type(iter) == "function" then
+            for itemFrame in iter, state, ctrl do
                 if itemFrame.SetMouseMotionEnabled then
                     pcall(itemFrame.SetMouseMotionEnabled, itemFrame, target == 1)
                 end
@@ -523,6 +526,15 @@ function MaintenanceTracker.ApplyViewerVisibility(profile)
                 alphaHooked[viewer] = true
                 hooksecurefunc(viewer, "SetAlpha", function(frame)
                     if alphaGuard[frame] then return end
+                    if hiddenViewers[frame] then ApplyViewerAlpha(frame, true) end
+                end)
+                -- RefreshLayout releases the whole item pool and re-acquires it, and every fresh
+                -- item frame comes back mouse-enabled (OnAcquireItemFrame -> SetTooltipsShown).
+                -- It runs on a full UNIT_AURA update, on any Cooldown Manager settings change and
+                -- on every OnShow - none of which touch the viewer's alpha, so the hook above
+                -- never covered it and tooltips came back on their own. hooksecurefunc, not a
+                -- plain assignment: this frame must stay untainted to keep reading secrets.
+                hooksecurefunc(viewer, "RefreshLayout", function(frame)
                     if hiddenViewers[frame] then ApplyViewerAlpha(frame, true) end
                 end)
             end

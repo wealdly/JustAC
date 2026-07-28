@@ -18,6 +18,16 @@ local function ResolveSpellID(id)
     return BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(id) or id
 end
 
+--- Identity of a rotation entry for diffing. The rotation list hands back
+--- form-dependent variants of the same ability (Moonfire 8921 in caster form,
+--- 155625 in cat), and override resolution does not collapse them - so keying on
+--- the ID alone reads a shapeshift as one spell added plus one removed, forever.
+--- Key on the name when we have it; fall back to the resolved ID.
+local function RotationKey(id)
+    local resolved = ResolveSpellID(id)
+    return (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(resolved)) or resolved
+end
+
 --- Invalidate SpellQueue's rotation cache so changes take effect immediately.
 local function InvalidateRotationCache()
     local SpellQueueLib = LibStub("JustAC-SpellQueue", true)
@@ -154,29 +164,30 @@ local function DiffRotation(addon, specKey)
     local rotationSpells = BlizzardAPI.GetRotationSpells()
     if not rotationSpells then return nil, nil end
 
-    -- Build sets for comparison (use resolved IDs to avoid false positives from talent swaps)
+    -- Build sets for comparison, keyed so talent overrides and form variants of the
+    -- same ability don't register as a change. Values stay spell IDs for the merge.
     local baselineSet = {}
     for _, sid in ipairs(cq.baseline) do
         if sid and sid > 0 then
-            baselineSet[ResolveSpellID(sid)] = true
+            baselineSet[RotationKey(sid)] = sid
         end
     end
     local currentSet = {}
     for _, sid in ipairs(rotationSpells) do
         if sid and sid > 0 then
-            currentSet[ResolveSpellID(sid)] = true
+            currentSet[RotationKey(sid)] = sid
         end
     end
 
     local added = {}
     local removed = {}
-    for sid in pairs(currentSet) do
-        if not baselineSet[sid] then
+    for key, sid in pairs(currentSet) do
+        if not baselineSet[key] then
             added[#added + 1] = sid
         end
     end
-    for sid in pairs(baselineSet) do
-        if not currentSet[sid] then
+    for key, sid in pairs(baselineSet) do
+        if not currentSet[key] then
             removed[#removed + 1] = sid
         end
     end
@@ -317,12 +328,12 @@ function CustomQueue.CreateTabArgs(addon)
                     if removed then
                         local removedSet = {}
                         for _, sid in ipairs(removed) do
-                            removedSet[ResolveSpellID(sid)] = true
+                            removedSet[RotationKey(sid)] = true
                         end
                         if cq.spells then
                             local newSpells = {}
                             for _, sid in ipairs(cq.spells) do
-                                if sid and sid > 0 and not removedSet[ResolveSpellID(sid)] then
+                                if sid and sid > 0 and not removedSet[RotationKey(sid)] then
                                     newSpells[#newSpells + 1] = sid
                                 end
                             end
