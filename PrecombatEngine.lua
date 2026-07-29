@@ -29,9 +29,51 @@ local RECUPERATE_HEALTH_PCT = 90
 -- shows, regardless of the top-off toggle - a critical-health survival cue.
 local LOW_HEALTH_PCT = 35
 
--- True if the player currently has any aura whose spellId is in the set. Iterates the
--- player's helpful auras (usually < 40), so cost is independent of how big the set is -
--- which matters because the food set can hold a few hundred Well Fed buff ids.
+-- Re-offer a buff once it has this much time left, rather than waiting for it to lapse
+-- outright. FLAT time remaining, not a fraction of the duration: what matters is whether
+-- the buff outlasts the pull, and a 60-minute flask with 20 minutes on it needs nothing.
+-- Wider in a group, where a recast covers everyone and wants to land while people are
+-- still standing around rather than mid-pull. Applies to EVERY out-of-combat category -
+-- flasks, food, runes, oils, poisons, imbues, raid buffs - so they all age out the same way.
+local PRECOMBAT_REFRESH_SOLO  = 180   -- 3 minutes
+local PRECOMBAT_REFRESH_GROUP = 300   -- 5 minutes
+
+local function RefreshWindow()
+    local inGroup = IsInGroup and IsInGroup()
+    -- Group-membership probes can come back secret in instanced contexts; unreadable means
+    -- we cannot establish a group, and the narrower window is the one that nags less.
+    if issecretvalue and issecretvalue(inGroup) then return PRECOMBAT_REFRESH_SOLO end
+    return inGroup and PRECOMBAT_REFRESH_GROUP or PRECOMBAT_REFRESH_SOLO
+end
+
+-- Is this aura close enough to lapsing to be worth re-applying now?
+-- A permanent aura (duration 0) never lapses. Unreadable timing answers "no": a buff we
+-- cannot time is one we must not nag about, since the cost of a false cue is a wasted
+-- flask. Same rule the class-buff path uses, so one window governs everything.
+local function IsLapsing(aura)
+    if not aura then return false end
+    local dur, exp = aura.duration, aura.expirationTime
+    if issecretvalue and (issecretvalue(dur) or issecretvalue(exp)) then return false end
+    if type(dur) ~= "number" or type(exp) ~= "number" or dur <= 0 then return false end
+    return (exp - GetTime()) <= RefreshWindow()
+end
+
+-- Main-hand temp enchant (weapon oil / shaman imbue) present AND not about to run out.
+-- Its expiry comes back as milliseconds REMAINING, not a timestamp - the one place in this
+-- file where the window is not compared against expirationTime.
+local function MainHandEnchantHolds()
+    if not GetWeaponEnchantInfo then return false end
+    local has, expiryMs = GetWeaponEnchantInfo()
+    if not has then return false end
+    if issecretvalue and issecretvalue(expiryMs) then return true end
+    if type(expiryMs) ~= "number" then return true end
+    return (expiryMs / 1000) > RefreshWindow()
+end
+
+-- True if the player currently has any aura whose spellId is in the set AND it is not
+-- already inside the refresh window. Iterates the player's helpful auras (usually < 40),
+-- so cost is independent of how big the set is - which matters because the food set can
+-- hold a few hundred Well Fed buff ids.
 local function HasAnyAura(buffSet)
     if not buffSet or not BlizzardAPI or not BlizzardAPI.GetAuras then return false end
     local auras = BlizzardAPI.GetAuras("player", "HELPFUL")
@@ -40,8 +82,10 @@ local function HasAnyAura(buffSet)
         local spellId = auras[i].spellId
         -- 12.0.7: some aura spellIds are secret even out of combat; a secret table
         -- key throws, so skip those auras (their identity is unknowable here).
+        -- Keep scanning past a lapsing match: a category can be satisfied by more than one
+        -- buff, and a fresher one elsewhere in the list still counts.
         if spellId and not (issecretvalue and issecretvalue(spellId))
-           and buffSet[spellId] then return true end
+           and buffSet[spellId] and not IsLapsing(auras[i]) then return true end
     end
     return false
 end
@@ -109,8 +153,7 @@ function PrecombatEngine.IsCategorySatisfied(category)
     end
     if category == "weaponEnchant" then
         if GetTime() - enchantAppliedAt < ENCHANT_APPLY_GRACE then return true end
-        local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
-        return hasMainHand and true or false
+        return MainHandEnchantHolds()
     end
     local set = SpellDB and SpellDB.GetPrecombatBuffSet and SpellDB.GetPrecombatBuffSet(category)
     return HasAnyAura(set)
@@ -175,11 +218,11 @@ function PrecombatEngine.ClearCache()
 end
 
 -- Class maintained buffs (poisons, imbues) that need (re)applying, as spell IDs. For each
--- group we find the option that's currently ACTIVE and re-suggest it once it drops past the
--- halfway point of its duration (refresh with plenty of margin, and useful for short buffs
--- too); if none is up we fall back to the group's default. Only spells the player knows
--- (IsPlayerSpell) surface, so it self-gates by class. Out of combat only; cached.
-local CLASS_BUFF_REFRESH_FRACTION = 0.5  -- prompt to refresh once remaining < this * duration
+-- group we find the option that's currently ACTIVE and re-suggest it once it is close enough
+-- to lapsing to be worth a recast; if none is up we fall back to the group's default. Only
+-- spells the player knows (IsPlayerSpell) surface, so it self-gates by class. Out of combat
+-- only; cached. Shares the flat refresh window with the consumable categories (IsLapsing);
+-- every buff in this table runs 30-60 minutes, so no short-duration floor is needed.
 
 -- Highest-priority member of `group` that the current rotation/fixed queue wants, or nil.
 -- Used as the preferred pick when a maintained buff is missing entirely: offer the poison
@@ -313,19 +356,8 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 end
             end
             if active then
-                -- 12.0.7: aura timing can be secret even out of combat (arithmetic on a
-                -- secret throws). Secret timing = buff is up but the refresh window is
-                -- unknowable - suggest nothing rather than a premature refresh.
-                local offered = false
-                local dur, exp = aura.duration, aura.expirationTime
-                if not (issecretvalue and (issecretvalue(dur) or issecretvalue(exp))) then
-                    dur = dur or 0
-                    local rem = (exp or 0) - now
-                    if dur > 0 and rem <= dur * CLASS_BUFF_REFRESH_FRACTION then
-                        out[#out + 1] = active
-                        offered = true
-                    end
-                end
+                local offered = IsLapsing(aura)
+                if offered then out[#out + 1] = active end
                 -- Group buff the player already has, but a party member is missing it
                 -- (joined late, released, or was out of range when it went out). One
                 -- re-cast covers everyone, so offer it even though the player's own
@@ -344,14 +376,11 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
         end
     end
     -- Weapon imbue (Enhancement shaman): a temp weapon ENCHANT, not a player aura, so it can't
-    -- ride the group loop above. Suggest the known imbue while the main hand is bare. Mirrors
-    -- IsCategorySatisfied's weapon read; GetWeaponEnchantInfo's first return is a plain OOC value.
+    -- ride the group loop above. Suggest the known imbue while the main hand is bare or the
+    -- enchant is inside the refresh window - the same read IsCategorySatisfied uses for oils.
     if not InCombatLockdown() then
         local imbue = KnownWeaponImbue()
-        if imbue then
-            local hasMainHand = GetWeaponEnchantInfo and GetWeaponEnchantInfo()
-            if not hasMainHand then out[#out + 1] = imbue end
-        end
+        if imbue and not MainHandEnchantHolds() then out[#out + 1] = imbue end
     end
     -- Recuperate (cross-class OOC self-heal): a maintained buff whose "missing"
     -- condition is health-based instead of aura-expiry - offer it while the player
