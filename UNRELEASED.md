@@ -14,3 +14,6 @@
   halfway mark - half an hour of nagging on a 60-minute buff). Everything now
   surfaces on the same schedule: in the last 3 minutes solo, or the last 5 minutes
   in a group, where one recast covers everyone and wants to land before the pull.
+- **Korean translation updated.** Every option and tooltip is now translated, and
+  a number of earlier mistranslations have been corrected. Thanks to Crazyyoungs
+  for the contribution.
