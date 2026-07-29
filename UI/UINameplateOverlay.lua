@@ -484,11 +484,13 @@ local function RestoreEnrageIndicator()
 end
 
 -- A frame's edges and centre in UIParent space, so two of our frames can be compared even
--- when they carry different scales. Only ever called on OUR frames: the nameplate side is
--- restricted and GetRect on it is what we're going out of our way to avoid needing.
+-- when they carry different scales. Only ever called on OUR frames - but ours hang off the
+-- nameplate, and a rect that depends on a restricted frame is itself restricted, so GetRect
+-- can be refused (targeting an enemy is enough to trigger it). Treat that exactly like a
+-- not-yet-laid-out frame: return nil and let the caller skip the pass.
 local function RectInUISpace(f)
-    local l, b, w, h = f:GetRect()
-    if not l or not w or w == 0 then return nil end
+    local ok, l, b, w, h = pcall(f.GetRect, f)
+    if not ok or not l or not w or w == 0 then return nil end
     local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
     return {
         right = (l + w) * s, top = (b + h) * s,

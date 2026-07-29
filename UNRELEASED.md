@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+
+- **No more error when you target an enemy.** With nameplate icons on, picking an
+  enemy target could throw a "failed because Can't measure restricted regions"
+  error. The overlay now skips that measurement and retries on the next pass.
+
 ### Changed
 
 - **Out-of-combat buff reminders now come back before the buff runs out.** Flasks,
