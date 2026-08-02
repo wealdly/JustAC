@@ -833,14 +833,16 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- click-to-use layer (UIPrecombatOverlay) sits invisibly over these icons, OOC only.
     -- Main panel only (not overrides) - the nameplate overlay has no click layers, and
     -- buffs on a target's nameplate make no sense.
-    -- Explicitly gated on defensives.enabled: pre-combat suggestions are a feature of
-    -- the defensive bar. The current main-panel caller is already behind that flag, but
-    -- the guarantee must hold even if a future caller reaches here without overrides.
+    -- Explicitly gated on defensives.enabled (IsOfferingNow): pre-combat suggestions are a
+    -- feature of the defensive bar. The current main-panel caller is already behind that
+    -- flag, but the guarantee must hold even if a future caller reaches here without
+    -- overrides. That gate is PrecombatEngine's because the DPS queue consults it too -
+    -- an ability offered here as a clickable buff is dropped from the queue beside it.
+    local PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
     if not inCombat and not overrides
-        and profile.defensives and profile.defensives.enabled
-        and profile.precombatBuffs and profile.precombatBuffs.enabled ~= false then
-        local PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
-        if PrecombatEngine and PrecombatEngine.GetMissingBuffItems then
+        and PrecombatEngine and PrecombatEngine.IsOfferingNow
+        and PrecombatEngine.IsOfferingNow(profile) then
+        if PrecombatEngine.GetMissingBuffItems then
             for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(profile.precombatBuffs.categories)) do
                 if #results >= maxIcons then break end
                 if not alreadyAdded[itemID] then
@@ -850,12 +852,14 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             end
         end
         -- Class maintained buffs (poisons, imbues) as spell entries, gated by IsPlayerSpell.
-        -- These deliberately BYPASS dpsQueueExclusions: the SBA lists a missing poison in the
-        -- offensive queue, but as an OOC pre-combat buff we want it ALSO shown here as a
-        -- clickable green buff - honoring the exclusion would hide it from the defensive queue
-        -- entirely. GetMissingClassBuffs returns distinct spells, so no in-loop dedupe is
-        -- needed; mark alreadyAdded so the later proc/defensive passes don't re-add them.
-        if PrecombatEngine and PrecombatEngine.GetMissingClassBuffs then
+        -- These deliberately BYPASS dpsQueueExclusions: this queue wins the tie. The offer
+        -- here is clickable and the offensive one is not, so out of combat the buff belongs
+        -- on this bar - honoring the exclusion would hide it from the only cluster that can
+        -- act on it. The offensive queue drops its own copy in the same pass (RedundancyFilter
+        -- asks IsOfferedNow), so the ability appears once, here.
+        -- GetMissingClassBuffs returns distinct spells, so no in-loop dedupe is needed; mark
+        -- alreadyAdded so the later proc/defensive passes don't re-add them.
+        if PrecombatEngine.GetMissingClassBuffs then
             local offerTopoff = profile.precombatBuffs.topoffHeal == true
             for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff)) do
                 if #results >= maxIcons then break end
@@ -869,6 +873,14 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                 alreadyAdded[spellID] = true
             end
         end
+    end
+
+    -- Out-of-combat recovery is handled by the pre-combat buff path (Recuperate), so
+    -- combatOnly hides everything else the moment combat ends. This gate sits ABOVE the
+    -- proc passes deliberately: a procced self-heal is still a defensive suggestion, and
+    -- leaving it below meant "In Combat Only" showed free heals out of combat forever.
+    if displayMode == "combatOnly" and not inCombat then
+        return results, alreadyAdded
     end
 
     -- Procced spells shown at ANY health level
@@ -913,13 +925,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- Early exit: proc passes filled the queue
     if #results >= maxIcons then return results, alreadyAdded end
 
-    -- Out-of-combat recovery is handled by the pre-combat buff path (Recuperate),
-    -- so combatOnly hides the list the moment combat ends.
-    if displayMode == "combatOnly" and not inCombat then
-        return results, alreadyAdded
-    end
-
-    -- Past the gate, combatOnly implies in-combat
+    -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
     local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
     if showAllAvailable or isLow then
         -- Order the unified list by health state: below ~35% survival floats up; above it,

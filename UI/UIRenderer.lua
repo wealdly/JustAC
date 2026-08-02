@@ -2396,6 +2396,50 @@ local interruptCtx = {}
 
 -- Small ST / CLEAVE / AOE readout above the queue (debug mode only) so the active
 -- context is a glance, not guesswork. Lazily created; hidden when debug is off.
+-- Danger cue: "a mob near you is casting something lethal". One texture per nearby caster,
+-- all stacked in the same spot - each one's alpha is driven from that caster's (possibly
+-- secret) important-cast verdict, so ANY of them lighting up lights the cue. Stacking is what
+-- replaces the OR we are not allowed to compute: the verdicts can never be read, only poured
+-- into a sink. See BlizzardAPI.DriveImportantCastAlphas.
+-- One slot per nameplate token, so every visible enemy has a region of its own and no mob
+-- can be crowded out by scan order (the verdicts are unreadable, so we cannot rank them).
+-- Forty alpha-0 textures on one frame cost nothing; being blind to the seventh caster does.
+local DANGER_CUE_SLOTS = 40
+local DANGER_CUE_INTERVAL = 0.2 -- scanning 40 unit tokens every frame buys nothing
+local lastDangerCueAt = 0
+local function UpdateImportantCastCue(addon, profile)
+    local mf = addon.mainFrame
+    if not mf then return end
+    if not profile.showImportantCastCue then
+        if mf.jacDangerCue then mf.jacDangerCue:Hide() end
+        return
+    end
+    local cue = mf.jacDangerCue
+    if not cue then
+        cue = CreateFrame("Frame", nil, mf)
+        cue:SetSize(48, 16)
+        cue:SetPoint("BOTTOM", mf, "TOP", 0, 6)
+        cue.slots = {}
+        for i = 1, DANGER_CUE_SLOTS do
+            -- Blizzard's own important-cast art, so the cue reads as the same language the
+            -- nameplate speaks when the setting for it happens to be on.
+            local t = cue:CreateTexture(nil, "OVERLAY")
+            t:SetAtlas("ui-hud-nameplates-importantcast")
+            t:SetAllPoints(cue)
+            t:SetAlpha(0)
+            cue.slots[i] = t
+        end
+        mf.jacDangerCue = cue
+    end
+    cue:Show()
+    local now = GetTime()
+    if now - lastDangerCueAt < DANGER_CUE_INTERVAL then return end
+    lastDangerCueAt = now
+    if BlizzardAPI and BlizzardAPI.DriveImportantCastAlphas then
+        BlizzardAPI.DriveImportantCastAlphas(cue.slots, 1)
+    end
+end
+
 local function UpdateContextIndicator(addon, profile)
     local mf = addon.mainFrame
     if not mf then return end
@@ -2430,6 +2474,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not profile then return end
 
     UpdateContextIndicator(addon, profile)
+    UpdateImportantCastCue(addon, profile)
 
     local currentTime = GetTime()
     local hasSpells = spellIDs and #spellIDs > 0

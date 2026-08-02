@@ -140,6 +140,8 @@ local INSPECT_TOPICS = {
     validate    = "ValidateAssumptions",
     selfcast    = "SelfCastProbe",
     auraids     = "AuraInstanceIdsProbe",
+    blank       = "QueueBlankReport",
+    ccdb        = "CCImmunityDB",
     cdfields    = "CooldownFieldsProbe",
     secrecymap  = "SecrecyMapProbe",
     frames      = "FrameStateProbe",
@@ -149,7 +151,7 @@ local INSPECT_TOPICS = {
     errors      = "ErrorCapture",
     enragelog   = "EnrageLog",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, validate [arm], selfcast, auraids, cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear]"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler

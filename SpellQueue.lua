@@ -185,10 +185,15 @@ end
 
 -- Position 1 / spellbook proc filter: availability + usability + redundancy.
 -- Usability (C_Spell.IsSpellUsable) is NeverSecret; includes resource + CD check.
+-- Under a player-wide ability lockout it is not consulted at all: a stun or a bar-swapping
+-- debuff makes EVERY spell uncastable, so filtering on it empties the queue outright - the
+-- one moment the player most wants to see what to press next. The entries stay and the
+-- renderer greys them from its own usability read. Same rule the defensive gate uses.
 local function PassesSpellFilters(spellID, profile)
     local cached = filterResultCache[spellID]
     if cached ~= nil then return cached end
     local isUsable = BlizzardAPI.IsSpellUsable(spellID)
+        or (BlizzardAPI.IsPlayerAbilityLockout and BlizzardAPI.IsPlayerAbilityLockout())
     local result = BlizzardAPI.IsSpellAvailable(spellID)
        and isUsable
        and (not RedundancyFilter or not RedundancyFilter.IsSpellRedundant(spellID, profile))
@@ -264,7 +269,9 @@ local function ClaimSpellID(spellID, addedSpellIDs)
 end
 
 --- Evaluate whether the spell queue should be visible based on profile settings.
---- Returns true if queue should be shown, false to hide it.
+--- Returns true if queue should be shown, or false plus the reason it is hidden. A blanked
+--- queue looks identical whichever branch produced it, and "my queue vanished" is only
+--- actionable with the branch name attached - /jac inspect blank prints the last one.
 local function EvaluateQueueVisibility(profile, inCombat)
     local queueVis = profile.queueVisibility
     if not queueVis then
@@ -278,30 +285,59 @@ local function EvaluateQueueVisibility(profile, inCombat)
     end
 
     if queueVis == "combatOnly" and not inCombat then
-        return false
+        return false, "combatOnly and out of combat"
     end
 
     if queueVis == "requireHostile" and not inCombat then
         local hasHostileTarget = UnitExists("target") and UnitCanAttack("player", "target")
         if not hasHostileTarget then
-            return false
+            return false, "requireHostile and no hostile target"
         end
     end
 
     if profile.hideQueueWhenMounted then
         local isMounted = IsMounted()
-        if not isMounted then
-            local formID = GetShapeshiftFormID()
-            if formID == 3 or formID == 27 then
-                isMounted = true
-            end
+        local formID = GetShapeshiftFormID()
+        if not isMounted and (formID == 3 or formID == 27) then
+            isMounted = true
         end
         if isMounted then
-            return false
+            -- Form ID rides along: an effect that swaps the action bar can present as a form,
+            -- and this branch then hides the queue for something that is not a mount at all.
+            return false, "hideQueueWhenMounted (IsMounted=" .. tostring(IsMounted())
+                .. " formID=" .. tostring(formID) .. ")"
         end
     end
 
     return true
+end
+
+-- Last time the queue went blank, and why. Three branches can empty it - a visibility rule,
+-- alternate control (vehicle/possess), or a build that produced nothing with no previous
+-- queue to fall back on - and once the icons are gone they are indistinguishable. Recorded
+-- at the moment of the flip so a report can name the branch instead of guessing at it.
+--
+-- FIRST cause of an episode wins, and it is held until the queue shows something again. The
+-- blanking branches all run every build, so recording each call would overwrite the
+-- interesting cause with whatever is true a second later - stand in a corridor after the
+-- fight and the report would read "no spells to show" instead of naming the debuff.
+local blankInfo = nil
+local blankActive = false
+function SpellQueue.NoteQueueBlank(reason)
+    if blankActive then return end
+    blankActive = true
+    blankInfo = {
+        reason  = reason,
+        at      = GetTime(),
+        inCombat = UnitAffectingCombat("player"),
+        override = HasOverrideActionBar and HasOverrideActionBar() or false,
+        vehicle  = HasVehicleActionBar and HasVehicleActionBar() or false,
+        possess  = IsPossessBarVisible and IsPossessBarVisible() or false,
+        formID   = GetShapeshiftFormID and GetShapeshiftFormID() or -1,
+    }
+end
+function SpellQueue.GetQueueBlankInfo()
+    return blankInfo
 end
 
 --- Inject procced spellbook spells (e.g. Fel Blade) after position 1.
@@ -769,7 +805,9 @@ function SpellQueue.GetCurrentSpellQueue()
         return lastSpellIDs or {}
     end
     
-    if not EvaluateQueueVisibility(profile, inCombat) then
+    local queueVisible, hiddenReason = EvaluateQueueVisibility(profile, inCombat)
+    if not queueVisible then
+        if #lastSpellIDs > 0 then SpellQueue.NoteQueueBlank(hiddenReason) end
         lastShouldShowQueue = false
         lastQueueUpdate = now
         -- Clear situation memory here too: with combat-only visibility this early
@@ -1190,7 +1228,12 @@ function SpellQueue.GetCurrentSpellQueue()
     -- When Blizzard returns no spells (e.g. target out of range OOC) but
     -- visibility conditions passed, preserve the previous queue so the frame
     -- stays visible with stale icons instead of hiding entirely.
+    if spellCount == 0 and #lastSpellIDs == 0 then
+        -- Nothing built AND nothing to fall back on: the frame really does go away here.
+        SpellQueue.NoteQueueBlank("build produced no spells and no previous queue to hold")
+    end
     if spellCount > 0 then
+        blankActive = false   -- icons are back: the next blank starts a new episode
         wipe(lastSpellIDs)
         -- Pet summons are ALTERNATIVES, so only the first survives. Every summon you know is
         -- individually non-redundant while you have no pet out, and the per-spell filter is

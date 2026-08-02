@@ -8,6 +8,7 @@ local AceConfigRegistry = LibStub("AceConfigRegistry-3.0")
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local W = LibStub("JustAC-OptionsWidgets")
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 local ipairs = ipairs
@@ -269,7 +270,8 @@ function CustomQueue.CreateTabArgs(addon)
                     },
                     procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2),
                     contextOrder  = MakeContextOrderSelect(addon, 3),
-                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"], L["Custom Queue Sink Cooldowns desc"], 4),
+                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
+                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4),  -- Execute
                 },
             },
             staleWarning = {

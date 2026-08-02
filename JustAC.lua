@@ -54,6 +54,7 @@ local defaults = {
         showFlash = true,                 -- Flash icon on matching key press
         showUsabilityTint = true,         -- Tint icons by usability state (blue=no resources, gray=unavailable)
         showRangeTint = true,             -- Red tint icons when target is out of range
+        showImportantCastCue = false,     -- Warn when a nearby mob casts an engine-flagged "important" spell
         showCastingHighlight = true,      -- White border on icon while its spell is actively being cast
         greyOutWhileCasting = true,           -- Grey out icons while the player is casting a spell
         greyOutWhileChanneling = true,        -- Grey out icons while the player is channeling a spell
@@ -989,13 +990,21 @@ function JustAC:GetClassSpellList(listKey)
 end
 
 function JustAC:UpdateAlternateControlState()
-    -- Detect when the player is controlling a vehicle (replaces action bars),
-    -- possessing an NPC via Mind Control / similar effects, or using an
-    -- override action bar (quest vehicles, NPC control). In any of these cases
-    -- our normal rotation spells are completely wrong, so suppress all rendering.
+    -- Controlling a vehicle or possessing an NPC replaces WHO you cast as: the player's own
+    -- rotation is meaningless there, so nothing renders at all.
+    --
+    -- An override action BAR on its own is deliberately NOT in this list. A debuff can swap
+    -- your buttons out for a few seconds while you stay yourself (an aura applying
+    -- OVERRIDE_SPELLS), and the rotation is exactly what you press the moment it ends -
+    -- hiding the whole queue for that reads as the addon breaking, right when someone is
+    -- watching it to see what comes next. Those abilities are merely uncastable, which is
+    -- what the usability tint says: the entries hold their place, dimmed, and light back up
+    -- when the debuff falls off. Same treatment as loss of control - see
+    -- BlizzardAPI.IsPlayerAbilityLockout, which keeps them from being FILTERED for being
+    -- uncastable. Quest bars that override without a vehicle land here too, and a dimmed
+    -- queue beside them is the cheaper mistake.
     self.playerInAlternateControl = (UnitHasVehicleUI and UnitHasVehicleUI("player") or false)
         or (HasVehicleActionBar and HasVehicleActionBar() or false)
-        or (HasOverrideActionBar and HasOverrideActionBar() or false)
         or (IsPossessBarVisible and IsPossessBarVisible() or false)
 end
 
@@ -1151,6 +1160,9 @@ function JustAC:UpdateSpellQueue()
     -- Our rotation spells are meaningless in these states; render an empty queue
     -- so all icons hide cleanly through the normal renderer path.
     if self.playerInAlternateControl then
+        if SpellQueue.NoteQueueBlank then
+            SpellQueue.NoteQueueBlank("alternate control (vehicle / possess)")
+        end
         UIRenderer.RenderSpellQueue(self, {})
         if UINameplateOverlay then UINameplateOverlay.Render(self, {}) end
         return
@@ -1794,8 +1806,8 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         -- overlay reads it from there. (The overlay used to carry a forwarder for this; it had
         -- no callers and is gone - do not re-add one, call UIRenderer directly.)
         if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
-        -- Notify CC-failure learning: after a short delay, IsTargetCCImmune
-        -- will check if UnitIsCrowdControlled("target") became true.
+        -- Notify CC-failure learning: if the target was mid-cast, check shortly after
+        -- whether that cast actually stopped.
         -- Guard: skip for pure interrupt spells (Kick, Wind Shear, etc.) - they apply a lockout
         -- but no CC mechanic, so the failure check would always fire and permanently mark
         -- the target as CC-immune, suppressing CC fallbacks (e.g. Blind after Kick).

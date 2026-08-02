@@ -127,6 +127,32 @@ function W.toggle(addon, path, opts) return scalar(addon, "toggle", path, opts) 
 function W.range(addon, path, opts)  return scalar(addon, "range",  path, opts) end
 function W.select(addon, path, opts) return scalar(addon, "select", path, opts) end
 
+-- Descriptions that cite an ability as an example carry a %s and name it by spell ID
+-- here, letting the client supply the localized name. Hardcoding names into each locale
+-- file got them wrong more often than right - the game's own strings are the only source
+-- correct in every language, and they stay correct when Blizzard renames a spell.
+--
+-- Keep the cited examples few and class-agnostic. A list of per-spec abilities is noise:
+-- the reader plays one spec, so every name but theirs is filler. Three survive - Victory
+-- Rush, Execute, Soothe - each the canonical example of its concept for any class.
+--
+-- Returns a function, so names resolve when the tooltip is drawn rather than when the
+-- options table is built (spell data is not guaranteed loaded that early). Falls back to
+-- the unformatted string if a translation's placeholder count ever drifts, since a raw
+-- format() error would take the whole panel down.
+function W.spellDesc(key, ...)
+    local ids = { ... }
+    return function()
+        local names = {}
+        for i = 1, #ids do
+            names[i] = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(ids[i]))
+                or ("#" .. tostring(ids[i]))
+        end
+        local ok, text = pcall(string.format, L[key], unpack(names))
+        return ok and text or L[key]
+    end
+end
+
 -- Standard "reset to defaults" scaffold shared by every panel: returns the empty
 -- header spacer (at `order`) and the reset execute button (at `order + 1`) as two
 -- values, so a call site assigns them to its resetHeader/resetDefaults keys. Only
