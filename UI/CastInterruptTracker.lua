@@ -37,9 +37,9 @@ local LSM = LibStub("LibSharedMedia-3.0", true)
 if LSM then
     local BUILTIN_SOUNDS = {
         -- Iconic WoW alerts
-        ["JAC: Night Elf Bell"]    = 566558,  -- DBM default raid warning
+        ["JAC: Night Elf Bell"]    = 566558,  -- clear bell toll
         ["JAC: Raid Emote"]        = 876098,  -- Blizzard raid warning chime
-        ["JAC: Algalon Black Hole"]= 543587,  -- DBM special warning 2
+        ["JAC: Algalon Black Hole"]= 543587,  -- deep warning swell
         ["JAC: PvP Flag"]          = 569200,  -- PVP flag taken
         -- Crisp alert tones
         ["JAC: Shing!"]            = 566240,  -- sharp metallic bling
@@ -73,7 +73,7 @@ local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, inte
 -- default and the common third-party cast-bar / nameplate addons:
 --   "blizzard"     : nameplate.UnitFrame.castBar  (capital U)
 --   "lowercaseUF"  : nameplate.unitFrame.castBar  (lowercase u)
---   "childCastbar" : a nameplate child's .Castbar  (oUF-style element)
+--   "childCastbar" : a nameplate child's .Castbar  (unit-frame-library element)
 -- ─────────────────────────────────────────────────────────────────────────────
 local function FindVisibleCastBar(nameplate)
     if not nameplate then return nil, nil end
@@ -252,7 +252,7 @@ function CastInterruptTracker.DebugInterruptState()
     local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
     local isCasting, interruptible = IsTargetCastInterruptible(nameplate)
     local _, _, evtKnown = BlizzardAPI.GetTargetCastInterruptState()
-    local src = "fail-open(none)"
+    local src
     if evtKnown then
         src = "event-tracker"
     else

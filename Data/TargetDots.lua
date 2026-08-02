@@ -17,7 +17,6 @@ SpellDB.RegisterTargetDots({
 [348]=18,  -- Immolate (script-applies its DoT)
 [589]=16,  -- Shadow Word: Pain
 [703]=18,  -- Garrote
-[772]=15,  -- Rend
 [980]=18,  -- Agony (stacks ramp passively; recast is still a wasted refresh)
 [1079]=24,  -- Rip
 [1822]=15,  -- Rake
@@ -52,16 +51,17 @@ SpellDB.RegisterTargetDots({
 [205546]=4,  -- Odyn's Fury
 [207407]=3,  -- Soul Carver
 [210723]=6,  -- Ashamane's Frenzy
-[212431]=3,  -- Explosive Shot
 [215537]=6,  -- Trauma
 [217200]=12,  -- Barbed Shot
 [255937]=9,  -- Wake of Ashes
+[258881]=4,  -- Trail of Ruin
 [271788]=18,  -- Serpent Sting
 [285381]=24,  -- Primal Wrath (applies Rip via script)
 [307443]=10,  -- Radiant Spark
 [307865]=4,  -- Spear of Bastion
 [312202]=14,  -- Shackle the Unworthy
 [312321]=18,  -- Scouring Tithe
+[316099]=16,  -- Unstable Affliction
 [317009]=8,  -- Sinful Brand
 [323639]=6,  -- The Hunt
 [324149]=18,  -- Flayed Shot

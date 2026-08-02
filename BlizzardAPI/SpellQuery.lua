@@ -13,14 +13,12 @@ local pcall      = pcall
 local type       = type
 local wipe       = wipe
 local ipairs     = ipairs
-local math_min   = math.min
 local IsSpellKnown  = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
 local C_SpellBook_IsSpellInSpellBook    = C_SpellBook and C_SpellBook.IsSpellInSpellBook
 local C_Spell_IsSpellPassive            = C_Spell and C_Spell.IsSpellPassive
 local C_Spell_GetSpellInfo              = C_Spell and C_Spell.GetSpellInfo
 local C_Spell_GetSpellCooldown          = C_Spell and C_Spell.GetSpellCooldown
-local C_Spell_GetSpellCharges           = C_Spell and C_Spell.GetSpellCharges
 local C_Spell_IsSpellUsable             = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell          = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
@@ -29,7 +27,6 @@ local FindSpellOverrideByID             = FindSpellOverrideByID
 local GetInventoryItemID                = GetInventoryItemID ---@diagnostic disable-line: undefined-global
 local GetItemSpell                      = GetItemSpell
 local IsSecretValue = BlizzardAPI.IsSecretValue
-local Unsecret      = BlizzardAPI.Unsecret
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
 
@@ -391,9 +388,9 @@ function BlizzardAPI.ResolveKnownSpellID(spellID)
     return nil
 end
 
---- Mark each spell ID and its talent-resolved variant into a set. Shared by the
---- gap-closer and burst-injection engines to suppress their spells from the
---- rotation list (their own insertion controls when they appear).
+--- Mark each spell ID and its talent-resolved variant into a set. Used by the
+--- gap-closer engine to suppress its spells from the rotation list (its own
+--- insertion controls when they appear).
 function BlizzardAPI.MarkResolvedIDs(spellList, spellIDSet)
     if not spellList or not spellIDSet then return end
     for _, spellID in ipairs(spellList) do

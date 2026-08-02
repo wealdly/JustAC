@@ -10,12 +10,7 @@ local W = LibStub("JustAC-OptionsWidgets")
 
 -- Shared disabled helper: overlay not active
 local function overlayDisabled(addon)
-    local Options = LibStub("JustAC-Options", true)
-    if Options and Options.IsOverlayDisabled then
-        return Options.IsOverlayDisabled(addon)
-    end
-    local dm = addon.db.profile.displayMode or "queue"
-    return dm ~= "overlay" and dm ~= "both"
+    return LibStub("JustAC-Options", true).IsOverlayDisabled(addon)
 end
 
 -- Defensive sub-options are disabled when the overlay is off OR defensives are hidden.
@@ -241,24 +236,28 @@ function Overlay.CreateTabArgs(addon)
     tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
         W.resetButton(990, L["Reset General desc"], function()
             local npo = addon.db.profile.nameplateOverlay
-            npo.queueVisibility = "always"
-            npo.hideWhenMounted = false
-            npo.reverseAnchor = false
-            npo.expansion     = "down"
-            npo.iconSize      = 32
-            npo.iconSpacing   = 2
-            npo.opacity       = 1.0
+            -- Values come from the real defaults table, never re-typed here: a second
+            -- hand-written copy is what let this list drift out of sync with JustAC.lua.
+            local D = addon.db.defaults.profile.nameplateOverlay
+            npo.queueVisibility = D.queueVisibility
+            npo.hideWhenMounted = D.hideWhenMounted
+            npo.reverseAnchor = D.reverseAnchor
+            npo.expansion     = D.expansion
+            npo.iconSize      = D.iconSize
+            npo.iconSpacing   = D.iconSpacing
+            npo.opacity       = D.opacity
             rebuildNPO(addon)
             W.NotifyChange()
         end)
     tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
         W.resetButton(990, L["Reset Offensive Display desc"], function()
             local npo = addon.db.profile.nameplateOverlay
-            npo.maxIcons              = 3
-            npo.firstIconScale        = 1.0
-            npo.glowMode              = "all"
+            local D = addon.db.defaults.profile.nameplateOverlay
+            npo.maxIcons              = D.maxIcons
+            npo.firstIconScale        = D.firstIconScale
+            npo.glowMode              = D.glowMode
             npo.showGlow              = nil  -- clear legacy key
-            npo.queueIconDesaturation = 0
+            npo.queueIconDesaturation = D.queueIconDesaturation
             addon:ForceUpdate()
             rebuildNPO(addon)
             W.NotifyChange()
@@ -266,14 +265,15 @@ function Overlay.CreateTabArgs(addon)
     tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
         W.resetButton(990, L["Reset Defensive Display desc"], function()
             local npo = addon.db.profile.nameplateOverlay
-            npo.showDefensives       = true
-            npo.defensiveDisplayMode  = "always"
-            npo.maxDefensiveIcons     = 3
-            npo.defensiveIconScale    = 1.0
-            npo.defensiveGlowMode     = "all"
-            npo.showHealthBar         = true
-            npo.showPetHealthBar      = true
-            npo.showPowerBar          = false
+            local D = addon.db.defaults.profile.nameplateOverlay
+            npo.showDefensives       = D.showDefensives
+            npo.defensiveDisplayMode  = D.defensiveDisplayMode
+            npo.maxDefensiveIcons     = D.maxDefensiveIcons
+            npo.defensiveIconScale    = D.defensiveIconScale
+            npo.defensiveGlowMode     = D.defensiveGlowMode
+            npo.showHealthBar         = D.showHealthBar
+            npo.showPetHealthBar      = D.showPetHealthBar
+            npo.showPowerBar          = D.showPowerBar
             addon:ForceUpdateAll()
             rebuildNPO(addon)
             W.NotifyChange()

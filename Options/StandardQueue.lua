@@ -9,12 +9,7 @@ local W = LibStub("JustAC-OptionsWidgets")
 
 -- Shared disabled helper: standard panel not active
 local function panelDisabled(addon)
-    local Options = LibStub("JustAC-Options", true)
-    if Options and Options.IsStandardQueueDisabled then
-        return Options.IsStandardQueueDisabled(addon)
-    end
-    local dm = addon.db.profile.displayMode or "queue"
-    return dm == "disabled" or dm == "overlay"
+    return LibStub("JustAC-Options", true).IsStandardQueueDisabled(addon)
 end
 
 -- Defensive Display subtab is always accessible when defensives are detached
@@ -512,20 +507,23 @@ function StandardQueue.CreateTabArgs(addon)
     tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
         W.resetButton(990, L["Reset General desc"], function()
             local p = addon.db.profile
-            p.queueVisibility      = "always"
-            p.hideQueueWhenMounted  = false
+            -- Values come from the real defaults table, never re-typed here: a second
+            -- hand-written copy is what let this list drift out of sync with JustAC.lua.
+            local D = addon.db.defaults.profile
+            p.queueVisibility      = D.queueVisibility
+            p.hideQueueWhenMounted  = D.hideQueueWhenMounted
             -- Clear legacy visibility keys
             p.hideQueueOutOfCombat  = nil
             p.requireHostileTarget  = nil
-            p.iconSize            = 42
-            p.iconSpacing         = 1
-            p.queueOrientation    = "LEFT"
-            p.targetFrameAnchor   = "DISABLED"
-            p.defensives.position = "SIDE1"
-            p.frameOpacity        = 1.0
-            p.tooltipMode         = "always"
-            p.panelInteraction    = "unlocked"
-            p.clickToCastOOC      = true
+            p.iconSize            = D.iconSize
+            p.iconSpacing         = D.iconSpacing
+            p.queueOrientation    = D.queueOrientation
+            p.targetFrameAnchor   = D.targetFrameAnchor
+            p.defensives.position = D.defensives.position
+            p.frameOpacity        = D.frameOpacity
+            p.tooltipMode         = D.tooltipMode
+            p.panelInteraction    = D.panelInteraction
+            p.clickToCastOOC      = D.clickToCastOOC
             -- Clear legacy migration keys
             p.panelLocked      = nil
             p.showTooltips     = nil
@@ -537,10 +535,11 @@ function StandardQueue.CreateTabArgs(addon)
     tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
         W.resetButton(990, L["Reset Offensive Display desc"], function()
             local p = addon.db.profile
-            p.maxIcons              = 4
-            p.firstIconScale        = 1.0
-            p.glowMode              = "all"
-            p.queueIconDesaturation = 0
+            local D = addon.db.defaults.profile
+            p.maxIcons              = D.maxIcons
+            p.firstIconScale        = D.firstIconScale
+            p.glowMode              = D.glowMode
+            p.queueIconDesaturation = D.queueIconDesaturation
             addon:UpdateFrameSize()
             addon:ForceUpdate()
             W.NotifyChange()
@@ -548,21 +547,24 @@ function StandardQueue.CreateTabArgs(addon)
     tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
         W.resetButton(990, L["Reset Defensive Display desc"], function()
             local def = addon.db.profile.defensives
-            def.enabled          = true
-            def.displayMode      = "always"
-            def.maxIcons         = 4
-            def.iconScale        = 1.0
-            def.glowMode         = "all"
-            def.hideEmergencyUntilLow = true
-            def.showHealthBar    = true
-            def.showPetHealthBar = true
-            def.showTargetHealthBar = true
-            def.showPowerBar     = false
+            local D = addon.db.defaults.profile.defensives
+            def.enabled          = D.enabled
+            def.displayMode      = D.displayMode
+            def.maxIcons         = D.maxIcons
+            def.iconScale        = D.iconScale
+            def.glowMode         = D.glowMode
+            def.hideEmergencyUntilLow = D.hideEmergencyUntilLow
+            def.showHealthBar    = D.showHealthBar
+            def.showPetHealthBar = D.showPetHealthBar
+            def.showTargetHealthBar = D.showTargetHealthBar
+            def.showPowerBar     = D.showPowerBar
             -- Moved here from the General tab
-            def.showProcs        = true
-            def.detached         = false
-            def.detachedOrientation = "LEFT"
-            def.detachedPosition = { point = "CENTER", x = 0, y = 100 }
+            def.showProcs        = D.showProcs
+            def.detached         = D.detached
+            def.detachedOrientation = D.detachedOrientation
+            -- Fresh table: assigning the defaults one would alias it into the profile.
+            def.detachedPosition = { point = D.detachedPosition.point,
+                                     x = D.detachedPosition.x, y = D.detachedPosition.y }
             -- Clear legacy migration keys
             def.showOnlyInCombat    = nil
             def.alwaysShowDefensive = nil

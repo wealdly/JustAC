@@ -165,7 +165,14 @@ def main():
         print("skipped generators (--skip-gen)")
         return
     print("\n== generators")
+    # gen_aura_durations.py is retained for reference but its output is not shipped
+    # (durations are secret in combat; the readiness probe superseded it). Running it
+    # would drop an untracked Data/AuraDurations.lua that nothing loads.
+    skip = {"gen_aura_durations.py"}
     for gen in sorted(REPO.glob("tools/gen_*.py")):
+        if gen.name in skip:
+            print(f"-- {gen.name} SKIPPED (output not shipped)")
+            continue
         print(f"-- {gen.name}")
         subprocess.run([sys.executable, str(gen)], check=True, cwd=REPO)
     bash = shutil.which("bash")

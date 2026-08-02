@@ -61,7 +61,6 @@ L["Show Casting Highlight desc"] = "Show a white border highlight on an icon whi
 -- Blacklist
 L["Remove"] = "Remove"
 L["No spells currently blacklisted"] = "Nothing currently blacklisted. Use the Add button below to blacklist a spell or item."
-L["Blacklisted Spells"] = "Blacklisted Entries"
 L["Add Spell to Blacklist"] = "Add to Blacklist"
 L["Add"] = "Add"
 L["Clear All"] = "Clear All"
@@ -78,7 +77,6 @@ L["Custom Hotkeys"] = "Custom Hotkeys"
 
 -- Defensives
 L["Show Defensive Icons"] = "Show Defensive Icons"
-L["Add to %s"] = "Add to %s"
 
 -- Orientation values
 L["Up"] = "Up"
@@ -86,7 +84,6 @@ L["Dn"] = "Dn"
 
 -- Descriptions
 L["General description"] = "Settings that apply to both Standard Queue and Nameplate Overlay."
-L["Interrupt"] = "Interrupt"
 -- The shared "position 0" slot. Named for what its members have in common - taking away what
 -- the enemy is doing - rather than for any one of them. Deliberately not "Intervention"
 -- (Intervene is a Warrior ability, and a protective one, so it reads backwards) and not
@@ -177,7 +174,6 @@ L["Hide in Combat desc"] = "Hide this item from the queue during combat. Recomme
 L["Linked: %s"] = "Linked: %s"
 L["Clear Link"] = "Clear"
 L["Clear Link desc"] = "Remove the linked aura"
-L["Search auras desc"] = "Shows active player buffs. Type to filter, or enter a spell ID directly."
 
 -- Defensive thresholds
 
@@ -235,20 +231,10 @@ L["Blacklist Position 1 desc"] = "Also hide this ability in the AC slot (Blizzar
 L["Restore Class Defaults name"] = "Restore Class Defaults"
 
 -- Spell search UI (used in multiple panels)
-L["Search spell name or ID"] = "Search spell name or ID"
 L["Search spell desc"] = "Type a name or ID (2+ chars to search)"
-L["Select spell to add"] = "Select an entry from the filtered results to add it"
-L["Select spell to blacklist"] = "Select an entry from the filtered results to blacklist it"
-L["Add spell manual desc"] = "Add spell by ID or exact name"
-L["Add spell dropdown desc"] = "Add spell by ID or exact name (for spells not in dropdown)"
-L["Select spell for hotkey"] = "Select a spell or item from the filtered results"
-L["Add hotkey desc"] = "Add hotkey override for the selected spell or item"
 L["No matches"] = "No matches - try a different search"
-L["Please search and select a spell first"] = "Please search and select a spell or item first"
-L["Please enter a hotkey value"] = "Please enter a hotkey value"
 L["Select Spell..."] = "Select Spell/Item..."
 L["No spell selected"] = "No spell or item selected"
-L["Set Override..."] = "Set Override..."
 
 -- Gap-Closers
 L["Gap-Closers"] = "Gap-Closers"
@@ -264,30 +250,18 @@ L["Reset Gap-Closers desc"] = "Reset gap-closer settings to defaults. The spell 
 L["Show Gap-Closer Glow"] = "Show Gap-Closer Glow"
 L["Show Gap-Closer Glow desc"] = "Show a gold emphasis glow on gap-closer icons to highlight that they are available."
 
--- Burst Injection
-L["Burst Injection"] = "Burst Injection"
-L["Experimental"] = "Experimental"
-L["Burst Injection Experimental Note"] = "Experimental; may not work for all specs."
-L["Burst Injection Behavior Note"] = "Purple glow highlights trigger spells in the queue. Once the buff activates, priority spells are injected at the front."
-L["Enable Burst Injection"] = "Enable Burst Injection"
-L["Enable Burst Injection desc"] = "Detect trigger spells anywhere in the queue and inject priority spells during burst windows."
-L["Show Burst Glow"] = "Show Burst Glow"
-L["Show Burst Glow desc"] = "Purple glow on trigger spells (press next) and injected spells (burst active)."
-L["Burst Window Duration"] = "Fallback Window Duration"
-L["Burst Window Duration desc"] = "Burst window length (seconds) when the trigger doesn't create a self-buff aura."
-L["Reset Burst Injection desc"] = "Reset all burst injection settings to defaults."
-L["Burst Trigger Override"] = "Trigger Spells"
-L["Burst Trigger Override desc"] = "Spells that open a burst window. Uses class defaults when empty."
-L["Clear Trigger Overrides"] = "Clear Custom Triggers"
-L["Clear Trigger Overrides desc"] = "Remove custom triggers and use class defaults."
-L["No Burst Trigger Overrides"] = "No custom triggers; using class defaults."
-L["Detected Burst Triggers"] = "|cFF9966FFClass defaults:|r"
-L["Detected Burst Triggers None"] = "none"
-L["Burst Injection Spells"] = "Injection Spells"
-L["Burst Injection Priority List"] = "Injection Priority List"
-L["Burst Injection Priority desc"] = "Priority order: first usable spell wins."
-L["Restore Burst Injection Defaults desc"] = "Reset injection list to class/spec defaults."
-L["No Burst Injection Spells"] = "No injection spells configured."
+-- Burst-ready cue
+L["Burst Ready Cue"] = "Burst-Ready Cue"
+L["Burst Ready Cue desc"] = "Purple glow on your spec's major cooldown when it appears in the queue ready to use - the signal to start your burst."
+L["Burst Triggers"] = "Burst Triggers"
+L["Burst Triggers desc"] = "Which spells get the burst-ready cue. The default list comes from SimulationCraft's own burst-window markers for your spec (or curated class defaults where none exist). Add spells below to use your own list instead. Your own triggers light up whenever they're ready."
+L["Burst Triggers Active"] = "Active (%s):"
+L["Burst Source simc"] = "SimC-derived"
+L["Burst Source custom"] = "Custom"
+L["Burst Source curated"] = "Class defaults"
+L["Burst Triggers Empty"] = "No custom triggers - the default list above is active."
+L["Clear Burst Triggers"] = "Use Defaults"
+L["Clear Burst Triggers desc"] = "Remove your custom triggers and return to the default list."
 
 -- Custom Queue
 L["Custom Queue"] = "Priority"
@@ -296,8 +270,6 @@ L["Custom Queue Ordering"] = "Ordering"
 L["Custom Queue Ordering Note"] = "How the abilities after position 1 are ordered - your list and Blizzard's alike. All on: smart order; all off: exact source order."
 L["Custom Queue Procs First"] = "Procs first"
 L["Custom Queue Procs First desc"] = "Move abilities that have procced to the front, ahead of your order. Off: procced abilities stay in their listed position (they still glow)."
-L["Custom Queue Context Aware"] = "Context aware"
-L["Custom Queue Context Aware desc"] = "Reorder the queue to match the ability Assisted Combat is recommending right now, ahead of your saved order:\n\n- Abilities with the same target pattern rise (single-target, melee-AoE, or ranged-AoE; cleave counts as melee-AoE).\n- Abilities with the same builder / spender role rise.\n- Melee abilities sink while your target is out of melee range.\n\nOff: keep your exact saved order (fixed queue)."
 L["Custom Queue Sink Cooldowns"] = "Unavailable last"
 L["Custom Queue Sink Cooldowns desc"] = "Move abilities that are on cooldown, out of charges, currently unusable (like %s above its health threshold), or out of range, to the end of the queue. Off: keep them in their listed position."
 L["Emergency Potion"] = "Emergency Potion"
@@ -322,14 +294,11 @@ L["Mastery"] = "Mastery"
 L["Versatility"] = "Versatility"
 L["Speed"] = "Speed"
 L["XP"] = "XP"
-L["Speed desc"] = "Movement-speed food buffs (20 min or longer). Off by default - handy for leveling and open-world travel."
 L["XP desc"] = "Experience-gain consumables. Off by default - for leveling characters."
-L["none in bags"] = "none in bags"
 L["Emergency Potion Auto Desc"] = "Auto fires the health item that restores the most at your current maximum health, so a percentage potion (e.g. 50%) is weighed fairly against a fixed-amount one. Pick a specific potion to override, or Off to disable."
 L["Best in bags"] = "Best in bags"
 L["best of"] = "best of"
 L["health"] = "health"
-L["Custom Queue Blacklist Note"] = "Removing here affects the queue only. To hide a spell everywhere (including the AC slot), blacklist it: |cffff6666shift+right-click|r its queue icon, or use the Blacklist tab."
 L["Enable Custom Queue"] = "Enable Custom Priority"
 L["Enable Custom Queue desc"] = "When on, the abilities after Blizzard's pick come from your own list instead of Blizzard's rotation - it starts seeded from your spec's rotation, then reorder, trim, or add abilities below. Off: JustAC just orders Blizzard's own rotation.\n\nShift+right-click any queue icon to hide that ability everywhere."
 L["Custom Queue Spells"] = "Custom Priority"
@@ -345,16 +314,10 @@ L["Refresh from Rotation"] = "Refresh from Rotation"
 L["Refresh from Rotation desc"] = "Replace your entire Custom Rotation with Blizzard's current rotation list."
 L["Refresh from Rotation confirm"] = "This will replace your Custom Rotation with Blizzard's current rotation. Your custom ordering will be lost. Continue?"
 
-L["Default"] = "Default"
-L["Override"] = "Override"
-L["Clear Override"] = "Clear Override"
-L["Search Spell"] = "Search Spell"
 L["Unknown"] = "Unknown"
-L["None"] = "None"
 
 -- Nameplate Overlay
 L["Nameplate Overlay"] = "Overlay Queue"
-L["Offensive Queue"] = "Offensive Queue"
 L["Defensive Queue"] = "Defensive Queue"
 L["Queue Content"] = "Queue Content"
 L["Reverse Anchor"] = "Reverse Anchor"
@@ -366,7 +329,6 @@ L["Show Soothe Cue"] = "Show Enrage Cleanse"
 L["Show Soothe Cue desc"] = "Show your enrage-removal ability (%s and equivalents) in the Disruption slot while your target is enraged. Only appears if your specialization has one. Independent of the interrupt reminder: they share the slot, but you can run either one without the other."
 L["Include Fears"] = "Include Fears"
 L["Include Fears desc"] = "Suggest fear-type crowd control as an interrupt fallback. Off by default: fears break the moment the target takes damage and scatter enemies, which is disruptive in groups."
-L["Sounds"] = "Sounds"
 L["Interrupt Alert"] = "Interrupt Alert"
 L["Interrupt Alert Sound desc"] = "Play a sound when the interrupt reminder icon first appears."
 L["Interrupt Mode Disabled"] = "Off"
@@ -380,7 +342,6 @@ L["Nameplate Show Resource Bar desc"] = "Show a compact resource bar (primary po
 -- Reset buttons
 L["Reset to Defaults"] = "Reset to Defaults"
 L["Reset General desc"] = "Reset all General settings to their default values."
-L["Reset Layout desc"] = "Reset layout settings (icon size, spacing, orientation, anchor) to defaults."
 L["Reset Offensive Display desc"] = "Reset offensive display settings (icon count, scale, glow) to defaults."
 L["Reset Defensive Display desc"] = "Reset defensive display settings (icon count, scale, glow, health bars) to defaults."
 

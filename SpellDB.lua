@@ -291,7 +291,6 @@ end
 --------------------------------------------------------------------------------
 local PRECOMBAT_BUFFS = {}
 local PRECOMBAT_ORDER = {}  -- categories in registration order (stable display order)
-local PRECOMBAT_ITEM_SET = {}  -- every bag-item buff id, for IsPrecombatBuffItem (click layers)
 local PRECOMBAT_ITEM_CATEGORY = {}  -- bag-item buff id -> category ("flask"/"food"/…)
 
 local function AddPrecombatEntry(cat, e)
@@ -306,15 +305,8 @@ local function AddPrecombatEntry(cat, e)
     bucket.items[#bucket.items + 1] = e
     if e.buff then bucket.buffSet[e.buff] = true end
     if e.source == "item" then
-        PRECOMBAT_ITEM_SET[e.id] = true
         PRECOMBAT_ITEM_CATEGORY[e.id] = cat
     end
-end
-
---- True if itemID is any registered pre-combat buff consumable. Lets the defensive render
---- recognise inserted buff icons so the click-layer overlay can sit on exactly those.
-function SpellDB.IsPrecombatBuffItem(itemID)
-    return itemID ~= nil and PRECOMBAT_ITEM_SET[itemID] == true
 end
 
 --- Category of a buff item ("flask"/"food"/…), or nil. Lets the render pick the food icon.
@@ -446,13 +438,6 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
     -- via GetWeaponEnchantInfo in PrecombatEngine (see WEAPON_IMBUE_SPELLS below).
 }
 
-local CLASS_BUFF_SET = {}  -- flat spellID set, for the green-glow emphasis on class-buff icons
-for _, groups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
-    for _, grp in ipairs(groups) do
-        for _, id in ipairs(grp.group) do CLASS_BUFF_SET[id] = true end
-    end
-end
-
 -- Rogue poison cast IDs, derived from the maintained-buff groups above so the two
 -- can never drift. RedundancyFilter consumes this for cast-based poison detection
 -- and its NeverSecret whitelist merge.
@@ -476,16 +461,15 @@ SpellDB.WEAPON_ENCHANT_SPELLS = {
     [382021] = true,  -- Earthliving Weapon
 }
 SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
-for _, id in ipairs(SpellDB.WEAPON_IMBUE_SPELLS) do CLASS_BUFF_SET[id] = true end
 
 -- Cheap self-heals castable out of combat, per class: preferred over Recuperate
 -- for topping off (faster, and the resource regenerates out of combat anyway).
 -- Only no/short-cooldown heals belong here - never real combat cooldowns
 -- (Exhilaration, Renewal), which Recuperate exists to preserve. First KNOWN
 -- entry wins; classes without an entry fall back to Recuperate.
--- Deliberately NOT added to CLASS_BUFF_SET: these spells also appear as regular
--- defensive-list entries, and the green glow keys on entry provenance (the
--- queue entry's precombat flag), never on spell identity.
+-- These spells also appear as regular defensive-list entries, so the green glow
+-- must key on entry provenance (the queue entry's precombat flag), never on spell
+-- identity - an identity check would glow the defensive copy too.
 SpellDB.CLASS_TOPOFF_HEALS = {
     DRUID   = { 8936 },       -- Regrowth
     EVOKER  = { 355913 },     -- Emerald Blossom
@@ -505,11 +489,6 @@ function SpellDB.GetKnownTopoffHeal()
         if IsPlayerSpell(list[i]) then return list[i] end
     end
     return nil
-end
-
---- True if spellID is any class maintained buff (lets the render green-glow inserted ones).
-function SpellDB.IsClassMaintainedBuff(spellID)
-    return spellID ~= nil and StaticLookup(CLASS_BUFF_SET, spellID) == true
 end
 
 --- Register generated buff categories: { flask = { {id=,buff=,stat=}, ... }, food = ... }.
@@ -619,22 +598,6 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
         end
     end
     return best
-end
-
---- Owned buff entries for a category, best-first: { {id=, name=, stat=}, ... }. Feeds the
---- per-category dropdown. Out of combat only (item names).
-function SpellDB.GetOwnedPrecombatBuffs(cat)
-    local b = PRECOMBAT_BUFFS[cat]
-    if not b then return {} end
-    local owned = {}
-    for i = 1, #b.items do
-        local e = b.items[i]
-        if OwnsBuffEntry(e) then
-            owned[#owned + 1] = { id = e.id, stat = e.stat,
-                                  name = (GetItemInfo(e.id)) or ("Item " .. e.id) }
-        end
-    end
-    return owned
 end
 
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -1435,34 +1398,11 @@ SpellDB.GAP_CLOSER_REQUIRES_STEALTH = {
 }
 
 --------------------------------------------------------------------------------
--- BURST WINDOW DURATION DEFAULTS (seconds)
--- How long the burst window stays active after trigger fires.
--- Per-spec overrides for specs with shorter/longer burst CDs.
--- Fallback: 10 seconds.
---------------------------------------------------------------------------------
-SpellDB.CLASS_BURST_DURATION_DEFAULTS = {
-    -- Specs with notably longer burst windows
-    DEATHKNIGHT_1 = 15,  -- Dancing Rune Weapon lasts 15s
-    DEMONHUNTER_1 = 24,  -- Metamorphosis lasts 24s
-    DRUID_2       = 20,  -- Berserk lasts 20s
-    DRUID_3       = 15,  -- Guardian Berserk lasts 15s
-    MAGE_2        = 12,  -- Combustion lasts 12s
-    ROGUE_2       = 20,  -- Adrenaline Rush lasts 20s
-    ROGUE_3       = 20,  -- Shadow Blades lasts 20s
-    WARRIOR_2     = 12,  -- Recklessness lasts 12s
-    WARRIOR_3     = 20,  -- Avatar lasts 20s
-    -- Default (10s) is fine for most specs
-}
-
-SpellDB.BURST_DURATION_FALLBACK = 10  -- seconds
-
---------------------------------------------------------------------------------
 -- BURST TRIGGER DEFAULTS
--- Per-spec list of major offensive CDs that Blizzard's Assisted Combat will
--- recommend when a burst window is appropriate.  When any of these appear at
--- position 1, the engine activates burst injection.
--- Includes talent alternatives (e.g. Incarnation vs Berserk) - the engine
--- filters by IsSpellAvailable at runtime.
+-- Per-spec list of major offensive CDs. When one is visible in the queue and
+-- off cooldown, SpellQueue marks it with the purple burst-ready cue ("press
+-- this to start your burst"). Includes talent alternatives (e.g. Incarnation
+-- vs Berserk) - unknown ones simply never appear in the queue.
 --------------------------------------------------------------------------------
 SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
     -- Death Knight
@@ -1523,111 +1463,6 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
     WARRIOR_2 = {1719},                              -- Fury: Recklessness (90s)
     WARRIOR_3 = {107574},                            -- Protection: Avatar (90s)
 }
-
---------------------------------------------------------------------------------
--- BURST TRIGGER AURA OVERRIDES
--- Maps cast spellID → buff spellID for triggers where the self-buff uses a
--- different spell ID than the cast.  Most CDs share the same ID for cast and
--- buff; only list exceptions here.  BurstInjectionEngine uses this to resolve
--- which aura to scan for during the aura-based burst window.
---------------------------------------------------------------------------------
-SpellDB.BURST_TRIGGER_AURA_OVERRIDES = {
-    [191427] = 162264,   -- Havoc DH: Metamorphosis cast → Meta buff
-    [228260] = 194249,   -- Shadow Priest: Void Eruption cast → Voidform buff
-    [391109] = 194249,   -- Shadow Priest: Dark Ascension cast → Voidform buff
-}
-
---- Return the aura spell ID to scan for a given trigger spell.
---- Falls back to the trigger spellID itself when no override exists.
-function SpellDB.GetTriggerAuraID(triggerSpellID)
-    return SpellDB.BURST_TRIGGER_AURA_OVERRIDES[triggerSpellID] or triggerSpellID
-end
-
---------------------------------------------------------------------------------
--- BURST INJECTION DEFAULTS
--- Per-spec ordered list of spells to inject at position 1 during burst.
--- First usable spell wins. Typically secondary CDs, empowered abilities,
--- or spells the player wants to guarantee during a burst window.
--- Intentionally sparse - users can customize. Ship with known combos only.
---------------------------------------------------------------------------------
-SpellDB.CLASS_BURST_INJECTION_DEFAULTS = {
-    -- Death Knight
-    DEATHKNIGHT_1 = {194844},                        -- Blood: Bonestorm (60s)
-    DEATHKNIGHT_2 = {51271},                         -- Frost: Pillar of Frost (60s) - stack during Breath window
-    DEATHKNIGHT_3 = {42650},                         -- Unholy: Army of the Dead (180s) - stack during Dark Transformation
-
-    -- Demon Hunter
-    DEMONHUNTER_1 = {370965},                        -- Havoc: The Hunt (90s)
-    DEMONHUNTER_2 = {370965},                        -- Vengeance: The Hunt (90s)
-
-    -- Druid
-    DRUID_1 = {391528},                              -- Balance: Convoke the Spirits (120s)
-    DRUID_2 = {391528, 274837},                      -- Feral: Convoke the Spirits (120s), Feral Frenzy (45s)
-    DRUID_3 = {50334, 102558, 391528},               -- Guardian: Berserk/Incarnation + Convoke
-
-    -- Evoker
-    EVOKER_1 = {357210},                             -- Devastation: Deep Breath (120s)
-    -- EVOKER_3 (Augmentation): Breath of Eons is the trigger; no distinct secondary burst CD to force
-
-    -- Hunter
-    HUNTER_1 = {359844, 321530},                     -- Beast Mastery: Call of the Wild (120s), Bloodshed (60s)
-    HUNTER_2 = {260243},                             -- Marksmanship: Volley (45s)
-    HUNTER_3 = {203415},                             -- Survival: Fury of the Eagle (45s)
-
-    -- Mage
-    MAGE_1  = {321507},                              -- Arcane: Touch of the Magi (45s)
-    MAGE_2  = {153561},                              -- Fire: Meteor (45s)
-    MAGE_3  = {84714},                               -- Frost: Frozen Orb (60s)
-
-    -- Monk
-    MONK_1  = {325153},                              -- Brewmaster: Exploding Keg (60s)
-    MONK_3  = {123904},                              -- Windwalker: Invoke Xuen, the White Tiger (120s)
-
-    -- Paladin
-    PALADIN_2 = {387174},                            -- Protection: Eye of Tyr (60s)
-    PALADIN_3 = {255937},                            -- Retribution: Wake of Ashes (45s)
-
-    -- Priest
-    PRIEST_3 = {263165},                             -- Shadow: Void Torrent (45s)
-
-    -- Rogue
-    ROGUE_1 = {385627},                              -- Assassination: Kingsbane (60s)
-    ROGUE_2 = {51690},                               -- Outlaw: Killing Spree (120s)
-    ROGUE_3 = {280719},                              -- Subtlety: Secret Technique (45s)
-
-    -- Shaman
-    -- SHAMAN_1 (Elemental): Ascendance is the trigger; no distinct secondary burst CD to force
-    SHAMAN_2 = {384352},                             -- Enhancement: Doom Winds (60s)
-
-    -- Warlock
-    WARLOCK_1 = {386997},                            -- Affliction: Soul Rot (60s)
-    WARLOCK_2 = {111898},                            -- Demonology: Grimoire: Felguard (120s)
-    WARLOCK_3 = {152108},                            -- Destruction: Cataclysm (45s)
-
-    -- Warrior
-    WARRIOR_1 = {107574},                            -- Arms: Avatar (90s)
-    WARRIOR_2 = {107574},                            -- Fury: Avatar (90s)
-    WARRIOR_3 = {228920},                            -- Protection: Ravager (45s)
-}
-
---- Return the burst injection default list for the current class+spec, or nil.
-function SpellDB.GetBurstInjectionDefaults()
-    local specKey = SpellDB.GetSpecKey()
-    return specKey and SpellDB.CLASS_BURST_INJECTION_DEFAULTS[specKey] or nil
-end
-
---- Return the burst trigger default list for the current class+spec, or nil.
-function SpellDB.GetBurstTriggerDefaults()
-    local specKey = SpellDB.GetSpecKey()
-    return specKey and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey] or nil
-end
-
---- Return the default burst window duration for the current class+spec.
-function SpellDB.GetBurstDurationDefault()
-    local specKey = SpellDB.GetSpecKey()
-    return (specKey and SpellDB.CLASS_BURST_DURATION_DEFAULTS[specKey])
-        or SpellDB.BURST_DURATION_FALLBACK
-end
 
 --- Check whether the current spec has gap-closer defaults (i.e. is a melee spec).
 --- Returns true if CLASS_GAPCLOSER_DEFAULTS has an entry for the current class+spec.

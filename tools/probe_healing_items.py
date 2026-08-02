@@ -4,9 +4,9 @@
 #   python tools/probe_healing_items.py
 #
 # Source CSVs live in Documentation/wow_spell_csv/ (drop fresh ItemSparse.*.csv there
-# from https://wago.tools/db2/ItemSparse — "Export as CSV"). Name-based: it finds the
+# from https://wago.tools/db2/ItemSparse - "Export as CSV"). Name-based: it finds the
 # standard "* Healing Potion" / "Healthstone" naming. Oddly-named restoration items
-# (e.g. health+mana pots with no "healing" in the name) won't surface here — those stay
+# (e.g. health+mana pots with no "healing" in the name) won't surface here - those stay
 # hand-curated in HealingItems.lua. ponytail: name match, not effect graph; we don't
 # have ItemXItemEffect to walk on-use heal effects, and the standard names cover ~all.
 import csv, glob, os, re, sys
@@ -69,7 +69,7 @@ def main():
         print("No new candidates. List is current.")
         return
     print(f"{len(missing)} candidate(s) NOT in the list "
-          "(verify on wago.tools, then add — heirlooms are quality 7):\n")
+          "(verify on wago.tools, then add - heirlooms are quality 7):\n")
     cur = None
     for i in missing:
         r = found[i]

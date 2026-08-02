@@ -45,8 +45,10 @@ tools/check.ps1                                     # whole addon
 ```
 
 It prefers **luacheck** (config `.luacheckrc`: undefined globals, unused locals,
-syntax) and falls back to a **luaparser** syntax check. Baseline is ~47 known
-warnings / 0 errors - a clean change adds no errors and no *new* warnings. If no
+syntax) and falls back to a **luaparser** syntax check. Baseline is 54 known
+warnings / 0 errors, all of them WoW globals the config does not list plus
+multiple-return placeholders in `FormCache.lua`; a clean change adds no errors and
+no *new* warnings. If no
 checker is installed, `check.ps1` prints the install command. Details:
 `Documentation/DEV_TOOLING.md`.
 
@@ -66,52 +68,57 @@ LibStub modules in `JustAC.toc` - **MUST edit in dependency order**:
 ```
 BlizzardAPI → FormCache → MacroParser → ActionBarScanner → RedundancyFilter
                                     ↓
-              SpellQueue → UI/* → DefensiveEngine → GapCloserEngine → BurstInjectionEngine → DebugCommands → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
+              DotTracker → MaintenanceTracker → SpellQueue → UI/*
+                                    ↓
+              DefensiveEngine → GapCloserEngine → PrecombatEngine
+                                    ↓
+              DebugCommands → DebugHUD → Options/* → TargetFrameAnchor → KeyPressDetector → JustAC
 ```
+Note `Options/Core.lua` loads LAST of the `Options/*` files: the panels resolve
+`LibStub("JustAC-Options")` per call, not at load time.
 
 | Module | Role | Key Exports | Current Version |
 |--------|------|-------------|-----------------|
 | `Locales/*.lua` | AceLocale-3.0 localization (9 languages) | `L` global | N/A (not LibStub) |
-| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v13 |
-| `RotationImport.lua` | Alternate rotation source (gated import lookup) | `GetRotation()`, `HasRotation()`, `RegisterGated()` | v1 |
+| `SpellDB.lua` | Static spell data (defensive, class defaults) | `GetDefaults()`, `GetSpecKey()` | v20 |
+| `RotationImport.lua` | Alternate rotation source (gated import lookup + burst anchors) | `GetRotation()`, `HasRotation()`, `RegisterGated()`, `GetBurstTriggers()` | v1 |
 | `BlizzardAPI.lua` | Root: secret value primitives, live secrecy gates, version detection | `IsSecretValue()`, `Unsecret()`, `AreCooldownsSecret()`, `AreAurasSecret()`, `GetActionBarUsability()` | v36 |
 | `BlizzardAPI/CooldownTracking.lua` | Local CD tracking (12.0+ secret workaround) | `IsSpellReady()`, `RegisterSpellForTracking()`, `IsSpellOnLocalCooldown()` | v13 |
 | `BlizzardAPI/SecretValues.lua` | Feature availability gates, aura timing | `IsRedundancyFilterAvailable()`, `GetFeatureAvailability()` | v2 |
 | `BlizzardAPI/SpellQuery.lua` | Spell info, usability, rotation API, items | `GetProfile()`, `GetSpellInfo()`, `IsSpellUsable()` | v2 |
-| `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v10 |
+| `BlizzardAPI/StateHelpers.lua` | Defensive/item state, health, CC immunity, target analysis | `CheckDefensiveItemState()`, `GetPlayerHealthPercent()`, `IsTargetCCImmune()` | v14 |
 | `FormCache.lua` | Shapeshift form state (Druid/Rogue/etc) | `GetActiveForm()`, `GetFormIDBySpellID()` | v11 |
 | `MacroParser.lua` | `[mod]`, `[form]`, `[spec]` conditional parsing | `GetMacroSpellInfo()`, quality scoring | v25 |
 | `ActionBarScanner.lua` | Spell→keybind lookup, slot caching | `GetSpellHotkey()`, `GetSlotForSpell()` | v38 |
-| `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v43 |
+| `RedundancyFilter.lua` | Hide active buffs/forms | `IsSpellRedundant()` | v45 |
 | `DotTracker.lua` | Sink maintained enemy DoTs while their debuff is live on the target (cast-observation + `IsAuraFilteredOutByInstanceID` bridge; secret-safe) | `OnCastSucceeded()`, `OnTargetAuraUpdate()`, `IsDotActiveOnCurrentTarget()` | v1 |
+| `MaintenanceTracker.lua` | Sustain/maintenance slot: tracked buff+bar viewer bridge, cosmetic CDM hides | `ApplyViewerVisibility()`, `Reset()`, `GetBridgeDiag()` | v8 |
 | `SpellQueue.lua` | Throttled spell queue, proc detection | `GetCurrentSpellQueue()`, blacklist | v43 |
 | **UI/** | **UI rendering subsystem (8 files)** | | |
 | `UI/UIHealthBar.lua` | Health bar widget | `Create()`, `Update()` | v9 |
-| `UI/UIAnimations.lua` | Animation helpers (glow, flash, channel fill) | `StartAssistedGlow()`, `ShowProcGlow()`, `StartFlash()` | v15 |
-| `UI/CastInterruptTracker.lua` | Interrupt debounce, cast bar discovery, LSM sound registration | `EvaluateInterrupt()`, `PlayInterruptAlertSound()`, `NotifyCCApplied()` | v1 |
-| `UI/UIFrameFactory.lua` | Icon/grab-tab frame construction | `CreateSpellIcons()`, `CreateInterruptIcon()` | v16 |
-| `UI/UIRenderer.lua` | Icon rendering + Masque integration (shared per-icon render for both surfaces) | `RenderSpellQueue()`, `RenderQueueIcon()`, `RenderInterruptSlot()` | v25 |
-| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v11 |
-| `UI/UISootheCue.lua` | Soothe (enrage-cleanse) cue; rides the interrupt slot | `Create()`, `SetSpell()`, `Show()`, `Available()` | v2 |
-| `UI/UIPrecombatOverlay.lua` | OOC click overlay for the defensive queue (pooled click layers) | `Init()`, `Refresh()`, `OverlayClickLayers()` | v1 |
-| `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v2 |
+| `UI/UIAnimations.lua` | Animation helpers (glow, flash, channel fill) | `StartAssistedGlow()`, `ShowProcGlow()`, `StartFlash()` | v18 |
+| `UI/CastInterruptTracker.lua` | Interrupt debounce, cast bar discovery, LSM sound registration | `EvaluateInterrupt()`, `PlayInterruptAlertSound()`, `NotifyCCApplied()` | v2 |
+| `UI/UIFrameFactory.lua` | Icon/grab-tab frame construction | `CreateSpellIcons()`, `CreateInterruptIcon()` | v25 |
+| `UI/UIRenderer.lua` | Icon rendering + Masque integration (shared per-icon render for both surfaces) | `RenderSpellQueue()`, `RenderQueueIcon()`, `RenderInterruptSlot()` | v44 |
+| `UI/UINameplateOverlay.lua` | Nameplate overlay rendering | `Create()`, `Destroy()`, `Update()` | v14 |
+| `UI/UISootheCue.lua` | Soothe (enrage-cleanse) cue; rides the interrupt slot | `Create()`, `SetSpell()`, `Show()`, `Available()` | v8 |
+| `UI/UIPrecombatOverlay.lua` | OOC click overlay for the defensive queue (pooled click layers) | `Init()`, `Refresh()`, `OverlayClickLayers()` | v3 |
+| `DefensiveEngine.lua` | Defensive spell evaluation | `EvaluateDefensives()` | v4 |
 | `GapCloserEngine.lua` | Gap-closer spell suggestions (offensive queue) | `GetGapCloserSpell()`, `IsGapCloserSpell()`, `InvalidateGapCloserCache()` | v6 |
-| `BurstInjectionEngine.lua` | Two-phase burst injection (trigger → inject priority spells) | `TryActivateBurst()`, `GetBurstStatus()`, `PreCacheRotationCooldowns()` | v5 |
-| `PrecombatEngine.lua` | Out-of-combat buff checklist (flask/food/rune/imbue) | `IsCategorySatisfied()`, maintained-buff offers | v3 |
-| `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v21 |
+| `PrecombatEngine.lua` | Out-of-combat buff checklist (flask/food/rune/imbue) | `IsCategorySatisfied()`, maintained-buff offers | v8 |
+| `DebugCommands.lua` | In-game diagnostics | `/jac inspect <topic>`, `/jac find` | v37 |
 | `DebugHUD.lua` | Movable live overlay of the signals feeding the queue | `Toggle()` | v1 |
-| **Options/** | **Modular options panel (15 files)** | | |
+| **Options/** | **Modular options panel (14 files)** | | |
 | `Options/Widgets.lua` | Shared AceConfig entry builders (`JustAC-OptionsWidgets`) | `W.toggle()`, `W.select()`, `W.range()`, `W.resetButton()` | v1 |
 | `Options/SpellSearch.lua` | Shared spell search, filter state, spell list utils | `BuildSpellbookCache()`, `AddSpellToList()`, `RebuildListSection()` | v3 |
 | `Options/LiveSearchPopup.lua` | Persistent modal for spell/item selection | `Open()`, `Close()`, `IsOpen()` | v1 |
-| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v4 |
+| `Options/General.lua` | General tab (display mode, layout, visibility) | `CreateTabArgs()` | v8 |
 | `Options/StandardQueue.lua` | Standard Queue tab (icon size, spacing, layout) | `CreateTabArgs()` | v4 |
-| `Options/Offensive.lua` | Offensive tab + blacklist management | `CreateTabArgs()`, `UpdateBlacklistOptions()` | v1 |
+| `Options/Offensive.lua` | Offensive tab + blacklist + burst-trigger overrides | `CreateTabArgs()`, `UpdateBlacklistOptions()`, `UpdateBurstTriggerOptions()` | v3 |
 | `Options/CustomQueue.lua` | Custom Queue tab (manual spell list override) | `CreateTabArgs()` | v1 |
 | `Options/Overlay.lua` | Nameplate Overlay tab | `CreateTabArgs()` | v3 |
-| `Options/Defensives.lua` | Defensives tab + spell list management | `CreateTabArgs()`, `UpdateDefensivesOptions()` | v1 |
+| `Options/Defensives.lua` | Defensives tab + spell list management | `CreateTabArgs()`, `UpdateDefensivesOptions()` | v4 |
 | `Options/GapClosers.lua` | Gap Closers tab (sub-tab of Offensive) | `CreateTabArgs()`, `UpdateGapCloserOptions()` | v1 |
-| `Options/BurstInjection.lua` | Burst Injection tab (trigger + spell list) | `CreateTabArgs()` | v1 |
 | `Options/Labels.lua` | Icon Labels tab (text overlays) | `CreateTabArgs()` | v4 |
 | `Options/Hotkeys.lua` | Hotkey Overrides tab | `CreateTabArgs()`, `UpdateHotkeyOverrideOptions()` | v1 |
 | `Options/Profiles.lua` | Per-spec profile switching (injected into profiles) | `AddSpecProfileOptions()` | v1 |
@@ -182,7 +189,7 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 /jac inspect cooldown [spell] - Cooldown API diagnostics (defaults to AC suggestion)
 /jac inspect defensives       - Defensive system state
 /jac inspect interrupts       - Interrupt/CC queue state
-/jac inspect burst            - Burst injection state
+/jac inspect burst            - Burst-ready cue state
 /jac inspect auras            - Aura cache state
 /jac inspect buffs            - Pre-combat buff checklist state
 /jac inspect rank             - Queue context inference / per-spell ordering
@@ -257,7 +264,7 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 | `HealingItems.lua` | `gen_healing_items.py` | Usable heal/potion items |
 | `PrecombatBuffs.lua` | `gen_precombat_buffs.py` | Flask/food/rune/imbue + Well Fed families |
 | `SpellCooldowns.lua` | `gen_spell_cooldowns.py` | Per-spec cooldown-set reference |
-| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (34 specs) |
+| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (35 specs) + per-spec `burst` anchor lists (mined from potion/trinket/PI sync conditions; feed the burst-ready cue). Pinned source APLs in `tools/simc-apl/`; refresh via `tools/update_simc_apl.py` (syncs from the `00-SOURCE/simc` sparse mirror, branch `midnight`, then regenerates) - standard pre-release step |
 | *(not shipped)* | `gen_aura_durations.py` | Retained only - durations are secret in combat, superseded by the readiness probe |
 
 ## 12.0 Compatibility & Secret Values
@@ -270,56 +277,14 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 
 **Live secrecy gates (validated 2026-07-05, all contexts):** the `C_Secrets.Should*BeSecret` predicates flip exactly at combat edges, both directions. Use `BlizzardAPI.AreCooldownsSecret()` / `BlizzardAPI.AreAurasSecret()` as the "is this data readable" signal - never `InCombatLockdown()` as a secrecy proxy. Per-spell secrecy overrides the globals: `C_Secrets.GetSpellAuraSecrecy(id) == 0` means that aura stays readable even mid-combat (RedundancyFilter's `IsNeverSecretAura` caches this; forced evaluation via its `ForceReadNumber`/`ForceReadString` reads exempt fields past the generic secret mark).
 
-**Secret Values (WoW 12.0+):**
-- Blizzard hides certain combat data to prevent automation
-- **Detection:** `BlizzardAPI.IsSecretValue(value)` returns `true` for secret data
-- **Critical limitations:**
-  - ❌ Cannot compare: `if charges > 2` crashes if `charges` is secret
-  - ❌ Cannot do arithmetic: `charges + 1` returns secret value (unusable)
-  - ❌ Cannot use in conditionals: `if duration > 5` fails if `duration` is secret
-  - ✅ Can pass to UI: `FontString:SetText(secretValue)` works (Blizzard handles internally)
-  - ✅ Can pass to cooldown: `Cooldown:SetCooldown(start, secretDuration)` works
-  - ✅ Can pass LuaDurationObject: `Cooldown:SetCooldownFromDurationObject(dur)` works (12.0 opaque pipeline)
-- **Common secret values in combat:**
-  - `C_Spell.GetSpellCooldown()` → `duration`/`startTime` (blanket-secreted even when zero)
-  - `C_UnitAuras` → `spellId`, `name` (aura identity hidden in combat)
-  - `currentCharges` (charge count)
-  - `UnitHealth()` (potentially in some instanced content)
-- **Fail-open design:** `IsSecretValue()` shows extra content rather than hiding valid data
-- **Fallback pattern:** Cache non-secret structure data (e.g., `maxCharges`) for comparison
+**Secret Values (WoW 12.0+):** Blizzard hides certain combat data to prevent automation.
+A secret value cannot be compared, used in arithmetic, or branched on - it can only be
+handed back to the engine (`FontString:SetText`, `Cooldown:SetCooldownFromDurationObject`,
+`SetAlphaFromBoolean`, `SetVertexColorFromBoolean`). Detect with `BlizzardAPI.IsSecretValue(value)`.
 
-**Cooldown readiness pattern (isOnGCD + local tracking fallback):**
-```lua
-local info = C_Spell.GetSpellCooldown(spellID)
-if info then
-    -- isOnGCD == true → on GCD only, spell is ready
-    if info.isOnGCD == true then
-        -- Spell is ready (just on GCD)
-    elseif info.isOnGCD == false then
-        -- Real cooldown running (only for flagged spells: Judgment, BoJ, Wake, etc.)
-    elseif issecretvalue(info.duration) then
-        -- In combat: isOnGCD is nil for BOTH "off CD" and "unflagged spell on CD"
-        -- Must use local cooldown tracking or action bar fallback
-        -- See BlizzardAPI.IsSpellReady() for full fallback chain
-    else
-        -- Out of combat: can compare duration directly
-        if info.duration == 0 then -- ready end
-    end
-end
-```
-
-**Aura tracking pattern (use auraInstanceID):**
-```lua
--- Build instance map out of combat (spellId is readable)
-for i = 1, 40 do
-    local data = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
-    if data then instanceToSpellMap[data.auraInstanceID] = data.spellId end
-end
--- In combat: resolve via map when spellId is secret
-if BlizzardAPI.IsSecretValue(data.spellId) then
-    local resolved = instanceToSpellMap[data.auraInstanceID]
-end
-```
+Per the rule above, the limitation list, the per-API secrecy table, and the worked patterns
+(cooldown readiness via `isOnGCD` + local tracking, aura identity via `auraInstanceID`) are
+NOT repeated here - they live in `Documentation/12.0_COMPATIBILITY.md`. Update that doc.
 
 ## Reference Docs
 

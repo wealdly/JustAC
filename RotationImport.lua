@@ -5,7 +5,7 @@
 -- Consumes imported action priority lists (flattened, per context) and hands the
 -- queue a spell list for positions 2+. Each entry may carry secret-safe GATES
 -- (cooldown / dot / proc / buff-window / execute / targets) classified offline by
--- tools/gen-simc-rotations.py; the runtime evaluator (SpellQueue) applies them.
+-- tools/gen_simc_rotations.py; the runtime evaluator (SpellQueue) applies them.
 -- This module reads no combat state, so it is safe under 12.0 secret values.
 --
 -- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
@@ -14,9 +14,11 @@
 local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
 if not RotationImport then return end
 
--- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...} }
+-- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
 -- entry = { id = <spellID>, gates = { {t="cd"}, {t="dot",id=..}, {t="proc"},
 --           {t="buff",id=..,neg=bool}, {t="execute"}, {t="targets",..} }, delegated = bool }
+-- burst = plain spell ids: the APL's sync anchors (what SimC pots/trinkets
+-- into), consumed by SpellQueue's burst-ready cue.
 local rotations = RotationImport._rotations or {}
 RotationImport._rotations = rotations
 local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
@@ -39,25 +41,10 @@ local function EntriesFor(context)
     return (type(list) == "table") and list or nil
 end
 
---- Ordered spell-ID list for the current spec + context, filtered to spells the
---- player knows/has talented (IsPlayerSpell is static -> secret-safe). nil if none.
--- @param context string|nil - "st" (default) | "aoe"
-function RotationImport.GetRotation(context)
-    local list = EntriesFor(context)
-    if not list then return nil end
-    local out, n = {}, 0
-    for i = 1, #list do
-        local e = list[i]
-        if e and e.id and (not IsPlayerSpell or IsPlayerSpell(e.id)) then
-            n = n + 1
-            out[n] = e.id
-        end
-    end
-    return n > 0 and out or nil
-end
-
---- Gated entries for the current spec + context (same IsPlayerSpell filter). The
---- runtime evaluator uses the gates; the editor uses GetRotation (flat) instead.
+--- Gated entries for the current spec + context, filtered to spells the player
+--- knows/has talented (IsPlayerSpell is static -> secret-safe). nil if none.
+--- Diagnostic accessor: the runtime reaches entries through GetEntry instead.
+--- @param context string|nil - "st" (default) | "aoe"
 function RotationImport.GetRotationGated(context)
     local list = EntriesFor(context)
     if not list then return nil end
@@ -72,11 +59,32 @@ function RotationImport.GetRotationGated(context)
     return n > 0 and out or nil
 end
 
+--- The same list flattened to bare spell IDs.
+--- @param context string|nil - "st" (default) | "aoe"
+function RotationImport.GetRotation(context)
+    local gated = RotationImport.GetRotationGated(context)
+    if not gated then return nil end
+    local out = {}
+    for i = 1, #gated do out[i] = gated[i].id end
+    return out
+end
+
 --- True when this module has data for the current spec.
 function RotationImport.HasRotation()
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     return specKey ~= nil and rotations[specKey] ~= nil
+end
+
+--- SimC burst anchors for the current spec (ordered cast ids), or nil.
+--- The offline generator derives these from potion/trinket/external-buff sync
+--- conditions - SimC's explicit marker for the spec's burst window.
+function RotationImport.GetBurstTriggers()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local entry = specKey and rotations[specKey]
+    local b = entry and entry.burst
+    return (type(b) == "table" and #b > 0) and b or nil
 end
 
 --------------------------------------------------------------------------------
@@ -97,7 +105,8 @@ local function BuildLookup(specKey)
     if not rot then return nil end
     local byCtx = {}
     for ctx, list in pairs(rot) do
-        if type(list) == "table" then
+        -- "burst" holds plain ids for the cue, not gated entries - never a context.
+        if ctx ~= "burst" and type(list) == "table" then
             local m = {}
             for i = 1, #list do
                 local e = list[i]

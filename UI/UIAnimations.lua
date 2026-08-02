@@ -207,12 +207,10 @@ local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
 end
 
+-- No Hide counterpart on purpose: this only ever glows soothe-cue slots, and the cue
+-- frame owns them, so hiding the cue takes the glow with it.
 local function ShowSootheProcGlow(icon)
     ShowColoredProcGlow(icon, "SootheProcGlowFrame", SOOTHE_PROC_R, SOOTHE_PROC_G, SOOTHE_PROC_B)
-end
-
-local function HideSootheProcGlow(icon)
-    HideColoredProcGlow(icon, "SootheProcGlowFrame")
 end
 
 local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
@@ -808,7 +806,35 @@ local function HideInterruptCastBar(icon)
     icon._castBarArmed = false
 end
 
+-- Stop every glow an icon can carry and clear the flags. Callers that tear an icon
+-- down (pool release, detach, hide-all) want all of them regardless of which pool the
+-- icon came from, and each arm is already a no-op when its flag is false - so one
+-- superset here beats a per-site subset that silently misses a type when a new glow
+-- is added.
+local function StopAllGlows(icon)
+    if not icon then return end
+    if icon.hasAssistedGlow  then StopAssistedGlow(icon)  end
+    if icon.hasDefensiveGlow then StopDefensiveGlow(icon) end
+    if icon.hasGapCloserGlow then StopGapCloserGlow(icon) end
+    if icon.hasBurstGlow     then StopBurstGlow(icon)     end
+    if icon.hasPrecombatGlow then StopPrecombatGlow(icon) end
+    if icon.hasProcGlow      then HideProcGlow(icon)      end
+    icon.hasAssistedGlow  = false
+    icon.hasDefensiveGlow = false
+    icon.hasGapCloserGlow = false
+    icon.hasBurstGlow     = false
+    icon.hasPrecombatGlow = false
+    icon.hasProcGlow      = false
+    -- We just force-hid the defensive glow from outside UIRenderer's arbiter, so its
+    -- cached state would still claim the glow is applied and the next RenderDefensives
+    -- would see want == have and never restart it. Resetting here rather than at each
+    -- call site is what makes that invariant impossible to forget.
+    icon.appliedDefGlowState = nil
+    icon.pendingDefGlowState = nil
+end
+
 -- Exports
+UIAnimations.StopAllGlows = StopAllGlows
 UIAnimations.StartAssistedGlow = StartAssistedGlow
 UIAnimations.StopAssistedGlow = StopAssistedGlow
 UIAnimations.StartDefensiveGlow = StartDefensiveGlow
@@ -828,10 +854,7 @@ UIAnimations.ShowColoredProcGlow = ShowColoredProcGlow
 UIAnimations.HideColoredProcGlow = HideColoredProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
 UIAnimations.ShowSootheProcGlow = ShowSootheProcGlow
-UIAnimations.HideSootheProcGlow = HideSootheProcGlow
 UIAnimations.StartFlash = StartFlash
-UIAnimations.StopFlash = StopFlash
-UIAnimations.UpdateFlash = UpdateFlash
 UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows
 UIAnimations.StartChannelFill = StartChannelFill

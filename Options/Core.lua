@@ -25,7 +25,7 @@ local FORWARDERS = {
     { publicName = "UpdateHotkeyOverrideOptions", libName = "JustAC-OptionsHotkeys",          methodName = "UpdateHotkeyOverrideOptions", public = true },
     { publicName = "UpdateDefensivesOptions",     libName = "JustAC-OptionsDefensives",      methodName = "UpdateDefensivesOptions"    },
     { publicName = "UpdateGapCloserOptions",      libName = "JustAC-OptionsGapClosers",      methodName = "UpdateGapCloserOptions"     },
-    { publicName = "UpdateBurstInjectionOptions", libName = "JustAC-OptionsBurstInjection",  methodName = "UpdateBurstInjectionOptions"},
+    { publicName = "UpdateBurstTriggerOptions",   libName = "JustAC-OptionsOffensive",       methodName = "UpdateBurstTriggerOptions"  },
     { publicName = "UpdateCustomQueueOptions",    libName = "JustAC-OptionsCustomQueue",     methodName = "UpdateCustomQueueOptions"   },
 }
 
@@ -64,6 +64,25 @@ end
 function Options.IsOverlayDisabled(addon)
     local dm = addon and addon.db and addon.db.profile and addon.db.profile.displayMode or "queue"
     return dm ~= "overlay" and dm ~= "both"
+end
+
+function Options.IsFullyDisabled(addon)
+    local dm = addon and addon.db and addon.db.profile and addon.db.profile.displayMode or "queue"
+    return dm == "disabled"
+end
+
+--- True when NEITHER surface would show a defensive icon, so defensive-behaviour
+--- options have nothing to act on. Both surfaces read the same shared builder, so
+--- this must consider both - gating on the standard queue alone wrongly greys the
+--- options out for an overlay-only player.
+function Options.AreDefensivesUnreachable(addon)
+    local profile = addon and addon.db and addon.db.profile
+    if not profile then return true end
+    local dm = profile.displayMode or "queue"
+    if dm == "disabled" then return true end
+    local npo = profile.nameplateOverlay
+    local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
+    return not (profile.defensives and profile.defensives.enabled) and not overlayEnabled
 end
 
 -------------------------------------------------------------------------------
@@ -311,7 +330,7 @@ function Options.Initialize(addon)
         addon.optionsTable.args.profiles.order = 6
 
         -- AceDBOptions uses a shared args table across ALL addons.
-        -- Shallow-copy it so our modifications don't leak into BigWigs, DBM, etc.
+        -- Shallow-copy it so our modifications don't leak into other addons' panels.
         local sharedArgs = addon.optionsTable.args.profiles.args
         local localArgs = {}
         for k, v in pairs(sharedArgs) do

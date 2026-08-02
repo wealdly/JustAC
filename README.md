@@ -16,9 +16,9 @@ A World of Warcraft addon that displays Blizzard's Assisted Combat spell suggest
 - The **AC slot** shows the currently recommended ability with your keybind - blacklisted spells auto-substitute via highlight-mode lookahead
 - The **queue** (everything after the AC slot) displays Blizzard's priority list with redundancy filtering, cooldown awareness, and optional **Custom Queue** ordering (user-defined spell/item priority per spec)
 - **Context-aware ranking** - the queue ranks each ability by how closely it matches the ability Assisted Combat is recommending right now: the nearest target pattern (single-target / melee-AOE / ranged-AOE, with cleave treated as a melee AOE) and the same builder/spender role float to the top, so the alternatives on offer are the best DPS fit for the current situation. Abilities the game won't let you use sink to the back: out-of-range melee, Cat/Bear-only abilities in the wrong form (skipped when Fluid Form makes them castable anywhere), stealth-only openers while unstealthed (Subterfuge/Shadow Dance respected), and abilities missing their enabling buff (e.g. Arcane Missiles without Clearcasting) - procs always outrank the sink. Applies to the Custom Queue too, and is backed by a DB2-generated table (archetype, range, and builder/spender role) covering every class - including damage-over-time abilities. On by default; switch it off in the Rotation tab's ordering toggles to keep a fixed order
-- Dynamic insertion of procs, gap-closers (melee specs), burst cooldowns (purple glow during burst windows), and a separate icon for interrupts
+- Dynamic insertion of procs and gap-closers (melee specs), a burst-ready cue (purple glow on your spec's major cooldown when it's ready), and a separate icon for interrupts
 - **DoT awareness** - a damage-over-time ability already applied to your target sinks to the back of the queue while its debuff is live, reappearing in time to refresh (pandemic window), the moment it drops or is dispelled, or on a target that doesn't have it. When Assisted Combat keeps recommending a DoT that's already up, a switch-target arrow appears on the AC slot as a cue to spread it to another enemy. Stacking DoTs are left alone so you can keep building stacks. On by default; toggle in the General tab
-- **SimC priority ordering** *(opt-in)* - orders the abilities after Blizzard's pick using SimulationCraft's priority for your spec, re-ranked against what Blizzard is recommending right now (single-target vs. multi-target, building vs. spending). It also reads point-based resources - combo points, holy power, chi, soul shards, runes - so spenders sink until you can afford them and surface as you reach the threshold. Where the amount can't be read, ordering is left untouched rather than guessed. Multi-target abilities stay out of your single-target order, and openers, execute-only casts, interrupts, defensives and movement abilities are kept out of the damage queue entirely
+- **SimC priority ordering** *(on by default; specs without imported data fall back to context-aware ranking)* - orders the abilities after Blizzard's pick using SimulationCraft's priority for your spec, re-ranked against what Blizzard is recommending right now (single-target vs. multi-target, building vs. spending). It also reads point-based resources - combo points, holy power, chi, soul shards, runes - so spenders sink until you can afford them and surface as you reach the threshold. Where the amount can't be read, ordering is left untouched rather than guessed. Multi-target abilities stay out of your single-target order, and openers, execute-only casts, interrupts, defensives and movement abilities are kept out of the damage queue entirely
 - **Ability markers** - an azure dot marks abilities you can cast while moving; an amber marker (opt-in) marks abilities that don't trigger the global cooldown, so you can fire one and go straight to the next suggestion. Both sit in the lower-left corner and share it when both apply, the dot splitting half azure and half amber. Shown on the offensive and defensive queues alike, on both display surfaces. Configured under General → Shared Behavior
 - Spells and on-use items (trinkets, potions) supported throughout the queue
 - Icons grey out during hardcasts and channels so you can see what's next at a glance
@@ -91,14 +91,12 @@ The defensive queue's "position 0", holding what keeps you *contributing* rather
 - Injects into the offensive queue for natural flow
 - Push-based range detection via `C_ActionBar.EnableActionRangeCheck` for minimal polling
 
-### Burst Injection *(Experimental)*
+### Burst-Ready Cue
 
-- Detects burst windows via aura tracking - when a trigger spell's self-buff is active on the player, configured burst spells inject at the front of the queue with a purple glow
-- Trigger detection scans all visible queue positions, not just the AC slot - triggers at any position show burst glow
-- Timer fallback for triggers that don't create a self-buff (pet summons, target debuffs)
-- Per-spec trigger and injection spell lists with class-appropriate defaults
-- Configurable fallback window duration
-- **Experimental in 12.0**: Aura identity relies on `auraInstanceID` mapping (combat-safe). Works well for self-buff triggers but may miss edge cases. This feature is opt-in and disabled by default.
+- In combat, your spec's major offensive cooldown glows purple when a burst window is actually called for - not merely when it's off cooldown. The window is inferred from Blizzard's own recommendation (the only system that can read the secret in-combat context) combined with SimulationCraft's burst conditions: the cue fires when Assisted Combat recommends the trigger itself, when the trigger's SimC window is up (e.g. Berserk during Tiger's Fury), or when Blizzard is recommending the ability that opens that window
+- A called-for trigger surfaces at the second queue position (promoted, or inserted when Assisted Combat leaves the cooldown entirely to you), so the signal sits where you're already looking
+- Trigger lists are SimC-derived: SimulationCraft's own burst-window markers (potion/trinket/Power Infusion sync) define them per spec, with curated class defaults where no data exists - and you can set your own list per spec under Offensive → General
+- Readiness and buff windows are read as engine truth, so the cue is combat-safe under 12.0 secret values; opt-in - enable under Offensive → General
 
 ### Smart Hotkey Detection
 
@@ -143,7 +141,7 @@ Options are organized into 6 tabs:
 | **General** | Display mode, visibility rules, queue content toggles, Disruption slot, Shared Behavior (ability markers), Cooldown Manager (3 sub-tabs: Settings, Icon Labels, Hotkeys) |
 | **Standard Queue** | Layout, offensive display, defensive display, appearance, resource bar (4 sub-tabs) |
 | **Overlay** | Nameplate overlay layout, offensive display, defensive display, resource bar (3 sub-tabs) |
-| **Offensive** | Blacklist, custom queue (Always Show / Hold Until Charged), ordering toggles incl. SimC priority, gap-closers, burst injection, interrupt mode |
+| **Offensive** | Blacklist, custom queue (Always Show / Hold Until Charged), ordering toggles incl. SimC priority, burst-ready cue, gap-closers, interrupt mode |
 | **Defensives** | Spell priority list, health thresholds, per-item aura linking, Sustain slot (tank maintenance, CC escape, pet heal), pre-combat buffs |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
@@ -191,14 +189,6 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ---
 
-## Known Issues
-
-### Burst injection cooldown detection
-
-See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Major cooldown tracking in WoW 12.0 combat relies on local timer estimates, seeded from observed casts, tooltips, and a generated base-cooldown table - estimates may still drift on cooldown-reduction effects the addon can't observe.
-
----
-
 ## Technical Notes
 
 - **WoW 12.0 Midnight Compliant** - Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
@@ -226,7 +216,7 @@ See [Burst Injection *(Experimental)*](#burst-injection-experimental) above. Maj
 /jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)
 /jac inspect defensives       - Diagnose defensive system
 /jac inspect interrupts       - Diagnose interrupt/CC queue state
-/jac inspect burst            - Dump burst injection priority list
+/jac inspect burst            - Burst-ready cue state
 /jac inspect auras            - Diagnose aura cache state
 /jac inspect perf             - Queue build rate statistics (requires /jac debug)
 /jac inspect perf reset       - Reset build counters

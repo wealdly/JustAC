@@ -152,8 +152,10 @@ local function GetVerticalSidebarOffset(profile, anchorSide)
     local defIconScale = defProfile.iconScale or 1.0
     local defIconSize  = iconSize * defIconScale
     local iconSpacing  = profile.iconSpacing or 1
-    local BAR_SPACING  = 3  -- matches UIHealthBar.BAR_SPACING
-    local BAR_HEIGHT   = 6  -- matches UIHealthBar.BAR_HEIGHT
+    -- Imported, not re-typed: these must track the bars this reserves space for.
+    local UIHealthBar  = LibStub("JustAC-UIHealthBar", true)
+    local BAR_SPACING  = (UIHealthBar and UIHealthBar.BAR_SPACING) or 3
+    local BAR_HEIGHT   = (UIHealthBar and UIHealthBar.BAR_HEIGHT) or 6
     local effectiveSpacing = math_max(iconSpacing, BAR_SPACING)
 
     -- Defensive icon column extends: effectiveSpacing + one icon width

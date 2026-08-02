@@ -7,18 +7,21 @@ if not UIFrameFactory then return end
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
+local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
 
 -- Hot path cache
 local wipe = wipe
 local math_max = math.max
 local math_floor = math.floor
 
--- Visual constants (shared with UIRenderer)
+-- Hotkey text sizing/placement, applied wherever this file builds a hotkey FontString.
 local HOTKEY_FONT_SCALE = 0.4
 local HOTKEY_MIN_FONT_SIZE = 8
 local HOTKEY_OFFSET_FIRST = -3
 local HOTKEY_OFFSET_QUEUE = -2
-local GRAB_TAB_LENGTH = 12  -- grab-tab thickness along the queue axis
+-- Grab-tab thickness along the queue axis. Imported so the bar math in UIHealthBar,
+-- which reserves space for this tab, cannot disagree with the tab we actually draw.
+local GRAB_TAB_LENGTH = (UIHealthBar and UIHealthBar.GRAB_TAB_LENGTH) or 12
 -- Per-ability cue colours now live with the renderer that paints them (CUE_MOVECAST /
 -- CUE_OFFGCD in UIRenderer): they are applied per render to the shared cue dot's halves
 -- rather than baked in at construction, since which colour a half takes depends on how
@@ -60,10 +63,6 @@ function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
 end
 
 -- Export constants for UIRenderer and UINameplateOverlay
-UIFrameFactory.HOTKEY_FONT_SCALE = HOTKEY_FONT_SCALE
-UIFrameFactory.HOTKEY_MIN_FONT_SIZE = HOTKEY_MIN_FONT_SIZE
-UIFrameFactory.HOTKEY_OFFSET_FIRST = HOTKEY_OFFSET_FIRST
-UIFrameFactory.HOTKEY_OFFSET_QUEUE = HOTKEY_OFFSET_QUEUE
 UIFrameFactory.POSITION_HOLD_TIME  = 0.05  -- 50ms: min display time before positions 2+ can swap
 UIFrameFactory.GLOW_HOLD_TIME      = 0.05  -- 50ms: glow hysteresis to prevent animation flicker
 -- Per-frame refresh throttles for CD-swipe widgets and usability tint. Centralized
@@ -176,16 +175,16 @@ function UIFrameFactory.MergeOverlayTextOverlays(profile)
     return merged
 end
 
--- Panel interaction helpers
+-- Panel interaction helpers.
+-- panelInteraction always resolves: it has a profile default, and the legacy panelLocked
+-- bool it replaced is migrated into it on load, so no fallback arm is reachable.
 local function IsPanelLocked(profile)
     if not profile then return false end
-    local mode = profile.panelInteraction
-    if mode then return mode ~= "unlocked" end
-    return profile.panelLocked or false  -- Legacy fallback
+    return (profile.panelInteraction or "unlocked") ~= "unlocked"
 end
 
 local function TogglePanelLock(profile)
-    local mode = profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
+    local mode = profile.panelInteraction or "unlocked"
     if mode == "unlocked" then
         profile.panelInteraction = "locked"
     else
@@ -412,6 +411,26 @@ if Masque then
     MasqueGroup:RegisterCallback(OnStandardQueueSkinChanged)
 else
     GetMasqueGroup = function() return nil end
+end
+
+-- Hand a finished button to the skinning group, then re-apply our text overlay
+-- settings. Order matters: ApplyTextOverlaySettings must run AFTER AddButton so our
+-- anchor overrides whatever position the skin gives the HotKey element.
+local function RegisterMasque(button, actualIconSize, profile)
+    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
+    if MasqueGroup then
+        MasqueGroup:AddButton(button, {
+            Icon = button.iconTexture,
+            Cooldown = button.cooldown,
+            ChargeCooldown = button.chargeCooldown,
+            HotKey = button.hotkeyText,
+            Count = button.chargeText,
+            Normal = button.NormalTexture,
+            Pushed = button.PushedTexture,
+            Highlight = button.HighlightTexture,
+        })
+    end
+    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
 end
 
 -- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
@@ -751,12 +770,10 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
 
     button._cooldownShown = false
     button._chargeCooldownShown = false
-    button._cachedMaxCharges = nil
     button.castingHighlightShown = false
 
     button.normalizedHotkey = nil
     button.previousNormalizedHotkey = nil
-    button.hotkeyChangeTime = nil
     button.spellChangeTime = nil
     button.cachedHotkey = nil
 
@@ -795,9 +812,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     -- anchor family is never protected yet, so this Show() is always combat-safe.
     button:SetAlpha(0)
     button:Show()
-
-    -- Defensive-specific slot tracking
-    button.iconIndex = index
 
     if isDetached then
         -- Detached mode: lay out along detachedOrientation within defensiveFrame.
@@ -896,22 +910,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
         end
     end)
 
-    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
-    if MasqueGroup then
-        MasqueGroup:AddButton(button, {
-            Icon = button.iconTexture,
-            Cooldown = button.cooldown,
-            ChargeCooldown = button.chargeCooldown,
-            HotKey = button.hotkeyText,
-            Count = button.chargeText,
-            Normal = button.NormalTexture,
-            Pushed = button.PushedTexture,
-            Highlight = button.HighlightTexture,
-        })
-    end
-
-    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
-    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
+    RegisterMasque(button, actualIconSize, profile)
 
     return button
 end
@@ -1235,8 +1234,7 @@ function UIFrameFactory.SetupClickThroughIconDrag(addon)
     listener:SetScript("OnEvent", function()
         local p = addon:GetProfile()
         if not p then return end
-        local mode = p.panelInteraction or (p.panelLocked and "locked" or "unlocked")
-        if mode ~= "clickthrough" then
+        if (p.panelInteraction or "unlocked") ~= "clickthrough" then
             if altHoldTimer then altHoldTimer:Cancel() altHoldTimer = nil end
             if dragModeActive then DisableIconDragMode() end
             return
@@ -1658,22 +1656,7 @@ local function CreateInterruptIcon(addon, profile)
         end
     end)
 
-    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
-    if MasqueGroup then
-        MasqueGroup:AddButton(button, {
-            Icon = button.iconTexture,
-            Cooldown = button.cooldown,
-            ChargeCooldown = button.chargeCooldown,
-            HotKey = button.hotkeyText,
-            Count = button.chargeText,
-            Normal = button.NormalTexture,
-            Pushed = button.PushedTexture,
-            Highlight = button.HighlightTexture,
-        })
-    end
-
-    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
-    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
+    RegisterMasque(button, actualIconSize, profile)
 
     -- Cast aura: small icon showing what the enemy is casting, attached to
     -- the interrupt button.  Always placed on the side away from the queue
@@ -1803,22 +1786,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
         end
     end)
 
-    local MasqueGroup = GetMasqueGroup and GetMasqueGroup()
-    if MasqueGroup then
-        MasqueGroup:AddButton(button, {
-            Icon = button.iconTexture,
-            Cooldown = button.cooldown,
-            ChargeCooldown = button.chargeCooldown,
-            HotKey = button.hotkeyText,
-            Count = button.chargeText,
-            Normal = button.NormalTexture,
-            Pushed = button.PushedTexture,
-            Highlight = button.HighlightTexture,
-        })
-    end
-
-    -- Apply text overlay settings AFTER Masque so our anchor overrides the skin's HotKey position.
-    UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
+    RegisterMasque(button, actualIconSize, profile)
 
     return button
 end

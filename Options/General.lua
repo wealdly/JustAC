@@ -8,8 +8,9 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local W = LibStub("JustAC-OptionsWidgets")
 
 -- displayMode == "disabled" turns off every surface; most controls gate on it.
+-- Resolved per call, not at load: Options/Core.lua loads after this file.
 local function fullyDisabled(addon)
-    return (addon.db.profile.displayMode or "queue") == "disabled"
+    return LibStub("JustAC-Options", true).IsFullyDisabled(addon)
 end
 
 local rebuildNPO = W.rebuildNPO

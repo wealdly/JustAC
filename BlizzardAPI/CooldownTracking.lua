@@ -87,6 +87,20 @@ function BlizzardAPI.PeekBaseCooldownSeconds(spellID)
     return (spellID and baseCdSecondsCache[spellID]) or 0
 end
 
+--- Pre-cache base cooldowns for every spell in the Blizzard rotation list.
+--- Must be called OUT of combat (GetSpellBaseCooldown returns secrets in combat).
+--- Safe to call repeatedly - already-cached spells are skipped above.
+function BlizzardAPI.PreCacheRotationCooldowns()
+    if not BlizzardAPI.GetRotationSpells then return end
+    local rotationSpells = BlizzardAPI.GetRotationSpells()
+    if not rotationSpells then return end
+    for _, spellID in ipairs(rotationSpells) do
+        if spellID and spellID > 0 then
+            BlizzardAPI.GetBaseCooldownSeconds(spellID)
+        end
+    end
+end
+
 -- Hidden tooltip for parsing traited cooldown values
 local probeTooltip = nil
 
@@ -500,7 +514,7 @@ local function CheckChargeCorrections()
     end
 end
 
--- ============================================================================
+--------------------------------------------------------------------------------
 -- Secret-safe readiness probes (12.0). Cooldown-remaining and aura durations are
 -- secret in combat, but a DurationObject fed into a scratch Cooldown widget drives
 -- that widget's SHOWN state, and IsShown() is a plain, branchable boolean. So we

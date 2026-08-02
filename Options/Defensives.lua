@@ -10,6 +10,12 @@ local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local W = LibStub("JustAC-OptionsWidgets")
 
+-- Defensive-behaviour options are dead when neither surface would show a defensive icon.
+-- Resolved per call, not at load: Options/Core.lua loads after this file.
+local function defensivesUnreachable(addon)
+    return LibStub("JustAC-Options", true).AreDefensivesUnreachable(addon)
+end
+
 -- Pre-combat buff options -------------------------------------------------------------
 -- categories[cat]: false = off, a stat string = preference, nil = auto (optimal/recency).
 local PB_STAT_ORDER = { "off", "auto", "haste", "crit", "mastery", "versatility" }
@@ -148,14 +154,7 @@ function Defensives.CreateTabArgs(addon)
                         desc = W.spellDesc("Insert Procced Defensives desc", 34428),  -- Victory Rush
                         order = 1, width = "full", default = true,
                         onSet = function() addon:ForceUpdateAll() end,
-                        disabled = function(a)
-                            local dm = a.db.profile.displayMode or "queue"
-                            if dm == "disabled" then return true end
-                            local standardEnabled = a.db.profile.defensives.enabled
-                            local npo = a.db.profile.nameplateOverlay
-                            local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                            return not standardEnabled and not overlayEnabled
-                        end,
+                        disabled = defensivesUnreachable,
                     }),
                     -- CONTENT behaviour, not display: it reorders which defensives the queue
                     -- recommends. Lived under Standard Queue -> Defensive Display, which was
@@ -171,11 +170,7 @@ function Defensives.CreateTabArgs(addon)
                         -- about the standard queue), plus: meaningless in "When Health Low"
                         -- mode, where everything is already gated on health.
                         disabled = function(a)
-                            local dm = a.db.profile.displayMode or "queue"
-                            if dm == "disabled" then return true end
-                            local npo = a.db.profile.nameplateOverlay
-                            local overlayEnabled = (dm == "overlay" or dm == "both") and npo and npo.showDefensives
-                            if not a.db.profile.defensives.enabled and not overlayEnabled then return true end
+                            if defensivesUnreachable(a) then return true end
                             return (a.db.profile.defensives.displayMode or "always") == "healthBased"
                         end,
                     }),
@@ -329,14 +324,7 @@ function Defensives.CreateTabArgs(addon)
                         -- is off, or when no defensive display is actually showing, since the
                         -- slot renders inside that cluster.
                         disabled = function(a)
-                            if not HasMaintenanceDefensive() then return true end
-                            local dm = a.db.profile.displayMode or "queue"
-                            if dm == "disabled" then return true end
-                            local standardEnabled = a.db.profile.defensives.enabled
-                            local npo = a.db.profile.nameplateOverlay
-                            local overlayEnabled = (dm == "overlay" or dm == "both")
-                                and npo and npo.showDefensives
-                            return not standardEnabled and not overlayEnabled
+                            return not HasMaintenanceDefensive() or defensivesUnreachable(a)
                         end,
                     }),
                     -- CROWD-CONTROL ESCAPE (70-71) - a MEMBER of Sustain above, not a rival
@@ -523,7 +511,6 @@ function Defensives.UpdateDefensivesOptions(addon)
         petHealSpells = defensives.classSpells[targetKey].petHealSpells
     elseif playerClass and defensives.classSpells and defensives.classSpells[playerClass] then
         -- Class-level fallback (legacy data not yet migrated to per-spec)
-        targetKey = playerClass
         defensiveSpells = defensives.classSpells[playerClass].defensiveSpells
         petRezSpells = defensives.classSpells[playerClass].petRezSpells
         petHealSpells = defensives.classSpells[playerClass].petHealSpells

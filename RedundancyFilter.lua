@@ -42,7 +42,8 @@ local WEAPON_ENCHANT_SPELLS = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS or {}
 
 --------------------------------------------------------------------------------
 -- NeverSecret Aura Whitelist (12.0+)
--- Source: Meorawr (Blizzard) hotfix + NoSelph/ShadowedUnitFrames research.
+-- Derived from the engine hotfix that exempted these spells, confirmed by probing
+-- the aura API on live units.
 -- These spells return non-secret AuraData (spellId, name, icon, duration, etc.)
 -- even in combat on player/party/raid units. When the aura API reports a field
 -- as "secret" for one of these spells, we can safely pcall-access it - the data
@@ -196,6 +197,29 @@ local instanceToSpellMap = {}   -- auraInstanceID → spellID
 local instanceToNameMap = {}    -- auraInstanceID → spell name
 local instanceToIconMap = {}    -- auraInstanceID → icon texture
 local instanceToTimingMap = {}  -- auraInstanceID → {duration, expirationTime, count, halfwayThreshold}
+
+-- Fraction of an aura's duration still remaining at the pandemic window: refreshing at or
+-- past this point no longer clips the existing application.
+local PANDEMIC_REMAINING = 0.2
+
+--- Build the timing record every aura cache stores, including the pandemic threshold as an
+--- ABSOLUTE timestamp. The subtraction has to happen here, at capture time, because in
+--- combat duration/expirationTime are secret and cannot be read or subtracted - only the
+--- already-computed threshold can be compared against `now` later. Every caller goes
+--- through this so that rule (and the 0.2) is stated once.
+local function BuildAuraTiming(dur, exp, count)
+    dur, exp = dur or 0, exp or 0
+    local halfwayThreshold
+    if dur > 0 and exp > 0 then
+        halfwayThreshold = exp - (dur * PANDEMIC_REMAINING)
+    end
+    return {
+        duration = dur,
+        expirationTime = exp,
+        count = count or 1,
+        halfwayThreshold = halfwayThreshold,
+    }
+end
 
 -- Track spellIDs explicitly removed during combat (via UNIT_AURA removedAuraInstanceIDs)
 -- Prevents trustedOutOfCombatCache from re-adding auras the player manually cancelled
@@ -382,16 +406,8 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                         end
                     end
                     if not durIsSecret and not expIsSecret and dur and exp then
-                        local halfwayThreshold = nil
-                        if dur > 0 and exp > 0 then
-                            halfwayThreshold = exp - (dur * 0.2)
-                        end
-                        instanceToTimingMap[instanceID] = {
-                            duration = dur,
-                            expirationTime = exp,
-                            count = auraData.applications or 1,
-                            halfwayThreshold = halfwayThreshold,
-                        }
+                        instanceToTimingMap[instanceID] =
+                            BuildAuraTiming(dur, exp, auraData.applications)
                     end
                     
                     -- Copy name/icon from previous mapping if we have them
@@ -675,16 +691,7 @@ RefreshAuraCache = function()
                         cachedAuras.byID[realSpellId] = true
                         local dur = ForceReadNumber(auraData, "duration")
                         local exp = ForceReadNumber(auraData, "expirationTime")
-                        local halfwayThreshold = nil
-                        if dur and dur > 0 and exp and exp > 0 then
-                            halfwayThreshold = exp - (dur * 0.2)
-                        end
-                        local timingInfo = {
-                            duration = dur or 0,
-                            expirationTime = exp or 0,
-                            count = auraData.applications or 1,
-                            halfwayThreshold = halfwayThreshold,
-                        }
+                        local timingInfo = BuildAuraTiming(dur, exp, auraData.applications)
                         cachedAuras.auraInfo[realSpellId] = timingInfo
                         if instanceID then
                             instanceToSpellMap[instanceID] = realSpellId
@@ -734,18 +741,7 @@ RefreshAuraCache = function()
                     cachedAuras.byID[auraData.spellId] = true
                     -- Store aura timing info for pandemic check (use API-specific helper)
                     local dur, exp = BlizzardAPI.GetAuraTiming("player", i, "HELPFUL")
-                    -- Pre-calculate 80% duration threshold (absolute timestamp)
-                    -- CRITICAL: Do arithmetic NOW (out of combat) not later when values may be secret
-                    local halfwayThreshold = nil
-                    if dur and dur > 0 and exp and exp > 0 then
-                        halfwayThreshold = exp - (dur * 0.2)  -- Timestamp when aura reaches 20% remaining (80% consumed)
-                    end
-                    local timingInfo = {
-                        duration = dur or 0,
-                        expirationTime = exp or 0,
-                        count = auraData.applications or 1,  -- Stack count
-                        halfwayThreshold = halfwayThreshold,  -- Pre-calculated for in-combat comparison
-                    }
+                    local timingInfo = BuildAuraTiming(dur, exp, auraData.applications)
                     cachedAuras.auraInfo[auraData.spellId] = timingInfo
                     
                     -- Update instance maps (always, so they're current for combat)
@@ -787,18 +783,7 @@ RefreshAuraCache = function()
                     local expIsSecret = BlizzardAPI.IsSecretValue(expirationTime)
                     local dur = (not durIsSecret and duration) or 0
                     local exp = (not expIsSecret and expirationTime) or 0
-                    -- Pre-calculate 80% duration threshold (absolute timestamp)
-                    -- CRITICAL: Do arithmetic NOW (out of combat) not later when values may be secret
-                    local halfwayThreshold = nil
-                    if dur > 0 and exp > 0 then
-                        halfwayThreshold = exp - (dur * 0.2)  -- Timestamp when aura reaches 20% remaining (80% consumed)
-                    end
-                    cachedAuras.auraInfo[spellId] = {
-                        duration = dur,
-                        expirationTime = exp,
-                        count = count or 1,
-                        halfwayThreshold = halfwayThreshold,  -- Pre-calculated for in-combat comparison
-                    }
+                    cachedAuras.auraInfo[spellId] = BuildAuraTiming(dur, exp, count)
                 end
                 if name then
                     cachedAuras.byName[name] = spellId or true

@@ -88,6 +88,14 @@ CURATED = {
     "DEATHKNIGHT_3": {"raise_abomination": 288853, "summon_gargoyle": 49206, "unholy_assault": 207289},
     "DEMONHUNTER_1": {"fel_barrage": 258925, "glaive_tempest": 342817, "reavers_glaive": 442294},
     "DEMONHUNTER_2": {"bulk_extraction": 320341, "reavers_glaive": 442294, "shear": 203782},
+    # Devourer: the trait-tree export joins only same-named PASSIVE shadow records
+    # for these casts, so the universe walk can't reach them. CSV name+castability
+    # grounded at live 12.0.7.68887 (passives excluded via SPELL_ATTR0_PASSIVE),
+    # cross-checked against live rotation-guide spell ids - 2026-08-02.
+    "DEMONHUNTER_3": {
+        "collapsing_star": 1221150, "eradicate": 1225826, "hungering_slash": 1239123,
+        "pierce_the_veil": 1245483, "predators_wake": 1259431, "reapers_toll": 1245470,
+    },
     "DRUID_1": {"full_moon": 274283, "half_moon": 274282, "stellar_flare": 202347, "warrior_of_elune": 202425},
     "DRUID_3": {"pulverize": 80313, "thrash_bear": 77758, "swipe_bear": 213771},
     "HUNTER_1": {"bloodshed": 321530, "call_of_the_wild": 359844, "multishot": 2643},
@@ -96,6 +104,12 @@ CURATED = {
     "MAGE_2": {"phoenix_flames": 257541},
     "MAGE_3": {"glacial_spike": 199786},
     "MONK_2": {"invoke_chiji": 325197},
+    # zenith 1249625 (Midnight WW cooldown, 2 charges @ 90s; single-entry node in
+    # the parallel Monk tree the universe walk misses) - CSV-grounded 2026-08-02.
+    "MONK_3": {"zenith": 1249625},
+    # ascendance: the shared-class-tree name walk picks Elemental's 114050 inside
+    # the Enhancement universe; the Enh cast is 114051 - CSV-grounded 2026-08-02.
+    "SHAMAN_2": {"ascendance": 114051},
     "PALADIN_2": {"holy_armaments": 432459},
     "PALADIN_3": {"divine_hammer": 198034, "final_reckoning": 343721,
                   "justicars_vengeance": 215661, "templar_strike": 407480},
@@ -381,8 +395,64 @@ def list_sig(lst):
     return tuple(entry_sig(e) for e in lst)
 
 
+# --- burst anchors -----------------------------------------------------------
+# SimC marks each spec's burst window EXPLICITLY: potions, on-use trinkets and
+# external-buff requests (Power Infusion) are gated on the window buff
+# (`potion,if=buff.X.up`, trinket-sync variables). Those anchor tokens, resolved
+# to cast ids and filtered to real cooldowns, become the per-spec burst-cue
+# trigger list (runtime priority: profile override -> this list -> SpellDB
+# curated fallback).
+SYNC_RE = re.compile(r"\+=/(?:potion|use_items?|invoke_external_buff)\b"
+                     r"|variable,name=[a-z_0-9]*(?:trinket|sync)")
+ANCHOR_TOKEN_RE = re.compile(r"(?:buff|cooldown)\.([a-z_]+)\.(?:up|remains|react|ready)")
+# Raid externals/utility that gate items but are not the spec's own burst CD,
+# plus stealth openers (long CDs that gate opener lines, not burst windows).
+ANCHOR_SKIP = set("""bloodlust heroism time_warp fury_of_the_aspects power_infusion potion
+shadowmeld prowl stealth vanish""".split())
+# Anchor buff token -> castable action token(s), where they differ (composite
+# talent-choice tokens, buff granted by a differently-named cast).
+BUFF2CAST = {
+    "ca_inc":          ["celestial_alignment", "incarnation_chosen_of_elune"],
+    "bs_inc":          ["berserk", "incarnation_avatar_of_ashamane"],
+    "voidform":        ["void_eruption", "dark_ascension"],
+    "ebon_might_self": ["ebon_might"],
+}
+MIN_ANCHOR_CD_MS = 45_000  # ponytail: fixed floor keeps 30s mini-CDs (Tiger's Fury) out
+MAX_ANCHORS = 4
+
+
+def burst_anchors(text, resolve, cds, unresolved):
+    counts = {}
+    for line in text.splitlines():
+        if not SYNC_RE.search(line):
+            continue
+        for t in ANCHOR_TOKEN_RE.findall(line):
+            if t not in ANCHOR_SKIP:
+                counts[t] = counts.get(t, 0) + 1
+    out, seen = [], set()
+    for t, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        hit = False
+        for cast in BUFF2CAST.get(t, [t]):
+            sid = resolve(cast)
+            if sid and sid not in seen and cds.get(sid, 0) >= MIN_ANCHOR_CD_MS:
+                seen.add(sid)
+                out.append((sid, cast))
+                hit = True
+        # Report anchors that resolve to nothing at all - a proc/pseudo buff
+        # token is expected noise, but a top anchor going dark is worth eyes.
+        if not hit and t in BUFF2CAST:
+            unresolved.add(t + "(burst)")
+        if len(out) >= MAX_ANCHORS:
+            break
+    return out[:MAX_ANCHORS]
+
+
 def emit_spec(speckey, contexts):
     L = ['  ["%s"] = {' % speckey]
+    b = contexts.get("burst")
+    if b:
+        L.append("    burst = {%s},  -- %s" % (
+            ", ".join(str(sid) for sid, _ in b), " ".join(tok for _, tok in b)))
     for ctx in ("st", "cleave", "aoe"):
         lst = contexts.get(ctx)
         if not lst:
@@ -469,6 +539,25 @@ def main():
         only = sys.argv[sys.argv.index("--spec") + 1]
 
     bridge = SimcBridge(CSV_DIR)
+    # Base cooldowns (ms) for the burst-anchor floor: procs/pseudo buffs have no
+    # cooldown row and mini-CDs fall under MIN_ANCHOR_CD_MS. Charge-based majors
+    # (Zenith: 2 charges @ 90s) carry their real weight in ChargeRecoveryTime,
+    # not RecoveryTime - fold that in via the charge-category join.
+    cds = {}
+    for r in bridge._rows("SpellCooldowns"):
+        sid = int(r["SpellID"] or 0)
+        eff = max(int(r["RecoveryTime"] or 0), int(r["CategoryRecoveryTime"] or 0))
+        if sid and eff > cds.get(sid, 0):
+            cds[sid] = eff
+    charge_cat = {int(r["ID"]): int(r["ChargeRecoveryTime"] or 0)
+                  for r in bridge._rows("SpellCategory")}
+    for r in bridge._rows("SpellCategories"):
+        if int(r.get("DifficultyID") or 0) != 0:
+            continue
+        sid = int(r["SpellID"] or 0)
+        recharge = charge_cat.get(int(r["ChargeCategory"] or 0), 0)
+        if sid and recharge > cds.get(sid, 0):
+            cds[sid] = recharge
     files = sorted(glob.glob(os.path.join(APL_DIR, "*.simc")))
     all_specs = {}          # speckey -> {ctx: list}
     report = []             # (name, speckey, counts, residue)
@@ -483,7 +572,8 @@ def main():
         cls, specname, speckey = info
         resolve = bridge.resolver(cls, specname, CURATED.get(speckey, {}))
         unresolved = set()
-        lists = parse_apl(open(f, encoding="utf-8").read())
+        text = open(f, encoding="utf-8").read()
+        lists = parse_apl(text)
         varmap = build_varmap(lists)
 
         tier_lists = {ctx: flatten(lists, k, resolve, unresolved, varmap) for ctx, k in TIERS}
@@ -497,8 +587,12 @@ def main():
         if list_sig(cl) != list_sig(st) and list_sig(cl) != list_sig(contexts.get("aoe", [])):
             contexts["cleave"] = cl
 
+        anchors = burst_anchors(text, resolve, cds, unresolved)
+        if anchors:
+            contexts["burst"] = anchors
+
         all_specs[speckey] = contexts
-        counts = {c: len(v) for c, v in contexts.items()}
+        counts = {c: len(v) for c, v in contexts.items() if c != "burst"}
         # residue minus anything SKIP would have caught (dot-name refs etc. already excluded)
         report.append((name, speckey, counts, sorted(unresolved)))
 

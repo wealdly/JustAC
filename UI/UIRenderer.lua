@@ -138,13 +138,12 @@ local function SetIconHotkeyText(icon, hotkey, showHotkeys)
     end
 end
 
-local function SetIconNormalizedHotkey(icon, hotkey, now, trackPrevious)
+local function SetIconNormalizedHotkey(icon, hotkey, trackPrevious)
     if not icon then return end
     if hotkey and hotkey ~= "" then
         local normalized = NormalizeHotkey(hotkey)
         if trackPrevious and icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
             icon.previousNormalizedHotkey = icon.normalizedHotkey
-            icon.hotkeyChangeTime = now or GetTime()
         end
         icon.normalizedHotkey = normalized
     else
@@ -697,16 +696,7 @@ local function ClearIconState(icon)
         icon.cueDot:Hide()
         icon._cueDotKey = nil   -- force a repaint when this pooled icon is reused
     end
-    if UIAnimations then
-        if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon) end
-        if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon) end
-        if icon.hasGapCloserGlow then UIAnimations.StopGapCloserGlow(icon) end
-        if icon.hasBurstGlow     then UIAnimations.StopBurstGlow(icon) end
-    end
-    icon.hasAssistedGlow  = false
-    icon.hasProcGlow      = false
-    icon.hasGapCloserGlow = false
-    icon.hasBurstGlow     = false
+    if UIAnimations then UIAnimations.StopAllGlows(icon) end
     icon.hotkeyText:SetText("")
 end
 
@@ -1639,7 +1629,7 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     
     -- When showHotkeys is off, keep normalized hotkey for flash matching.
     SetIconHotkeyText(defensiveIcon, hotkey, showHotkeys)
-    SetIconNormalizedHotkey(defensiveIcon, hotkey, GetTime(), true)
+    SetIconNormalizedHotkey(defensiveIcon, hotkey, true)
 
     defensiveIcon.isWaiting = waiting or nil
     if defensiveIcon.centerText then
@@ -1914,7 +1904,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
                 local hotkey = ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
                 intIcon.cachedHotkey = hotkey
                 SetIconHotkeyText(intIcon, hotkey, ctx.showHotkeys)
-                SetIconNormalizedHotkey(intIcon, hotkey, nil, false)
+                SetIconNormalizedHotkey(intIcon, hotkey, false)
             end
 
             -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
@@ -2018,8 +2008,8 @@ local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window activ
 local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow, showBurstGlow)
     local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
-    local isBurstInjection = SpellQueue.IsBurstInjection and SpellQueue.IsBurstInjection(spellID)
-    if isBurstInjection and showBurstGlow then return GLOW_BURST end
+    local isBurstCue = SpellQueue.IsBurstCue and SpellQueue.IsBurstCue(spellID)
+    if isBurstCue and showBurstGlow then return GLOW_BURST end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
     if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
     -- Spell displaced to position 2 by a gap-closer injection keeps its blue glow
@@ -2292,7 +2282,7 @@ local function RenderQueueIcon(icon, i, ctx)
         -- When showHotkeys is off, keep normalized hotkey for flash matching.
         SetIconHotkeyText(icon, hotkey, ctx.showHotkeys)
         if hotkeyChanged then
-            SetIconNormalizedHotkey(icon, hotkey, currentTime, true)
+            SetIconNormalizedHotkey(icon, hotkey, true)
         end
 
         local hasVisibleHotkey = ctx.showHotkeys and hotkey ~= ""
@@ -2497,7 +2487,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
-    local showBurstGlow = showPrimaryGlow and profile.burstInjection and profile.burstInjection.showGlow == true
+    local showBurstGlow = showPrimaryGlow and profile.burstCueGlow == true
     local queueDesaturation = profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
     local showUsabilityTint = profile.showUsabilityTint ~= false
     local showRangeTint = profile.showRangeTint ~= false
@@ -2554,7 +2544,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                         local defShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
                         if defIcon.cachedHotkey ~= defHotkey then
                             defIcon.cachedHotkey = defHotkey
-                            SetIconNormalizedHotkey(defIcon, defHotkey, currentTime, true)
+                            SetIconNormalizedHotkey(defIcon, defHotkey, true)
                         end
                         SetIconHotkeyText(defIcon, defHotkey, defShowHotkeys)
                     end
@@ -2578,12 +2568,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         for i = 1, maxIcons do
             local icon = spellIconsRef[i]
             if icon then
-                if icon.hasAssistedGlow   then UIAnimations.StopAssistedGlow(icon);  icon.hasAssistedGlow   = false end
-                if icon.hasProcGlow       then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow       = false end
-                if icon.hasGapCloserGlow  then UIAnimations.StopGapCloserGlow(icon);  icon.hasGapCloserGlow  = false end
-                if icon.hasBurstGlow      then UIAnimations.StopBurstGlow(icon);      icon.hasBurstGlow      = false end
+                UIAnimations.StopAllGlows(icon)
                 if icon.spreadArrow and icon.spreadArrow:IsShown() then icon.spreadArrow:Hide() end
-                if icon.hasDefensiveGlow  then UIAnimations.StopDefensiveGlow(icon);  icon.hasDefensiveGlow  = false end
             end
         end
     end
@@ -2693,7 +2679,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
     end
     
-    local interactionMode = profile.panelInteraction or (profile.panelLocked and "locked" or "unlocked")
+    local interactionMode = profile.panelInteraction or "unlocked"
 
     if lastPanelLocked ~= interactionMode then
         lastPanelLocked = interactionMode
@@ -2870,18 +2856,7 @@ end
 
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.MoveCastDotEnabled    = MoveCastDotEnabled
-UIRenderer.NormalizeHotkey       = NormalizeHotkey
-UIRenderer.SetIconHotkeyText     = SetIconHotkeyText
-UIRenderer.SetIconNormalizedHotkey = SetIconNormalizedHotkey
-UIRenderer.CheckSpellRange       = CheckSpellRange
-UIRenderer.UpdateRangeHotkeyColor = UpdateRangeHotkeyColor
-UIRenderer.MatchActiveCast       = MatchActiveCast
-UIRenderer.ResolveVisualState    = ResolveVisualState
-UIRenderer.ApplyVisualState      = ApplyVisualState
-UIRenderer.UpdateCastingHighlight = UpdateCastingHighlight
-UIRenderer.ClearIconState        = ClearIconState
 UIRenderer.RenderQueueIcon       = RenderQueueIcon
-UIRenderer.WAIT_LABEL            = WAIT_LABEL
 
 -- Suppresses CC suggestions until the game registers the CC state on the target.
 function UIRenderer.NotifyCCApplied()

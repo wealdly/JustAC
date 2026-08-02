@@ -328,7 +328,7 @@ function SpellSearch.SpecHeader(label)
             local _, name = GetSpecializationInfo(specIndex)
             specName = name
         end
-        return "|c" .. colorCode .. (className or "Unknown") .. "|r " .. label .. " (" .. (specName or "?") .. ")"
+        return "|c" .. colorCode .. (className or L["Unknown"]) .. "|r " .. label .. " (" .. (specName or "?") .. ")"
     end
 end
 
@@ -556,7 +556,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     end
                     local best = "|cff00ff00" .. info.name .. "|r"
                     if restores then
-                        best = best .. " — " .. restores .. " " .. (L["health"] or "health")
+                        best = best .. " - " .. restores .. " " .. (L["health"] or "health")
                     end
                     if info.owned > 1 then
                         best = best .. " (" .. (L["best of"] or "best of") .. " " .. info.owned .. ")"

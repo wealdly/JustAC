@@ -22,7 +22,7 @@ A `DurationObject` (from `C_Spell.GetSpellCooldownDuration`,
 `C_UnitAuras.GetAuraDuration`, etc.) carries a *secret* remaining time. But when it is
 fed to a native **Cooldown** widget via `SetCooldownFromDurationObject`, the engine
 drives that widget's **shown state** from the duration, and `Cooldown:IsShown()` is a
-plain widget boolean — *not* a secret value. So we recover a branchable
+plain widget boolean - *not* a secret value. So we recover a branchable
 "active / not active" without ever touching the secret number.
 
 ```lua
@@ -37,19 +37,19 @@ sets -> reads -> resets, so the read always reflects the duration object just fe
 
 ### What we get / don't get
 
-- **Get:** the boolean "on cooldown?" / "aura active?" — enough to evaluate a gate.
+- **Get:** the boolean "on cooldown?" / "aura active?" - enough to evaluate a gate.
 - **Do NOT get:** the remaining *time* (still secret). Anything that needs a number
   (a "% remaining" bar, `dot.remains < N`) is out of reach this way.
 
 ### Where it's used
 
-- **cd gate** — `BlizzardAPI.IsSpellOnCooldown(id)` via
+- **cd gate** - `BlizzardAPI.IsSpellOnCooldown(id)` via
   `GetSpellCooldownDuration(id, true)` (the `true` excludes the GCD, so "on a real
   cooldown" is distinguished from "just the GCD").
-- **buff-window gate** — `BlizzardAPI.IsBuffWindowActive(id)` via
+- **buff-window gate** - `BlizzardAPI.IsBuffWindowActive(id)` via
   `GetPlayerAuraBySpellID(id).auraInstanceID` -> `GetAuraDuration("player", instId)`.
   This replaced a shipped duration DB + local cast-time bookkeeping.
-- **dot gate** — same pattern against the target aura instance.
+- **dot gate** - same pattern against the target aura instance.
 
 ## Verifying it (and detecting closure)
 
@@ -72,25 +72,25 @@ Self-buffs present (aura duration object -> IsShown):
   stopped driving the widget's shown state from the duration, or `IsShown()` itself
   became secret-tainted.
 
-## If Blizzard closes it — fallbacks (in order)
+## If Blizzard closes it - fallbacks (in order)
 
-1. **`C_Spell.GetSpellCooldown(id).isActive`** — a separate boolean that is
+1. **`C_Spell.GetSpellCooldown(id).isActive`** - a separate boolean that is
    **NeverSecret** (readable in combat, validated 2026-07-07). Cheapest cd-ready
    signal, but it does not distinguish a real cooldown from the GCD, so it is coarser
    than the ignore-GCD probe. Good first fallback for the cd gate.
-2. **`C_Secrets.GetSpellCooldownSecrecy(id)` / power-secrecy predicates** — ask the
+2. **`C_Secrets.GetSpellCooldownSecrecy(id)` / power-secrecy predicates** - ask the
    engine up front which inputs are secret this combat and take the readable path
    where one exists (not every spell/spec is secret).
-3. **Local cast-time + duration DB** — the approach this replaced. Time each window
+3. **Local cast-time + duration DB** - the approach this replaced. Time each window
    from `UNIT_SPELLCAST_SUCCEEDED` and look the length up in a generated
    `Data/AuraDurations.lua`. The generator is retained at `tools/gen_aura_durations.py`;
    the runtime tracker is recoverable from git history (removed 2026-07-07 in the commit
-   that introduced this probe). Approximate — drifts, can't see external refreshes — but
+   that introduced this probe). Approximate - drifts, can't see external refreshes - but
    needs no probe.
-4. **Pandemic-pool hook** — for `dot.refreshable` specifically, hook OnShow/OnHide of
+4. **Pandemic-pool hook** - for `dot.refreshable` specifically, hook OnShow/OnHide of
    Blizzard's CooldownViewer pandemic-icon pool frames, which the engine shows exactly
    on real pandemic enter/exit. Turns a secret threshold into an event edge.
-5. **Delegate to AC** — fail open. Drop the gate and let the ability surface in priority
+5. **Delegate to AC** - fail open. Drop the gate and let the ability surface in priority
    order; Blizzard's Assisted Combat pick (position 1) still reads the real state
    engine-side, so the queue degrades to "AC order" rather than breaking.
 
@@ -98,14 +98,14 @@ Self-buffs present (aura duration object -> IsShown):
 
 Surveyed from native-frame trackers; useful if new secret-value problems appear:
 
-- **`StatusBar:SetTimerDuration(durObj, ...)`** — engine-driven bar fill/drain from a
+- **`StatusBar:SetTimerDuration(durObj, ...)`** - engine-driven bar fill/drain from a
   duration object; motion is computed engine-side, never resampled in Lua.
-- **`C_DurationUtil.CreateDurationTextBinding()`** — binds a FontString countdown to a
+- **`C_DurationUtil.CreateDurationTextBinding()`** - binds a FontString countdown to a
   duration object, so the number ticks without the addon reading the remaining time.
-- **StatusBar threshold fill** — `SetMinMaxValues(n-1, n)` + `SetValue(secretValue)`:
+- **StatusBar threshold fill** - `SetMinMaxValues(n-1, n)` + `SetValue(secretValue)`:
   below N fills 0% (bar hidden), at N fills 100% (bar shown). A native "resource >= N" /
-  "at max stacks" *display* detector — but visual only; you cannot branch on it, so a
+  "at max stacks" *display* detector - but visual only; you cannot branch on it, so a
   resource gate still delegates to AC.
-- **`AssistedCombatManager.lastNextCastSpellID`** — Blizzard's already-computed pick as a
+- **`AssistedCombatManager.lastNextCastSpellID`** - Blizzard's already-computed pick as a
   plain table field; read it instead of calling `GetNextCastSpell` on a ticker to avoid
   taint/throttle.
