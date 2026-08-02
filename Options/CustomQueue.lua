@@ -98,7 +98,8 @@ local function MakeContextOrderSelect(addon, order)
             .. "|cffffd100Match Blizzard's pick|r - reorder to match what Assisted "
             .. "Combat is recommending now (target pattern + builder/spender role).\n"
             .. "|cffffd100SimC priority|r - order by SimulationCraft's theorycraft "
-            .. "priority for your spec and target count.\n\n"
+            .. "priority for your spec and target count. The default where data "
+            .. "exists for your spec.\n\n"
             .. "SimC priority is tuned for end-game; below max level use Match Blizzard's "
             .. "pick. (Orderings from SimulationCraft, GPL-3.0.)",
         order = order,
@@ -114,8 +115,14 @@ local function MakeContextOrderSelect(addon, order)
         get = function()
             local profile = addon:GetProfile()
             if not profile then return "ac" end
-            if profile.contextOrder then return profile.contextOrder end
-            return (profile.orderContextAware == false) and "off" or "ac"
+            local v = profile.contextOrder
+            if not v then
+                v = (profile.orderContextAware == false) and "off" or "simc"
+            end
+            -- No SimC data for this spec: the runtime falls back to the AC
+            -- heuristic, and the dropdown has no "simc" entry - reflect that.
+            if v == "simc" and not hasSimc() then v = "ac" end
+            return v
         end,
         set = function(_, val)
             local profile = addon:GetProfile()

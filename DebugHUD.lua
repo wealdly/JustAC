@@ -37,7 +37,12 @@ local function BuildText()
     local cq = prof and prof.customQueue and specKey and prof.customQueue[specKey]
     local src = (cq and cq.enabled) and "Custom" or "Blizzard AC"
     local order = (prof and prof.contextOrder)
-        or (prof and prof.orderContextAware == false and "off") or "ac"
+        or (prof and prof.orderContextAware == false and "off") or "simc"
+    -- Mirror the runtime fallback: SimC ordering needs data for this spec.
+    if order == "simc" then
+        local RI = LibStub("JustAC-RotationImport", true)
+        if not (RI and RI.HasRotation and RI.HasRotation()) then order = "ac" end
+    end
     L[#L + 1] = "|cff00ccffsource|r   " .. src .. "  |cffaaaaaaorder:" .. order .. "|r"
 
     -- Blizzard's live pick (kept as context source even when hidden).

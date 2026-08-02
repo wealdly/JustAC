@@ -27,7 +27,7 @@ SpellDB.RegisterAuraStacks({
 [211088]=10,  -- Mark of Aluneth
 [224968]=4,  -- Mark of Aluneth
 [231895]=10,  -- Avenging Wrath
-[260708]=18,  -- Sweeping Strikes
+[260708]=12,  -- Sweeping Strikes
 [316440]=3,  -- Martial Prowess
 [323546]=99,  -- Ravenous Frenzy
 [323654]=30,  -- Flagellation

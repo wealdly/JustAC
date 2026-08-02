@@ -8,7 +8,6 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local FormCache = LibStub("JustAC-FormCache", true)
 
 -- Hot path cache
-local type = type
 local tonumber = tonumber
 local string_lower = string.lower
 local string_match = string.match

@@ -25,8 +25,6 @@ local UnitAffectingCombat = UnitAffectingCombat
 local UnitCanAttack = UnitCanAttack
 local UnitHealth = UnitHealth
 local UnitHealthMax = UnitHealthMax
-local UnitPower = UnitPower
-local UnitPowerMax = UnitPowerMax
 local UnitExists = UnitExists
 local UnitIsDead = UnitIsDead
 local math_min = math.min
@@ -231,33 +229,10 @@ local function CreateOverlayHealthBar(initialWidth)
     -- on a 5px bar the direction is barely perceptible once the bar renders vertical.
     UIHealthBar.AddBarGloss(bar, true)
 
-    -- 1px black bevel strip on bar's OVERLAY layer; starts hidden (shown per orientation).
-    local function bevelStrip(alpha, a, b, ox, oy, horizontal)
-        local t = bar:CreateTexture(nil, "OVERLAY")
-        t:SetTexture("Interface\\Buttons\\WHITE8X8")
-        t:SetVertexColor(0, 0, 0, alpha)
-        t:SetPoint(a, bar, a, ox, oy)
-        t:SetPoint(b, bar, b, ox, oy)
-        if horizontal then t:SetHeight(1) else t:SetWidth(1) end
-        t:Hide()
-        return t
-    end
-
-    -- Horizontal bevel strips (shown when orientation is HORIZONTAL).
-    bar.hBevelStrips = {
-        bevelStrip(0.35, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  0, true),
-        bevelStrip(0.16, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  1, true),
-        bevelStrip(0.16, "TOPLEFT",    "TOPRIGHT",    0, -1, true),
-        bevelStrip(0.35, "TOPLEFT",    "TOPRIGHT",    0,  0, true),
-    }
-
-    -- Vertical bevel strips (shown when orientation is VERTICAL).
-    bar.bevelStrips = {
-        bevelStrip(0.35, "TOPLEFT",  "BOTTOMLEFT",  0, 0, false),
-        bevelStrip(0.16, "TOPLEFT",  "BOTTOMLEFT",  1, 0, false),
-        bevelStrip(0.16, "TOPRIGHT", "BOTTOMRIGHT", -1, 0, false),
-        bevelStrip(0.35, "TOPRIGHT", "BOTTOMRIGHT", 0, 0, false),
-    }
+    -- Both orientations built up front and started hidden: this bar re-orients at runtime,
+    -- so the layout code just shows the matching set. Same strips the standard queue uses.
+    bar.hBevelStrips = UIHealthBar.AddTubeBevel(bar, true, true)
+    bar.bevelStrips  = UIHealthBar.AddTubeBevel(bar, false, true)
 
     bar:SetAlpha(0)
     bar:Hide()
@@ -298,16 +273,11 @@ local function CreateOverlayPowerBar(powerType)
     return bar
 end
 
--- Cache the secondary segment count from the readable UnitPowerMax (0 = resource
--- absent). In combat max may be secret, so guard IsSecretValue and reuse the cached
--- count rather than fail open. Fail-CLOSED (a spec without the resource stays hidden).
+-- Cache the secondary segment count. The fail-CLOSED secret-value rule (a spec without
+-- the resource stays hidden) lives in UIHealthBar so both surfaces cannot drift on it.
 local function RefreshOverlaySecondaryCache()
-    if not overlaySecondaryPowerBar then overlaySecondarySegments = 0; return end
-    local maxP = UnitPowerMax("player", overlaySecondaryPowerBar.powerType)
-    local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
-    if maxP and not (IsSecret and IsSecret(maxP)) then
-        overlaySecondarySegments = (maxP > 0) and maxP or 0
-    end
+    overlaySecondarySegments =
+        UIHealthBar.ResolveSegmentCount(overlaySecondaryPowerBar, overlaySecondarySegments)
 end
 
 -- Size + orient one resource bar beyond `anchorBar` at POWER_BAR_HEIGHT thickness,
@@ -381,15 +351,9 @@ local function PositionOverlayPowerBars(npo, expansion, isLeft, barWidth, barHei
     end
 end
 
--- Secret-safe value passthrough for one resource bar.
-local function UpdateOneOverlayPowerBar(bar)
-    if not bar or not bar:IsVisible() then return end
-    local power    = UnitPower("player", bar.powerType)
-    local maxPower = UnitPowerMax("player", bar.powerType)
-    if not power or not maxPower then return end
-    bar:SetMinMaxValues(0, maxPower)   -- secret in combat; engine renders it
-    bar:SetValue(power)
-end
+-- Secret-safe value passthrough for one resource bar. Shared with the standard queue's
+-- bars: overlay bars set `bar.statusBar = bar`, so they satisfy the same shape.
+local UpdateOneOverlayPowerBar = UIHealthBar and UIHealthBar.UpdateOneResourceBar
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- CC frame displacement
@@ -403,7 +367,7 @@ local BLIZZARD_AURA_HEIGHT = 25   -- NamePlateConstants.AURA_ITEM_HEIGHT
 local BLIZZARD_LOC_SIZE    = 30   -- LossOfControlFrame default size (30×30)
 
 -- Nameplate aura frames (the CC/stun list, LoC, and the enrage buff) are children of the
--- nameplate, so they inherit the target nameplate's scale — bumped up by default via
+-- nameplate, so they inherit the target nameplate's scale - bumped up by default via
 -- nameplateSelectedScale. Our queue icons are UIParent children, so without compensation
 -- the auras render noticeably bigger. Return the UIParent/AurasFrame effective-scale ratio
 -- so a list-frame scale lands the aura item at the intended UIParent-space pixel size.
@@ -447,11 +411,11 @@ end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Enrage indicator (Blizzard's enemy BuffListFrame)
--- The engine renders enemy important/stealable buffs — ENRAGE among them — in the
+-- The engine renders enemy important/stealable buffs - ENRAGE among them - in the
 -- nameplate BuffListFrame. We reposition it to sit as "position 0" of the DEFENSIVE
 -- queue (the mirror of the interrupt icon on the offensive queue) and restore it on
 -- detach. This is the only secret-safe enrage signal available: the engine renders it,
--- we only move the frame — we never read the aura.
+-- we only move the frame - we never read the aura.
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Where the defensive row meets the nameplate, captured while AnchorToNameplate lays the
 -- row out. PositionEnrageIndicator needs it to anchor against the NAMEPLATE rather than
@@ -511,7 +475,7 @@ end
 -- every frame, so that trade is not available. Same reasoning as the out-of-combat click
 -- overlay, which copies rects rather than anchoring across the boundary.
 --
--- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge —
+-- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge -
 -- tune by eye in-game; the structural anchor is what matters here.
 local function PositionEnrageIndicator(npo, expansion, stackTop)
     local uf        = currentNameplate and currentNameplate.UnitFrame
@@ -687,7 +651,7 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     -- Position: center-aligned with queue icons rather than edge-aligned.
     iconSize = iconSize or 32
     -- Scale CC/stun + LoC to the queue icon size, compensating for the nameplate scale
-    -- space (see AuraListScaleForQueue) — otherwise both render bigger than our icons.
+    -- space (see AuraListScaleForQueue) - otherwise both render bigger than our icons.
     local ccScale  = AuraListScaleForQueue(af, iconSize)
     local locScale = (iconSize / BLIZZARD_LOC_SIZE) * AuraFrameScaleRatio(af)
 
@@ -1018,11 +982,7 @@ end
 --- Called before rebuilding (settings change) or on addon disable.
 function UINameplateOverlay.Destroy(addon)
     local function CleanIcon(icon)
-        if UIAnimations then
-            if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon)  end
-            if icon.hasDefensiveGlow then UIAnimations.StopDefensiveGlow(icon) end
-            if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon)      end
-        end
+        if UIAnimations then UIAnimations.StopAllGlows(icon) end
         icon:ClearAllPoints()
         icon:Hide()
         icon:SetParent(nil)
@@ -1198,25 +1158,14 @@ function UINameplateOverlay.UpdateAnchor(addon)
 
         -- Detach and hide every element
         for _, icon in ipairs(dpsIcons) do
-            if UIAnimations then
-                if icon.hasAssistedGlow    then UIAnimations.StopAssistedGlow(icon);    icon.hasAssistedGlow    = false end
-                if icon.hasProcGlow        then UIAnimations.HideProcGlow(icon);        icon.hasProcGlow        = false end
-                if icon.hasGapCloserGlow   then UIAnimations.StopGapCloserGlow(icon);   icon.hasGapCloserGlow   = false end
-                if icon.hasBurstGlow       then UIAnimations.StopBurstGlow(icon);       icon.hasBurstGlow       = false end
-            end
+            if UIAnimations then UIAnimations.StopAllGlows(icon) end
             icon:ClearAllPoints()
             icon:Hide()
         end
         for _, icon in ipairs(defIcons) do
-            if UIAnimations then
-                if icon.hasDefensiveGlow then UIAnimations.StopDefensiveGlow(icon); icon.hasDefensiveGlow = false end
-                if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon);      icon.hasProcGlow      = false end
-            end
-            -- Glows were force-hidden outside UIRenderer's arbiter: reset its state
-            -- (same rule as UIAnimations.PauseAllGlows) or the next RenderDefensives
-            -- sees want == have and never restarts the glow on the new target.
-            icon.appliedDefGlowState = nil
-            icon.pendingDefGlowState = nil
+            -- StopAllGlows also resets UIRenderer's glow arbiter, so the next
+            -- RenderDefensives restarts the glow on the new target.
+            if UIAnimations then UIAnimations.StopAllGlows(icon) end
             icon:ClearAllPoints()
             icon:Hide()
         end
@@ -1297,7 +1246,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoShowPrimaryGlow = (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
     local npoShowProcGlow    = (npoGlowMode == "all" or npoGlowMode == "procOnly")
     local showGapCloserGlow  = npoShowPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
-    local showBurstGlow      = npoShowPrimaryGlow and profile.burstInjection and profile.burstInjection.showGlow == true
+    local showBurstGlow      = npoShowPrimaryGlow and profile.burstCueGlow == true
     local npoDesaturation = npo.queueIconDesaturation or 0
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
@@ -1573,7 +1522,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
     -- Enrage indicator: place Blizzard's enemy BuffListFrame as position 0 of the
     -- defensive queue. Re-anchored on visible-count change (same granularity as the
     -- health bar); horizontal must clear the health/resource stack, so find its top.
-    -- ponytail: a pet/power bar appearing without a count change won't re-nudge it —
+    -- ponytail: a pet/power bar appearing without a count change won't re-nudge it -
     -- force via lastEnrageCount = -1 (as UpdatePowerColor does for the health bar).
     if visibleCount > 0 then
         if visibleCount ~= lastEnrageCount then
@@ -1617,9 +1566,6 @@ function UINameplateOverlay.RefreshDefensives(addon)
     end
 end
 
---- Return the base RGB for the overlay health bar, mirroring the user's
---- WoW nameplate / raid-frame health-bar colour settings (new in 12.0).
---- Falls back to solid green on pre-12.0 clients or if CVars are absent.
 --- Update the player health bar fill value and colour.
 --- Fill: StatusBar:SetValue() accepts Blizzard secret values natively.
 --- Colour: fixed bright green base, tinted orange/red at low health using
@@ -1659,10 +1605,6 @@ function UINameplateOverlay.UpdateHealthBar()
     end
     healthBar:SetStatusBarColor(r, g, b, 0.9)
 end
-
---- Re-resolve the module-local interrupt spell list.
---- Called from JustAC:OnSpellsChanged() / OnSpecChange() when talents may have
---- changed which interrupt/CC spells are available.
 
 --- Update the pet health bar fill value.
 --- UnitHealth("pet") is secret in 12.0 combat but StatusBar:SetValue() accepts secrets.
@@ -1704,7 +1646,7 @@ function UINameplateOverlay.UpdatePowerBar(addon)
     if not overlayPowerBar then return end
     local profile = addon and addon:GetProfile()
     local npo = profile and profile.nameplateOverlay
-    if not (npo and npo.showPowerBar) then return end
+    if not (npo and npo.showPowerBar) or not UpdateOneOverlayPowerBar then return end
     local now = GetTime()
     if now - lastOverlayPowerUpdate < POWER_UPDATE_INTERVAL then return end
     lastOverlayPowerUpdate = now
@@ -1728,6 +1670,9 @@ function UINameplateOverlay.UpdatePowerColor(addon)
     UINameplateOverlay.UpdatePowerBar(addon)
 end
 
+--- Re-resolve the module-local interrupt/soothe spell lists.
+--- Called from JustAC:OnSpellsChanged() / OnSpecChange() when talents may have
+--- changed which interrupt/CC spells are available.
 function UINameplateOverlay.RefreshInterruptSpells()
     if SpellDB and SpellDB.ResolveInterruptSpells then
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
@@ -1763,17 +1708,11 @@ end
 --- Hide every overlay element (called from EnterDisabledMode).
 function UINameplateOverlay.HideAll()
     for _, icon in ipairs(dpsIcons) do
-        if UIAnimations then
-            if icon.hasAssistedGlow  then UIAnimations.StopAssistedGlow(icon);  icon.hasAssistedGlow  = false end
-            if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon);       icon.hasProcGlow      = false end
-        end
+        if UIAnimations then UIAnimations.StopAllGlows(icon) end
         icon:Hide()
     end
     for _, icon in ipairs(defIcons) do
-        if UIAnimations then
-            if icon.hasDefensiveGlow then UIAnimations.StopDefensiveGlow(icon); icon.hasDefensiveGlow = false end
-            if icon.hasProcGlow      then UIAnimations.HideProcGlow(icon);      icon.hasProcGlow      = false end
-        end
+        if UIAnimations then UIAnimations.StopAllGlows(icon) end
         icon:Hide()
     end
     if maintenanceIcon then maintenanceIcon:Hide() end

@@ -34,9 +34,8 @@ local lastShouldShowQueue = true
 -- each build; read by UIRenderer via IsDotSpreadActive().
 local dotSpreadActive = false
 
--- Lazy-resolved references for gap-closer and burst injection (load after SpellQueue in TOC)
+-- Lazy-resolved references for gap-closer injection (loads after SpellQueue in TOC)
 local cachedGapCloserEngine = nil
-local cachedBurstEngine = nil
 local cachedAddon = nil
 
 -- Build counters (for /jac perf diagnostic)
@@ -47,14 +46,77 @@ local spellQueueResetTime = GetTime()
 -- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
 local syntheticProcs = {}
 
--- Spells displaced from position 1 to position 2 by a gap-closer/burst injection.
+-- Spells displaced from position 1 to position 2 by a gap-closer injection.
 -- These were Blizzard's primary recommendation; they keep the blue assisted glow
 -- at their new position so the player knows they're still the next cast after closing.
 local displacedPrimary = {}
 
--- Spells injected by the burst injection system.  Separate from syntheticProcs
--- so UIRenderer can apply a distinct purple glow instead of the gap-closer magenta.
-local burstInjectedSpells = {}
+-- Burst-ready cue: queue entries matching a curated major-CD trigger that is off
+-- cooldown. Separate from syntheticProcs so UIRenderer can apply the distinct
+-- purple burst glow instead of the gap-closer magenta.
+local burstCueSpells = {}
+
+-- Burst-cue trigger set for the current spec, resolved in priority order:
+--   1) profile.burstTriggers[specKey]        - user override (non-empty)
+--   2) RotationImport.GetBurstTriggers()     - SimC sync anchors (what the APL
+--      pots/trinkets into), generated per spec
+--   3) SpellDB.CLASS_BURST_TRIGGER_DEFAULTS  - curated fallback
+-- Set keyed by raw + talent-resolved ID for the queue scan; ordered list kept
+-- for the tail pin. Rebuilt when the spec key moves; wiped on SPELLS_CHANGED
+-- because talent overrides remap ResolveSpellID within a spec.
+local cachedBurstTriggers = nil
+local cachedBurstList = nil
+local cachedBurstSource = nil   -- "custom" | "simc" | "curated" | nil
+local cachedBurstSpecKey = nil
+local function ResolveBurstTriggers()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return nil end
+    if cachedBurstTriggers and cachedBurstSpecKey == specKey then
+        return cachedBurstTriggers, cachedBurstList
+    end
+    cachedBurstSpecKey = specKey
+    cachedBurstTriggers, cachedBurstList, cachedBurstSource = {}, {}, nil
+
+    -- Options can query before the first queue build resolves the addon ref.
+    if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
+    local profile = cachedAddon and cachedAddon.db and cachedAddon.db.profile
+    local src = profile and profile.burstTriggers and profile.burstTriggers[specKey]
+    if src and #src > 0 then
+        cachedBurstSource = "custom"
+    else
+        src = nil
+    end
+    if not src then
+        local RI = LibStub("JustAC-RotationImport", true)
+        src = RI and RI.GetBurstTriggers and RI.GetBurstTriggers()
+        if src then cachedBurstSource = "simc" end
+    end
+    if not src then
+        src = SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS
+            and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
+        if src then cachedBurstSource = "curated" end
+    end
+
+    if src then
+        for _, spellID in ipairs(src) do
+            if spellID and spellID > 0 then
+                cachedBurstTriggers[spellID] = true
+                local resolved = BlizzardAPI.ResolveSpellID(spellID)
+                if resolved ~= spellID then cachedBurstTriggers[resolved] = true end
+                cachedBurstList[#cachedBurstList + 1] = resolved
+            end
+        end
+    end
+    return cachedBurstTriggers, cachedBurstList
+end
+
+--- True if a queue entry matches the trigger set (raw or display form).
+local function IsBurstTrigger(triggers, spellID)
+    if not spellID or spellID <= 0 then return false end
+    if triggers[spellID] then return true end
+    local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+    return (displayID and displayID ~= spellID and triggers[displayID]) or false
+end
 
 -- ── Reusable scratch buffers (wiped at start of each GetCurrentSpellQueue call) ────────────────
 -- These are NOT persistent state; they are pooled to avoid GC pressure on the hot path.
@@ -273,16 +335,9 @@ end
 --- queue looks identical whichever branch produced it, and "my queue vanished" is only
 --- actionable with the branch name attached - /jac inspect blank prints the last one.
 local function EvaluateQueueVisibility(profile, inCombat)
+    -- Always non-nil: it has a profile default, and the legacy keys it replaced are
+    -- migrated into it on every load.
     local queueVis = profile.queueVisibility
-    if not queueVis then
-        if profile.hideQueueOutOfCombat then
-            queueVis = "combatOnly"
-        elseif profile.requireHostileTarget then
-            queueVis = "requireHostile"
-        else
-            queueVis = "always"
-        end
-    end
 
     if queueVis == "combatOnly" and not inCombat then
         return false, "combatOnly and out of combat"
@@ -532,6 +587,33 @@ local function GateInPickWindows(gates, pickWindows)
     for i = 1, #gates do
         local g = gates[i]
         if g.t == "buff" and not g.neg and g.id and pickWindows[g.id] then return true end
+    end
+    return false
+end
+
+--- True when the entry carries any positive buff-window gate at all - i.e. the
+--- SimC data DEFINES a window this ability belongs to (vs. "cast on cooldown").
+local function HasPositiveBuffGate(gates)
+    if not gates then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "buff" and not g.neg and g.id then return true end
+    end
+    return false
+end
+
+--- True when one of the entry's positive window gates IS Blizzard's current pick
+--- (raw or display form) - AC is recommending the very ability that opens this
+--- window (e.g. pick = Tiger's Fury while Berserk is gated on the TF buff), so
+--- the window is about to exist even though no aura is up yet.
+local function TriggerWindowOpenerIsPick(gates, pickID, pickDisplay)
+    if not gates or not pickID then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "buff" and not g.neg and g.id
+           and (g.id == pickID or g.id == pickDisplay) then
+            return true
+        end
     end
     return false
 end
@@ -842,7 +924,7 @@ function SpellQueue.GetCurrentSpellQueue()
     wipe(addedSpellIDs)
     wipe(syntheticProcs)
     wipe(displacedPrimary)
-    wipe(burstInjectedSpells)
+    wipe(burstCueSpells)
     wipe(cooldownSpells)
     local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
     local spellCount = 0
@@ -851,7 +933,6 @@ function SpellQueue.GetCurrentSpellQueue()
     -- Resolve late-bound engine refs (load after SpellQueue in TOC; resolved once, then cached).
     if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
     if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
-    if not cachedBurstEngine then cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true) end
 
     -- Position 1: Blizzard's primary suggestion. A full blacklist entry hides it here too
     -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
@@ -969,62 +1050,6 @@ function SpellQueue.GetCurrentSpellQueue()
         end
     end
 
-    -- Burst injection: inject priority spell at position 1 when burst window is active.
-    -- Two-phase: "pending" = trigger CD at pos 1 (glow only, no injection),
-    --            "active"  = trigger aura on player (inject from injection list).
-    if spellCount < maxIcons then
-        if cachedBurstEngine and cachedBurstEngine.CheckTrigger and cachedAddon then
-            local burstPhase, triggerPosition = cachedBurstEngine.CheckTrigger(cachedAddon, primarySpellID, recommendedSpells)
-            -- Phase "pending": trigger CD is visible in the queue. Mark it as burst so
-            -- renderers can show the burst glow (signal to press it), but don't
-            -- inject anything - let Blizzard's recommendation stand.
-            if burstPhase == "pending" and triggerPosition and spellCount >= triggerPosition then
-                local triggerDisplay = recommendedSpells[triggerPosition]
-                if triggerDisplay then
-                    burstInjectedSpells[triggerDisplay] = true
-                end
-                -- Also mark underlying spell ID if different from display (talent overrides)
-                if triggerPosition == 1 and primarySpellID and primarySpellID ~= triggerDisplay then
-                    burstInjectedSpells[primarySpellID] = true
-                end
-            end
-            -- Phase "active": trigger aura is on the player. Inject from injection list.
-            if burstPhase == "active" then
-                local biSpell, biBase = cachedBurstEngine.GetBurstInjectionSpell(cachedAddon, addedSpellIDs)
-                if biSpell then
-                    local biDisplay = BlizzardAPI.GetDisplaySpellID(biSpell)
-                    if spellCount >= 1 then
-                        local pos1Display = recommendedSpells[1]
-                        if pos1Display then displacedPrimary[pos1Display] = true end
-                        if primarySpellID and primarySpellID ~= pos1Display then
-                            displacedPrimary[primarySpellID] = true
-                        end
-                        for i = spellCount, 1, -1 do
-                            recommendedSpells[i + 1] = recommendedSpells[i]
-                        end
-                        recommendedSpells[1] = biSpell
-                    else
-                        recommendedSpells[1] = biSpell
-                    end
-                    spellCount = spellCount + 1
-                    addedSpellIDs[biSpell] = true
-                    addedSpellIDs[biDisplay] = true
-                    if biBase and biBase ~= biSpell then
-                        addedSpellIDs[biBase] = true
-                    end
-                    burstInjectedSpells[biSpell] = true
-                    burstInjectedSpells[biDisplay] = true
-
-                    -- Suppress burst injection spells from rotation list - only when
-                    -- we actually injected one, so they show normally when all on CD.
-                    if cachedBurstEngine.MarkBurstInjectionSpellIDs then
-                        cachedBurstEngine.MarkBurstInjectionSpellIDs(cachedAddon, addedSpellIDs)
-                    end
-                end
-            end
-        end
-    end
-
     if profile.showSpellbookProcs then
         spellCount = AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
     end
@@ -1123,7 +1148,7 @@ function SpellQueue.GetCurrentSpellQueue()
         end
     end
     -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
-    -- pick (the original recommendation, before any gap-closer/burst injection).
+    -- pick (the original recommendation, before any gap-closer injection).
     local ctxArch, ctxRange, ctxRole, ctxExecute
     if primarySpellID and SpellDB then
         ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
@@ -1184,6 +1209,9 @@ function SpellQueue.GetCurrentSpellQueue()
     lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
     lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
     lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
+    -- Hoisted for the burst cue below: the trigger-gate evaluation reuses the
+    -- SimC context tier and the pick-revealed windows computed in this block.
+    local simcCtx, pickWindows
     if cachedRotationList then
         -- Master ordering toggles (profile-level; apply to both the custom list and
         -- Blizzard's default rotation). Default nil → true (smart order):
@@ -1192,14 +1220,15 @@ function SpellQueue.GetCurrentSpellQueue()
         -- on-CD spells in their source slot instead of trailing.
         local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
         local sinkCooldowns = profile.orderSinkCooldowns ~= false
-        -- Context ordering: "off" | "ac" (match Blizzard's pick, the old default) |
-        -- "simc" (theorycraft priority). Migrate the old boolean orderContextAware.
+        -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
+        -- priority, the default - falls back to "ac" below when no data for this spec).
+        -- Migrate the old boolean orderContextAware.
         local contextOrder = profile.contextOrder
         if not contextOrder then
-            contextOrder = (profile.orderContextAware == false) and "off" or "ac"
+            contextOrder = (profile.orderContextAware == false) and "off" or "simc"
         end
         -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
-        local simcCtx = (ctxArch == "aoe" and "aoe") or (ctxArch == "cleave" and "cleave") or "st"
+        simcCtx = (ctxArch == "aoe" and "aoe") or (ctxArch == "cleave" and "cleave") or "st"
         if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
            and RotationImport.HasRotation()) then
             contextOrder = "ac"
@@ -1208,7 +1237,6 @@ function SpellQueue.GetCurrentSpellQueue()
         -- window, so the pick's positive buff gates reveal those windows are up - readable even
         -- when the buff aura itself is secret (IsBuffWindowActive's aura probe is blind to secret
         -- auras). Siblings sharing a revealed window then promote like a live proc.
-        local pickWindows
         if contextOrder == "simc" and RotationImport and RotationImport.GetEntry and primarySpellID then
             local pickRec = RotationImport.GetEntry(primarySpellID, simcCtx)
             if pickRec and pickRec.gates then
@@ -1223,6 +1251,103 @@ function SpellQueue.GetCurrentSpellQueue()
         end
         lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
         spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
+    end
+
+    -- Burst-ready cue: emphasize a burst trigger only when a burst window is
+    -- actually CALLED FOR - inferred from Blizzard's recommendation system, the
+    -- only system that can read the secret in-combat context. The signals, per
+    -- trigger, evaluated against its own SimC burst condition (positive
+    -- buff-window gates - e.g. Feral's Berserk is gated on Tiger's Fury):
+    --   1) AC's pick IS the trigger                    -> glow position 1.
+    --   2) The trigger's window is up: plain self-buff probe, or revealed by the
+    --      pick's own gates when the aura is secret (pickWindows).
+    --   3) AC's pick IS the window opener (pick = Tiger's Fury while the trigger
+    --      needs the TF buff) - the window is about to exist.
+    -- A trigger whose SimC entry has NO window gate AND is not delegated is a
+    -- cast-on-cooldown CD by the data (Darkglare, DRW): ready-in-combat is its
+    -- window, negative gates still veto. A DELEGATED entry without a window gate
+    -- (Convoke: resource/state conditions we can't read) gets NO readiness cue -
+    -- its condition lives in state only AC can see, so the only signal left is
+    -- AC picking it (signal 1). USER-ADDED triggers are the exception: an explicit
+    -- custom list is intent, so those cue whenever ready (only their own active
+    -- window vetoes). The cued trigger surfaces at position 2 (promoted or
+    -- inserted) - never position 1, which stays AC's alone. In-combat only.
+    if inCombat and profile.burstCueGlow == true then
+        local triggers, triggerList = ResolveBurstTriggers()
+        if triggers and triggerList then
+            local pos1 = recommendedSpells[1]
+            if pos1 and IsBurstTrigger(triggers, pos1) then
+                -- Signal 1: Blizzard says press it. Glow, touch nothing.
+                burstCueSpells[pos1] = true
+                if primarySpellID and primarySpellID ~= pos1 then
+                    burstCueSpells[primarySpellID] = true
+                end
+            else
+                local pos1Display = pos1 and BlizzardAPI.GetDisplaySpellID(pos1) or pos1
+                for i = 1, #triggerList do
+                    local tid = triggerList[i]
+                    local display = BlizzardAPI.GetDisplaySpellID(tid) or tid
+                    if not blacklist[tid] and not blacklist[display]
+                       and BlizzardAPI.IsSpellAvailable(display)
+                       and not BlizzardAPI.IsSpellOnCooldown(display) then
+                        local rec = RotationImport and RotationImport.GetEntry
+                            and RotationImport.GetEntry(tid, simcCtx)
+                        local called = false
+                        if cachedBurstSource == "custom" then
+                            -- Explicit intent: the user put this spell on the list,
+                            -- so ready cues it; only its own running window vetoes.
+                            called = not (rec and SimcNegativeBuffBlocks(rec.gates))
+                        elseif rec then
+                            local gates = rec.gates
+                            if HasPositiveBuffGate(gates) then
+                                called = (SimcBuffWindowActive(gates)
+                                        or GateInPickWindows(gates, pickWindows)
+                                        or TriggerWindowOpenerIsPick(gates, primarySpellID, pos1Display))
+                                    and not SimcNegativeBuffBlocks(gates)
+                            elseif not rec.delegated then
+                                -- Unconditional by the data: SimC's own line is
+                                -- "cast on cooldown".
+                                called = not SimcNegativeBuffBlocks(gates)
+                            end
+                            -- else: delegated with no window gate - condition
+                            -- unreadable, wait for AC to pick it (signal 1).
+                        end
+                        if called then
+                            -- Locate in the assembled queue: promote to position 2,
+                            -- or insert there when AC's rotation list omits it.
+                            local at, atSid
+                            for p = 2, spellCount do
+                                local s = recommendedSpells[p]
+                                if s == display or s == tid then at, atSid = p, s break end
+                            end
+                            if at then
+                                if at > 2 then
+                                    -- Shift 2..at-1 down one, seat the trigger at 2.
+                                    for j = at, 3, -1 do
+                                        recommendedSpells[j] = recommendedSpells[j - 1]
+                                    end
+                                    recommendedSpells[2] = atSid
+                                end
+                                burstCueSpells[atSid] = true
+                            else
+                                -- ponytail: on a full queue the last icon falls off -
+                                -- the cue outranks the lowest-priority tail slot.
+                                local insertAt = (spellCount >= 1) and 2 or 1
+                                if spellCount < maxIcons then spellCount = spellCount + 1 end
+                                for j = spellCount, insertAt + 1, -1 do
+                                    recommendedSpells[j] = recommendedSpells[j - 1]
+                                end
+                                recommendedSpells[insertAt] = display
+                                addedSpellIDs[tid] = true
+                                addedSpellIDs[display] = true
+                                burstCueSpells[display] = true
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
     end
 
     -- When Blizzard returns no spells (e.g. target out of range OOC) but
@@ -1288,9 +1413,22 @@ function SpellQueue.IsSyntheticProc(spellID)
     return syntheticProcs[spellID] == true
 end
 
---- Returns true if spellID was injected by the burst injection system this frame.
-function SpellQueue.IsBurstInjection(spellID)
-    return burstInjectedSpells[spellID] == true
+--- Returns true if spellID carries the burst-ready cue (trigger off cooldown,
+--- visible in the queue) as of the most recent GetCurrentSpellQueue().
+function SpellQueue.IsBurstCue(spellID)
+    return burstCueSpells[spellID] == true
+end
+
+--- Effective burst-trigger list and its source ("custom" | "simc" | "curated").
+--- Options panel + /jac inspect burst.
+function SpellQueue.GetBurstTriggerInfo()
+    local _, list = ResolveBurstTriggers()
+    return list, cachedBurstSource
+end
+
+--- Wipe the trigger cache (user edited overrides, profile switched).
+function SpellQueue.InvalidateBurstTriggers()
+    cachedBurstTriggers = nil
 end
 
 --- Returns true if spellID was displaced from position 1 to position 2 by a
@@ -1323,7 +1461,6 @@ function SpellQueue.OnSpecChange()
     -- Eagerly resolve late-bound refs; by spec-change time all engines are loaded.
     if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
     if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
-    if not cachedBurstEngine then cachedBurstEngine = LibStub("JustAC-BurstInjectionEngine", true) end
     SpellQueue.ClearSpellCache()
     SpellQueue.ForceUpdate()
 end
@@ -1331,6 +1468,8 @@ end
 function SpellQueue.OnSpellsChanged()
     SpellQueue.ClearSpellCache()
     SpellQueue.InvalidateRotationCache()
+    -- Burst-cue trigger set bakes in talent-resolved IDs; rebuild on talent change.
+    cachedBurstTriggers = nil
     -- SimC rank lookup bakes in talent-dependent override resolution. Invalidate
     -- HERE (SPELLS_CHANGED fires on every talent change) and not in
     -- InvalidateRotationCache, which also fires on every target swap and would

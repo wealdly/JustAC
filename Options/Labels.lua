@@ -178,8 +178,7 @@ function Labels.CreateTabArgs(addon)
                 name = L["Nameplate Overlay"],
                 order = 2,
                 disabled = function()
-                    local dm = addon.db.profile.displayMode or "queue"
-                    return dm ~= "overlay" and dm ~= "both"
+                    return LibStub("JustAC-Options", true).IsOverlayDisabled(addon)
                 end,
                 args = {
                     hotkeyGroup   = BuildLabelInlineGroup(addon, "hotkey",   L["Hotkey Text"],   1, 1.0, hotkeyAnchorValues, HOTKEY_ANCHORS, "TOPRIGHT",    "overlay"),

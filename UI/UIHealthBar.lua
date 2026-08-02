@@ -35,6 +35,7 @@ UIHealthBar.POWER_BAR_HEIGHT = POWER_BAR_HEIGHT  -- shared with the nameplate ov
 -- what prevents create/resize drift (e.g. the past defSpacing mismatch).
 
 local GRAB_TAB_LENGTH = 12
+UIHealthBar.GRAB_TAB_LENGTH = GRAB_TAB_LENGTH  -- shared with UIFrameFactory, which draws the tab
 
 --- Pixel span + first-icon inset for a bar mirroring a queue of `count` icons.
 --- The first icon may be scaled (firstSize); the rest are bodySize. The 0.90 factors
@@ -91,7 +92,9 @@ local lastPetVisibleCount = -1  -- cached visible icon count for pet bar
 --   Defensives disabled + defensives.showHealthBar → spans offensive queue, sits at BAR_SPACING above mainFrame
 -- 1px black tube bevel on statusBar's OVERLAY layer (engine can't clobber it).
 -- Horizontal bars bevel top+bottom; vertical bars bevel left+right. Alphas: 0.35 outer / 0.16 inner.
-local function AddTubeBevel(statusBar, barIsHorizontal)
+-- Returns the four strips. Pass startHidden when the caller builds BOTH orientations up
+-- front and toggles them at runtime (the nameplate overlay does; its bars re-orient).
+local function AddTubeBevel(statusBar, barIsHorizontal, startHidden)
     local function strip(alpha, a, b, ox, oy, horizontal)
         local t = statusBar:CreateTexture(nil, "OVERLAY")
         t:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -99,19 +102,25 @@ local function AddTubeBevel(statusBar, barIsHorizontal)
         t:SetPoint(a, statusBar, a, ox, oy)
         t:SetPoint(b, statusBar, b, ox, oy)
         if horizontal then t:SetHeight(1) else t:SetWidth(1) end
+        if startHidden then t:Hide() end
+        return t
     end
     if barIsHorizontal then
-        strip(0.35, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  0, true)
-        strip(0.16, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  1, true)
-        strip(0.16, "TOPLEFT",    "TOPRIGHT",    0, -1, true)
-        strip(0.35, "TOPLEFT",    "TOPRIGHT",    0,  0, true)
-    else
-        strip(0.35, "TOPLEFT",  "BOTTOMLEFT",  0, 0, false)
-        strip(0.16, "TOPLEFT",  "BOTTOMLEFT",  1, 0, false)
-        strip(0.16, "TOPRIGHT", "BOTTOMRIGHT", -1, 0, false)
-        strip(0.35, "TOPRIGHT", "BOTTOMRIGHT", 0, 0, false)
+        return {
+            strip(0.35, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  0, true),
+            strip(0.16, "BOTTOMLEFT", "BOTTOMRIGHT", 0,  1, true),
+            strip(0.16, "TOPLEFT",    "TOPRIGHT",    0, -1, true),
+            strip(0.35, "TOPLEFT",    "TOPRIGHT",    0,  0, true),
+        }
     end
+    return {
+        strip(0.35, "TOPLEFT",  "BOTTOMLEFT",   0, 0, false),
+        strip(0.16, "TOPLEFT",  "BOTTOMLEFT",   1, 0, false),
+        strip(0.16, "TOPRIGHT", "BOTTOMRIGHT", -1, 0, false),
+        strip(0.35, "TOPRIGHT", "BOTTOMRIGHT",  0, 0, false),
+    }
 end
+UIHealthBar.AddTubeBevel = AddTubeBevel  -- shared with the nameplate overlay
 
 -- Shared depleted-health background. One neutral dark tone behind every bar so the
 -- fill color (player green / pet yellow / target red) is what reads as "remaining",
@@ -840,14 +849,22 @@ UIHealthBar.GetClassSecondary = GetClassSecondary  -- shared with the nameplate 
 -- UNIT_DISPLAYPOWER, where the value is readable), so in combat - where max may be
 -- secret - we reuse the cached count rather than fail-open and show a secondary bar for
 -- a spec that has none (e.g. Balance Druid, Brewmaster Monk). Fail-CLOSED.
-local secondarySegments = 0
-local function RefreshSecondaryCache()
-    if not secondaryPowerBarFrame then secondarySegments = 0; return end
-    local maxP = UnitPowerMax("player", secondaryPowerBarFrame.powerType)
+-- Returns the segment count for `bar`, or `current` unchanged when max is secret.
+-- Shared with the nameplate overlay so the fail-closed rule lives in exactly one place.
+local function ResolveSegmentCount(bar, current)
+    if not bar then return 0 end
+    local maxP = UnitPowerMax("player", bar.powerType)
     local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
     if maxP and not (IsSecret and IsSecret(maxP)) then
-        secondarySegments = (maxP > 0) and maxP or 0
+        return (maxP > 0) and maxP or 0
     end
+    return current
+end
+UIHealthBar.ResolveSegmentCount = ResolveSegmentCount
+
+local secondarySegments = 0
+local function RefreshSecondaryCache()
+    secondarySegments = ResolveSegmentCount(secondaryPowerBarFrame, secondarySegments)
 end
 
 -- Reposition segment dividers proportionally along the bar (on size change / rebuild).
@@ -1067,9 +1084,11 @@ local function UpdateOneResourceBar(frame)
     local power = UnitPower("player", frame.powerType)
     local maxPower = UnitPowerMax("player", frame.powerType)
     if not power or not maxPower then return end
+    -- Both are secret in combat; StatusBar renders them engine-side without us reading.
     frame.statusBar:SetMinMaxValues(0, maxPower)
     frame.statusBar:SetValue(power)
 end
+UIHealthBar.UpdateOneResourceBar = UpdateOneResourceBar  -- shared with the nameplate overlay
 
 -- Update power values on timer / power events. UnitPower is secret in combat but
 -- StatusBar:SetValue accepts it (rendered by the engine).

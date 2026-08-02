@@ -44,7 +44,7 @@ the hide-point (e.g. `0.90` to stop nagging near-full). This retires the fragile
 event-cadence heuristic (`HasSustainedPlayerHealthActivity`) and the ~35% `LowHealthFrame`
 vignette as the OOC "below full" signal for top-off suggestions.
 
-### auraInstanceID mapping (RedundancyFilter v38): Holding up in live
+### auraInstanceID mapping (RedundancyFilter): Holding up in live
 
 The beta assumption that `auraInstanceID` is NeverSecret has held in live play.
 The pending activation FIFO queue pattern (UNIT_SPELLCAST_SUCCEEDED → addedAuras) is working.
@@ -273,7 +273,7 @@ Key patterns observed:
 - "Secure cooldown passthrough": obtain a `LuaDurationObject` via `GetSpellCooldownDuration`,
   pass directly to `SetCooldownFromDurationObject` - no intermediate secret value touched
 - `MSA_BuffBridge.lua`: out-of-combat aura cache bridged into combat via instanceID maps
-  (same pattern as JustAC RedundancyFilter v38)
+  (same pattern as JustAC's RedundancyFilter)
 - Whitelisted aura handling: separate code path for spells where full data is available
 
 ### OmniCD
@@ -283,8 +283,8 @@ Cooldown/interrupt tracker for group content. Post-CLEU approach:
 - Shows Ironbark, Pain Suppression, etc. using the `C_Spell.IsExternalDefensive()` API
   (already documented in JustAC's `12.0_COMPATIBILITY.md`)
 
-### BetterBlizzFrames / MidnightSimpleUnitFrames
-Working unit frame addons (ElvUI and SUF broke at launch):
+### Unit-frame addons that kept working
+The ones still functional at launch shared an approach:
 - Build on Blizzard's frame templates rather than replacing them
 - Aura display uses `C_UnitAuras.GetUnitAuras()` (not the deprecated index loop)
 - Health display uses new `UnitHealthPercent()` helper
@@ -313,16 +313,17 @@ Priority ordered. None are regressions - these are improvements.
 
 ---
 
-## Addons That Broke at Launch (For Context)
+## What Broke at Launch (For Context)
 
-| Addon | Status | Reason |
-|-------|--------|--------|
-| ElvUI | No updates until 12.0.5+ | Massive rewrite required for new container model |
-| WeakAuras (rotation profiles) | Effectively dead for decision logic | Cannot access protected combat data |
-| WeakAuras (visual display) | Functional (limited) | Still works as visual display layer |
-| Shadowed Unit Frames | Broken | Replaced raw frame access patterns |
-| Z-Perl | Broken | Same root cause as SUF |
-| Hekili | Dead | Direct rotation calculation explicitly blocked |
+Categories of addon that stopped working, by root cause:
+
+| Category | Status | Reason |
+|----------|--------|--------|
+| Full UI-replacement suites | No updates until 12.0.5+ | Massive rewrite required for the new container model |
+| Aura frameworks used for rotation logic | Effectively dead for decision logic | Cannot access protected combat data |
+| Aura frameworks used for display only | Functional (limited) | Still work as a visual display layer |
+| Unit-frame replacements | Broken | Relied on raw frame access patterns that were removed |
+| Rotation calculators | Dead | Direct rotation calculation explicitly blocked |
 
 JustAC is unaffected by all of the above because it consumes `C_AssistedCombat` output
 (Blizzard's own feature) rather than calculating rotation logic.
@@ -336,7 +337,6 @@ JustAC is unaffected by all of the above because it consumes `C_AssistedCombat` 
 - https://warcraft.wiki.gg/wiki/Patch_12.0.1/API_changes
 - https://www.wowhead.com/news/majority-of-addon-changes-finalized-for-midnight-pre-patch-whitelisted-spells-379738
 - https://www.icy-veins.com/wow/news/blizzard-relaxing-more-addon-limitations-in-midnight/
-- https://www.warcrafttavern.com/wow/news/elvui-joins-weakauras-in-development-limbo-for-midnight/
 - https://www.wowhead.com/news/unit-frame-addons-in-midnight-massive-changes-project-reworked-for-midnight-379941
 - https://us.forums.blizzard.com/en/wow/t/with-new-api-changes-addons-are-once-again-stronger-than-base-ui-on-beta/2215895
 - https://kaylriene.com/2025/10/03/wow-midnights-addon-combat-and-design-changes-part-1-api-anarchy-and-the-dark-black-box/

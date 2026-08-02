@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell archetype data (GENERATED -- do not edit by hand).
--- Source: wago.tools DB2 build 12.1.0.68301. Regenerate with tools/gen_archetypes.sh.
+-- Source: wago.tools DB2 build 12.0.7.68887. Regenerate with tools/gen_archetypes.sh.
 -- Player class damage spells grouped by archetype; value = range; comment = name.
 -- Indirect-damage spells (triggered/cloned) are intentionally absent (neutral).
 -- Plus builder/spender roles: spender = costs an accumulator resource, builder =
@@ -10,8 +10,9 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 if not SpellDB or not SpellDB.RegisterArchetypes then return end
 
 SpellDB.RegisterArchetypes({
-    aoe = {  -- 733 spells (value = range)
+    aoe = {  -- 724 spells (value = range)
         [122] = "melee",  -- Frost Nova
+        [772] = "melee",  -- Rend
         [1449] = "melee",  -- Arcane Explosion
         [2120] = "ranged",  -- Flamestrike
         [2643] = "ranged",  -- Multi-Shot
@@ -650,7 +651,7 @@ SpellDB.RegisterArchetypes({
         [1223801] = "ranged",  -- Arcane Rebound
         [1226968] = "ranged",  -- Abyssal Flare
         [1227621] = "ranged",  -- Tentacle Slam
-        [1231479] = "ranged",  -- Shadeburst
+        [1231479] = "ranged",  -- Corrupted Apparition
         [1232346] = "ranged",  -- Desecrate
         [1232993] = "ranged",  -- A Murder of Crows
         [1234195] = "ranged",  -- Void Nova
@@ -734,18 +735,8 @@ SpellDB.RegisterArchetypes({
         [1282534] = "ranged",  -- Blaze
         [1283723] = "melee",  -- Stomp
         [1291678] = "ranged",  -- Hammer of Wrath
-        [1292322] = "ranged",  -- Unbound Flame
-        [1295939] = "ranged",  -- Prismatic Bolt
-        [1297432] = "ranged",  -- Soulburst
-        [1299409] = "ranged",  -- Cobra Cleave
-        [1299944] = "melee",  -- Rampaging Ruin
-        [1300330] = "ranged",  -- Epidemic Order
-        [1300660] = "melee",  -- Concussive Slam
-        [1301619] = "ranged",  -- Fiery Shrapnel
-        [1306077] = "ranged",  -- Isolated Implosion
-        [1306923] = "ranged",  -- Divine Arbiter
     },
-    cleave = {  -- 177 spells (value = range)
+    cleave = {  -- 182 spells (value = range)
         [120] = "melee",  -- Cone of Cold
         [845] = "melee",  -- Cleave
         [6572] = "melee",  -- Revenge
@@ -920,11 +911,16 @@ SpellDB.RegisterArchetypes({
         [1264147] = "melee",  -- Revenge
         [1264379] = "melee",  -- Unravel
         [1264485] = "ranged",  -- Shadow Thrash
+        [1265579] = "melee",  -- Rampaging Ruin
+        [1265580] = "melee",  -- Rampaging Ruin
+        [1265581] = "melee",  -- Rampaging Ruin
+        [1265582] = "melee",  -- Rampaging Ruin
         [1269224] = "ranged",  -- Blaze of Glory
+        [1269972] = "melee",  -- Echo of Raze
+        [1269973] = "melee",  -- Echo of Ravage
         [1270116] = "melee",  -- Phalanx
-        [1301157] = "ranged",  -- Rampant Thorn
     },
-    st = {  -- 1772 spells (value = range)
+    st = {  -- 1764 spells (value = range)
         [53] = "melee",  -- Backstab
         [133] = "ranged",  -- Fireball
         [172] = "ranged",  -- Corruption
@@ -935,7 +931,6 @@ SpellDB.RegisterArchetypes({
         [603] = "ranged",  -- Doom
         [686] = "ranged",  -- Shadow Bolt
         [703] = "melee",  -- Garrote
-        [772] = "melee",  -- Rend
         [853] = "ranged",  -- Hammer of Justice
         [980] = "ranged",  -- Agony
         [1079] = "melee",  -- Rip
@@ -1780,7 +1775,6 @@ SpellDB.RegisterArchetypes({
         [212143] = "melee",  -- Blackout Kick
         [212332] = "melee",  -- Smash
         [212337] = "melee",  -- Powerful Smash
-        [212431] = "ranged",  -- Explosive Shot
         [212881] = "ranged",  -- Jagged Spikes
         [212947] = "ranged",  -- Beam - Test - Crash
         [213229] = "ranged",  -- Chaos Bolt
@@ -1852,7 +1846,6 @@ SpellDB.RegisterArchetypes({
         [228600] = "ranged",  -- Glacial Spike
         [228645] = "melee",  -- Heart Strike
         [228649] = "ranged",  -- Blackout Kick
-        [228920] = "ranged",  -- Ravager
         [231489] = "ranged",  -- Compounding Horror
         [232056] = "ranged",  -- Windfury Attack
         [232670] = "ranged",  -- Shadow Bolt
@@ -1917,7 +1910,7 @@ SpellDB.RegisterArchetypes({
         [257045] = "ranged",  -- Rapid Fire
         [257538] = "ranged",  -- Ebonbolt
         [257938] = "ranged",  -- Hungering Glaive
-        [258883] = "ranged",  -- Trail of Ruin
+        [258883] = "melee",  -- Trail of Ruin
         [259271] = "melee",  -- Raptor Strike
         [259277] = "ranged",  -- Kill Command
         [259278] = "melee",  -- Flanking Strike
@@ -2049,6 +2042,7 @@ SpellDB.RegisterArchetypes({
         [315341] = "ranged",  -- Between the Eyes
         [315585] = "ranged",  -- Instant Poison
         [315949] = "ranged",  -- Mind Flay
+        [316099] = "ranged",  -- Unstable Affliction
         [316239] = "melee",  -- Rune Strike
         [317009] = "ranged",  -- Sinful Brand
         [317483] = "melee",  -- Condemn
@@ -2125,6 +2119,7 @@ SpellDB.RegisterArchetypes({
         [341864] = "ranged",  -- Dread Slug
         [342240] = "ranged",  -- Ice Strike
         [342445] = "ranged",  -- Corrosive Carbonation
+        [342938] = "ranged",  -- Unstable Affliction
         [343142] = "melee",  -- Dreadblades
         [343294] = "melee",  -- Soul Reaper
         [343295] = "ranged",  -- Soul Reaper
@@ -2308,6 +2303,8 @@ SpellDB.RegisterArchetypes({
         [394047] = "ranged",  -- Goldrinn's Fang
         [394062] = "melee",  -- Rend
         [394063] = "melee",  -- Rend
+        [394324] = "ranged",  -- Deadly Poison
+        [394325] = "ranged",  -- Deadly Poison
         [394326] = "ranged",  -- Instant Poison
         [394327] = "ranged",  -- Wound Poison
         [394328] = "ranged",  -- Amplifying Poison
@@ -2658,6 +2655,7 @@ SpellDB.RegisterArchetypes({
         [1269336] = "ranged",  -- Shadowstrike
         [1269343] = "ranged",  -- Shuriken Toss
         [1269383] = "melee",  -- Heroic Strike
+        [1269648] = "melee",  -- Echo of Maul
         [1269885] = "ranged",  -- Diabolic Gaze
         [1269886] = "ranged",  -- Diabolic Gaze
         [1269892] = "ranged",  -- Diabolic Gaze
@@ -2687,22 +2685,12 @@ SpellDB.RegisterArchetypes({
         [1292107] = "ranged",  -- Frostbolt
         [1292391] = "ranged",  -- Soul Barrage
         [1292919] = "ranged",  -- Coalescence
-        [1294264] = "ranged",  -- Death Order
-        [1295924] = "ranged",  -- Prismatic Bolt
-        [1297055] = "ranged",  -- Necrotic Bolt
-        [1297086] = "ranged",  -- Necrotic Bolt
-        [1297091] = "ranged",  -- Writhing Grasp
-        [1300662] = "ranged",  -- Unrelenting Edict
-        [1300690] = "ranged",  -- Bloody Rebuke
-        [1301418] = "ranged",  -- Aflame
-        [1301742] = "ranged",  -- Starfall
-        [1308093] = "ranged",  -- Spirit's Wrath
     },
 })
 
 if not SpellDB.RegisterRoles then return end
 SpellDB.RegisterRoles({
-    builder = {  -- 453 spells
+    builder = {  -- 451 spells
         [53] = true,  -- Backstab
         [589] = true,  -- Shadow Word: Pain
         [703] = true,  -- Garrote
@@ -3117,10 +3105,12 @@ SpellDB.RegisterRoles({
         [1239507] = true,  -- Hungering Slash
         [1239541] = true,  -- Hungering Slash
         [1241413] = true,  -- Hammer of Wrath
+        [1241462] = true,  -- Arcane Pulse
         [1241922] = true,  -- Voidglare Boon
         [1242173] = true,  -- Void Volley
         [1242466] = true,  -- Void-Suffused Edge
         [1242475] = true,  -- Soul Immolation
+        [1243460] = true,  -- Arcane Pulse
         [1245414] = true,  -- Voidblade
         [1245453] = true,  -- Cull
         [1247227] = true,  -- Crimson Tempest
@@ -3152,10 +3142,6 @@ SpellDB.RegisterRoles({
         [1283344] = true,  -- Reaver's Glaive
         [1288123] = true,  -- Devour
         [1291678] = true,  -- Hammer of Wrath
-        [1295924] = true,  -- Prismatic Bolt
-        [1295977] = true,  -- Arcane Pulse
-        [1305798] = true,  -- Refund Soul Shard
-        [1307639] = true,  -- Glory of the Vanguard
     },
     spender = {  -- 190 spells
         [408] = true,  -- Kidney Shot

@@ -1,7 +1,12 @@
 # Macro Parsing Deep Dive - JustAC
 
-**Version:** 2.5 (MacroParser v11)  
 **Last Updated:** 2025-11-18
+
+> **Drift warning:** this document was written against MacroParser v11 and predates the
+> Midnight (12.0) launch. MacroParser has moved on considerably since. The conditional
+> grammar it describes is still accurate, but treat any claim about JustAC's internals,
+> API availability, or secret-value behaviour as unverified - check `MacroParser.lua` and
+> `12.0_COMPATIBILITY.md` first.
 
 ---
 

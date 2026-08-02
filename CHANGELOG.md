@@ -3,6 +3,35 @@
 
 ## [Unreleased]
 
+## [4.59.0] - 2026-08-02
+
+### Changed
+- SimC priority is now the default ordering for the queue positions after Blizzard's pick
+  (previously opt-in; specs without SimC data keep the previous ordering). If you ever
+  chose an ordering yourself, your choice is kept - change it any time under
+  Offensive → General → Context ordering.
+- Burst Injection (experimental) has been replaced by a burst-ready cue: in combat, your
+  spec's major cooldown glows purple right next to Blizzard's pick when it's actually time
+  to burst - Feral's Berserk lights up during Tiger's Fury, for example, not just whenever
+  it's off cooldown. Off by default - enable it under Offensive → General.
+- Burst trigger spells come from SimulationCraft's burst data for your spec, and you can
+  set your own list per spec under Offensive → General - your own triggers light up
+  whenever they're ready, and custom triggers from the old feature carry over. Injection
+  spell lists are retired.
+- Rotation priorities refreshed from the latest SimulationCraft data, and all spell data
+  rebuilt against the current game build - including full support for Devourer Demon
+  Hunters.
+
+### Fixed
+- Two options-panel strings showed in English regardless of your game language: the spell
+  search "no matches" hint and the class-name fallback in search results. Both are now
+  translated.
+- The nameplate overlay's Reset to Defaults now also restores Queue Visibility and Hide When
+  Mounted, and the defensive resource-bar toggle now resets correctly.
+- The nameplate overlay could leave a gap-closer or burst glow running on an icon after the
+  overlay was switched off.
+- Defensive icon glows could stay dark after the overlay was disabled and re-enabled.
+
 ## [4.58.0] - 2026-08-02
 
 ### Fixed
@@ -503,8 +532,8 @@
 
 ### Added
 - **Shamans get a weapon-imbue reminder.** Out of combat, when your weapon has no enchant,
-  JustAC reminds you to apply your imbue — Windfury or Flametongue for Enhancement,
-  Earthliving for Restoration — as a clickable green buff icon, just like the other
+  JustAC reminds you to apply your imbue - Windfury or Flametongue for Enhancement,
+  Earthliving for Restoration - as a clickable green buff icon, just like the other
   pre-combat reminders. It won't suggest a weapon oil on top of an imbue you'd rather use.
 
 ### Changed
@@ -547,7 +576,7 @@
 
 ### Pre-combat buffs
 - Every pre-combat buff dropdown now shows **the exact item from your bags** on each option
-  — the Flask list tells you which flask "Haste" will actually use, so you can see what
+  - the Flask list tells you which flask "Haste" will actually use, so you can see what
   you'd get (or what you're missing) without guessing.
 - **Speed and XP consumables** are now covered. The Food dropdown gains a **Speed** option
   (long-lasting movement-speed foods, for travel and leveling), and XP-boost consumables get
@@ -561,12 +590,12 @@
 
 ### Pre-combat buffs (new)
 - Out of combat, the defensive queue now reminds you of the pre-combat buffs you're
-  **missing but own** — flask, food, augment rune, weapon enchant — as clickable icons
+  **missing but own** - flask, food, augment rune, weapon enchant - as clickable icons
   with a green glow. Click one to use it right from the queue. Made for buffing up before
   a group or dungeon pull.
 - **Class buffs** are covered too: rogue poisons, shaman shields and weapon imbues, and the
   standard party/raid buffs. You're reminded when one is missing or has dropped below half
-  its remaining time, and offered the option your rotation already favors — rogues get both
+  its remaining time, and offered the option your rotation already favors - rogues get both
   a lethal and a non-lethal poison.
 - While you're **eating or applying** a buff, the whole queue greys out with a channel-style
   progress sweep, so it's clear the buff is on its way.
@@ -575,7 +604,7 @@
 
 ### Defensive queue
 - The emergency healing potion now surfaces the **best potion you're actually carrying**,
-  ranked by how much it restores — a potion that heals a share of your maximum health can
+  ranked by how much it restores - a potion that heals a share of your maximum health can
   out-rank a bigger fixed-amount one, and the reverse. The tile's tooltip explains the pick.
 
 ### Health bars
@@ -587,7 +616,7 @@
 
 ### Interrupts
 - The interrupt reminder now overlays the target's cast progress on the kick icon,
-  with a highlighted zone over the final stretch — press the interrupt as the bar
+  with a highlighted zone over the final stretch - press the interrupt as the bar
   reaches the zone to time it well. Channels drain instead of fill.
 
 ### Rotation
@@ -612,8 +641,8 @@
 - Renamed the **Fixed Queue** tab to **Rotation**. Position 1 is always Blizzard's
   pick; everything on the tab controls positions 2+ (the abilities shown as coming
   up next).
-- New master **Ordering** toggles — **Procs first**, **Context aware**, and
-  **Cooldowns last** — apply to positions 2+ of both Blizzard's rotation and your
+- New master **Ordering** toggles - **Procs first**, **Context aware**, and
+  **Cooldowns last** - apply to positions 2+ of both Blizzard's rotation and your
   Custom Rotation. All on by default; turn them off to show positions 2+ in exact
   source order.
 - With **Procs first** on, the per-ability **Proc Priority** toggle now affects the
@@ -622,13 +651,13 @@
 
 ### Interrupts & CC
 - Interrupt settings moved to their own **Interrupt** section above Shared Behavior.
-- Crowd-control suggestions now draw from a much larger auto-filtered list —
-  interrupt-capable hybrid abilities, racials, and pet stuns included — showing only
+- Crowd-control suggestions now draw from a much larger auto-filtered list -
+  interrupt-capable hybrid abilities, racials, and pet stuns included - showing only
   what your character actually has.
 - Suggestions are now range- and context-aware: a self-centered AoE stun is skipped
   when the target is out of range, and single-target CC is preferred when Blizzard is
   recommending single-target attacks.
-- New **Include Fears** toggle (off by default) — fears scatter mobs and break in
+- New **Include Fears** toggle (off by default) - fears scatter mobs and break in
   groups, so they're hidden unless you opt in.
 
 ### Gap-closer
@@ -1005,15 +1034,6 @@
 - **Detected Burst Triggers display**: Options panel shows auto-detected trigger spells from the current rotation, so users know what will fire the burst window without manual configuration.
 - Burst injection defaults for all 37 DPS/tank specs (13 classes), including the new Devourer Demon Hunter spec (The Hunt, Void-Scarred).
 
-### Fixed
-- Replaced broken `SetAlphaFromBoolean` secret-resolution probe with `TargetFrame.spellbar:IsInterruptable()` pcall attempt in `ResolveSecretBool`. Neither resolves secrets from addon context (`barType` is `ForceTaint_Strong`), but removes dead `CreateFrame` allocation and avoids the `GetAlpha()` stays-secret pitfall.
-
-### Changed
-- Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
-
-### Known Issues
-- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones - kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
-
 ## [4.13.1] - 2026-03-15
 
 ### Changed
@@ -1021,12 +1041,12 @@
 - Cached `LibStub("JustAC-BlizzardAPI")` at file scope in SpellDB.lua for `IsInterruptOnCooldown` hot path (eliminates redundant hash lookup 2-5× per frame during interrupt evaluation)
 
 ### Known Issues
-- **Non-interruptible cast detection fails with some nameplate replacement addons** (e.g. Platynator). When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones - kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
+- **Non-interruptible cast detection fails with some nameplate replacement addons.** When a third-party addon disables or replaces the Blizzard nameplate cast bar, JustAC cannot distinguish non-interruptible (grey bar) casts from interruptible ones - kicks/CC may be suggested on non-interruptible casts. This is a WoW 12.0 limitation: `notInterruptible` from `UnitCastingInfo()` is secret in combat, and no known addon-accessible API can resolve it. Blizzard's default nameplate cast bar resolves it internally via Icon visibility (`HideIconWhenNotInterruptible`), but addons that disable that bar remove the only working signal. Works correctly with Blizzard default nameplates.
 
 ## [4.13.0] - 2026-03-15
 
 ### Fixed
-- Interrupt detection now works correctly with all nameplate addons (Platynator, Plater, ElvUI, etc.) - no longer depends on visible cast bar frames to determine interruptibility
+- Interrupt detection now works correctly with all nameplate addons - no longer depends on visible cast bar frames to determine interruptibility
 - Fixed non-interruptible casts being treated as interruptible when switching targets mid-cast with third-party nameplate addons installed
 - Secret `notInterruptible` values (12.0 combat) resolved through `SetAlphaFromBoolean` opaque pipeline instead of `SetShown` (which rejects secrets from addon code); falls back to existing cast bar cascade when probe fails
 - **Fixed interrupt cooldown detection for unflagged spells (Kick, Pummel, etc.)** - `isOnGCD` stays `nil` for most interrupt spells even when on cooldown, so the old `isOnGCD == false` check never detected them as on-CD. Now delegates to `BlizzardAPI.IsSpellReady()` (local cooldown tracking via `UNIT_SPELLCAST_SUCCEEDED`). Interrupt spells are registered for local CD tracking at resolve time. This fixes Kick Priority mode not suggesting CC as fallback when the kick is on cooldown.
@@ -1287,7 +1307,7 @@
 ## [4.7.3] - 2026-03-07
 
 ### Fixed
-- Interrupt reminder now works correctly when third-party nameplate/target frame addons (Platynator, etc.) hide or replace the Blizzard cast bar. Previously, non-interruptible casts could incorrectly show the interrupt icon because the interruptibility check depended on visually inspecting the Blizzard cast bar's shield widget. The event tracker now reads `notInterruptible` directly from the API at cast start, making it self-sufficient.
+- Interrupt reminder now works correctly when third-party nameplate/target frame addons hide or replace the Blizzard cast bar. Previously, non-interruptible casts could incorrectly show the interrupt icon because the interruptibility check depended on visually inspecting the Blizzard cast bar's shield widget. The event tracker now reads `notInterruptible` directly from the API at cast start, making it self-sufficient.
 - Cast aura icon on interrupt reminder now falls back to UnitCastingInfo/UnitChannelInfo when the Blizzard cast bar is hidden by third-party addons (both standard queue and overlay).
 - Overlay interrupt icon in horizontal mode no longer overlaps the nameplate - now pops out above the first DPS icon instead of inline.
 - Overlay defensive queue now rebuilds on periodic checks (every 0.5s) instead of only updating cooldown swipes. Icons for "always" and "combatOnly" display modes now appear promptly when cooldowns expire.
@@ -1485,9 +1505,9 @@
 ## [4.5.0] - 2026-03-02
 
 ### Added
-- **Third-party nameplate cast bar discovery chain (UIRenderer v16):** Interrupt detection now cascades through Blizzard → Plater → ElvUI cast bars via `FindVisibleCastBar()`. Previously only worked with Blizzard's default nameplate cast bar; Plater and ElvUI users got no interrupt suggestions. Source-verified paths: `nameplate.UnitFrame.castBar` (Blizzard, capital U), `nameplate.unitFrame.castBar` (Plater, lowercase u), child `.Castbar` (ElvUI/oUF, capital C).
+- **Third-party nameplate cast bar discovery chain (UIRenderer v16):** Interrupt detection now cascades through the Blizzard cast bar and the common third-party replacements via `FindVisibleCastBar()`. Previously only worked with Blizzard's default nameplate cast bar, so anyone using a nameplate addon that replaces it got no interrupt suggestions. Source-verified paths: `nameplate.UnitFrame.castBar` (capital U), `nameplate.unitFrame.castBar` (lowercase u), child `.Castbar` (capital C).
 - **API fallback for interrupt detection when nameplates disabled:** `IsTargetCastInterruptible()` falls back to `UnitCastingInfo`/`UnitChannelInfo` with `issecretvalue()` guard and fail-open design when no cast bar frame is available (nameplates off + addon target frame).
-- **Event-driven interrupt interruptibility tracking (StateHelpers v2):** `UNIT_SPELLCAST_INTERRUPTIBLE` / `NOT_INTERRUPTIBLE` events on `"target"` now provide a definitive real boolean for interruptibility (never secret). Used as the preferred signal before frame field inspection or API fallback. Pattern learned from oUF (ElvUI) and DetailsFramework (Plater) source.
+- **Event-driven interrupt interruptibility tracking (StateHelpers v2):** `UNIT_SPELLCAST_INTERRUPTIBLE` / `NOT_INTERRUPTIBLE` events on `"target"` now provide a definitive real boolean for interruptibility (never secret). Used as the preferred signal before frame field inspection or API fallback. Pattern learned from how unit-frame and nameplate libraries track the same state.
 - **`ResetTargetCastState()` on target change (JustAC.lua):** Clears stale event-driven interruptibility state when target changes, preventing carry-over from previous target's cast.
 
 ### Changed
@@ -1747,7 +1767,7 @@
 ### Fixed
 - Fixed frame snapping to right side of screen after update or profile reset (target frame anchor was re-applied on every drag stop)
 - Fixed inability to reposition the panel when target frame anchor was enabled - dragging would immediately snap the frame back
-- Added detection for unavailable/replaced TargetFrame (ElvUI, SUF, etc.) - anchoring gracefully falls back to saved position
+- Added detection for an unavailable or replaced TargetFrame (unit-frame addons) - anchoring gracefully falls back to saved position
 - Added off-screen safety check on load - if saved position is outside screen bounds (resolution/scale change), frame resets to center
 - Fixed update-freeze-during-drag not working (`isDragging` was set on grab tab but checked on addon object)
 - Fixed SavePosition saving garbage coordinates when frame was anchored to TargetFrame (now skips save when anchored)
@@ -2481,7 +2501,7 @@
 - **Defensive Spells Filtered by DPS-Relevance**: In 12.0 when aura API is restricted (instances), the DPS-relevance filter incorrectly filtered out self-heal spells like Regrowth. Added `isDefensiveCheck` parameter to `IsSpellRedundant()` to bypass this filter for defensive spell selection
 - Fixed GCD swipe not showing when repeatedly casting the same ability (e.g., spamming Shred)
 - Fixed GCD swipe flickering caused by floating-point comparison on every frame
-- Fixed cooldown swipe inset gap - cooldowns now fill icon exactly (`SetAllPoints(iconTexture)`) matching Blizzard/WeakAuras/Dominos pattern
+- Fixed cooldown swipe inset gap - cooldowns now fill icon exactly (`SetAllPoints(iconTexture)`), matching the standard action-button pattern
 - Fixed icon mask not filling button properly - now uses `SetAllPoints(button)` instead of explicit sizing
 - Fixed asymmetric frame sizing (was `actualIconSize + 1` width, `actualIconSize` height) - all textures now symmetric and centered
 - Fixed flash/highlight textures using TOPLEFT anchor with 0.5px offset compensation - now properly centered

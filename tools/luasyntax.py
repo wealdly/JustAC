@@ -5,7 +5,7 @@ Parses each given .lua file with luaparser (Lua grammar). WoW runs Lua 5.1;
 luaparser targets 5.3, which is a syntactic superset for every construct WoW
 uses (WoW code has no goto/labels or // operator), so a clean parse here means
 the file will at least load without a syntax error. This does NOT catch
-undefined globals — that's luacheck's job; this is the brace/paren/statement gate.
+undefined globals - that's luacheck's job; this is the brace/paren/statement gate.
 
 Usage: python luasyntax.py <file.lua> [file2.lua ...]
 Exit 0 = all clean, 1 = at least one failure.

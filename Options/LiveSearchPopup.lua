@@ -5,6 +5,7 @@ local LiveSearchPopup = LibStub:NewLibrary("JustAC-LiveSearchPopup", 1)
 if not LiveSearchPopup then return end
 
 local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 local MAX_ROWS   = 10
 local ROW_HEIGHT = 22
@@ -142,7 +143,7 @@ local function PopulateRows(results)
         if not filter or #filter:trim() < 2 then
             hintText:SetText("Type to search...")
         else
-            hintText:SetText("No matches")
+            hintText:SetText(L["No matches"])
         end
         hintText:Show()
     else

@@ -1032,10 +1032,6 @@ function ActionBarScanner.GetMacroHotkey(macroName)
     return ""
 end
 
-function ActionBarScanner.InvalidateKeybindCache()
-    InvalidateKeybindCache()
-end
-
 -- Soft invalidation: mark invalid but keep values to prevent flicker
 function ActionBarScanner.InvalidateHotkeyCache()
     -- Full wipe so stale slot→hotkey entries don't get returned via the

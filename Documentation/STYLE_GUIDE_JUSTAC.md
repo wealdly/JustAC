@@ -492,11 +492,12 @@ local hash = page + (bonusOffset * 100) + (formID * 10000)
 ```
 
 ### Function Documentation
+Use the three-dash LuaDoc form (`--- @param`), which is what the codebase uses.
 ```lua
 -- SHOULD: Document public API
--- Gets the current spell queue with filters applied
--- @param ignoreBlacklist bool - Skip blacklist filtering
--- @return table - Array of spell IDs
+--- Gets the current spell queue with filters applied
+--- @param ignoreBlacklist bool - Skip blacklist filtering
+--- @return table - Array of spell IDs
 function SpellQueue.GetCurrentSpellQueue(ignoreBlacklist)
 ```
 
@@ -848,6 +849,7 @@ When creating or editing a module, verify:
 ## Version History
 
 - **2.5** (2025-11-18): Initial JustAC-specific style guide
+- **2.6** (2026-05-10): 12.0 secret-value conventions; LuaDoc standardized on `--- @param`
 
 ---
 

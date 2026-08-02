@@ -2,7 +2,7 @@
 
 When `C_UnitAuras.GetAuraDataByIndex()` returns secret values, these alternatives may bypass restrictions.
 
-## IMPLEMENTED SOLUTION: auraInstanceID Mapping (RedundancyFilter v38)
+## IMPLEMENTED SOLUTION: auraInstanceID Mapping (RedundancyFilter)
 
 **Status:** ✅ Implemented and tested - handles multi-cycle removal/reapply in combat.
 
@@ -333,7 +333,16 @@ local function HasBuffBySpellID_Smart(spellID, spellName)
 end
 ```
 
-## Testing Priority - RESOLVED\n\nThe auraInstanceID mapping approach was implemented and tested successfully.\nThe methods below were candidates evaluated before implementation:\n\n1. **auraInstanceID mapping** - ✅ IMPLEMENTED (RedundancyFilter v38) - NeverSecret handles, maps built OOC, resolved in combat\n2. **GetPlayerAuraBySpellID** - Not used (still returns secrets for spellId field)\n3. **GetAuraDataBySpellName** - Not used (still returns secrets)\n4. **Slot-based access** - Not used (same underlying data, same secrets)\n5. **Hardcoded filtering** - Superseded by instance map approach", "oldString": "## Testing Priority\n\n1. **GetPlayerAuraBySpellID** - Most promising, direct lookup by spell ID\n2. **GetAuraDataBySpellName** - Alternative using spell names\n3. **Slot-based access** - Different iteration method\n4. **Hardcoded filtering** - Current fallback (hide common buffs when secrets detected)
+## Testing Priority - RESOLVED
+
+The auraInstanceID mapping approach was implemented and tested successfully.
+The methods below were the candidates evaluated before implementation:
+
+1. **auraInstanceID mapping** - IMPLEMENTED - NeverSecret handles, maps built OOC, resolved in combat
+2. **GetPlayerAuraBySpellID** - Not used (still returns secrets for the spellId field)
+3. **GetAuraDataBySpellName** - Not used (still returns secrets)
+4. **Slot-based access** - Not used (same underlying data, same secrets)
+5. **Hardcoded filtering** - Superseded by the instance-map approach
 
 ## Implementation Notes
 

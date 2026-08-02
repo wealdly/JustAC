@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, BurstInjectionEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker
 
 -- Hot path cache for OnUpdateTick (upvalued at file scope so all methods share them)
 local UnitAffectingCombat = UnitAffectingCombat
@@ -112,11 +112,11 @@ local defaults = {
             iconSize          = 32,
             iconSpacing       = 2,   -- px between successive icons in the cluster
             opacity           = 1.0, -- icon opacity (0.1–1.0)
-            showGlow          = true,
             glowMode          = "all",
             firstIconScale    = 1.0,
             queueIconDesaturation = 0,
-            showHotkey        = true, -- Legacy; migrated to textOverlays.hotkey.show on load
+            queueVisibility   = "always", -- "always", "combatOnly", or "requireHostile"
+            hideWhenMounted   = false,
             showDefensives       = true,
             maxDefensiveIcons    = 3,    -- 1-5
             defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
@@ -136,11 +136,11 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
-            showHotkeys = true,       -- Legacy (migrated; cleared on load)
             position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
             showHealthBar = true,    -- Display compact health bar above main queue
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
             showTargetHealthBar = true, -- Display compact target health bar opposite the player/pet bars (hostile targets only)
+            showPowerBar = false,     -- Resource bar (primary power + segmented point resource); anchors to the health bars
             iconScale = 1.0,          -- Scale for defensive icons (same range as Primary Spell Scale)
             maxIcons = 4,             -- Number of defensive icons to show (1-7)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {defensiveSpells={...}, petHealSpells={...}}
@@ -180,7 +180,6 @@ local defaults = {
         },
     },
     char = {
-        lastKnownSpec = nil,
         firstRun = true,
         blacklistedSpells = {},   -- Legacy: migrated to profile on load; kept as schema for migration detection
         hotkeyOverrides = {},     -- Legacy: migrated to profile on load; kept as schema for migration detection
@@ -307,8 +306,8 @@ local function MigrateLegacySettings(profile)
     end
     -- Migrate legacy hotkey show/hide settings → per-queue textOverlays.hotkey.show (one-time)
     -- Main queue: showOffensiveHotkeys → textOverlays.hotkey.show
-    -- NOTE: defensives.showHotkeys is NOT migrated here - it was a separate
-    -- per-category toggle that no longer exists. Merging it into the unified
+    -- NOTE: defensives.showHotkeys is deliberately dropped, not migrated - it was a
+    -- separate per-category toggle that no longer exists. Merging it into the unified
     -- toggle would hide ALL hotkeys (offensive + defensive) for users who only
     -- intended to hide defensive hotkeys. Fail-open: show hotkeys by default.
     if profile.textOverlays and profile.textOverlays.hotkey then
@@ -683,8 +682,8 @@ function JustAC:OnEnable()
                 end
             end
             -- Re-cache base cooldowns for any new rotation spells (talent change, etc.)
-            if BurstInjectionEngine and BurstInjectionEngine.PreCacheRotationCooldowns then
-                BurstInjectionEngine.PreCacheRotationCooldowns()
+            if BlizzardAPI and BlizzardAPI.PreCacheRotationCooldowns then
+                BlizzardAPI.PreCacheRotationCooldowns()
             end
             self:ForceUpdate()
         end, self)
@@ -877,6 +876,11 @@ function JustAC:RefreshConfig()
     self:NormalizeSavedData()
     -- Blacklist/spec profiles are character-specific; hotkey overrides travel with the profile
     self:InitializeDefensiveSpells()
+    -- Burst-trigger overrides live on the profile; the spec key alone doesn't
+    -- move on a profile switch, so wipe the cache explicitly.
+    if SpellQueue and SpellQueue.InvalidateBurstTriggers then
+        SpellQueue.InvalidateBurstTriggers()
+    end
 
     self:UpdateFrameSize()
     if self.mainFrame then
@@ -975,8 +979,35 @@ function JustAC:InitializeDefensiveSpells()
     if GapCloserEngine then
         GapCloserEngine.InitializeGapClosers(self)
     end
-    if BurstInjectionEngine then
-        BurstInjectionEngine.InitializeBurstInjection(self)
+    -- Burst-ready cue: migrate the retired burst-injection settings. The cue is
+    -- OFF by default (like the old feature); users who had burst injection enabled
+    -- with its glow on carry over as opted-in. Per-spec trigger overrides feed the
+    -- new burst-trigger list; the old table is dropped (injection lists retire).
+    local profile = self.db and self.db.profile
+    if profile and profile.burstInjection then
+        if profile.burstInjection.enabled and profile.burstInjection.showGlow ~= false
+           and profile.burstCueGlow == nil then
+            profile.burstCueGlow = true
+        end
+        local oldTriggers = profile.burstInjection.triggerSpells
+        if oldTriggers then
+            for specKey, list in pairs(oldTriggers) do
+                if type(list) == "table" and #list > 0 then
+                    profile.burstTriggers = profile.burstTriggers or {}
+                    if not profile.burstTriggers[specKey] then
+                        local copy = {}
+                        for i, id in ipairs(list) do copy[i] = id end
+                        profile.burstTriggers[specKey] = copy
+                    end
+                end
+            end
+        end
+        profile.burstInjection = nil
+    end
+    -- Warm the base-cooldown cache for the rotation while we're out of combat
+    -- (base CDs are secret in combat; the cache backs IsSpellReady's fallbacks).
+    if BlizzardAPI and BlizzardAPI.PreCacheRotationCooldowns then
+        BlizzardAPI.PreCacheRotationCooldowns()
     end
     if CustomQueueOpts and CustomQueueOpts.EnsureInitialized then
         CustomQueueOpts.EnsureInitialized(self)
@@ -1052,8 +1083,6 @@ function JustAC:LoadModules()
     if not DefensiveEngine then self:Print("Warning: DefensiveEngine module not found") end
     GapCloserEngine = LibStub("JustAC-GapCloserEngine", true)
     if not GapCloserEngine then self:Print("Warning: GapCloserEngine module not found") end
-    BurstInjectionEngine = LibStub("JustAC-BurstInjectionEngine", true)
-    if not BurstInjectionEngine then self:Print("Warning: BurstInjectionEngine module not found") end
     TargetFrameAnchor = LibStub("JustAC-TargetFrameAnchor", true)
     if not TargetFrameAnchor then self:Print("Warning: TargetFrameAnchor module not found") end
     KeyPressDetector = LibStub("JustAC-KeyPressDetector", true)
@@ -1316,13 +1345,9 @@ function JustAC:OnCombatEvent(event)
         if DotTracker and DotTracker.Reset then
             DotTracker.Reset()
         end
-        -- Clear any active burst window so it doesn't carry into the next pull
-        if BurstInjectionEngine and BurstInjectionEngine.ClearBurstState then
-            BurstInjectionEngine.ClearBurstState()
-        end
         -- Pre-cache base cooldowns for rotation spells (secret in combat)
-        if BurstInjectionEngine and BurstInjectionEngine.PreCacheRotationCooldowns then
-            BurstInjectionEngine.PreCacheRotationCooldowns()
+        if BlizzardAPI and BlizzardAPI.PreCacheRotationCooldowns then
+            BlizzardAPI.PreCacheRotationCooldowns()
         end
         -- Check if custom queue is stale (rotation changed since last snapshot)
         if CustomQueueOpts and CustomQueueOpts.CheckStaleNotification then
@@ -1345,8 +1370,6 @@ function JustAC:OnSpecChange(event, unit)
     if unit and unit ~= "player" then return end
     local newSpec = GetSpecialization()
     if not newSpec then return end
-
-    self.db.char.lastKnownSpec = newSpec
 
     -- The tracked aura instance belongs to the OLD spec's maintenance buff; keeping it would
     -- point the new spec's slot at a buff it does not use.
@@ -1379,7 +1402,7 @@ function JustAC:OnSpecChange(event, unit)
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
     -- Re-initialize all per-spec engines: defensive lists + cooldown-tracking
-    -- registration, gap closers, burst injection, custom queue defaults.
+    -- registration, gap closers, custom queue defaults.
     -- The defensive re-init is required: without it the old spec's spells stay
     -- registered for cooldown tracking and the new spec's list is never seeded.
     self:InitializeDefensiveSpells()
@@ -1668,14 +1691,12 @@ function JustAC:OnTargetChanged()
     self:ForceUpdateAll()
 end
 
-function JustAC:OnActionUsableChanged(_, changes)
-    -- Cache update is always immediate (used by GetActionBarUsability on next render).
-    if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
-        BlizzardAPI.OnActionUsableChanged(changes)
-    end
+-- Shared by the cooldown and usability event handlers: both fire in bursts (~10x per
+-- cast in combat via the GCD cascade, and again OOC as things come off cooldown). In
+-- combat, reset the timer immediately for low-latency response. OOC, coalesce the burst
+-- and let the 0.5s idle cycle pick it up rather than waking the loop dozens of times.
+local function MarkQueuesDirtyThrottled(addon)
     local inCombat = UnitAffectingCombat("player")
-    -- Same OOC throttle as OnCooldownUpdate: coalesce bursts while preserving
-    -- immediate in-combat responsiveness.
     if not inCombat then
         local now = GetTime()
         if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
@@ -1686,9 +1707,17 @@ function JustAC:OnActionUsableChanged(_, changes)
 
     spellQueueDirty = true
     defensiveQueueDirty = true
-    if inCombat and self.updateTimeLeft then
-        self.updateTimeLeft = 0
+    if inCombat and addon.updateTimeLeft then
+        addon.updateTimeLeft = 0
     end
+end
+
+function JustAC:OnActionUsableChanged(_, changes)
+    -- Cache update is always immediate (used by GetActionBarUsability on next render).
+    if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
+        BlizzardAPI.OnActionUsableChanged(changes)
+    end
+    MarkQueuesDirtyThrottled(self)
 end
 
 -- Both handlers compare FRAMES, not unit tokens: the old UnitIsUnit(nameplateUnit, "target")
@@ -1716,10 +1745,7 @@ function JustAC:OnNamePlateRemoved()
     end
 end
 
--- Delegated to TargetFrameAnchor module (thin wrappers for external callers)
-function JustAC:ClampFrameToScreen()
-    if TargetFrameAnchor then TargetFrameAnchor.ClampFrameToScreen(self) end
-end
+-- Delegated to TargetFrameAnchor module (thin wrappers for the options panel)
 function JustAC:IsStandardTargetFrame()
     if TargetFrameAnchor then return TargetFrameAnchor.IsStandardTargetFrame(self) end
     return false
@@ -1791,11 +1817,6 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         BlizzardAPI.NoteDefensiveItemUse(spellID)
     end
 
-    -- Burst injection: record trigger spell casts for timer fallback window
-    if BurstInjectionEngine and BurstInjectionEngine.RecordTriggerCast then
-        BurstInjectionEngine.RecordTriggerCast(self, spellID)
-    end
-
     -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
     -- spellID from UNIT_SPELLCAST_SUCCEEDED reads plain for the player's own cast (the event is
@@ -1865,24 +1886,7 @@ function JustAC:OnPlayerChannelStop(event, unit)
 end
 
 function JustAC:OnCooldownUpdate()
-    -- SPELL_UPDATE_COOLDOWN fires ~10x per cast in combat (GCD cascade), and also
-    -- fires OOC when abilities/items come off cooldown.  In combat, reset the timer
-    -- immediately for low-latency response.  OOC, only mark dirty and let the 0.5s
-    -- idle cycle handle the update - avoids waking the loop dozens of times per minute.
-    local inCombat = UnitAffectingCombat("player")
-    if not inCombat then
-        local now = GetTime()
-        if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
-            return
-        end
-        lastOOCDirtyEvent = now
-    end
-
-    spellQueueDirty = true
-    defensiveQueueDirty = true
-    if inCombat and self.updateTimeLeft then
-        self.updateTimeLeft = 0
-    end
+    MarkQueuesDirtyThrottled(self)
 end
 
 --- Marks queues dirty and ensures the next OnUpdate tick processes immediately.

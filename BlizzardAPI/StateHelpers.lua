@@ -84,9 +84,9 @@ end
 -- Deliberately independent of Blizzard's own indicator: that one is gated on the cast bar's
 -- highlightImportantCasts setting, so a player with it switched off would see nothing.
 --
--- @param regions table  array of textures to drive; every one is written each pass
--- @param litAlpha number|nil  alpha for "important" (default 1)
--- @return number  how many nearby casters were measured (diagnostics; NOT how many are important)
+--- @param regions table  array of textures to drive; every one is written each pass
+--- @param litAlpha number|nil  alpha for "important" (default 1)
+--- @return number  how many nearby casters were measured (diagnostics; NOT how many are important)
 function BlizzardAPI.DriveImportantCastAlphas(regions, litAlpha)
     if not regions or #regions == 0 then return 0 end
     local IsImportant = C_Spell and C_Spell.IsSpellImportant

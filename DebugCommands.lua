@@ -36,7 +36,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)")
     addon:Print("/jac inspect defensives - Diagnose defensive system")
     addon:Print("/jac inspect interrupts - Diagnose interrupt/CC queue state")
-    addon:Print("/jac inspect burst - Dump burst injection priority list")
+    addon:Print("/jac inspect burst - Burst-ready cue state")
     addon:Print("/jac inspect auras - Diagnose aura cache state")
     addon:Print("/jac inspect buffs - Diagnose pre-combat buff checklist (out of combat)")
     addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
@@ -1229,48 +1229,34 @@ function DebugCommands.AuraDiagnostics(addon)
 end
 
 --------------------------------------------------------------------------------
--- Burst Injection Diagnostics
+-- Burst-Ready Cue Diagnostics
 --------------------------------------------------------------------------------
 function DebugCommands.BurstDiagnostics(addon)
-    addon:Print("=== Burst Injection Diagnostics ===")
+    addon:Print("=== Burst-Ready Cue Diagnostics ===")
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     local SpellDB = LibStub("JustAC-SpellDB", true)
-    local BurstInjectionEngine = LibStub("JustAC-BurstInjectionEngine", true)
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
 
-    if not BurstInjectionEngine then
-        addon:Print("|cffff0000BurstInjectionEngine not loaded|r")
-        return
-    end
-
-    local specKey = BurstInjectionEngine.GetBurstSpecKey()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     addon:Print("Spec key: " .. (specKey or "|cffff0000unknown|r"))
 
     local profile = addon and addon.db and addon.db.profile
-    local bi = profile and profile.burstInjection
-    local enabled = bi and bi.enabled or false
-    addon:Print("Enabled: " .. (enabled and "|cff00ff00YES|r" or "|cff888888NO|r"))
+    local cueOn = profile and profile.burstCueGlow == true
+    addon:Print("Cue glow: " .. (cueOn and "|cff00ff00ON|r" or "|cff888888off (default)|r"))
 
-    addon:Print("Trigger source: " .. (bi and bi.triggerSpells and specKey
-        and bi.triggerSpells[specKey] and #bi.triggerSpells[specKey] > 0
-        and "|cffadd8e6Custom overrides|r" or "|cff888888SpellDB defaults|r"))
-
-    -- Aura-based window status
-    local burstActive = BurstInjectionEngine.IsBurstActive and BurstInjectionEngine.IsBurstActive(addon)
-    addon:Print("Burst window: " .. (burstActive and "|cffb048f8ACTIVE (trigger aura detected)|r" or "|cff888888inactive|r"))
-
-    -- ── Injection priority list ──
+    -- Effective trigger list: cue fires when one of these is visible in the queue
+    -- and off cooldown (ready-but-absent triggers get pinned to the tail).
+    -- Source chain: profile override -> SimC sync anchors -> curated defaults.
     addon:Print("")
-    addon:Print("Injection Priority List (first usable wins):")
-    local injectionSpells = bi and bi.injectionSpells and specKey and bi.injectionSpells[specKey]
-    local defaults = SpellDB and SpellDB.CLASS_BURST_INJECTION_DEFAULTS and specKey
-        and SpellDB.CLASS_BURST_INJECTION_DEFAULTS[specKey]
-    local spellList = injectionSpells and #injectionSpells > 0 and injectionSpells or defaults
-    local isCustom = injectionSpells and #injectionSpells > 0
-    addon:Print("  Source: " .. (isCustom and "|cffadd8e6Custom (profile)|r" or "|cff888888SpellDB defaults|r"))
-
-    if spellList and #spellList > 0 then
-        for i, spellID in ipairs(spellList) do
+    local defaults, source
+    if SpellQueue and SpellQueue.GetBurstTriggerInfo then
+        defaults, source = SpellQueue.GetBurstTriggerInfo()
+    end
+    addon:Print("Burst Triggers (" .. (specKey or "?") .. ", source: "
+        .. (source or "|cff888888none|r") .. "):")
+    if defaults and #defaults > 0 then
+        for i, spellID in ipairs(defaults) do
             local name = "?"
             local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
             if spellInfo and spellInfo.name then name = spellInfo.name end
@@ -1281,59 +1267,25 @@ function DebugCommands.BurstDiagnostics(addon)
             local known = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(resolvedID)
             local knownTag = known and "|cff00ff00known|r" or "|cffff6666not known|r"
 
-            local ready = known and BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(resolvedID)
-            local readyTag = ""
+            local stateTag = ""
             if known then
-                readyTag = ready and " |cff00ff00READY|r" or " |cffff6600on CD|r"
+                local onCd = BlizzardAPI and BlizzardAPI.IsSpellOnCooldown and BlizzardAPI.IsSpellOnCooldown(resolvedID)
+                stateTag = onCd and " |cffff6600on CD|r" or " |cff00ff00READY|r"
+                -- The cue table is keyed by the QUEUE entry id (display form) plus the
+                -- raw AC pick - probe all three forms so this mirrors the runtime keys.
+                local displayID = BlizzardAPI and BlizzardAPI.GetDisplaySpellID
+                    and BlizzardAPI.GetDisplaySpellID(resolvedID) or resolvedID
+                if SpellQueue and SpellQueue.IsBurstCue
+                   and (SpellQueue.IsBurstCue(spellID) or SpellQueue.IsBurstCue(resolvedID)
+                        or SpellQueue.IsBurstCue(displayID)) then
+                    stateTag = stateTag .. " |cffb048f8CUED|r"
+                end
             end
 
-            addon:Print("  " .. i .. ". " .. name .. " (" .. spellID .. resolvedTag .. ") " .. knownTag .. readyTag)
+            addon:Print("  " .. i .. ". " .. name .. " (" .. spellID .. resolvedTag .. ") " .. knownTag .. stateTag)
         end
     else
-        addon:Print("  |cff888888(none configured)|r")
-    end
-
-    -- ── Explicit trigger overrides ──
-    addon:Print("")
-    local triggerSpells = bi and bi.triggerSpells and specKey and bi.triggerSpells[specKey]
-    if triggerSpells and #triggerSpells > 0 then
-        addon:Print("Explicit Trigger Spells (override):")
-        for i, spellID in ipairs(triggerSpells) do
-            local name = "?"
-            local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.name then name = spellInfo.name end
-            addon:Print("  " .. i .. ". " .. name .. " (" .. spellID .. ")")
-        end
-    end
-
-    -- ── Active trigger spells ──
-    addon:Print("")
-    addon:Print("Active Burst Triggers:")
-    local detected = BurstInjectionEngine.GetDetectedTriggers(addon)
-    if detected and #detected > 0 then
-        for i, entry in ipairs(detected) do
-            local cdTag = entry.baseCd > 0 and (" - " .. entry.baseCd .. "s CD") or ""
-            addon:Print("  " .. i .. ". " .. entry.name .. " (" .. entry.spellID .. ")" .. cdTag)
-        end
-    else
-        addon:Print("  |cff888888(none - no triggers defined for this spec)|r")
-    end
-
-    -- ── SpellDB trigger defaults for reference ──
-    if SpellDB and SpellDB.CLASS_BURST_TRIGGER_DEFAULTS and specKey then
-        local rawDefaults = SpellDB.CLASS_BURST_TRIGGER_DEFAULTS[specKey]
-        if rawDefaults and #rawDefaults > 0 then
-            addon:Print("")
-            addon:Print("SpellDB Trigger Defaults (" .. specKey .. "):")
-            for i, spellID in ipairs(rawDefaults) do
-                local name = "?"
-                local spellInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
-                if spellInfo and spellInfo.name then name = spellInfo.name end
-                local known = BlizzardAPI and BlizzardAPI.IsSpellAvailable and BlizzardAPI.IsSpellAvailable(spellID)
-                local knownTag = known and "|cff00ff00known|r" or "|cffff6666not known|r"
-                addon:Print("  " .. i .. ". " .. name .. " (" .. spellID .. ") " .. knownTag)
-            end
-        end
+        addon:Print("  |cff888888(none defined for this spec)|r")
     end
 
     addon:Print("==================================")
