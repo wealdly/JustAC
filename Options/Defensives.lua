@@ -144,7 +144,8 @@ function Defensives.CreateTabArgs(addon)
                 order = 5,
                 args = {
                     showDefensiveProcs = W.toggle(addon, "defensives.showProcs", {
-                        name = L["Insert Procced Defensives"], desc = L["Insert Procced Defensives desc"],
+                        name = L["Insert Procced Defensives"],
+                        desc = W.spellDesc("Insert Procced Defensives desc", 34428),  -- Victory Rush
                         order = 1, width = "full", default = true,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = function(a)

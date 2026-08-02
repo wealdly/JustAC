@@ -17,7 +17,6 @@ local UnitClassification = UnitClassification ---@diagnostic disable-line: undef
 local UnitIsUnit         = UnitIsUnit         ---@diagnostic disable-line: undefined-global
 local UnitCreatureType   = UnitCreatureType   ---@diagnostic disable-line: undefined-global
 local UnitIsMinion       = UnitIsMinion       ---@diagnostic disable-line: undefined-global
-local UnitIsCrowdControlled = UnitIsCrowdControlled ---@diagnostic disable-line: undefined-global
 local pcall          = pcall
 local UnitHealth     = UnitHealth
 local UnitHealthMax  = UnitHealthMax
@@ -73,6 +72,63 @@ function BlizzardAPI.GetEngagedEnemyCount()
 end
 
 --------------------------------------------------------------------------------
+-- Important casts nearby (secret-safe danger cue)
+--------------------------------------------------------------------------------
+-- C_Spell.IsSpellImportant is the engine's own "lethal if not interrupted" flag, and it is
+-- AllowedWhenTainted, so we may call it - and may hand it a secret spell id. What comes back
+-- inherits that secrecy, so the verdict can never be read or branched on. It does not have to
+-- be: each nearby caster's verdict is poured straight into one region's alpha, and if ANY
+-- region lights up, something lethal is being cast. The compositor performs the OR that Lua
+-- cannot, which is the whole reason this works without a branchable boolean.
+--
+-- Deliberately independent of Blizzard's own indicator: that one is gated on the cast bar's
+-- highlightImportantCasts setting, so a player with it switched off would see nothing.
+--
+-- @param regions table  array of textures to drive; every one is written each pass
+-- @param litAlpha number|nil  alpha for "important" (default 1)
+-- @return number  how many nearby casters were measured (diagnostics; NOT how many are important)
+function BlizzardAPI.DriveImportantCastAlphas(regions, litAlpha)
+    if not regions or #regions == 0 then return 0 end
+    local IsImportant = C_Spell and C_Spell.IsSpellImportant
+    local canRead = IsImportant and UnitCastingInfo and UnitChannelInfo
+    local measured = 0
+    -- One region PER NAMEPLATE TOKEN, not per caster found. Packing casters into the first
+    -- free regions would mean a cap drops whichever mobs were scanned last - and since the
+    -- verdicts can't be read, there is no way to prefer the dangerous ones. A fixed mapping
+    -- has no such bias: region i always belongs to nameplate i, and an absent or silent mob
+    -- simply leaves its own region dark.
+    for i = 1, #regions do
+        local region = regions[i]
+        local lit = nil                     -- nil => nothing to say, region goes dark
+        local u = canRead and NAMEPLATE_UNITS[i]
+        if u then
+            local ex = UnitExists(u)
+            if not IsSecretValue(ex) and ex then
+                local ca = UnitCanAttack("player", u)
+                if not IsSecretValue(ca) and ca then
+                    -- spellID: 9th return casting, 8th channelling. Test secrecy BEFORE any
+                    -- comparison - `id ~= nil` on a secret is itself a forbidden read.
+                    local id = select(9, UnitCastingInfo(u))
+                    if not IsSecretValue(id) and id == nil then
+                        id = select(8, UnitChannelInfo(u))
+                    end
+                    if IsSecretValue(id) or id ~= nil then
+                        local ok, important = pcall(IsImportant, id)
+                        if ok then
+                            lit = important
+                            measured = measured + 1
+                        end
+                    end
+                end
+            end
+        end
+        -- nilAlpha 0: no caster behind this region must never leave a stale verdict lit.
+        BlizzardAPI.SetAlphaFromSecretBool(region, lit, litAlpha or 1, 0, 0)
+    end
+    return measured
+end
+
+--------------------------------------------------------------------------------
 -- Defensive Spell State Helper (consolidates common validation pattern)
 --------------------------------------------------------------------------------
 
@@ -110,6 +166,23 @@ function BlizzardAPI.IsLossOfControlActive()
     return (count or 0) > 0
 end
 local IsLossOfControlActive = BlizzardAPI.IsLossOfControlActive
+
+--- Is the player unable to use their own abilities as a whole, right now?
+--- Two causes, one consequence: loss of control (stun, fear, silence, disarm - the engine
+--- reports these), or an override action bar, where a debuff has swapped the buttons out
+--- from under them (an aura applying OVERRIDE_SPELLS; the engine reports no LoC entry for
+--- it, so the count above stays 0 and only the bar state gives it away).
+--- Callers use this to SKIP the usability gate, never to hide anything: when NOTHING is
+--- castable, the reason is the player's state rather than a fact about any one spell, and
+--- dropping every entry empties the queue at the exact moment someone is looking at it to
+--- see what to press when they get control back. The renderer greys the icons from its own
+--- usability read, so they hold their place, dimmed, and light back up on release.
+--- Plain never-secret reads (validated for LoC 2026-07-24); fail-open - doubt reads as false.
+function BlizzardAPI.IsPlayerAbilityLockout()
+    if IsLossOfControlActive() then return true end
+    return HasOverrideActionBar and HasOverrideActionBar() or false
+end
+local IsPlayerAbilityLockout = BlizzardAPI.IsPlayerAbilityLockout
 
 --- Is this specific spell locked out by an active loss-of-control effect?
 --- GetSpellLossOfControlCooldownInfo().isActive is NeverSecret - validated in-game
@@ -152,12 +225,12 @@ function BlizzardAPI.CheckDefensiveSpellState(spellID, profile)
     -- static data can't. Hide only when genuinely uncastable for a NON-resource
     -- reason; a pure resource shortfall (e.g. Frenzied Regeneration's 40 energy)
     -- still shows - downstream renders that state. Fail open when unreadable.
-    -- Skipped entirely under loss of control (see IsLossOfControlActive): the CC,
-    -- not the spell, is why nothing is castable. Entries fall through to the
-    -- caller's ready/on-CD ordering, which stays honest while CC'd; the renderer
-    -- greys the icons off its own usability read, so they hold their place, dimmed,
-    -- and light back up when control returns.
-    if C_Spell and C_Spell.IsSpellUsable and not IsLossOfControlActive() then
+    -- Skipped entirely under a player-wide ability lockout (see IsPlayerAbilityLockout - CC,
+    -- or a debuff that swaps the action bar): the lockout, not the spell, is why nothing is
+    -- castable. Entries fall through to the caller's ready/on-CD ordering, which stays honest
+    -- while locked out; the renderer greys the icons off its own usability read, so they hold
+    -- their place, dimmed, and light back up when control returns.
+    if C_Spell and C_Spell.IsSpellUsable and not IsPlayerAbilityLockout() then
         local ok, usable, notEnoughPower = pcall(C_Spell.IsSpellUsable, gateID)
         if ok and not IsSecretValue(usable) and usable == false and notEnoughPower ~= true then
             return false, false, false
@@ -256,35 +329,23 @@ end
 --------------------------------------------------------------------------------
 
 --- Check if a specific aura (by spellID) is active on a unit.
---- Uses RedundancyFilter's combat-safe instance map (resolves secret aura IDs).
---- Fail-open: returns false if aura status cannot be determined.
---- @param unit string  Unit token (typically "player")
+--- Single source: RedundancyFilter's aura cache, which already runs the whole ladder for us -
+--- it picks its strategy off AreAurasSecret, resolves secret aura IDs through the instance
+--- maps, and merges the trusted out-of-combat snapshot. There is deliberately no second rung
+--- here: this answer is two-valued, so "absent" and "unknown" both come back false, and any
+--- fallback placed below would be unreachable (the cache table always exists once built).
+--- False is the fail-open direction every caller wants - an unresolved aura keeps its
+--- suggestion visible rather than hiding an ability whose buff we could not confirm.
+--- @param unit string  Unit token - unused; the cache is player-only (kept for call-site clarity)
 --- @param auraSpellID number  The spellID of the aura to check
---- @return boolean  true if the aura is currently active
+--- @return boolean  true if the aura is known to be active
 function BlizzardAPI.IsAuraActive(unit, auraSpellID)
     if not auraSpellID or auraSpellID == 0 then return false end
 
-    -- Prefer RedundancyFilter's aura cache (combat-safe, maintains instance maps)
     local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
-    if RedundancyFilter and RedundancyFilter.GetAuraCache then
-        local cache = RedundancyFilter.GetAuraCache()
-        if cache and cache.byID then
-            return cache.byID[auraSpellID] == true
-        end
-    end
-
-    -- Fallback: direct scan (works OOC when aura fields are readable)
-    if unit and BlizzardAPI.GetAuras then
-        local auras = BlizzardAPI.GetAuras(unit, "HELPFUL")
-        for i = 1, (auras and #auras or 0) do
-            local spellId = auras[i].spellId
-            if spellId and not IsSecretValue(spellId) and spellId == auraSpellID then
-                return true
-            end
-        end
-    end
-
-    return false
+    local cache = RedundancyFilter and RedundancyFilter.GetAuraCache
+        and RedundancyFilter.GetAuraCache()
+    return (cache and cache.byID and cache.byID[auraSpellID]) == true
 end
 
 --------------------------------------------------------------------------------
@@ -434,6 +495,38 @@ local function StoreNameType(name, typeID)
     c[name] = typeID
 end
 
+-- Persistent, bounded name -> npcID cache, same shape and cap as the type cache above.
+-- UnitGUID is secret in combat, so a mid-fight target swap otherwise loses the mob's
+-- identity outright - and with it every chance to apply what we already learned about that
+-- mob type. UnitName stays readable (the type cache above already leans on this), and a name
+-- is enough to look up what was recorded while the GUID WAS readable.
+--
+-- Names are not unique across the game, so a recovered id is weaker evidence than one read
+-- from a GUID. It is therefore allowed to READ what we know and never to WRITE it: nothing
+-- reaches the immunity table on the strength of a name match. Same evidence rule as
+-- engine-announced vs inferred immunity.
+local function StoreNameNPCID(name, npcID)
+    if not name or not npcID then return end
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    local c = g.npcIDCache
+    if not c then c = {}; g.npcIDCache = c; g.npcIDCacheN = 0 end
+    if c[name] == npcID then return end
+    if c[name] == nil then
+        if (g.npcIDCacheN or 0) >= NAME_TYPE_CACHE_CAP then
+            wipe(c); g.npcIDCacheN = 0   -- bounded: wipe and re-learn
+        end
+        g.npcIDCacheN = (g.npcIDCacheN or 0) + 1
+    end
+    c[name] = npcID
+end
+
+local function LookupNameNPCID(name)
+    if not name then return nil end
+    local g = _G.JustACGlobal
+    return g and g.npcIDCache and g.npcIDCache[name] or nil
+end
+
 -- Instance-level CC immunity cache (keyed by NPC ID from GUID).
 -- UnitGUID() is SECRET in combat, so NPC ID is only populated when a target is
 -- acquired out of combat (pre-pull) or on PLAYER_REGEN_ENABLED.  When a CC
@@ -441,7 +534,8 @@ end
 -- the rest of the instance - all future mobs with the same NPC ID are suppressed
 -- without needing to re-learn.
 local ccImmuneNPCIDs = {}           -- [npcID] = true; persists across pulls
-local currentTargetNPCID = nil      -- NPC ID from GUID when readable
+local currentTargetNPCID = nil      -- NPC ID from GUID when readable (authoritative)
+local inferredTargetNPCID = nil     -- NPC ID recovered by NAME when the GUID is secret
 
 --- Extract NPC ID from a WoW GUID string.
 --- Creature GUIDs: "Creature-0-SERVERID-INSTANCEID-ZONEID-NPCID-SPAWNUID"
@@ -456,14 +550,23 @@ local function ExtractNPCID(guid)
     return nil
 end
 
--- CC-failure learning: if we suggested a CC and the target didn't become
--- crowd-controlled, mark the current target as CC-immune for the rest of
--- combat.  Uses UnitIsCrowdControlled() which is NeverSecret (verified
--- 2026-02-24).  Reset on PLAYER_TARGET_CHANGED and PLAYER_REGEN_ENABLED.
-local CC_FAILURE_CHECK_DELAY = 0.4  -- seconds after CC cast to check result
-local ccCastTime = 0                -- GetTime() when player cast a CC
+-- CC-failure learning: mark the current target as CC-immune for the rest of combat once
+-- something proves CC doesn't work on it.  Reset on PLAYER_TARGET_CHANGED and
+-- PLAYER_REGEN_ENABLED.
+--
+-- This used to poll UnitIsCrowdControlled("target") after each CC. That function DOES NOT
+-- EXIST: it appears nowhere in the 12.0 UI source, not even in the generated API
+-- documentation, so the poll sat behind `if UnitIsCrowdControlled then` and never ran once.
+-- Learning was left resting entirely on the two engine announcements below, which only fire
+-- when the engine says "Immune" outright - so the ordinary case (the CC resolves, or is
+-- quietly ignored, and the cast rolls on) taught us nothing and CC kept being offered.
+-- Do not re-add a UnitIsCrowdControlled poll. The combat log, which would answer this
+-- directly via SPELL_MISS, is a hard-blocked data source in 12.0 (see DebugCommands).
 local ccFailureObserved = false     -- true = current target resisted/immune
-local ccFailureChecked  = false     -- true = we already checked this cast
+
+-- Assigned further down, once the target-cast state it reads exists; called from
+-- NotifyCCCastOnTarget, which only runs long after load.
+local ArmCCInterruptCheck
 
 -- Direct immunity signals (wired up in InitTargetCastTracking below).  The engine
 -- announces a shrugged-off spell outright - that beats inferring immunity from a
@@ -474,25 +577,84 @@ local CC_IMMUNE_SIGNAL_WINDOW = 1.5 -- seconds a CC attempt counts as "just trie
 local ccAttemptTime = 0             -- GetTime() when the player SENT a CC
 local ccImmuneSignal = nil          -- which signal marked the target immune (diagnostics)
 
+-- Cross-session CC immunity, account-wide (JustACGlobal), keyed by NPC ID.
+--
+-- Only ENGINE-ANNOUNCED immunities are written here. "cast-continued" is an inference - it
+-- proves the CC did not stop THAT cast, which is a weaker claim than "CC does not work on
+-- this mob": a boss with an unstoppable cast would otherwise blacklist its whole type
+-- forever. Inference stays in the session cache below, where a mistake dies at the next
+-- zone change; only the engine saying "Immune" outright earns a place on disk.
+--
+-- Two sightings before it counts, so a single fluke (an immunity phase, a shield that
+-- happened to be up) can't condemn a mob type permanently.
+local CC_IMMUNE_DB_CAP     = 500  -- ponytail: bounded by wipe-and-relearn, as the name cache
+local CC_CONFIRM_SIGHTINGS = 2
+
+local function CCImmuneDB()
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    local db = g.ccImmuneNPCs
+    if not db then db = {}; g.ccImmuneNPCs = db; g.ccImmuneNPCsN = 0 end
+    return db, g
+end
+
+local function NoteConfirmedImmunity(npcID)
+    local db, g = CCImmuneDB()
+    if db[npcID] == nil then
+        if (g.ccImmuneNPCsN or 0) >= CC_IMMUNE_DB_CAP then
+            wipe(db); g.ccImmuneNPCsN = 0   -- bounded: wipe and re-learn
+        end
+        g.ccImmuneNPCsN = (g.ccImmuneNPCsN or 0) + 1
+    end
+    db[npcID] = (db[npcID] or 0) + 1
+end
+
+local function IsConfirmedImmuneNPC(npcID)
+    if not npcID then return false end
+    local db = CCImmuneDB()
+    return (db[npcID] or 0) >= CC_CONFIRM_SIGHTINGS
+end
+
+--- What the addon has learned, and a way to throw it away. A self-modifying blacklist that
+--- can be wrong needs both. /jac inspect ccdb.
+function BlizzardAPI.GetCCImmunityDBInfo()
+    local db, g = CCImmuneDB()
+    local target = currentTargetNPCID or inferredTargetNPCID
+    return (g.ccImmuneNPCsN or 0), target, target and db[target] or nil, CC_CONFIRM_SIGHTINGS,
+        (currentTargetNPCID == nil and inferredTargetNPCID ~= nil)
+end
+
+function BlizzardAPI.ClearCCImmunityDB()
+    local _, g = CCImmuneDB()
+    g.ccImmuneNPCs = nil
+    g.ccImmuneNPCsN = nil
+end
+
+-- Which sources are the engine's own word rather than our inference.
+local CC_ENGINE_ANNOUNCED = { ["unit-combat"] = true, ["ui-error"] = true }
+
 --- Single sink for "this target shrugged off crowd control", whatever noticed it.
---- Persists the immunity per mob TYPE when the NPC ID is known so later pulls of the
---- same mob skip re-learning entirely.
+--- Remembers the immunity per mob TYPE when the NPC ID is known (only readable when the
+--- target was acquired out of combat, or backfilled on combat exit - UnitGUID is secret in
+--- combat) so later pulls of the same mob skip re-learning entirely.
 local function MarkTargetCCImmune(source)
     ccFailureObserved = true
     ccImmuneSignal = source
     if currentTargetNPCID then
-        ccImmuneNPCIDs[currentTargetNPCID] = true
+        ccImmuneNPCIDs[currentTargetNPCID] = true            -- this zone, any evidence
+        if CC_ENGINE_ANNOUNCED[source] then
+            NoteConfirmedImmunity(currentTargetNPCID)         -- on disk, engine's word only
+        end
     end
 end
 
 function BlizzardAPI.RefreshTargetCreatureType()
     -- Clear per-target state first; a stale NPC ID is worse than nil (nil fails open).
     currentTargetNPCID = nil
+    inferredTargetNPCID = nil
     -- Also reset CC-failure learning on target switch - the new target might
     -- be CC-able even if the previous one wasn't.
-    ccCastTime = 0
     ccFailureObserved = false
-    ccFailureChecked  = false
     ccAttemptTime = 0
     ccImmuneSignal = nil
     local ct = UnitCreatureType and UnitCreatureType("target")
@@ -508,9 +670,24 @@ function BlizzardAPI.RefreshTargetCreatureType()
     -- Extract NPC ID from GUID (only readable out of combat; secret in combat).
     -- Used to persist CC immunity per mob TYPE across pulls within an instance.
     local guid = UnitGUID and UnitGUID("target")
+    local tname = UnitName and UnitName("target")
+    if tname and IsSecretValue(tname) then tname = nil end
     if guid and not IsSecretValue(guid) then
         currentTargetNPCID = ExtractNPCID(guid)
+        -- Learn the name while the GUID is readable, so a later in-combat swap onto this
+        -- same mob type can still be identified.
+        if currentTargetNPCID and tname then StoreNameNPCID(tname, currentTargetNPCID) end
+    elseif tname then
+        -- GUID secret (mid-fight target swap): recover the id by name. READ-ONLY - see
+        -- StoreNameNPCID. It lets us APPLY what we know, never add to it.
+        inferredTargetNPCID = LookupNameNPCID(tname)
     end
+end
+
+--- The target's NPC ID for LOOKUPS: the GUID-derived one when we have it, otherwise the
+--- name-recovered one. Never use this to record anything - writes take currentTargetNPCID.
+local function LookupTargetNPCID()
+    return currentTargetNPCID or inferredTargetNPCID
 end
 
 --- Resolve the current target's creature type ID (numeric, locale-independent), or nil.
@@ -558,29 +735,26 @@ function BlizzardAPI.IsCCSpellTypeValid(spellID)
     return bit.band(mask, bit.lshift(1, tid - 1)) ~= 0
 end
 
---- Called when the player successfully casts a CC spell on the current target.
---- Starts the CC-failure detection timer so we can check if the CC took effect.
+--- Called when the player successfully casts a real CC (not a pure interrupt) on the current
+--- target. Arms the one check we can still make: if the target was mid-cast, did that cast
+--- stop? Deliberately does NOT clear ccFailureObserved - knowing this target is immune
+--- survives further attempts.
 function BlizzardAPI.NotifyCCCastOnTarget()
-    ccCastTime = GetTime()
-    ccFailureChecked = false
-    -- Don't clear ccFailureObserved here - if we already know this target is
-    -- immune, keep that knowledge.
+    if ArmCCInterruptCheck then ArmCCInterruptCheck() end
 end
 
 --- Called on PLAYER_REGEN_ENABLED to reset per-target CC-failure learning for
 --- the next combat session.  Instance-level ccImmuneNPCIDs is NOT cleared here
 --- - it persists across pulls until the player changes zone.
 function BlizzardAPI.ResetCCFailureLearning()
-    ccCastTime = 0
     ccFailureObserved = false
-    ccFailureChecked  = false
     ccAttemptTime = 0
     ccImmuneSignal = nil
 end
 
 --- Diagnostics only: which signal condemned the current target, or nil.
 --- One of "unit-combat" (engine combat feedback), "ui-error" (cast rejected
---- outright), "aura-poll" (no crowd-control aura appeared), or "npc-cache".
+--- outright), "cast-continued" (the CC did not stop the cast), or "npc-cache".
 function BlizzardAPI.GetCCImmuneSignal()
     return ccImmuneSignal
 end
@@ -603,6 +777,13 @@ function BlizzardAPI.BackfillCCImmunity()
         local npcID = ExtractNPCID(guid)
         if npcID then
             ccImmuneNPCIDs[npcID] = true
+            -- Same evidence rule as the live path: a backfilled sighting still only reaches
+            -- disk if the ENGINE announced the immunity. This is the common case for a mob
+            -- tab-targeted mid-fight, whose ID could not be read while it mattered, so
+            -- skipping it here would keep the persistent table nearly empty in practice.
+            if CC_ENGINE_ANNOUNCED[ccImmuneSignal] then
+                NoteConfirmedImmunity(npcID)
+            end
         end
     end
 end
@@ -666,29 +847,24 @@ function BlizzardAPI.IsTargetCCImmune()
 
     -- 3) Instance-level NPC ID cache: if we previously learned that this mob
     --    TYPE is CC-immune (on a prior pull), suppress CC immediately.
-    if currentTargetNPCID and ccImmuneNPCIDs[currentTargetNPCID] then
+    --     Looked up by GUID id when we have one, else by the name-recovered one, so a mob
+    --     tab-targeted mid-fight still benefits from what earlier pulls taught us.
+    local lookupNPCID = LookupTargetNPCID()
+    if lookupNPCID and ccImmuneNPCIDs[lookupNPCID] then
         ccImmuneSignal = "npc-cache"
         return true
     end
-
-    -- 4) Per-target CC-failure learning: if we cast a CC on this target and it
-    --    didn't take effect, treat the target as CC-immune.  Uses
-    --    UnitIsCrowdControlled (NeverSecret, verified 2026-02-24).
-    --    Early-out: skip the timer check if no CC is pending.
-    if ccFailureObserved then return true end
-    if ccCastTime > 0 and not ccFailureChecked
-        and (GetTime() - ccCastTime) >= CC_FAILURE_CHECK_DELAY then
-        ccFailureChecked = true
-        if UnitIsCrowdControlled then
-            local isCCd = UnitIsCrowdControlled("target")
-            if IsSecretValue(isCCd) then
-                -- Secret value - can't determine, fail-open
-            elseif not isCCd then
-                MarkTargetCCImmune("aura-poll")
-                return true
-            end
-        end
+    -- 3b) And what previous SESSIONS learned, but only where the engine itself announced the
+    --     immunity, twice. Inference never reaches this table - see NoteConfirmedImmunity.
+    if IsConfirmedImmuneNPC(lookupNPCID) then
+        ccImmuneSignal = "npc-db"
+        return true
     end
+
+    -- 4) Per-target CC-failure learning: something proved CC does not work here. Set by the
+    --    engine's own "Immune" announcements and by the cast-continued check (see
+    --    ArmCCInterruptCheck) - no polling, the observation arrives on its own.
+    if ccFailureObserved then return true end
 
     return false
 end
@@ -912,6 +1088,27 @@ end
 local targetCastInterruptible = true   -- fail-open default
 local targetCastInterruptKnown = false -- true once event provides definitive state
 local targetCastActive = false         -- true when a cast/channel is in progress
+-- Bumped whenever the cast being tracked becomes a DIFFERENT cast (new cast, new target).
+-- Lets a delayed check tell "the cast I was watching is still running" from "a cast is
+-- running", which are the same boolean and opposite conclusions.
+local targetCastSerial = 0
+
+-- A CC aimed at a target that is MID-CAST is being used as an interrupt, so the question is
+-- not whether the mob got crowd-controlled - it is whether the cast stopped. If the same cast
+-- is still going once the CC has had time to land, CC does not interrupt this target, and
+-- that is the one thing we can still observe: no combat log, and no UnitIsCrowdControlled to
+-- ask. Silence teaches nothing, so this is the signal that makes learning happen at all in
+-- the ordinary case - the engine only announces "Immune" for outright rejections.
+local CC_INTERRUPT_CHECK_DELAY = 0.6   -- seconds: cast travel + aura application, then look
+ArmCCInterruptCheck = function()
+    if not targetCastActive then return end
+    local watched = targetCastSerial
+    C_Timer.After(CC_INTERRUPT_CHECK_DELAY, function()
+        if targetCastActive and targetCastSerial == watched then
+            MarkTargetCCImmune("cast-continued")
+        end
+    end)
+end
 
 local UnitCastingInfo  = UnitCastingInfo  ---@diagnostic disable-line: undefined-global
 local UnitChannelInfo  = UnitChannelInfo  ---@diagnostic disable-line: undefined-global
@@ -947,6 +1144,7 @@ local function ProbeTargetCast()
         end
     end
     targetCastActive = true
+    targetCastSerial = targetCastSerial + 1   -- a probed cast is a different cast
     local resolved = ResolveSecretBool(notInt)
     if resolved ~= nil then
         targetCastInterruptible = not resolved
@@ -1035,6 +1233,10 @@ local function InitTargetCastTracking()
             -- casts. Read notInterruptible from the API immediately and resolve
             -- it through C++ if secret (addon-agnostic: no cast bar frame needed).
             targetCastActive = true
+            -- Only cast STARTS bump the serial. An end sets targetCastActive false, which
+            -- the delayed check already treats as "not still casting"; the serial exists
+            -- solely so a REPLACEMENT cast can't be mistaken for the one we were watching.
+            targetCastSerial = targetCastSerial + 1
             local notInt
             if event == "UNIT_SPELLCAST_START" then
                 _, _, _, _, _, _, _, notInt = UnitCastingInfo("target")

@@ -3,6 +3,58 @@
 
 ## [Unreleased]
 
+## [4.58.0] - 2026-08-02
+
+### Fixed
+
+- **Ability names in tooltips are now the game's own.** Where a setting names an
+  example ability, the name comes from the game instead of being written into each
+  translation by hand - so it is correct in every language, and stays correct if an
+  ability is ever renamed. Most of the translated names were wrong before this.
+- **JustAC now notices when crowd control doesn't interrupt a target.** It was
+  supposed to stop offering a stun or incapacitate once one had failed to stop a
+  target's cast, but the check it relied on could never fire, so it kept offering
+  them all fight. It now watches whether the cast actually stops, and drops CC from
+  the suggestions for that enemy - and for others of the same kind - when it doesn't.
+  Where the game states outright that an enemy shrugged off crowd control, that is
+  remembered for good, so later pulls and later evenings skip the lesson entirely.
+- **The queue no longer vanishes when a debuff takes your abilities away.** Some
+  effects swap your action bar out from under you for a few seconds. JustAC treated
+  that like being put in a vehicle and hid everything, right when you most wanted to
+  see what to press next. The queue now stays put and greys out, and lights back up
+  the moment the debuff falls off - the same way it behaves while you are stunned.
+- **"In Combat Only" now really hides the defensive icons out of combat.** Free procced
+  self-heals ignored the setting and stayed on screen between pulls, so the cluster never
+  fully went away. With the mode set to In Combat Only - and pre-combat buffs turned off -
+  nothing is shown until a fight starts.
+- **Long buffs no longer reappear in the queue while they still have ages left.** A
+  raid buff or poison you already had could show up as a suggestion once it passed
+  30% of its total duration - eighteen minutes of nagging on a one-hour buff. It now
+  waits for the same last-few-minutes window the pre-combat reminders use.
+
+### Changed
+
+- **A buff waiting on the defensive bar no longer shows up twice.** Out of combat,
+  a missing poison, imbue or raid buff is offered on the defensive bar, where you
+  can click it. It used to be listed in the rotation queue at the same time - the
+  same reminder twice, and only one of them clickable. The rotation queue now
+  leaves it to the defensive bar.
+- **Trimmed example abilities out of some tooltips.** Settings that listed examples
+  from other classes - the five tank mitigation buffs, the damage-reduction walls,
+  the fear spells - no longer do. At most one ever applied to you, and the settings
+  read the same without them.
+
+### Added
+
+- **Optional warning for dangerous casts nearby.** Off by default, under General.
+  When on, a marker appears above the queue whenever any enemy around you - not
+  only your target - begins casting something the game itself flags as dangerous.
+  It uses the game's own judgement of which casts are lethal, so it needs no list
+  of abilities and works in any dungeon or raid.
+- **Italian translation.** JustAC now speaks every language the game ships in.
+  Italian players previously saw the whole interface in English; every option,
+  dropdown and tooltip is now translated.
+
 ## [4.57.0] - 2026-07-29
 
 ### Fixed

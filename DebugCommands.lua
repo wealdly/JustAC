@@ -63,6 +63,8 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect audit [off|clear] - ARM the 68887 probe battery: auto-snapshots on combat enter/exit to SavedVariables")
     addon:Print("/jac inspect selfcast - Arm a capture of own-cast info secrecy (cast + channel something)")
     addon:Print("/jac inspect auraids - One-shot: are aura instance-ID lists plain/countable in combat?")
+    addon:Print("/jac inspect blank - Why the queue last went empty (run right after it vanishes)")
+    addon:Print("/jac inspect ccdb [clear] - Mob types learned to be CC-immune (persists across sessions)")
     addon:Print("/jac inspect cdfields - One-shot: NeverSecret cooldown fields + proc overlay per rotation spell")
     addon:Print("/jac inspect secrecymap - One-shot OOC: per-spell/power SecrecyLevel exemption dump")
     addon:Print("/jac inspect frames - One-shot: laundered frame booleans (low HP, capped power, absorbs)")
@@ -3382,6 +3384,44 @@ local function BuildValidateProbes()
         local B = LibStub("JustAC-BlizzardAPI", true)
         return B and B.IsLossOfControlActive and B.IsLossOfControlActive()
     end)
+    -- A bar-swapping debuff reports NO loss-of-control entry, so loc.gate above stays false
+    -- while every ability is uncastable. This is the read that catches it, and the lockout
+    -- gate is what keeps the queue from being filtered away in that state.
+    -- Important-cast channels. C_Spell.IsSpellImportant is the engine's own "lethal if not
+    -- interrupted" flag and is AllowedWhenTainted, but an NPC's cast spell id is expected to
+    -- be secret in combat, which would make the verdict secret too - display-only. These
+    -- three reads decide whether a BRANCH is available (a suggestion) or only a cue:
+    --   cast.importantVerdict - the verdict itself, from the target's cast id
+    --   castbar.importantAnim - Blizzard's flash animation: SetPlaying(secret) is a DIFFERENT
+    --                           laundering channel from SetShown, and the shape that worked
+    --                           for the scratch-Cooldown readiness probe. Best hope.
+    --   castbar.importantShown - predicted SECRET: Blizzard uses SetShown(expr), which the
+    --                           resource sweep established does not launder.
+    -- Both castbar reads need the target's own nameplate up AND Blizzard's
+    -- highlightImportantCasts setting on; castbar.highlight reports whether it is.
+    add("cast.importantVerdict", function()
+        local id = select(9, UnitCastingInfo("target"))
+        return C_Spell.IsSpellImportant(id)
+    end)
+    local function TargetCastBar()
+        local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+            and C_NamePlate.GetNamePlateForUnit("target")
+        return np and np.UnitFrame and np.UnitFrame.castBar
+    end
+    add("castbar.spellID", function() return TargetCastBar().spellID end)
+    add("castbar.highlight", function() return TargetCastBar().highlightImportantCasts end)
+    add("castbar.importantAnim", function()
+        return TargetCastBar().ImportantCastFlashAnim:IsPlaying()
+    end)
+    add("castbar.importantShown", function()
+        return TargetCastBar().ImportantCastIndicator:IsShown()
+    end)
+    add("bar.override", function() return HasOverrideActionBar() end)
+    add("bar.vehicle", function() return HasVehicleActionBar() end)
+    add("lockout.gate", function()
+        local B = LibStub("JustAC-BlizzardAPI", true)
+        return B and B.IsPlayerAbilityLockout and B.IsPlayerAbilityLockout()
+    end)
 
     add("cast.playerName", function() return (UnitCastingInfo("player")) end)
     add("cast.targetName", function() return (UnitCastingInfo("target")) end)
@@ -4268,6 +4308,50 @@ function DebugCommands.SelfCastProbe(addon)
     end)
     addon:Print("|cff00ff00=== selfcast ARMED (5min/12 casts) ===|r hardcast + channel something, in and out of combat.")
     addon:Print("|cff888888  Also logs target STOP vs INTERRUPTED arg4 - kick a target's cast to see the two differ.|r")
+end
+
+--- /jac inspect ccdb [clear] - what the addon has learned about CC-immune mob types, and
+--- the escape hatch. The table only ever grows on the engine's own "Immune" announcement,
+--- so a wrong entry should be rare - but it survives sessions, so it must be inspectable.
+function DebugCommands.CCImmunityDB(addon, arg)
+    local B = LibStub("JustAC-BlizzardAPI", true)
+    if not (B and B.GetCCImmunityDBInfo) then return end
+    if arg == "clear" then
+        B.ClearCCImmunityDB()
+        addon:Print("|cff00ccff== ccdb ==|r cleared.")
+        return
+    end
+    local count, targetNPC, sightings, threshold, byName = B.GetCCImmunityDBInfo()
+    addon:Print(string.format("|cff00ccff== ccdb ==|r %d mob type(s) confirmed CC-immune "
+        .. "(%d sighting(s) to confirm).", count, threshold))
+    if targetNPC then
+        addon:Print(string.format("  current target npcID=%d sightings=%s%s",
+            targetNPC, tostring(sightings or 0),
+            byName and " |cff888888(recovered by name - lookups only, never recorded)|r" or ""))
+    else
+        addon:Print("  current target npcID unknown (GUID is secret in combat, and no name "
+            .. "match yet - target this mob out of combat once to learn it).")
+    end
+    addon:Print("  signal on this target: "
+        .. tostring(B.GetCCImmuneSignal and B.GetCCImmuneSignal()))
+end
+
+--- /jac inspect blank - why did the queue last go empty? Three branches can blank it and
+--- the result looks identical, so SpellQueue records the branch at the moment of the flip.
+--- Run it right after the icons vanish; the bar/form state captured alongside is what tells
+--- an ordinary hide apart from an effect that swapped the action bar out from under you.
+function DebugCommands.QueueBlankReport(addon)
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local info = SQ and SQ.GetQueueBlankInfo and SQ.GetQueueBlankInfo()
+    if not info then
+        addon:Print("|cff00ccff== blank ==|r the queue has not gone empty since login.")
+        return
+    end
+    addon:Print(string.format("|cff00ccff== blank ==|r %.1fs ago: |cffffff00%s|r",
+        GetTime() - info.at, tostring(info.reason)))
+    addon:Print(string.format("  combat=%s overrideBar=%s vehicleBar=%s possessBar=%s formID=%s",
+        tostring(info.inCombat), tostring(info.override), tostring(info.vehicle),
+        tostring(info.possess), tostring(info.formID)))
 end
 
 --- /jac inspect auraids - one-shot: is C_UnitAuras.GetUnitAuraInstanceIDs a plain,

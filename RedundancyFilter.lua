@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Redundancy Filter Module - Hides active buffs and forms from queue
-local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 44)
+local RedundancyFilter = LibStub:NewLibrary("JustAC-RedundancyFilter", 45)
 if not RedundancyFilter then return end
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
@@ -14,7 +14,6 @@ local pcall = pcall
 local wipe = wipe
 local pairs = pairs
 local ipairs = ipairs
-local math_max = math.max
 local UnitAffectingCombat = UnitAffectingCombat
 local table_remove = table.remove
 local C_Secrets = C_Secrets
@@ -148,14 +147,26 @@ end
 -- Pandemic window: allow recast when aura has less than 30% duration remaining
 -- This matches WoW's pandemic mechanic where refreshing extends duration
 local PANDEMIC_THRESHOLD = 0.30
--- Absolute minimum time-remaining threshold for long-duration buffs (poisons, raid buffs, etc).
--- When less than this many seconds remain, stop filtering - show the recast suggestion so
--- the player can reapply before or immediately after entering combat.
+-- Time-remaining threshold for long-duration buffs (poisons, raid buffs, etc). When less
+-- than this many seconds remain, stop filtering - show the recast suggestion so the player
+-- can reapply before or immediately after entering combat. Owned by PrecombatEngine so the
+-- queue hides a buff for exactly as long as the pre-combat checklist stays quiet about it.
 -- expirationTime is cached out of combat as a plain Lua number (GetTime() timestamp),
 -- so remaining = expirationTime - GetTime() is valid arithmetic even in combat.
 -- auraInstanceID → expirationTime mapping (instanceToTimingMap) carries this into combat.
-local PRE_COMBAT_REFRESH_THRESHOLD = 600  -- 10 minutes in seconds
-local LONG_BUFF_DURATION_CUTOFF    = 600  -- Only apply absolute threshold to buffs >= 10 min
+local precombatEngine  -- resolved on first use: that module loads after this one
+local function GetPrecombatEngine()
+    precombatEngine = precombatEngine or LibStub("JustAC-PrecombatEngine", true)
+    return precombatEngine
+end
+local function RefreshWindow()
+    local PE = GetPrecombatEngine()
+    if PE and PE.RefreshWindow then
+        return PE.RefreshWindow()
+    end
+    return 180  -- solo default, if the checklist module ever isn't loaded
+end
+local LONG_BUFF_DURATION_CUTOFF = 600  -- Only apply the flat window to buffs >= 10 min
 
 -- Cache auras to avoid repeated API calls (refreshed on UNIT_AURA event)
 -- UNIT_AURA events invalidate the cache, so 0.5s is safe and reduces API calls by 60%
@@ -566,7 +577,7 @@ local function MergeTrustedCacheFallback(now)
             local skipExpiring = info
                 and info.expirationTime and info.expirationTime > 0
                 and info.duration and info.duration >= LONG_BUFF_DURATION_CUTOFF
-                and (info.expirationTime - now) < PRE_COMBAT_REFRESH_THRESHOLD
+                and (info.expirationTime - now) < RefreshWindow()
             if not skipExpiring then
                 cachedAuras.byID[spellID] = v
             end
@@ -900,22 +911,32 @@ local function IsInPandemicWindow(spellID)
     -- Allow refresh if remaining time is less than pandemic threshold
     local pandemicTime = duration * PANDEMIC_THRESHOLD
 
-    -- For long-duration buffs (>= 10 min, e.g. poisons, Mark of the Wild), apply an
-    -- absolute minimum window so the addon suggests reapplication with time to spare.
+    -- For long-duration buffs (>= 10 min, e.g. poisons, Mark of the Wild) the pandemic
+    -- fraction is the wrong shape entirely: 30% of a 60-minute buff is 18 minutes, so the
+    -- recast would sit in the queue for most of an evening. Use the flat pre-combat window
+    -- instead - what matters is whether the buff outlasts the pull, not what fraction is left.
     -- expirationTime is a plain Lua number cached out of combat - arithmetic is safe in combat.
     -- The auraInstanceID → timing mapping (instanceToTimingMap) carries this value into combat
     -- even when the aura API returns secret values for expirationTime directly.
     if duration >= LONG_BUFF_DURATION_CUTOFF then
-        pandemicTime = math_max(pandemicTime, PRE_COMBAT_REFRESH_THRESHOLD)
+        pandemicTime = RefreshWindow()
     end
 
     return remaining <= pandemicTime
 end
 
--- Check if player has a buff by exact name
+-- Check if player has a buff by exact name. The name is a WEAKER key than the spell ID -
+-- distinct spells share names, and a collision here suppresses an ability whose buff is not
+-- actually up, which is the opposite of this module's fail-open direction. So it only answers
+-- while the ID index is known INCOMPLETE (hasSecrets: aura fields came back secret and some
+-- auras resolved to a name but not to an id - the one case where the name is the only
+-- evidence there is). When the ID index is complete, its "no" is the answer and this must not
+-- second-guess it. Nothing is lost on the live paths: both write byName alongside byID, so a
+-- name-only entry can arise only in the legacy UnitAura branch, which 12.0 never reaches.
 local function HasBuffByName(buffName)
     if not buffName then return false end
     local auras = RefreshAuraCache()
+    if not auras.hasSecrets then return false end
     return auras.byName and auras.byName[buffName]
 end
 
@@ -1120,7 +1141,7 @@ local function CountActivePoisonBuffs()
     end
 
     -- FALLBACK 1: Aura cache by buff spell ID (works out of combat, pre-combat buffs)
-    -- Also checks cached expirationTime: if <= PRE_COMBAT_REFRESH_THRESHOLD seconds remain,
+    -- Also checks cached expirationTime: if less than the refresh window remains,
     -- don't count the poison as "active" - the player should reapply before or at combat start.
     -- expirationTime is a plain Lua number from the out-of-combat snapshot (or instanceToTimingMap),
     -- so the arithmetic is valid even when the aura API returns secret values in combat.
@@ -1131,7 +1152,7 @@ local function CountActivePoisonBuffs()
                 local auraInfo = auras.auraInfo and auras.auraInfo[spellID]
                 local expiringSoon = auraInfo
                     and auraInfo.expirationTime and auraInfo.expirationTime > 0
-                    and (auraInfo.expirationTime - now_poison) < PRE_COMBAT_REFRESH_THRESHOLD
+                    and (auraInfo.expirationTime - now_poison) < RefreshWindow()
                 if not expiringSoon then
                     local spellInfo = GetCachedSpellInfo(spellID)
                     local name = spellInfo and spellInfo.name
@@ -1204,6 +1225,18 @@ end
 -- for free, matching BlizzardAPI.IsSpellReady's pattern.
 function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     if not spellID then return false end
+
+    -- 0. ALREADY OFFERED OUT OF COMBAT. The defensive bar shows missing pre-combat buffs as
+    -- clickable icons; listing the same ability in the offensive queue beside them is the
+    -- same suggestion twice, and only one of the two can be clicked. The defensive copy wins,
+    -- so this queue drops its own. Never applied to the defensive check itself (isDefensiveCheck)
+    -- - that is the copy we are keeping.
+    if not isDefensiveCheck then
+        local PE = GetPrecombatEngine()
+        if PE and PE.IsOfferedNow and PE.IsOfferedNow(spellID, profile) then
+            return true, "already offered as a pre-combat buff on the defensive bar"
+        end
+    end
 
     local debugMode = GetDebugMode()
 

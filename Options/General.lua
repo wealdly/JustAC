@@ -128,7 +128,8 @@ function General.CreateTabArgs(addon)
                     -- its alert sound, so the panel reads one member at a time rather than
                     -- interleaving a second feature into the interrupt's own settings.
                     showSootheCue = W.toggle(addon, "showSootheCue", {
-                        name = L["Show Soothe Cue"], desc = L["Show Soothe Cue desc"],
+                        name = L["Show Soothe Cue"],
+                        desc = W.spellDesc("Show Soothe Cue desc", 2908),  -- Soothe
                         order = 8.5, width = "double", default = true,
                         -- Deliberately NOT disabled when the interrupt reminder is off: the two
                         -- share an icon but are independent choices, and the slot is now built
@@ -188,6 +189,10 @@ function General.CreateTabArgs(addon)
                     showRangeTint = W.toggle(addon, "showRangeTint", {
                         name = L["Show Range Tint"], desc = L["Show Range Tint desc"],
                         order = 16, width = "normal", default = true, disabled = fullyDisabled,
+                    }),
+                    showImportantCastCue = W.toggle(addon, "showImportantCastCue", {
+                        name = L["Show Important Cast Warning"], desc = L["Show Important Cast Warning desc"],
+                        order = 16.5, width = "normal", default = false, disabled = fullyDisabled,
                     }),
                     showCastingHighlight = W.toggle(addon, "showCastingHighlight", {
                         name = L["Show Casting Highlight"], desc = L["Show Casting Highlight desc"],

@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 7)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 8)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -45,6 +45,11 @@ local function RefreshWindow()
     if issecretvalue and issecretvalue(inGroup) then return PRECOMBAT_REFRESH_SOLO end
     return inGroup and PRECOMBAT_REFRESH_GROUP or PRECOMBAT_REFRESH_SOLO
 end
+
+-- Exported because the redundancy filter has to agree with us: it decides when a buff that
+-- IS up stops being reason enough to hide the recast, and that has to be the same moment we
+-- start offering it. Two numbers here meant the queue nagged long before we did.
+PrecombatEngine.RefreshWindow = RefreshWindow
 
 -- Is this aura close enough to lapsing to be worth re-applying now?
 -- A permanent aura (duration 0) never lapses. Unreadable timing answers "no": a buff we
@@ -467,4 +472,45 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
     end
     cachedClassBuffs, cachedClassBuffsAt = out, now
     return out
+end
+
+-- Are out-of-combat buff offers live right now? The defensive queue builds under exactly
+-- this gate, and the DPS queue asks the same question so it can drop an ability that is
+-- already sitting one cluster over as a clickable buff icon. One gate, two surfaces - they
+-- cannot disagree about whether the offer exists.
+function PrecombatEngine.IsOfferingNow(profile)
+    if not profile or InCombatLockdown() then return false end
+    local def, pre = profile.defensives, profile.precombatBuffs
+    return (def and def.enabled and pre and pre.enabled ~= false) and true or false
+end
+
+local cachedAddon
+local function DefensiveIcons()
+    if not cachedAddon then
+        local AceAddon = LibStub("AceAddon-3.0", true)
+        cachedAddon = AceAddon and AceAddon:GetAddon("JustAssistedCombat", true)
+    end
+    return cachedAddon and cachedAddon.defensiveIcons
+end
+
+-- Is this spell being offered on screen, right now, as a pre-combat buff? Asked of the
+-- rendered icons rather than of the checklist, because only the icons know whether the
+-- offer is actually VISIBLE - the cluster can be hidden with the rest of the panel, and the
+-- queue is capped at maxIcons, so "we would like to offer this" is not the same claim. An
+-- icon carries isPrecombatBuff only while shown out of combat by the pre-combat path (the
+-- renderer clears it on hide), and IsVisible answers false when an ancestor is hidden.
+-- Only spells are asked about: the consumable offers are items, which never reach the DPS
+-- queue. Reads one frame behind the DPS build, which is the safe direction - a buff that
+-- has just lapsed is listed in both for one pass, never dropped from both.
+function PrecombatEngine.IsOfferedNow(spellID, profile)
+    if not spellID or not PrecombatEngine.IsOfferingNow(profile) then return false end
+    local icons = DefensiveIcons()
+    if not icons then return false end
+    for i = 1, #icons do
+        local icon = icons[i]
+        if icon and icon.isPrecombatBuff and icon.spellID == spellID and icon:IsVisible() then
+            return true
+        end
+    end
+    return false
 end
