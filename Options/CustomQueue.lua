@@ -54,6 +54,88 @@ local function IsCustomQueueHidden(addon)
         and profile.customQueue[specKey].enabled)
 end
 
+--- Ordering presets over the three profile keys (orderProcsFirst / contextOrder /
+--- orderSinkCooldowns). The preset is DERIVED, never stored - any other mix of
+--- the three reads as "custom". No migration needed and DebugHUD/SpellQueue keep
+--- reading the raw keys.
+local ORDERING_PRESETS = {
+    smart = { procs = true,  context = "simc", sink = true  },
+    ac    = { procs = true,  context = "ac",   sink = true  },
+    fixed = { procs = false, context = "off",  sink = false },
+}
+
+local function CurrentOrderingPreset(addon)
+    local profile = addon:GetProfile()
+    if not profile then return "smart" end
+    local procs   = profile.orderProcsFirst ~= false
+    local context = profile.contextOrder or "simc"
+    local sink    = profile.orderSinkCooldowns ~= false
+    for key, p in pairs(ORDERING_PRESETS) do
+        if p.procs == procs and p.context == context and p.sink == sink then
+            return key
+        end
+    end
+    return "custom"
+end
+
+-- Write one preset's three keys (shared by the preset select and the Customize
+-- snap-back). Returns true when applied.
+local function ApplyOrderingPreset(addon, key)
+    local p = ORDERING_PRESETS[key]
+    if not p then return false end
+    local profile = addon:GetProfile()
+    if not profile then return false end
+    profile.orderProcsFirst    = p.procs
+    profile.contextOrder       = p.context
+    profile.orderSinkCooldowns = p.sink
+    addon:ForceUpdateAll()
+    return true
+end
+
+-- Session-only: the player opened the individual ordering controls. A profile
+-- already in a mixed state shows them regardless.
+local orderingAdvanced = false
+
+local function OrderingAdvancedShown(addon)
+    return orderingAdvanced or CurrentOrderingPreset(addon) == "custom"
+end
+
+local function MakeOrderingPresetSelect(addon, order)
+    return {
+        type = "select",
+        name = L["Ordering Preset"],
+        desc = L["Ordering Preset desc"],
+        order = order,
+        width = "double",
+        values = function()
+            local v = {
+                smart = L["Ordering Smart"],
+                ac    = L["Ordering Match"],
+                fixed = L["Ordering Fixed"],
+            }
+            -- "Custom" is a state reached through the individual controls below,
+            -- not a preset to pick - listed only while it is the current state.
+            if CurrentOrderingPreset(addon) == "custom" then
+                v.custom = L["Ordering Custom"]
+            end
+            return v
+        end,
+        sorting = function()
+            if CurrentOrderingPreset(addon) == "custom" then
+                return { "smart", "ac", "fixed", "custom" }
+            end
+            return { "smart", "ac", "fixed" }
+        end,
+        get = function() return CurrentOrderingPreset(addon) end,
+        set = function(_, val)
+            if ApplyOrderingPreset(addon, val) then
+                -- Refresh so the per-ability pin toggles re-evaluate their greyed state.
+                if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+            end
+        end,
+    }
+end
+
 --- Build a master ordering toggle. `field` is a profile-level key; the toggle
 --- applies universally - to positions 2+ of both the custom list and Blizzard's
 --- default rotation. All three default to enabled (nil → true: smart order);
@@ -83,8 +165,7 @@ end
 
 --- The "Context ordering" select for positions 2+: Off / Match Blizzard's pick (the
 --- context-aware heuristic) / SimC priority (imported theorycraft order). The SimC
---- tier only appears where we have data for the current spec. Reads/writes
---- profile.contextOrder, migrating the old boolean orderContextAware.
+--- tier only appears where we have data for the current spec.
 local function MakeContextOrderSelect(addon, order)
     local function hasSimc()
         local RI = LibStub("JustAC-RotationImport", true)
@@ -115,10 +196,7 @@ local function MakeContextOrderSelect(addon, order)
         get = function()
             local profile = addon:GetProfile()
             if not profile then return "ac" end
-            local v = profile.contextOrder
-            if not v then
-                v = (profile.orderContextAware == false) and "off" or "simc"
-            end
+            local v = profile.contextOrder or "simc"
             -- No SimC data for this spec: the runtime falls back to the AC
             -- heuristic, and the dropdown has no "simc" entry - reflect that.
             if v == "simc" and not hasSimc() then v = "ac" end
@@ -128,32 +206,39 @@ local function MakeContextOrderSelect(addon, order)
             local profile = addon:GetProfile()
             if not profile then return end
             profile.contextOrder = val
-            profile.orderContextAware = nil  -- superseded by contextOrder
             addon:ForceUpdateAll()
             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
         end,
     }
 end
 
+--- Copy the current Blizzard rotation into cq.baseline. Returns the rotation
+--- list (never empty), or nil when unavailable.
+local function snapshotBaseline(cq)
+    if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return nil end
+    local rotationSpells = BlizzardAPI.GetRotationSpells()
+    if not rotationSpells then return nil end
+    cq.baseline = {}
+    for i, spellID in ipairs(rotationSpells) do
+        cq.baseline[i] = spellID
+    end
+    return rotationSpells
+end
+
 --- Snapshot the current Blizzard rotation into the profile (baseline + spells).
 --- Returns true if snapshot was taken, false if no rotation available.
 local function SnapshotRotation(addon, specKey)
-    if not BlizzardAPI or not BlizzardAPI.GetRotationSpells then return false end
-
-    local rotationSpells = BlizzardAPI.GetRotationSpells()
-    if not rotationSpells or #rotationSpells == 0 then return false end
-
     local profile = addon and addon.db and addon.db.profile
     if not profile then return false end
     if not profile.customQueue then profile.customQueue = {} end
     if not profile.customQueue[specKey] then profile.customQueue[specKey] = {} end
 
     local cq = profile.customQueue[specKey]
+    local rotationSpells = snapshotBaseline(cq)
+    if not rotationSpells then return false end
     cq.spells = {}
-    cq.baseline = {}
     for i, spellID in ipairs(rotationSpells) do
         cq.spells[i] = spellID
-        cq.baseline[i] = spellID
     end
 
     return true
@@ -268,18 +353,46 @@ function CustomQueue.CreateTabArgs(addon)
                 inline = true,
                 name = L["Custom Queue Ordering"],
                 order = 0.5,
-                args = {
-                    note = {
-                        type = "description",
-                        name = "|cFF999999" .. L["Custom Queue Ordering Note"] .. "|r",
-                        order = 1,
-                        fontSize = "small",
-                    },
-                    procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2),
-                    contextOrder  = MakeContextOrderSelect(addon, 3),
-                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
-                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4),  -- Execute
-                },
+                args = (function()
+                    local function advancedHidden()
+                        return not OrderingAdvancedShown(addon)
+                    end
+                    local procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2)
+                    local contextOrder  = MakeContextOrderSelect(addon, 3)
+                    local sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
+                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4)  -- Execute
+                    procsFirst.hidden, contextOrder.hidden, sinkCooldowns.hidden =
+                        advancedHidden, advancedHidden, advancedHidden
+                    return {
+                        note = {
+                            type = "description",
+                            name = "|cFF999999" .. L["Custom Queue Ordering Note"] .. "|r",
+                            order = 1,
+                            fontSize = "small",
+                        },
+                        preset = MakeOrderingPresetSelect(addon, 1.2),
+                        customize = {
+                            type = "toggle",
+                            name = L["Ordering Customize"],
+                            desc = L["Ordering Customize desc"],
+                            order = 1.4,
+                            width = "normal",
+                            get = function() return OrderingAdvancedShown(addon) end,
+                            set = function(_, v)
+                                orderingAdvanced = v
+                                -- Collapsing out of a mixed state snaps back to Smart,
+                                -- so the toggle never reads off while controls show.
+                                if not v and CurrentOrderingPreset(addon) == "custom" then
+                                    ApplyOrderingPreset(addon, "smart")
+                                end
+                                if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+                            end,
+                        },
+                        procsFirst    = procsFirst,
+                        contextOrder  = contextOrder,
+                        sinkCooldowns = sinkCooldowns,
+                    }
+                end)(),
             },
             staleWarning = {
                 type = "description",
@@ -351,15 +464,7 @@ function CustomQueue.CreateTabArgs(addon)
                     end
 
                     -- Update baseline to current rotation
-                    if BlizzardAPI and BlizzardAPI.GetRotationSpells then
-                        local rotationSpells = BlizzardAPI.GetRotationSpells()
-                        if rotationSpells then
-                            cq.baseline = {}
-                            for i, sid in ipairs(rotationSpells) do
-                                cq.baseline[i] = sid
-                            end
-                        end
-                    end
+                    snapshotBaseline(cq)
 
                     InvalidateRotationCache()
                     CustomQueue.UpdateCustomQueueOptions(addon)

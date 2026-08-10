@@ -25,7 +25,7 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame = CreateFrame
 local C_Timer = C_Timer
 
-local POOL_SIZE = 16   -- main queue (<=7) + defensive (<=7) + headroom
+local POOL_SIZE = 8    -- defensive queue only (<=7) + headroom; the DPS row is keybind-only
 local container
 local layers = {}
 local placedCount = 0   -- layers currently seated over an icon (layers[1..placedCount])
@@ -162,6 +162,15 @@ local function ArmLayer(layer, icon, busy)
         -- Mid-application, clicking anything breaks it, so the hint says "wait".
         if icon.isPrecombatBuff == true then
             layer.clickHint:SetText(busy and "wait" or "click")
+            -- Anchored to the ICON, not the layer: the layer is absolutely placed
+            -- (see SeatLayer) and only re-seated once the layout settles, so while
+            -- the frame is being dragged the clickable region lags behind - fine
+            -- for an invisible hitbox, wrong for visible text. A FontString is not
+            -- a protected object, so unlike anchoring the layer itself this puts
+            -- no combat geometry protection on the icon; and it stays the layer's
+            -- child, so the [combat] hide driver still removes it instantly.
+            layer.clickHint:ClearAllPoints()
+            layer.clickHint:SetPoint("CENTER", icon, "CENTER")
             layer.clickHint:Show()
         else
             layer.clickHint:Hide()
@@ -316,8 +325,12 @@ end
 
 --- Called after the queues render, and on combat-end / login.
 function PrecombatOverlay.Refresh()
+    -- Strictly an out-of-combat feature: in combat, do nothing and schedule
+    -- nothing - the old reschedule here span a no-op timer closure ~10x/sec for
+    -- the whole fight. PLAYER_REGEN_ENABLED re-arms the overlay on combat exit.
+    if InCombatLockdown() then return end
     local addon = ownerAddon
-    if not container or not addon or InCombatLockdown() then return ScheduleUpdate() end
+    if not container or not addon then return ScheduleUpdate() end
     if ResyncInPlace(addon) then return end
     WithdrawStale()
     ScheduleUpdate()

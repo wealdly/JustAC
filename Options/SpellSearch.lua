@@ -22,29 +22,6 @@ local C_Container = C_Container
 local spellbookCache = {}  -- {spellID = {name = "Spell Name", icon = iconID}, ...}
 local spellbookCacheBuilt = false
 
--- Preview state for hotkey panel (selected spell pending confirmation)
-SpellSearch.previewState = { hotkey = nil }
-
--- Storage for hotkey value input (not spell search)
-SpellSearch.addHotkeyValueInput = ""
-
--- WoW class color codes for Options panel headers
-SpellSearch.CLASS_COLORS = {
-    DEATHKNIGHT = "FFC41E3A",
-    DEMONHUNTER = "FFA330C9",
-    DRUID       = "FFFF7C0A",
-    EVOKER      = "FF33937F",
-    HUNTER      = "FFAAD372",
-    MAGE        = "FF3FC7EB",
-    MONK        = "FF00FF98",
-    PALADIN     = "FFF48CBA",
-    PRIEST      = "FFFFFFFF",
-    ROGUE       = "FFFFF468",
-    SHAMAN      = "FF0070DD",
-    WARLOCK     = "FF8788EE",
-    WARRIOR     = "FFC69B6D",
-}
-
 -------------------------------------------------------------------------------
 -- Build spellbook cache (called once when options panel opens)
 -------------------------------------------------------------------------------
@@ -315,13 +292,13 @@ end
 
 -------------------------------------------------------------------------------
 -- Returns a name-function for a class-colored, spec-suffixed inline header.
--- label: already-localized middle text, e.g. L["Blacklist"].
+-- label: already-localized middle text, e.g. L["Defensive Priority List"].
 -------------------------------------------------------------------------------
 function SpellSearch.SpecHeader(label)
     return function()
         local className, playerClass = UnitClass("player")
-        local colorCode = (playerClass and SpellSearch.CLASS_COLORS
-            and SpellSearch.CLASS_COLORS[playerClass]) or "FFFFFFFF"
+        local classColor = playerClass and RAID_CLASS_COLORS and RAID_CLASS_COLORS[playerClass]
+        local colorCode = (classColor and classColor.colorStr) or "FFFFFFFF"
         local specIndex = GetSpecialization and GetSpecialization()
         local specName
         if specIndex then
@@ -384,6 +361,49 @@ function SpellSearch.AddSpellToList(addon, spellList, id)
 end
 
 -------------------------------------------------------------------------------
+-- Curated role for a spell, as a colored short tag plus a family bucket:
+-- "defensive" (defensive/heal tables), "offensive" (SpellDB's fail-open default),
+-- or "both" for the ambiguous middle - Disruption (CC/interrupt) and Utility keep
+-- their own tag but belong to BOTH families, so nothing warns or reorders against
+-- them. Items return nil - their role is context-specific. Display guidance only;
+-- nothing gates on it.
+-------------------------------------------------------------------------------
+function SpellSearch.RoleTag(id)
+    if not id or id < 0 or not SpellDB then return nil end
+    if (SpellDB.IsDefensiveSpell and SpellDB.IsDefensiveSpell(id))
+       or (SpellDB.IsHealingSpell and SpellDB.IsHealingSpell(id)) then
+        return "|cff2ecc71" .. L["Role Defensive"] .. "|r", "defensive"
+    end
+    if (SpellDB.IsCrowdControlSpell and SpellDB.IsCrowdControlSpell(id))
+       or (SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(id)) then
+        return "|cff4fc3f7" .. L["Disruption"] .. "|r", "both"
+    end
+    if SpellDB.IsOffensiveSpell and not SpellDB.IsOffensiveSpell(id) then
+        return "|cff9e9e9e" .. L["Role Utility"] .. "|r", "both"
+    end
+    return "|cffff9966" .. L["Role Offensive"] .. "|r", "offensive"
+end
+
+-------------------------------------------------------------------------------
+-- Resolve a signed list entry to its display name and icon: positive = spell,
+-- negative = item. Either return may be nil when the record is not cached;
+-- callers supply their own fallback text and icon.
+-------------------------------------------------------------------------------
+function SpellSearch.DisplayInfo(id)
+    if id < 0 then
+        local itemID = -id
+        local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
+        if not itemTexture and C_Item and C_Item.GetItemIconByID then
+            itemTexture = C_Item.GetItemIconByID(itemID)
+        end
+        return itemName, itemTexture
+    end
+    local info = (BlizzardAPI and BlizzardAPI.GetCachedSpellInfo(id))
+        or (C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id))
+    if info then return info.name, info.iconID end
+end
+
+-------------------------------------------------------------------------------
 -- Helper to create spell list entries for a given list (defensives/etc.)
 -------------------------------------------------------------------------------
 -- Lists whose engines actually read defensives.spellSettings[id].procPriority
@@ -432,18 +452,17 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             cooldownInfo = ""
         elseif isItemEntry then
             -- Negative entry = item ID
-            local itemID = -entry
-            local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
-            displayName = itemName and (itemName .. " |cff00ccff[Item]|r") or ("Item " .. itemID)
-            displayIcon = itemTexture or 134400
+            local itemName, itemIcon = SpellSearch.DisplayInfo(entry)
+            displayName = itemName and (itemName .. " |cff00ccff[Item]|r") or ("Item " .. -entry)
+            displayIcon = itemIcon or 134400
             cooldownInfo = ""
         else
             -- Positive entry = spell ID
-            local spellInfo = BlizzardAPI.GetCachedSpellInfo(entry)
-            displayName = spellInfo and spellInfo.name or ("Spell " .. entry)
-            displayIcon = spellInfo and spellInfo.iconID or 134400
+            local spellName, spellIcon = SpellSearch.DisplayInfo(entry)
+            displayName = spellName or ("Spell " .. entry)
+            displayIcon = spellIcon or 134400
             cooldownInfo = ""
-            if spellInfo and C_Spell and C_Spell.GetSpellCooldown then
+            if spellName and C_Spell and C_Spell.GetSpellCooldown then
                 local cdInfo = C_Spell.GetSpellCooldown(entry)
                 local duration = cdInfo and cdInfo.duration
                 local isSecret = BlizzardAPI.IsSecretValue(duration)

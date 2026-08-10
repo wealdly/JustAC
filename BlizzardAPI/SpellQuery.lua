@@ -28,8 +28,6 @@ local GetInventoryItemID                = GetInventoryItemID ---@diagnostic disa
 local GetItemSpell                      = GetItemSpell
 local IsSecretValue = BlizzardAPI.IsSecretValue
 
-local SpellDB = LibStub("JustAC-SpellDB", true)
-
 --------------------------------------------------------------------------------
 -- Addon Access & Profile Management
 --------------------------------------------------------------------------------
@@ -122,6 +120,14 @@ end
 --- next spell Blizzard would highlight instead.
 function BlizzardAPI.GetHighlightCastSpell()
     return QueryNextCastSpell(true)
+end
+
+--- Demand probe: the opposite of the highlight lookahead - always includes spells
+--- with NO visible action-bar button. The pre-combat engine reads the assisted
+--- rotation's current maintained-buff demand through this: poisons and shields
+--- rarely sit on anyone's bars, so the visible-only variants never surface them.
+function BlizzardAPI.GetAnyNextCastSpell()
+    return QueryNextCastSpell(false)
 end
 
 function BlizzardAPI.GetRotationSpells()
@@ -402,18 +408,6 @@ function BlizzardAPI.MarkResolvedIDs(spellList, spellIDSet)
             end
         end
     end
-end
-
-function BlizzardAPI.IsOffensiveSpell(spellID)
-    if not spellID then return true end
-    if not SpellDB then return true end
-    return SpellDB.IsOffensiveSpell(spellID)
-end
-
-function BlizzardAPI.IsDefensiveSpell(spellID)
-    if not spellID then return false end
-    if not SpellDB then return false end
-    return SpellDB.IsDefensiveSpell(spellID) or SpellDB.IsHealingSpell(spellID)
 end
 
 --------------------------------------------------------------------------------

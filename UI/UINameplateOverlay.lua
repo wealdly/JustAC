@@ -64,6 +64,8 @@ local overlayPowerBar          = nil  -- primary resource bar (current displayed
 local overlaySecondaryPowerBar = nil  -- secondary point-resource bar (combo points / chi / …)
 local overlaySecondarySegments = 0    -- cached fail-closed segment count for the secondary
 local lastOverlayPowerUpdate    = 0   -- throttle stamp for UpdatePowerBar
+local lastOverlayHealthUpdate    = 0  -- throttle stamp for UpdateHealthBar
+local lastOverlayPetHealthUpdate = 0  -- throttle stamp for UpdatePetHealthBar
 local currentNameplate = nil  -- nameplate frame we're currently anchored to
 local savedCCAnchors   = nil  -- saved Blizzard CC frame anchors for restoration
 local interruptIcon    = nil  -- single interrupt reminder icon ("position 0")
@@ -136,7 +138,7 @@ local cachedDefensiveQueue = nil
 local function CreateOverlayIcon(iconSize, profile)
     -- Build the shared icon skeleton (textures, cooldowns, hotkey, animations).
     -- isClickable=false (always click-through), isFirstIcon=true (uses HOTKEY_OFFSET_FIRST=-3).
-    local button = UIFrameFactory.CreateBaseIcon(UIParent, iconSize, false, true, nil)
+    local button = UIFrameFactory.CreateBaseIcon(UIParent, iconSize, false, true)
     if not button then return nil end
 
     -- Nameplate-specific: BACKGROUND strata so icons sit under addon UI.
@@ -280,15 +282,14 @@ local function RefreshOverlaySecondaryCache()
         UIHealthBar.ResolveSegmentCount(overlaySecondaryPowerBar, overlaySecondarySegments)
 end
 
--- Size + orient one resource bar beyond `anchorBar` at POWER_BAR_HEIGHT thickness,
--- using the same per-orientation template the pet health bar uses. `barWidth`/`barHeight`
--- come from the health-bar sizing (one is nil per orientation - only the used one matters).
-local function AnchorOverlayPowerBar(bar, anchorBar, expansion, isLeft, barWidth, barHeight)
+-- Size + orient one bar beyond `anchorBar` at the given thickness, matching the
+-- cluster expansion. `barWidth`/`barHeight` come from the health-bar sizing (one
+-- is nil per orientation - only the used one matters).
+local function AnchorOverlayBar(bar, anchorBar, expansion, isLeft, barWidth, barHeight, thickness)
     bar:ClearAllPoints()
     if expansion == "out" then
         bar:SetOrientation("HORIZONTAL")
-        bar:SetSize(barWidth, POWER_BAR_HEIGHT)
-        bar.barIsHorizontal = true
+        bar:SetSize(barWidth, thickness)
         if isLeft then
             bar:SetPoint("BOTTOMLEFT",  anchorBar, "TOPLEFT",  0, BAR_SPACING)
         else
@@ -296,8 +297,7 @@ local function AnchorOverlayPowerBar(bar, anchorBar, expansion, isLeft, barWidth
         end
     else
         bar:SetOrientation("VERTICAL")
-        bar:SetSize(POWER_BAR_HEIGHT, barHeight)
-        bar.barIsHorizontal = false
+        bar:SetSize(thickness, barHeight)
         if expansion == "up" then
             if isLeft then
                 bar:SetPoint("BOTTOMLEFT",  anchorBar, "BOTTOMRIGHT",  BAR_SPACING, 0)
@@ -312,6 +312,23 @@ local function AnchorOverlayPowerBar(bar, anchorBar, expansion, isLeft, barWidth
             end
         end
     end
+end
+
+-- Show the bevel strips matching the bar's orientation, hide the other set.
+local function SetBevelOrientation(bar, horizontal)
+    if bar.hBevelStrips then
+        for _, s in ipairs(bar.hBevelStrips) do s:SetShown(horizontal) end
+    end
+    if bar.bevelStrips then
+        for _, s in ipairs(bar.bevelStrips) do s:SetShown(not horizontal) end
+    end
+end
+
+-- Resource-bar variant: POWER_BAR_HEIGHT thickness, plus the fill-direction flag
+-- the segment layout reads.
+local function AnchorOverlayPowerBar(bar, anchorBar, expansion, isLeft, barWidth, barHeight)
+    AnchorOverlayBar(bar, anchorBar, expansion, isLeft, barWidth, barHeight, POWER_BAR_HEIGHT)
+    bar.barIsHorizontal = (expansion == "out")
 end
 
 -- Stack the resource bars beyond the outermost shown health bar and (re)segment the
@@ -447,20 +464,9 @@ local function RestoreEnrageIndicator()
     savedEnrageClassAnchor = nil
 end
 
--- A frame's edges and centre in UIParent space, so two of our frames can be compared even
--- when they carry different scales. Only ever called on OUR frames - but ours hang off the
--- nameplate, and a rect that depends on a restricted frame is itself restricted, so GetRect
--- can be refused (targeting an enemy is enough to trigger it). Treat that exactly like a
--- not-yet-laid-out frame: return nil and let the caller skip the pass.
-local function RectInUISpace(f)
-    local ok, l, b, w, h = pcall(f.GetRect, f)
-    if not ok or not l or not w or w == 0 then return nil end
-    local s = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    return {
-        right = (l + w) * s, top = (b + h) * s,
-        cx = (l + w * 0.5) * s, cy = (b + h * 0.5) * s,
-    }
-end
+-- (Rect measurement helpers are gone deliberately: rects of nameplate-parented
+-- frames are refused in combat, so every consumer now works from the analytic
+-- layout state in defRowAnchor/rightRowAnchor instead.)
 
 -- Position the BuffListFrame as position 0 of the defensive queue, scaled to the queue
 -- icon size so it reads as part of the defensive column.
@@ -477,18 +483,19 @@ end
 --
 -- ponytail: sub-item centering inside Blizzard's list frame may want a small x nudge -
 -- tune by eye in-game; the structural anchor is what matters here.
-local function PositionEnrageIndicator(npo, expansion, stackTop)
+local function PositionEnrageIndicator(npo, expansion)
     local uf        = currentNameplate and currentNameplate.UnitFrame
     local af        = uf and uf.AurasFrame
     local buffFrame = af and af.BuffListFrame
     local anchorFrame = defRowAnchor.frame
-    if not buffFrame or not anchorFrame or #defIcons == 0 then RestoreEnrageIndicator(); return end
+    if not buffFrame or not anchorFrame or #defIcons == 0 then RestoreEnrageIndicator(); return false end
 
     local iconSize = npo.iconSize or 32
     local defScale = npo.defensiveIconScale or 1  -- defensive icons render at iconSize * this
     -- Match the defensive icons' rendered size, compensating for the nameplate scale space.
     local scale    = AuraListScaleForQueue(af, iconSize * defScale)
-    local spacing  = npo.iconSpacing or ICON_SPACING
+    -- Effective spacing: icons chain in their own scaled space (see AnchorToNameplate).
+    local spacing  = (npo.iconSpacing or ICON_SPACING) * defScale
 
     -- SetPoint offsets are read in the positioned frame's own (scaled) space, while every
     -- distance below is measured in UIParent space. One conversion factor covers all of them.
@@ -497,18 +504,18 @@ local function PositionEnrageIndicator(npo, expansion, stackTop)
     -- Horizontal centre of the defensive row as an offset from the nameplate edge it hangs
     -- off. defIcons[1] anchors LEFT/RIGHT (so, vertically centred) at exactly this gap, which
     -- puts its centre half an icon further along and its top half an icon above.
-    local half = (defRowAnchor.iconSize or iconSize) * 0.5
+    -- defRowAnchor carries EFFECTIVE (scaled) geometry.
+    local half = (defRowAnchor.iconSize or iconSize * defScale) * 0.5
     local cx   = (defRowAnchor.gapX or 0) + (defRowAnchor.isLeft and half or -half)
 
-    -- "out" stacks the indicator above the health/resource bars instead of the icon row.
-    -- Those are all our own frames, so measuring them is safe - unlike the nameplate side,
-    -- where GetRect is restricted. Fold the gap into the offset and the anchor itself still
-    -- lands on the nameplate.
+    -- "out" stacks the indicator above the health/resource bars instead of the icon row,
+    -- using the ANALYTIC stack extent RenderDefensives captured - measuring the bars via
+    -- GetRect is refused in combat (their rects hang off the restricted nameplate), which
+    -- used to silently skip this placement for entire fights.
     local dx, dy = 0, 0
-    if expansion == "out" and stackTop and stackTop ~= defIcons[1] then
-        local s, i = RectInUISpace(stackTop), RectInUISpace(defIcons[1])
-        if not s or not i then RestoreEnrageIndicator(); return end  -- not laid out yet
-        dy, dx = s.top - i.top, s.cx - i.cx
+    if expansion == "out" and (defRowAnchor.stackOut or 0) > 0 then
+        dy = defRowAnchor.stackOut
+        dx = (defRowAnchor.isLeft and 1 or -1) * (defRowAnchor.stackShift or 0)
     end
 
     local ok = pcall(function()
@@ -529,6 +536,7 @@ local function PositionEnrageIndicator(npo, expansion, stackTop)
         savedEnrageFrame       = buffFrame
         savedEnrageClassAnchor = uf.ClassificationFrame
     end
+    return ok
 end
 
 --- Restore all displaced CC/classification frames to their original Blizzard anchoring.
@@ -560,120 +568,54 @@ local function RestoreCCFrames()
     savedCCAnchors = nil
 end
 
---- Save original CC anchors and re-anchor relative to our icon cluster.
---- Always displaces (both default and reversed anchors have a cluster on the right).
---- Scales CC frames to match our icon size and center-aligns with our queue.
---- Horizontal ("out"): CC moves ABOVE the right-side cluster (above health bar if present).
---- Vertical ("up"/"down"): CC moves to the RIGHT of the right-side cluster (past health bar if present).
-local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, showHealthBar, iconSize)
-    -- Always restore previous displacement first
-    RestoreCCFrames()
-
-    local uf = nameplate and nameplate.UnitFrame
+--- Place the CC/LoC list frames beside/above the right-side cluster. Split from
+--- DisplaceCCFrames so RenderDefensives can RE-place them whenever the bar stack
+--- changes. Every offset is ANALYTIC, from layout state captured in
+--- rightRowAnchor/defRowAnchor - nothing is measured. The old measured version was
+--- broken two ways: GetRect on nameplate-parented frames is refused in combat
+--- (so every in-combat placement silently skipped), and on a fresh anchor pass the
+--- health bar had just been unanchored, so the reversed-anchor case always failed
+--- with no retry.
+---
+--- Anchors to the NAMEPLATE, never to our own icons or bars: these are Blizzard's
+--- restricted frames, and anchoring one to ours makes ours - plus everything its
+--- rect depends on - geometry-protected in combat, while we move these icons every
+--- frame. Same approach as PositionEnrageIndicator.
+---
+--- Scale: match CC icon visual size to our queue's iconSize.
+---   CrowdControlListFrame children are individually scaled by auraItemScale
+---   (applied per-child in NamePlateAurasMixin), so the parent frame needs:
+---     parentScale = iconSize / (AURA_ITEM_HEIGHT * auraItemScale)
+---   LossOfControlFrame is a simple 30x30 container, scale = iconSize / 30.
+local function PlaceCCListFrames(expansion)
+    if not savedCCAnchors then return end
+    local ccList, locFrame = savedCCAnchors.ccList, savedCCAnchors.locFrame
+    if not ccList and not locFrame then return end
+    local npAnchor = rightRowAnchor.frame
+    if not npAnchor then return end
+    local uf = currentNameplate and currentNameplate.UnitFrame
     local af = uf and uf.AurasFrame
     if not af then return end
 
-    local ccList   = af.CrowdControlListFrame
-    local locFrame = af.LossOfControlFrame
-    if not ccList and not locFrame then return end
-
-    -- Determine which icon set occupies the RIGHT side (where CC naturally lives).
-    -- anchor="RIGHT" (default)  → DPS is RIGHT, DEF is LEFT  → DPS overlaps CC
-    -- anchor="LEFT"  (reversed) → DPS is LEFT,  DEF is RIGHT → DEF overlaps CC (+ health bar)
-    local isLeft = (anchor == "LEFT")
-    local rightIcons, rightHasHealthBar
-    if isLeft then
-        -- Reversed: defensive cluster is on the right
-        rightIcons = showDefensives and #defIcons > 0 and defIcons or nil
-        -- Health bar sits above defensive icons in horizontal, beside them in vertical
-        rightHasHealthBar = showHealthBar and showDefensives and healthBar ~= nil
-    else
-        -- Default: DPS cluster is on the right (no health bar on DPS side)
-        rightIcons = #dpsIcons > 0 and dpsIcons or nil
-        rightHasHealthBar = false
-    end
-    if not rightIcons then return end  -- nothing on the right side → no overlap
-
-    -- Track which frames we displaced + the Blizzard healthBar for restoration
-    -- (Blizzard's HealthBarsContainer.healthBar is the restore anchor target)
-    local npHealthBar = uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar
-    savedCCAnchors = { healthBar = npHealthBar }
-    if ccList   then savedCCAnchors.ccList   = ccList   end
-    if locFrame then savedCCAnchors.locFrame = locFrame end
-
-    -- Displace ClassificationFrame (elite/boss/rare badge) when our defensive icons
-    -- occupy the LEFT side of the health bar - the badge's default position floats
-    -- to the LEFT of the bar center and collides with defIcons[1].
-    -- Fix: overlay the badge on the top-left corner of the health bar at 80% scale.
-    -- Covers default mode (DEF on left) and reversed anchor mode (DPS on left).
-    local defOnLeft = not isLeft and showDefensives and #defIcons > 0
-    if (defOnLeft or isLeft) and npHealthBar and uf.ClassificationFrame and uf.RaidTargetFrame then
-        local classFrame = uf.ClassificationFrame
-        local ok2 = pcall(function()
-            classFrame:ClearAllPoints()
-            classFrame:SetPoint("CENTER", npHealthBar, "TOPLEFT", 0, 0)
-            classFrame:SetScale(0.80)
-        end)
-        if ok2 then
-            savedCCAnchors.classificationFrame = classFrame
-            savedCCAnchors.raidTargetFrame     = uf.RaidTargetFrame
-        end
-    end
-
-    -- Displace RaidTargetFrame (skull/cross/star raid markers) - default anchor is
-    -- RIGHT of HealthBarsContainer.LEFT at center height, directly in front of our
-    -- left-side defensive cluster.
-    -- Fix: move it above the health bar, centered, so it clears both clusters.
-    if npHealthBar and uf.RaidTargetFrame then
-        local raidTarget = uf.RaidTargetFrame
-        local ok3 = pcall(function()
-            raidTarget:ClearAllPoints()
-            raidTarget:SetPoint("BOTTOM", npHealthBar, "TOP", 0, 2)
-        end)
-        if ok3 then
-            savedCCAnchors.raidTarget = raidTarget
-        end
-    end
-
-    -- The topmost frame our CC should sit above / beside:
-    -- If the right-side cluster has a health bar, CC goes above/beside the bar;
-    -- otherwise CC goes above/beside the first icon.
-    local topAnchorFrame = (rightHasHealthBar and healthBar) or rightIcons[1]
-
-    -- pcall all anchor/scale mutations - CC frames may be restricted in some
-    -- combat contexts (e.g., arena) and ClearAllPoints/SetPoint could taint.
-    --
-    -- Scale: match CC icon visual size to our queue's iconSize.
-    --   CrowdControlListFrame children are individually scaled by auraItemScale
-    --   (applied per-child in NamePlateAurasMixin), so the parent frame needs:
-    --     parentScale = iconSize / (AURA_ITEM_HEIGHT * auraItemScale)
-    --   LossOfControlFrame is a simple 30×30 container, scale = iconSize / 30.
-    -- Position: center-aligned with queue icons rather than edge-aligned.
-    iconSize = iconSize or 32
+    local iconSize = savedCCAnchors.iconSize or 32
     -- Scale CC/stun + LoC to the queue icon size, compensating for the nameplate scale
     -- space (see AuraListScaleForQueue) - otherwise both render bigger than our icons.
     local ccScale  = AuraListScaleForQueue(af, iconSize)
     local locScale = (iconSize / BLIZZARD_LOC_SIZE) * AuraFrameScaleRatio(af)
+    local uiRatio  = AuraFrameScaleRatio(af)
 
-    -- Everything below anchors to the NAMEPLATE, never to our own icons or bars. These are
-    -- Blizzard's restricted frames, and anchoring one to ours makes ours - plus everything
-    -- its rect depends on - geometry-protected in combat, while we move these icons every
-    -- frame. topAnchorFrame is still what we line up WITH; it is measured rather than
-    -- anchored to, which is safe because it belongs to us. Same approach as
-    -- PositionEnrageIndicator.
-    local npAnchor = rightRowAnchor.frame
-    if not npAnchor then return end
-    local rowGapX  = rightRowAnchor.gapX or 0
-    local rowIcon  = rightRowAnchor.iconSize or iconSize
-
-    -- Offset from the row's first icon to whatever we're lining up with (zero when they are
-    -- the same frame). Both are ours, so this measurement is always available to us.
-    local topRect, iconRect = RectInUISpace(topAnchorFrame), RectInUISpace(rightIcons[1])
-    if not topRect or not iconRect then return end  -- not laid out yet; the next pass retries
+    local rowGapX = rightRowAnchor.gapX or 0
+    local rowIcon = rightRowAnchor.iconSize or iconSize
+    -- Bar-stack clearance: nonzero only when the DEFENSIVE cluster is the right row
+    -- (reversed anchor) and RenderDefensives has laid its bars out.
+    local stackOut, stackShift = 0, 0
+    if rightRowAnchor.isDefSide then
+        stackOut   = defRowAnchor.stackOut or 0
+        stackShift = defRowAnchor.stackShift or 0
+    end
 
     -- SetPoint offsets are read in the positioned frame's own scaled space, and each of
     -- these frames carries a different scale, so the conversion is per frame.
-    local uiRatio = AuraFrameScaleRatio(af)
     local function Place(frame, frameScale, point, x, y)
         local per = uiRatio / (frameScale > 0 and frameScale or 1)
         frame:ClearAllPoints()
@@ -684,16 +626,17 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
     local ok = pcall(function()
         local point, x, y
         if expansion == "out" then
-            -- Horizontal row: CC goes ABOVE the cluster, centred on the anchor frame.
+            -- Horizontal row: CC goes ABOVE the cluster (above the bar stack when
+            -- present), centred on the stack / first icon.
             point = "BOTTOM"
-            x = rowGapX + rowIcon * 0.5 + (topRect.cx - iconRect.cx)
-            y = rowIcon * 0.5 + (topRect.top - iconRect.top) + CC_GAP
+            x = rowGapX + rowIcon * 0.5 + stackShift
+            y = rowIcon * 0.5 + stackOut + CC_GAP
         else
-            -- Vertical column ("up"/"down"): CC goes to the RIGHT, vertically
-            -- centred on the anchor frame.
+            -- Vertical column ("up"/"down"): CC goes to the RIGHT, past the bar
+            -- stack, vertically centred on it.
             point = "LEFT"
-            x = rowGapX + rowIcon + (topRect.right - iconRect.right) + CC_GAP
-            y = topRect.cy - iconRect.cy
+            x = rowGapX + rowIcon + stackOut + CC_GAP
+            y = (expansion == "up") and stackShift or -stackShift
         end
         if ccList then Place(ccList, ccScale, point, x, y) end
         if locFrame then
@@ -711,11 +654,80 @@ local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, sh
             end
         end
     end)
-
     if not ok then
-        -- Displacement failed (restricted frame) - clean up and skip
-        savedCCAnchors = nil
+        -- Restricted frame (arena): fully unwind. The old "savedCCAnchors = nil"
+        -- destroyed the restore record AFTER the badge/marker were already moved,
+        -- stranding them on a RECYCLED plate for whatever unit it served next.
+        RestoreCCFrames()
     end
+end
+
+--- Save original CC anchors and re-anchor relative to our icon cluster.
+--- Always displaces (both default and reversed anchors have a cluster on the right).
+local function DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, iconSize)
+    -- Always restore previous displacement first
+    RestoreCCFrames()
+
+    local uf = nameplate and nameplate.UnitFrame
+    local af = uf and uf.AurasFrame
+    if not af then return end
+
+    local ccList   = af.CrowdControlListFrame
+    local locFrame = af.LossOfControlFrame
+    if not ccList and not locFrame then return end
+
+    -- Determine which icon set occupies the RIGHT side (where CC naturally lives).
+    -- anchor="RIGHT" (default)  → DPS is RIGHT, DEF is LEFT  → DPS overlaps CC
+    -- anchor="LEFT"  (reversed) → DPS is LEFT,  DEF is RIGHT → DEF overlaps CC (+ health bar)
+    local isLeft = (anchor == "LEFT")
+    local rightIcons
+    if isLeft then
+        rightIcons = showDefensives and #defIcons > 0 and defIcons or nil
+    else
+        rightIcons = #dpsIcons > 0 and dpsIcons or nil
+    end
+    if not rightIcons then return end  -- nothing on the right side → no overlap
+
+    -- Record EVERYTHING we are about to touch BEFORE any mutation. Restores are
+    -- idempotent (restoring an unmoved frame just re-asserts its XML default), so a
+    -- partial failure can always unwind - recording on success left frames stranded
+    -- when a later step failed.
+    local npHealthBar = uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar
+    savedCCAnchors = { healthBar = npHealthBar, iconSize = iconSize or 32 }
+    if ccList   then savedCCAnchors.ccList   = ccList   end
+    if locFrame then savedCCAnchors.locFrame = locFrame end
+
+    -- Displace ClassificationFrame (elite/boss/rare badge) when our defensive icons
+    -- occupy the LEFT side of the health bar - the badge's default position floats
+    -- to the LEFT of the bar center and collides with defIcons[1].
+    -- Fix: overlay the badge on the top-left corner of the health bar at 80% scale.
+    -- Covers default mode (DEF on left) and reversed anchor mode (DPS on left).
+    local defOnLeft = not isLeft and showDefensives and #defIcons > 0
+    if (defOnLeft or isLeft) and npHealthBar and uf.ClassificationFrame and uf.RaidTargetFrame then
+        local classFrame = uf.ClassificationFrame
+        savedCCAnchors.classificationFrame = classFrame
+        savedCCAnchors.raidTargetFrame     = uf.RaidTargetFrame
+        pcall(function()
+            classFrame:ClearAllPoints()
+            classFrame:SetPoint("CENTER", npHealthBar, "TOPLEFT", 0, 0)
+            classFrame:SetScale(0.80)
+        end)
+    end
+
+    -- Displace RaidTargetFrame (skull/cross/star raid markers) - default anchor is
+    -- RIGHT of HealthBarsContainer.LEFT at center height, directly in front of our
+    -- left-side defensive cluster.
+    -- Fix: move it above the health bar, centered, so it clears both clusters.
+    if npHealthBar and uf.RaidTargetFrame then
+        local raidTarget = uf.RaidTargetFrame
+        savedCCAnchors.raidTarget = raidTarget
+        pcall(function()
+            raidTarget:ClearAllPoints()
+            raidTarget:SetPoint("BOTTOM", npHealthBar, "TOP", 0, 2)
+        end)
+    end
+
+    PlaceCCListFrames(expansion)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -726,12 +738,18 @@ end
 -- When the nameplate moves, the entire cluster follows automatically.
 -- Health bar (when shown) floats above the nameplate for all anchor directions.
 -- ─────────────────────────────────────────────────────────────────────────────
-local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, iconSpacing)
+local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, iconSpacing, npo)
     -- anchor:            "LEFT" or "RIGHT" - which side of the nameplate
     -- expansion:         "out" (horizontal), "up" (vertical upward), "down" (vertical downward)
     -- iconSpacing:       px between successive icons (defaults to ICON_SPACING constant)
+    -- npo:               overlay profile block (per-icon scales for the anchor records)
     expansion         = expansion or "down"
     iconSpacing       = iconSpacing or ICON_SPACING
+    -- Icons are SetScale'd (defensive cluster / first DPS icon), which scales their
+    -- SetPoint offsets too - the anchor records below carry EFFECTIVE plate-space
+    -- geometry so the CC/enrage consumers line up with what actually renders.
+    local defScale  = (npo and npo.defensiveIconScale) or 1
+    local dpsScale1 = (npo and npo.firstIconScale) or 1
     -- Anchor to HealthBarsContainer so icons center on the health bar strip,
     -- not on the root nameplate frame (which also includes auras/name/castbar).
     local uf          = nameplate.UnitFrame
@@ -783,21 +801,26 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
 
     -- The right-hand row, for the CC frames. Both layouts put a row on the right attached
     -- by its LEFT edge to the nameplate's RIGHT - it's the DPS row by default and the
-    -- defensive row when the clusters are reversed.
-    rightRowAnchor.frame    = anchorFrame
-    rightRowAnchor.edge     = isLeft and defEdge or dpsEdge
-    rightRowAnchor.gapX     = isLeft and defGapX or dpsGapX
-    rightRowAnchor.iconSize = iconSize
+    -- defensive row when the clusters are reversed. Effective (scaled) geometry - see above.
+    local rightScale = isLeft and defScale or dpsScale1
+    rightRowAnchor.frame     = anchorFrame
+    rightRowAnchor.edge      = isLeft and defEdge or dpsEdge
+    rightRowAnchor.gapX      = (isLeft and defGapX or dpsGapX) * rightScale
+    rightRowAnchor.iconSize  = iconSize * rightScale
+    rightRowAnchor.isDefSide = isLeft
 
     if showDefensives then
         AnchorRow(defIcons, defPt, defEdge, defGapX, defPt, defEdge, defChainX)
 
         -- Hand the row's nameplate attachment to the enrage indicator, which has to reach
         -- the same spot without anchoring to our icons. Captured here so the two can't drift
-        -- apart: whatever the row attaches to is what it attaches to.
+        -- apart: whatever the row attaches to is what it attaches to. Effective geometry.
         defRowAnchor.frame,  defRowAnchor.edge     = anchorFrame, defEdge
-        defRowAnchor.gapX,   defRowAnchor.isLeft   = defGapX, isLeft
-        defRowAnchor.iconSize = iconSize
+        defRowAnchor.gapX,   defRowAnchor.isLeft   = defGapX * defScale, isLeft
+        defRowAnchor.iconSize = iconSize * defScale
+        -- Bar stack is not laid out yet on a fresh anchor; RenderDefensives fills these
+        -- in (and re-places the CC list) once its bars exist.
+        defRowAnchor.stackOut, defRowAnchor.stackShift = 0, 0
 
         -- Maintenance slot: the defensive row's "position 0". Mirrors the interrupt icon's
         -- relationship to dpsIcons[1] below, using the same expansion rules, so defIcons[1]
@@ -851,6 +874,12 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
                 interruptIcon.castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
             end
         end
+        -- The soothe cue's cleansed-aura clones hang off the same slot and must follow
+        -- the same expansion rule - they were built with the STANDARD queue's
+        -- orientation and popped over dpsIcons[1] on "up" overlays.
+        if interruptIcon.sootheCue and UISootheCue.ReanchorAuras then
+            UISootheCue.ReanchorAuras(interruptIcon.sootheCue, expansion)
+        end
         interruptIcon:Hide()
     end
 
@@ -884,7 +913,9 @@ function UINameplateOverlay.Create(addon)
         savedNameplateShowEnemies = GetCVar("nameplateShowEnemies")
     end
     if GetCVar("nameplateShowEnemies") ~= "1" then
-        SetCVar("nameplateShowEnemies", "1")
+        -- pcall: nameplate CVars have been combat/instance-restricted on some clients,
+        -- and this path is reachable mid-combat (options rebuild).
+        pcall(SetCVar, "nameplateShowEnemies", "1")
     end
 
     local iconSize = npo.iconSize or 32
@@ -911,7 +942,7 @@ function UINameplateOverlay.Create(addon)
     -- an independent choice, so build it when either feature wants it. The kick self-gates on
     -- interruptMode in RenderInterruptSlot, so "off + cleanse on" shows only the cleanse.
     local interruptMode = profile.interruptMode or "kickPrefer"
-    local kickWanted = interruptMode ~= "disabled" and interruptMode ~= "off"
+    local kickWanted = interruptMode ~= "disabled"
     if kickWanted or (profile.showSootheCue ~= false and SpellDB.ResolveSootheSpells() ~= nil) then
         interruptIcon = CreateOverlayIcon(iconSize, profile)
         resolvedInterrupts = SpellDB.ResolveInterruptSpells()
@@ -955,7 +986,7 @@ function UINameplateOverlay.Create(addon)
             savedShowQuestUnitCircles = GetCVar("ShowQuestUnitCircles")
         end
         if GetCVar("ShowQuestUnitCircles") ~= "0" then
-            SetCVar("ShowQuestUnitCircles", "0")
+            pcall(SetCVar, "ShowQuestUnitCircles", "0")
         end
         -- Create the replacement texture (hidden until UpdateAnchor detects a quest mob)
         local qSize = math_floor(iconSize * 0.65)
@@ -1078,20 +1109,24 @@ function UINameplateOverlay.Destroy(addon)
     rightRowAnchor.frame = nil
 
     -- Restore the user's original nameplateShowEnemies CVar.
-    -- Only restore when we actually saved a value (Create was called).
+    -- Only restore when we actually saved a value (Create was called). Keep the saved
+    -- value when a (possibly combat-restricted) write fails, so the next Destroy - or
+    -- a Create that finds the value still saved - can retry instead of losing it.
     if savedNameplateShowEnemies ~= nil then
+        local restored = true
         if GetCVar("nameplateShowEnemies") ~= savedNameplateShowEnemies then
-            SetCVar("nameplateShowEnemies", savedNameplateShowEnemies)
+            restored = pcall(SetCVar, "nameplateShowEnemies", savedNameplateShowEnemies)
         end
-        savedNameplateShowEnemies = nil
+        if restored then savedNameplateShowEnemies = nil end
     end
 
-    -- Restore the user's original ShowQuestUnitCircles CVar.
+    -- Restore the user's original ShowQuestUnitCircles CVar (same retry contract).
     if savedShowQuestUnitCircles ~= nil then
+        local restored = true
         if GetCVar("ShowQuestUnitCircles") ~= savedShowQuestUnitCircles then
-            SetCVar("ShowQuestUnitCircles", savedShowQuestUnitCircles)
+            restored = pcall(SetCVar, "ShowQuestUnitCircles", savedShowQuestUnitCircles)
         end
-        savedShowQuestUnitCircles = nil
+        if restored then savedShowQuestUnitCircles = nil end
     end
 
     if addon then
@@ -1103,6 +1138,23 @@ end
 --- Re-anchor the entire cluster to the current target's nameplate.
 --- Called on PLAYER_TARGET_CHANGED, NAME_PLATE_UNIT_ADDED, NAME_PLATE_UNIT_REMOVED.
 --- No InCombatLockdown() guard: nameplates are non-secure frames.
+--- Shared interrupt-slot teardown (glows, cast bar, soothe cue).
+--- clearPoints detaches it from the nameplate as well (UpdateAnchor path).
+local function HideInterruptSlot(clearPoints)
+    if not interruptIcon then return end
+    if UIAnimations then
+        UIAnimations.HideInterruptProcGlow(interruptIcon)
+        UIAnimations.HideInterruptCastBar(interruptIcon)
+        if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
+        interruptIcon.hasInterruptGlow = false
+    end
+    if clearPoints then interruptIcon:ClearAllPoints() end
+    interruptIcon:Hide()
+    -- The soothe cue is a sibling pinned over the icon (UIParent-parented),
+    -- so hiding the icon does not hide it.
+    if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
+end
+
 function UINameplateOverlay.UpdateAnchor(addon)
     if not addon then return end
     local profile = addon:GetProfile()
@@ -1121,14 +1173,14 @@ function UINameplateOverlay.UpdateAnchor(addon)
         lastEnrageCount     = -1 -- force enrage-indicator re-anchor on new nameplate
         local anchor       = npo.reverseAnchor and "LEFT" or "RIGHT"
         local iconSize     = npo.iconSize or 32
-        -- Health bar is tied to the defensive queue: only show when defensives are enabled
         local showDefensives = npo.showDefensives
-        local showHealthBar  = npo.showHealthBar and showDefensives
 
         local expansion         = npo.expansion or "down"
-        AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, npo.iconSpacing or ICON_SPACING)
-        -- Displace Blizzard CC frames so they don't overlap our icon cluster
-        DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, showHealthBar, iconSize)
+        AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, expansion, npo.iconSpacing or ICON_SPACING, npo)
+        -- Displace Blizzard CC frames so they don't overlap our icon cluster.
+        -- (Bar-stack clearance is applied later by RenderDefensives, which re-places
+        -- the CC list once its bars are laid out - the stack state is zero here.)
+        DisplaceCCFrames(nameplate, anchor, expansion, showDefensives, iconSize)
         -- Individual icons become visible when Render() / RenderDefensives() fills them
 
         -- Quest indicator: show our replacement "!" on quest-relevant targets.
@@ -1182,19 +1234,7 @@ function UINameplateOverlay.UpdateAnchor(addon)
             petHealthBar:ClearAllPoints()
             petHealthBar:Hide()
         end
-        if interruptIcon then
-            if UIAnimations then
-                UIAnimations.HideInterruptProcGlow(interruptIcon)
-                UIAnimations.HideInterruptCastBar(interruptIcon)
-                if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
-                interruptIcon.hasInterruptGlow = false
-            end
-            interruptIcon:ClearAllPoints()
-            interruptIcon:Hide()
-            -- The soothe cue is a sibling pinned over the icon (UIParent-parented),
-            -- so hiding the icon does not hide it.
-            if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
-        end
+        HideInterruptSlot(true)
     end
 end
 
@@ -1213,15 +1253,13 @@ function UINameplateOverlay.Render(addon, spellIDs)
 
     -- Overlay-specific visibility (independent settings, but the same-named options
     -- behave identically to the standard queue's SpellQueue.EvaluateQueueVisibility).
+    -- "requireHostile" needs no branch here: the overlay only renders on an attackable
+    -- target's nameplate, so a saved value behaves as "always" (option retired from the
+    -- overlay dropdown for the same reason).
     local queueVis = npo.queueVisibility or "always"
     local shouldHide = false
     if queueVis == "combatOnly" and not UnitAffectingCombat("player") then
         shouldHide = true
-    elseif queueVis == "requireHostile" and not UnitAffectingCombat("player") then
-        -- requireHostile only gates out of combat (in combat the queue always shows).
-        if not (UnitExists("target") and UnitCanAttack("player", "target")) then
-            shouldHide = true
-        end
     end
     if not shouldHide and npo.hideWhenMounted then
         local isMounted = IsMounted()
@@ -1242,17 +1280,15 @@ function UINameplateOverlay.Render(addon, spellIDs)
     end
 
     local hasSpells   = spellIDs and #spellIDs > 0
-    local npoGlowMode       = npo.glowMode or "all"
+    local npoGlowMode       = UIRenderer.ResolveGlowMode(profile, npo.glowMode)
     local npoShowPrimaryGlow = (npoGlowMode == "all" or npoGlowMode == "primaryOnly")
     local npoShowProcGlow    = (npoGlowMode == "all" or npoGlowMode == "procOnly")
     local showGapCloserGlow  = npoShowPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
-    local showBurstGlow      = npoShowPrimaryGlow and profile.burstCueGlow == true
     local npoDesaturation = npo.queueIconDesaturation or 0
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
     local showHotkey   = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
     local showUsabilityTint = profile.showUsabilityTint ~= false
-    local showRangeTint = profile.showRangeTint ~= false
     local showCastingHighlight = profile.showCastingHighlight ~= false
     local opacity      = npo.opacity or 1.0
     local now        = GetTime()
@@ -1267,15 +1303,9 @@ function UINameplateOverlay.Render(addon, spellIDs)
         isChanneling, channelSpellID, isCasting, castSpellID = false, nil, false, nil
     end
 
-    -- Update overlay defensive icon visual states every frame (channeling + usability),
-    -- giving them the same responsiveness as overlay queue icons.
-    if UIRenderer and UIRenderer.UpdateDefensiveVisualState then
-        for _, defIcon in ipairs(defIcons) do
-            if defIcon:IsShown() then
-                UIRenderer.UpdateDefensiveVisualState(defIcon)
-            end
-        end
-    end
+    -- (Defensive icon visual states are handled by RefreshDefensives, which the
+    -- update loop runs right after this render on the same tick - a second loop
+    -- here double-processed every shown defensive icon per pass.)
 
     -- ── Interrupt reminder (position 0) + soothe cue (shared renderer) ──────
     -- interruptMode is centralized in profile (no longer per-surface). The overlay
@@ -1312,13 +1342,11 @@ function UINameplateOverlay.Render(addon, spellIDs)
     ctx.showPrimaryGlow     = npoShowPrimaryGlow
     ctx.showProcGlow        = npoShowProcGlow
     ctx.showGapCloserGlow   = showGapCloserGlow
-    ctx.showBurstGlow       = showBurstGlow
     ctx.queueDesaturation   = npoDesaturation
     ctx.showHotkeys         = showHotkey
     ctx.lookupHotkeys       = true
     ctx.refreshHotkeys      = shouldUpdateCooldowns
     ctx.hotkeyColor         = centralOverlays and centralOverlays.hotkey and centralOverlays.hotkey.color
-    ctx.showRangeTint       = showRangeTint
     ctx.showUsabilityTint   = showUsabilityTint
     ctx.showCastingHighlight = showCastingHighlight
     ctx.showOffGcdDot       = profile.showOffGcdDot
@@ -1352,15 +1380,10 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
 
     local npo          = addon:GetProfile() and addon:GetProfile().nameplateOverlay or {}
     local profile      = addon:GetProfile() or {}
-    local npoGlowMode   = npo.defensiveGlowMode or npo.glowMode or "all"
+    local npoGlowMode   = UIRenderer.ResolveGlowMode(profile, npo.defensiveGlowMode)
     local npoDefScale   = npo.defensiveIconScale or 1.0
     local opacity       = npo.opacity or 1.0
     local iconSpacing   = npo.iconSpacing or ICON_SPACING
-    -- Read hotkey visibility from central textOverlays (Labels tab)
-    local centralOverlays = profile.textOverlays
-    local npoShowHotkey  = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
-    -- showFlash is centralized in profile (no longer per-surface)
-    local showFlash      = profile.showFlash ~= false
 
     local visibleCount = 0
     for i, icon in ipairs(defIcons) do
@@ -1368,7 +1391,7 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
         if entry and entry.spellID then
             icon.overlayOpacity = opacity
             if icon:GetScale() ~= npoDefScale then icon:SetScale(npoDefScale) end
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, npoShowHotkey, showFlash, entry.waiting, entry.precombat)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, i == 1, npoGlowMode, entry.waiting, entry.precombat)
             icon:SetAlpha(opacity)
             visibleCount = visibleCount + 1
         else
@@ -1391,10 +1414,15 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             if npo and npo.showHealthBar then
                 if visibleCount ~= lastDefVisibleCount then
                     lastDefVisibleCount = visibleCount
-                    local iconSize          = npo.iconSize or 32
+                    local iconSize  = npo.iconSize or 32
                     local anchor    = npo.reverseAnchor and "LEFT" or "RIGHT"
                     local expansion = npo.expansion or "down"
                     local isLeft    = (anchor == "LEFT")
+                    -- EFFECTIVE sizes: the icons render at SetScale(defensiveIconScale),
+                    -- which scales their chain offsets too - span math must match or the
+                    -- bars read too long/short at any non-1.0 scale.
+                    local effSize    = iconSize * npoDefScale
+                    local effSpacing = iconSpacing * npoDefScale
 
                     healthBar:ClearAllPoints()
 
@@ -1403,18 +1431,12 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     if expansion == "out" then
                         -- Horizontal cluster: symmetric 10% inset on both outer edges.
                         -- clusterWidth = n*size + (n-1)*spacing; barWidth = clusterWidth - 2*inset.
-                        local clusterWidth = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
-                        local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
+                        local clusterWidth = visibleCount * effSize + (visibleCount - 1) * effSpacing
+                        local inset = (visibleCount == 1) and 0 or math_floor(effSize * 0.10)
                         barWidth = math_floor(clusterWidth - 2 * inset)
                         healthBar:SetOrientation("HORIZONTAL")
                         healthBar:SetSize(barWidth, BAR_HEIGHT)
-                        -- Show horizontal bevel strips; hide vertical ones
-                        if healthBar.hBevelStrips then
-                            for _, s in ipairs(healthBar.hBevelStrips) do s:Show() end
-                        end
-                        if healthBar.bevelStrips then
-                            for _, s in ipairs(healthBar.bevelStrips) do s:Hide() end
-                        end
+                        SetBevelOrientation(healthBar, true)
                         if isLeft then
                             healthBar:SetPoint("BOTTOMLEFT", defIcons[1], "TOPLEFT", inset, BAR_SPACING)
                         else
@@ -1422,16 +1444,11 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                         end
                     else
                         -- Vertical cluster: VERTICAL bar spans beside the column on the outer side.
-                        local clusterHeight = visibleCount * iconSize + (visibleCount - 1) * iconSpacing
-                        local inset = (visibleCount == 1) and 0 or math_floor(iconSize * 0.10)
+                        local clusterHeight = visibleCount * effSize + (visibleCount - 1) * effSpacing
+                        local inset = (visibleCount == 1) and 0 or math_floor(effSize * 0.10)
                         barHeight = math_floor(clusterHeight - 2 * inset)
                         healthBar:SetOrientation("VERTICAL")
-                        if healthBar.bevelStrips then
-                            for _, s in ipairs(healthBar.bevelStrips) do s:Show() end
-                        end
-                        if healthBar.hBevelStrips then
-                            for _, s in ipairs(healthBar.hBevelStrips) do s:Hide() end
-                        end
+                        SetBevelOrientation(healthBar, false)
                         healthBar:SetSize(BAR_HEIGHT, barHeight)
                         if expansion == "up" then
                             if isLeft then
@@ -1454,44 +1471,8 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     -- Pet health bar: same size/orientation as player bar, stacked one bar further out.
                     if petHealthBar then
                         if UnitExists("pet") then
-                            petHealthBar:ClearAllPoints()
-                            if expansion == "out" then
-                                petHealthBar:SetOrientation("HORIZONTAL")
-                                petHealthBar:SetSize(barWidth, BAR_HEIGHT)
-                                if petHealthBar.hBevelStrips then
-                                    for _, s in ipairs(petHealthBar.hBevelStrips) do s:Show() end
-                                end
-                                if petHealthBar.bevelStrips then
-                                    for _, s in ipairs(petHealthBar.bevelStrips) do s:Hide() end
-                                end
-                                if isLeft then
-                                    petHealthBar:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, BAR_SPACING)
-                                else
-                                    petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "TOPRIGHT", 0, BAR_SPACING)
-                                end
-                            else
-                                petHealthBar:SetOrientation("VERTICAL")
-                                petHealthBar:SetSize(BAR_HEIGHT, barHeight)
-                                if petHealthBar.bevelStrips then
-                                    for _, s in ipairs(petHealthBar.bevelStrips) do s:Show() end
-                                end
-                                if petHealthBar.hBevelStrips then
-                                    for _, s in ipairs(petHealthBar.hBevelStrips) do s:Hide() end
-                                end
-                                if expansion == "up" then
-                                    if isLeft then
-                                        petHealthBar:SetPoint("BOTTOMLEFT",  healthBar, "BOTTOMRIGHT",  BAR_SPACING, 0)
-                                    else
-                                        petHealthBar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMLEFT",  -BAR_SPACING, 0)
-                                    end
-                                else  -- "down"
-                                    if isLeft then
-                                        petHealthBar:SetPoint("TOPLEFT",  healthBar, "TOPRIGHT",  BAR_SPACING, 0)
-                                    else
-                                        petHealthBar:SetPoint("TOPRIGHT", healthBar, "TOPLEFT",  -BAR_SPACING, 0)
-                                    end
-                                end
-                            end
+                            AnchorOverlayBar(petHealthBar, healthBar, expansion, isLeft, barWidth, barHeight, BAR_HEIGHT)
+                            SetBevelOrientation(petHealthBar, expansion == "out")
                             petHealthBar:SetAlpha(opacity)
                             if not petHealthBar:IsShown() then petHealthBar:Show() end
                         else
@@ -1502,6 +1483,39 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
                     -- Resource/power bars: stack beyond the outermost shown health
                     -- bar at the current orientation (re-segments the secondary).
                     PositionOverlayPowerBars(npo, expansion, isLeft, barWidth, barHeight, opacity)
+
+                    -- Analytic bar-stack extent for the CC/enrage/maintenance consumers:
+                    -- DERIVED, never measured - rects of nameplate-parented frames are
+                    -- refused in combat, which silently killed every in-combat
+                    -- re-placement under the old GetRect approach.
+                    --   stackOut   = how far the stack extends beyond defIcons[1]'s outer edge
+                    --   stackShift = the bars' centre offset from icon 1's centre along the row
+                    local stackOut = BAR_SPACING + BAR_HEIGHT
+                    if petHealthBar and petHealthBar:IsShown() then
+                        stackOut = stackOut + BAR_SPACING + BAR_HEIGHT
+                    end
+                    if overlayPowerBar and overlayPowerBar:IsShown() then
+                        stackOut = stackOut + BAR_SPACING + POWER_BAR_HEIGHT
+                    end
+                    if overlaySecondaryPowerBar and overlaySecondaryPowerBar:IsShown() then
+                        stackOut = stackOut + BAR_SPACING + POWER_BAR_HEIGHT
+                    end
+                    local clusterSpan = visibleCount * effSize + (visibleCount - 1) * effSpacing
+                    defRowAnchor.stackOut   = stackOut
+                    defRowAnchor.stackShift = (clusterSpan - effSize) * 0.5
+                    PlaceCCListFrames(expansion)
+
+                    -- Maintenance slot ("out"): AnchorToNameplate parks it above
+                    -- defIcons[1] - exactly the band the bar stack now occupies.
+                    -- Lift it above the stack. Offset is read in the slot's scaled
+                    -- space, hence the division. (The enrage indicator also clears
+                    -- the stack; the two can still meet on a tank with an enraged
+                    -- target - pre-existing and rarer, accepted.)
+                    if maintenanceIcon and expansion == "out" and #defIcons > 0 then
+                        maintenanceIcon:ClearAllPoints()
+                        maintenanceIcon:SetPoint("BOTTOM", defIcons[1], "TOP", 0,
+                            iconSpacing + stackOut / (npoDefScale > 0 and npoDefScale or 1))
+                    end
                 else
                     -- visibleCount unchanged: just update opacity
                     healthBar:SetAlpha(opacity)
@@ -1516,25 +1530,27 @@ function UINameplateOverlay.RenderDefensives(addon, defensiveQueue)
             if petHealthBar then petHealthBar:Hide() end
             if overlayPowerBar then overlayPowerBar:Hide() end
             if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
+            -- Stack gone: pull the CC list back in beside the bare row.
+            if (defRowAnchor.stackOut or 0) ~= 0 then
+                defRowAnchor.stackOut, defRowAnchor.stackShift = 0, 0
+                PlaceCCListFrames(npo and npo.expansion or "down")
+            end
         end
     end
 
     -- Enrage indicator: place Blizzard's enemy BuffListFrame as position 0 of the
     -- defensive queue. Re-anchored on visible-count change (same granularity as the
-    -- health bar); horizontal must clear the health/resource stack, so find its top.
+    -- health bar); horizontal clears the health/resource stack via the analytic
+    -- stack extent captured above. Latch the count only on SUCCESS - a failed
+    -- placement (restricted frame) retries next pass instead of never attaching
+    -- for the rest of the fight.
     -- ponytail: a pet/power bar appearing without a count change won't re-nudge it -
     -- force via lastEnrageCount = -1 (as UpdatePowerColor does for the health bar).
     if visibleCount > 0 then
         if visibleCount ~= lastEnrageCount then
-            lastEnrageCount = visibleCount
-            local stackTop = defIcons[1]
-            if npo.showHealthBar and healthBar then
-                stackTop = healthBar
-                if petHealthBar and petHealthBar:IsShown() then stackTop = petHealthBar end
-                if overlayPowerBar and overlayPowerBar:IsShown() then stackTop = overlayPowerBar end
-                if overlaySecondaryPowerBar and overlaySecondaryPowerBar:IsShown() then stackTop = overlaySecondaryPowerBar end
+            if PositionEnrageIndicator(npo, npo.expansion or "down") then
+                lastEnrageCount = visibleCount
             end
-            PositionEnrageIndicator(npo, npo.expansion or "down", stackTop)
         end
     else
         lastEnrageCount = 0
@@ -1556,6 +1572,14 @@ function UINameplateOverlay.HideDefensiveIcons()
     if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
 end
 
+--- Force the next RenderDefensives pass to re-run bar anchoring, the CC placement,
+--- and the enrage placement. Needed when bar VISIBILITY changes without a defensive
+--- count change - pet summon/dismiss - which the count-keyed cache can't see.
+function UINameplateOverlay.InvalidateBarLayout()
+    lastDefVisibleCount = -1
+    lastEnrageCount     = -1
+end
+
 --- Re-render defensive icons using the last cached queue.
 --- Called from UpdateSpellQueue so defensive overlay refreshes on the same
 --- tick as the offensive overlay (eliminates visual delay from the slower
@@ -1572,6 +1596,13 @@ end
 --- GetPlayerHealthPercentSafe() so it works even when values are secret (12.0+).
 function UINameplateOverlay.UpdateHealthBar()
     if not healthBar then return end
+
+    -- Same 0.1s cadence as every other bar path: this is called per UNIT_HEALTH
+    -- event (10-30/sec in raid combat) ahead of the defensive-queue throttle.
+    -- Time-based only - the values written below are secret and can't be diffed.
+    local hbNow = GetTime()
+    if hbNow - lastOverlayHealthUpdate < POWER_UPDATE_INTERVAL then return end
+    lastOverlayHealthUpdate = hbNow
 
     -- Drive fill from raw UnitHealth - secret-safe, tracks continuously.
     -- Truthiness only: UnitHealthMax can be secret in combat and a `> 0`
@@ -1611,6 +1642,11 @@ end
 --- Auto-hides when no pet exists.
 function UINameplateOverlay.UpdatePetHealthBar()
     if not petHealthBar then return end
+
+    -- Same 0.1s cadence + secret-values rationale as UpdateHealthBar above.
+    local hbNow = GetTime()
+    if hbNow - lastOverlayPetHealthUpdate < POWER_UPDATE_INTERVAL then return end
+    lastOverlayPetHealthUpdate = hbNow
 
     local exists = UnitExists("pet")
     if not exists then
@@ -1720,15 +1756,6 @@ function UINameplateOverlay.HideAll()
     if petHealthBar then petHealthBar:Hide() end
     if overlayPowerBar then overlayPowerBar:Hide() end
     if overlaySecondaryPowerBar then overlaySecondaryPowerBar:Hide() end
-    if interruptIcon then
-        if UIAnimations then
-            UIAnimations.HideInterruptProcGlow(interruptIcon)
-            UIAnimations.HideInterruptCastBar(interruptIcon)
-            if interruptIcon.hasProcGlow then UIAnimations.HideProcGlow(interruptIcon); interruptIcon.hasProcGlow = false end
-            interruptIcon.hasInterruptGlow = false
-        end
-        interruptIcon:Hide()
-        if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
-    end
+    HideInterruptSlot(false)
 end
 

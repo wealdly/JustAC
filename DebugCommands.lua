@@ -28,6 +28,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac toggle - Pause/resume display")
     addon:Print("/jac debug - Toggle debug mode")
     addon:Print("/jac reset - Unlock, undock and re-centre the panel (use if you can't find or move it)")
+    addon:Print("/jac enable - Enable the addon for the current spec (if it was disabled)")
     addon:Print("/jac profile <name> - Switch profile")
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac find [spell] - Find spell on action bars (defaults to AC suggestion)")
@@ -59,6 +60,7 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
     addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
     addon:Print("/jac inspect healthgate - Toggle live on-screen swatches proving the curve gate tracks health")
+    addon:Print("/jac inspect healprobe [arm|show|watch] - Heal-mode party probes: low-bridge, roster gates, curves, dispel filter, AC feed")
     addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
     addon:Print("/jac inspect audit [off|clear] - ARM the 68887 probe battery: auto-snapshots on combat enter/exit to SavedVariables")
     addon:Print("/jac inspect selfcast - Arm a capture of own-cast info secrecy (cast + channel something)")
@@ -721,7 +723,7 @@ function DebugCommands.DefensiveDiagnostics(addon)
 
     addon:Print("")
     addon:Print("Defensive Icons:")
-    local defensiveIcons = addon.defensiveIcons or (addon.defensiveIcon and {addon.defensiveIcon}) or {}
+    local defensiveIcons = addon.defensiveIcons or {}
     if #defensiveIcons == 0 then
         addon:Print("  Frames: |cffff0000NOT CREATED|r")
     else
@@ -1330,6 +1332,74 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         end
     end
 
+    -- Class maintained buffs (poisons/shields): dump the AC demand chain the picks
+    -- defer to, so a wrong pick can be traced to its source (api read / queue head /
+    -- rotation list / default fallback).
+    local class = select(2, UnitClass("player"))
+    local groups = SpellDB.CLASS_MAINTAINED_BUFFS and class
+        and SpellDB.CLASS_MAINTAINED_BUFFS[class]
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function SpellName(id)
+        local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+        return (info and info.name or "spell") .. " (" .. id .. ")"
+    end
+    local anyNext = BAPI and BAPI.GetAnyNextCastSpell and BAPI.GetAnyNextCastSpell()
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
+    local head = type(queue) == "table" and queue[1] or nil
+    if head and issecretvalue and issecretvalue(head) then head = nil end
+    if groups then
+        addon:Print("---- class buffs (AC deference) ----")
+        addon:Print("  AC demand: api(any)=" .. (anyNext and SpellName(anyNext) or "|cff888888nil|r")
+            .. "  queue[1]=" .. (head and SpellName(head) or "|cff888888nil|r"))
+        local rot = BAPI and BAPI.GetRotationSpells and BAPI.GetRotationSpells()
+        for gi, grp in ipairs(groups) do
+            local inRot = {}
+            for _, id in ipairs(grp.group) do
+                if rot then
+                    for i = 1, #rot do
+                        if rot[i] == id then inRot[#inRot + 1] = SpellName(id) break end
+                    end
+                end
+            end
+            addon:Print(string.format("  group %d: rotation-listed: %s", gi,
+                #inRot > 0 and table.concat(inRot, ", ") or "|cff888888none|r"))
+        end
+        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal) or {}) do
+            addon:Print("  offering: " .. SpellName(s))
+        end
+    end
+
+    -- TEMPORARY probe: Paladin Auras as maintained-buff candidates. A data audit
+    -- (2026-08-09) found 465/32223/183435 fit the maintained-group pattern, but
+    -- Auras are stance-style toggles - before adding a PALADIN group we must see
+    -- (a) whether the by-cast-id aura probe detects an active Aura (else the group
+    -- would false-nag every paladin), and (b) whether AC ever demands one (the
+    -- demand line above). Run with each Aura active in turn, and once with none.
+    if class == "PALADIN" then
+        addon:Print("---- paladin aura probe ----")
+        addon:Print("  AC demand: api(any)=" .. (anyNext and SpellName(anyNext) or "|cff888888nil|r")
+            .. "  queue[1]=" .. (head and SpellName(head) or "|cff888888nil|r"))
+        local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+        for _, id in ipairs({ 465, 32223, 183435 }) do
+            local a = get and get(id)
+            addon:Print(string.format("  %s known=%s auraByCastId=%s", SpellName(id),
+                tostring(IsPlayerSpell(id)), a and "|cff00ff00YES|r" or "|cffff6666no|r"))
+        end
+        -- Discovery dump: every readable helpful aura on the player, so a differing
+        -- aura id (cast id != aura id) shows up by name.
+        local auras = BAPI and BAPI.GetAuras and BAPI.GetAuras("player", "HELPFUL")
+        if auras then
+            for i = 1, #auras do
+                local sid, nm = auras[i].spellId, auras[i].name
+                if sid and not (issecretvalue and issecretvalue(sid))
+                   and not (nm and issecretvalue and issecretvalue(nm)) then
+                    addon:Print("  helpful: " .. tostring(nm) .. " (" .. sid .. ")")
+                end
+            end
+        end
+    end
+
     -- Recuperate gate-by-gate probe (health-conditioned class buff)
     addon:Print("---- Recuperate ----")
     if not SpellDB.RECUPERATE then
@@ -1434,8 +1504,8 @@ function DebugCommands.ContextRankDiagnostics(addon)
         tostring(ctx.outOfMelee)))
 
     local profile = addon.db and addon.db.profile
-    if profile and profile.orderContextAware == false then
-        addon:Print("|cffffff00Context-aware ordering is OFF - ranks below are not applied.|r")
+    if profile and profile.contextOrder == "off" then
+        addon:Print("|cffffff00Context ordering is OFF - ranks below are not applied.|r")
     end
 
     addon:Print("")
@@ -4260,6 +4330,365 @@ function DebugCommands.SelfCastProbe(addon)
     end)
     addon:Print("|cff00ff00=== selfcast ARMED (5min/12 casts) ===|r hardcast + channel something, in and out of combat.")
     addon:Print("|cff888888  Also logs target STOP vs INTERRUPTED arg4 - kick a target's cast to see the two differ.|r")
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect healprobe [arm|show] - heal-mode Phase 0 probe battery.
+-- Everything the planned healer queue would branch on, measured on live party
+-- units (follower-dungeon NPC allies included). Three modes:
+--   (none) one-shot census - run once OUT of combat, again IN combat with the
+--          party taking damage; the delta is the finding.
+--   show   toggle an on-screen swatch row proving the party health-curve alpha
+--          sink tracks each member (eyes are the only readback - the alpha
+--          itself is secret).
+--   arm    toggle a 5-minute capture of cast-target secrecy and party
+--          UNIT_AURA instance plumbing (cast HoTs on party members while armed).
+-- Reads only: never writes a CVar, never assigns a Blizzard frame field.
+--------------------------------------------------------------------------------
+
+-- Urgency bands mirroring the planned party cue: bright below 35%, dim up to
+-- 90%, invisible above. Module-level constant - the curve caches by identity.
+local HEALPROBE_BANDS = { { 0, 1 }, { 0.35, 0.65 }, { 0.9, 0 } }
+local HEALPROBE_UNITS = { "player", "party1", "party2", "party3", "party4" }
+local HEALPROBE_PARTY = { party1 = true, party2 = true, party3 = true, party4 = true }
+
+--- Compact classifier for per-unit grid lines (ClassifyRead is too wide there).
+local function HealCR(fn)
+    local ok, v = pcall(fn)
+    if not ok then return "|cffff6600ERR|r" end
+    if v == nil then return "|cff888888nil|r" end
+    if issecretvalue and issecretvalue(v) then return "|cffff6600SECRET|r" end
+    local s = tostring(v)
+    return "|cff2ecc71" .. (#s > 14 and (s:sub(1, 14) .. "..") or s) .. "|r"
+end
+
+--- `show`: one swatch per party slot, alpha handed to the engine per tick.
+local function HealProbeSwatches(addon)
+    if DebugCommands._healSwatchFrame then
+        DebugCommands._healSwatchFrame:Hide()
+        DebugCommands._healSwatchFrame:SetParent(nil)
+        DebugCommands._healSwatchFrame = nil
+        addon:Print("healprobe swatches: OFF")
+        return
+    end
+    local UFF = LibStub("JustAC-UIFrameFactory", true)
+    if not (UFF and UFF.SetAlphaFromHealthCurve) then
+        addon:Print("healprobe: |cffff6666UIFrameFactory unavailable|r")
+        return
+    end
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(5 * 64 + 8, 76)
+    f:SetPoint("CENTER", 0, 200)
+    f._swatches = {}
+    for i, unit in ipairs(HEALPROBE_UNITS) do
+        local box = f:CreateTexture(nil, "ARTWORK")
+        box:SetColorTexture(0.15, 0.85, 0.3, 1)  -- solid green; the curve drives alpha
+        box:SetSize(56, 40)
+        box:SetPoint("TOPLEFT", (i - 1) * 64 + 8, -16)
+        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("TOP", box, "BOTTOM", 0, -2)
+        fs:SetText(unit)
+        f._swatches[i] = { tex = box, unit = unit }
+    end
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("BOTTOM", f, "TOP", 0, 2)
+    title:SetText("bright<35% dim<90% gone at full - row = party order")
+    f:SetScript("OnUpdate", function(self, elapsed)
+        self._t = (self._t or 0) + elapsed
+        if self._t < 0.1 then return end
+        self._t = 0
+        for _, s in ipairs(self._swatches) do
+            -- The helper sinks the secret alpha engine-side; false = no unit or
+            -- technique dead, either way the swatch must not stick visible.
+            if not UFF.SetAlphaFromHealthCurve(s.tex, s.unit, HEALPROBE_BANDS, true) then
+                pcall(s.tex.SetAlpha, s.tex, 0)
+            end
+        end
+    end)
+    DebugCommands._healSwatchFrame = f
+    addon:Print("healprobe swatches: ON (top-center). Let party members take damage.")
+    addon:Print("|cff888888A swatch tracking ITS member's health = curve sink works on that unit class.|r")
+    addon:Print("|cff888888Run /jac inspect healprobe show again to remove.|r")
+end
+
+--- `arm`: capture cast-target secrecy + party aura-instance plumbing.
+local function HealProbeCapture(addon)
+    if DebugCommands._healCapture then
+        DebugCommands._healCapture:UnregisterAllEvents()
+        DebugCommands._healCapture:SetScript("OnEvent", nil)
+        DebugCommands._healCapture = nil
+        addon:Print("|cffffff00healprobe: disarmed.|r")
+        return
+    end
+    local f = CreateFrame("Frame")
+    DebugCommands._healCapture = f
+    local armT, sent, added = GetTime(), 0, 0
+    f:RegisterEvent("UNIT_SPELLCAST_SENT")
+    f:RegisterEvent("UNIT_AURA")
+    f:SetScript("OnEvent", function(_, event, unit, arg2, arg3, arg4)
+        if GetTime() - armT > 300 then
+            f:UnregisterAllEvents(); f:SetScript("OnEvent", nil)
+            DebugCommands._healCapture = nil
+            addon:Print("|cffffff00healprobe: capture window ended.|r")
+            return
+        end
+        if event == "UNIT_SPELLCAST_SENT" then
+            -- Args: unit, targetName, castGUID, spellID. The target NAME is the
+            -- HoT-attribution backbone; its secrecy is annotated ConditionalSecret,
+            -- so this capture is the only way to learn the 12.0 condition.
+            if unit ~= "player" or sent >= 10 then return end
+            sent = sent + 1
+            local sName = arg4 and C_Spell.GetSpellName and C_Spell.GetSpellName(arg4)
+            addon:Print(string.format("|cff00ccffSENT|r %s target=%s combat=%s",
+                tostring(sName or arg4), ClassifyRead(function() return arg2 end),
+                tostring(UnitAffectingCombat("player"))))
+        elseif event == "UNIT_AURA" then
+            if not HEALPROBE_PARTY[unit] or added >= 20 then return end
+            local info = arg2
+            local list = info and info.addedAuras
+            if type(list) ~= "table" then return end
+            for i = 1, #list do
+                added = added + 1
+                local a = list[i]
+                -- instanceID plain = the cast->instance bridge can bind on party
+                -- units; the HELPFUL|PLAYER filter verdict is the ours-detector.
+                addon:Print(string.format("|cff00ff00+aura|r %s instID=%s spellId=%s fromMe=%s oursFilter=%s",
+                    unit,
+                    ClassifyRead(function() return a.auraInstanceID end),
+                    HealCR(function() return a.spellId end),
+                    HealCR(function() return a.isFromPlayerOrPlayerPet end),
+                    HealCR(function()
+                        return C_UnitAuras.IsAuraFilteredOutByInstanceID
+                            and C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, a.auraInstanceID, "HELPFUL|PLAYER")
+                    end)))
+            end
+        end
+    end)
+    addon:Print("|cff00ff00=== healprobe ARMED (5min) ===|r Cast HoTs on party members, in and out of combat.")
+    addon:Print("|cff888888SENT target plain + party instID plain + oursFilter plain bool = HoT upkeep bridge works.|r")
+end
+
+--- `watch`: edge-triggered watcher for the party-low table. The one-shot census
+--- can't catch "someone is below the threshold RIGHT NOW" while the user is busy
+--- healing; this polls at 0.25s and prints only TRANSITIONS. A read that throws
+--- or returns secret is itself the verdict (laundering failed) and is printed
+--- loudly rather than swallowed.
+local function HealProbeWatch(addon)
+    if DebugCommands._healWatch then
+        DebugCommands._healWatch:SetScript("OnUpdate", nil)
+        DebugCommands._healWatch = nil
+        addon:Print("|cffffff00healprobe watch: OFF.|r")
+        return
+    end
+    local caa = _G.CombatAudioAlertManager
+    if not caa then
+        addon:Print("healprobe watch: |cffff6666alert manager frame not found|r")
+        return
+    end
+    local cvar = tostring(GetCVar and GetCVar("CAAPartyHealthPercent") or "?")
+    if cvar == "0" then
+        addon:Print("|cffff6600Party health alert CVar is 0 - enable the accessibility setting first.|r")
+    end
+    local f = CreateFrame("Frame")
+    DebugCommands._healWatch = f
+    local last, lastCount, armT = {}, nil, GetTime()
+    addon:Print(string.format("|cff00ff00=== healprobe watch ON (5min, threshold-CVar=%s) ===|r pull; transitions print as they happen.", cvar))
+    f:SetScript("OnUpdate", function(self, elapsed)
+        self._t = (self._t or 0) + elapsed
+        if self._t < 0.25 then return end
+        self._t = 0
+        if GetTime() - armT > 300 then
+            f:SetScript("OnUpdate", nil)
+            DebugCommands._healWatch = nil
+            addon:Print("|cffffff00healprobe watch: window ended.|r")
+            return
+        end
+        -- unitCount: a plain int per the source; secret/throw = failed laundering.
+        local okC, count = pcall(function()
+            return caa.partyHealthInfo and caa.partyHealthInfo.unitCount end)
+        local countState = not okC and "ERROR"
+            or (issecretvalue and issecretvalue(count)) and "SECRET"
+            or tostring(count)
+        if countState ~= lastCount then
+            local bad = (countState == "ERROR" or countState == "SECRET")
+            addon:Print(string.format("%sunitCount -> %s|r  combat=%s",
+                bad and "|cffff6600" or "|cff2ecc71", countState,
+                tostring(UnitAffectingCombat("player"))))
+            lastCount = countState
+        end
+        for _, u in ipairs(HEALPROBE_UNITS) do
+            local okK, present = pcall(function()
+                local ui = caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
+                return ui and (ui[u] ~= nil) or false end)
+            local state = not okK and "ERROR"
+                or (issecretvalue and issecretvalue(present)) and "SECRET"
+                or tostring(present)
+            if state ~= last[u] then
+                local bad = (state == "ERROR" or state == "SECRET")
+                -- true/false transitions are the PASS signal; ERROR/SECRET is the
+                -- laundering-failed verdict the whole emergency tier hangs on.
+                addon:Print(string.format("%slow[%s] -> %s|r  combat=%s",
+                    bad and "|cffff6600" or "|cff2ecc71", u, state,
+                    tostring(UnitAffectingCombat("player"))))
+                last[u] = state
+            end
+        end
+    end)
+end
+
+--- `cvar [index]`: the auto-setup taint experiment. Writes the party-health
+--- threshold CVar from ADDON (tainted) code - the exact thing the sweep memory
+--- warns might taint the alert manager's cached compare. If, after this write,
+--- keys still flip plain during a fight (`watch`) and `/jac inspect errors`
+--- stays clean, a managed-CVar setup toggle (nameplate-overlay save/restore
+--- pattern) is safe to ship. Recovery if it breaks: re-set the threshold from
+--- Blizzard's accessibility settings, or /reload.
+local function HealProbeCVarWrite(addon, arg)
+    if InCombatLockdown() then
+        addon:Print("|cffff6600Run the cvar write OUT of combat.|r")
+        return
+    end
+    local cur = tostring(GetCVar and GetCVar("CAAPartyHealthPercent") or "?")
+    local idx = arg and arg:match("^cvar%s+(%d+)$")
+    if not idx then
+        addon:Print(string.format("Usage: /jac inspect healprobe cvar <index>  (current=%s; 0 disables)", cur))
+        addon:Print("|cff888888Writes the threshold CVar from addon code to test the taint theory.|r")
+        return
+    end
+    local ok, err = pcall(SetCVar, "CAAPartyHealthPercent", idx)
+    addon:Print(string.format("SetCVar CAAPartyHealthPercent %s -> %s : %s",
+        cur, idx, ok and "|cff2ecc71written|r" or ("|cffff6600FAILED|r " .. tostring(err))))
+    if ok then
+        addon:Print("Now: `healprobe watch`, pull, let members drop below the threshold, then `/jac inspect errors`.")
+        addon:Print("|cff888888Keys flipping plain + zero taint errors = managed auto-setup is shippable.|r")
+    end
+end
+
+function DebugCommands.HealProbe(addon, arg)
+    if arg == "show" then return HealProbeSwatches(addon) end
+    if arg == "arm" then return HealProbeCapture(addon) end
+    if arg == "watch" then return HealProbeWatch(addon) end
+    if arg and arg:match("^cvar") then return HealProbeCVarWrite(addon, arg) end
+
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local UFF = LibStub("JustAC-UIFrameFactory", true)
+    local caa = _G.CombatAudioAlertManager
+    local caaApi = _G.C_CombatAudioAlert
+
+    addon:Print("== heal-mode probe ==  run OOC, then IN combat while the party takes damage")
+    local role = GetSpecialization() and GetSpecializationRole(GetSpecialization())
+    addon:Print(string.format("  combat=%s grouped=%s members=%s role=%s",
+        tostring(InCombatLockdown()), tostring(IsInGroup()),
+        tostring(GetNumGroupMembers()), tostring(role)))
+
+    -- A. The one branchable ally-low signal: key-existence in the accessibility
+    -- alert manager's table, inserted by untainted code. Values stay untouched.
+    addon:Print("|cff66ccffA. party-low bridge (audio-alert manager)|r")
+    addon:Print(string.format("  manager=%s IsEnabled=%s threshold-CVar=%s (0 = feature off; volume CVar mutes the voice)",
+        tostring(caa ~= nil),
+        HealCR(function() return caaApi and caaApi.IsEnabled and caaApi.IsEnabled() end),
+        HealCR(function() return GetCVar("CAAPartyHealthPercent") end)))
+    addon:Print("  unitCount=" .. ClassifyRead(function()
+        return caa and caa.partyHealthInfo and caa.partyHealthInfo.unitCount end))
+    addon:Print("  keys-iterable=" .. ClassifyRead(function()
+        local ui = caa and caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
+        if not ui then return nil end
+        local n = 0
+        for _ in pairs(ui) do n = n + 1 end
+        return n end))
+    for _, u in ipairs(HEALPROBE_UNITS) do
+        addon:Print(string.format("  low[%s]=%s", u, ClassifyRead(function()
+            local ui = caa and caa.partyHealthInfo and caa.partyHealthInfo.unitInfo
+            if not ui then return nil end
+            return ui[u] ~= nil end)))
+    end
+
+    -- B. Plain per-unit gates the queue would branch on.
+    addon:Print("|cff66ccffB. roster gates (per unit: exists/conn/dead/role/name/maxHP/threat/cmp)|r")
+    for _, u in ipairs(HEALPROBE_UNITS) do
+        addon:Print(string.format("  %-7s %s %s %s %s %s %s %s", u,
+            HealCR(function() return UnitExists(u) end),
+            HealCR(function() return UnitIsConnected(u) end),
+            HealCR(function() return UnitIsDeadOrGhost(u) end),
+            HealCR(function() return UnitGroupRolesAssigned(u) end),
+            HealCR(function() return UnitName(u) end),
+            HealCR(function() return UnitHealthMax(u) end),
+            HealCR(function() return UnitThreatSituation(u) end)
+            .. "/" .. HealCR(function()
+                return C_Secrets and C_Secrets.CanCompareUnitTokens
+                    and C_Secrets.CanCompareUnitTokens("player", u) end)))
+    end
+
+    -- C. Availability of the display-only curve sink per unit (the alpha itself
+    -- is secret - `show` mode is the eyes-on proof; this only asks "did the
+    -- helper wire up").
+    addon:Print("|cff66ccffC. health-curve alpha sink availability|r")
+    if UFF and UFF.SetAlphaFromHealthCurve then
+        DebugCommands._healScratch = DebugCommands._healScratch or CreateFrame("Frame")
+        local parts = {}
+        for _, u in ipairs(HEALPROBE_UNITS) do
+            local ok = UFF.SetAlphaFromHealthCurve(DebugCommands._healScratch, u, HEALPROBE_BANDS, true)
+            parts[#parts + 1] = u .. "=" .. (ok and "|cff2ecc71ok|r" or "|cffff6600no|r")
+        end
+        addon:Print("  " .. table.concat(parts, " "))
+    else
+        addon:Print("  |cffff6666UIFrameFactory unavailable|r")
+    end
+
+    -- D. Engine aura filters on party units. CountAuras carries the shipped
+    -- token-verdict guard: nil = token not trusted (or unit unreadable). The
+    -- verdict needs >1 aura in play, so only in-combat runs are conclusive.
+    addon:Print("|cff66ccffD. aura filters (harmful / player-dispellable / my-HoTs)|r")
+    if BlizzardAPI and BlizzardAPI.CountAuras then
+        for _, u in ipairs(HEALPROBE_UNITS) do
+            local harm = BlizzardAPI.CountAuras(u, "HARMFUL")
+            local disp = BlizzardAPI.CountAuras(u, "HARMFUL|RAID_PLAYER_DISPELLABLE")
+            local mine = BlizzardAPI.CountAuras(u, "HELPFUL|PLAYER")
+            local warn = (harm and disp and harm > 1 and disp == harm)
+                and "  |cffff6600token may be ignored (narrowed==base)|r" or ""
+            addon:Print(string.format("  %-7s harmful=%s dispellable=%s myhots=%s%s",
+                u, tostring(harm), tostring(disp), tostring(mine), warn))
+        end
+        addon:Print("|cff888888  cast a HoT on a member and re-run: their myhots must move 0->1|r")
+    else
+        addon:Print("  |cffff6666BlizzardAPI unavailable|r")
+    end
+
+    -- E. What Assisted Combat feeds this spec (works even while spec-disabled -
+    -- these are direct API reads, not the queue).
+    addon:Print("|cff66ccffE. Assisted Combat on this spec|r")
+    local AC = C_AssistedCombat
+    if AC then
+        local okA, avail, reason = pcall(AC.IsAvailable)
+        addon:Print(string.format("  IsAvailable=%s reason=%s",
+            okA and tostring(avail) or "ERR", okA and tostring(reason) or "-"))
+        local okN, pick = pcall(AC.GetNextCastSpell, false)
+        local pickName = okN and pick and C_Spell.GetSpellName and C_Spell.GetSpellName(pick)
+        local pickTag = ""
+        if okN and pick and SpellDB and SpellDB.IsHealingSpell then
+            pickTag = SpellDB.IsHealingSpell(pick) and " |cff2ecc71[heal]|r" or " [dps]"
+        end
+        addon:Print(string.format("  next=%s %s%s", tostring(okN and pick or "ERR"),
+            tostring(pickName or ""), pickTag))
+        local okR, rot = pcall(AC.GetRotationSpells)
+        if okR and type(rot) == "table" then
+            addon:Print(string.format("  rotation pool: %d spells%s", #rot,
+                #rot == 0 and " (some specs return empty OOC)" or ""))
+            for i = 1, math.min(#rot, 12) do
+                local id = rot[i]
+                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+                local tag = (SpellDB and SpellDB.IsHealingSpell and SpellDB.IsHealingSpell(id))
+                    and "|cff2ecc71heal|r" or "dps"
+                addon:Print(string.format("    %2d. %7d %-24s %s", i, id, tostring(nm), tag))
+            end
+        else
+            addon:Print("  rotation pool: unavailable")
+        end
+    else
+        addon:Print("  |cffff6666C_AssistedCombat unavailable|r")
+    end
+    addon:Print("|cff888888Also: `healprobe show` = live swatches, `healprobe arm` = cast/aura capture.|r")
 end
 
 --- /jac inspect ccdb [clear] - what the addon has learned about CC-immune mob types, and

@@ -22,6 +22,7 @@ if not RotationImport then return end
 local rotations = RotationImport._rotations or {}
 RotationImport._rotations = rotations
 local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
+local cachedSpellDB     -- lazy module ref (see GetEntry)
 
 --- Register GATED rotation tables (the generated format above).
 function RotationImport.RegisterGated(data)
@@ -138,7 +139,13 @@ local CTX_FALLBACK = { st = { "st" }, cleave = { "cleave", "aoe", "st" }, aoe = 
 --- @param context string|nil "st" (default) | "cleave" | "aoe"
 function RotationImport.GetEntry(spellID, context)
     if not spellID then return nil end
-    local SpellDB = LibStub("JustAC-SpellDB", true)
+    -- Lazy module ref: this runs per rotation spell per build in SimC mode, and the
+    -- LibStub lookup per call was pure overhead (GetSpecKey memoizes on its own).
+    local SpellDB = cachedSpellDB
+    if not SpellDB then
+        SpellDB = LibStub("JustAC-SpellDB", true)
+        cachedSpellDB = SpellDB
+    end
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return nil end
     local byCtx = lookupCache[specKey] or BuildLookup(specKey)

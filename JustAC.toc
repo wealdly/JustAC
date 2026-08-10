@@ -96,10 +96,11 @@ Options\StandardQueue.lua
 Options\Offensive.lua
 Options\CustomQueue.lua
 Options\Overlay.lua
+Options\Display.lua
+Options\Abilities.lua
 Options\Defensives.lua
 Options\GapClosers.lua
 Options\Labels.lua
-Options\Hotkeys.lua
 Options\Profiles.lua
 Options\Core.lua
 

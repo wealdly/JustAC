@@ -22,31 +22,52 @@ end
 local rebuildNPO = W.rebuildNPO
 
 function Overlay.CreateTabArgs(addon)
+    -- One flat panel (a sub-tab of the Display tab): the former sub-tabs are
+    -- inline sections, so their controls keep local orders and arg keys.
     local tab = {
         type = "group",
         name = L["Nameplate Overlay"],
-        order = 3,
-        childGroups = "tab",
+        order = 2,
         args = {
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 1: GENERAL
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 1: LAYOUT / VISIBILITY ──────────────────────────────
             layout = {
                 type = "group",
-                name = L["General"],
+                inline = true,
+                name = "",
                 order = 1,
                 args = {
+                    -- Deliberately NOT gated on overlayDisabled: this is the way back on.
+                    enableOverlay = {
+                        type = "toggle",
+                        name = L["Enable Overlay Queue"],
+                        desc = L["Enable Overlay Queue desc"],
+                        order = 0.1,
+                        width = "full",
+                        get = function() return W.SurfaceEnabled(addon, "overlay") end,
+                        set = function(_, v) W.SetSurfaceEnabled(addon, "overlay", v) end,
+                    },
                     -- VISIBILITY (1-9)
                     visibilityHeader = {
                         type = "header",
                         name = L["Visibility"],
                         order = 1,
                     },
+                    -- No "Require Hostile Target" here: the overlay only renders on an
+                    -- attackable target's nameplate, so that value is structurally
+                    -- identical to "Always" (a legacy saved value reads as Always).
                     queueVisibility = W.select(addon, "nameplateOverlay.queueVisibility", {
-                        name = L["Queue Visibility"], desc = L["Queue Visibility desc"],
+                        name = L["Queue Visibility"], desc = L["Nameplate Queue Visibility desc"],
                         order = 2, width = "double", default = "always",
-                        values = W.QUEUE_VISIBILITY_VALUES,
-                        sorting = W.QUEUE_VISIBILITY_SORTING,
+                        values = {
+                            always     = L["Always"],
+                            combatOnly = L["In Combat Only"],
+                        },
+                        sorting = { "always", "combatOnly" },
+                        get = function()
+                            local v = addon.db.profile.nameplateOverlay.queueVisibility or "always"
+                            if v == "requireHostile" then v = "always" end
+                            return v
+                        end,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = overlayDisabled,
                     }),
@@ -102,11 +123,10 @@ function Overlay.CreateTabArgs(addon)
 
                 },
             },
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 2: OFFENSIVE DISPLAY
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 2: DPS ICONS ────────────────────────────────────────
             offensiveDisplay = {
                 type = "group",
+                inline = true,
                 name = L["Offensive Display"],
                 order = 2,
                 args = {
@@ -125,10 +145,10 @@ function Overlay.CreateTabArgs(addon)
                     -- Legacy showGlow bool is migrated to glowMode once at load by
                     -- MigrateOverlayGlowMode.
                     glowMode = W.select(addon, "nameplateOverlay.glowMode", {
-                        name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
-                        order = 12, width = "normal", default = "all",
-                        values = W.GLOW_VALUES,
-                        sorting = W.GLOW_SORTING,
+                        name = L["Highlight Mode"], desc = L["Highlight Mode Shared desc"],
+                        order = 12, width = "normal", default = "shared",
+                        values = W.GLOW_VALUES_SHARED,
+                        sorting = W.GLOW_SORTING_SHARED,
                         onSet = function() addon:ForceUpdate() end,
                         disabled = overlayDisabled,
                     }),
@@ -140,11 +160,10 @@ function Overlay.CreateTabArgs(addon)
                     }),
                 },
             },
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 3: DEFENSIVE DISPLAY
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 3: DEFENSIVE ICONS ──────────────────────────────────
             defensiveDisplay = {
                 type = "group",
+                inline = true,
                 name = L["Defensive Display"],
                 order = 3,
                 args = {
@@ -188,24 +207,14 @@ function Overlay.CreateTabArgs(addon)
                         onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
                         disabled = defDisabled,
                     }),
-                    defensiveGlowMode = {
-                        type = "select",
-                        name = L["Highlight Mode"],
-                        desc = L["Highlight Mode desc"],
-                        order = 4,
-                        width = "normal",
-                        values = W.GLOW_VALUES,
-                        sorting = W.GLOW_SORTING,
-                        get = function()
-                            local npo = addon.db.profile.nameplateOverlay
-                            return npo.defensiveGlowMode or npo.glowMode or "all"
-                        end,
-                        set = function(_, val)
-                            addon.db.profile.nameplateOverlay.defensiveGlowMode = val
-                            addon:ForceUpdateAll()
-                        end,
-                        disabled = function() return defDisabled(addon) end,
-                    },
+                    defensiveGlowMode = W.select(addon, "nameplateOverlay.defensiveGlowMode", {
+                        name = L["Highlight Mode"], desc = L["Highlight Mode Shared desc"],
+                        order = 4, width = "normal", default = "shared",
+                        values = W.GLOW_VALUES_SHARED,
+                        sorting = W.GLOW_SORTING_SHARED,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        disabled = defDisabled,
+                    }),
                     showHealthBar = W.toggle(addon, "nameplateOverlay.showHealthBar", {
                         name = L["Show Health Bars"], desc = L["Nameplate Show Health Bars desc"],
                         order = 5, width = "normal",
@@ -216,7 +225,10 @@ function Overlay.CreateTabArgs(addon)
                         name = L["Show Pet Health Bar"], desc = L["Show Pet Health Bar desc"],
                         order = 6, width = "normal",
                         onSet = function() rebuildNPO(addon); addon:ForceUpdateAll() end,
-                        disabled = defDisabled,
+                        -- Only built inside the health-bar cluster, so it needs that enabled.
+                        disabled = function()
+                            return defDisabled(addon) or not addon.db.profile.nameplateOverlay.showHealthBar
+                        end,
                         hidden = W.petClassHidden,
                     }),
                     showPowerBar = W.toggle(addon, "nameplateOverlay.showPowerBar", {
@@ -233,7 +245,8 @@ function Overlay.CreateTabArgs(addon)
 
         },
     }
-    tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
+    -- One reset for the whole surface panel (the former per-sub-tab resets merged).
+    tab.args.resetHeader, tab.args.resetDefaults =
         W.resetButton(990, L["Reset General desc"], function()
             local npo = addon.db.profile.nameplateOverlay
             -- Values come from the real defaults table, never re-typed here: a second
@@ -246,26 +259,11 @@ function Overlay.CreateTabArgs(addon)
             npo.iconSize      = D.iconSize
             npo.iconSpacing   = D.iconSpacing
             npo.opacity       = D.opacity
-            rebuildNPO(addon)
-            W.NotifyChange()
-        end)
-    tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
-        W.resetButton(990, L["Reset Offensive Display desc"], function()
-            local npo = addon.db.profile.nameplateOverlay
-            local D = addon.db.defaults.profile.nameplateOverlay
             npo.maxIcons              = D.maxIcons
             npo.firstIconScale        = D.firstIconScale
             npo.glowMode              = D.glowMode
             npo.showGlow              = nil  -- clear legacy key
             npo.queueIconDesaturation = D.queueIconDesaturation
-            addon:ForceUpdate()
-            rebuildNPO(addon)
-            W.NotifyChange()
-        end)
-    tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
-        W.resetButton(990, L["Reset Defensive Display desc"], function()
-            local npo = addon.db.profile.nameplateOverlay
-            local D = addon.db.defaults.profile.nameplateOverlay
             npo.showDefensives       = D.showDefensives
             npo.defensiveDisplayMode  = D.defensiveDisplayMode
             npo.maxDefensiveIcons     = D.maxDefensiveIcons

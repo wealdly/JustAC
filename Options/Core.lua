@@ -9,39 +9,35 @@ local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Sub-module references (resolved lazily)
 local General       = LibStub("JustAC-OptionsGeneral", true)
-local StandardQueue = LibStub("JustAC-OptionsStandardQueue", true)
+local Display       = LibStub("JustAC-OptionsDisplay", true)
 local Offensive     = LibStub("JustAC-OptionsOffensive", true)
-local Overlay       = LibStub("JustAC-OptionsOverlay", true)
+local Abilities     = LibStub("JustAC-OptionsAbilities", true)
 local Defensives    = LibStub("JustAC-OptionsDefensives", true)
 local Profiles      = LibStub("JustAC-OptionsProfiles", true)
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 
 -------------------------------------------------------------------------------
--- Forward Update functions so external code using Options.UpdateX still works
--- and expose RefreshAllDynamic for batch refresh call sites.
+-- Dynamic-list rebuild targets for RefreshAllDynamic below.
 -------------------------------------------------------------------------------
 local FORWARDERS = {
-    { publicName = "UpdateBlacklistOptions",      libName = "JustAC-OptionsOffensive",       methodName = "UpdateBlacklistOptions",      public = true },
-    { publicName = "UpdateHotkeyOverrideOptions", libName = "JustAC-OptionsHotkeys",          methodName = "UpdateHotkeyOverrideOptions", public = true },
-    { publicName = "UpdateDefensivesOptions",     libName = "JustAC-OptionsDefensives",      methodName = "UpdateDefensivesOptions"    },
-    { publicName = "UpdateGapCloserOptions",      libName = "JustAC-OptionsGapClosers",      methodName = "UpdateGapCloserOptions"     },
-    { publicName = "UpdateBurstTriggerOptions",   libName = "JustAC-OptionsOffensive",       methodName = "UpdateBurstTriggerOptions"  },
-    { publicName = "UpdateCustomQueueOptions",    libName = "JustAC-OptionsCustomQueue",     methodName = "UpdateCustomQueueOptions"   },
+    { libName = "JustAC-OptionsAbilities",   methodName = "UpdateAbilitiesOptions"      },
+    { libName = "JustAC-OptionsDefensives",  methodName = "UpdateDefensivesOptions"     },
+    { libName = "JustAC-OptionsGapClosers",  methodName = "UpdateGapCloserOptions"      },
+    { libName = "JustAC-OptionsOffensive",   methodName = "UpdateBurstTriggerOptions"   },
+    { libName = "JustAC-OptionsCustomQueue", methodName = "UpdateCustomQueueOptions"    },
 }
 
--- Only UpdateBlacklistOptions and UpdateHotkeyOverrideOptions are invoked from
--- outside the Options module (SpellQueue / JustAC), so only those get exposed as
--- Options.UpdateX. The rest are driven purely through RefreshAllDynamic below.
-for _, f in ipairs(FORWARDERS) do
-    if f.public then
-        Options[f.publicName] = function(addon)
-            local mod = LibStub(f.libName, true)
-            if mod and mod[f.methodName] then
-                mod[f.methodName](addon)
-            end
-        end
+-- Kept as the external notification points (SpellQueue's right-click blacklist
+-- path and JustAC's hotkey-override path call these): blacklist and hotkey
+-- overrides both render on the Abilities tab now, so both repoint there.
+function Options.UpdateBlacklistOptions(addon)
+    local mod = LibStub("JustAC-OptionsAbilities", true)
+    if mod and mod.UpdateAbilitiesOptions then
+        mod.UpdateAbilitiesOptions(addon)
     end
 end
+
+Options.UpdateHotkeyOverrideOptions = Options.UpdateBlacklistOptions
 
 -- Refresh all dynamic options lists in one call (used by JustAC.lua and slash handler).
 function Options.RefreshAllDynamic(addon)
@@ -95,14 +91,14 @@ local function CreateOptionsTable(addon)
     if General then
         args.general = General.CreateTabArgs(addon)
     end
-    if StandardQueue then
-        args.standardQueue = StandardQueue.CreateTabArgs(addon)
-    end
-    if Overlay then
-        args.nameplateOverlay = Overlay.CreateTabArgs(addon)
+    if Display then
+        args.display = Display.CreateTabArgs(addon)
     end
     if Offensive then
         args.offensive = Offensive.CreateTabArgs(addon)
+    end
+    if Abilities then
+        args.abilities = Abilities.CreateTabArgs(addon)
     end
     if Defensives then
         args.defensives = Defensives.CreateTabArgs(addon)
@@ -121,6 +117,10 @@ local function CreateOptionsTable(addon)
         name = L["JustAssistedCombat"],
         handler = addon,
         type = "group",
+        -- Deliberate two-level navigation: sections in the tree sidebar, pages
+        -- within a section as text-width tabs. Declared (it is also the AceConfig
+        -- default) so the sidebar reads as a choice, not an omission.
+        childGroups = "tree",
         args = args,
     }
 end
@@ -156,6 +156,7 @@ local INSPECT_TOPICS = {
     castdiag    = "CastDiagnostics",
     healthprobe = "HealthProbe",
     healthgate  = "HealthGatePreview",
+    healprobe   = "HealProbe",
     validate    = "ValidateAssumptions",
     selfcast    = "SelfCastProbe",
     auraids     = "AuraInstanceIdsProbe",
@@ -170,7 +171,7 @@ local INSPECT_TOPICS = {
     errors      = "ErrorCapture",
     enragelog   = "EnrageLog",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear]"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, healprobe [arm|show|watch], validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear]"
 
 -------------------------------------------------------------------------------
 -- Slash command handler
@@ -266,6 +267,19 @@ local function HandleSlashCommand(addon, input)
             addon:Print("Debug HUD module not available")
         end
 
+    elseif command == "enable" then
+        -- Un-disable the current spec (clears the "DISABLED" spec-profile
+        -- sentinel; healer specs get it by default at first run).
+        local spec = GetSpecialization()
+        if not spec then
+            addon:Print("No specialization active.")
+        elseif addon.db.char.specProfiles and addon.db.char.specProfiles[spec] == "DISABLED" then
+            addon.db.char.specProfiles[spec] = nil
+            addon:OnSpecChange()
+            addon:Print("Enabled for this spec.")
+        else
+            addon:Print("Already enabled for this spec.")
+        end
     elseif command == "profile" then
         CallDebug("ManageProfile", arg)
 
@@ -354,8 +368,11 @@ function Options.Initialize(addon)
     end
 
     AceConfig:RegisterOptionsTable("JustAssistedCombat", addon.optionsTable)
-    -- Store the category for version-aware opening
-    addon.optionsCategoryID = AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
+    -- Wide enough that a three-tab row (Display, Defensive Queue) stays under the
+    -- tab widget's 75%-of-width fill threshold - past it, AceGUI stretches every
+    -- tab in the row to fill the panel instead of fitting them to their text.
+    AceConfigDialog:SetDefaultSize("JustAssistedCombat", 800, 550)
+    AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
 
     -- Populate dynamic lists at startup so Blizzard Settings has full content
     -- even before the slash command path calls RefreshAllDynamic.

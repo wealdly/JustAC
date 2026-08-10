@@ -42,6 +42,7 @@ local DEFENSIVE_SPELLS = {
     [370960] = true,  -- Emerald Communion
     [374348] = true,  -- Renewing Blaze
     [357170] = true,  -- Time Dilation
+    [374227] = true,  -- Zephyr (group damage reduction)
     [378441] = true,  -- Time Stop
     [406732] = true,  -- Spatial Paradox (also supportive/healing for Preservation)
     [360827] = true,  -- Blistering Scales (Augmentation - shield + thorns)
@@ -98,6 +99,7 @@ local DEFENSIVE_SPELLS = {
     [47536] = true,   -- Rapture
     [47585] = true,   -- Dispersion
     [33206] = true,   -- Pain Suppression
+    [47788] = true,   -- Guardian Spirit
     [62618] = true,   -- Power Word: Barrier
     [81782] = true,   -- Power Word: Barrier (aura)
     -- REMOVED: Spirit Shell (109964) - removed from game in Dragonflight
@@ -174,18 +176,29 @@ local HEALING_SPELLS = {
     [207385] = true,  -- Spring Blossoms
     [391888] = true,  -- Adaptive Swarm (heal component)
     [740] = true,     -- Tranquility
+    [50464] = true,   -- Nourish
+    [102693] = true,  -- Grove Guardians
+    [33891] = true,   -- Incarnation: Tree of Life
+    -- SKIPPED: Convoke the Spirits (391528) - heals as Restoration but is a
+    -- damage cooldown for Balance/Feral; a flat entry would exclude it from
+    -- their DPS tails. Dual-use spells stay uncategorized.
     
     -- Evoker
     [355913] = true,  -- Emerald Blossom
     [360823] = true,  -- Naturalize
     -- MOVED: Blistering Scales (360827) - defensive shield + thorns, classified as defensive
     [360995] = true,  -- Verdant Embrace
-    [361469] = true,  -- Living Flame (heal)
+    -- SKIPPED: Living Flame (361469) - one spell ID heals a friendly target or
+    -- damages a hostile one; it is Devastation's AND Preservation's rotational
+    -- damage filler, so a flat heal entry would strip it from their DPS tails.
+    -- Dual-use spells stay uncategorized. [removed from this list 2026-08]
     [363534] = true,  -- Rewind
     [366155] = true,  -- Reversion
     [367226] = true,  -- Spiritbloom
-    [382614] = true,  -- Dream Breath
-    [382731] = true,  -- Temporal Anomaly
+    [382614] = true,  -- Dream Breath (4-stage empower variant)
+    [382731] = true,  -- Spiritbloom (4-stage empower variant)  [comment was mislabeled Temporal Anomaly]
+    [373861] = true,  -- Temporal Anomaly
+    [364343] = true,  -- Echo
     -- MOVED: Ebon Might (395152) - Augmentation buff, classified as utility
     -- MOVED: Prescience (409311) - Augmentation buff, classified as utility
     -- Spatial Paradox (406732) already in DEFENSIVE_SPELLS (primary classification)
@@ -203,6 +216,10 @@ local HEALING_SPELLS = {
     [325197] = true,  -- Invoke Chi-Ji
     [388615] = true,  -- Restoral
     [388193] = true,  -- Faeline Stomp (heal)
+    [399491] = true,  -- Sheilun's Gift
+    -- SKIPPED: Chi Burst (123986) and Celestial Conduit (443028) - heal as
+    -- Mistweaver but are rotational damage for Windwalker; flat entries would
+    -- exclude them from its DPS tail. Dual-use spells stay uncategorized.
     
     -- Paladin
     [19750] = true,   -- Flash of Light
@@ -212,6 +229,9 @@ local HEALING_SPELLS = {
     [633] = true,     -- Lay on Hands
     [20473] = true,   -- Holy Shock
     [53563] = true,   -- Beacon of Light
+    [156910] = true,  -- Beacon of Faith
+    -- SKIPPED: Divine Toll (375576) - heals as Holy but is a damage cooldown
+    -- for Ret/Prot (role-conditional). Dual-use spells stay uncategorized.
     [114158] = true,  -- Light's Hammer
     [114165] = true,  -- Holy Prism
     -- REMOVED: Light of the Protector (183998) - replaced by Word of Glory
@@ -249,6 +269,12 @@ local HEALING_SPELLS = {
     [33076] = true,   -- Prayer of Mending
     [527] = true,     -- Purify
     -- Dispel Magic (528) already in UTILITY_SPELLS (primary classification)
+    [200829] = true,  -- Plea
+    [472433] = true,  -- Evangelism
+    [64901] = true,   -- Symbol of Hope
+    [265202] = true,  -- Holy Word: Salvation
+    -- SKIPPED: Penance (47540) - Discipline's Atonement design makes its damage
+    -- cast rotational healing; excluding it from the DPS tail would be wrong.
     
     -- Shaman
     [5394] = true,    -- Healing Stream Totem
@@ -261,7 +287,11 @@ local HEALING_SPELLS = {
     [197995] = true,  -- Wellspring
     [198838] = true,  -- Earthen Wall Totem
     [207778] = true,  -- Downpour
-    [382024] = true,  -- Primordial Wave (heal component)
+    [382024] = true,  -- Earthliving Weapon (imbue)  [comment was mislabeled Primordial Wave]
+    [428332] = true,  -- Primordial Wave (Restoration heal variant)
+    [1064] = true,    -- Chain Heal
+    [974] = true,     -- Earth Shield
+    [73685] = true,   -- Unleash Life
     [51886] = true,   -- Cleanse Spirit
     [77130] = true,   -- Purify Spirit
     
@@ -482,6 +512,7 @@ local UTILITY_SPELLS = {
     
     -- Battle Resurrects
     [20484] = true,   -- Rebirth (Druid)
+    [212051] = true,  -- Reawaken (Monk)
     [61999] = true,   -- Raise Ally (DK)
     [20707] = true,   -- Soulstone (Warlock)
     [391054] = true,  -- Intercession (Paladin)

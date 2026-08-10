@@ -342,7 +342,7 @@ end
 function BlizzardAPI.IsAuraActive(unit, auraSpellID)
     if not auraSpellID or auraSpellID == 0 then return false end
 
-    local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
+    local RedundancyFilter = GetRedundancyFilter()
     local cache = RedundancyFilter and RedundancyFilter.GetAuraCache
         and RedundancyFilter.GetAuraCache()
     return (cache and cache.byID and cache.byID[auraSpellID]) == true
@@ -465,6 +465,25 @@ end
 -- Flat numeric values; hard cap that wipes + re-warms so it never grows without bound.
 local NAME_TYPE_CACHE_CAP = 1500
 
+-- Shared bounded-insert for the JustACGlobal caches below: lazily creates
+-- g[cacheKey] with its g[cacheKey.."N"] counter, and on a NEW key wipes at cap
+-- (wipe-and-relearn) before counting it. Returns the cache table; the caller
+-- writes the value.
+local function BoundedGlobalCache(cacheKey, cap, key)
+    if not _G.JustACGlobal then _G.JustACGlobal = {} end
+    local g = _G.JustACGlobal
+    local nKey = cacheKey .. "N"
+    local c = g[cacheKey]
+    if not c then c = {}; g[cacheKey] = c; g[nKey] = 0 end
+    if c[key] == nil then
+        if (g[nKey] or 0) >= cap then
+            wipe(c); g[nKey] = 0
+        end
+        g[nKey] = (g[nKey] or 0) + 1
+    end
+    return c
+end
+
 -- Localized creature-type name -> numeric ID, built once from C_CreatureInfo
 -- (locale-correct - no hardcoded type strings).
 local creatureTypeByName = nil
@@ -481,17 +500,7 @@ end
 
 local function StoreNameType(name, typeID)
     if not name or not typeID then return end
-    if not _G.JustACGlobal then _G.JustACGlobal = {} end
-    local g = _G.JustACGlobal
-    local c = g.creatureTypeCache
-    if not c then c = {}; g.creatureTypeCache = c; g.creatureTypeCacheN = 0 end
-    if c[name] == typeID then return end
-    if c[name] == nil then
-        if (g.creatureTypeCacheN or 0) >= NAME_TYPE_CACHE_CAP then
-            wipe(c); g.creatureTypeCacheN = 0   -- bounded: wipe and re-warm
-        end
-        g.creatureTypeCacheN = (g.creatureTypeCacheN or 0) + 1
-    end
+    local c = BoundedGlobalCache("creatureTypeCache", NAME_TYPE_CACHE_CAP, name)
     c[name] = typeID
 end
 
@@ -507,17 +516,7 @@ end
 -- engine-announced vs inferred immunity.
 local function StoreNameNPCID(name, npcID)
     if not name or not npcID then return end
-    if not _G.JustACGlobal then _G.JustACGlobal = {} end
-    local g = _G.JustACGlobal
-    local c = g.npcIDCache
-    if not c then c = {}; g.npcIDCache = c; g.npcIDCacheN = 0 end
-    if c[name] == npcID then return end
-    if c[name] == nil then
-        if (g.npcIDCacheN or 0) >= NAME_TYPE_CACHE_CAP then
-            wipe(c); g.npcIDCacheN = 0   -- bounded: wipe and re-learn
-        end
-        g.npcIDCacheN = (g.npcIDCacheN or 0) + 1
-    end
+    local c = BoundedGlobalCache("npcIDCache", NAME_TYPE_CACHE_CAP, name)
     c[name] = npcID
 end
 
@@ -599,13 +598,7 @@ local function CCImmuneDB()
 end
 
 local function NoteConfirmedImmunity(npcID)
-    local db, g = CCImmuneDB()
-    if db[npcID] == nil then
-        if (g.ccImmuneNPCsN or 0) >= CC_IMMUNE_DB_CAP then
-            wipe(db); g.ccImmuneNPCsN = 0   -- bounded: wipe and re-learn
-        end
-        g.ccImmuneNPCsN = (g.ccImmuneNPCsN or 0) + 1
-    end
+    local db = BoundedGlobalCache("ccImmuneNPCs", CC_IMMUNE_DB_CAP, npcID)
     db[npcID] = (db[npcID] or 0) + 1
 end
 
@@ -1367,61 +1360,56 @@ end
 -- everything else returns nil = UNKNOWN so callers fall back to delegation rather than act on
 -- stale data. `isActive` is a Blizzard-internal field, not an API, so every read is guarded and
 -- any secret or missing value collapses the whole read to nil.
-local RESOURCE_BARS = {
-    -- The 12.x Personal Resource Display builds its OWN class frame from the standard class
-    -- template and names it globally `prdClassFrame` (Blizzard_PersonalResourceDisplay.lua
-    -- SetupClassBar). It is a THIRD source, independent of both the player-frame bars and the
-    -- older nameplate bars, and it stays live whenever the PRD is enabled - including when an
-    -- addon replaces the player unit frame and hides Blizzard's own bars. Listed first for that
-    -- reason; same per-class shapes, so the class filter picks the right one.
-    { frame = "prdClassFrame", class = "DRUID",   res = "combo_points", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "ROGUE",   res = "combo_points", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "MONK",    res = "chi", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "MAGE",    res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "EVOKER",  res = "essence", event = "UNIT_POWER_FREQUENT" },
-    { frame = "prdClassFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
-      state = "visualState", min = 1, max = 3, isFilled = function(v) return v > 1 end },
-    { frame = "prdClassFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
-      state = "visualState", min = 1, max = 4, isFilled = function(v) return v == 4 end },
-
-    { frame = "DruidComboPointBarFrame", class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT" },   -- isActive (boolean)
-    { frame = "RogueComboPointBarFrame", class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT" },   -- isFull   (boolean)
-    { frame = "MonkHarmonyBarFrame", class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT" },            -- active   (boolean)
-    { frame = "WarlockPowerFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },     -- fillAmount (0..1 fractional)
-    { frame = "MageArcaneChargesFrame", class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
-    { frame = "EssencePlayerFrame", class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT" },
+-- One def per class, expanded below into one RESOURCE_BARS entry per frame name.
+-- `frames` are probed in order:
+--   1. The 12.x Personal Resource Display builds its OWN class frame from the standard class
+--      template and names it globally `prdClassFrame` (Blizzard_PersonalResourceDisplay.lua
+--      SetupClassBar). It is a THIRD source, independent of both the player-frame bars and the
+--      older nameplate bars, and it stays live whenever the PRD is enabled - including when an
+--      addon replaces the player unit frame and hides Blizzard's own bars. Listed first for that
+--      reason; same per-class shapes, so the class filter picks the right one.
+--   2. The player-frame bar.
+--   3. The older nameplate bar - a SEPARATE global reusing the same mixin (and therefore the
+--      same shape) as the player-frame bar. It matters because an addon that replaces the
+--      player unit frame hides Blizzard's bars, which stops them updating - with the PRD
+--      enabled these keep running, so a player on a replacement unit-frame addon still gets a
+--      resource read. Whichever bar is LIVE first wins; all carry identical data when up.
+local RESOURCE_BAR_DEFS = {
+    { class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT",   -- isActive (boolean)
+      frames = { "prdClassFrame", "DruidComboPointBarFrame", "ClassNameplateBarFeralDruidFrame" } },
+    { class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT",   -- isFull   (boolean)
+      frames = { "prdClassFrame", "RogueComboPointBarFrame", "ClassNameplateBarRogueFrame" } },
+    { class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT",             -- active   (boolean)
+      frames = { "prdClassFrame", "MonkHarmonyBarFrame", "ClassNameplateBarWindwalkerMonkFrame" } },
+    { class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT",   -- fillAmount (0..1 fractional)
+      frames = { "prdClassFrame", "WarlockPowerFrame", "ClassNameplateBarWarlockFrame" } },
+    { class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT",
+      frames = { "prdClassFrame", "MageArcaneChargesFrame", "ClassNameplateBarMageFrame" } },
+    { class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT",
+      frames = { "prdClassFrame", "EssencePlayerFrame", "ClassNameplateBarDracthyrFrame" } },
     -- Paladin: runes hang off the bar as rune1..runeN. PaladinPowerBar.VisualState =
     -- 1 Inactive / 2 Active / 3 SpellReady -> filled when > 1.
-    { frame = "PaladinPowerBarFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
-      state = "visualState", min = 1, max = 3,
-      isFilled = function(v) return v > 1 end },
+    { class = "PALADIN", res = "holy_power", event = "UNIT_POWER_FREQUENT", indexed = "rune",
+      state = "visualState", min = 1, max = 3, isFilled = function(v) return v > 1 end,
+      frames = { "prdClassFrame", "PaladinPowerBarFrame", "ClassNameplateBarPaladinFrame" } },
     -- Death Knight: runes live in bar.Runes. RuneButtonMixin.VisualState =
     -- 1 Empty / 2 OnCooldown / 3 CooldownEnding / 4 Ready -> AVAILABLE ONLY at 4. Note this is a
     -- different enum to Paladin's under the same field name, hence per-bar semantics.
-    { frame = "RuneFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
-      state = "visualState", min = 1, max = 4,
-      isFilled = function(v) return v == 4 end },
-
-    -- Personal Resource Display equivalents. These are SEPARATE globals that reuse the same
-    -- mixins (and therefore the same shapes) as the player-frame bars above. They matter because
-    -- an addon that replaces the player unit frame hides Blizzard's bars, which stops them
-    -- updating - with the PRD enabled these keep running, so a player on a replacement unit-frame
-    -- addon still gets a resource read. Listed after the player-frame bars: whichever is SHOWN
-    -- wins, and both carry identical data when both are up.
-    { frame = "ClassNameplateBarFeralDruidFrame", class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarRogueFrame", class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarWindwalkerMonkFrame", class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarWarlockFrame", class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarMageFrame", class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarDracthyrFrame", class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT" },
-    { frame = "ClassNameplateBarPaladinFrame", class = "PALADIN", event = "UNIT_POWER_FREQUENT", res = "holy_power", indexed = "rune",
-      state = "visualState", min = 1, max = 3,
-      isFilled = function(v) return v > 1 end },
-    { frame = "DeathKnightResourceOverlayFrame", class = "DEATHKNIGHT", event = "RUNE_POWER_UPDATE", res = "rune", array = "Runes",
-      state = "visualState", min = 1, max = 4,
-      isFilled = function(v) return v == 4 end },
+    { class = "DEATHKNIGHT", res = "rune", event = "RUNE_POWER_UPDATE", array = "Runes",
+      state = "visualState", min = 1, max = 4, isFilled = function(v) return v == 4 end,
+      frames = { "prdClassFrame", "RuneFrame", "DeathKnightResourceOverlayFrame" } },
 }
+
+local RESOURCE_BARS = {}
+for _, def in ipairs(RESOURCE_BAR_DEFS) do
+    for _, frameName in ipairs(def.frames) do
+        local entry = { frame = frameName }
+        for k, v in pairs(def) do
+            if k ~= "frames" then entry[k] = v end
+        end
+        RESOURCE_BARS[#RESOURCE_BARS + 1] = entry
+    end
+end
 
 -- Each class's point widget stores its state under a DIFFERENT name and in one of two shapes:
 --   BOOLEAN "filled" flag - Druid `isActive` (DruidComboPointMixin:SetActive), Monk `active`

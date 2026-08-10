@@ -5,7 +5,7 @@
 -- Detection is aura-based and runs only out of combat, so it never touches the 12.0
 -- secret-value wall (auras and item counts are plain values out of combat).
 
-local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 8)
+local PrecombatEngine = LibStub:NewLibrary("JustAC-PrecombatEngine", 9)
 if not PrecombatEngine then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -228,14 +228,53 @@ end
 -- spells the player knows (IsPlayerSpell) surface, so it self-gates by class. Out of combat
 -- only; cached. Shares the flat refresh window with the consumable categories (IsLapsing);
 -- every buff in this table runs 30-60 minutes, so no short-duration floor is needed.
+--
+-- One override on all of that: when the assisted-combat rotation expresses its own pick
+-- within a group (see ACPickInGroup), that pick WINS - over the default, over the queue
+-- scan, and even over a different member that is already active and fresh.
+
+-- The member of `group` the assisted-combat rotation itself runs, or nil. Matching it is
+-- mandatory, not cosmetic: the AC manager keeps recommending ITS member until that exact
+-- one is applied - a different member of the same group never satisfies it - so offering
+-- anything else sends the player in a circle (apply ours, AC still nags for the other).
+-- Two sources, in authority order:
+--   1. The live demand (GetAnyNextCastSpell / plain queue head) - the very spell slot 1
+--      is frozen on. Plain and readable out of combat, which is the only place this runs.
+--   2. GetRotationSpells - the spec's full AC spell list (also plain). Confirmed in game:
+--      it carries EVERY member of a group the spec can use (Sub lists all three
+--      non-lethal poisons), so it expresses a pick ONLY when exactly one member appears.
+--      Several listed members = no opinion - return nil and let the demand chain (or,
+--      with no demand pending, the caller's fallbacks) decide.
+local function ACPickInGroup(nextCast, rotation, group)
+    if nextCast then
+        for j = 1, #group do
+            if nextCast == group[j] and IsPlayerSpell(group[j]) then return group[j] end
+        end
+    end
+    if not rotation then return nil end
+    local found
+    for j = 1, #group do
+        if IsPlayerSpell(group[j]) then
+            for i = 1, #rotation do
+                if rotation[i] == group[j] then
+                    if found then return nil end   -- second member listed: ambiguous
+                    found = group[j]
+                    break
+                end
+            end
+        end
+    end
+    return found
+end
 
 -- Highest-priority member of `group` that the current rotation/fixed queue wants, or nil.
--- Used as the preferred pick when a maintained buff is missing entirely: offer the poison
--- the SBA/fixed queue is actually trying to apply instead of a blind default. Best-effort
--- only - position 1 of the queue is Blizzard's 12.0 secret suggestion, which can't be
--- compared (a raw `==` throws), so secret entries are skipped. Returns the known group
--- constant (never a queue value) and only one the player knows, so it can NEVER suppress
--- the reliable default fallback at the call site.
+-- Fallback pick when a maintained buff is missing entirely and the rotation list gave no
+-- answer (ACPickInGroup above is the preferred source): offer the poison the fixed queue
+-- is actually trying to apply instead of a blind default. Best-effort only - position 1
+-- of the queue is Blizzard's 12.0 secret suggestion, which can't be compared (a raw `==`
+-- throws), so secret entries are skipped. Returns the known group constant (never a queue
+-- value) and only one the player knows, so it can NEVER suppress the reliable default
+-- fallback at the call site.
 local issecretvalue = issecretvalue
 local function HighestQueuedInGroup(group)
     local SQ = LibStub("JustAC-SpellQueue", true)
@@ -342,6 +381,39 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
     -- auras (RequiresNonSecretAura), so every class buff would look lapsed - offer nothing.
     local restricted = BlizzardAPI and BlizzardAPI.AreAurasSecret()
     if groups and get and not restricted then
+        -- AC's live demand, from the strongest source available:
+        --   1. GetAnyNextCastSpell - the include-hidden API read. The visible-only
+        --      variants skip spells with no action-bar button, and poisons rarely
+        --      have one, so they'd report the demand as "nothing" (observed on Sub).
+        --   2. The queue's position 1, when plain (it is out of combat) - the very
+        --      icon the player sees frozen, so deferring to it can never disagree
+        --      with what's on screen.
+        local nextCast = BlizzardAPI and BlizzardAPI.GetAnyNextCastSpell
+            and BlizzardAPI.GetAnyNextCastSpell()
+        if not nextCast then
+            local SQ = LibStub("JustAC-SpellQueue", true)
+            local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
+            local head = type(queue) == "table" and queue[1] or nil
+            if head and not (issecretvalue and issecretvalue(head)) then nextCast = head end
+        end
+        local rotation = BlizzardAPI and BlizzardAPI.GetRotationSpells
+            and BlizzardAPI.GetRotationSpells()
+        -- AC surfaces its maintained-buff demands ONE at a time through the demand
+        -- probe, and the rotation list can't break the tie (it carries every member
+        -- the spec can use, not a preference). So while AC is demanding a member of
+        -- ANY group, the picks for the OTHER groups are still hidden behind that
+        -- demand - and offering our own default in that window is a trap: apply it,
+        -- and AC's next reveal freezes on a member we just displaced. Those groups
+        -- HOLD instead; each applied demand reveals the next group's pick.
+        local pendingDemand = false
+        if nextCast then
+            for _, grp in ipairs(groups) do
+                for _, id in ipairs(grp.group) do
+                    if nextCast == id then pendingDemand = true; break end
+                end
+                if pendingDemand then break end
+            end
+        end
         for _, grp in ipairs(groups) do
             local active, aura
             for _, spellID in ipairs(grp.group) do
@@ -360,7 +432,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                     if a then active, aura = spellID, a; break end
                 end
             end
-            if active then
+            local acPick = ACPickInGroup(nextCast, rotation, grp.group)
+            if active and acPick and acPick ~= active then
+                -- The WRONG member is up: the assisted rotation runs a different one, and
+                -- the active buff doesn't satisfy it, so AC's queue slot stays frozen on
+                -- its pick no matter how fresh the current buff is. Offer AC's member -
+                -- applying it replaces the active one and unfreezes the recommendation.
+                out[#out + 1] = acPick
+            elseif active then
                 local offered = IsLapsing(aura)
                 if offered then out[#out + 1] = active end
                 -- Group buff the player already has, but a party member is missing it
@@ -372,10 +451,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                     out[#out + 1] = active
                 end
             else
-                -- Missing entirely (lapsed/cancelled): offer what the fixed queue ranks
-                -- highest in this group, else the group's own default. Each group resolves
-                -- independently, so a rogue with neither lethal nor non-lethal up gets both.
-                local pick = HighestQueuedInGroup(grp.group) or grp.default
+                -- Missing entirely (lapsed/cancelled): defer to the assisted rotation's
+                -- pick; the queue-scan/default fallbacks only run when NO AC demand is
+                -- pending in another group (see pendingDemand above) - otherwise this
+                -- group holds until the chain reveals its pick.
+                local pick = acPick
+                if not pick and not pendingDemand then
+                    pick = HighestQueuedInGroup(grp.group) or grp.default
+                end
                 if pick and IsPlayerSpell(pick) then out[#out + 1] = pick end
             end
         end
@@ -448,15 +531,14 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
             -- fails OPEN because resource state can be secret even out of combat -
             -- worst case an out-of-mana click errors and mana is back in seconds.
             local heal = SpellDB.GetKnownTopoffHeal and SpellDB.GetKnownTopoffHeal()
-            local BAPI = LibStub("JustAC-BlizzardAPI", true)
             if heal and get(heal) then
                 -- The chosen heal's own HoT is still ticking: the player IS being
                 -- healed - suggest nothing (mirrors the Recuperate aura gate, and
                 -- prevents the HoT's own no-change snapshots at full health from
                 -- keeping the suggestion alive).
-            elseif heal and BAPI
-                and (not BAPI.IsSpellUsable or BAPI.IsSpellUsable(heal, true))
-                and (not BAPI.IsSpellReady or BAPI.IsSpellReady(heal)) then
+            elseif heal and BlizzardAPI
+                and (not BlizzardAPI.IsSpellUsable or BlizzardAPI.IsSpellUsable(heal, true))
+                and (not BlizzardAPI.IsSpellReady or BlizzardAPI.IsSpellReady(heal)) then
                 out[#out + 1] = heal
                 PrecombatEngine.offeredTopoffHeal = heal
             else
@@ -484,13 +566,9 @@ function PrecombatEngine.IsOfferingNow(profile)
     return (def and def.enabled and pre and pre.enabled ~= false) and true or false
 end
 
-local cachedAddon
 local function DefensiveIcons()
-    if not cachedAddon then
-        local AceAddon = LibStub("AceAddon-3.0", true)
-        cachedAddon = AceAddon and AceAddon:GetAddon("JustAssistedCombat", true)
-    end
-    return cachedAddon and cachedAddon.defensiveIcons
+    local addon = BlizzardAPI and BlizzardAPI.GetAddon and BlizzardAPI.GetAddon()
+    return addon and addon.defensiveIcons
 end
 
 -- Is this spell being offered on screen, right now, as a pre-combat buff? Asked of the

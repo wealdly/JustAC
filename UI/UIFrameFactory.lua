@@ -62,9 +62,28 @@ function UIFrameFactory.GetInterruptAuraAnchor(profile, orientation, iconSize)
     return "BOTTOM", "TOP", 2 + shift
 end
 
+--- Manual drag = undock. Shared by the grab-tab drag and the Alt-drag (click-through
+--- mode) icon drag: the Alt path used to move a docked panel WITHOUT undocking, so
+--- nothing was saved, the next target change snapped it back, and the docked flag
+--- kept lying to the save/clamp guards.
+function UIFrameFactory.UndockAfterManualDrag(addon)
+    local currentProfile = addon:GetProfile()
+    if currentProfile and currentProfile.targetFrameAnchor and currentProfile.targetFrameAnchor ~= "DISABLED" then
+        currentProfile.targetFrameAnchor = "DISABLED"
+        addon.targetframe_anchored = false
+        if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
+        -- Undocking re-enables the target health bar (it's suppressed while docked,
+        -- where the target frame shows the same readout). Nothing else on this path
+        -- rebuilds it, and UpdateTargetVisibility no-ops while the frame is nil, so
+        -- without this the bar stays missing until a reload or zone change.
+        local UIHealthBarLib = LibStub("JustAC-UIHealthBar", true)
+        if UIHealthBarLib and UIHealthBarLib.UpdateTargetSize then
+            UIHealthBarLib.UpdateTargetSize(addon)
+        end
+    end
+end
+
 -- Export constants for UIRenderer and UINameplateOverlay
-UIFrameFactory.POSITION_HOLD_TIME  = 0.05  -- 50ms: min display time before positions 2+ can swap
-UIFrameFactory.GLOW_HOLD_TIME      = 0.05  -- 50ms: glow hysteresis to prevent animation flicker
 -- Per-frame refresh throttles for CD-swipe widgets and usability tint. Centralized
 -- here so a single tune applies equally to every queue (standard, overlay, defensive)
 -- instead of drifting between per-file copies.
@@ -151,8 +170,9 @@ function UIFrameFactory.ApplyTextOverlaySettingsToIcons(iconList, size, overlays
 end
 
 --- Build a merged textOverlays block for the nameplate overlay.
---- Central show from profile.textOverlays; overlay-specific fontScale, color,
---- and anchor from nameplateOverlay.textOverlays with central fallback.
+--- show/color/anchor are central (profile.textOverlays); only fontScale is
+--- per-surface (nameplateOverlay.textOverlays, which declares nothing else -
+--- NormalizeSavedData strips any other field on load).
 function UIFrameFactory.MergeOverlayTextOverlays(profile)
     if not profile then return nil end
     local central = profile.textOverlays
@@ -166,9 +186,9 @@ function UIFrameFactory.MergeOverlayTextOverlays(profile)
         if c then
             merged[key] = {
                 show      = c.show,
-                fontScale = (n and n.fontScale) or (c and c.fontScale) or 1.0,
-                color     = (n and n.color) or c.color,
-                anchor    = (n and n.anchor) or c.anchor,
+                fontScale = (n and n.fontScale) or 1.0,
+                color     = c.color,
+                anchor    = c.anchor,
             }
         end
     end
@@ -198,7 +218,7 @@ end
 -- showBlacklistHint adds the queue-only Shift+Right-click line.
 local function ShowIconHotkeyTooltip(addon, icon, showBlacklistHint)
     local profile = addon:GetProfile()
-    local tooltipMode = profile and profile.tooltipMode or "outOfCombat"
+    local tooltipMode = profile and profile.tooltipMode or "always"
 
     local inCombat = UnitAffectingCombat("player")
     local showTooltip = tooltipMode == "always" or (tooltipMode == "outOfCombat" and not inCombat)
@@ -492,8 +512,8 @@ function UIFrameFactory.CreateAuraSubIcon(parent, iconSize, profile, orientation
     return aura
 end
 
-local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, template)
-    local button = CreateFrame("Button", nil, parent, template)
+local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
+    local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
 
     button:SetSize(size, size)
@@ -535,8 +555,6 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon, profile, t
 
     button.Flash = flashTexture
     button.FlashFrame = flashFrame
-    button.flashing = 0
-    button.flashtime = 0
 
     -- Cooldown container: SetClipsChildren clips swipe to icon bounds
     -- Glow effects are parented to button directly so they're NOT clipped
@@ -802,7 +820,7 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     local isDetached = profile.defensives and profile.defensives.detached
     local parentFrame = (isDetached and addon.defensiveFrame) or addon.mainFrame
     -- Build the shared icon skeleton (textures, cooldowns, hotkey text, animations)
-    local button = CreateBaseIcon(parentFrame, actualIconSize, true, true, profile)
+    local button = CreateBaseIcon(parentFrame, actualIconSize, true, true)
     if not button then return nil end
 
     -- Born Shown at alpha 0: defensive visibility is alpha-driven (SetDefensiveIconVisible),
@@ -941,19 +959,8 @@ local function AddFadeAnims(frame, duration, onInFinished, onOutFinished)
     frame.fadeOut = fadeOut
 end
 
+-- Sole caller (CreateDefensiveIcons) destroys any existing detached frame/grab tab first.
 local function CreateDetachedDefensiveFrame(addon)
-    -- Destroy any existing detached frame
-    if addon.defensiveFrame then
-        addon.defensiveFrame:Hide()
-        addon.defensiveFrame:SetParent(nil)
-        addon.defensiveFrame = nil
-    end
-    if addon.defensiveGrabTab then
-        addon.defensiveGrabTab:Hide()
-        addon.defensiveGrabTab:SetParent(nil)
-        addon.defensiveGrabTab = nil
-    end
-
     local profile = addon:GetProfile()
     if not profile then return end
 
@@ -961,10 +968,11 @@ local function CreateDetachedDefensiveFrame(addon)
     if not frame then return end
     addon.defensiveFrame = frame
 
-    -- Restore saved position
+    -- Restore saved position (older saves carry no relativePoint; fall back to the
+    -- symmetric point-to-point apply they were written for)
     local dpos = profile.defensives and profile.defensives.detachedPosition
     if dpos and dpos.point then
-        frame:SetPoint(dpos.point, UIParent, dpos.point, dpos.x or 0, dpos.y or 100)
+        frame:SetPoint(dpos.point, UIParent, dpos.relativePoint or dpos.point, dpos.x or 0, dpos.y or 100)
     else
         frame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
     end
@@ -1052,10 +1060,15 @@ local function BuildGrabTab(addon, opts)
     end
 
     tab:EnableMouse(true)
-    tab:RegisterForDrag("LeftButton")
     tab:RegisterForClicks("RightButtonUp")
 
-    tab:SetScript("OnDragStart", function(self)
+    -- Press-grab, NOT RegisterForDrag: the drag threshold delayed the pickup until
+    -- the cursor had already traveled off the tab, and StartMoving's snap-to-mouse
+    -- then preserved that gap for the whole drag - the frame trailed beside the
+    -- cursor. Grabbing on press starts instantly, and plain StartMoving keeps the
+    -- cursor exactly where it grabbed the tab.
+    tab:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" then return end
         local profile = addon:GetProfile()
         if not profile or IsPanelLocked(profile) then return end
 
@@ -1068,19 +1081,31 @@ local function BuildGrabTab(addon, opts)
         if self.fadeIn  and self.fadeIn:IsPlaying()  then self.fadeIn:Stop()  end
         self:SetAlpha(1)
 
+        self.dragFromX, self.dragFromY = GetCursorPosition()
         if opts.onDragStart then opts.onDragStart(self, profile) end
 
         -- Move the owning frame (grab tab follows since it's anchored to it)
-        -- Use alwaysStartFromMouse=true to prevent offset when dragging from child frame
-        frame:StartMoving(true)
+        frame:StartMoving()
     end)
 
-    tab:SetScript("OnDragStop", function(self)
+    tab:SetScript("OnMouseUp", function(self, button)
+        if button ~= "LeftButton" or not self.isDragging then return end
         frame:StopMovingOrSizing()
         self.isDragging = false
         addon.isDragging = false
 
-        opts.onDragStop(self)
+        -- A press without movement is a click, not a drag: skip the drop handling
+        -- so a stray left-click can't undock the frame or churn the saved position.
+        -- StopMovingOrSizing did convert a docked frame's anchor to an absolute
+        -- point, so re-run the anchor pass - it re-pins when docking is on and
+        -- no-ops otherwise (the frame hasn't moved).
+        local x, y = GetCursorPosition()
+        local dx, dy = x - (self.dragFromX or x), y - (self.dragFromY or y)
+        if dx * dx + dy * dy > 16 then
+            opts.onDragStop(self)
+        elseif addon.UpdateTargetFrameAnchor then
+            addon:UpdateTargetFrameAnchor()
+        end
 
         -- Fade out if mouse isn't over frame/tab
         if not frame:IsMouseOver() and not self:IsMouseOver() and self.fadeOut then
@@ -1182,49 +1207,71 @@ function UIFrameFactory.SetupClickThroughIconDrag(addon)
         dragModeActive = false
         for _, icon in ipairs(addon.spellIcons or {}) do
             icon:EnableMouse(false)
-            icon:RegisterForDrag()
-            icon:SetScript("OnDragStart", nil)
-            icon:SetScript("OnDragStop", nil)
+            icon:SetScript("OnMouseDown", nil)
+            icon:SetScript("OnMouseUp", nil)
         end
         for _, icon in ipairs(addon.defensiveIcons or {}) do
             icon:EnableMouse(false)
-            icon:RegisterForDrag()
-            icon:SetScript("OnDragStart", nil)
-            icon:SetScript("OnDragStop", nil)
+            icon:SetScript("OnMouseDown", nil)
+            icon:SetScript("OnMouseUp", nil)
         end
+    end
+
+    -- Press-grab, same pattern (and reasons) as the grab tab: the drag threshold
+    -- delayed the pickup and snap-to-mouse kept the resulting gap. A press without
+    -- movement releases in place with no side effects (drag mode stays armed while
+    -- Alt is held).
+    local dragFromX, dragFromY
+    local function IconPressMoved()
+        local x, y = GetCursorPosition()
+        local dx, dy = x - (dragFromX or x), y - (dragFromY or y)
+        return dx * dx + dy * dy > 16
     end
 
     local function EnableIconDragMode()
         dragModeActive = true
         for _, icon in ipairs(addon.spellIcons or {}) do
             icon:EnableMouse(true)
-            icon:RegisterForDrag("LeftButton")
-            icon:SetScript("OnDragStart", function()
+            icon:SetScript("OnMouseDown", function(_, button)
+                if button ~= "LeftButton" then return end
                 addon.isDragging = true
-                addon.mainFrame:StartMoving(true)
+                dragFromX, dragFromY = GetCursorPosition()
+                addon.mainFrame:StartMoving()
             end)
-            icon:SetScript("OnDragStop", function()
+            icon:SetScript("OnMouseUp", function(_, button)
+                if button ~= "LeftButton" or not addon.isDragging then return end
                 addon.mainFrame:StopMovingOrSizing()
                 addon.isDragging = false
-                UIFrameFactory.SavePosition(addon)
-                if addon.MarkQueueDirty then addon:MarkQueueDirty() end
-                if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-                DisableIconDragMode()
+                if IconPressMoved() then
+                    -- Same undock rule as the grab tab: SavePosition no-ops while
+                    -- docked, so a docked Alt-drag was silently thrown away.
+                    UIFrameFactory.UndockAfterManualDrag(addon)
+                    UIFrameFactory.SavePosition(addon)
+                    if addon.MarkQueueDirty then addon:MarkQueueDirty() end
+                    if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+                    DisableIconDragMode()
+                elseif addon.UpdateTargetFrameAnchor then
+                    addon:UpdateTargetFrameAnchor()
+                end
             end)
         end
         for _, icon in ipairs(addon.defensiveIcons or {}) do
             icon:EnableMouse(true)
-            icon:RegisterForDrag("LeftButton")
-            icon:SetScript("OnDragStart", function()
+            icon:SetScript("OnMouseDown", function(_, button)
+                if button ~= "LeftButton" then return end
                 addon.isDragging = true
-                if addon.defensiveFrame then addon.defensiveFrame:StartMoving(true) end
+                dragFromX, dragFromY = GetCursorPosition()
+                if addon.defensiveFrame then addon.defensiveFrame:StartMoving() end
             end)
-            icon:SetScript("OnDragStop", function()
+            icon:SetScript("OnMouseUp", function(_, button)
+                if button ~= "LeftButton" or not addon.isDragging then return end
                 if addon.defensiveFrame then addon.defensiveFrame:StopMovingOrSizing() end
                 addon.isDragging = false
-                UIFrameFactory.SaveDefensivePosition(addon)
-                if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
-                DisableIconDragMode()
+                if IconPressMoved() then
+                    UIFrameFactory.SaveDefensivePosition(addon)
+                    if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+                    DisableIconDragMode()
+                end
             end)
         end
     end
@@ -1236,7 +1283,17 @@ function UIFrameFactory.SetupClickThroughIconDrag(addon)
         if not p then return end
         if (p.panelInteraction or "unlocked") ~= "clickthrough" then
             if altHoldTimer then altHoldTimer:Cancel() altHoldTimer = nil end
-            if dragModeActive then DisableIconDragMode() end
+            if dragModeActive then
+                -- Mode switched away mid-press: end any live drag BEFORE tearing the
+                -- scripts down - nil'ing OnMouseUp mid-drag would leave the frame
+                -- glued to the cursor and the isDragging freeze stuck.
+                if addon.isDragging then
+                    if addon.mainFrame then addon.mainFrame:StopMovingOrSizing() end
+                    if addon.defensiveFrame then addon.defensiveFrame:StopMovingOrSizing() end
+                    addon.isDragging = false
+                end
+                DisableIconDragMode()
+            end
             return
         end
         if IsAltKeyDown() then
@@ -1260,9 +1317,13 @@ function UIFrameFactory.SaveDefensivePosition(addon)
     if not addon.defensiveFrame then return end
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
-    local point, _, _, x, y = addon.defensiveFrame:GetPoint()
+    -- Keep relativePoint: dropping it and re-applying point-to-point shifts the
+    -- frame on reload whenever the two differ - the exact lossy-save hazard the
+    -- main frame's SavePosition documents and avoids.
+    local point, _, relativePoint, x, y = addon.defensiveFrame:GetPoint()
     if not point then return end
-    profile.defensives.detachedPosition = { point = point, x = x or 0, y = y or 100 }
+    profile.defensives.detachedPosition =
+        { point = point, relativePoint = relativePoint, x = x or 0, y = y or 100 }
 end
 
 function UIFrameFactory.UpdateDefensiveFrameSize(addon)
@@ -1321,7 +1382,6 @@ local function CreateDefensiveIcons(addon, profile)
     end
     wipe(defensiveIcons)
     addon.defensiveIcons = nil
-    addon.defensiveIcon = nil
 
     -- Tear the maintenance slot down with its siblings, ABOVE the "defensives disabled" early
     -- return below - otherwise turning defensives off orphans the button on screen and leaks
@@ -1391,7 +1451,6 @@ local function CreateDefensiveIcons(addon, profile)
 
     -- Expose to addon (use the fresh table, not the module-level one)
     addon.defensiveIcons = newIcons
-    addon.defensiveIcon = newIcons[1]  -- Backward compatibility
 
     -- When detached, size the container frame and create its grab tab.
     if isDetached then
@@ -1500,30 +1559,17 @@ function UIFrameFactory.CreateGrabTab(addon)
         frame = addon.mainFrame,
         isVertical = isVertical,
         anchorPoint = isVertical and "BOTTOM" or "RIGHT",
-        onDragStart = function(_, currentProfile)
-            -- Detach from target frame anchor before dragging so position saves correctly
-            if addon.targetframe_anchored then
-                addon.targetframe_anchored = false
-                addon.mainFrame:ClearAllPoints()
-                ApplySavedPosition(addon, currentProfile)
-            end
+        onDragStart = function()
+            -- Docked: drop the flag only. StartMoving picks the frame up right where
+            -- it sits (under the cursor at the dock) and StopMovingOrSizing leaves it
+            -- with an absolute anchor for SavePosition. The old teleport-to-saved-
+            -- position here yanked the frame across the screen at drag start - it
+            -- existed to compensate for the snap-to-mouse drag, which is gone.
+            addon.targetframe_anchored = false
         end,
         onDragStop = function()
             -- User manually dragged - auto-disable target frame anchor so it doesn't snap back
-            local currentProfile = addon:GetProfile()
-            if currentProfile and currentProfile.targetFrameAnchor and currentProfile.targetFrameAnchor ~= "DISABLED" then
-                currentProfile.targetFrameAnchor = "DISABLED"
-                addon.targetframe_anchored = false
-                if addon.DebugPrint then addon:DebugPrint("Target frame anchor auto-disabled (manual drag)") end
-                -- Undocking re-enables the target health bar (it's suppressed while docked,
-                -- where the target frame shows the same readout). Nothing else on this path
-                -- rebuilds it, and UpdateTargetVisibility no-ops while the frame is nil, so
-                -- without this the bar stays missing until a reload or zone change.
-                local UIHealthBarLib = LibStub("JustAC-UIHealthBar", true)
-                if UIHealthBarLib and UIHealthBarLib.UpdateTargetSize then
-                    UIHealthBarLib.UpdateTargetSize(addon)
-                end
-            end
+            UIFrameFactory.UndockAfterManualDrag(addon)
 
             UIFrameFactory.SavePosition(addon)
 
@@ -1604,7 +1650,7 @@ local function CreateInterruptIcon(addon, profile)
     local orientation = profile.queueOrientation or "LEFT"
     local spacing = profile.iconSpacing or 1
 
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true, profile)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, true)
     if not button then return end
 
     -- Position before slot 1 (opposite of queue growth direction)
@@ -1728,7 +1774,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
     local actualIconSize = isFirstIcon and (profile.iconSize * firstIconScale) or profile.iconSize
     local orientation = profile.queueOrientation or "LEFT"
 
-    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon, profile)
+    local button = CreateBaseIcon(addon.mainFrame, actualIconSize, true, isFirstIcon)
     if not button then return nil end
 
     -- Position based on orientation

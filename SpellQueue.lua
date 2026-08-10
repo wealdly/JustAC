@@ -28,6 +28,74 @@ local lastQueueUpdate = 0
 -- Cached visibility verdict from GetCurrentSpellQueue(); read by UIRenderer via ShouldShowQueue().
 -- Avoids re-evaluating the same mount/healer/OOC conditions every render frame.
 local lastShouldShowQueue = true
+-- Healer DPS mode: tail-filter state. isHealerSpec is nil-until-computed and
+-- invalidated on spec change; healerTailBuf is the pooled filtered list.
+-- The entry points hang off the SpellQueue table ON PURPOSE: GetCurrentSpellQueue
+-- sits near Lua 5.1's 60-upvalue-per-function COMPILE limit ("more than 60
+-- upvalues" kills the whole file), and module-table access rides its existing
+-- SpellQueue upvalue instead of spending new slots. Do not "simplify" these
+-- back to direct local references from inside that function.
+local isHealerSpec = nil
+local healerTailBuf = {}
+local FormCache = nil   -- lazily resolved; false once known-absent
+SpellQueue._rotationIsCustom = false
+
+local function IsHealerSpecActive()
+    if isHealerSpec == nil then
+        local spec = GetSpecialization()
+        isHealerSpec = (spec and GetSpecializationRole(spec) == "HEALER") or false
+    end
+    return isHealerSpec
+end
+
+-- Caster filler (per-spec toggle, healer specs only): suppress melee-weave
+-- suggestions - melee-tagged abilities and form-shift buttons - for healers
+-- who stay at range. Governs the addon's tail and the pos-1 fallback path;
+-- AC's own pick still adapts to where the player stands.
+local function CasterFillerActive(profile)
+    if not IsHealerSpecActive() then return false end
+    local key = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    return (key and profile.casterFiller and profile.casterFiller[key]) or false
+end
+
+local function IsWeaveSuggestion(spellID)
+    if SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID) == "melee" then
+        return true
+    end
+    if FormCache == nil then
+        FormCache = LibStub("JustAC-FormCache", true) or false
+    end
+    return (FormCache and FormCache.GetFormIDBySpellID
+        and FormCache.GetFormIDBySpellID(spellID) ~= nil) or false
+end
+
+--- Caster-filler verdict for the position-1 pick and its lookahead replacement.
+function SpellQueue.IsCasterSuppressedPick(spellID, profile)
+    return CasterFillerActive(profile) and IsWeaveSuggestion(spellID)
+end
+
+--- Healer tail filter: heals (plus melee-weave entries in caster mode) out of
+--- the DPS tail. Custom queues exempt - the user's list is theirs. Fails open:
+--- returns the original list when filtering would empty it.
+function SpellQueue.FilterHealerTail(list, profile)
+    if not (IsHealerSpecActive() and not SpellQueue._rotationIsCustom
+            and SpellDB and SpellDB.IsHealingSpell) then
+        return list
+    end
+    local casterMode = CasterFillerActive(profile)
+    wipe(healerTailBuf)
+    for i = 1, #list do
+        local sid = list[i]
+        if not SpellDB.IsHealingSpell(sid)
+           and not (casterMode and IsWeaveSuggestion(sid)) then
+            healerTailBuf[#healerTailBuf + 1] = sid
+        end
+    end
+    if #healerTailBuf > 0 and #healerTailBuf < #list then
+        return healerTailBuf
+    end
+    return list
+end
 -- True when Blizzard's position-1 pick is a maintained DoT that is already live on
 -- the current target (and not in its refresh window) - i.e. AC wants it applied
 -- ELSEWHERE, so the renderer shows a "switch target" arrow on the slot. Recomputed
@@ -137,6 +205,8 @@ local maxChargeGated = {}
 -- Parallel context-rank buffers for the fixed-queue archetype/range bias.
 local proccedRank = {}
 local normalRank = {}
+-- Pooled pick-window set (SimC mode; see the pick-gates block in GetSpellQueue).
+local pickWindowsBuf = {}
 
 -- Situation memory: the AC pick churns faster than the situation it reveals.
 --   stickyArch/-Range: last multi-target (aoe/cleave) pick, held STICKY_CTX_SECONDS.
@@ -165,18 +235,14 @@ local rotationFilterCache = {}
 -- GetRotationSpells() returns a flat array of spell IDs that is static during combat;
 -- Blizzard's AssistedCombatManager only calls it on SPELLS_CHANGED.
 local cachedRotationList = nil
-
-function SpellQueue.ClearSpellCache()
-    if BlizzardAPI and BlizzardAPI.ClearSpellCache then
-        BlizzardAPI.ClearSpellCache()
-    end
-end
-
-function SpellQueue.ClearAvailabilityCache()
-    if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then
-        BlizzardAPI.ClearAvailabilityCache()
-    end
-end
+-- Rotation setup skip-state: the expensive half of a cold rebuild (pin resolution,
+-- cooldown-tracking registration, CD seeding) only reruns when the refetched list
+-- actually differs or a FULL invalidation demanded it. Target swaps re-query the
+-- list defensively but the rotation is spec-level, so their setup rebuilds were
+-- pure waste (heavy in tab-target fights).
+local rotationSetupForced = true
+local lastSetupList = {}
+local lastSetupUseCustom = nil
 
 -- Helper: resolve the blacklist table for the current spec from profile.
 -- Returns the per-spec blacklist table (or nil), plus the spec key.
@@ -335,6 +401,12 @@ end
 --- queue looks identical whichever branch produced it, and "my queue vanished" is only
 --- actionable with the branch name attached - /jac inspect blank prints the last one.
 local function EvaluateQueueVisibility(profile, inCombat)
+    -- These are the STANDARD queue's visibility settings, but they gate the shared
+    -- build that also feeds the nameplate overlay. With the standard surface off, its
+    -- controls are greyed out - a stale saved value ("In Combat Only") would invisibly
+    -- blank the overlay with no reachable control naming the reason. The overlay
+    -- applies its own visibility settings at render, so the build must stay live.
+    if (profile.displayMode or "queue") == "overlay" then return true end
     -- Always non-nil: it has a profile default, and the legacy keys it replaced are
     -- migrated into it on every load.
     local queueVis = profile.queueVisibility
@@ -405,8 +477,8 @@ local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedS
         if procSpellID and not addedSpellIDs[procSpellID] then
             local displayID = ClaimSpellID(procSpellID, addedSpellIDs)
             if displayID
-               and BlizzardAPI.IsOffensiveSpell(procSpellID)
-               and ActionBarScanner.HasKeybind(procSpellID)
+               and (not SpellDB or SpellDB.IsOffensiveSpell(procSpellID))
+               and (ActionBarScanner.GetSpellHotkey(procSpellID) or "") ~= ""
                and not SpellQueue.IsSpellBlacklisted(procSpellID, blacklist)
                and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
                and PassesSpellFilters(procSpellID, profile) then
@@ -631,18 +703,29 @@ end
 -- being buried on a guess.
 --- Does this spell spend power? Plain metadata (GetSpellPowerCost is unannotated),
 --- used only while the primary resource is capped, so the extra call is rare.
+-- Verdict cached per spellID (cost tables are static per talent build; the API
+-- allocates a fresh table per call and this runs per candidate per build while
+-- power-capped). Wiped with the spell cache on SPELLS_CHANGED.
+local spenderCache = {}
 local function IsSpenderSpell(spellID)
-    if not (C_Spell and C_Spell.GetSpellPowerCost) then return false end
-    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
-    if not ok or type(costs) ~= "table" then return false end
-    for i = 1, #costs do
-        local c = costs[i]
-        local amt = c and c.cost
-        if type(amt) == "number" and not (issecretvalue and issecretvalue(amt)) and amt > 0 then
-            return true
+    local cached = spenderCache[spellID]
+    if cached ~= nil then return cached end
+    local verdict = false
+    if C_Spell and C_Spell.GetSpellPowerCost then
+        local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+        if ok and type(costs) == "table" then
+            for i = 1, #costs do
+                local c = costs[i]
+                local amt = c and c.cost
+                if type(amt) == "number" and not (issecretvalue and issecretvalue(amt)) and amt > 0 then
+                    verdict = true
+                    break
+                end
+            end
         end
     end
-    return false
+    spenderCache[spellID] = verdict
+    return verdict
 end
 
 local function SimcResourceGateBlocks(gates, resCount, resName)
@@ -676,6 +759,23 @@ local function SimcNegativeBuffBlocks(gates)
     return false
 end
 
+-- Hoisted rank helper: upvalues are set once per build by CategorizeAndAssembleRotation
+-- below (same pattern as rankSortComparator) - defining this inline allocated a closure
+-- every build tick.
+local rankSimcMode, rankContextOrder
+local rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee
+local function rankOf(spellID, simcRec)
+    if rankSimcMode then
+        local ctx = ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee)
+        local simc = (simcRec and simcRec.rank) or SIMC_UNRANKED
+        if simc > SIMC_UNRANKED then simc = SIMC_UNRANKED end
+        return ctx * CONTEXT_STRIDE + simc
+    elseif rankContextOrder == "ac" then
+        return ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee)
+    end
+    return 1
+end
+
 local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
     wipe(proccedSpells)
     wipe(normalSpells)
@@ -704,17 +804,10 @@ local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, a
     -- 2026-07-24): promote ready, affordable spenders so regen stops going to waste.
     -- Read once per build; false for power types without a full-power animation.
     local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
-    local function rankOf(spellID, simcRec)
-        if simcMode then
-            local ctx = ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
-            local simc = (simcRec and simcRec.rank) or SIMC_UNRANKED
-            if simc > SIMC_UNRANKED then simc = SIMC_UNRANKED end
-            return ctx * CONTEXT_STRIDE + simc
-        elseif contextOrder == "ac" then
-            return ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
-        end
-        return 1
-    end
+    -- Arm the hoisted rankOf for this build (see its definition above).
+    rankSimcMode, rankContextOrder = simcMode, contextOrder
+    rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee =
+        ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee
 
     for i = 1, #rotationList do
         local spellID = rotationList[i]
@@ -966,8 +1059,12 @@ function SpellQueue.GetCurrentSpellQueue()
     end
 
     if primarySpellID and primarySpellID > 0 then
+        -- Caster filler treats a melee/form pick like a blacklisted one: the
+        -- highlight lookahead below supplies AC's next-best suggestion.
+        local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)
         local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
         if displaySpellID
+           and not casterSuppressed
            and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist, true) then
             spellCount = spellCount + 1
             recommendedSpells[spellCount] = displaySpellID
@@ -984,6 +1081,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
                 if hlSpellID and hlSpellID > 0
                    and hlSpellID ~= primarySpellID
+                   and not SpellQueue.IsCasterSuppressedPick(hlSpellID, profile)
                    and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist, true) then
                     local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
                     if hlDisplay then
@@ -1017,10 +1115,8 @@ function SpellQueue.GetCurrentSpellQueue()
                         for i = spellCount, 1, -1 do
                             recommendedSpells[i + 1] = recommendedSpells[i]
                         end
-                        recommendedSpells[1] = gcSpell
-                    else
-                        recommendedSpells[1] = gcSpell
                     end
+                    recommendedSpells[1] = gcSpell
                     spellCount = spellCount + 1
                     addedSpellIDs[gcSpell] = true
                     addedSpellIDs[gcDisplay] = true
@@ -1085,6 +1181,31 @@ function SpellQueue.GetCurrentSpellQueue()
         if not useCustom and BlizzardAPI.GetRotationSpells then
             cachedRotationList = BlizzardAPI.GetRotationSpells()
         end
+        SpellQueue._rotationIsCustom = useCustom
+        -- Setup skip: identical list from the same source with no full invalidation
+        -- pending means pins, tracking registrations, and CD seeds are already
+        -- correct (see rotationSetupForced above).
+        local newList = cachedRotationList
+        local sameSetup = newList ~= nil
+            and not rotationSetupForced
+            and lastSetupUseCustom == useCustom
+            and #lastSetupList == #newList
+        if sameSetup then
+            for i = 1, #newList do
+                if lastSetupList[i] ~= newList[i] then sameSetup = false; break end
+            end
+        end
+        if not sameSetup then
+        rotationSetupForced = false
+        lastSetupUseCustom = useCustom
+        wipe(lastSetupList)
+        if newList then
+            for i = 1, #newList do lastSetupList[i] = newList[i] end
+        end
+        -- Clear prior rotation registrations; re-registered just below.
+        if BlizzardAPI.ClearTrackedRotationSpells then
+            BlizzardAPI.ClearTrackedRotationSpells()
+        end
         -- Resolve Always Show pins once per list rebuild (cold): the pin lives
         -- on the user's STORED id, but queue entries may be normalized to a
         -- known variant and gap-closer marks carry base+override forms - key
@@ -1112,11 +1233,11 @@ function SpellQueue.GetCurrentSpellQueue()
                 if ss and type(id) == "number" and id > 0 then
                     if ss.alwaysShow == true then markForms(pinnedAlwaysShow, id) end
                     -- Hold Until Charged applies ONLY while the custom queue is the rotation
-                    -- source. The toggle that sets it lives on custom-queue rows, and that
-                    -- whole panel hides when the custom queue is off - so honouring the key
-                    -- outside custom-queue mode would keep demoting a spell with no reachable
-                    -- control to undo it. (alwaysShow needs no such guard: it only ever adds
-                    -- visibility, so a stale one is harmless.)
+                    -- source; a stale key must never demote a spell with no live control
+                    -- behind it. Both places that set it - the custom-queue rows and the
+                    -- Ability Overrides card - grey out under the same condition.
+                    -- (alwaysShow needs no such guard: it only ever adds visibility, so a
+                    -- stale one is harmless.)
                     if useCustom and ss.holdUntilCharged == true then
                         markForms(maxChargeGated, id)
                     end
@@ -1146,6 +1267,7 @@ function SpellQueue.GetCurrentSpellQueue()
                 end
             end
         end
+        end  -- if not sameSetup
     end
     -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
     -- pick (the original recommendation, before any gap-closer injection).
@@ -1213,20 +1335,15 @@ function SpellQueue.GetCurrentSpellQueue()
     -- SimC context tier and the pick-revealed windows computed in this block.
     local simcCtx, pickWindows
     if cachedRotationList then
-        -- Master ordering toggles (profile-level; apply to both the custom list and
-        -- Blizzard's default rotation). Default nil → true (smart order):
-        -- "procs first" off folds procced spells into the normal bucket (kept in source
-        -- order); "context aware" off neutralizes ContextRank; "cooldowns last" off leaves
+        -- Ordering settings (profile-level; apply to both the custom list and
+        -- Blizzard's default rotation): "procs first" off folds procced spells into
+        -- the normal bucket (kept in source order); "cooldowns last" off leaves
         -- on-CD spells in their source slot instead of trailing.
         local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
         local sinkCooldowns = profile.orderSinkCooldowns ~= false
         -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
         -- priority, the default - falls back to "ac" below when no data for this spec).
-        -- Migrate the old boolean orderContextAware.
-        local contextOrder = profile.contextOrder
-        if not contextOrder then
-            contextOrder = (profile.orderContextAware == false) and "off" or "simc"
-        end
+        local contextOrder = profile.contextOrder or "simc"
         -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
         simcCtx = (ctxArch == "aoe" and "aoe") or (ctxArch == "cleave" and "cleave") or "st"
         if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
@@ -1243,14 +1360,23 @@ function SpellQueue.GetCurrentSpellQueue()
                 for i = 1, #pickRec.gates do
                     local g = pickRec.gates[i]
                     if g.t == "buff" and not g.neg and g.id then
-                        pickWindows = pickWindows or {}
+                        -- Pooled: wiped on first acquisition each build (stays nil on
+                        -- builds with no windows, which downstream checks rely on).
+                        if not pickWindows then
+                            wipe(pickWindowsBuf)
+                            pickWindows = pickWindowsBuf
+                        end
                         pickWindows[g.id] = true
                     end
                 end
             end
         end
         lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
-        spellCount = CategorizeAndAssembleRotation(cachedRotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
+        -- Healer specs: heals (and melee-weave entries in caster mode) out of
+        -- the DPS tail - see SpellQueue.FilterHealerTail. Position 1 (the AC
+        -- pick) is inserted elsewhere and is never filtered.
+        local rotationList = SpellQueue.FilterHealerTail(cachedRotationList, profile)
+        spellCount = CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
     end
 
     -- Burst-ready cue: emphasize a burst trigger only when a burst window is
@@ -1287,7 +1413,11 @@ function SpellQueue.GetCurrentSpellQueue()
                 for i = 1, #triggerList do
                     local tid = triggerList[i]
                     local display = BlizzardAPI.GetDisplaySpellID(tid) or tid
-                    if not blacklist[tid] and not blacklist[display]
+                    -- blacklist is nil for a spec with no hidden abilities (the common
+                    -- case) - indexing it raw crashed every combat build the moment the
+                    -- cue was enabled, freezing the whole queue. Any entry vetoes, full
+                    -- or 2+-only: the cue surfaces at position 2, which both cover.
+                    if not (blacklist and (blacklist[tid] or blacklist[display]))
                        and BlizzardAPI.IsSpellAvailable(display)
                        and not BlizzardAPI.IsSpellOnCooldown(display) then
                         local rec = RotationImport and RotationImport.GetEntry
@@ -1440,8 +1570,8 @@ end
 
 --- Returns true if spellID is ANY known gap-closer for the current spec
 --- (regardless of whether it was injected by our system this frame).
---- Used by renderers to keep the gap-closer glow when Blizzard suggests a
---- gap closer at position 1 after our injection is removed (in-range transition).
+--- Diagnostic-only: renderers resolve the engine directly; the sole caller
+--- is the /jac inspect path.
 function SpellQueue.IsGapCloserSpell(spellID)
     if not cachedGapCloserEngine or not cachedGapCloserEngine.IsGapCloserSpell then
         if not cachedGapCloserEngine then
@@ -1461,13 +1591,16 @@ function SpellQueue.OnSpecChange()
     -- Eagerly resolve late-bound refs; by spec-change time all engines are loaded.
     if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
     if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
-    SpellQueue.ClearSpellCache()
+    isHealerSpec = nil   -- recomputed lazily on the next build
+    BlizzardAPI.ClearSpellCache()
     SpellQueue.ForceUpdate()
 end
 
 function SpellQueue.OnSpellsChanged()
-    SpellQueue.ClearSpellCache()
+    BlizzardAPI.ClearSpellCache()
     SpellQueue.InvalidateRotationCache()
+    -- Power costs are talent-dependent; re-derive spender verdicts.
+    wipe(spenderCache)
     -- Burst-cue trigger set bakes in talent-resolved IDs; rebuild on talent change.
     cachedBurstTriggers = nil
     -- SimC rank lookup bakes in talent-dependent override resolution. Invalidate
@@ -1480,12 +1613,15 @@ function SpellQueue.OnSpellsChanged()
     SpellQueue.ForceUpdate()
 end
 
--- Invalidate the cached rotation list - called on RotationSpellsUpdated and SPELLS_CHANGED
-function SpellQueue.InvalidateRotationCache()
+-- Invalidate the cached rotation list - called on RotationSpellsUpdated, SPELLS_CHANGED,
+-- options changes, and (with keepSetupIfUnchanged) every target swap. The next build
+-- re-fetches the list; tracking registrations are cleared and rebuilt inside the cold
+-- rebuild's setup branch, which is skipped entirely when the refetched list is
+-- unchanged and no full invalidation is pending.
+function SpellQueue.InvalidateRotationCache(keepSetupIfUnchanged)
     cachedRotationList = nil
-    -- Clear rotation spell registrations; they'll be re-registered on next fetch
-    if BlizzardAPI and BlizzardAPI.ClearTrackedRotationSpells then
-        BlizzardAPI.ClearTrackedRotationSpells()
+    if not keepSetupIfUnchanged then
+        rotationSetupForced = true
     end
 end
 

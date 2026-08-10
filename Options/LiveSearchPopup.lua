@@ -130,7 +130,9 @@ local function PopulateRows(results)
         if i <= count then
             local e = sorted[i]
             row.itemID = e.id
-            row.lbl:SetText(e.name)
+            -- Role tag so offensive vs defensive is visible before picking.
+            local tag = SpellSearch.RoleTag and SpellSearch.RoleTag(e.id)
+            row.lbl:SetText(tag and (e.name .. "  " .. tag) or e.name)
             row:Show()
         else
             row.itemID = nil

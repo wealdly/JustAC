@@ -54,17 +54,12 @@ local ipairs = ipairs
 -- Position stabilization: minimum display time before a spell at positions 2+
 -- can be replaced. Prevents visual flicker from rapid proc/CD re-categorization
 -- in SpellQueue. Position 1 always passes through Blizzard's suggestion.
-local POSITION_HOLD_TIME = UIFrameFactory.POSITION_HOLD_TIME  -- 50ms
+local POSITION_HOLD_TIME = 0.05
 
 -- Glow hysteresis: require desired glow state to be stable for this duration
 -- before switching animations. Prevents jarring animation restarts when proc
 -- state toggles transiently (e.g. during GCD processing).
-local GLOW_HOLD_TIME = UIFrameFactory.GLOW_HOLD_TIME  -- 50ms
-
--- Gap-closers have their own red crawl path; excluded here.
-local function IsSpellProcced(spellID)
-    return BlizzardAPI.IsSpellProcced(spellID)
-end
+local GLOW_HOLD_TIME = 0.05
 
 -- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
 -- Multi-modifier combos are checked first to prevent partial prefix matches.
@@ -72,20 +67,13 @@ end
 -- Results are cached by raw input string (hotkeys rarely change; new bindings produce new keys).
 local normalizeHotkeyCache = {}
 local HOTKEY_NORMALIZE_PATTERNS = {
-    { "^CTRL%-SHIFT%-(.+)$", "CTRL-SHIFT-" },
-    { "^CTRL%-ALT%-(.+)$",   "CTRL-ALT-" },
-    { "^SHIFT%-ALT%-(.+)$",  "SHIFT-ALT-" },
-    { "^SHIFT%-(.+)$",       "SHIFT-" },
-    { "^CTRL%-(.+)$",        "CTRL-" },
-    { "^ALT%-(.+)$",         "ALT-" },
-    { "^MOD%-(.+)$",         "MOD-" },
-
     { "^CTRL%-SHIFT[%-%+](.+)$", "CTRL-SHIFT-" },
     { "^CTRL%-ALT[%-%+](.+)$",   "CTRL-ALT-" },
     { "^SHIFT%-ALT[%-%+](.+)$",  "SHIFT-ALT-" },
     { "^SHIFT[%-%+](.+)$",       "SHIFT-" },
     { "^CTRL[%-%+](.+)$",        "CTRL-" },
     { "^ALT[%-%+](.+)$",         "ALT-" },
+    { "^MOD%-(.+)$",             "MOD-" },
 
     { "^CS%-(.+)$", "CTRL-SHIFT-" },
     { "^CA%-(.+)$", "CTRL-ALT-" },
@@ -110,11 +98,10 @@ local function NormalizeHotkey(hotkey)
     local n = hotkey:upper()
 
     -- Deterministic prefix parsing (first match wins):
-    -- 1) already-normalized full forms
-    -- 2) full-word forms with +/- separators
-    -- 3) abbreviated forms with hyphen
-    -- 4) compact abbreviated forms (no hyphen)
-    -- 5) any-modifier form (+KEY)
+    -- 1) full-word forms with +/- separators (covers already-normalized input)
+    -- 2) abbreviated forms with hyphen
+    -- 3) compact abbreviated forms (no hyphen)
+    -- 4) any-modifier form (+KEY)
     for _, rule in ipairs(HOTKEY_NORMALIZE_PATTERNS) do
         local suffix = n:match(rule[1])
         if suffix then
@@ -156,6 +143,11 @@ end
 -- Logic layer: all readiness decisions use cached OOC data (CooldownTracking).
 local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0, isActive = false }
+-- Scratch structs for the two numeric cooldown sources in UpdateButtonCooldowns -
+-- consumed synchronously within one call, so one reusable table each replaces a
+-- fresh allocation per icon per cooldown tick.
+local itemCooldownScratch  = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
+local localCooldownScratch = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 
 local function UpdateButtonCooldowns(button)
     if not button then return end
@@ -222,8 +214,12 @@ local function UpdateButtonCooldowns(button)
         chargeInfo = C_ActionBar_GetActionCharges and C_ActionBar_GetActionCharges(cdSlot)
     elseif isItem then
         local start, duration = GetItemCooldown(id)
-        local active = (start or 0) > 0 and (duration or 0) > 0
-        cooldownInfo = { startTime = start or 0, duration = duration or 0, isEnabled = 1, modRate = 1, isActive = active }
+        -- Scratch struct (consumed synchronously below) - this ran per item icon per
+        -- cooldown tick and allocated a fresh table each time.
+        local ci = itemCooldownScratch
+        ci.startTime, ci.duration = start or 0, duration or 0
+        ci.isActive = (start or 0) > 0 and (duration or 0) > 0
+        cooldownInfo = ci
         ciFromNumbers = true
     elseif cooldownID then
         -- No direct slot (modifier-macro / off-bar): source the swipe from our own
@@ -241,7 +237,9 @@ local function UpdateButtonCooldowns(button)
         if BlizzardAPI.IsSpellOnCooldown and not BlizzardAPI.IsSpellOnCooldown(cooldownID or id) then
             cooldownInfo = nil
         elseif lStart and lDuration and lDuration > 0 then
-            cooldownInfo = { startTime = lStart, duration = lDuration, isEnabled = 1, modRate = 1, isActive = true }
+            local ci = localCooldownScratch
+            ci.startTime, ci.duration, ci.isActive = lStart, lDuration, true
+            cooldownInfo = ci
             ciFromNumbers = true
         elseif C_Spell_GetSpellCooldown then
             local ok, result = pcall(C_Spell_GetSpellCooldown, cooldownID)
@@ -404,8 +402,6 @@ local function UpdateButtonCooldowns(button)
 end
 
 local DEFAULT_QUEUE_DESATURATION = 0
-local QUEUE_ICON_BRIGHTNESS = 1.0
-local QUEUE_ICON_OPACITY = 1.0
 
 local isInCombat = false
 local isChanneling = false
@@ -436,13 +432,10 @@ local VS_UNAVAILABLE   = 5  -- on cooldown or wrong form (gray desat)
 local VS_OUT_OF_RANGE  = 6  -- out of range, no hotkey visible (red tint)
 local VS_RANGE_HOTKEY  = 7  -- out of range, hotkey visible (muted warm; hotkey text carries the red)
 
--- ── Defensive visual state constants (used by UpdateDefensiveVisualState) ──
-local DVS_CHANNELING    = 1  -- channeling/casting a different spell (full desat)
-local DVS_NO_RESOURCES  = 2  -- usable but not enough resources (blue tint)
-local DVS_NORMAL        = 3  -- ready and usable
-local DVS_ON_COOLDOWN   = 4  -- on cooldown or unavailable (gray desat)
-local DVS_ACTIVE_CAST   = 5  -- this spell is currently being cast/channeled
-local DVS_WAITING       = 6  -- held-back emergency heal above the low-health threshold (desat + WAIT tag)
+-- Defensive icons reuse the VS_* states/ApplyVisualState; WAITING is the one
+-- defensive-only state (held-back emergency heal), painted by hand and kept
+-- outside ApplyVisualState's range so leaving it always forces a repaint.
+local VS_WAITING = 8
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
@@ -483,6 +476,12 @@ local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
     icon.lastOutOfRange = isOutOfRange
 end
 
+--- Fade a frame out, or hide it outright when it has no fade animation.
+local function FadeOutOrHide(frame)
+    if frame.fadeIn then frame.fadeIn:Stop() end
+    if frame.fadeOut then frame.fadeOut:Play() else frame:Hide() end
+end
+
 --- Check if spellID matches targetID directly or via BlizzardAPI.GetDisplaySpellID.
 --- @param spellID number  Spell to test
 --- @param targetID number  Active cast/channel spell
@@ -516,7 +515,7 @@ local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID)
     -- PlayerCastingBarFrame.channeling is a plain Lua boolean (set by CastingBarMixin),
     -- not a secret value. PlayerChannelBarFrame was removed in the Dragonflight UI rework.
     -- Early ungrey: stop greying out 100ms before channel ends.
-    if profile.greyOutWhileChanneling ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
+    if profile.greyOutWhileCasting ~= false and PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true then
         isChanneling = true
         channelSpellID = cachedChannelID
         local remaining = PlayerCastingBarFrame.value
@@ -549,21 +548,20 @@ end
 --- @param isChanneling boolean
 --- @param isCasting boolean
 --- @param isOutOfRange boolean
---- @param showRangeTint boolean
---- @param showUsabilityTint boolean
+--- @param showStateTint boolean  One setting ("State Tint") covers both the range and usability tints
 --- @param inCombat boolean
 --- @param directSlot number|nil  Action bar slot for slot-based usability
 --- @param hasVisibleHotkey boolean|nil  When true, hotkey text handles range feedback; icon red tint is skipped
 --- @return number visualState
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
                                   isChanneling, isCasting, isOutOfRange,
-                                  showRangeTint, showUsabilityTint, inCombat, directSlot,
+                                  showStateTint, inCombat, directSlot,
                                   hasVisibleHotkey, currentTime)
     if isChanneledSpell or isCastedSpell then
         return VS_ACTIVE_CAST
     elseif isChanneling or isCasting then
         return VS_GREYED
-    elseif showRangeTint and isOutOfRange then
+    elseif showStateTint and isOutOfRange then
         return hasVisibleHotkey and VS_RANGE_HOTKEY or VS_OUT_OF_RANGE
     elseif inCombat then
         local now = currentTime or GetTime()
@@ -585,7 +583,7 @@ local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell
         if not icon.cachedIsUsable then
             if icon.cachedNotEnoughResources then
                 return VS_NO_RESOURCES   -- not enough resources → blue tint
-            elseif showUsabilityTint then
+            elseif showStateTint then
                 return VS_UNAVAILABLE    -- on CD / wrong form → gray desat
             end
         end
@@ -597,9 +595,7 @@ end
 --- @param icon table  Icon button
 --- @param visualState number  1-7
 --- @param baseDesaturation number  Position-based desaturation
---- @param brightness number  Vertex color multiplier for state 3 (1.0 = full)
---- @param opacity number  Alpha multiplier for state 3 (1.0 = full)
-local function ApplyVisualState(icon, visualState, baseDesaturation, brightness, opacity)
+local function ApplyVisualState(icon, visualState, baseDesaturation)
     local iconTexture = icon.iconTexture
     -- Skip redundant GPU calls when state + desaturation haven't changed and
     -- we're not in a channel/cast frame (which requires per-frame sync).
@@ -626,8 +622,10 @@ local function ApplyVisualState(icon, visualState, baseDesaturation, brightness,
         if prevState ~= VS_RANGE_HOTKEY then iconTexture:SetDesaturation(0) end
         iconTexture:SetVertexColor(0.55, 0.35, 0.35)
     else  -- VS_NORMAL
-        if changed then iconTexture:SetDesaturation(baseDesaturation) end
-        if changed then iconTexture:SetVertexColor(brightness, brightness, brightness, opacity) end
+        if changed then
+            iconTexture:SetDesaturation(baseDesaturation)
+            iconTexture:SetVertexColor(1, 1, 1)
+        end
     end
     icon.lastVisualState = visualState
     icon.lastBaseDesaturation = baseDesaturation
@@ -788,10 +786,10 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     -- shown desaturated with a WAIT tag instead of removed. Skip the usual usability/
     -- cooldown/channel tinting - the WAIT state is intentional and fixed until it lights up.
     if defensiveIcon.isWaiting then
-        if defensiveIcon.lastDefVisualState ~= DVS_WAITING then
+        if defensiveIcon.lastVisualState ~= VS_WAITING then
             defensiveIcon.iconTexture:SetDesaturation(1.0)
             defensiveIcon.iconTexture:SetVertexColor(0.5, 0.5, 0.5)
-            defensiveIcon.lastDefVisualState = DVS_WAITING
+            defensiveIcon.lastVisualState = VS_WAITING
         end
         return
     end
@@ -800,25 +798,13 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     local defID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
     local isDefActiveSpell = false
     if defID then
-        if isChanneling and channelSpellID then
-            if defensiveIcon.isItem then
-                isDefActiveSpell = (defID == channelSpellID)
-            else
-                isDefActiveSpell = MatchesSpellOrOverride(defID, channelSpellID)
-            end
-        end
-        if not isDefActiveSpell and isCasting and castSpellID then
-            if defensiveIcon.isItem then
-                isDefActiveSpell = (defID == castSpellID)
-            else
-                isDefActiveSpell = MatchesSpellOrOverride(defID, castSpellID)
-            end
-        end
+        local isChanneledSpell, isCastedSpell = MatchActiveCast(defID, isChanneling, channelSpellID, isCasting, castSpellID)
+        isDefActiveSpell = isChanneledSpell or isCastedSpell
     end
 
     local isGreyingOut = (isChanneling or isCasting) and not isDefActiveSpell
-    local defVisualState = isGreyingOut and DVS_CHANNELING or DVS_NORMAL
-    if isDefActiveSpell then defVisualState = DVS_ACTIVE_CAST end
+    local defVisualState = isGreyingOut and VS_GREYED or VS_NORMAL
+    if isDefActiveSpell then defVisualState = VS_ACTIVE_CAST end
 
     local now = GetTime()
     if forceCheck or (now - (defensiveIcon.lastDefUsableCheck or 0)) >= COOLDOWN_UPDATE_INTERVAL then
@@ -846,34 +832,15 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
         end
     end
 
-    if defVisualState ~= DVS_CHANNELING and not defensiveIcon.cachedDefUsable then
+    if defVisualState ~= VS_GREYED and not defensiveIcon.cachedDefUsable then
         if defensiveIcon.cachedDefNoResource then
-            defVisualState = DVS_NO_RESOURCES
+            defVisualState = VS_NO_RESOURCES
         else
-            defVisualState = DVS_ON_COOLDOWN
+            defVisualState = VS_UNAVAILABLE
         end
     end
 
-    if defensiveIcon.lastDefVisualState ~= defVisualState
-       or isChanneling or isCasting then
-        if defVisualState == DVS_ACTIVE_CAST then
-            defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        elseif defVisualState == DVS_CHANNELING then
-            defensiveIcon.iconTexture:SetDesaturation(1.0)
-            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        elseif defVisualState == DVS_NO_RESOURCES then
-            defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(0.4, 0.4, 1.0)
-        elseif defVisualState == DVS_ON_COOLDOWN then
-            defensiveIcon.iconTexture:SetDesaturation(0.8)
-            defensiveIcon.iconTexture:SetVertexColor(0.6, 0.6, 0.6)
-        else  -- DVS_NORMAL
-            defensiveIcon.iconTexture:SetDesaturation(0)
-            defensiveIcon.iconTexture:SetVertexColor(1, 1, 1)
-        end
-        defensiveIcon.lastDefVisualState = defVisualState
-    end
+    ApplyVisualState(defensiveIcon, defVisualState, 0)
 
     -- Fill sweep while this item is the active channel - including the synthetic "eating"
     -- channel we derive from a food's on-use aura above (StartChannelFill falls back to that
@@ -890,7 +857,7 @@ function UIRenderer.UpdateDefensiveVisualState(defensiveIcon, forceCheck)
     -- settle-time as the full rebuild - the two can never disagree).
     if UIAnimations then
         local procCheckID = defensiveIcon.isItem and defensiveIcon.itemCastSpellID or id
-        local isProc = procCheckID and IsSpellProcced(procCheckID) or false
+        local isProc = procCheckID and BlizzardAPI.IsSpellProcced(procCheckID) or false
         ApplyDefensiveGlow(defensiveIcon,
             ComputeDefensiveGlowState(defensiveIcon, isProc), isInCombat)
     end
@@ -1107,9 +1074,13 @@ local function ApplyExecuteCue(icon, spellID)
         ClearExecuteCue(icon)
         return
     end
-    UIAnimations.ShowColoredProcGlow(icon, EXECUTE_GLOW_KEY,
-        EXECUTE_GLOW.r, EXECUTE_GLOW.g, EXECUTE_GLOW.b)
-    icon._executeCue = true
+    -- Arm the glow once per display; only the alpha curve below needs re-applying
+    -- per pass (target can change). Re-arming ran SetScale/Show/IsPlaying every pass.
+    if not icon._executeCue then
+        UIAnimations.ShowColoredProcGlow(icon, EXECUTE_GLOW_KEY,
+            EXECUTE_GLOW.r, EXECUTE_GLOW.g, EXECUTE_GLOW.b)
+        icon._executeCue = true
+    end
     -- ShowColoredProcGlow leaves the frame at alpha 1; the curve immediately overrides that,
     -- so the glow is only actually visible inside execute range.
     local glow = icon[EXECUTE_GLOW_KEY]
@@ -1138,9 +1109,27 @@ UIRenderer.ClearMaintenanceSlot = ClearMaintenanceSlot
 --- by the engine from a DurationObject we never read, while our own logic only ever sees
 --- the up/down/unknown boolean. So the player gets an exact timer for a value that is
 --- secret to the addon.
+--- Resolve a per-surface glow-mode value against the shared master. "shared" is a
+--- storage sentinel that matches no mode string, so a site that forgets this resolve
+--- silently disables every glow - one owner, consumed by both renderers and the
+--- gap-closer options gate.
+function UIRenderer.ResolveGlowMode(profile, mode)
+    if mode == nil or mode == "shared" then
+        return (profile and profile.glowMode) or "all"
+    end
+    return mode
+end
+
+-- Lazy module refs (these load after this file): resolved once, not per render pass.
+local MaintenanceTrackerRef, DefensiveEngineRef, UIHealthBarRef
+
 function UIRenderer.RenderMaintenanceSlot(addon, icon)
     if not icon then return end
-    local MT = LibStub("JustAC-MaintenanceTracker", true)
+    local MT = MaintenanceTrackerRef
+    if not MT then
+        MT = LibStub("JustAC-MaintenanceTracker", true)
+        MaintenanceTrackerRef = MT
+    end
     local profile = addon.db and addon.db.profile
 
     -- Visibility comes from MT.IsSlotActive, the SHARED predicate: the defensive queue builder
@@ -1234,7 +1223,11 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     if not ccSpellID and profile and profile.showPetHealCue ~= false
        and profile.defensives and profile.defensives.enabled
        and UnitExists("pet") and not UnitIsDeadOrGhost("pet") then
-        local DE = LibStub("JustAC-DefensiveEngine", true)
+        local DE = DefensiveEngineRef
+        if not DE then
+            DE = LibStub("JustAC-DefensiveEngine", true)
+            DefensiveEngineRef = DE
+        end
         local getList = DE and DE.GetClassSpellList
         local list = getList and getList(addon, "petHealSpells")
         -- Skip any pet heal that is ALSO in the player's own defensive list - Exhilaration is
@@ -1457,7 +1450,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     if not usable then
         vs = noResource and VS_NO_RESOURCES or VS_UNAVAILABLE
     end
-    ApplyVisualState(icon, vs, 0, 1, 1)
+    ApplyVisualState(icon, vs, 0)
 
     -- Hotkey + range colouring, so a rotational button in this slot (Blood's Marrowrend)
     -- still tells the player whether they can actually reach and afford it.
@@ -1528,7 +1521,7 @@ end
 -- glowModeOverride: overrides profile.defensives.glowMode (overlay has its own setting).
 -- waiting: held-back emergency heal (above low-health threshold) - render desaturated
 -- with a centered WAIT tag and no glow, instead of showing it as a live suggestion.
-function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, showHotkeysOverride, showFlashOverride, waiting, isPrecombatEntry)
+function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow, glowModeOverride, waiting, isPrecombatEntry)
     if not addon or not id or not defensiveIcon then return end
     
     local iconTexture
@@ -1565,7 +1558,9 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         end
         if not iconTexture then return end
     else
-        defSpellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo and BlizzardAPI.GetSpellInfo(id)
+        -- Cached read: the raw C_Spell.GetSpellInfo allocates a fresh info table per
+        -- call, and this runs per defensive icon per render pass on both surfaces.
+        defSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
         if not defSpellInfo then return end
         iconTexture = defSpellInfo.iconID
     end
@@ -1575,10 +1570,16 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
     defensiveIcon.itemID = isItem and id or nil
     defensiveIcon.isItem = isItem
     
-    defensiveIcon.itemCastSpellID = nil
-    if isItem then
-        local _, spellID = GetItemSpell(id)
-        defensiveIcon.itemCastSpellID = spellID
+    -- Item → cast-spell mapping is static per item; re-query on identity change,
+    -- plus retry while nil - GetItemSpell returns nothing until the client has the
+    -- item data cached, and latching that nil would strip the icon's hotkey
+    -- fallback and cast matching for as long as it keeps the slot.
+    if idChanged or (isItem and not defensiveIcon.itemCastSpellID) then
+        defensiveIcon.itemCastSpellID = nil
+        if isItem then
+            local _, spellID = GetItemSpell(id)
+            defensiveIcon.itemCastSpellID = spellID
+        end
     end
 
     -- Marker cues, same rules as the offensive queue: spells only (items follow a separate
@@ -1601,23 +1602,22 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
-        defensiveIcon.lastDefVisualState = nil
+        defensiveIcon.lastVisualState = nil
     end
-    
-    UpdateButtonCooldowns(defensiveIcon)
 
-    local showHotkeys, showFlash
-    if showHotkeysOverride ~= nil then
-        showHotkeys = showHotkeysOverride
-    else
-        local defOverlays = addon.db and addon.db.profile and addon.db.profile.textOverlays
-        showHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
+    -- Cooldown queries at the shared widget cadence, like every other icon path
+    -- (RenderQueueIcon gates on spellChanged-or-tick) - this ran unthrottled per
+    -- render pass, which on the overlay meant the full query chain at 20-33Hz.
+    local cdNow = GetTime()
+    if idChanged or (cdNow - (defensiveIcon.lastCdQueryTime or 0)) >= COOLDOWN_UPDATE_INTERVAL then
+        defensiveIcon.lastCdQueryTime = cdNow
+        UpdateButtonCooldowns(defensiveIcon)
     end
-    if showFlashOverride ~= nil then
-        showFlash = showFlashOverride
-    else
-        showFlash = addon.db and addon.db.profile and addon.db.profile.showFlash ~= false
-    end
+
+    -- Hotkey visibility and key-press flash are central settings (both surfaces).
+    local defOverlays = addon.db and addon.db.profile and addon.db.profile.textOverlays
+    local showHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
+    local showFlash = addon.db and addon.db.profile and addon.db.profile.showFlash ~= false
     local hotkey = ""
     if showHotkeys or showFlash then
         if isItem then
@@ -1643,15 +1643,15 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     UIRenderer.UpdateDefensiveVisualState(defensiveIcon, idChanged)
 
-    local defGlowMode = glowModeOverride
-        or (addon.db and addon.db.profile and addon.db.profile.defensives and addon.db.profile.defensives.glowMode)
-        or "all"
+    local profileForGlow = addon.db and addon.db.profile
+    local defGlowMode = UIRenderer.ResolveGlowMode(profileForGlow, glowModeOverride
+        or (profileForGlow and profileForGlow.defensives and profileForGlow.defensives.glowMode))
 
     defensiveIcon.defGlowMode = defGlowMode
     defensiveIcon.defShowGlow = showGlow
 
     local procCheckID = isItem and defensiveIcon.itemCastSpellID or id
-    local isProc = procCheckID and IsSpellProcced(procCheckID) or false
+    local isProc = procCheckID and BlizzardAPI.IsSpellProcced(procCheckID) or false
 
     -- Inserted pre-combat buffs get their own vivid-green glow (out of combat) so they read
     -- as distinct, important "use me" icons rather than ordinary defensive suggestions.
@@ -1713,7 +1713,7 @@ function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
         -- Reset usability visual state
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
-        defensiveIcon.lastDefVisualState = nil
+        defensiveIcon.lastVisualState = nil
         defensiveIcon.lastDefUsableCheck = nil
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
@@ -1747,7 +1747,7 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         local entry = queue[i]
         if entry and entry.spellID then
             local showGlow = (i == 1)
-            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, nil, nil, entry.waiting, entry.precombat)
+            UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, entry.waiting, entry.precombat)
             -- Health top-off: hand the alpha ShowDefensiveIcon just set straight to the engine.
             -- Must come AFTER it, since that call sets alpha itself.
             if entry.topoff then
@@ -1769,15 +1769,8 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
                 addon.defensiveFrame:Show()
                 if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Play() end
             end
-        else
-            if addon.defensiveFrame:IsShown() then
-                if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Stop() end
-                if addon.defensiveFrame.fadeOut then
-                    addon.defensiveFrame.fadeOut:Play()
-                else
-                    addon.defensiveFrame:Hide()
-                end
-            end
+        elseif addon.defensiveFrame:IsShown() then
+            FadeOutOrHide(addon.defensiveFrame)
         end
     end
 
@@ -1808,16 +1801,12 @@ function UIRenderer.HideDefensiveIcons(addon)
 
     -- Hide the detached container frame (covers vehicle/possess mode).
     if addon.defensiveFrame and addon.defensiveFrame:IsShown() then
-        if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Stop() end
-        if addon.defensiveFrame.fadeOut then
-            addon.defensiveFrame.fadeOut:Play()
-        else
-            addon.defensiveFrame:Hide()
-        end
+        FadeOutOrHide(addon.defensiveFrame)
     end
 end
 
--- Exported so UINameplateOverlay can reuse the same cleanup logic.
+-- Full interrupt-slot teardown for RenderInterruptSlot (the overlay keeps its
+-- own lighter detach path that preserves slot state for re-attach).
 function UIRenderer.HideInterruptIcon(intIcon)
     intIcon.spellID = nil
     intIcon.iconTexture:Hide()
@@ -1843,10 +1832,6 @@ function UIRenderer.HideInterruptIcon(intIcon)
     intIcon:Hide()
 end
 
-function UIRenderer.PlayInterruptAlertSound(profile)
-    if CastInterruptTracker then CastInterruptTracker.PlayInterruptAlertSound(profile) end
-end
-
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared interrupt "position 0" render (standard queue + nameplate overlay):
 -- retired-mode remap, shared evaluation/debounce, position-1 de-dup, cooldown/
@@ -1866,13 +1851,15 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
     if not intIcon then return end
 
     local interruptMode = ctx.interruptMode or "kickPrefer"
-    -- Retired modes in saved data → safe fallback.
+    -- Retired mode in saved data → safe fallback (this is its only handler; other
+    -- retired values are rewritten by the load-time migrations).
     if interruptMode == "importantOnly" then interruptMode = "kickOnly" end
-    if interruptMode == "ccShielded" then interruptMode = "kickPrefer" end
 
     if ctx.resolvedInterrupts and ctx.active and interruptMode ~= "disabled" then
         -- Shared evaluation: both renderers see identical state and share one debounce timer.
-        local intResult           = UIRenderer.EvaluateInterrupt(ctx.resolvedInterrupts, interruptMode, ctx.now)
+        local intResult           = CastInterruptTracker
+            and CastInterruptTracker.EvaluateInterrupt(ctx.resolvedInterrupts, interruptMode, ctx.now)
+            or { shouldShow = false, spellID = nil, castBar = nil, interruptMode = interruptMode }
         local shouldShowInterrupt = intResult.shouldShow
         local intSpellID          = intResult.spellID
         local castBar             = intResult.castBar
@@ -1956,8 +1943,10 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             end
 
             if not intIcon:IsShown() then
-                UIRenderer.PlayInterruptAlertSound(ctx.profile)
+                if CastInterruptTracker then CastInterruptTracker.PlayInterruptAlertSound(ctx.profile) end
                 intIcon:Show()
+                -- Fresh display: force the diffed plain writes below to re-apply.
+                intIcon.lastPlainAlpha, intIcon.lastIntDesat = nil, nil
             end
             local iconOpacity = ctx.opacity or 1.0
             -- Hide a KICK suggestion on a non-interruptible cast via the secret-aware alpha
@@ -1965,12 +1954,23 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             -- stays visible - CC is the correct call on a non-interruptible cast.
             if SpellDB and SpellDB.IsInterruptTypeSpell and SpellDB.IsInterruptTypeSpell(intSpellID) then
                 BlizzardAPI.ApplyInterruptIconAlpha(intIcon, iconOpacity)
+                -- The sink writes an unreadable alpha; the plain stamp is now stale.
+                intIcon.lastPlainAlpha = nil
             else
-                intIcon:SetAlpha(iconOpacity)
+                -- Plain value: only write on change (the secret-aware branch above
+                -- must stay unconditional - its alpha can't be read back).
+                if intIcon.lastPlainAlpha ~= iconOpacity then
+                    intIcon.lastPlainAlpha = iconOpacity
+                    intIcon:SetAlpha(iconOpacity)
+                end
             end
             -- Grey the reminder (interrupt or CC) while it's on the GCD; off-GCD
             -- interrupts stay full-color since IsSpellOnGCD is false for them.
-            intIcon.iconTexture:SetDesaturation(BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0)
+            local intDesat = BlizzardAPI.IsSpellOnGCD(intSpellID) and 1.0 or 0
+            if intIcon.lastIntDesat ~= intDesat then
+                intIcon.lastIntDesat = intDesat
+                intIcon.iconTexture:SetDesaturation(intDesat)
+            end
         elseif intIcon.spellID or intIcon:IsShown() then
             UIRenderer.HideInterruptIcon(intIcon)
         end
@@ -2005,11 +2005,13 @@ local GLOW_BURST      = 4   -- purple crawl (burst injection, burst window activ
 
 --- Priority: gap-closer > burst > proc > assisted > none.
 --- No WoW API calls - all inputs pre-computed by caller.
-local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow, showBurstGlow)
+local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow, showGapCloserGlow)
     local isSyntheticProc = SpellQueue.IsSyntheticProc and SpellQueue.IsSyntheticProc(spellID)
     if isSyntheticProc and showGapCloserGlow then return GLOW_GAP_CLOSER end
+    -- Burst cues are only injected while profile.burstCueGlow is on (SpellQueue gates
+    -- the populator), so the primary-glow policy is the only renderer-side check needed.
     local isBurstCue = SpellQueue.IsBurstCue and SpellQueue.IsBurstCue(spellID)
-    if isBurstCue and showBurstGlow then return GLOW_BURST end
+    if isBurstCue and showPrimaryGlow then return GLOW_BURST end
     if BlizzardAPI.IsSpellProcced(spellID) and showProcGlow then return GLOW_PROC end
     if position == 1 and showPrimaryGlow then return GLOW_ASSISTED end
     -- Spell displaced to position 2 by a gap-closer injection keeps its blue glow
@@ -2027,19 +2029,34 @@ end
 --   inCombat                player combat state (surface-specific source)
 --   updateCooldowns         throttled cooldown-refresh tick
 --   spellIDs, hasSpells     the queue array and whether it has entries
---   showPrimaryGlow / showProcGlow / showGapCloserGlow / showBurstGlow
+--   showPrimaryGlow / showProcGlow / showGapCloserGlow
 --   queueDesaturation       desaturation applied to positions 2+
 --   showHotkeys             hotkey text visible
 --   lookupHotkeys           query spell hotkeys at all (text display or flash matching)
 --   refreshHotkeys          force hotkey re-query this pass (bindings dirty / throttle)
 --   hotkeyColor             profile hotkey color table (or nil)
---   showRangeTint / showUsabilityTint / showCastingHighlight
+--   showUsabilityTint / showCastingHighlight
 --   isChanneling, channelSpellID, isCasting, castSpellID   player cast state
 --   firstIconScale          per-surface scale for position 1 (nil = never touch scale)
 --   opacity                 per-frame alpha (nil = never touch alpha)
 --   hideEmptySlots          hide the button on an empty slot (overlay) instead of
 --                           showing an empty placeholder slot (standard queue)
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Icon info for a bar item, shaped like GetCachedSpellInfo's result.
+-- Cached per itemID: item icons never change, and the uncached version allocated
+-- a fresh table per item icon per render pass. A miss (icon not loaded yet) is
+-- deliberately NOT negative-cached so it retries until the item data streams in.
+local itemIconInfoCache = {}
+local function ItemIconInfo(itemID)
+    local cached = itemIconInfoCache[itemID]
+    if cached then return cached end
+    local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
+    if not itemIcon then return nil end
+    cached = { iconID = itemIcon }
+    itemIconInfoCache[itemID] = cached
+    return cached
+end
+
 local function RenderQueueIcon(icon, i, ctx)
     local currentTime = ctx.now
     local spellIDs = ctx.spellIDs
@@ -2050,8 +2067,7 @@ local function RenderQueueIcon(icon, i, ctx)
     local GetCachedSpellInfo = BlizzardAPI.GetCachedSpellInfo
     local spellInfo
     if isItemEntry then
-        local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
-        if itemIcon then spellInfo = { iconID = itemIcon } end
+        spellInfo = ItemIconInfo(itemID)
     else
         spellInfo = spellID and GetCachedSpellInfo(spellID)
     end
@@ -2082,9 +2098,7 @@ local function RenderQueueIcon(icon, i, ctx)
             if oldStillQueued then
                 local oldInfo
                 if icon.spellID < 0 then
-                    local oldItemID = -icon.spellID
-                    local oldItemIcon = GetItemIcon and GetItemIcon(oldItemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(oldItemID))
-                    if oldItemIcon then oldInfo = { iconID = oldItemIcon } end
+                    oldInfo = ItemIconInfo(-icon.spellID)
                 else
                     oldInfo = GetCachedSpellInfo(icon.spellID)
                 end
@@ -2176,7 +2190,7 @@ local function RenderQueueIcon(icon, i, ctx)
         end
 
         -- Proc glow replaces all other glows to avoid confusing layered animations.
-        local glowState = ResolveGlowState(i, spellID, ctx.showPrimaryGlow, ctx.showProcGlow, ctx.showGapCloserGlow, ctx.showBurstGlow)
+        local glowState = ResolveGlowState(i, spellID, ctx.showPrimaryGlow, ctx.showProcGlow, ctx.showGapCloserGlow)
 
         -- Glow hysteresis (positions 2+): require desired glow state to be
         -- stable for GLOW_HOLD_TIME before switching animations. Prevents
@@ -2286,7 +2300,7 @@ local function RenderQueueIcon(icon, i, ctx)
         end
 
         local hasVisibleHotkey = ctx.showHotkeys and hotkey ~= ""
-        local needRangeCheck = ctx.showRangeTint or hasVisibleHotkey
+        local needRangeCheck = ctx.showUsabilityTint or hasVisibleHotkey
         local needsDirectSlot = needRangeCheck or ctx.inCombat
 
         -- Range/usability support: slot-based with spell fallback.
@@ -2318,12 +2332,10 @@ local function RenderQueueIcon(icon, i, ctx)
 
         local visualState = ResolveVisualState(icon, spellID,
             isChanneledSpell, isCastedSpell, ctx.isChanneling, ctx.isCasting,
-            isOutOfRange, ctx.showRangeTint, ctx.showUsabilityTint, ctx.inCombat, directSlot,
+            isOutOfRange, ctx.showUsabilityTint, ctx.inCombat, directSlot,
             hasVisibleHotkey, currentTime)
 
-        local qb = (i > 1) and QUEUE_ICON_BRIGHTNESS or 1
-        local qa = (i > 1) and QUEUE_ICON_OPACITY or 1
-        ApplyVisualState(icon, visualState, baseDesaturation, qb, qa)
+        ApplyVisualState(icon, visualState, baseDesaturation)
 
         UpdateCastingHighlight(icon, ctx.showCastingHighlight, spellID, isChanneledSpell, isCastedSpell)
 
@@ -2408,7 +2420,6 @@ local function UpdateImportantCastCue(addon, profile)
     if not cue then
         cue = CreateFrame("Frame", nil, mf)
         cue:SetSize(48, 16)
-        cue:SetPoint("BOTTOM", mf, "TOP", 0, 6)
         cue.slots = {}
         for i = 1, DANGER_CUE_SLOTS do
             -- Blizzard's own important-cast art, so the cue reads as the same language the
@@ -2420,6 +2431,19 @@ local function UpdateImportantCastCue(addon, profile)
             cue.slots[i] = t
         end
         mf.jacDangerCue = cue
+    end
+    -- Clear the attached SIDE1 defensive row: the old fixed TOP+6 anchor drew the
+    -- cue straight across it. Re-checked per pass (settings are runtime toggles);
+    -- the SetPoint only fires when the lift actually changes.
+    local UIHealthBar = UIHealthBarRef
+    if not UIHealthBar then
+        UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+        UIHealthBarRef = UIHealthBar
+    end
+    local lift = 6 + (UIHealthBar and UIHealthBar.AttachedDefRowDepth(profile) or 0)
+    if cue.lastLift ~= lift then
+        cue.lastLift = lift
+        cue:SetPoint("BOTTOM", mf, "TOP", 0, lift)
     end
     cue:Show()
     local now = GetTime()
@@ -2487,10 +2511,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showPrimaryGlow = (glowMode == "all" or glowMode == "primaryOnly")
     local showProcGlow = (glowMode == "all" or glowMode == "procOnly")
     local showGapCloserGlow = showPrimaryGlow and profile.gapClosers and profile.gapClosers.showGlow == true
-    local showBurstGlow = showPrimaryGlow and profile.burstCueGlow == true
     local queueDesaturation = profile.queueIconDesaturation or DEFAULT_QUEUE_DESATURATION
     local showUsabilityTint = profile.showUsabilityTint ~= false
-    local showRangeTint = profile.showRangeTint ~= false
     local showCastingHighlight = profile.showCastingHighlight ~= false
     
     -- Shared cast/channel state (used by both standard queue and nameplate overlay).
@@ -2503,7 +2525,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- sweep runs to, so the grey-out lifts exactly as the sweep completes.
     local SDB = LibStub("JustAC-SpellDB", true)
     if not isChanneling and not isCasting and addon.defensiveIcons
-            and profile.greyOutWhileChanneling ~= false
+            and profile.greyOutWhileCasting ~= false
             and SDB and SDB.IsEatingForBuff and SDB.IsEatingForBuff() then
         for _, dicon in ipairs(addon.defensiveIcons) do
             if dicon:IsShown() and dicon.isItem and dicon.itemCastSpellID
@@ -2608,13 +2630,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ctx.showPrimaryGlow     = showPrimaryGlow
         ctx.showProcGlow        = showProcGlow
         ctx.showGapCloserGlow   = showGapCloserGlow
-        ctx.showBurstGlow       = showBurstGlow
         ctx.queueDesaturation   = queueDesaturation
         ctx.showHotkeys         = showHotkeys
         ctx.lookupHotkeys       = showHotkeys or showFlash
         ctx.refreshHotkeys      = hotkeysDirty
         ctx.hotkeyColor         = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
-        ctx.showRangeTint       = showRangeTint
         ctx.showUsabilityTint   = showUsabilityTint
         ctx.showCastingHighlight = showCastingHighlight
         ctx.showMoveCastDot     = showMoveCastDot
@@ -2699,14 +2719,6 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 else
                     icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
                 end
-            end
-        end
-        if addon.defensiveIcon then
-            addon.defensiveIcon:EnableMouse(not isClickThrough)
-            if isLocked then
-                addon.defensiveIcon:RegisterForClicks()
-            else
-                addon.defensiveIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             end
         end
         if addon.defensiveIcons then
@@ -2831,13 +2843,6 @@ end
 --- @param interruptMode string   "kickOnly" | "ccPrefer"
 --- @param currentTime   number   GetTime() value from the caller
 --- @return table  { shouldShow, spellID, castBar } - reused each call; do NOT hold across frames
-function UIRenderer.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
-    if CastInterruptTracker then
-        return CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, currentTime)
-    end
-    return { shouldShow = false, spellID = nil, castBar = nil, interruptMode = interruptMode }
-end
-
 function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
@@ -2857,8 +2862,3 @@ end
 UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.MoveCastDotEnabled    = MoveCastDotEnabled
 UIRenderer.RenderQueueIcon       = RenderQueueIcon
-
--- Suppresses CC suggestions until the game registers the CC state on the target.
-function UIRenderer.NotifyCCApplied()
-    if CastInterruptTracker then CastInterruptTracker.NotifyCCApplied() end
-end

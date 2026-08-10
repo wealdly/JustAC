@@ -135,14 +135,21 @@ local function IsPetHealClass()
 end
 
 function Defensives.CreateTabArgs(addon)
-    return {
+    local tab = {
         type = "group",
         name = L["Defensives"],
         order = 5,
+        childGroups = "tab",
         args = {
+            -- ── SUB-TAB 1: GENERAL (queue behavior + the Sustain slot) ──────────
+            general = {
+                type = "group",
+                name = L["General"],
+                order = 1,
+                args = {
             -- Defensive queue CONTENT behavior (cross-surface: standard queue + overlay).
-            -- Moved out of the General tab. Frame/display settings (enable, health bars,
-            -- display mode, positioning) live in Standard Queue -> Defensive Display.
+            -- Frame/display settings (enable, health bars, display mode, positioning)
+            -- live in Standard Queue -> Defensive Display.
             queueContentGroup = {
                 type = "group",
                 inline = true,
@@ -168,19 +175,171 @@ function Defensives.CreateTabArgs(addon)
                         onSet = function() addon:ForceUpdateAll() end,
                         -- Same cross-surface gate as the toggle above (the old one only knew
                         -- about the standard queue), plus: meaningless in "When Health Low"
-                        -- mode, where everything is already gated on health.
+                        -- mode, where everything is already gated on health. The overlay has
+                        -- its own display mode, so grey out only when EVERY reachable
+                        -- defensive surface is health-based.
                         disabled = function(a)
                             if defensivesUnreachable(a) then return true end
-                            return (a.db.profile.defensives.displayMode or "always") == "healthBased"
+                            local p = a.db.profile
+                            local npo = p.nameplateOverlay
+                            local std = W.SurfaceEnabled(a, "queue") and p.defensives.enabled
+                            local ov  = W.SurfaceEnabled(a, "overlay") and npo and npo.showDefensives
+                            local stdHB = (p.defensives.displayMode or "always") == "healthBased"
+                            local ovHB  = ((npo and npo.defensiveDisplayMode) or "always") == "healthBased"
+                            return (not std or stdHB) and (not ov or ovHB)
                         end,
                     }),
                 },
             },
-            precombatGroup = {
+            -- SUSTAIN - defensive "position 0". NOT tank-only: the tank mitigation
+            -- buff is one member, crowd-control escape is another and works on any
+            -- spec, and the pet-heal cue is a third. Only the mitigation-buff TOGGLE
+            -- is tank-gated; the section is not.
+            -- Shown but greyed off-spec, unlike the class-gated pet sections on the
+            -- Priority Lists sub-tab which hide: spec is switchable, so a Feral
+            -- still needs to discover it exists.
+            sustainGroup = {
                 type = "group",
                 inline = true,
-                name = L["Pre-combat Buffs"],
+                name = L["Sustain"],
                 order = 10,
+                args = {
+                    maintenanceInfo = {
+                        type = "description",
+                        -- The section is universal - crowd-control escape claims this slot on
+                        -- ANY spec - so the tank-only caveat belongs to the mitigation-buff
+                        -- toggle below, not to the header. Attaching it here told every
+                        -- non-tank the whole slot was unavailable to them, which was wrong.
+                        name = function()
+                            if HasMaintenanceDefensive() then return L["Sustain desc"] end
+                            return L["Sustain desc"] .. "\n\n"
+                                .. "|cffff9900The mitigation-buff part is tank-only; your escape "
+                                .. "from crowd control still uses this slot.|r"
+                        end,
+                        order = 1,
+                        fontSize = "small",
+                    },
+                    showMaintenanceSlot = W.toggle(addon, "showMaintenanceSlot", {
+                        name = L["Maintenance Slot"],
+                        desc = L["Maintenance Slot desc"],
+                        order = 2, width = "normal", default = true,
+                        -- Rebuild, not just refresh: the interrupt icon's cast-aura
+                        -- clearance reserves this slot's row at CREATION time, so a
+                        -- plain refresh left the aura overlapping (or floating a dead
+                        -- row out) until a spec change or reload.
+                        onSet = function() addon:UpdateFrameSize(); W.rebuildNPO(addon); addon:ForceUpdateAll() end,
+                        -- Dead when every surface is off, or when no defensive display is
+                        -- actually showing, since the slot renders inside that cluster.
+                        disabled = function(a)
+                            return not HasMaintenanceDefensive() or defensivesUnreachable(a)
+                        end,
+                    }),
+                    -- Pet heal: hidden rather than greyed for non-pet classes - class is
+                    -- not switchable, so there is nothing to discover.
+                    showPetHealCue = W.toggle(addon, "showPetHealCue", {
+                        name = L["Pet Heal Cue"],
+                        desc = L["Pet Heal Cue desc"],
+                        order = 3, width = "double", default = true,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = function() return not IsPetHealClass() end,
+                    }),
+                    -- Stepped in 5s deliberately: the threshold becomes a curve point, and each
+                    -- distinct value builds and caches its own curve. A continuous slider would
+                    -- mint one per pixel dragged; 5% steps cap it at ~16 for the whole session.
+                    petHealThreshold = W.range(addon, "petHealThreshold", {
+                        name = L["Pet Heal Threshold"],
+                        desc = L["Pet Heal Threshold desc"],
+                        order = 4, width = "double", min = 10, max = 90, step = 5, default = 50,
+                        onSet = function() addon:ForceUpdateAll() end,
+                        hidden = function() return not IsPetHealClass() end,
+                        disabled = function(a) return a.db.profile.showPetHealCue == false end,
+                    }),
+                    -- CROWD-CONTROL ESCAPE - a MEMBER of Sustain, not a rival section. It
+                    -- keeps its own header purely as a visual divider - the toggles below
+                    -- are its own, and it works on any spec whether or not the
+                    -- mitigation-buff toggle is on.
+                    ccBreakHeader = {
+                        type = "header",
+                        name = L["CC Escape"],
+                        order = 10,
+                    },
+                    ccBreakInfo = {
+                        type = "description",
+                        name = L["CC Escape info"],
+                        order = 11,
+                        fontSize = "small",
+                    },
+                    showCCBreak = W.toggle(addon, "showCCBreak", {
+                        name = L["CC Break"],
+                        desc = L["CC Break desc"],
+                        order = 12, width = "normal", default = false,
+                        -- Rebuild for the same cast-aura clearance reason as the
+                        -- Maintenance Slot toggle above (the slot serves both uses).
+                        onSet = function(a) a:UpdateFrameSize(); W.rebuildNPO(a); a:ForceUpdateAll() end,
+                    }),
+                    -- DRUID ONLY. Roots, snares and slows are broken by shapeshifting, but that
+                    -- break is engine behaviour attached to the shift action, not a spell effect,
+                    -- so no generated table can find it. The player designates their /cancelform
+                    -- macro; the slot then surfaces ITS keybind. A select (not auto-detect) is the
+                    -- point: the player owns which macro, so a macro that also casts something is
+                    -- their informed choice - and the description shows the body so it is visible.
+                    ccBreakMacro = {
+                        type = "select",
+                        name = L["CC Break Macro"],
+                        desc = L["CC Break Macro desc"],
+                        order = 13,
+                        width = "double",
+                        hidden = function()
+                            return select(2, UnitClass("player")) ~= "DRUID"
+                                or not addon.db.profile.showCCBreak
+                        end,
+                        values = function()
+                            local out = { [""] = NONE or "None" }
+                            if not GetMacroInfo then return out end
+                            -- Global macros then per-character; names are what the runtime matches
+                            -- against action slots, so store names, not shifting indices.
+                            for idx = 1, 138 do
+                                local name, _, body = GetMacroInfo(idx)
+                                if name and body and body:lower():find("/cancelform", 1, true) then
+                                    out[name] = name
+                                end
+                            end
+                            return out
+                        end,
+                        get = function() return addon.db.profile.ccBreakMacro or "" end,
+                        set = function(_, val)
+                            addon.db.profile.ccBreakMacro = (val ~= "" and val) or nil
+                            addon:ForceUpdateAll()
+                        end,
+                    },
+                    ccBreakMacroBody = {
+                        type = "description",
+                        order = 14,
+                        fontSize = "small",
+                        hidden = function()
+                            return select(2, UnitClass("player")) ~= "DRUID"
+                                or not addon.db.profile.showCCBreak
+                                or not addon.db.profile.ccBreakMacro
+                        end,
+                        name = function()
+                            local m = addon.db.profile.ccBreakMacro
+                            local body
+                            if m and GetMacroInfo then
+                                body = select(3, GetMacroInfo(m))
+                            end
+                            if not body then return L["CC Break Macro missing"] end
+                            return "|cff888888" .. body:gsub("\n", " | ") .. "|r"
+                        end,
+                    },
+                },
+            },
+                },
+            },
+            -- ── SUB-TAB 2: PRE-COMBAT BUFFS ─────────────────────────────────────
+            precombat = {
+                type = "group",
+                name = L["Pre-combat Buffs"],
+                order = 2,
                 -- Pre-combat suggestions render on the defensive bar; with defensives
                 -- disabled they have no surface, so the whole section grays out.
                 disabled = function() return not addon.db.profile.defensives.enabled end,
@@ -238,6 +397,12 @@ function Defensives.CreateTabArgs(addon)
                     xp = pbOnOffSelect(addon, "xp", L["XP"], 15, true, L["XP desc"]),
                 },
             },
+            -- ── SUB-TAB 3: PRIORITY LISTS (per-spec, dynamic rows) ──────────────
+            lists = {
+                type = "group",
+                name = L["Priority Lists"],
+                order = 3,
+                args = {
             spellListGroup = {
                 type = "group",
                 inline = true,
@@ -264,144 +429,6 @@ function Defensives.CreateTabArgs(addon)
                         func = function()
                             addon:RestoreDefensiveDefaults("defensive")
                             Defensives.UpdateDefensivesOptions(addon)
-                        end,
-                    },
-                    -- SUSTAIN (60-79) - defensive "position 0". NOT tank-only: the tank mitigation
-                    -- buff is one member, crowd-control escape (below) is another and works on any
-                    -- spec, and the pet-heal cue is a third. Only the mitigation-buff TOGGLE is
-                    -- tank-gated; the section is not.
-                    -- Shown but greyed off-spec, unlike the class-gated pet sections below which
-                    -- hide: spec is switchable, so a Feral still needs to discover it exists.
-                    maintenanceHeader = {
-                        type = "header",
-                        name = L["Sustain"],
-                        order = 60,
-                    },
-                    maintenanceInfo = {
-                        type = "description",
-                        -- The section is universal - crowd-control escape claims this slot on
-                        -- ANY spec - so the tank-only caveat belongs to the mitigation-buff
-                        -- toggle below, not to the header. Attaching it here told every
-                        -- non-tank the whole slot was unavailable to them, which was wrong.
-                        name = function()
-                            if HasMaintenanceDefensive() then return L["Sustain desc"] end
-                            return L["Sustain desc"] .. "\n\n"
-                                .. "|cffff9900The mitigation-buff part is tank-only; your escape "
-                                .. "from crowd control still uses this slot.|r"
-                        end,
-                        order = 61,
-                        fontSize = "small",
-                    },
-                    -- SUSTAIN MEMBER 3: pet heal (69). Hidden rather than greyed for non-pet
-                    -- classes - class is not switchable, so there is nothing to discover, unlike
-                    -- the mitigation buff above which a Feral might switch into.
-                    -- No AceDB default: same convention as showMaintenanceSlot/showCCBreak -
-                    -- `default = true` here plus `~= false` at the read site.
-                    showPetHealCue = W.toggle(addon, "showPetHealCue", {
-                        name = L["Pet Heal Cue"],
-                        desc = L["Pet Heal Cue desc"],
-                        order = 69, width = "double", default = true,
-                        onSet = function() addon:ForceUpdateAll() end,
-                        hidden = function() return not IsPetHealClass() end,
-                    }),
-                    -- Stepped in 5s deliberately: the threshold becomes a curve point, and each
-                    -- distinct value builds and caches its own curve. A continuous slider would
-                    -- mint one per pixel dragged; 5% steps cap it at ~16 for the whole session.
-                    petHealThreshold = W.range(addon, "petHealThreshold", {
-                        name = L["Pet Heal Threshold"],
-                        desc = L["Pet Heal Threshold desc"],
-                        order = 69.1, width = "double", min = 10, max = 90, step = 5, default = 50,
-                        onSet = function() addon:ForceUpdateAll() end,
-                        hidden = function() return not IsPetHealClass() end,
-                        disabled = function(a) return a.db.profile.showPetHealCue == false end,
-                    }),
-                    showMaintenanceSlot = W.toggle(addon, "showMaintenanceSlot", {
-                        name = L["Maintenance Slot"],
-                        desc = L["Maintenance Slot desc"],
-                        order = 62, width = "normal", default = true,
-                        onSet = function() addon:ForceUpdateAll() end,
-                        -- Mirrors the defensive-queue gate used above: dead when every surface
-                        -- is off, or when no defensive display is actually showing, since the
-                        -- slot renders inside that cluster.
-                        disabled = function(a)
-                            return not HasMaintenanceDefensive() or defensivesUnreachable(a)
-                        end,
-                    }),
-                    -- CROWD-CONTROL ESCAPE (70-71) - a MEMBER of Sustain above, not a rival
-                    -- section. It used to be kept separate because that section was branded as
-                    -- tank maintenance and grouping the two would have implied CC escape needed a
-                    -- tank; naming the slot Sustain removed that reason. It keeps its own header
-                    -- purely as a visual divider - the toggles below are its own, and it works on
-                    -- any spec whether or not the mitigation-buff toggle is on.
-                    ccBreakHeader = {
-                        type = "header",
-                        name = L["CC Escape"],
-                        order = 70,
-                    },
-                    ccBreakInfo = {
-                        type = "description",
-                        name = L["CC Escape info"],
-                        order = 70.5,
-                        fontSize = "small",
-                    },
-                    showCCBreak = W.toggle(addon, "showCCBreak", {
-                        name = L["CC Break"],
-                        desc = L["CC Break desc"],
-                        order = 71, width = "normal", default = false,
-                        onSet = function(a) a:ForceUpdateAll() end,
-                    }),
-                    -- DRUID ONLY. Roots, snares and slows are broken by shapeshifting, but that
-                    -- break is engine behaviour attached to the shift action, not a spell effect,
-                    -- so no generated table can find it. The player designates their /cancelform
-                    -- macro; the slot then surfaces ITS keybind. A select (not auto-detect) is the
-                    -- point: the player owns which macro, so a macro that also casts something is
-                    -- their informed choice - and the description shows the body so it is visible.
-                    ccBreakMacro = {
-                        type = "select",
-                        name = L["CC Break Macro"],
-                        desc = L["CC Break Macro desc"],
-                        order = 72,
-                        width = "double",
-                        hidden = function()
-                            return select(2, UnitClass("player")) ~= "DRUID"
-                                or not addon.db.profile.showCCBreak
-                        end,
-                        values = function()
-                            local out = { [""] = NONE or "None" }
-                            if not GetMacroInfo then return out end
-                            -- Global macros then per-character; names are what the runtime matches
-                            -- against action slots, so store names, not shifting indices.
-                            for idx = 1, 138 do
-                                local name, _, body = GetMacroInfo(idx)
-                                if name and body and body:lower():find("/cancelform", 1, true) then
-                                    out[name] = name
-                                end
-                            end
-                            return out
-                        end,
-                        get = function() return addon.db.profile.ccBreakMacro or "" end,
-                        set = function(_, val)
-                            addon.db.profile.ccBreakMacro = (val ~= "" and val) or nil
-                            addon:ForceUpdateAll()
-                        end,
-                    },
-                    ccBreakMacroBody = {
-                        type = "description",
-                        order = 72.5,
-                        fontSize = "small",
-                        hidden = function()
-                            return select(2, UnitClass("player")) ~= "DRUID"
-                                or not addon.db.profile.showCCBreak
-                                or not addon.db.profile.ccBreakMacro
-                        end,
-                        name = function()
-                            local m = addon.db.profile.ccBreakMacro
-                            local body
-                            if m and GetMacroInfo then
-                                body = select(3, GetMacroInfo(m))
-                            end
-                            if not body then return L["CC Break Macro missing"] end
-                            return "|cff888888" .. body:gsub("\n", " | ") .. "|r"
                         end,
                     },
                     -- Dynamic defensiveSpells entries added by UpdateDefensivesOptions
@@ -461,15 +488,42 @@ function Defensives.CreateTabArgs(addon)
                     -- Dynamic petHealSpells entries added by UpdateDefensivesOptions
                 },
             },
+                },
+            },
         },
     }
+    -- One reset for the whole Defensive Queue tab (scalar settings across all
+    -- sub-tabs; the priority lists are per-spec seeded and stay untouched).
+    tab.args.general.args.resetHeader, tab.args.general.args.resetDefaults =
+        W.resetButton(990, L["Reset Defensives desc"], function()
+            local p = addon.db.profile
+            local def = p.defensives
+            def.showProcs             = true
+            def.hideEmergencyUntilLow = true
+            def.emergencyPotionChoice = nil
+            p.showMaintenanceSlot = true
+            p.showPetHealCue      = true
+            p.petHealThreshold    = 50
+            p.showCCBreak         = false
+            p.ccBreakMacro        = nil
+            local pb = p.precombatBuffs
+            pb.enabled         = true
+            pb.topoffHeal      = false
+            pb.topoffThreshold = 90
+            -- Fresh table: assigning the defaults one would alias it into the profile.
+            pb.categories      = { xp = false }
+            pbApply(addon)
+            W.NotifyChange()
+        end)
+    return tab
 end
 
 function Defensives.UpdateDefensivesOptions(addon)
     local optionsTable = addon and addon.optionsTable
     if not optionsTable or not SpellQueue then return end
 
-    local spellListGroup = optionsTable.args.defensives.args.spellListGroup
+    local listsTab = optionsTable.args.defensives.args.lists
+    local spellListGroup = listsTab and listsTab.args.spellListGroup
     if not spellListGroup then return end
     local spellListArgs = spellListGroup.args
 
@@ -477,14 +531,9 @@ function Defensives.UpdateDefensivesOptions(addon)
     -- spellListGroup must be listed here or it is silently deleted on the next refresh -
     -- the entry still exists in CreateTabArgs, so it appears once and then vanishes, which
     -- is a confusing way to lose an option.
+    -- (Sustain / CC-escape controls live on the General sub-tab now, outside this group.)
     local staticKeys = {
         selfHealHeader = true, selfHealInfo = true, restoreSelfHealDefaults = true,
-        maintenanceHeader = true, maintenanceInfo = true, showMaintenanceSlot = true,
-        ccBreakHeader = true, ccBreakInfo = true, showCCBreak = true,
-        ccBreakMacro = true, ccBreakMacroBody = true,
-        -- (Cooldown Manager controls moved to General -> Settings; they are a game-wide client
-        -- setting, not a defensive one, and this tab no longer declares them.)
-        showPetHealCue = true, petHealThreshold = true,
         petRezHeader = true, petRezInfo = true, restorePetRezDefaults = true,
         petHealHeader = true, petHealInfo = true, restorePetHealDefaults = true,
     }
@@ -493,10 +542,10 @@ function Defensives.UpdateDefensivesOptions(addon)
     local defensives = addon.db.profile.defensives
     if not defensives then return end
 
-    local DefensiveEngine = LibStub("JustAC-DefensiveEngine", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
     local specKey, playerClass
-    if DefensiveEngine and DefensiveEngine.GetDefensiveSpecKey then
-        specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    if SpellDB and SpellDB.GetSpecKey then
+        specKey, playerClass = SpellDB.GetSpecKey()
     else
         local _
         _, playerClass = UnitClass("player")
@@ -517,7 +566,6 @@ function Defensives.UpdateDefensivesOptions(addon)
     end
 
     -- Determine if this is a pet class (has rez or heal defaults)
-    local SpellDB = LibStub("JustAC-SpellDB", true)
     local isPetClass = SpellDB and SpellDB.ClassHasPetDefaults(playerClass)
 
     local updateFunc = function()

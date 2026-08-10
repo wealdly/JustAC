@@ -212,11 +212,9 @@ end
 -- kind of line can match a command pattern, but the drift is kept explicit).
 -- A non-nil callback return stops the walk and is returned.
 local function ForEachCommandLine(macroBody, skipInertLines, callback)
-    local lineNumber = 0
     local commandIndex = 0
 
     for line in string_gmatch(macroBody, "[^\r\n]+") do
-        lineNumber = lineNumber + 1
         local lowerLine = GetLowercase(line)
 
         local skipped = string_match(lowerLine, "^%s*#") ~= nil
@@ -260,7 +258,7 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
                     })
                 end
 
-                local result = callback(lineNumber, commandIndex, isCastseq, entries)
+                local result = callback(commandIndex, isCastseq, entries)
                 if result ~= nil then return result end
             end
         end
@@ -269,9 +267,9 @@ local function ForEachCommandLine(macroBody, skipInertLines, callback)
     return nil
 end
 
-local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
-    return ForEachCommandLine(macroBody, true, function(lineNumber, commandIndex, isCastseq, entries)
-        local simultaneousAbilities = {}
+local function AnalyzeMacroExecutionFlow(macroBody, targetSpells)
+    return ForEachCommandLine(macroBody, true, function(commandIndex, isCastseq, entries)
+        local totalInLine = 0
         local clauseEntries = {}
         local targetSpellFound = false
         local targetSpellPosition = 0
@@ -279,7 +277,7 @@ local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
         for clausePosition, clause in ipairs(entries) do
             local spellPart = clause.spellPart
             if spellPart and spellPart ~= "" then
-                table_insert(simultaneousAbilities, spellPart)
+                totalInLine = totalInLine + 1
                 table_insert(clauseEntries, clause.entry)
 
                 if DoesSpellMatch(spellPart, targetSpells) then
@@ -298,10 +296,8 @@ local function AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
             end
             return {
                 order = commandIndex,
-                lineNumber = lineNumber,
                 positionInLine = targetSpellPosition,
-                totalInLine = #simultaneousAbilities,
-                simultaneousAbilities = simultaneousAbilities,
+                totalInLine = totalInLine,
                 conditionCount = lineConditions,
                 isFirstClause = targetSpellPosition == 1,
             }
@@ -324,7 +320,7 @@ local function CalculateMacroSpecificityScore(macroName, macroBody, targetSpells
         end
     end
     
-    local executionInfo = AnalyzeMacroExecutionFlow(macroBody, targetSpells, debugMode)
+    local executionInfo = AnalyzeMacroExecutionFlow(macroBody, targetSpells)
     
     if executionInfo then
         local penalty = 0
@@ -538,7 +534,7 @@ function MacroParser.ParseMacroForSpell(macroBody, targetSpellID, targetSpellNam
 
     local bestMatch = nil
 
-    ForEachCommandLine(macroBody, false, function(lineNumber, commandIndex, isCastseq, entries)
+    ForEachCommandLine(macroBody, false, function(commandIndex, isCastseq, entries)
         for _, clause in ipairs(entries) do
             local spellPart = clause.spellPart
             local conditionGroups = clause.conditionGroups

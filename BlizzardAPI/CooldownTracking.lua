@@ -27,6 +27,8 @@ local Unsecret      = BlizzardAPI.Unsecret
 local localCooldowns = {}
 local cachedDurations = {}
 local cachedMaxCharges = {}
+-- Rotation spells that failed the tracking duration gate (see RegisterSpellForTracking).
+local rotationGateRejected = {}
 local cooldownEventFrame = nil
 
 -- Unified spell tracking: spellID → category string
@@ -306,6 +308,9 @@ local function ClearCachedDurations()
     wipe(cachedMaxCharges)
     wipe(localCooldowns)
     wipe(localCharges)
+    -- Talent changes can alter cooldown durations, so rejected rotation spells
+    -- (see RegisterSpellForTracking) get a fresh chance at the duration gate.
+    wipe(rotationGateRejected)
 end
 
 --- At maximum charges right now (charge regen idle, so holding it wastes recharge
@@ -439,56 +444,49 @@ end
 ---   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
 ---   is checked (O(1) instead of O(n)). When nil (batch "refresh all" signal),
 ---   falls back to iterating all tracked cooldowns.
+-- Clear-decision for one tracked cooldown, shared by the targeted and batch paths.
+local function CheckOne(spellID, data)
+    if GetTime() >= data.endTime then return end
+    local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
+    if not (ok and cd) then return end
+    if cd.isOnGCD == true then
+        -- isOnGCD=true means "GCD only, real CD done" - but ONLY for
+        -- Blizzard-flagged rotation spells (nil→false→nil CD pattern).
+        -- For unflagged interrupts/defensives/etc., isOnGCD=true fires
+        -- during the GCD window right after casting (unflagged pattern:
+        -- nil→true(GCD)→nil). Clearing here would wipe the local CD
+        -- immediately, causing IsSpellReady to fail-open and show the
+        -- spell as ready on the very next frame. Only clear for "rotation".
+        if trackedSpells[spellID] == "rotation" then
+            localCooldowns[spellID] = nil
+        end
+    elseif cd.isOnGCD == nil and cd.isActive == false then
+        -- isActive is NeverSecret ground truth (same signal IsSpellReady
+        -- trusts): isOnGCD==nil (outside the GCD window) + isActive==false
+        -- means NO cooldown timer is running. Our local timer is stale -
+        -- a CDR/reset effect we couldn't observe - so clear it, for ALL
+        -- categories (interrupts/defensives/gap-closers, not just
+        -- rotation). Explicit ==false: nil/secret must never clear.
+        localCooldowns[spellID] = nil
+    end
+    -- isOnGCD == false: real CD running - no action needed.
+end
+
 local function CheckCooldownCompletions(eventSpellID)
     if not C_Spell_GetSpellCooldown then return end
 
     -- Targeted check: event told us exactly which spell changed
     if eventSpellID then
         local data = localCooldowns[eventSpellID]
-        if data and GetTime() < data.endTime then
-            local ok, cd = pcall(C_Spell_GetSpellCooldown, eventSpellID)
-            if ok and cd then
-                if cd.isOnGCD == true then
-                    -- isOnGCD=true means "GCD only, real CD done" - but ONLY for
-                    -- Blizzard-flagged rotation spells (nil→false→nil CD pattern).
-                    -- For unflagged interrupts/defensives/etc., isOnGCD=true fires
-                    -- during the GCD window right after casting (unflagged pattern:
-                    -- nil→true(GCD)→nil). Clearing here would wipe the local CD
-                    -- immediately, causing IsSpellReady to fail-open and show the
-                    -- spell as ready on the very next frame. Only clear for "rotation".
-                    if trackedSpells[eventSpellID] == "rotation" then
-                        localCooldowns[eventSpellID] = nil
-                    end
-                elseif cd.isOnGCD == nil and cd.isActive == false then
-                    -- isActive is NeverSecret ground truth (same signal IsSpellReady
-                    -- trusts): isOnGCD==nil (outside the GCD window) + isActive==false
-                    -- means NO cooldown timer is running. Our local timer is stale -
-                    -- a CDR/reset effect we couldn't observe - so clear it, for ALL
-                    -- categories (interrupts/defensives/gap-closers, not just
-                    -- rotation). Explicit ==false: nil/secret must never clear.
-                    localCooldowns[eventSpellID] = nil
-                end
-                -- isOnGCD == false: real CD running - no action needed.
-            end
+        if data then
+            CheckOne(eventSpellID, data)
         end
         return
     end
 
     -- Batch refresh (nil spellID): scan all tracked cooldowns
     for spellID, data in pairs(localCooldowns) do
-        if GetTime() < data.endTime then
-            local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
-            if ok and cd then
-                if cd.isOnGCD == true and trackedSpells[spellID] == "rotation" then
-                    -- See targeted-check comment above: only rotation-category spells
-                    -- are reliably Blizzard-flagged and use the nil→false→nil pattern.
-                    localCooldowns[spellID] = nil
-                elseif cd.isOnGCD == nil and cd.isActive == false then
-                    -- Stale entry, all categories - see targeted-check comment above.
-                    localCooldowns[spellID] = nil
-                end
-            end
-        end
+        CheckOne(spellID, data)
     end
 end
 
@@ -585,7 +583,10 @@ local function InitCooldownTracking()
     -- can't run mid-combat), failing everything open. Stale entries self-heal via
     -- the isActive clear in CheckCooldownCompletions + the combat-exit resync.
     cooldownEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    cooldownEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    -- Player only: this event also fires for GROUP MEMBERS (mid-combat too), and an
+    -- unfiltered wipe below would clear localCooldowns - the live in-combat readiness
+    -- state - on someone else's respec, failing the readiness probe open.
+    cooldownEventFrame:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     cooldownEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
     cooldownEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
     cooldownEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -629,6 +630,12 @@ end
 function BlizzardAPI.RegisterSpellForTracking(spellID, category)
     if not spellID or spellID == 0 then return end
     if trackedSpells[spellID] then return end  -- already registered
+    -- Short-CD rotation spells fail the duration gate below on EVERY rotation
+    -- rebuild (they never enter trackedSpells, so the top guard can't stop the
+    -- re-check) - each retry re-running the duration resolution and a charges
+    -- pcall. Negative-cache the verdict; cleared with cachedDurations on talent
+    -- changes, the only thing that can alter it.
+    if category == "rotation" and rotationGateRejected[spellID] then return end
 
     -- Resolve the best-known duration for the rotation gate below. The tooltip
     -- tier self-caches into cachedDurations; static tier-4 values are deliberately
@@ -651,7 +658,13 @@ function BlizzardAPI.RegisterSpellForTracking(spellID, category)
 
     -- Only "rotation" category has the CD duration gate; charge spells are exempt.
     if category == "rotation" and not isChargeSpell then
-        if bestDuration * 1000 < MIN_TRACKABLE_CD_SECS * 1000 then return end
+        if bestDuration < MIN_TRACKABLE_CD_SECS then
+            -- Unknown (0) ≠ short: only cache a rejection backed by a real duration,
+            -- so a spell first seen before its data resolves keeps retrying and
+            -- self-heals once the duration reads.
+            if bestDuration > 0 then rotationGateRejected[spellID] = true end
+            return
+        end
     end
 
     trackedSpells[spellID] = category or "rotation"

@@ -1,13 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: TargetFrameAnchor - Anchor main frame to Blizzard's TargetFrame
-local TFA = LibStub:NewLibrary("JustAC-TargetFrameAnchor", 1)
+local TFA = LibStub:NewLibrary("JustAC-TargetFrameAnchor", 2)
 if not TFA then return end
 
 -- Hot path cache
 local GetScreenWidth = GetScreenWidth
 local GetScreenHeight = GetScreenHeight
 local InCombatLockdown = InCombatLockdown
+local UnitExists = UnitExists
+local issecretvalue = issecretvalue
 local math_max = math.max
 
 -------------------------------------------------------------------------------
@@ -160,9 +162,19 @@ local function GetVerticalSidebarOffset(profile, anchorSide)
 
     -- Defensive icon column extends: effectiveSpacing + one icon width
     local width = effectiveSpacing + defIconSize
-    -- Health bar sits beyond the defensive cluster
+    -- Bars stack beyond the defensive cluster: player, then pet, then the resource
+    -- pair (primary + segmented secondary). Static reserve like the rest of this
+    -- function - a pet bar only shows with a pet out, but reserving its row keeps
+    -- the dock from overlapping the TargetFrame the moment one is summoned.
     if defProfile.showHealthBar then
         width = width + BAR_SPACING + BAR_HEIGHT
+        if defProfile.showPetHealthBar then
+            width = width + BAR_SPACING + BAR_HEIGHT
+        end
+    end
+    if defProfile.showPowerBar then
+        local POWER_BAR_HEIGHT = (UIHealthBar and UIHealthBar.POWER_BAR_HEIGHT) or 5
+        width = width + 2 * (BAR_SPACING + POWER_BAR_HEIGHT)
     end
     return width
 end
@@ -190,6 +202,30 @@ function TFA.UpdateTargetFrameAnchor(addon)
 
     -- Whitelist: only anchor to the genuine Blizzard TargetFrame
     if not TFA.IsStandardTargetFrame(addon) then
+        if addon.targetframe_anchored then
+            RestoreSavedPosition(addon, profile)
+        end
+        return
+    end
+
+    -- The whitelist is static per session; visibility is not. An addon can leave the
+    -- standard TargetFrame intact (events and all) yet keep it from ever showing -
+    -- parked under a hidden parent (shown-but-not-visible) or hidden outright while a
+    -- target is up. Docking then pins the queue to an invisible frame's position, so
+    -- decline the dock for this pass. Hidden with NO target is just the stock frame
+    -- idle between targets - keep the dock so the queue doesn't jump around.
+    -- Deliberately per-pass, never latched: the option stays on, and this runs again
+    -- on every target change / combat exit / layout pass, so the queue re-docks the
+    -- moment the frame is visible again (e.g. the hiding addon is toggled off).
+    local hiddenExternally = TargetFrame:IsShown() and not TargetFrame:IsVisible()
+    if not hiddenExternally and not TargetFrame:IsShown() then
+        -- UnitExists can be secret in instanced contexts (secrecy is per-context, not
+        -- per-combat, and a raw compare on a secret throws). Unreadable means we can't
+        -- prove a target is up, and keeping the dock is the established behavior.
+        local exists = UnitExists("target")
+        hiddenExternally = not (issecretvalue and issecretvalue(exists)) and exists == true
+    end
+    if hiddenExternally then
         if addon.targetframe_anchored then
             RestoreSavedPosition(addon, profile)
         end

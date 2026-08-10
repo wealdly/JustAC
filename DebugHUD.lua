@@ -36,8 +36,7 @@ local function BuildText()
     local prof = addonRef and addonRef.db and addonRef.db.profile
     local cq = prof and prof.customQueue and specKey and prof.customQueue[specKey]
     local src = (cq and cq.enabled) and "Custom" or "Blizzard AC"
-    local order = (prof and prof.contextOrder)
-        or (prof and prof.orderContextAware == false and "off") or "simc"
+    local order = (prof and prof.contextOrder) or "simc"
     -- Mirror the runtime fallback: SimC ordering needs data for this spec.
     if order == "simc" then
         local RI = LibStub("JustAC-RotationImport", true)

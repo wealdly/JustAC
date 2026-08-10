@@ -34,6 +34,12 @@ function W.rebuildNPO(addon)
     if NPO then NPO.Destroy(addon); NPO.Create(addon) end
 end
 
+-- displayMode == "disabled" turns off every surface; content toggles gate on it.
+-- Resolved per call, not at load: Options/Core.lua loads after this file.
+function W.fullyDisabled(addon)
+    return LibStub("JustAC-Options", true).IsFullyDisabled(addon)
+end
+
 -- True when the player's class has no pet defaults (hides pet-related controls).
 function W.petClassHidden()
     local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -102,6 +108,9 @@ end
 
 -- Standard scalar widget (toggle/range/select/etc.): get returns the stored value
 -- or the default; set writes it, runs onSet, optionally notifies.
+-- An explicit opts.get overrides the path read (e.g. remapping a legacy stored
+-- value for display) - it was silently discarded before, which left the caller's
+-- remap dead and the dropdown blank on legacy values.
 local function scalar(addon, wtype, path, opts)
     local segs = compilePath(path)
     local lastKey = segs[#segs]
@@ -109,7 +118,7 @@ local function scalar(addon, wtype, path, opts)
     local onSet = opts.onSet
     local notify = opts.notify
     local entry = buildBase(addon, wtype, opts)
-    entry.get = function()
+    entry.get = opts.get or function()
         local v = pathGet(addon.db.profile, segs)
         if v == nil then return default end
         return v
@@ -174,6 +183,17 @@ W.GLOW_VALUES = {
 }
 W.GLOW_SORTING = { "all", "primaryOnly", "procOnly", "none" }
 
+-- Per-surface variants add the follow-the-shared-setting choice ("shared" is
+-- also the AceDB default for the per-surface glow keys).
+W.GLOW_VALUES_SHARED = {
+    shared      = L["Use Shared Setting"],
+    all         = L["All Glows"],
+    primaryOnly = L["Primary Only"],
+    procOnly    = L["Proc Only"],
+    none        = L["No Glows"],
+}
+W.GLOW_SORTING_SHARED = { "shared", "all", "primaryOnly", "procOnly", "none" }
+
 W.DEFENSIVE_DISPLAY_VALUES = {
     healthBased = L["When Health Low"],
     combatOnly  = L["In Combat Only"],
@@ -187,5 +207,35 @@ W.QUEUE_VISIBILITY_VALUES = {
     requireHostile = L["Require Hostile Target"],
 }
 W.QUEUE_VISIBILITY_SORTING = { "always", "combatOnly", "requireHostile" }
+
+-- The two per-surface enable toggles map onto the stored displayMode enum
+-- ("disabled"/"queue"/"overlay"/"both") - presentation only; every existing
+-- gate keeps reading the enum.
+function W.SurfaceEnabled(addon, surface)
+    local mode = addon.db.profile.displayMode or "queue"
+    if surface == "queue" then return mode == "queue" or mode == "both" end
+    return mode == "overlay" or mode == "both"
+end
+
+function W.SetSurfaceEnabled(addon, surface, on)
+    local p = addon.db.profile
+    local previous = p.displayMode or "queue"
+    local queueOn = W.SurfaceEnabled(addon, "queue")
+    local overlayOn = W.SurfaceEnabled(addon, "overlay")
+    if surface == "queue" then queueOn = on else overlayOn = on end
+    p.displayMode = (queueOn and overlayOn and "both") or (queueOn and "queue")
+        or (overlayOn and "overlay") or "disabled"
+    local NPO = LibStub("JustAC-UINameplateOverlay", true)
+    if NPO then
+        NPO.Destroy(addon)
+        if overlayOn then NPO.Create(addon) end
+    end
+    if previous == "disabled" and p.displayMode ~= "disabled" then
+        addon:InvalidateCaches({spells = true})
+        addon:OnHealthChanged(nil, "player")
+    end
+    addon:ForceUpdateAll()
+    notifyChange()
+end
 
 return W

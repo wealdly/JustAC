@@ -95,8 +95,9 @@ function KPD.Create(addon)
     if addon.keyPressFrame then return end
 
     local frame = CreateFrame("Frame", "JustACKeyPressFrame", UIParent)
-    frame:SetPropagateKeyboardInput(true)
     addon.keyPressFrame = frame
+    -- SetPropagateKeyboardInput is PROTECTED in combat (9.1.5+); the keyboard hook
+    -- arms together with it further down - see ArmKeyboardHook.
 
     -- Cache function reference at creation time (avoid table lookup in hot path)
     local StartFlash = UIAnimations and UIAnimations.StartFlash
@@ -164,12 +165,6 @@ function KPD.Create(addon)
         if showFlash then
             AddMatchedIcons(iconsToFlash, addon.defensiveIcons, normalizedKey, hasAnyModifier)
 
-            -- Legacy single defensive icon
-            local defIcon = addon.defensiveIcon
-            if defIcon and defIcon:IsShown() and HotkeyMatches(defIcon.normalizedHotkey, normalizedKey, hasAnyModifier) then
-                iconsToFlash[#iconsToFlash + 1] = defIcon
-            end
-
             -- Nameplate overlay icons
             AddMatchedIcons(iconsToFlash, addon.nameplateIcons, normalizedKey, hasAnyModifier)
             AddMatchedIcons(iconsToFlash, addon.nameplateDefIcons, normalizedKey, hasAnyModifier)
@@ -200,16 +195,34 @@ function KPD.Create(addon)
     ---------------------------------------------------------------------------
     -- Keyboard detection (global via SetPropagateKeyboardInput)
     ---------------------------------------------------------------------------
-    frame:SetScript("OnKeyDown", function(_, key)
-        if not addon or not StartFlash then return end
+    -- Propagation and the key hook arm TOGETHER: SetPropagateKeyboardInput is a
+    -- protected call in combat (9.1.5+), and a /reload mid-fight re-runs OnEnable
+    -- under lockdown. Arming the hook without propagation would swallow every
+    -- keypress, so under lockdown both wait for combat exit (mouse-button flash
+    -- via the OnUpdate poll below works throughout).
+    local function ArmKeyboardHook()
+        frame:SetPropagateKeyboardInput(true)
+        frame:SetScript("OnKeyDown", function(_, key)
+            if not addon or not StartFlash then return end
 
-        -- Skip pure modifier keys early
-        if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
-            return
-        end
+            -- Skip pure modifier keys early
+            if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
+                return
+            end
 
-        MatchAndFlash(BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
-    end)
+            MatchAndFlash(BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
+        end)
+    end
+    if InCombatLockdown() then
+        frame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        frame:SetScript("OnEvent", function(f)
+            f:UnregisterEvent("PLAYER_REGEN_ENABLED")
+            f:SetScript("OnEvent", nil)
+            ArmKeyboardHook()
+        end)
+    else
+        ArmKeyboardHook()
+    end
 
     ---------------------------------------------------------------------------
     -- Mouse button detection (poll IsMouseButtonDown for down-transitions)

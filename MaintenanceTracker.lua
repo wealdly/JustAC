@@ -969,22 +969,24 @@ local function Urgency(entry, state)
     return 4                                   -- "up" with time left: nothing to say
 end
 
+-- Store on EVERY exit, not just the timestamp: setting `t` alone made the second call
+-- in a frame hit the cache and return nils, blanking the slot. Module-level: as an
+-- inline closure this allocated once per rendered frame while the slot was live.
+local function MemoPick(now, state, entry, inst)
+    pickCache.t, pickCache.state, pickCache.entry, pickCache.inst = now, state, entry, inst
+    MaintenanceTracker._activeEntry = entry
+    return state, entry, inst
+end
+
 --- The entry the slot should show right now, picked across everything the spec maintains.
 --- Falls back to the first entry so the slot always has an icon to draw.
 --- @return string state, table|nil entry, number|nil auraInstanceID
 function MaintenanceTracker.GetState()
     local now = GetTime()
     if pickCache.t == now then return pickCache.state, pickCache.entry, pickCache.inst end
-    -- Store on EVERY exit, not just the timestamp: setting `t` alone made the second call in a
-    -- frame hit the cache and return nils, blanking the slot.
-    local function memo(state, entry, inst)
-        pickCache.t, pickCache.state, pickCache.entry, pickCache.inst = now, state, entry, inst
-        MaintenanceTracker._activeEntry = entry
-        return state, entry, inst
-    end
     local list = SpellDB and SpellDB.GetMaintenanceDefensives and SpellDB.GetMaintenanceDefensives()
     if not list then
-        return memo("none", nil, nil)
+        return MemoPick(now, "none", nil, nil)
     end
     -- Single-entry specs are the norm (currently all of them), and ranking one candidate can
     -- only ever pick that candidate - so skip Urgency entirely, which also skips its readiness
@@ -992,7 +994,7 @@ function MaintenanceTracker.GetState()
     -- just stops costing anything while it cannot discriminate.
     if #list == 1 then
         local st, en, inst = EntryState(list[1])
-        return memo(st or "unknown", en or list[1], inst)
+        return MemoPick(now, st or "unknown", en or list[1], inst)
     end
     local bestState, bestEntry, bestInst, bestRank
     for i = 1, #list do
@@ -1006,7 +1008,7 @@ function MaintenanceTracker.GetState()
     end
     -- memo also records _activeEntry: GetEstimatedCooldown/IsBindExact are called by the
     -- renderer without an entry argument, and must answer about the buff actually on screen.
-    return memo(bestState or "unknown", bestEntry, bestInst)
+    return MemoPick(now, bestState or "unknown", bestEntry, bestInst)
 end
 
 --------------------------------------------------------------------------------

@@ -75,6 +75,14 @@ local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, inte
 --   "lowercaseUF"  : nameplate.unitFrame.castBar  (lowercase u)
 --   "childCastbar" : a nameplate child's .Castbar  (unit-frame-library element)
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Scratch buffer for child enumeration (see the childCastbar branch below).
+local childScratch = {}
+local function FillChildScratch(...)
+    local n = select("#", ...)
+    for i = 1, n do childScratch[i] = select(i, ...) end
+    return n
+end
+
 local function FindVisibleCastBar(nameplate)
     if not nameplate then return nil, nil end
 
@@ -97,17 +105,17 @@ local function FindVisibleCastBar(nameplate)
 
     -- child-element .Castbar is not a named field, must enumerate children.
     if nameplate.GetNumChildren then
-        local numKids = nameplate:GetNumChildren()
-        if numKids > 0 then
-            -- Avoid re-evaluating the GetChildren() vararg per iteration.
-            local children = { nameplate:GetChildren() }
-            for i = 1, numKids do
-                local child = children[i]
-                if child then
-                    local cb = child.Castbar
-                    if cb and cb.IsShown and cb:IsShown() then
-                        return cb, "childCastbar"
-                    end
+        -- Scratch-filled, not `{ GetChildren() }`: this path is the COMMON
+        -- "target not casting" state and ran per evaluation, so the vararg pack
+        -- was a steady multi-element allocation all combat. Stale tail entries
+        -- beyond n are never read (the loop is bounded by n).
+        local numKids = FillChildScratch(nameplate:GetChildren())
+        for i = 1, numKids do
+            local child = childScratch[i]
+            if child then
+                local cb = child.Castbar
+                if cb and cb.IsShown and cb:IsShown() then
+                    return cb, "childCastbar"
                 end
             end
         end
@@ -273,19 +281,25 @@ function CastInterruptTracker.DebugInterruptState()
 end
 
 --- Can the suggested ability actually hit the current target right now?
---- Ranged CCs/kicks: exact via IsSpellInRange. Player-centered AoE (reach="pbaoe"):
---- IsSpellInRange returns nil for self-centered spells and no API exposes radius-vs-distance,
---- so it FAILS OPEN. ponytail: PBAoE reach needs a distance signal we don't have; the melee-
---- range proxy (gap-closer, melee specs only) is the upgrade path if it proves worth it.
+--- Ranged CCs/kicks: exact via IsSpellInRange, fail-OPEN on unknown - pressing a
+--- targeted spell out of range is a harmless "Out of range" error, nothing is spent.
+--- Player-centered AoE (reach="pbaoe") fails CLOSED - proven within radius or not
+--- shown - because the waste asymmetry is reversed: the cast fires on the spot
+--- regardless, burning the cooldown while the enemy cast continues, and the icon
+--- trains exactly that impulse press. Better to miss a reminder than to bait one.
+--- The gap-closer system owns the approach; the moment a charge lands, the melee
+--- probes prove "within" and the suggestion appears.
 local function IsReachable(entry)
     if entry.reach == "pbaoe" then
         -- Self-centered AoE: reach = radius, and IsSpellInRange is nil for it. Use the
-        -- range-probe bracket instead. nil (no probe / can't tell) → fail-open (never hide).
-        local within = SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius or 8)
-        if within == nil then return true end
-        return within
+        -- range-probe bracket instead (baseline taunt probes in Data/RangeReferences
+        -- give Druid/Monk their mid-range beyond-proof).
+        return (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius or 8)) == true
     end
-    local r = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(entry.spellID)
+    -- The "target" unit argument is REQUIRED (same finding as the range probes in
+    -- SpellDB.IsTargetWithin): without it the call answers nil, the fail-open below
+    -- turned nil into "reachable", and a melee kick was recommended from 40 yards.
+    local r = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(entry.spellID, "target")
     if r == nil or BlizzardAPI.IsSecretValue(r) then return true end  -- unknown → assume reachable
     return r ~= false
 end
@@ -363,8 +377,11 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                     elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
                         if not IsReachable(entry) then
                             -- Usable but can't hit the target now (e.g. a ranged CC out of range).
-                            -- Keep only as a last resort; prefer any reachable option found below.
-                            if not outOfRangeFallbackID then outOfRangeFallbackID = sid end
+                            -- TARGETED spells stay as a dimmed last resort - an out-of-range
+                            -- press costs nothing. A self-centered CC does NOT: it would fire
+                            -- in place and burn the cooldown, so it drops out entirely rather
+                            -- than baiting the impulse press.
+                            if entry.reach ~= "pbaoe" and not outOfRangeFallbackID then outOfRangeFallbackID = sid end
                         elseif (preferCC or ccOnly) and stype == "cc" then
                             if ccOnly and entry.mech == 9 then
                                 -- A silence only stops magic casts; an uninterruptible cast

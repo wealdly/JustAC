@@ -177,16 +177,24 @@ SpellDB.RECUPERATE_AURA = 1231418
 -- so raw issecretvalue is used here instead of BlizzardAPI.Unsecret.
 local C_Spell_GetBaseSpell = C_Spell and C_Spell.GetBaseSpell
 local baseIDCache = {}
-local function StaticLookup(t, spellID)
-    if not t or not spellID then return nil end
-    local v = t[spellID]
-    if v ~= nil or not C_Spell_GetBaseSpell then return v end
+
+-- Cached override->base resolution: the base spell ID, or false when there is
+-- none. Callers guard C_Spell_GetBaseSpell availability.
+local function resolveBase(spellID)
     local base = baseIDCache[spellID]
     if base == nil then
         local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
         base = (ok and type(b) == "number" and b > 0) and b or false
         baseIDCache[spellID] = base
     end
+    return base
+end
+
+local function StaticLookup(t, spellID)
+    if not t or not spellID then return nil end
+    local v = t[spellID]
+    if v ~= nil or not C_Spell_GetBaseSpell then return v end
+    local base = resolveBase(spellID)
     if base and base ~= spellID then return t[base] end
     return nil
 end
@@ -197,12 +205,7 @@ end
 -- of maintaining their own override->base cache.
 function SpellDB.GetBaseSpell(spellID)
     if not spellID or not C_Spell_GetBaseSpell then return nil end
-    local base = baseIDCache[spellID]
-    if base == nil then
-        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
-        base = (ok and type(b) == "number" and b > 0) and b or false
-        baseIDCache[spellID] = base
-    end
+    local base = resolveBase(spellID)
     if base and base ~= spellID then return base end
     return nil
 end
@@ -395,6 +398,9 @@ end
 -- it lapses) rather than picking a "best", and suggest `default` only when none is up. Cast
 -- and detect share the same spellID (the ability applies a like-named self-buff). Gated at
 -- runtime by IsPlayerSpell, so only spells the player actually knows ever surface.
+-- The assisted-combat rotation's own pick within a group overrides ALL of this - default,
+-- queue scan, and even a fresh active member - because AC keeps recommending its exact
+-- member until it's applied (see PrecombatEngine.ACPickInGroup for the full rationale).
 --
 -- raidWide = true marks a group buff: one cast covers the whole party, so it is ALSO
 -- re-offered when the player has it but a party member doesn't (someone who joined,
@@ -418,6 +424,13 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
     MAGE = {
         { group = { 1459 }, default = 1459, raidWide = true },         -- Arcane Intellect
     },
+    PALADIN = {
+        -- Auras are stance-style toggles but DO register as normal player auras under
+        -- their cast id (validated in game: active Devotion Aura answers the by-id
+        -- probe as 465). NOT raidWide: an Aura is radius-based - re-casting it does
+        -- nothing for a party member who is simply out of range.
+        { group = { 465, 32223, 183435 }, default = 465 },             -- Devotion/Crusader/Retribution Aura
+    },
     PRIEST = {
         { group = { 21562 }, default = 21562, raidWide = true },       -- Power Word: Fortitude
     },
@@ -433,7 +446,7 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
         { group = { 6673 }, default = 6673, raidWide = true },         -- Battle Shout
     },
     -- No aura-based maintained pre-combat self-buff (or handled by the pet system):
-    -- DEATHKNIGHT, DEMONHUNTER, HUNTER, MONK, PALADIN, WARLOCK. Shaman weapon imbues
+    -- DEATHKNIGHT, DEMONHUNTER, HUNTER, MONK, WARLOCK. Shaman weapon imbues
     -- (Windfury/Flametongue/Earthliving) are weapon enchants, not auras - they're suggested
     -- via GetWeaponEnchantInfo in PrecombatEngine (see WEAPON_IMBUE_SPELLS below).
 }
@@ -609,28 +622,77 @@ local IsSpellKnown = IsSpellKnown
 --- that is OUT of range proves target > yards (beyond). Distance in yards is a secret in
 --- combat, but IsSpellInRange's boolean is not - this is built entirely on it.
 --- Reliability scales with probe density near `yards`; nil when no probe brackets it.
+-- Spec-filtered probe list + per-tick verdict memo: the naive version scanned all
+-- ~65 references with an IsSpellKnown call each, twice per queue build (gap-closer
+-- + melee-context checks in the same tick). The known set only changes on talent
+-- swaps, so a short refresh window self-heals those; the memo collapses the
+-- second same-tick call to a table read.
+local knownRangeProbes = {}      -- flat pairs: id1, ref1, id2, ref2, ...
+local knownRangeProbesTime = -math.huge
+local KNOWN_PROBE_REFRESH = 5    -- seconds
+-- Per-tick verdict memo keyed by yards (the gap closer asks 5yd AND its near-band in
+-- the same build, plus ContextRank's 5yd - a single-slot memo would thrash and re-poll
+-- every probe). UNKNOWN stands in for a memoized nil verdict, which a table can't hold.
+local withinVerdicts = {}
+local lastWithinTime = -1
+local WITHIN_UNKNOWN = {}
+local cachedBlizzAPIRef
 function SpellDB.IsTargetWithin(yards)
     if not C_Spell_IsSpellInRange then return nil end
-    local api = LibStub("JustAC-BlizzardAPI", true)
+    local now = GetTime()
+    if now == lastWithinTime then
+        local v = withinVerdicts[yards]
+        if v ~= nil then
+            if v == WITHIN_UNKNOWN then return nil end
+            return v
+        end
+    else
+        wipe(withinVerdicts)
+        lastWithinTime = now
+    end
+
+    local api = cachedBlizzAPIRef
+    if not api then
+        api = LibStub("JustAC-BlizzardAPI", true)
+        cachedBlizzAPIRef = api
+    end
     local isSecret = api and api.IsSecretValue
+
+    if (now - knownRangeProbesTime) >= KNOWN_PROBE_REFRESH then
+        knownRangeProbesTime = now
+        local n = 0
+        for id, ref in pairs(RANGE_REFERENCES) do
+            -- Gate on KNOWN (form-independent), NOT castability: IsSpellAvailable would skip a
+            -- form-gated probe (a Druid's Mangle while shifted, anything on GCD/low resources),
+            -- which silently breaks detection. IsSpellInRange only needs the spell to be known.
+            if not IsSpellKnown or IsSpellKnown(id) then
+                knownRangeProbes[n + 1], knownRangeProbes[n + 2] = id, ref
+                n = n + 2
+            end
+        end
+        for i = #knownRangeProbes, n + 1, -1 do knownRangeProbes[i] = nil end
+    end
+
     local within, beyond
-    for id, ref in pairs(RANGE_REFERENCES) do
-        -- Gate on KNOWN (form-independent), NOT castability: IsSpellAvailable would skip a
-        -- form-gated probe (a Druid's Mangle while shifted, anything on GCD/low resources),
-        -- which silently breaks detection. IsSpellInRange only needs the spell to be known.
-        if not IsSpellKnown or IsSpellKnown(id) then
-            local r = C_Spell_IsSpellInRange(id, "target")   -- "target" unit is required
-            if r ~= nil and not (isSecret and isSecret(r)) then
-                if r ~= false then
-                    if ref <= yards then within = true end   -- target ≤ ref ≤ yards
-                elseif ref >= yards then
-                    beyond = true                            -- target > ref ≥ yards
+    for i = 1, #knownRangeProbes, 2 do
+        local id, ref = knownRangeProbes[i], knownRangeProbes[i + 1]
+        local r = C_Spell_IsSpellInRange(id, "target")   -- "target" unit is required
+        if r ~= nil and not (isSecret and isSecret(r)) then
+            if r ~= false then
+                if ref <= yards then                     -- target ≤ ref ≤ yards
+                    within = true
+                    break  -- within outranks beyond: the verdict is already decided
                 end
+            elseif ref >= yards then
+                beyond = true                            -- target > ref ≥ yards
             end
         end
     end
-    if within then return true elseif beyond then return false end
-    return nil
+
+    local verdict
+    if within then verdict = true elseif beyond then verdict = false end
+    withinVerdicts[yards] = (verdict == nil) and WITHIN_UNKNOWN or verdict
+    return verdict
 end
 
 --------------------------------------------------------------------------------
@@ -781,12 +843,20 @@ ApplyArchOverrides()
 
 --- Build the spec key ("CLASS_N") for the current player and spec.
 --- Returns specKey, playerClass or nil, nil if unavailable.
+--- Memoized on the spec index: class never changes in-session, and the concat
+--- allocated a fresh string per call - this runs per spell per queue build via
+--- RotationImport.GetEntry and per defensive list fetch.
+local specKeyCache, specKeyClass, specKeySpec
 function SpellDB.GetSpecKey()
+    local spec = GetSpecialization and GetSpecialization()
+    if specKeyClass and spec == specKeySpec then
+        return specKeyCache, specKeyClass
+    end
     local _, playerClass = UnitClass("player")
     if not playerClass then return nil, nil end
-    local spec = GetSpecialization and GetSpecialization()
-    if not spec then return nil, playerClass end
-    return playerClass .. "_" .. spec, playerClass
+    specKeyClass, specKeySpec = playerClass, spec
+    specKeyCache = spec and (playerClass .. "_" .. spec) or nil
+    return specKeyCache, playerClass
 end
 
 -- Ranged-DPS spec IDs (healers resolve via role below). Everything else - melee
