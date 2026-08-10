@@ -3,11 +3,12 @@
 -- JustAC: Action Bar Scanner Module - Caches action bar slots and keybind mappings
 local ActionBarScanner = LibStub:NewLibrary("JustAC-ActionBarScanner", 38)
 if not ActionBarScanner then return end
-ActionBarScanner.lastKeybindChangeTime = 0
+local lastKeybindChangeTime = 0
 
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local MacroParser = LibStub("JustAC-MacroParser", true)
 local FormCache = LibStub("JustAC-FormCache", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 -- Hot path cache
 local GetTime = GetTime
@@ -27,64 +28,20 @@ local wipe = wipe
 local string_find = string.find
 local math_max = math.max
 
--- Gamepad face button atlas mappings by style (using _64 atlas with outline for better visibility)
+-- Gamepad face button atlas names by style (using _64 atlas with outline for better visibility)
 -- Format: {PAD1, PAD2, PAD3, PAD4, PAD5, PAD6}
--- Atlas format: |A:name:height:width|a
--- Normal size (14:14) for single buttons, small size (10:10) for modifier combos
 local GAMEPAD_FACE_BUTTONS = {
     generic = {
-        normal = {
-            "|A:Gamepad_Gen_1_64:14:14|a",
-            "|A:Gamepad_Gen_2_64:14:14|a",
-            "|A:Gamepad_Gen_3_64:14:14|a",
-            "|A:Gamepad_Gen_4_64:14:14|a",
-            "|A:Gamepad_Gen_5_64:14:14|a",
-            "|A:Gamepad_Gen_6_64:14:14|a",
-        },
-        small = {
-            "|A:Gamepad_Gen_1_64:10:10|a",
-            "|A:Gamepad_Gen_2_64:10:10|a",
-            "|A:Gamepad_Gen_3_64:10:10|a",
-            "|A:Gamepad_Gen_4_64:10:10|a",
-            "|A:Gamepad_Gen_5_64:10:10|a",
-            "|A:Gamepad_Gen_6_64:10:10|a",
-        },
+        "Gamepad_Gen_1_64", "Gamepad_Gen_2_64", "Gamepad_Gen_3_64",
+        "Gamepad_Gen_4_64", "Gamepad_Gen_5_64", "Gamepad_Gen_6_64",
     },
     xbox = {
-        normal = {
-            "|A:Gamepad_Ltr_A_64:14:14|a",
-            "|A:Gamepad_Ltr_B_64:14:14|a",
-            "|A:Gamepad_Ltr_X_64:14:14|a",
-            "|A:Gamepad_Ltr_Y_64:14:14|a",
-            "|A:Gamepad_Gen_5_64:14:14|a",
-            "|A:Gamepad_Gen_6_64:14:14|a",
-        },
-        small = {
-            "|A:Gamepad_Ltr_A_64:10:10|a",
-            "|A:Gamepad_Ltr_B_64:10:10|a",
-            "|A:Gamepad_Ltr_X_64:10:10|a",
-            "|A:Gamepad_Ltr_Y_64:10:10|a",
-            "|A:Gamepad_Gen_5_64:10:10|a",
-            "|A:Gamepad_Gen_6_64:10:10|a",
-        },
+        "Gamepad_Ltr_A_64", "Gamepad_Ltr_B_64", "Gamepad_Ltr_X_64",
+        "Gamepad_Ltr_Y_64", "Gamepad_Gen_5_64", "Gamepad_Gen_6_64",
     },
     playstation = {
-        normal = {
-            "|A:Gamepad_Shp_Cross_64:14:14|a",
-            "|A:Gamepad_Shp_Circle_64:14:14|a",
-            "|A:Gamepad_Shp_Square_64:14:14|a",
-            "|A:Gamepad_Shp_Triangle_64:14:14|a",
-            "|A:Gamepad_Shp_MicMute_64:14:14|a",
-            "|A:Gamepad_Shp_TouchpadR_64:14:14|a",
-        },
-        small = {
-            "|A:Gamepad_Shp_Cross_64:10:10|a",
-            "|A:Gamepad_Shp_Circle_64:10:10|a",
-            "|A:Gamepad_Shp_Square_64:10:10|a",
-            "|A:Gamepad_Shp_Triangle_64:10:10|a",
-            "|A:Gamepad_Shp_MicMute_64:10:10|a",
-            "|A:Gamepad_Shp_TouchpadR_64:10:10|a",
-        },
+        "Gamepad_Shp_Cross_64", "Gamepad_Shp_Circle_64", "Gamepad_Shp_Square_64",
+        "Gamepad_Shp_Triangle_64", "Gamepad_Shp_MicMute_64", "Gamepad_Shp_TouchpadR_64",
     },
 }
 
@@ -93,14 +50,15 @@ local string_gsub = string.gsub
 -- Reuse BlizzardAPI's cached addon lookup
 local GetCachedAddon = BlizzardAPI.GetAddon
 
--- Helper to get face button atlas based on current setting
--- size: "normal" (14:14) or "small" (10:10) for modifier combos
+-- Helper to get face button atlas markup based on current setting
+-- size: "normal" (14:14) for single buttons or "small" (10:10) for modifier combos
 local function GetGamepadFaceButton(buttonNum, size)
     local addon = GetCachedAddon()
     local style = (addon and addon.db and addon.db.profile.gamepadIconStyle) or "xbox"
     local styleButtons = GAMEPAD_FACE_BUTTONS[style] or GAMEPAD_FACE_BUTTONS.xbox
-    local sizeButtons = styleButtons[size or "normal"] or styleButtons.normal
-    return sizeButtons[buttonNum] or sizeButtons[1]
+    local atlas = styleButtons[buttonNum] or styleButtons[1]
+    local dim = size == "small" and 10 or 14
+    return "|A:" .. atlas .. ":" .. dim .. ":" .. dim .. "|a"
 end
 
 local NUM_ACTIONBAR_BUTTONS = 12
@@ -114,7 +72,6 @@ local slotMappingCacheKey = 0
 local keybindCache = {}
 local keybindCacheValid = false
 local lastValidatedStateHash = 0
-local isRebuildingBindings = false
 
 local spellHotkeyCache = {}
 local spellHotkeyCacheValid = false
@@ -126,6 +83,8 @@ local spellSlotCache = {}
 local slotDirectCache = {}
 -- Item → action slot cache (items are always direct matches on the bar).
 local itemSlotCache = {}
+-- Shared stale-retry stamp for negative-cached item slots (false entries above).
+local lastItemMissScanTime = 0
 
 -- PERFORMANCE: Cache abbreviated keybinds (50+ gsub calls per abbreviation is expensive)
 -- Key: raw binding string, Value: abbreviated string
@@ -258,14 +217,6 @@ local function GetCachedBindingKey(bindingKey)
     return bindingKeyCache[bindingKey] or ""
 end
 
--- Return current binding version (incremented on each rebuild)
-local function CalculateKeybindHash()
-    if not bindingCacheValid then
-        RebuildBindingCache()
-    end
-    return bindingVersion
-end
-
 local function CalculateActionSlot(buttonID, barType)
     if not cachedStateData.valid then
         UpdateCachedState()
@@ -342,9 +293,10 @@ local function GetCachedSlotMapping()
 end
 
 local function ValidateAndBuildKeybindCache()
-    local newKeybindHash = CalculateKeybindHash()
-    local stateHash = GetCachedStateHash()
-    local combinedHash = newKeybindHash * 10000000 + stateHash  -- Form changes trigger rebuild
+    if not bindingCacheValid then
+        RebuildBindingCache()
+    end
+    local combinedHash = bindingVersion * 10000000 + GetCachedStateHash()  -- Form changes trigger rebuild
 
     if keybindCacheValid and lastValidatedStateHash == combinedHash then
         return
@@ -422,7 +374,7 @@ end
 -- ponytail: no actionType=="flyout" branch - a spell reachable only through a
 -- flyout is never matched. AC rotation spells are rarely flyout-nested; add
 -- C_ActionBar.FindFlyoutActionButtons handling if one ever surfaces.
-local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
+local function SearchSlots(slotSet, spellID, spellName)
     local candidates = wipe(scanCandidates)
     
     for slot in pairs(slotSet) do
@@ -497,7 +449,6 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                             slot = slot,
                             type = "direct",
                             modifiers = EMPTY_MODIFIERS,
-                            priority = priority,
                             score = hasHotkey and 1000 or -500
                         }
                     end
@@ -511,7 +462,6 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                                 slot = slot,
                                 type = "direct",
                                 modifiers = EMPTY_MODIFIERS,
-                                priority = priority,
                                 score = hasHotkey and 1000 or -500
                             }
                         end
@@ -524,7 +474,6 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                                 slot = slot,
                                 type = "macro_visible",
                                 modifiers = EMPTY_MODIFIERS,
-                                priority = priority,
                                 score = hasHotkey and 900 or -600
                             }
                         end
@@ -538,7 +487,6 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
                                 slot = slot,
                                 type = "macro_conditional",
                                 modifiers = parsedEntry.modifiers or EMPTY_MODIFIERS,
-                                priority = priority,
                                 score = hasHotkey and baseScore or (baseScore - 1000)
                             }
                         end
@@ -561,11 +509,6 @@ local function SearchSlots(slotSet, priority, spellID, spellName, debugMode)
     end)
     
     local bestCandidate = candidates[1]
-    
-    if debugMode then
-        print("|JAC| Selected slot " .. bestCandidate.slot .. " with score " .. bestCandidate.score)
-    end
-    
     return bestCandidate.slot, bestCandidate
 end
 
@@ -654,10 +597,10 @@ local function FindSpellInActions(spellID, spellName)
         end
     end
 
-    local foundSlot, slotInfo = SearchSlots(currentBarSlots, 1, spellID, spellName, false)
+    local foundSlot, slotInfo = SearchSlots(currentBarSlots, spellID, spellName)
 
     if not foundSlot and next(fallbackSlots) then
-        foundSlot, slotInfo = SearchSlots(fallbackSlots, 2, spellID, spellName, false)
+        foundSlot, slotInfo = SearchSlots(fallbackSlots, spellID, spellName)
     end
     
     if foundSlot then
@@ -970,32 +913,42 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
     end
 
     -- Cached slot first: this runs per frame from the renderer, and the full
-    -- bar scan below is ~100 HasAction/GetActionInfo calls.
+    -- bar scan below is ~100 HasAction/GetActionInfo calls. A known slot with no
+    -- keybind skips the scan too - rescanning would only re-find the same slot.
     local cachedSlot = itemSlotCache[itemID]
     if cachedSlot then
         local baseKey = GetOptimizedKeybind(cachedSlot)
         if baseKey and baseKey ~= "" then
             return AbbreviateKeybind(baseKey)
         end
-    end
-
-    -- Scan action bars for direct item placement
-    local slotMapping = GetCachedSlotMapping()
-    for slot in pairs(slotMapping) do
-        if HasAction(slot) then
-            local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
-            if actionType == "item" and actionID == itemID then
-                itemSlotCache[itemID] = slot
-                -- Cross-populate spell caches for unified slot-based lookups.
-                if castSpellID and castSpellID > 0 then
-                    spellSlotCache[castSpellID] = slot
-                    slotDirectCache[castSpellID] = true
-                end
-                local baseKey = GetOptimizedKeybind(slot)
-                if baseKey and baseKey ~= "" then
-                    return AbbreviateKeybind(baseKey)
+    elseif cachedSlot == nil
+        or (GetTime() - lastItemMissScanTime) >= HOTKEY_REFRESH_INTERVAL then
+        -- Unknown item, or a negative-cached miss (false) gone stale: scan once and
+        -- cache the outcome either way - mirrors GetSpellHotkey's "" negative cache.
+        -- Without this, an item defensive that isn't on any bar (the Emergency
+        -- Potion tile with the potion unbound) costs a full scan per render pass.
+        local slotMapping = GetCachedSlotMapping()
+        for slot in pairs(slotMapping) do
+            if HasAction(slot) then
+                local actionType, actionID = BlizzardAPI.GetActionInfo(slot)
+                if actionType == "item" and actionID == itemID then
+                    itemSlotCache[itemID] = slot
+                    -- Cross-populate spell caches for unified slot-based lookups.
+                    if castSpellID and castSpellID > 0 then
+                        spellSlotCache[castSpellID] = slot
+                        slotDirectCache[castSpellID] = true
+                    end
+                    local baseKey = GetOptimizedKeybind(slot)
+                    if baseKey and baseKey ~= "" then
+                        return AbbreviateKeybind(baseKey)
+                    end
+                    break
                 end
             end
+        end
+        if not itemSlotCache[itemID] then
+            itemSlotCache[itemID] = false
+            lastItemMissScanTime = GetTime()
         end
     end
 
@@ -1058,16 +1011,11 @@ end
 function ActionBarScanner.OnKeybindsChanged()
     local now = GetTime()
 
-    if isRebuildingBindings then
+    if (now - lastKeybindChangeTime) < 0.2 then
         return
     end
 
-    if (now - ActionBarScanner.lastKeybindChangeTime) < 0.2 then
-        return
-    end
-
-    ActionBarScanner.lastKeybindChangeTime = now
-    isRebuildingBindings = true
+    lastKeybindChangeTime = now
     -- Soft invalidation only: clear the raw binding-key cache so that the eventual
     -- fresh lookup re-reads from WoW, but do NOT wipe spellHotkeyCache yet.
     -- Gamepad bindings are often not committed when UPDATE_BINDINGS first fires;
@@ -1077,7 +1025,6 @@ function ActionBarScanner.OnKeybindsChanged()
     -- does the full hard wipe once bindings have settled.
     bindingCacheValid = false
     wipe(bindingKeyCache)
-    isRebuildingBindings = false
 
     -- Gamepad bindings may not be committed when UPDATE_BINDINGS fires.
     -- Full hard invalidation deferred to here so GetSpellHotkey fast-path
@@ -1091,10 +1038,6 @@ function ActionBarScanner.OnKeybindsChanged()
             UIRenderer.InvalidateHotkeyCache()
         end
     end)
-end
-
-function ActionBarScanner.OnUIChanged()
-    InvalidateStateCache()
 end
 
 --------------------------------------------------------------------------------
@@ -1146,12 +1089,6 @@ end
 function ActionBarScanner.GetSpellbookProccedSpells()
     RebuildProcList()
     return activeProcsList
-end
-
-function ActionBarScanner.HasKeybind(spellID)
-    if not spellID then return false end
-    local hotkey = ActionBarScanner.GetSpellHotkey(spellID)
-    return hotkey and hotkey ~= ""
 end
 
 function ActionBarScanner.ClearAllCaches()
@@ -1235,11 +1172,13 @@ end
 --------------------------------------------------------------------------------
 
 local defensiveProcsList = {}
+local defensiveProcsToRemove = {}
 
 -- Validates procs via API to catch stale event cache
 local function RebuildDefensiveProcList()
     wipe(defensiveProcsList)
-    local toRemove = {}
+    local toRemove = defensiveProcsToRemove
+    wipe(toRemove)
 
     for spellID in pairs(activeProcs) do
         local stillProcced = BlizzardAPI.IsSpellProcced and BlizzardAPI.IsSpellProcced(spellID)
@@ -1248,7 +1187,9 @@ local function RebuildDefensiveProcList()
             toRemove[#toRemove + 1] = spellID
         else
             local actualID = BlizzardAPI.GetDisplaySpellID(spellID)
-            if BlizzardAPI.IsDefensiveSpell(actualID) or BlizzardAPI.IsDefensiveSpell(spellID) then
+            -- Healing procs count as defensive for this list.
+            if SpellDB and (SpellDB.IsDefensiveSpell(actualID) or SpellDB.IsHealingSpell(actualID)
+                or SpellDB.IsDefensiveSpell(spellID) or SpellDB.IsHealingSpell(spellID)) then
                 defensiveProcsList[#defensiveProcsList + 1] = actualID
             end
         end

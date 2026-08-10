@@ -195,7 +195,6 @@ local EXPIRATION_CHECK_INTERVAL = 5
 --------------------------------------------------------------------------------
 local instanceToSpellMap = {}   -- auraInstanceID → spellID
 local instanceToNameMap = {}    -- auraInstanceID → spell name
-local instanceToIconMap = {}    -- auraInstanceID → icon texture
 local instanceToTimingMap = {}  -- auraInstanceID → {duration, expirationTime, count, halfwayThreshold}
 
 -- Fraction of an aura's duration still remaining at the pandemic window: refreshing at or
@@ -297,7 +296,6 @@ end
 function RedundancyFilter.FlushInstanceMaps()
     wipe(instanceToSpellMap)
     wipe(instanceToNameMap)
-    wipe(instanceToIconMap)
     wipe(instanceToTimingMap)
     lastAuraCheck = 0       -- force RefreshAuraCache on next out-of-combat tick
 end
@@ -322,7 +320,6 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
             end
             instanceToSpellMap[instanceID] = nil
             instanceToNameMap[instanceID] = nil
-            instanceToIconMap[instanceID] = nil
             instanceToTimingMap[instanceID] = nil
         end
     end
@@ -423,9 +420,6 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
                 if not nameIsSecret and auraData.name then
                     instanceToNameMap[instanceID] = auraData.name
                 end
-                if auraData.icon and not BlizzardAPI.IsSecretValue(auraData.icon) then
-                    instanceToIconMap[instanceID] = auraData.icon
-                end
             end
         end
     end
@@ -469,7 +463,7 @@ function RedundancyFilter.PruneExpiredActivations()
     if not next(inCombatActivations) then return end
 
     -- Hoist outside the loop: same result for every iteration
-    local auraAPIAvailable = BlizzardAPI and BlizzardAPI.IsRedundancyFilterAvailable and BlizzardAPI.IsRedundancyFilterAvailable()
+    local auraAPIAvailable = BlizzardAPI and not BlizzardAPI.AreAurasSecret()
 
     -- Check each tracked activation
     for spellID, timestamp in pairs(inCombatActivations) do
@@ -633,11 +627,19 @@ RefreshAuraCache = function()
         return cachedAuras
     end
     
-    wipe(cachedAuras)
-    cachedAuras.byID = {}
-    cachedAuras.byName = {}
-    cachedAuras.byIcon = {}
-    cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
+    -- Keep the three subtables permanent (wipe contents, not identity): recreating
+    -- them allocated three tables per rebuild, at up to 10Hz during aura churn.
+    -- (Invalidation elsewhere may still full-wipe cachedAuras; the nil branch rebuilds.)
+    if cachedAuras.byID then
+        wipe(cachedAuras.byID)
+        wipe(cachedAuras.byName)
+        wipe(cachedAuras.auraInfo)
+        cachedAuras.hasSecrets = nil
+    else
+        cachedAuras.byID = {}
+        cachedAuras.byName = {}
+        cachedAuras.auraInfo = {}  -- Stores {duration, expirationTime, count} by spellID
+    end
     
     local unresolvedSecrets = 0  -- Track how many auras we couldn't resolve
     
@@ -655,8 +657,6 @@ RefreshAuraCache = function()
             if timing then cachedAuras.auraInfo[spellID] = timing end
             local name = instanceToNameMap[instanceID]
             if name then cachedAuras.byName[name] = spellID end
-            local icon = instanceToIconMap[instanceID]
-            if icon then cachedAuras.byIcon[icon] = name or true end
         end
         -- Flag for trusted cache merge (covers auras not in instance maps)
         cachedAuras.hasSecrets = true
@@ -703,10 +703,6 @@ RefreshAuraCache = function()
                             cachedAuras.byName[realName] = realSpellId
                             if instanceID then instanceToNameMap[instanceID] = realName end
                         end
-                        if auraData.icon then
-                            cachedAuras.byIcon[auraData.icon] = realName or true
-                            if instanceID then instanceToIconMap[instanceID] = auraData.icon end
-                        end
                         whitelistResolved = true
                     end
                 end
@@ -715,8 +711,7 @@ RefreshAuraCache = function()
                 -- 12.0 Instance Map Resolution: Use instanceID to look up known spellID
                 local mappedSpellID = instanceID and instanceToSpellMap[instanceID]
                 local mappedName = instanceID and instanceToNameMap[instanceID]
-                local mappedIcon = instanceID and instanceToIconMap[instanceID]
-                
+
                 if mappedSpellID then
                     cachedAuras.byID[mappedSpellID] = true
                     -- Use pre-cached timing from instance map (timing values are secret in combat)
@@ -726,9 +721,6 @@ RefreshAuraCache = function()
                     end
                     if mappedName then
                         cachedAuras.byName[mappedName] = mappedSpellID
-                    end
-                    if mappedIcon then
-                        cachedAuras.byIcon[mappedIcon] = mappedName or true
                     end
                 else
                     -- Instance ID not in our map (new aura gained during combat)
@@ -751,45 +743,10 @@ RefreshAuraCache = function()
                         if auraData.name then
                             instanceToNameMap[instanceID] = auraData.name
                         end
-                        if auraData.icon then
-                            instanceToIconMap[instanceID] = auraData.icon
-                        end
                     end
                 end
                 if auraData.name then
                     cachedAuras.byName[auraData.name] = auraData.spellId or true
-                end
-                if auraData.icon then
-                    cachedAuras.byIcon[auraData.icon] = auraData.name or true
-                end
-            end
-        end
-    -- Fallback for older clients (no instance ID support)
-    elseif UnitAura then
-        for i = 1, 40 do
-            local ok, name, icon, count, _, duration, expirationTime, _, _, _, spellId = pcall(UnitAura, "player", i, "HELPFUL")
-            if not ok or not name then break end
-            
-            -- Best-effort: skip secret auras but continue processing others
-            local spellIdIsSecret = BlizzardAPI.IsSecretValue(spellId)
-            local nameIsSecret = BlizzardAPI.IsSecretValue(name)
-            
-            if spellIdIsSecret or nameIsSecret then
-                unresolvedSecrets = unresolvedSecrets + 1
-            else
-                if spellId then
-                    cachedAuras.byID[spellId] = true
-                    local durIsSecret = BlizzardAPI.IsSecretValue(duration)
-                    local expIsSecret = BlizzardAPI.IsSecretValue(expirationTime)
-                    local dur = (not durIsSecret and duration) or 0
-                    local exp = (not expIsSecret and expirationTime) or 0
-                    cachedAuras.auraInfo[spellId] = BuildAuraTiming(dur, exp, count)
-                end
-                if name then
-                    cachedAuras.byName[name] = spellId or true
-                end
-                if icon then
-                    cachedAuras.byIcon[icon] = name or true
                 end
             end
         end
@@ -808,11 +765,9 @@ RefreshAuraCache = function()
         wipe(trustedOutOfCombatCache)
         trustedOutOfCombatCache.byID = {}
         trustedOutOfCombatCache.byName = {}
-        trustedOutOfCombatCache.byIcon = {}
         trustedOutOfCombatCache.auraInfo = {}
         for k, v in pairs(cachedAuras.byID) do trustedOutOfCombatCache.byID[k] = v end
         for k, v in pairs(cachedAuras.byName) do trustedOutOfCombatCache.byName[k] = v end
-        for k, v in pairs(cachedAuras.byIcon) do trustedOutOfCombatCache.byIcon[k] = v end
         for k, v in pairs(cachedAuras.auraInfo) do 
             trustedOutOfCombatCache.auraInfo[k] = {
                 duration = v.duration,
@@ -837,7 +792,6 @@ RefreshAuraCache = function()
                 if not activeInstances[instanceID] then
                     instanceToSpellMap[instanceID] = nil
                     instanceToNameMap[instanceID] = nil
-                    instanceToIconMap[instanceID] = nil
                     instanceToTimingMap[instanceID] = nil
                 end
             end
@@ -1056,14 +1010,6 @@ local function IsPetAlive()
 end
 
 --------------------------------------------------------------------------------
--- Form/Stance Detection
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- Spell Category Detection (dynamic, no hardcoded spell lists)
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
 -- Rogue Poison Detection (cast-based inference)
 -- Poisons are hour-long buffs; once observed via cast tracking assume active until combat ends
 -- This avoids querying aura state which may return secret values
@@ -1086,16 +1032,6 @@ local ROGUE_POISON_BUFF_IDS = {
     -- Non-Lethal Poisons (aura IDs from whitelist)
     [3408] = true,   -- Crippling Poison
     [5761] = true,   -- Numbing Poison
-}
-
--- Poison buff names (fallback detection)
-local ROGUE_POISON_NAMES = {
-    ["Deadly Poison"] = true,
-    ["Wound Poison"] = true,
-    ["Instant Poison"] = true,
-    ["Atrophic Poison"] = true,
-    ["Crippling Poison"] = true,
-    ["Numbing Poison"] = true,
 }
 
 -- Check if a spell is a Rogue poison application spell
@@ -1145,23 +1081,7 @@ local function CountActivePoisonBuffs()
                         count = count + 1
                         foundNames[name] = true
                     end
-                else
-                    -- Still record the name so FALLBACK 2 doesn't re-count this expiring poison
-                    local spellInfo = GetCachedSpellInfo(spellID)
-                    if spellInfo and spellInfo.name then
-                        foundNames[spellInfo.name] = true
-                    end
                 end
-            end
-        end
-    end
-
-    -- FALLBACK 2: Aura cache by name (catches unknown buff IDs)
-    if auras.byName then
-        for poisonName in pairs(ROGUE_POISON_NAMES) do
-            if auras.byName[poisonName] and not foundNames[poisonName] then
-                count = count + 1
-                foundNames[poisonName] = true
             end
         end
     end
@@ -1233,14 +1153,10 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         if targetFormID then
             local currentFormID = FormCache.GetActiveForm()
             if targetFormID == currentFormID then
-                -- Throttle debug output (once per spell per 5 seconds)
-                local now = GetTime()
-                local throttleKey = "form_" .. spellID
-                if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                    lastPrintTime[throttleKey] = now
+                if debugMode then
                     local spellInfo = GetCachedSpellInfo(spellID)
                     local spellName = spellInfo and spellInfo.name or tostring(spellID)
-                    print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - already in form " .. targetFormID)
+                    DebugPrintThrottled("form_" .. spellID, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. spellName .. " - already in form " .. targetFormID)
                 end
                 return true, "already in that form/stance"
             end
@@ -1253,11 +1169,8 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
                 local name = spellInfo.name
                 local currentFormName = FormCache.GetActiveFormName()
                 if currentFormName and currentFormName == name then
-                    local now = GetTime()
-                    local throttleKey = "form_name_" .. name
-                    if debugMode and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                        lastPrintTime[throttleKey] = now
-                        print("|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
+                    if debugMode then
+                        DebugPrintThrottled("form_name_" .. name, "|cff66ccffJAC|r |cffff6666REDUNDANT|r: " .. name .. " - already active (name match)")
                     end
                     return true, "already in that form (name match)"
                 end
@@ -1305,14 +1218,10 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
             if not isDefensiveCheck and not IsDPSRelevant(spellID) then
                 if hasTrustedData then
                     -- Have pre-combat snapshot - safe to filter non-DPS spells
-                    local now = GetTime()
-                    local throttleKey = "nondps_" .. spellID
-                    if GetDebugMode() and (not lastPrintTime[throttleKey] or now - lastPrintTime[throttleKey] > 5) then
-                        lastPrintTime[throttleKey] = now
-                        local reason = "unresolved secrets in cache"
+                    if debugMode then
                         local spellInfo = GetCachedSpellInfo(spellID)
                         local spellName = spellInfo and spellInfo.name or "Unknown"
-                        print("|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (" .. reason .. ", have trusted cache)")
+                        DebugPrintThrottled("nondps_" .. spellID, "|cff66ccffJAC|r |cffff6666FILTERED|r: " .. spellName .. " (ID: " .. spellID .. ") - Non-DPS spell (unresolved secrets in cache, have trusted cache)")
                     end
                     return true, "aura data partly secret; non-rotational spell hidden as a safety measure"
                 else
@@ -1443,24 +1352,8 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
 end
 
 --------------------------------------------------------------------------------
--- Aura Query API
---------------------------------------------------------------------------------
-
---- Returns true if ANY spellID in the given set is active as a player aura.
---- Efficient single-pass scan for checking multiple trigger auras at once.
-function RedundancyFilter.IsAnyAuraActive(spellIDSet)
-    if not spellIDSet then return false end
-    for _, mapSpellID in pairs(instanceToSpellMap) do
-        if spellIDSet[mapSpellID] then return true end
-    end
-    return false
-end
-
---------------------------------------------------------------------------------
 -- Debug / Diagnostic Functions
 --------------------------------------------------------------------------------
-
-
 
 -- Expose aura cache for diagnostics
 function RedundancyFilter.GetAuraCache()

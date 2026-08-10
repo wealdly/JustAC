@@ -7,7 +7,7 @@
 -- Key functions added by each submodule:
 --   SpellQuery.lua        → GetAddon, GetProfile, GetDebugMode, GetSpellInfo, IsSpellUsable
 --   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
---   SecretValues.lua      → IsRedundancyFilterAvailable
+--   SecretValues.lua      → IsSecretValue, AreAurasSecret, GetAuras
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
 local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 36)
 if not BlizzardAPI then return end

@@ -75,8 +75,10 @@ local function DriveCue(cue)
     -- file). It covers the GCD as well as soothe's own cooldown, which is the whole point -
     -- a slot with no swipe reads as "press me" while the global is still running.
     -- Called for every slot because which one is visible is decided by a SECRET alpha, so we
-    -- cannot know which. The updater early-outs when the spell and its cooldown are unchanged,
-    -- so the repeated calls collapse to a compare after the first.
+    -- cannot know which. Only the WIDGET writes are change-guarded downstream; the query
+    -- chain runs per slot per tick. ponytail: 5 identical query chains while the cue is
+    -- live - split UpdateButtonCooldowns into query/apply if this transient state ever
+    -- shows up in profiling.
     local UIRenderer = LibStub("JustAC-UIRenderer", true)
     local UpdateCooldowns = UIRenderer and UIRenderer.UpdateButtonCooldowns
     local live  = sel and UnitExists("target") and UnitCanAttack("player", "target")
@@ -107,7 +109,7 @@ end
 -- button per slot instead of a light frame, times MAX_SLOTS - the N-slot trade noted up top.
 local function BuildSlot(cue, sz, profile)
     -- Not clickable: this is a display overlay pinned over the interrupt, never pressed.
-    local slot = UIFrameFactory.CreateBaseIcon(cue, sz, false, true, profile)
+    local slot = UIFrameFactory.CreateBaseIcon(cue, sz, false, true)
     if not slot then return nil end
     slot:SetAllPoints(cue)
     slot:EnableMouse(false)
@@ -118,7 +120,8 @@ local function BuildSlot(cue, sz, profile)
     -- cannot disagree about where a sub-icon on this slot belongs.
     local aura = UIFrameFactory.CreateAuraSubIcon(slot, sz, profile, profile and profile.queueOrientation or "LEFT")
     aura:SetFrameLevel(slot:GetFrameLevel() + 4)  -- above CreateBaseIcon's borderFrame (+3)
-    slot.auraIcon = aura.iconTexture
+    slot.auraIcon  = aura.iconTexture
+    slot.auraFrame = aura  -- kept for ReanchorAuras (the overlay re-seats per expansion)
 
     -- SHOWN, at alpha 0 - not hidden. The whole cue works by handing a SECRET alpha to
     -- SetAlpha and letting the engine decide; a hidden frame draws nothing whatever its alpha,
@@ -131,6 +134,27 @@ local function BuildSlot(cue, sz, profile)
     slot:Show()
     slot:SetAlpha(0)
     return slot
+end
+
+--- Re-seat every slot's cleansed-aura clone for the OVERLAY's expansion. The slots
+--- are built with the STANDARD queue's orientation (BuildSlot above), which put the
+--- clone on the wrong side of an "up"-expansion overlay - directly over dpsIcons[1].
+--- Mirrors the overlay's own castAura convention (±2, no maintenance shift: the
+--- overlay's maintenance slot lives on the defensive cluster and can't collide).
+function UISootheCue.ReanchorAuras(cue, expansion)
+    if not cue or not cue.slots then return end
+    for i = 1, MAX_SLOTS do
+        local slot = cue.slots[i]
+        local aura = slot and slot.auraFrame
+        if aura then
+            aura:ClearAllPoints()
+            if expansion == "up" then
+                aura:SetPoint("TOP", slot, "BOTTOM", 0, -2)
+            else
+                aura:SetPoint("BOTTOM", slot, "TOP", 0, 2)
+            end
+        end
+    end
 end
 
 --- Point the cue at a (new) soothe spell: icon + hotkey text + cyan cleanse glow.

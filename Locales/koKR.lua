@@ -8,11 +8,8 @@ if not L then return end
 -- General UI (일반 UI 세팅)
 L["JustAssistedCombat"] = "JustAssistedCombat"
 L["General"] = "일반"
-L["Settings"] = "상세 설정"
 L["Offensive"] = "공격 기술"
 L["Defensives"] = "방어 기술 (생존기)"
-L["Blacklist"] = "블랙리스트 (제외할 스킬)"
-L["Hotkey Overrides"] = "단축키 수동 지정"
 
 -- General Options (일반 옵션)
 L["Max Icons"] = "최대 아이콘 개수 (칸 수)"
@@ -45,33 +42,21 @@ L["Show Key Press Flash"] = "키 입력 시 반짝임 효과"
 L["Show Key Press Flash desc"] = "지정된 단축키를 키보드로 누를 때 해당 아이콘이 순간적으로 반짝이게 합니다."
 L["Grey Out While Casting"] = "시전 중인 스킬 외 회색 처리"
 L["Grey Out While Casting desc"] = "스킬을 캐스팅(캐스팅 바가 올라가는 중)하는 동안, 다음 대기열 아이콘들을 흑백으로 만들어 시선을 분산시키지 않습니다. 현재 시전 중인 스킬만 컬러로 유지됩니다."
-L["Grey Out While Channeling"] = "채널링 중인 스킬 외 회색 처리"
-L["Grey Out While Channeling desc"] = "사제의 '정신의 채찍'처럼 대상에게 집중하며 채널링하는 동안 다음 아이콘들을 흑백으로 만듭니다. 현재 채널링 중인 스킬만 컬러로 애니메이션이 표시됩니다."
 L["Mark Move-Castable Spells"] = "이동 시전 가능 스킬 표시"
 L["Mark Move-Castable Spells desc"] = "무빙하면서 쓸 수 있는 즉시시전 스킬이나 버프로 인해 즉발로 바뀐 캐스팅 스킬에 특수 마크를 표시합니다. 바닥을 피하며 무빙 딜을 해야 할 때 유용합니다. 원거리/힐러 특성은 기본 ON, 근접 밀리는 기본 OFF 상태입니다."
 L["Show Usability Tint"] = "사용 불가능 스킬 색상 변경"
 L["Show Usability Tint desc"] = "스킬의 상태에 따라 색상을 입힙니다. 마나/기력이 부족하면 파란색, 쿨다운 중이거나 형상(태세)이 안 맞으면 회색으로 어둡게 표시합니다."
-L["Show Range Tint"] = "사거리 이탈 시 붉은색 표시"
-L["Show Range Tint desc"] = "타겟이 스킬 사거리를 벗어나 사용할 수 없을 때 아이콘을 빨갛게 표시하여 알립니다."
 L["Show Casting Highlight"] = "현재 시전 중인 스킬 흰색 테두리"
 L["Show Casting Highlight desc"] = "내가 지금 캐스팅하거나 채널링 중인 스킬 아이콘에 흰색 밝은 테두리를 둘러서 강조합니다."
 
 -- Blacklist (블랙리스트)
 L["Remove"] = "삭제"
-L["No spells currently blacklisted"] = "현재 블랙리스트에 등록된 스킬이 없습니다. 아래 [추가] 버튼을 눌러 던전 갈고리 패턴, 몹 돌진기, 혹은 제외하고 싶은 내 스킬 번호를 등록하세요."
-L["Add Spell to Blacklist"] = "블랙리스트에 스킬 추가"
 L["Add"] = "추가"
 L["Clear All"] = "전체 삭제"
-L["Clear All Blacklist desc"] = "블랙리스트 목록을 한 번에 모두 비웁니다."
-L["Clear All Hotkeys desc"] = "수동으로 지정한 커스텀 단축키 설정을 모두 초기화합니다."
 
 -- Hotkey Overrides (단축키 수동 지정)
 L["Custom Hotkey"] = "사용자 지정 단축키"
-L["No custom hotkeys set"] = "지정된 사용자 단축키가 없습니다. 대기열의 스킬을 마우스 우클릭하여 원하는 단축키 텍스트를 직접 입력하세요."
-L["Add Hotkey Override"] = "단축키 수동 지정 추가"
-L["Hotkey"] = "단축키"
 L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "화면에 표시할 단축키 글자를 입력하세요. (예: 1, F1, S-2, Ctrl+Q)"
-L["Custom Hotkeys"] = "사용자 지정 단축키 목록"
 
 -- Defensives (방어 기술)
 L["Show Defensive Icons"] = "방어 기술(생존기) 아이콘 표시"
@@ -113,13 +98,9 @@ L["Spacing desc"] = "아이콘과 아이콘 사이의 간격(여백 픽셀)을 �
 L["Primary Spell Scale desc"] = "1번 추천칸(블리자드 순정 엔진이 지금 당장 누르라고 찍은 스킬)의 아이콘 크기 확대 비율을 설정합니다."
 L["Queue Orientation desc"] = "딜사이클 대기열이 늘어나는 방향과 사이드바(방어 기술 및 체력 바)의 배치 위치를 결정합니다."
 L["Queue Orientation detached desc"] = "공격 기술 대기열이 늘어나는 방향을 결정합니다. (방어 기술 대기열은 독립된 개별 위치를 가집니다.)"
-L["Highlight Mode desc"] = "스킬 아이콘 테두리에 어떤 반짝임(Glow) 효과를 적용할지 선택합니다."
 L["Frame Opacity desc"] = "애드온 전체 프레임의 마스터 투명도를 조절합니다."
 L["Queue Icon Fade desc"] = "다음에 올 뒷칸 아이콘들의 색상 채도를 빼서 흐리게 만듭니다. (0 = 원래 컬러, 1 = 완전 흑백)"
-L["Display Mode"] = "표시 모드 선택"
-L["Display Mode desc"] = "화면 출력 방식을 고릅니다. [기본 대기열]은 메인 패널을 띄우고, [이름표 오버레이]는 타겟의 체력바 옆에 아이콘을 붙입니다. [모두 사용]은 둘 다 켜고, [사용 안 함]은 애드온을 완전히 숨깁니다."
 L["Standard Queue"] = "기본 대기열 프레임"
-L["Both"] = "모두 사용"
 L["Queue Visibility"] = "대기열 노출 조건"
 L["Queue Visibility desc"] = "항상 표시: 언제나 화면에 띄웁니다.\n전투 중일 때만: 비전투 중에는 숨깁니다.\n적대적 대상 필요: 공격 가능한 적을 타겟으로 잡았을 때만 화면에 띄웁니다."
 L["Hide When Mounted"] = "탈것 탑승 시 숨기기"
@@ -137,7 +118,6 @@ L["Click Through"] = "마우스 클릭 통과 (UI 클릭 불가)"
 L["Click to Cast"] = "방어 기술 마우스 클릭 시전 허용 (비전투 한정)"
 L["Click to Cast desc"] = "비전투 중에 방어 기술 대기열에 떠 있는 아이콘을 마우스 좌클릭하면 해당 생존기나 버프가 즉시 시전됩니다. 풀링 전 미리 버프를 감거나 세팅할 때 편리합니다. 공격(딜) 로테이션은 절대 마우스 클릭으로 시전되지 않으며 무조건 단축키로만 작동합니다. 전투 중이거나 [클릭 통과] 모드에서는 이 기능이 자동으로 꺼집니다. 전투 중에는 매크로 패널티 방지를 위해 반드시 원래 단축키를 사용하세요."
 L["Enable Defensive Suggestions desc"] = "내 체력이 설정된 위험 수치 이하로 떨어지면 방어 기술(생존기)을 화면에 추천하기 시작합니다."
-L["Custom Hotkey desc"] = "단축키 자리에 텍스트로 강제 표시할 글자입니다. (예: 'F1', 'Ctrl+Q', 'Mouse4')"
 L["Move up desc"] = "우선순위 한 단계 위로 올리기"
 L["Move down desc"] = "우선순위 한 단계 아래로 내리기"
 L["Restore Defensive Defaults desc"] = "방어 기술 목록을 내 직업의 기본 오리지널 스킬 세팅으로 초기화합니다."
@@ -212,25 +192,18 @@ L["Down, Sidebar Right"] = "아래쪽 방향 늘리기 (사이드바는 오른�
 L["Target Frame Anchor"] = "타겟 프레임 자석 고정 (앵커)"
 L["Target Frame Anchor desc"] = "대기열 프레임을 허공에 두지 않고, 블리자드 순정 타겟(대상) 프레임 위치에 자석처럼 딱 붙여서 함께 움직이도록 고정합니다."
 L["Target Frame Replaced"] = "블리자드 순정 타겟 프레임을 찾을 수 없습니다. (유닛프레임 애드온 등에 의해 순정 UI가 대체된 상태)"
-L["Disabled"] = "사용 안 함 (자유 배치)"
 L["Top"] = "위쪽에 붙이기"
 L["Bottom"] = "아래쪽에 붙이기"
 L["Left"] = "왼쪽에 붙이기"
 L["Right"] = "오른쪽에 붙이기"
 
 -- Additional UI strings (추가 인터페이스 문구)
-L["Hotkey Overrides Info"] = "자동 단축키 감지가 실패할 경우 화면에 보일 단축키 글자를 직접 지정하세요.\n\n대기열의 스킬을 |cff00ff00마우스 우클릭|r 하면 단축키를 입력할 수 있습니다."
-L["Blacklist Info"] = "여기에 등록된 스킬이나 아이템은 메인 대기열, 이름표 오버레이, 폭딜/진입기 추천 등 애드온의 모든 위치에서 완전히 지워집니다.\n\n대기열에 떠 있는 아이콘을 |cffff6666Shift+우클릭|r 하면 인게임에서 즉시 블랙리스트에 등록할 수 있습니다. (※ 로테이션 탭은 대기열만 편집하며, 1번 추천칸은 편집할 수 없습니다.)"
-L["Blacklist Warning"] = "|cFFFF4444※ 경고:|r 1번 추천칸(블리자드 순정 엔진이 지금 당장 누르라고 찍은 스킬) 자체를 블랙리스트로 차단해 버리면 딜사이클 연산 전체가 먹통이 될 수 있습니다. 아이콘만 숨기고 딜사이클 흐름을 유지하려면 아래의 |cffFFAA00[1번 추천칸에도 적용]|r 옵션을 반드시 꺼주세요."
-L["Blacklist Position 1"] = "1번 추천칸에도 적용 (주의)"
-L["Blacklist Position 1 desc"] = "블리자드 순정 엔진이 찍은 1번 칸에서도 이 스킬을 완전히 숨겨버립니다. |cffFFAA00이 체크를 끄면|r 대기열 뒷칸에서만 스킬이 숨겨지고, 1번 칸에는 정상 작동하여 블리자드 딜사이클 연산이 멈추거나 꼬이는 대참사를 방지합니다."
 L["Restore Class Defaults name"] = "직업 기본값 복원"
 
 -- Spell search UI (스킬 검색 창 인터페이스)
 L["Search spell desc"] = "스킬 이름이나 ID 번호를 입력하세요. (최소 2글자 이상 입력 시 검색 시작)"
 L["No matches"] = "일치하는 항목이 없습니다. 다른 검색어를 입력해 보세요."
 L["Select Spell..."] = "스킬 / 아이템 선택..."
-L["No spell selected"] = "선택된 스킬이나 아이템이 없습니다."
 
 -- Gap-Closers (돌진기)
 L["Gap-Closers"] = "돌진기"
@@ -339,8 +312,6 @@ L["Nameplate Show Resource Bar desc"] = "체력 바 너머에 미니 자원(마�
 -- Reset buttons (초기화 버튼)
 L["Reset to Defaults"] = "기본값으로 초기화"
 L["Reset General desc"] = "모든 일반 설정을 오리지널 기본값으로 초기화합니다."
-L["Reset Offensive Display desc"] = "공격 기술 대기열의 칸 수, 크기 배율, 반짝임 효과 설정을 초기화합니다."
-L["Reset Defensive Display desc"] = "방어 기술 대기열의 칸 수, 크기 배율, 반짝임, 체력 바 설정을 초기화합니다."
 
 -- Icon Labels (아이콘 글꼴 및 레이블 설정)
 L["Icon Labels"] = "아이콘 글꼴 설정"
@@ -362,7 +333,6 @@ L["Center"] = "정중앙"
 L["Bottom Right"] = "우측 하단"
 L["Bottom Left"] = "좌측 하단"
 L["Bottom Center"] = "중앙 하단"
-L["Reset Icon Labels desc"] = "모든 아이콘 글꼴 설정을 오리지널 기본값으로 초기화합니다."
 L["Expansion Direction"] = "아이콘 확장 방향"
 L["Expansion Direction desc"] = "대기열 칸 수가 여러 개일 때 아이콘들이 늘어나는 방향을 결정합니다. [가로 방향]으로 설정하면 적 이름표 바깥쪽을 향해 나란히 늘어납니다."
 L["Horizontal (Out)"] = "가로 방향 (바깥쪽으로)"
@@ -378,7 +348,6 @@ L["Detached Orientation desc"] = "분리된 독립 방어 프레임에서 생존
 L["Reset Defensive Frame Position"] = "방어 프레임 위치 초기화"
 
 -- Performance (최적화 및 성능 설정)
-L["Performance"] = "성능 및 최적화"
 L["Disable Blizzard Highlight"] = "블리자드 기본 액션바 반짝임 기능 끄기"
 L["Disable Blizzard Highlight desc"] = "블리자드 순정 UI가 매 프레임마다 액션바 전체를 감시하며 테두리를 번쩍이게 만드는 연산을 강제로 차단합니다. (JustAC와 기능이 중복되므로 끄는 것이 좋습니다.) 렉을 대폭 줄여주며, 대규모 전투 및 무거운 애드온 환경에서 와우가 순간적으로 굳거나 '스크립트 실행 시간 초과 과부하' 에러가 나는 현상을 완벽하게 방지합니다."
 
@@ -405,7 +374,6 @@ L["CC Break Macro"] = "형상 해제 매크로 연동 (드루이드 전용)"
 L["CC Break Macro desc"] = "드루이드는 변신을 풀거나 다시 함으로써 이동 불가(이동 방해) 상태를 즉시 탈출할 수 있습니다. 하지만 이 방식은 스킬이 아니라 시스템적인 변신 판정이라 애드온이 스스로 단축키를 찾아내지 못합니다.\n\n내 매크로 중 /cancelform 문구가 포함된 매크로를 하나 선택해 주세요. 이동 불가에 걸리는 순간, 해당 매크로에 지정된 단축키가 화면에 팝업됩니다. 반드시 액션바에 등록되어 있고 단축키가 지정되어 있어야 화면에 노출됩니다.\n\n※ 단순 이속 감소는 감지되지 않으며 오직 완전 이동 불가(뿌리 묶기 등) 상태만 감지합니다. 매크로의 나머지 내용물은 자유롭게 짜셔도 좋습니다. (주의: 탱커의 경우 /cancelform을 쓰는 순간 곰 형상이 풀려 방어도가 급감하므로 신중하게 매크로를 선택하세요.)"
 L["CC Break Macro missing"] = "|cffff6600해당 매크로가 더 이상 존재하지 않습니다 - 다른 매크로를 선택하세요.|r"
 L["CC Break desc"] = "|cffff9900실험실 기능.|r 내 캐릭터가 기절, 공포, 이동 불가 등의 메즈에 걸려 행동 불능이 되었을 때, 나를 즉시 자유롭게 만들어 줄 수 있는 탈출 버튼(급장 등)이 쿨타임이 아니라면 화면에 크게 띄워줍니다.\n\n메즈 디버프가 지속되는 남은 시간을 초읽기로 보여주며 절대 놓치지 않도록 강하게 반짝입니다. 만약 내가 가진 스킬 중에 해당 메즈를 풀 수 있는 수단이 전혀 없다면 화면에는 아무것도 나타나지 않습니다. 전투 중 단순 이동 속도 저하는 시스템 감지가 안 되므로 지원되지 않습니다.\n\nWorks on any specialization, tank or not. It uses the Sustain slot, alongside the tank mitigation buff: a stun costs you as much uptime as a buff you let lapse, so both live there."
-L["Cooldown Manager"] = "블리자드 순정 재사용 대기시간 매니저"
 L["Enable Cooldown Manager"] = "블리자드 [재사용 대기시간 매니저] 사용"
 L["Enable Cooldown Manager desc"] = "게임 내장 [재사용 대기시간 매니저]를 켭니다 (옵션 > 게임플레이 향상 기능의 스위치와 동일합니다).\n\n전투 중에는 게임이 어떤 버프가 어떤 것인지 숨기기 때문에, 수많은 버프 속에서 탱커의 핵심 방어 버프를 정확히 구별해 낼 수 있는 것은 재사용 대기시간 매니저뿐입니다. 이 기능을 켜면 유지 칸에 정확한 초읽기와 실시간 중첩 수가 표시됩니다. 꺼져 있으면 초읽기는 예측치이며 중첩 수는 나오지 않습니다.\n\n이 기능이 작동하려면 편집 모드에서 패널이 하나 이상 활성화되어 있어야 합니다 - [추적된 바]가 가장 쓸모 있으며, 해당 버프들은 기본적으로 이 패널에 올라옵니다. 아래에서 패널을 보이지 않게 만들 수 있습니다.\n\n모든 전문화에서 사용할 수 있습니다: 이것은 게임 자체의 설정입니다. 위에서 말한 추가 정밀도는 탱커 방어 버프에만 적용되지만, 그와 상관없이 패널을 켜두거나 - 켜둔 채 숨겨두고 싶을 수도 있습니다."
 L["Hide Panels desc"] = "블리자드 순정 패널들이 백그라운드에서 연산은 정상적으로 수행하도록 놔둔 채, 내 눈에만 안 보이도록 화면에서 투명하게 숨겨버립니다. 덕분에 화면은 극도로 깔끔하게 유지하면서 JustAC 애드온이 탱커 버프 시간을 0.1초 오차도 없이 완벽하게 읽어올 수 있게 됩니다. 마우스 클릭도 통과하며, [편집 모드]를 열었을 때는 위치를 옮길 수 있도록 다시 임시로 화면에 노출됩니다."

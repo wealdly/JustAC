@@ -43,11 +43,33 @@ function GapClosers.CreateTabArgs(addon)
                 order = 1, width = "full",
                 onSet = function() addon:ForceUpdate() end,
             }),
+            farOnly = W.toggle(addon, "gapClosers.farOnly", {
+                name = L["Only Suggest For Real Gaps"], desc = L["Only Suggest For Real Gaps desc"],
+                order = 1.5, width = "full", default = true,
+                onSet = function() addon:ForceUpdate() end,
+                disabled = gcDisabled,
+            }),
             showGlow = W.toggle(addon, "gapClosers.showGlow", {
                 name = L["Show Gap-Closer Glow"], desc = L["Show Gap-Closer Glow desc"],
                 order = 2, width = "full",
                 onSet = function() addon:ForceUpdate() end,
-                disabled = gcDisabled,
+                -- Both renderers AND this with the surface's primary-glow policy, so it
+                -- is inert unless some enabled surface's highlight mode includes primary
+                -- glows ("shared" resolves against the central Highlight Mode).
+                disabled = function()
+                    if gcDisabled() then return true end
+                    local p = addon:GetProfile()
+                    if not p then return true end
+                    local UIR = LibStub("JustAC-UIRenderer", true)
+                    local function primaryOn(mode)
+                        mode = UIR and UIR.ResolveGlowMode(p, mode) or mode
+                        return mode == "all" or mode == "primaryOnly"
+                    end
+                    local std = W.SurfaceEnabled(addon, "queue") and primaryOn(p.glowMode)
+                    local npo = p.nameplateOverlay
+                    local ov = W.SurfaceEnabled(addon, "overlay") and primaryOn(npo and npo.glowMode)
+                    return not (std or ov)
+                end,
             }),
             -- SPELL LIST (10+)
             spellListGroup = {
@@ -91,10 +113,11 @@ function GapClosers.CreateTabArgs(addon)
         local profile = addon:GetProfile()
         if not profile then return end
         if not profile.gapClosers then
-            profile.gapClosers = { enabled = false, classSpells = {} }
+            profile.gapClosers = { enabled = true, classSpells = {} }
         end
-        profile.gapClosers.enabled = false
+        profile.gapClosers.enabled = true
         profile.gapClosers.showGlow = true  -- default: true (glow on by default)
+        profile.gapClosers.farOnly = true   -- default: true (skip walking-distance gaps)
         local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
         if GCE and GCE.InvalidateGapCloserCache then
             GCE.InvalidateGapCloserCache()
@@ -130,7 +153,7 @@ function GapClosers.UpdateGapCloserOptions(addon)
     }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
-    local specKey = GCE and GCE.GetGapCloserSpecKey and GCE.GetGapCloserSpecKey()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return end
 
     local profile = addon:GetProfile()

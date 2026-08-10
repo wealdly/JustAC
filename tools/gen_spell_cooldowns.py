@@ -13,11 +13,15 @@
 #   SpellCategory.csv      - per-category MaxCharges / ChargeRecoveryTime
 #   SkillLineAbility.csv   - player-learnable spell filter
 #   TraitDefinition.csv    - talent spell filter
+#   SpecializationSpells.csv - spec-granted spell filter (Penance, Purify, ...:
+#                            granted by spec assignment, absent from both tables above)
 #
 # Run: python tools/gen_spell_cooldowns.py [csv_dir] [build]
-# (csv_dir defaults to Documentation/wow_spell_csv, same as the sibling generators)
+# (csv_dir defaults to Documentation/wow_spell_csv, same as the sibling generators;
+#  build defaults to the one in the CSV filenames)
 
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -32,7 +36,7 @@ def read_csv(path):
 
 def main():
     csv_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSV_DIR
-    build = sys.argv[2] if len(sys.argv) > 2 else "12.1.0.68301"
+    build = sys.argv[2] if len(sys.argv) > 2 else None
 
     def find(table):
         hits = sorted(csv_dir.glob(f"{table}.*.csv"))
@@ -40,12 +44,26 @@ def main():
             sys.exit(f"missing {table} csv in {csv_dir}")
         return hits[-1]
 
+    # Stamp the header with the build the data actually came from: a hardcoded
+    # default here once shipped a build string ahead of the real CSVs.
+    if not build:
+        m = re.search(r"\.([\d.]+)\.csv$", find("SpellCooldowns").name)
+        build = m.group(1) if m else "unknown"
+
     # Player-relevant spell universe: class/profession skill lines + talents
+    # + spec grants (SpecializationSpells: baseline spells granted by spec
+    # assignment - Penance, Purify, Naturalize - reachable via neither
+    # SkillLineAbility nor TraitDefinition).
     universe = set()
     for row in read_csv(find("SkillLineAbility")):
         universe.add(int(row["Spell"]))
     for row in read_csv(find("TraitDefinition")):
         for col in ("SpellID", "VisibleSpellID", "OverridesSpellID"):
+            v = int(row[col] or 0)
+            if v > 0:
+                universe.add(v)
+    for row in read_csv(find("SpecializationSpells")):
+        for col in ("SpellID", "OverridesSpellID"):
             v = int(row[col] or 0)
             if v > 0:
                 universe.add(v)

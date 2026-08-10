@@ -84,10 +84,6 @@ local function RefreshFeatureAvailability()
     end
 end
 
-function BlizzardAPI.IsRedundancyFilterAvailable()
-    return not BlizzardAPI.AreAurasSecret()
-end
-
 function BlizzardAPI.IsProcFeatureAvailable()
     RefreshFeatureAvailability()
     return featureAvailability.procAccess

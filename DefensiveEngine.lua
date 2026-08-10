@@ -39,9 +39,48 @@ local proccedBuffer = {}    -- procced spells (highest priority)
 local nonProccedBuffer = {} -- castable non-procced spells in user list order
 local unusableBuffer = {}   -- on-CD or resource-starved spells (de-prioritized to end)
 
+-- Per-tick evaluation memo, keyed by list entry (positive spell / negative item).
+-- One rebuild evaluates the defensive list up to FOUR times (procs pass + full pass,
+-- x two surfaces); every pass re-ran the same per-spell C-call battery. GetTime() is
+-- frame-stable, so a stamp makes passes 2-4 pure table reads. Grows only to the set
+-- of entries ever seen (list-sized) - no wipe needed.
+local defensiveEvalMemo = {}
+
+-- Queue entry pooling: each surface owns a persistent results array; entry tables
+-- cycle through a shared free list instead of being allocated per pass (~30-40 fresh
+-- tables per rebuild otherwise, at up to 10Hz). Discipline: a table is either in
+-- exactly one results array or in the pool - ReleaseResults at the start of a
+-- surface's build recycles only that surface's previous entries.
+local mainResultsBuf = {}
+local overlayResultsBuf = {}
+local entryPool = {}
+
+local function ReleaseResults(results)
+    for i = #results, 1, -1 do
+        entryPool[#entryPool + 1] = results[i]
+        results[i] = nil
+    end
+end
+
+-- Append a fully-specified entry; nil clears stale fields from a recycled table.
+local function PushEntry(results, spellID, isItem, isProcced, unusable, noResources, precombat, topoff)
+    local n = #entryPool
+    local e
+    if n > 0 then e = entryPool[n]; entryPool[n] = nil else e = {} end
+    e.spellID, e.isItem, e.isProcced = spellID, isItem, isProcced
+    e.unusable, e.noResources = unusable, noResources
+    e.precombat, e.topoff = precombat, topoff
+    e.waiting = nil
+    results[#results + 1] = e
+    return e
+end
+
 -- Build counters (for /jac perf diagnostic)
 local defensiveBuildCount = 0
 local defensiveResetTime = GetTime()
+
+-- Lazy module refs (these load after this file): resolved once, not per rebuild.
+local MaintenanceTrackerRef, PrecombatEngineRef
 
 
 -- Forward declarations for functions referenced before definition
@@ -88,17 +127,16 @@ function DefensiveEngine.MarkEmergencyPotionRemoved(addon)
     local profile = addon and addon.GetProfile and addon:GetProfile()
     local def = profile and profile.defensives
     if not (def and def.classSpells) then return end
-    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    local specKey, playerClass
+    if SpellDB and SpellDB.GetSpecKey then specKey, playerClass = SpellDB.GetSpecKey() end
     local cs = def.classSpells[specKey or playerClass]
     if cs then cs.emergencyPotionRemoved = true end
 end
 
--- Hide multi-icon or single-icon defensive frames (handles both layouts).
+-- Hide the defensive icon frames.
 local function HideDefensiveIconFrames(addon)
     if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.HideDefensiveIcons then
         UIRenderer.HideDefensiveIcons(addon)
-    elseif addon.defensiveIcon and UIRenderer and UIRenderer.HideDefensiveIcon then
-        UIRenderer.HideDefensiveIcon(addon.defensiveIcon)
     end
 end
 
@@ -107,6 +145,10 @@ end
 local function ResizeHealthBars(addon, count)
     if UIHealthBar and UIHealthBar.ResizeToCount then UIHealthBar.ResizeToCount(addon, count) end
     if UIHealthBar and UIHealthBar.ResizePetToCount then UIHealthBar.ResizePetToCount(addon, count) end
+    -- The power pair anchors to the outermost health bar, which the calls above may
+    -- have just moved (e.g. the count-0 fallback position) - follow it, instead of
+    -- floating over the empty cluster spot.
+    if UIHealthBar and UIHealthBar.ReanchorPower then UIHealthBar.ReanchorPower(addon) end
 end
 
 -- Show or hide main-panel defensive icons based on a resolved queue.
@@ -114,8 +156,6 @@ local function ApplyMainPanelQueue(addon, defensiveQueue)
     if #defensiveQueue > 0 then
         if addon.defensiveIcons and #addon.defensiveIcons > 0 and UIRenderer and UIRenderer.ShowDefensiveIcons then
             UIRenderer.ShowDefensiveIcons(addon, defensiveQueue)
-        elseif addon.defensiveIcon and UIRenderer and UIRenderer.ShowDefensiveIcon then
-            UIRenderer.ShowDefensiveIcon(addon, defensiveQueue[1].spellID, defensiveQueue[1].isItem, addon.defensiveIcon)
         end
         -- The cluster is padded with empty slots up to maxIcons (see ShowDefensiveIcons),
         -- so the health bar spans the full cluster width, not just the filled count.
@@ -211,15 +251,6 @@ function DefensiveEngine.GetClassSpellList(addon, listKey)
     return nil
 end
 
---- Returns the spec key used for defensive spell storage.
---- Exposed so Options/Defensives can display the correct spec context.
-function DefensiveEngine.GetDefensiveSpecKey()
-    if SpellDB and SpellDB.GetSpecKey then
-        return SpellDB.GetSpecKey()
-    end
-    return nil, nil
-end
-
 --------------------------------------------------------------------------------
 -- Initialization & registration
 --------------------------------------------------------------------------------
@@ -228,7 +259,8 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    local specKey, playerClass
+    if SpellDB and SpellDB.GetSpecKey then specKey, playerClass = SpellDB.GetSpecKey() end
     if not playerClass then return end
 
     -- Determine target key: prefer spec key, fall back to class key for pre-spec data
@@ -258,7 +290,6 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
     -- Restore Class Defaults was the only way back. Absent the removal record we re-add,
     -- which means an accidental loss now heals itself on the next load.
     if SpellDB and SpellDB.EMERGENCY_POTION and not cs.emergencyPotionRemoved then
-        cs.emergencyPotionInit = true
         EnsureEmergencyPotion(cs)
     end
 
@@ -276,29 +307,18 @@ function DefensiveEngine.RegisterDefensivesForTracking(addon)
         BlizzardAPI.ClearTrackedDefensives()
     end
 
-    -- Table-driven iteration: register all defensive spell lists
-    local spellListTypes = { "defensiveSpells", "petHealSpells", "petRezSpells" }
-    for _, listType in ipairs(spellListTypes) do
-        local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
+    -- Register all defensive spell lists, seeding local CD entries as we go.
+    -- Seeding covers defensives already on cooldown at login/spec-change: without
+    -- it, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event, so IsSpellReady
+    -- fails-open for unflagged spells. OOC-only (safe to call always).
+    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
+        local spellList = DefensiveEngine.GetClassSpellList(addon, cfg.listKey)
         if spellList then
             for _, entry in ipairs(spellList) do
                 -- Only register positive entries (spells) - negative entries are items
                 if entry and entry > 0 then
                     BlizzardAPI.RegisterSpellForTracking(entry, "defensive")
-                end
-            end
-        end
-    end
-
-    -- Seed local CD entries for defensives already on cooldown at login/spec-change.
-    -- Without this, pre-existing CDs have no UNIT_SPELLCAST_SUCCEEDED event,
-    -- so IsSpellReady fails-open for unflagged spells. OOC-only (safe to call always).
-    if BlizzardAPI.SeedLocalCooldownIfActive then
-        for _, listType in ipairs(spellListTypes) do
-            local spellList = DefensiveEngine.GetClassSpellList(addon, listType)
-            if spellList then
-                for _, entry in ipairs(spellList) do
-                    if entry and entry > 0 then
+                    if BlizzardAPI.SeedLocalCooldownIfActive then
                         BlizzardAPI.SeedLocalCooldownIfActive(entry)
                     end
                 end
@@ -315,7 +335,8 @@ function DefensiveEngine.RestoreDefensiveDefaults(addon, listType)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return end
 
-    local specKey, playerClass = DefensiveEngine.GetDefensiveSpecKey()
+    local specKey, playerClass
+    if SpellDB and SpellDB.GetSpecKey then specKey, playerClass = SpellDB.GetSpecKey() end
     if not playerClass then return end
     local targetKey = specKey or playerClass
 
@@ -386,9 +407,14 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
         if UINameplateOverlay.UpdatePowerBar then UINameplateOverlay.UpdatePowerBar(addon) end
     end
 
-    -- Throttle defensive queue updates (expensive: table allocations, spell lookups)
+    -- Throttle defensive queue updates (expensive: table allocations, spell lookups).
+    -- Unconditional: the synthetic periodic call (event=nil) used to bypass this,
+    -- which let every dirty-flag burst trigger the full double-surface rebuild at
+    -- frame rate instead of the 0.1s cadence the throttle promises. Returns false
+    -- so the update loop keeps its dirty flag and retries next tick instead of
+    -- treating the skipped rebuild as done.
     local now = GetTime()
-    if event and now - lastHealthUpdate < HEALTH_UPDATE_THROTTLE then return end
+    if now - lastHealthUpdate < HEALTH_UPDATE_THROTTLE then return false end
     lastHealthUpdate = now
 
     -- Skip queue work if neither path needs it
@@ -427,7 +453,11 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- there must not also be listed in the queue beside it - that is the same icon twice in
     -- one row. (Contrast the DPS queue, which is a separate cluster: Blood's Marrowrend is
     -- allowed to appear both there and in the slot, because those carry different meanings.)
-    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    local MaintenanceTracker = MaintenanceTrackerRef
+    if not MaintenanceTracker then
+        MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+        MaintenanceTrackerRef = MaintenanceTracker
+    end
     if MaintenanceTracker and MaintenanceTracker.IsSlotActive then
         local slotActive, mEntry = MaintenanceTracker.IsSlotActive(profile)
         -- Exclude ONLY the buff currently ON SCREEN in the slot. Excluding every maintained
@@ -463,7 +493,7 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     if overlayActive and npo.showDefensives then
         local npoDisplayMode = npo.defensiveDisplayMode or "always"
         local npoMaxIcons    = npo.maxDefensiveIcons or 3
-        local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons, showProcs=(profile.defensives.showProcs ~= false)})
+        local npoQueue, npoAddedSet = DefensiveEngine.GetDefensiveSpellQueue(addon, isLow, inCombat, dpsQueueExclusions, {displayMode=npoDisplayMode, maxIcons=npoMaxIcons})
 
         -- Pet rez: parity with main panel (capped at one icon). Pet HEAL is the Sustain slot's
         -- now, on both surfaces - the overlay has its own maintenance icon and renders through
@@ -493,7 +523,102 @@ end
 -- Aura-linked hints (SpellDB.DEFENSIVE_AURA_HINTS) can float a ready button into the
 -- procced tier (its trigger aura is present, e.g. heavy stagger → purify) or sink one
 -- to the unusable tier (its mitigation buff is already active).
-function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
+-- Evaluate one positive list entry, memoized per GetTime() tick. The memo table
+-- doubles as the tier-buffer element: spellID/isItem/isProcced/unusable/noResources
+-- are the display fields AppendUsableSpells copies out; usableGate/realProc drive
+-- the buffer choice. All the semantics from the old inline body live here - see the
+-- comments; only the per-pass re-execution was removed.
+local function EvalDefensiveSpell(entry, profile, locActive, now)
+    local m = defensiveEvalMemo[entry]
+    if not m then m = {}; defensiveEvalMemo[entry] = m
+    elseif m.t == now then return m end
+    m.t = now
+
+    local resolvedID = BlizzardAPI.ResolveSpellID(entry)
+    m.spellID, m.isItem = resolvedID, false
+    m.isProcced, m.unusable, m.noResources, m.realProc = false, nil, nil, false
+
+    local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
+    m.usableGate = isUsable or false
+    if not isUsable then return m end
+
+    -- Aura-linked ordering hints (tank active mitigation), base-resolved.
+    local hint = SpellDB and SpellDB.GetDefensiveAuraHint and SpellDB.GetDefensiveAuraHint(entry)
+    if hint and hint.sinkAura and not isProcced
+        and BlizzardAPI.IsAuraActive("player", hint.sinkAura) then
+        -- Mitigation buff already rolling: a re-press isn't the priority.
+        -- Order-only park with the on-CD entries; the icon renders normally.
+        m.unusable, m.noResources = true, false
+    elseif isProcced then
+        m.isProcced, m.realProc = true, true
+    else
+        -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
+        -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
+        -- Under loss of control the castability check is skipped: the CC
+        -- reports every spell uncastable, which would collapse the ready vs
+        -- on-CD split and shuffle the whole queue the moment a stun lands.
+        -- IsSpellReady is local CD tracking, so it stays honest while CC'd -
+        -- the order holds and the renderer greys the icons on its own.
+        if not BlizzardAPI.IsSpellReady(resolvedID) then
+            m.unusable, m.noResources = true, false
+        elseif not locActive then
+            local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
+            if not castable then
+                m.unusable, m.noResources = true, notEnoughResources
+            end
+        end
+        if not m.unusable and hint and hint.floatAuras then
+            -- Aura-linked float: trigger aura present and the button is ready
+            -- (e.g. heavy stagger → purify). Treated like a proc: front of the
+            -- queue, surfaced at any health level. Unlike real procs this only
+            -- applies to READY buttons - the ready/resource checks above ran.
+            for _, auraID in ipairs(hint.floatAuras) do
+                if BlizzardAPI.IsAuraActive("player", auraID) then
+                    m.isProcced = true
+                    break
+                end
+            end
+        end
+    end
+    return m
+end
+
+-- Item counterpart (negative list entry); same memo contract.
+local function EvalDefensiveItem(entry, profile, now)
+    local m = defensiveEvalMemo[entry]
+    if not m then m = {}; defensiveEvalMemo[entry] = m
+    elseif m.t == now then return m end
+    m.t = now
+
+    local itemID = -entry
+    m.spellID, m.isItem = itemID, true
+    m.isProcced, m.unusable, m.noResources, m.realProc = false, nil, nil, false
+
+    -- Per-item settings: combat hide + linked aura suppression
+    local itemSettings = profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
+    local suppress = false
+    if itemSettings then
+        if itemSettings.combatHide and InCombatLockdown() then
+            suppress = true
+        end
+        if not suppress and itemSettings.linkedAura and BlizzardAPI.IsAuraActive("player", itemSettings.linkedAura) then
+            suppress = true
+        end
+    end
+    if suppress then
+        m.usableGate = false
+        return m
+    end
+    local isUsable, hasItem = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
+    m.usableGate = hasItem or false
+    if hasItem and not isUsable then
+        -- Item on cooldown - show greyed out (parity with spell behavior)
+        m.unusable, m.noResources = true, false
+    end
+    return m
+end
+
+local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded)
     wipe(usableResults)
     if not spellList or maxCount <= 0 then return usableResults end
 
@@ -506,6 +631,7 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     wipe(nonProccedBuffer)
     wipe(unusableBuffer)
 
+    local now = GetTime()
     -- Resolved once per build: stun/fear/silence is a state of the PLAYER, not of any
     -- one spell, so it must not feed the per-spell ordering decisions below.
     local locActive = BlizzardAPI.IsLossOfControlActive and BlizzardAPI.IsLossOfControlActive()
@@ -514,98 +640,44 @@ function DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxCount, al
     --   1. Procced (instant/free cast - highest priority)
     --   2. Castable non-procced (usable, off CD - mid priority, user list order)
     --   3. Unusable (on CD or lacking resources - de-prioritized to end)
+    -- Per-spell state comes from the per-tick memo; this loop is pure categorization.
     for _, entry in ipairs(spellList) do
         if entry and entry > 0 then
-            local resolvedID = BlizzardAPI.ResolveSpellID(entry)
+            local m = EvalDefensiveSpell(entry, profile, locActive, now)
+            local resolvedID = m.spellID
             -- Check both the original and resolved IDs to handle proc injection cross-dedup
-            if not alreadyAdded[entry] and not alreadyAdded[resolvedID] and not usableAddedHere[resolvedID] then
-                local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
-                if isUsable then
-                    -- Aura-linked ordering hints (tank active mitigation), base-resolved.
-                    local hint = SpellDB and SpellDB.GetDefensiveAuraHint and SpellDB.GetDefensiveAuraHint(entry)
-                    if hint and hint.sinkAura and not isProcced
-                        and BlizzardAPI.IsAuraActive("player", hint.sinkAura) then
-                        -- Mitigation buff already rolling: a re-press isn't the priority.
-                        -- Order-only park with the on-CD entries; the icon renders normally.
-                        unusableBuffer[#unusableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = false}
-                    elseif isProcced then
-                        -- Check per-spell proc-priority setting (default true)
-                        local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
-                        local procPriority = not spellSettings or spellSettings.procPriority ~= false
-                        if procPriority then
-                            -- Procced: top priority (instant/free cast)
-                            proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
-                        else
-                            -- Procced but priority disabled: keep in list order, still mark as procced for glow
-                            nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
-                        end
+            if m.usableGate and not alreadyAdded[entry] and not alreadyAdded[resolvedID]
+                and not usableAddedHere[resolvedID] then
+                if m.unusable then
+                    unusableBuffer[#unusableBuffer + 1] = m
+                elseif m.realProc then
+                    -- Check per-spell proc-priority setting (default true)
+                    local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
+                    if not spellSettings or spellSettings.procPriority ~= false then
+                        proccedBuffer[#proccedBuffer + 1] = m
                     else
-                        -- Cooldown check via centralized IsSpellReady (handles isOnGCD,
-                        -- local CD w/ CDR cross-check, charge tracking, action bar fallback).
-                        -- Under loss of control the castability check is skipped: the CC
-                        -- reports every spell uncastable, which would collapse the ready vs
-                        -- on-CD split and shuffle the whole queue the moment a stun lands.
-                        -- IsSpellReady is local CD tracking, so it stays honest while CC'd -
-                        -- the order holds and the renderer greys the icons on its own.
-                        local unusable, noResources
-                        if not BlizzardAPI.IsSpellReady(resolvedID) then
-                            unusable, noResources = true, false
-                        elseif not locActive then
-                            local castable, notEnoughResources = BlizzardAPI.IsSpellUsable(resolvedID)
-                            if not castable then
-                                unusable, noResources = true, notEnoughResources
-                            end
-                        end
-                        if unusable then
-                            unusableBuffer[#unusableBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false, unusable = true, noResources = noResources}
-                        else
-                            -- Aura-linked float: trigger aura present and the button is ready
-                            -- (e.g. heavy stagger → purify). Treated like a proc: front of the
-                            -- queue, surfaced at any health level. Unlike real procs this only
-                            -- applies to READY buttons - the ready/resource checks above ran.
-                            local floated = false
-                            if hint and hint.floatAuras then
-                                for _, auraID in ipairs(hint.floatAuras) do
-                                    if BlizzardAPI.IsAuraActive("player", auraID) then floated = true; break end
-                                end
-                            end
-                            if floated then
-                                proccedBuffer[#proccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
-                            else
-                                nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = resolvedID, isItem = false, isProcced = false}
-                            end
-                        end
+                        -- Procced but priority disabled: keep in list order, still marked procced for glow
+                        nonProccedBuffer[#nonProccedBuffer + 1] = m
                     end
-                    usableAddedHere[resolvedID] = true
-                    usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
+                elseif m.isProcced then
+                    -- Aura-linked float (see EvalDefensiveSpell): proc-tier placement.
+                    proccedBuffer[#proccedBuffer + 1] = m
+                else
+                    nonProccedBuffer[#nonProccedBuffer + 1] = m
                 end
+                usableAddedHere[resolvedID] = true
+                usableAddedHere[entry] = true  -- also mark original so it isn't reprocessed
             end
         elseif entry and entry < 0 and not alreadyAdded[entry] and not alreadyAdded[-entry] and not usableAddedHere[entry] then
-            -- Negative entry = item (stored as -itemID)
-            local itemID = -entry
-            -- Per-item settings: combat hide + linked aura suppression
-            local itemSettings = profile.defensives.itemSettings and profile.defensives.itemSettings[itemID]
-            local suppress = false
-            if itemSettings then
-                if itemSettings.combatHide and InCombatLockdown() then
-                    suppress = true
+            local m = EvalDefensiveItem(entry, profile, now)
+            if m.usableGate then
+                if m.unusable then
+                    unusableBuffer[#unusableBuffer + 1] = m
+                else
+                    nonProccedBuffer[#nonProccedBuffer + 1] = m
                 end
-                if not suppress and itemSettings.linkedAura and BlizzardAPI.IsAuraActive("player", itemSettings.linkedAura) then
-                    suppress = true
-                end
-            end
-            if not suppress then
-                local isUsable, hasItem = BlizzardAPI.CheckDefensiveItemState(itemID, profile)
-                if hasItem then
-                    if isUsable then
-                        nonProccedBuffer[#nonProccedBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false}
-                    else
-                        -- Item on cooldown - show greyed out (parity with spell behavior)
-                        unusableBuffer[#unusableBuffer + 1] = {spellID = itemID, isItem = true, isProcced = false, unusable = true, noResources = false}
-                    end
-                    usableAddedHere[entry] = true
-                    usableAddedHere[itemID] = true
-                end
+                usableAddedHere[entry] = true
+                usableAddedHere[m.spellID] = true
             end
         end
     end
@@ -629,14 +701,16 @@ end
 
 -- Append usable defensive spells from a spell list into a results table with dedup tracking.
 -- If procsOnly is true, only entries with isProcced=true are appended.
--- Callers MUST consume results before next GetUsableDefensiveSpells call (pooled table).
+-- The evaluation tables returned by GetUsableDefensiveSpells are per-tick memo state;
+-- entries are COPIED into pooled result tables here so the queue a surface holds on to
+-- is never mutated by a later pass or the other surface's build.
 AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded, procsOnly)
     if #results >= maxIcons then return end
-    local spells = DefensiveEngine.GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
-    for _, entry in ipairs(spells) do
-        if not procsOnly or entry.isProcced then
-            results[#results + 1] = entry
-            alreadyAdded[entry.spellID] = true
+    local spells = GetUsableDefensiveSpells(addon, spellList, maxIcons - #results, alreadyAdded)
+    for _, m in ipairs(spells) do
+        if not procsOnly or m.isProcced then
+            PushEntry(results, m.spellID, m.isItem, m.isProcced, m.unusable, m.noResources)
+            alreadyAdded[m.spellID] = true
         end
     end
 end
@@ -666,22 +740,18 @@ local function OrderByEmergencyTier(list)
     return emergencyOrderBuf
 end
 
--- Base cooldown (seconds), cached OOC-only - shared impl in BlizzardAPI/CooldownTracking.
-local function GetDefBaseCooldownSeconds(spellID)
-    return BlizzardAPI.GetBaseCooldownSeconds(spellID)
-end
-
 -- Pre-cache base cooldowns for the current spec's defensive list. MUST run OUT of combat.
 -- Only tier-2 big heals actually need it (bubbles + items are always hold-worthy), but
 -- caching the whole list is cheap and keeps the combat-time reads pure table lookups.
+-- GetBaseCooldownSeconds self-caches OOC (shared impl in BlizzardAPI/CooldownTracking).
 function DefensiveEngine.PreCacheDefensiveCooldowns(addon)
     local list = DefensiveEngine.GetClassSpellList(addon, "defensiveSpells")
     if not list then return end
     for _, sid in ipairs(list) do
         if sid and sid > 0 then
-            GetDefBaseCooldownSeconds(sid)
-            local resolved = BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(sid)
-            if resolved and resolved ~= sid then GetDefBaseCooldownSeconds(resolved) end
+            BlizzardAPI.GetBaseCooldownSeconds(sid)
+            local resolved = BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(sid)
+            if resolved and resolved ~= sid then BlizzardAPI.GetBaseCooldownSeconds(resolved) end
         end
     end
 end
@@ -747,33 +817,48 @@ end
 -- with the chosen or best owned healing item, as an item entry. Returns the list as-is
 -- when no sentinel is present; otherwise a resolved copy (never mutates the saved list).
 -- choice: -1 = off (drop it), 0/nil = auto best owned, >0 = a specific owned item.
+local emergencyResolveBuf = {}
+local emergencyResolveTime, emergencyResolveSrc, emergencyResolveResult = -1, nil, nil
 local function ResolveEmergencyDefensives(list, profile)
     if not list or not SpellDB or not SpellDB.EMERGENCY_POTION then return list end
+    -- Per-tick cache: both surfaces resolve the same list within one rebuild, and the
+    -- second call re-ran the sentinel scan + bag lookups and allocated a fresh copy.
+    local now = GetTime()
+    if emergencyResolveTime == now and emergencyResolveSrc == list then
+        return emergencyResolveResult
+    end
+
     local sentinel = SpellDB.EMERGENCY_POTION
     local hasSentinel = false
     for i = 1, #list do if list[i] == sentinel then hasSentinel = true; break end end
-    if not hasSentinel then return list end
 
-    local choice = profile.defensives.emergencyPotionChoice
-    local potID
-    if choice == -1 then
-        potID = nil  -- disabled via the tile dropdown
-    elseif choice and choice > 0 and (GetItemCount(choice) or 0) > 0 then
-        potID = choice
-    elseif SpellDB.GetBestHealingItem then
-        potID = SpellDB.GetBestHealingItem()
-    end
-
-    local out = {}
-    for i = 1, #list do
-        local e = list[i]
-        if e == sentinel then
-            if potID then out[#out + 1] = -potID end
-        else
-            out[#out + 1] = e
+    local result
+    if not hasSentinel then
+        result = list
+    else
+        local choice = profile.defensives.emergencyPotionChoice
+        local potID
+        if choice == -1 then
+            potID = nil  -- disabled via the tile dropdown
+        elseif choice and choice > 0 and (GetItemCount(choice) or 0) > 0 then
+            potID = choice
+        elseif SpellDB.GetBestHealingItem then
+            potID = SpellDB.GetBestHealingItem()
         end
+
+        wipe(emergencyResolveBuf)
+        for i = 1, #list do
+            local e = list[i]
+            if e == sentinel then
+                if potID then emergencyResolveBuf[#emergencyResolveBuf + 1] = -potID end
+            else
+                emergencyResolveBuf[#emergencyResolveBuf + 1] = e
+            end
+        end
+        result = emergencyResolveBuf
     end
-    return out
+    emergencyResolveTime, emergencyResolveSrc, emergencyResolveResult = now, list, result
+    return result
 end
 
 function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
@@ -794,7 +879,12 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     else
         showProcs = profile.defensives.showProcs ~= false
     end
-    local results = {}
+    -- Per-surface persistent results array (overrides present = overlay build).
+    -- Previous entries recycle through the entry pool; the returned array identity is
+    -- stable per surface, so the overlay's cachedDefensiveQueue always sees the
+    -- current build.
+    local results = overrides and overlayResultsBuf or mainResultsBuf
+    ReleaseResults(results)
     -- Reuse pooled table for tracking added spells
     wipe(defensiveAlreadyAdded)
     local alreadyAdded = defensiveAlreadyAdded
@@ -816,17 +906,6 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     end
 
     local displayMode = (overrides and overrides.displayMode) or profile.defensives.displayMode
-    if not displayMode then
-        local showOnlyInCombat = profile.defensives.showOnlyInCombat
-        local alwaysShow = profile.defensives.alwaysShowDefensive
-        if alwaysShow and showOnlyInCombat then
-            displayMode = "combatOnly"
-        elseif alwaysShow then
-            displayMode = "always"
-        else
-            displayMode = "healthBased"
-        end
-    end
 
     -- Out of combat: insert missing pre-combat buffs at the FRONT of the queue so the
     -- existing defensive icons shift back. Display rides the normal item-icon path; the
@@ -838,7 +917,11 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- flag, but the guarantee must hold even if a future caller reaches here without
     -- overrides. That gate is PrecombatEngine's because the DPS queue consults it too -
     -- an ability offered here as a clickable buff is dropped from the queue beside it.
-    local PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
+    local PrecombatEngine = PrecombatEngineRef
+    if not PrecombatEngine then
+        PrecombatEngine = LibStub("JustAC-PrecombatEngine", true)
+        PrecombatEngineRef = PrecombatEngine
+    end
     if not inCombat and not overrides
         and PrecombatEngine and PrecombatEngine.IsOfferingNow
         and PrecombatEngine.IsOfferingNow(profile) then
@@ -846,7 +929,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
             for _, itemID in ipairs(PrecombatEngine.GetMissingBuffItems(profile.precombatBuffs.categories)) do
                 if #results >= maxIcons then break end
                 if not alreadyAdded[itemID] then
-                    results[#results + 1] = { spellID = itemID, isItem = true, isProcced = false, precombat = true }
+                    PushEntry(results, itemID, true, false, nil, nil, true)
                     alreadyAdded[itemID] = true
                 end
             end
@@ -868,8 +951,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                 -- of combat in the open world health is secret, so the arming signal ("regen
                 -- is running") can only prove below FULL, not below the configured threshold.
                 -- Without this the reminder nags at 99%.
-                results[#results + 1] = { spellID = spellID, isItem = false, isProcced = false,
-                    precombat = true, topoff = (spellID == PrecombatEngine.offeredTopoffHeal) or nil }
+                PushEntry(results, spellID, false, false, nil, nil,
+                    true, (spellID == PrecombatEngine.offeredTopoffHeal) or nil)
                 alreadyAdded[spellID] = true
             end
         end
@@ -900,7 +983,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                             local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
                             local procPriority = not spellSettings or spellSettings.procPriority ~= false
                             if procPriority then
-                                results[#results + 1] = {spellID = resolvedID, isItem = false, isProcced = true}
+                                PushEntry(results, resolvedID, false, true)
                                 alreadyAdded[resolvedID] = true
                                 alreadyAdded[spellID] = true  -- also mark original ID
                             end
@@ -975,36 +1058,3 @@ function DefensiveEngine.ResetBuildStats()
     defensiveResetTime = GetTime()
 end
 
---------------------------------------------------------------------------------
--- Cooldown polling
---------------------------------------------------------------------------------
-
-function DefensiveEngine.UpdateDefensiveCooldowns(addon)
-    if addon.isDisabledMode then return end
-    if not addon.db or not addon.db.profile or addon.db.profile.isManualMode then return end
-
-    -- Update cooldowns on all visible main-panel defensive icons (requires defensives.enabled)
-    local def = addon.db.profile.defensives
-    if def and def.enabled then
-        if addon.defensiveIcons and #addon.defensiveIcons > 0 then
-            for _, icon in ipairs(addon.defensiveIcons) do
-                if icon and icon:IsShown() then
-                    UIRenderer.UpdateButtonCooldowns(icon)
-                end
-            end
-        elseif addon.defensiveIcon and addon.defensiveIcon:IsShown() then
-            UIRenderer.UpdateButtonCooldowns(addon.defensiveIcon)
-        end
-    end
-
-    -- Update cooldowns on nameplate overlay defensive icons.
-    -- The main OnUpdate loop now does full queue rebuilds periodically, but this
-    -- explicit poll keeps cooldown swipes smooth between rebuilds.
-    if addon.nameplateDefIcons and #addon.nameplateDefIcons > 0 then
-        for _, icon in ipairs(addon.nameplateDefIcons) do
-            if icon and icon:IsShown() then
-                UIRenderer.UpdateButtonCooldowns(icon)
-            end
-        end
-    end
-end

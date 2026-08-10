@@ -76,6 +76,15 @@ SpellDB.RegisterRangeReferences({
     [2094]   = 15,  -- Blind (Rogue)
     [47528]  = 15,  -- Mind Freeze (Death Knight)
     -- ~20-30yd mid
+    -- Baseline taunts (30yd, fixed, whole-class): not damage/CC like the rest of the
+    -- file, but single-ENEMY-targeted with a plain range read, which is all a probe
+    -- needs. They exist here because Druid and Monk otherwise have NO baseline probe
+    -- between melee and 40 - so a self-centered CC (Incapacitating Roar, Leg Sweep)
+    -- could never be proven out of reach at caster range. (Provoke is a scripted
+    -- any-target effect rather than a pure harmful one - IsSpellInRange still
+    -- answers for a hostile target, verified against the DB2 data.)
+    [6795]   = 30,  -- Growl (Druid - baseline, all specs)
+    [115546] = 30,  -- Provoke (Monk - baseline, all specs)
     [115078] = 20,  -- Paralysis (Monk - talent, but Monk's only mid probe → kept)
     [351338] = 25,  -- Quell (Evoker)
     [362969] = 25,  -- Azure Strike (Evoker)

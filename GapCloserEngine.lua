@@ -4,7 +4,7 @@
 -- Suggests movement spells when target is out of melee range.
 -- Extracted from DefensiveEngine.lua for clarity (gap closers inject into the offensive queue).
 
-local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 6)
+local GapCloserEngine = LibStub:NewLibrary("JustAC-GapCloserEngine", 7)
 if not GapCloserEngine then return end
 
 -- Hot path cache
@@ -38,6 +38,20 @@ local GAP_CLOSER_HIDE_DEBOUNCE = 0.4   -- seconds to hold the icon after returni
                                        -- bridges boundary jitter so the icon doesn't flicker
                                        -- as the player crosses in/out of melee.
 local lastOutOfRangeTime = 0
+
+-- Post-fire debounce: after a gap closer is CONFIRMED cast (UNIT_SPELLCAST_SUCCEEDED),
+-- the charge/leap is still in flight and the melee probe hasn't caught up - without
+-- this the engine offers the NEXT gap closer during the travel window. Long enough
+-- to cover any charge/leap travel plus the range probe settling; short enough that a
+-- genuinely failed close (target blinked away) re-offers promptly.
+local GAP_CLOSER_FIRED_DEBOUNCE = 3    -- seconds
+local lastFiredTime = -1e9
+
+-- Near-band gate: barely out of melee is walking distance, not a cooldown's job -
+-- only offer when the target is PROVEN beyond this (or unprovable: probe coverage
+-- varies by spec, and unknown fails OPEN so thin toolboxes keep their gap closers).
+-- ponytail: one flat threshold; per-spell max-range bands if a spec ever needs them.
+local GAP_CLOSER_NEAR_YARDS = 10
 
 --------------------------------------------------------------------------------
 -- Cached state
@@ -154,14 +168,6 @@ end
 -- Public API
 --------------------------------------------------------------------------------
 
---- Get the gap-closer spell list key for the current spec
-function GapCloserEngine.GetGapCloserSpecKey()
-    if SpellDB and SpellDB.GetSpecKey then
-        return SpellDB.GetSpecKey()
-    end
-    return nil
-end
-
 --- Initialize gap-closer defaults for the current spec if not yet populated
 function GapCloserEngine.InitializeGapClosers(addon)
     local profile = addon:GetProfile()
@@ -174,7 +180,7 @@ function GapCloserEngine.InitializeGapClosers(addon)
         profile.gapClosers.classSpells = {}
     end
 
-    local specKey = GapCloserEngine.GetGapCloserSpecKey()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return end
 
     if not profile.gapClosers.classSpells[specKey] or #profile.gapClosers.classSpells[specKey] == 0 then
@@ -206,8 +212,20 @@ end
 
 --- Reset range state on target change / combat end: clears the hide-debounce timestamp so
 --- a new target doesn't inherit the previous target's "recently out of range" hold.
+--- The post-fire debounce is deliberately NOT cleared here: switching targets mid-flight
+--- is exactly when offering a second gap closer wastes it, and 3s self-expires anyway.
 function GapCloserEngine.ClearRangeState()
     lastOutOfRangeTime = 0
+end
+
+--- Called from the player's UNIT_SPELLCAST_SUCCEEDED: arm the post-fire debounce when
+--- the cast was one of this spec's gap closers (user list or defaults, either ID form).
+function GapCloserEngine.NoteSpellcastSucceeded(addon, spellID)
+    local profile = addon and addon.db and addon.db.profile
+    if not (profile and profile.gapClosers and profile.gapClosers.enabled) then return end
+    if GapCloserEngine.IsGapCloserSpell(addon, spellID) then
+        lastFiredTime = GetTime()
+    end
 end
 
 --- Invalidate cached gap-closer spell list (spec change, profile change)
@@ -263,13 +281,28 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
         end
     end
 
+    -- Post-fire debounce: a gap closer just landed a cast; while it travels, offer
+    -- nothing from the whole category (the fired spell itself is on CD, but the
+    -- NEXT list entry would otherwise fill the slot mid-flight).
+    local now = GetTime()
+    if (now - lastFiredTime) < GAP_CLOSER_FIRED_DEBOUNCE then return nil end
+
     -- Melee detection via the shared range-reference system (SpellDB.IsTargetWithin), so the
     -- gap closer and ContextRank use ONE melee check - all melee specs covered bar-free
     -- (5yd probes in Data/RangeReferences.lua). IsTargetWithin polls every melee ability the
     -- player actually knows, so no per-spec reference or user override is needed.
     -- nil (no probe known / can't tell) → false → not out of melee (fail-safe).
-    local now = GetTime()
     local outOfRange = (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false) or false
+
+    -- Near-band suppression (gapClosers.farOnly, default ON via ~= false): proven
+    -- within GAP_CLOSER_NEAR_YARDS means the gap isn't worth a cooldown - treat it
+    -- like melee range (same hide-debounce smoothing). Only a positive proof
+    -- suppresses; nil (out of probe coverage) falls through and the offer stands,
+    -- so this can only ever REMOVE wasted offers, never valid ones.
+    if outOfRange and gc.farOnly ~= false
+        and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(GAP_CLOSER_NEAR_YARDS) == true then
+        outOfRange = false
+    end
 
     if outOfRange then
         -- Maintain the hide-debounce timestamp from the poll itself, so the bar-free
@@ -310,28 +343,30 @@ end
 --- active talent overrides.  This ensures that even if a user removes a spell
 --- from their personal list, Blizzard suggesting it at position 1 still suppresses
 --- our gap-closer injection at position 2.
+-- Scan a spell list for a match (base ID or talent override). Module-level:
+-- defining it inside IsGapCloserSpell allocated a closure per call, and SpellQueue
+-- calls that up to twice per build.
+local function ListContains(list, spellID)
+    if not list then return false end
+    for _, gcSpellID in ipairs(list) do
+        if gcSpellID == spellID then return true end
+        if BlizzardAPI.ResolveSpellID(gcSpellID) == spellID then return true end
+    end
+    return false
+end
+
 function GapCloserEngine.IsGapCloserSpell(addon, spellID)
     if not spellID or spellID == 0 then return false end
-
-    -- Helper: scan a spell list for a match (base ID or talent override)
-    local function ListContains(list)
-        if not list then return false end
-        for _, gcSpellID in ipairs(list) do
-            if gcSpellID == spellID then return true end
-            if BlizzardAPI.ResolveSpellID(gcSpellID) == spellID then return true end
-        end
-        return false
-    end
 
     -- Check user-configured list
     if addon then
         local userList = ResolveGapCloserSpells(addon)
-        if ListContains(userList) then return true end
+        if ListContains(userList, spellID) then return true end
     end
 
     -- Check SpellDB defaults (catches spells the user removed from their list)
     local defaults = SpellDB and SpellDB.GetGapCloserDefaults and SpellDB.GetGapCloserDefaults()
-    if defaults and ListContains(defaults) then return true end
+    if defaults and ListContains(defaults, spellID) then return true end
 
     return false
 end
@@ -353,7 +388,7 @@ function GapCloserEngine.RestoreGapCloserDefaults(addon)
     local profile = addon:GetProfile()
     if not profile or not profile.gapClosers then return end
 
-    local specKey = GapCloserEngine.GetGapCloserSpecKey()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return end
 
     if not profile.gapClosers.classSpells then

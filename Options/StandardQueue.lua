@@ -42,21 +42,105 @@ local function defEnabledDisabled(addon)
     return defensiveDisabled(addon) or not addon.db.profile.defensives.enabled
 end
 
+-- Key→label maps for the state-dependent dropdowns below. Locale strings are
+-- static and loaded before this file.
+local ORIENTATION_LABELS = {
+    LEFT        = L["Left"],
+    RIGHT       = L["Right"],
+    UP          = L["Up"],
+    DOWN        = L["Down"],
+    UP_LEFT     = L["Up, Sidebar Left"],
+    UP_RIGHT    = L["Up, Sidebar Right"],
+    DOWN_LEFT   = L["Down, Sidebar Left"],
+    DOWN_RIGHT  = L["Down, Sidebar Right"],
+    LEFT_ABOVE  = L["Left, Sidebar Above"],
+    LEFT_BELOW  = L["Left, Sidebar Below"],
+    RIGHT_ABOVE = L["Right, Sidebar Above"],
+    RIGHT_BELOW = L["Right, Sidebar Below"],
+}
+local ANCHOR_LABELS = {
+    DISABLED = L["Attach Screen"],
+    LEFT     = L["Left"],
+    RIGHT    = L["Right"],
+    TOP      = L["Top"],
+    BOTTOM   = L["Bottom"],
+}
+
+-- Valid queueOrientation keys for the current detached/anchor state; shared by
+-- the dropdown's values() and sorting().
+local function orientationKeys(addon)
+    local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
+    if detached then
+        return { "LEFT", "RIGHT", "UP", "DOWN" }
+    end
+    local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
+    if anchor == "LEFT" then
+        return { "UP_LEFT", "DOWN_LEFT" }
+    elseif anchor == "RIGHT" then
+        return { "UP_RIGHT", "DOWN_RIGHT" }
+    elseif anchor == "TOP" then
+        return { "LEFT_ABOVE", "RIGHT_ABOVE" }
+    elseif anchor == "BOTTOM" then
+        return { "LEFT_BELOW", "RIGHT_BELOW" }
+    end
+    return { "LEFT_ABOVE", "LEFT_BELOW", "RIGHT_ABOVE", "RIGHT_BELOW", "UP_LEFT", "UP_RIGHT", "DOWN_LEFT", "DOWN_RIGHT" }
+end
+
+-- Valid targetFrameAnchor keys: the side the target frame's buffs occupy is
+-- unavailable; both vertical sides are offered when the frame is not yet loaded.
+local function anchorKeys()
+    local keys = { "DISABLED" }
+    local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
+    if buffsOnTop == true then
+        keys[#keys + 1] = "BOTTOM"
+    elseif buffsOnTop == false then
+        keys[#keys + 1] = "TOP"
+    else
+        keys[#keys + 1] = "TOP"
+        keys[#keys + 1] = "BOTTOM"
+    end
+    keys[#keys + 1] = "LEFT"
+    keys[#keys + 1] = "RIGHT"
+    return keys
+end
+
+local function valuesFromKeys(keys, labels)
+    local vals = {}
+    for _, k in ipairs(keys) do vals[k] = labels[k] end
+    return vals
+end
+
 function StandardQueue.CreateTabArgs(addon)
+    -- Click-through mode nullifies hover/click features; shared by the Tooltips
+    -- and Click to Cast gates below.
+    local function clickthroughDisabled()
+        return panelDisabled(addon)
+            or (addon.db.profile.panelInteraction or "unlocked") == "clickthrough"
+    end
+    -- One flat panel (a sub-tab of the Display tab): the former sub-tabs are
+    -- inline sections, so their controls keep local orders and arg keys.
     local tab = {
         type = "group",
         name = L["Standard Queue"],
-        order = 2,
-        childGroups = "tab",
+        order = 1,
         args = {
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 1: GENERAL
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 1: LAYOUT / VISIBILITY / APPEARANCE ─────────────────
             layout = {
                 type = "group",
-                name = L["General"],
+                inline = true,
+                name = "",
                 order = 1,
                 args = {
+                    -- Deliberately NOT gated on panelDisabled: this is the way back on.
+                    enableStandard = {
+                        type = "toggle",
+                        name = L["Enable Standard Queue"],
+                        desc = L["Enable Standard Queue desc"],
+                        order = 0.1,
+                        width = "full",
+                        get = function() return W.SurfaceEnabled(addon, "queue") end,
+                        set = function(_, v) W.SetSurfaceEnabled(addon, "queue", v) end,
+                    },
                     -- VISIBILITY (1-9)
                     visibilityHeader = {
                         type = "header",
@@ -107,66 +191,10 @@ function StandardQueue.CreateTabArgs(addon)
                         order = 13,
                         width = "normal",
                         values = function()
-                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
-                            if detached then
-                                return {
-                                    LEFT  = L["Left"],
-                                    RIGHT = L["Right"],
-                                    UP    = L["Up"],
-                                    DOWN  = L["Down"],
-                                }
-                            end
-                            local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
-                            if anchor == "LEFT" then
-                                return {
-                                    UP_LEFT   = L["Up, Sidebar Left"],
-                                    DOWN_LEFT = L["Down, Sidebar Left"],
-                                }
-                            elseif anchor == "RIGHT" then
-                                return {
-                                    UP_RIGHT   = L["Up, Sidebar Right"],
-                                    DOWN_RIGHT = L["Down, Sidebar Right"],
-                                }
-                            elseif anchor == "TOP" then
-                                return {
-                                    LEFT_ABOVE  = L["Left, Sidebar Above"],
-                                    RIGHT_ABOVE = L["Right, Sidebar Above"],
-                                }
-                            elseif anchor == "BOTTOM" then
-                                return {
-                                    LEFT_BELOW  = L["Left, Sidebar Below"],
-                                    RIGHT_BELOW = L["Right, Sidebar Below"],
-                                }
-                            else
-                                return {
-                                    LEFT_ABOVE   = L["Left, Sidebar Above"],
-                                    LEFT_BELOW   = L["Left, Sidebar Below"],
-                                    RIGHT_ABOVE  = L["Right, Sidebar Above"],
-                                    RIGHT_BELOW  = L["Right, Sidebar Below"],
-                                    UP_LEFT      = L["Up, Sidebar Left"],
-                                    UP_RIGHT     = L["Up, Sidebar Right"],
-                                    DOWN_LEFT    = L["Down, Sidebar Left"],
-                                    DOWN_RIGHT   = L["Down, Sidebar Right"],
-                                }
-                            end
+                            return valuesFromKeys(orientationKeys(addon), ORIENTATION_LABELS)
                         end,
                         sorting = function()
-                            local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
-                            if detached then
-                                return { "LEFT", "RIGHT", "UP", "DOWN" }
-                            end
-                            local anchor = addon.db.profile.targetFrameAnchor or "DISABLED"
-                            if anchor == "LEFT" then
-                                return { "UP_LEFT", "DOWN_LEFT" }
-                            elseif anchor == "RIGHT" then
-                                return { "UP_RIGHT", "DOWN_RIGHT" }
-                            elseif anchor == "TOP" then
-                                return { "LEFT_ABOVE", "RIGHT_ABOVE" }
-                            elseif anchor == "BOTTOM" then
-                                return { "LEFT_BELOW", "RIGHT_BELOW" }
-                            else
-                                return { "LEFT_ABOVE", "LEFT_BELOW", "RIGHT_ABOVE", "RIGHT_BELOW", "UP_LEFT", "UP_RIGHT", "DOWN_LEFT", "DOWN_RIGHT" }
-                            end
+                            return orientationKeys(addon)
                         end,
                         get = function()
                             local detached = addon.db.profile.defensives and addon.db.profile.defensives.detached
@@ -203,6 +231,8 @@ function StandardQueue.CreateTabArgs(addon)
                             return InCombatLockdown() and (addon.db.profile.targetFrameAnchor or "DISABLED") ~= "DISABLED"
                         end,
                     },
+                    -- The primary placement question, so it comes before Queue Layout
+                    -- (whose choices it constrains).
                     targetFrameAnchor = {
                         type = "select",
                         name = L["Target Frame Anchor"],
@@ -212,36 +242,12 @@ function StandardQueue.CreateTabArgs(addon)
                             end
                             return L["Target Frame Anchor desc"]
                         end,
-                        order = 14,
+                        order = 12.5,
                         width = "normal",
                         values = function()
-                            local vals = { DISABLED = L["Disabled"], LEFT = L["Left"], RIGHT = L["Right"] }
-                            local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
-                            if buffsOnTop == true then
-                                vals.BOTTOM = L["Bottom"]
-                            elseif buffsOnTop == false then
-                                vals.TOP = L["Top"]
-                            else
-                                vals.TOP = L["Top"]
-                                vals.BOTTOM = L["Bottom"]
-                            end
-                            return vals
+                            return valuesFromKeys(anchorKeys(), ANCHOR_LABELS)
                         end,
-                        sorting = function()
-                            local keys = { "DISABLED" }
-                            local buffsOnTop = TargetFrame and TargetFrame.buffsOnTop
-                            if buffsOnTop == true then
-                                keys[#keys + 1] = "BOTTOM"
-                            elseif buffsOnTop == false then
-                                keys[#keys + 1] = "TOP"
-                            else
-                                keys[#keys + 1] = "TOP"
-                                keys[#keys + 1] = "BOTTOM"
-                            end
-                            keys[#keys + 1] = "LEFT"
-                            keys[#keys + 1] = "RIGHT"
-                            return keys
-                        end,
+                        sorting = anchorKeys,
                         get = function() return addon.db.profile.targetFrameAnchor or "DISABLED" end,
                         set = function(_, val)
                             addon.db.profile.targetFrameAnchor = val
@@ -297,7 +303,8 @@ function StandardQueue.CreateTabArgs(addon)
                             always      = L["Always"],
                         },
                         sorting = {"never", "outOfCombat", "always"},
-                        disabled = panelDisabled,
+                        -- Tooltips ride OnEnter, which a click-through frame never receives.
+                        disabled = clickthroughDisabled,
                     }),
                     -- Legacy panelLocked bool is migrated to panelInteraction once at
                     -- load by MigrateLegacySettings.
@@ -316,15 +323,15 @@ function StandardQueue.CreateTabArgs(addon)
                         name = L["Click to Cast"], desc = L["Click to Cast desc"],
                         order = 24, width = "full", default = true,
                         onSet = function() addon:ForceUpdate() end,
-                        disabled = panelDisabled,
+                        -- The click layer is explicitly skipped on click-through frames.
+                        disabled = clickthroughDisabled,
                     }),
                 },
             },
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 2: OFFENSIVE DISPLAY
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 2: DPS ICONS ────────────────────────────────────────
             offensiveDisplay = {
                 type = "group",
+                inline = true,
                 name = L["Offensive Display"],
                 order = 2,
                 args = {
@@ -340,14 +347,8 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize() end,
                         disabled = panelDisabled,
                     }),
-                    glowMode = W.select(addon, "glowMode", {
-                        name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
-                        order = 3, width = "normal", default = "all",
-                        values = W.GLOW_VALUES,
-                        sorting = W.GLOW_SORTING,
-                        onSet = function() addon:ForceUpdate() end,
-                        disabled = panelDisabled,
-                    }),
+                    -- (Highlight Mode lives on General -> Shared Behavior now; the main
+                    -- queue's glow IS the shared setting.)
                     queueDesaturation = W.range(addon, "queueIconDesaturation", {
                         name = L["Queue Icon Fade"], desc = L["Queue Icon Fade desc"],
                         min = 0, max = 1.0, step = 0.05, order = 4, width = "normal", default = 0,
@@ -356,11 +357,10 @@ function StandardQueue.CreateTabArgs(addon)
                     }),
                 },
             },
-            -- ═══════════════════════════════════════════════════════════════
-            -- SUB-TAB 3: DEFENSIVE DISPLAY
-            -- ═══════════════════════════════════════════════════════════════
+            -- ── SECTION 3: DEFENSIVE ICONS ──────────────────────────────────
             defensiveDisplay = {
                 type = "group",
+                inline = true,
                 name = L["Defensive Display"],
                 order = 3,
                 args = {
@@ -406,10 +406,10 @@ function StandardQueue.CreateTabArgs(addon)
                         disabled = defEnabledDisabled,
                     }),
                     glowMode = W.select(addon, "defensives.glowMode", {
-                        name = L["Highlight Mode"], desc = L["Highlight Mode desc"],
-                        order = 5, width = "normal", default = "all",
-                        values = W.GLOW_VALUES,
-                        sorting = W.GLOW_SORTING,
+                        name = L["Highlight Mode"], desc = L["Highlight Mode Shared desc"],
+                        order = 5, width = "normal", default = "shared",
+                        values = W.GLOW_VALUES_SHARED,
+                        sorting = W.GLOW_SORTING_SHARED,
                         onSet = function() addon:ForceUpdateAll() end,
                         disabled = defEnabledDisabled,
                     }),
@@ -504,7 +504,8 @@ function StandardQueue.CreateTabArgs(addon)
 
         },
     }
-    tab.args.layout.args.resetHeader, tab.args.layout.args.resetDefaults =
+    -- One reset for the whole surface panel (the former per-sub-tab resets merged).
+    tab.args.resetHeader, tab.args.resetDefaults =
         W.resetButton(990, L["Reset General desc"], function()
             local p = addon.db.profile
             -- Values come from the real defaults table, never re-typed here: a second
@@ -519,52 +520,34 @@ function StandardQueue.CreateTabArgs(addon)
             p.iconSpacing         = D.iconSpacing
             p.queueOrientation    = D.queueOrientation
             p.targetFrameAnchor   = D.targetFrameAnchor
-            p.defensives.position = D.defensives.position
             p.frameOpacity        = D.frameOpacity
             p.tooltipMode         = D.tooltipMode
             p.panelInteraction    = D.panelInteraction
             p.clickToCastOOC      = D.clickToCastOOC
+            p.maxIcons              = D.maxIcons
+            p.firstIconScale        = D.firstIconScale
+            p.queueIconDesaturation = D.queueIconDesaturation
             -- Clear legacy migration keys
             p.panelLocked      = nil
             p.showTooltips     = nil
             p.tooltipsInCombat = nil
-            addon:UpdateFrameSize()
-            addon:ForceUpdate()
-            W.NotifyChange()
-        end)
-    tab.args.offensiveDisplay.args.resetHeader, tab.args.offensiveDisplay.args.resetDefaults =
-        W.resetButton(990, L["Reset Offensive Display desc"], function()
-            local p = addon.db.profile
-            local D = addon.db.defaults.profile
-            p.maxIcons              = D.maxIcons
-            p.firstIconScale        = D.firstIconScale
-            p.glowMode              = D.glowMode
-            p.queueIconDesaturation = D.queueIconDesaturation
-            addon:UpdateFrameSize()
-            addon:ForceUpdate()
-            W.NotifyChange()
-        end)
-    tab.args.defensiveDisplay.args.resetHeader, tab.args.defensiveDisplay.args.resetDefaults =
-        W.resetButton(990, L["Reset Defensive Display desc"], function()
-            local def = addon.db.profile.defensives
-            local D = addon.db.defaults.profile.defensives
-            def.enabled          = D.enabled
-            def.displayMode      = D.displayMode
-            def.maxIcons         = D.maxIcons
-            def.iconScale        = D.iconScale
-            def.glowMode         = D.glowMode
-            def.hideEmergencyUntilLow = D.hideEmergencyUntilLow
-            def.showHealthBar    = D.showHealthBar
-            def.showPetHealthBar = D.showPetHealthBar
-            def.showTargetHealthBar = D.showTargetHealthBar
-            def.showPowerBar     = D.showPowerBar
-            -- Moved here from the General tab
-            def.showProcs        = D.showProcs
-            def.detached         = D.detached
-            def.detachedOrientation = D.detachedOrientation
+            local def = p.defensives
+            local DD = D.defensives
+            def.position         = DD.position
+            def.enabled          = DD.enabled
+            def.displayMode      = DD.displayMode
+            def.maxIcons         = DD.maxIcons
+            def.iconScale        = DD.iconScale
+            def.glowMode         = DD.glowMode
+            def.showHealthBar    = DD.showHealthBar
+            def.showPetHealthBar = DD.showPetHealthBar
+            def.showTargetHealthBar = DD.showTargetHealthBar
+            def.showPowerBar     = DD.showPowerBar
+            def.detached         = DD.detached
+            def.detachedOrientation = DD.detachedOrientation
             -- Fresh table: assigning the defaults one would alias it into the profile.
-            def.detachedPosition = { point = D.detachedPosition.point,
-                                     x = D.detachedPosition.x, y = D.detachedPosition.y }
+            def.detachedPosition = { point = DD.detachedPosition.point,
+                                     x = DD.detachedPosition.x, y = DD.detachedPosition.y }
             -- Clear legacy migration keys
             def.showOnlyInCombat    = nil
             def.alwaysShowDefensive = nil

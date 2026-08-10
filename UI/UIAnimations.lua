@@ -12,17 +12,12 @@ local UnitChannelDuration = UnitChannelDuration
 -- Flash animation constants
 local FLASH_DURATION = 0.2
 
--- Sentinel value: indicates no previous OnUpdate handler existed before flash
--- Must be a unique truthy value so the guard check works correctly
-local FLASH_NO_PREV_HANDLER = {}
-
 -- Forward declarations
 local StopAssistedGlow
 local StopDefensiveGlow
 local StopGapCloserGlow
 local StopBurstGlow
 local StopPrecombatGlow
-local UpdateFlash
 
 -- Create marching ants glow to show active abilities (Blizzard's rotation helper style)
 local function CreateMarchingAntsFrame(parent, frameKey)
@@ -412,59 +407,20 @@ end
 local function StartFlash(button)
     if not button.Flash then return end
 
-    button.flashing = 1
-    button.flashtime = FLASH_DURATION
+    -- Token so a queued hide from an earlier flash can't cut a newer one short
+    local token = (button.flashToken or 0) + 1
+    button.flashToken = token
 
     button.Flash:SetDrawLayer("OVERLAY", 2)
     button.Flash:SetAlpha(1.0)
     button.Flash:Show()
 
-    if not button._prevFlashOnUpdate then
-        local prev = button:GetScript("OnUpdate")
-        if prev then
-            local function wrapper(self, elapsed)
-                UpdateFlash(self, elapsed)
-                prev(self, elapsed)
-            end
-            button._prevFlashOnUpdate = prev
-            button:SetScript("OnUpdate", wrapper)
-        else
-            local function runner(self, elapsed)
-                UpdateFlash(self, elapsed)
-            end
-            button._prevFlashOnUpdate = FLASH_NO_PREV_HANDLER
-            button:SetScript("OnUpdate", runner)
+    C_Timer.After(FLASH_DURATION, function()
+        if button.flashToken == token and button.Flash then
+            button.Flash:SetAlpha(0)
+            button.Flash:Hide()
         end
-    end
-end
-
-local function StopFlash(button)
-    if not button then return end
-    button.flashing = 0
-    button.flashtime = 0
-    if button.Flash then
-        button.Flash:SetAlpha(0)
-        button.Flash:Hide()
-    end
-    if button._prevFlashOnUpdate then
-        if button._prevFlashOnUpdate == FLASH_NO_PREV_HANDLER then
-            button:SetScript("OnUpdate", nil)
-        else
-            button:SetScript("OnUpdate", button._prevFlashOnUpdate)
-        end
-        button._prevFlashOnUpdate = nil
-    end
-end
-
-UpdateFlash = function(button, elapsed)
-    if not button or button.flashing ~= 1 or not button.Flash then return end
-
-    button.flashtime = button.flashtime - elapsed
-
-    if button.flashtime <= 0 then
-        StopFlash(button)
-        return
-    end
+    end)
 end
 
 local function PauseIconGlows(icon)
@@ -767,16 +723,18 @@ local function ShowInterruptCastBar(icon)
     if not icon or not HAS_CAST_TIMER then return end
     local bar = icon.InterruptCastBar or CreateInterruptCastBar(icon)
 
+    -- Arm once per cast; only latch on a successful drive so a transient nil
+    -- duration retries next frame instead of leaving the bar blank.
+    if icon._castBarArmed and bar:IsShown() then return end
+
     -- Size to the current icon (icons scale with firstIconScale); zone = final quarter.
+    -- Behind the armed check: the values only depend on icon size, so re-writing
+    -- them per pass while the bar was already driving was pure widget churn.
     local size = icon.cachedIconSize or icon:GetWidth() or 0
     if size > 0 then
         bar:SetHeight(math.max(4, size * 0.18))
         bar.KickZone:SetWidth(math.max(1, (size - 2) * INTERRUPT_KICKZONE_FRAC))
     end
-
-    -- Arm once per cast; only latch on a successful drive so a transient nil
-    -- duration retries next frame instead of leaving the bar blank.
-    if icon._castBarArmed and bar:IsShown() then return end
 
     local durObj, isChannel
     local ok, d = pcall(UnitCastingDuration, "target")

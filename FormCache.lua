@@ -20,48 +20,6 @@ local cachedFormData = {
     lastFullScan = 0,
 }
 
-local function GetModernSpellTabInfo(tabIndex)
-    if C_SpellBook and C_SpellBook.GetSpellBookSkillLineInfo then
-        local skillLineInfo = C_SpellBook.GetSpellBookSkillLineInfo(tabIndex)
-        if skillLineInfo then
-            return skillLineInfo.name, skillLineInfo.iconID, skillLineInfo.itemIndexOffset, skillLineInfo.numSpellBookItems
-        end
-    elseif GetSpellTabInfo then
-        return GetSpellTabInfo(tabIndex)
-    end
-    return nil
-end
-
-local function GetModernNumSpellTabs()
-    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
-        return C_SpellBook.GetNumSpellBookSkillLines()
-    elseif GetNumSpellTabs then
-        return GetNumSpellTabs()
-    end
-    return 0
-end
-
-local function GetModernSpellBookItemInfo(spellIndex)
-    if C_SpellBook and C_SpellBook.GetSpellBookItemType and Enum and Enum.SpellBookSpellBank then
-        local itemType, actionID, spellID = C_SpellBook.GetSpellBookItemType(spellIndex, Enum.SpellBookSpellBank.Player)
-        local typeString = nil
-        if itemType == Enum.SpellBookItemType.Spell then
-            typeString = "SPELL"
-        elseif itemType == Enum.SpellBookItemType.Flyout then
-            typeString = "FLYOUT"
-        elseif itemType == Enum.SpellBookItemType.FutureSpell then
-            typeString = "FUTURESPELL"
-        elseif itemType == Enum.SpellBookItemType.PetAction then
-            typeString = "PETACTION"
-        end
-        return typeString, spellID or actionID
-    elseif GetSpellBookItemInfo then
-        return GetSpellBookItemInfo(spellIndex, BOOKTYPE_SPELL)
-    end
-    return nil, nil
-end
-
-
 local function ScanSpellbookForFormSpells()
     local formSpells = {}
 
@@ -77,18 +35,19 @@ local function ScanSpellbookForFormSpells()
 
     if not next(formSpellSet) then return formSpells end
 
-    local numTabs = GetModernNumSpellTabs()
+    local numTabs = C_SpellBook.GetNumSpellBookSkillLines()
     for tabIndex = 1, numTabs do
-        local name, _, offset, numSpells = GetModernSpellTabInfo(tabIndex)
+        local skillLine = C_SpellBook.GetSpellBookSkillLineInfo(tabIndex)
 
-        if name and offset and numSpells then
-            for spellIndex = offset + 1, offset + numSpells do
-                local spellType, spellID = GetModernSpellBookItemInfo(spellIndex)
+        if skillLine and skillLine.itemIndexOffset and skillLine.numSpellBookItems then
+            for spellIndex = skillLine.itemIndexOffset + 1, skillLine.itemIndexOffset + skillLine.numSpellBookItems do
+                local itemType, actionID, spellID = C_SpellBook.GetSpellBookItemType(spellIndex, Enum.SpellBookSpellBank.Player)
+                local id = (itemType == Enum.SpellBookItemType.Spell) and (spellID or actionID) or nil
 
-                if (spellType == "SPELL" or spellType == 1) and spellID and formSpellSet[spellID] then
-                    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
+                if id and formSpellSet[id] then
+                    local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(id)
                     if spellInfo and spellInfo.name then
-                        formSpells[spellID] = spellInfo.name
+                        formSpells[id] = spellInfo.name
                     end
                 end
             end
@@ -155,54 +114,26 @@ local function UpdateFormCache()
     
     local stanceIndex = FindActiveStanceIndex(numForms)
     
+    -- Caster/no-form has no spell, so the name stays "" - the only consumers compare
+    -- form names against spell names, which "" can never match.
     local formName = ""
     if stanceIndex > 0 and stanceIndex <= numForms then
         local icon, active, castable, spellID = BlizzardAPI.GetShapeshiftFormInfo(stanceIndex)
-        if spellID then
-            local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
-            if spellInfo and spellInfo.name then
-                formName = spellInfo.name
-            end
-        end
-        
-        if formName == "" then
-            formName = "Form " .. stanceIndex
-        end
-    else
-        local playerClass = select(2, UnitClass("player")) or "UNKNOWN"
-        if playerClass == "DRUID" then
-            formName = "Caster Form"
-        elseif playerClass == "WARRIOR" then
-            formName = "Normal Stance"
-        elseif playerClass == "DEATHKNIGHT" then
-            formName = "Normal Presence"
-        else
-            formName = "Normal Form"
+        local spellInfo = spellID and BlizzardAPI.GetSpellInfo(spellID)
+        if spellInfo and spellInfo.name then
+            formName = spellInfo.name
         end
     end
-    
+
+    -- Only name/spellID are consumed (GetFormIDBySpellID match loops)
     local availableForms = {}
-    
-    availableForms[0] = {
-        id = 0,
-        name = formName,
-        available = true,
-        current = (stanceIndex == 0),
-        spellID = nil
-    }
-    
     for i = 1, numForms do
         local icon, active, castable, spellID = BlizzardAPI.GetShapeshiftFormInfo(i)
         if icon and spellID then
             local spellInfo = BlizzardAPI and BlizzardAPI.GetSpellInfo(spellID)
-            local name = spellInfo and spellInfo.name or ("Form " .. i)
-            
             availableForms[i] = {
-                id = i,
-                name = name,
-                icon = icon,
-                current = (stanceIndex == i),
-                spellID = spellID
+                name = spellInfo and spellInfo.name,
+                spellID = spellID,
             }
         end
     end

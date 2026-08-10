@@ -4,7 +4,7 @@
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
 
-local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker
+local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker, MaintenanceTracker, CastInterruptTracker
 
 -- Hot path cache for OnUpdateTick (upvalued at file scope so all methods share them)
 local UnitAffectingCombat = UnitAffectingCombat
@@ -16,6 +16,9 @@ local math_max = math.max
 -- file can set the flags; the OnUpdateTick closure reads the same upvalues).
 local spellQueueDirty = true
 local defensiveQueueDirty = true
+-- Shared read-only empty queue for suppressed states (vehicle/possess) - renderers
+-- only iterate their input, so one constant replaces two fresh tables per tick.
+local EMPTY_QUEUE = {}
 local lastFullUpdate = 0
 local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
 local OOC_DIRTY_UPDATE_INTERVAL = 0.15   -- OOC dirty queue cadence (~6.7Hz)
@@ -50,21 +53,18 @@ local defaults = {
         debugMode = false,
         isManualMode = false,
         tooltipMode = "always",       -- "never", "outOfCombat", or "always"
-        glowMode = "all",                 -- "all", "primaryOnly", "procOnly", "none"
+        glowMode = "all",                 -- Shared highlight mode: "all", "primaryOnly", "procOnly", "none".
+                                          -- Per-surface glow keys default "shared" = follow this one.
         showFlash = true,                 -- Flash icon on matching key press
-        showUsabilityTint = true,         -- Tint icons by usability state (blue=no resources, gray=unavailable)
-        showRangeTint = true,             -- Red tint icons when target is out of range
+        showUsabilityTint = true,         -- Tint icons by state (blue=no resources, gray=unavailable, red=out of range)
         showImportantCastCue = false,     -- Warn when a nearby mob casts an engine-flagged "important" spell
         showCastingHighlight = true,      -- White border on icon while its spell is actively being cast
-        greyOutWhileCasting = true,           -- Grey out icons while the player is casting a spell
-        greyOutWhileChanneling = true,        -- Grey out icons while the player is channeling a spell
+        greyOutWhileCasting = true,       -- Grey out icons while the player is casting or channeling a spell
         firstIconScale = 1.0,
         queueIconDesaturation = 0,
         frameOpacity = 1.0,            -- Global opacity for entire frame (0.0-1.0)
-        hideQueueOutOfCombat = false,  -- Legacy: superseded by queueVisibility (kept for migration detection)
         hideQueueWhenMounted = false,  -- Hide the queue while mounted
         displayMode = "queue",         -- "disabled" / "queue" / "overlay" / "both"
-        requireHostileTarget = false,  -- Legacy: superseded by queueVisibility (kept for migration detection)
         queueVisibility = "always",    -- "always", "combatOnly", or "requireHostile"
         hideItemAbilities = false,     -- Hide equipped item abilities (trinkets, tinkers)
         panelInteraction = "unlocked",    -- "unlocked", "locked", "clickthrough"
@@ -72,17 +72,38 @@ local defaults = {
         queueOrientation = "LEFT",        -- Queue growth direction: LEFT, RIGHT, UP, DOWN
         targetFrameAnchor = "DISABLED",     -- Anchor to target frame: DISABLED, TOP, BOTTOM, LEFT, RIGHT
         showSpellbookProcs = true,        -- Show procced spells from spellbook (not just rotation list)
-        -- Master queue-ordering toggles: apply to positions 2+ of both the custom list and
-        -- Blizzard's default rotation. All on = smart order; all off = exact source order.
+        -- Queue-ordering settings: apply to positions 2+ of both the custom list and
+        -- Blizzard's default rotation. All smart ordering off = exact source order.
         orderProcsFirst = true,           -- Surface procced abilities ahead of source order
-        orderContextAware = true,         -- Bias by situation (AoE/ST, melee range) ahead of source order
+        contextOrder = "simc",            -- "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft priority; falls back to "ac" without spec data)
         orderSinkCooldowns = true,        -- Push on-cooldown abilities to the end of the queue
         includeHiddenAbilities = true,    -- Include abilities hidden behind macro conditionals
         blacklistedSpells = {},            -- Per-spec spell blacklist: blacklistedSpells["WARRIOR_1"] = {[spellID] = true}
         hotkeyOverrides = {},             -- Profile-level hotkey display overrides (included in profile copy)
         interruptMode = "kickPrefer",      -- Interrupt reminder mode: "disabled", "kickOnly", "kickPrefer", "ccPrefer"
         showSootheCue = true,              -- Enrage-cleanse cue on the interrupt icon (soothe classes only)
+        includeFears = false,              -- Offer fear-type CC as interrupt substitutes (breaks on damage, scatters packs)
         interruptAlertSound = "None",       -- Alert sound (LSM key); "None" = disabled
+        burstCueGlow = true,               -- Purple glow on the spec's major cooldown when a burst window is called for
+        casterFiller = {},                 -- [specKey]=true: suppress melee-weave suggestions for this healer spec
+        -- Cue dots on queue icons. showMoveCastDot is deliberately NOT declared here:
+        -- nil means "per-spec auto" (ranged/healer on, melee off) - see MoveCastDotEnabled.
+        -- Off by default: the arrow keys off AC re-recommending an active DoT, and not
+        -- every spec's rotation re-recommends on those terms - unreliable spec-dependent.
+        showDotSpreadArrow = false,        -- Switch-target arrow on the AC slot when its DoT is already up
+        showOffGcdDot = false,             -- Amber dot marking off-GCD (weave-in) abilities
+        -- Tank maintenance slot + crowd-control escape (defensive "position 0")
+        showMaintenanceSlot = true,        -- Tank mitigation-upkeep slot (tank specs, combat only)
+        showCCBreak = false,               -- Experimental: Sustain slot becomes your CC-escape while held by CC
+        ccBreakMacro = "",                 -- Macro name to suggest for form-escapable CC ("" = none)
+        showPetHealCue = true,             -- Pet-heal reminder in the Sustain slot (pet classes)
+        petHealThreshold = 50,             -- Pet health % that arms the pet-heal cue (10-90)
+        -- Blizzard Cooldown Manager integration (opt-in)
+        cooldownManagerEnable = false,     -- Let JustAC manage Cooldown Manager viewer visibility
+        hideCdmEssential = false,          -- Hide the Essential Cooldowns viewer
+        hideCdmUtility = false,            -- Hide the Utility Cooldowns viewer
+        hideCdmTrackedBuff = false,        -- Hide the Tracked Buffs viewer
+        hideCdmTrackedBar = false,         -- Hide the Tracked Bars viewer
         -- Text overlay settings: apply universally to all icons (main queue, defensive, nameplate, interrupt)
         textOverlays = {
             hotkey = {
@@ -106,21 +127,21 @@ local defaults = {
         },
         -- Nameplate Overlay feature (independent queue cluster on target nameplate)
         nameplateOverlay = {
-            maxIcons          = 3,       -- 1-5 DPS queue slots
+            maxIcons          = 3,       -- 1-7 DPS queue slots
             reverseAnchor     = false,   -- false = RIGHT (default), true = LEFT
             expansion         = "down",   -- "out" (horizontal), "up" (vertical up), "down" (vertical down)
             iconSize          = 32,
             iconSpacing       = 2,   -- px between successive icons in the cluster
             opacity           = 1.0, -- icon opacity (0.1–1.0)
-            glowMode          = "all",
+            glowMode          = "shared",
             firstIconScale    = 1.0,
             queueIconDesaturation = 0,
             queueVisibility   = "always", -- "always", "combatOnly", or "requireHostile"
             hideWhenMounted   = false,
             showDefensives       = true,
-            maxDefensiveIcons    = 3,    -- 1-5
+            maxDefensiveIcons    = 3,    -- 1-7
             defensiveDisplayMode = "always", -- "healthBased", "combatOnly", "always"
-            defensiveGlowMode    = "all",
+            defensiveGlowMode    = "shared",
             defensiveIconScale   = 1.0,
             showHealthBar        = true,
             showPetHealthBar     = true,
@@ -136,7 +157,7 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
-            position = "SIDE1",       -- SIDE1 (health bar side), SIDE2, or LEADING (opposite grab tab)
+            position = "SIDE1",       -- SIDE1 (health bar side) or SIDE2 (legacy saved "LEADING" reads as SIDE1)
             showHealthBar = true,    -- Display compact health bar above main queue
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
             showTargetHealthBar = true, -- Display compact target health bar opposite the player/pet bars (hostile targets only)
@@ -150,10 +171,10 @@ local defaults = {
             -- Hold back panic buttons (bubbles / big instant heals / potions) above the
             -- low-health threshold. ON by default: at 80% health a bubble or a Lay on Hands is
             -- never the right press, so listing it live is bad advice. Safe to default on only
-            -- since pre-emptive walls were exempted (SpellDB.IsPreemptiveDefensive) - before
+            -- since pre-emptive walls were exempted (tier 4 in SpellDB.GetDefenseTier) - before
             -- that this also parked Shield Wall and friends, which you press BEFORE the hit.
             hideEmergencyUntilLow = true,
-            glowMode = "all",    -- "all", "primaryOnly", "procOnly", "none"
+            glowMode = "shared", -- "shared" (follow the top-level glowMode), or its own "all"/"primaryOnly"/"procOnly"/"none"
             detached = false,                                    -- Give defensives their own independent draggable frame
             detachedPosition = { point = "CENTER", x = 0, y = 100 }, -- Saved position of the detached defensive frame
             detachedOrientation = "LEFT",                        -- Icon growth direction for detached frame (LEFT/RIGHT/UP/DOWN)
@@ -166,6 +187,7 @@ local defaults = {
             -- wants it, and the below-full signal is a proxy in secret zones (see
             -- PrecombatEngine hurt detection).
             topoffHeal = false,
+            topoffThreshold = 90,   -- Health % below which the top-off nudge shows (emergency band below 35% is fixed)
             -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
             -- Speed is a food preference (stat="speed"), not its own category. XP is a utility
             -- category - default OFF (explicit false, so "on" must be a truthy value to
@@ -174,19 +196,16 @@ local defaults = {
         },
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
-            enabled = false,
+            enabled = true,
             showGlow = true,          -- Glow on gap-closer icons (when enabled)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {100, 6544}
         },
     },
     char = {
         firstRun = true,
-        blacklistedSpells = {},   -- Legacy: migrated to profile on load; kept as schema for migration detection
-        hotkeyOverrides = {},     -- Legacy: migrated to profile on load; kept as schema for migration detection
         specProfilesEnabled = true,   -- Auto-switch profiles by spec (enabled by default)
         specProfiles = {},        -- [specIndex] = "profileName" | "DISABLED" | nil
     },
-    global = {},
 }
 
 function JustAC:DebugPrint(msg)
@@ -273,12 +292,14 @@ local function MigrateBlacklist(profile, charData)
 end
 
 local function MigrateHotkeyOverrides(profile, charData)
-    -- Normalize profile.hotkeyOverrides (SavedVariables serialize numeric keys as strings)
+    -- Normalize profile.hotkeyOverrides (SavedVariables serialize numeric keys as
+    -- strings). Negative IDs are items - they must survive normalization; the old
+    -- `> 0` filter silently dropped every item override on login.
     if profile.hotkeyOverrides then
         local normalized = {}
         for key, value in pairs(profile.hotkeyOverrides) do
             local spellID = tonumber(key)
-            if spellID and spellID > 0 and type(value) == "string" and value ~= "" then
+            if spellID and spellID ~= 0 and type(value) == "string" and value ~= "" then
                 normalized[spellID] = value
             end
         end
@@ -290,7 +311,7 @@ local function MigrateHotkeyOverrides(profile, charData)
         if not profile.hotkeyOverrides then profile.hotkeyOverrides = {} end
         for key, value in pairs(charData.hotkeyOverrides) do
             local spellID = tonumber(key)
-            if spellID and spellID > 0 and type(value) == "string" and value ~= "" and not profile.hotkeyOverrides[spellID] then
+            if spellID and spellID ~= 0 and type(value) == "string" and value ~= "" and not profile.hotkeyOverrides[spellID] then
                 profile.hotkeyOverrides[spellID] = value
             end
         end
@@ -315,12 +336,8 @@ local function MigrateLegacySettings(profile)
             profile.textOverlays.hotkey.show = false
         end
     end
-    -- Nameplate overlay: nameplateOverlay.showHotkey → nameplateOverlay.textOverlays.hotkey.show
-    if npo and npo.textOverlays and npo.textOverlays.hotkey then
-        if npo.showHotkey == false then
-            npo.textOverlays.hotkey.show = false
-        end
-    end
+    -- (Legacy nameplateOverlay.showHotkey is cleared with the other npo legacy keys
+    -- below; overlay label visibility is central now, so there is nothing to carry over.)
     -- Migrate showInterrupt + ccRegularMobs → interruptMode (one-time)
     if profile.showInterrupt ~= nil or profile.ccRegularMobs ~= nil then
         if profile.showInterrupt == false then
@@ -387,15 +404,12 @@ local function MigrateLegacySettings(profile)
     end
     profile.showHealthBar = nil
     profile.showPetHealthBar = nil
-    -- Migrate legacy tooltip settings → tooltipMode (one-time)
-    if profile.tooltipMode == nil then
-        if profile.showTooltips == false then
-            profile.tooltipMode = "never"
-        elseif profile.tooltipsInCombat then
-            profile.tooltipMode = "always"
-        else
-            profile.tooltipMode = "outOfCombat"
-        end
+    -- Migrate legacy tooltip settings → tooltipMode (one-time). "Still at default"
+    -- heuristic: tooltipMode has a profile default, so it never reads nil - only act
+    -- when it is untouched and an explicit legacy opt-out was saved. (Values equal to
+    -- the old defaults never persisted, so showTooltips==false is the only signal.)
+    if profile.tooltipMode == "always" and profile.showTooltips == false then
+        profile.tooltipMode = "never"
     end
     -- Nil legacy keys so they don't persist in saved data after migration
     profile.showTooltips = nil
@@ -465,12 +479,66 @@ local function MigrateDefensiveDisplayMode(profile)
     def.alwaysShowDefensive = nil
 end
 
+-- Per-surface highlight modes now default "shared" (follow the top-level glowMode).
+-- One-time stamped pin: where the shared mode had been changed away from "all" while
+-- a per-surface mode still sat on its old independent default, store that old
+-- effective value so the profile keeps looking exactly as it did. Stamped because
+-- re-running would re-pin values the user has since deliberately set to "shared".
+local function MigrateSharedGlow(profile)
+    if profile.sharedGlowMigrated then return end
+    profile.sharedGlowMigrated = true
+    local shared = profile.glowMode or "all"
+    -- Old effective values under the independent-default scheme: defensives and
+    -- overlay-offensive defaulted "all"; overlay-defensive fell back to
+    -- overlay-offensive, then "all". Pin only where following the shared value
+    -- would change what the player sees.
+    local function pin(tbl, key, oldEffective)
+        if tbl and (tbl[key] == nil or tbl[key] == "shared") and oldEffective ~= shared then
+            tbl[key] = oldEffective
+        end
+    end
+    local npo = profile.nameplateOverlay
+    local npoOld = (npo and npo.glowMode ~= nil and npo.glowMode ~= "shared") and npo.glowMode or "all"
+    pin(profile.defensives, "glowMode", "all")
+    if npo then
+        pin(npo, "defensiveGlowMode", npoOld)
+        pin(npo, "glowMode", "all")
+    end
+end
+
+-- Merge the retired split toggles: channel grey-out folded into the casting toggle,
+-- range tint folded into the usability tint. An explicit false on either half keeps
+-- the merged toggle off (the user disliked the effect; don't force it back on).
+local function MigrateMergedToggles(profile)
+    if profile.greyOutWhileChanneling == false then
+        profile.greyOutWhileCasting = false
+    end
+    profile.greyOutWhileChanneling = nil
+    if profile.showRangeTint == false then
+        profile.showUsabilityTint = false
+    end
+    profile.showRangeTint = nil
+end
+
+-- Migrate the legacy orderContextAware bool → the contextOrder select. Only a saved
+-- false matters (contextOrder still at its "simc" default): the Options set cleared
+-- the bool on every write, so a surviving false means the user turned the old toggle
+-- off and never touched the new dropdown.
+local function MigrateContextOrder(profile)
+    if profile.contextOrder == "simc" and profile.orderContextAware == false then
+        profile.contextOrder = "off"
+    end
+    profile.orderContextAware = nil
+end
+
 -- Migrate legacy nameplateOverlay.showGlow bool → nameplateOverlay.glowMode.
--- "all" is the default; only a saved showGlow=false changes it (to "none").
+-- Only a saved showGlow=false changes an untouched glowMode (to "none"). "Untouched"
+-- means either historical default: "all" (pre-shared saved value) or "shared" (the
+-- current profile default, which is what a never-customized glowMode reads as).
 local function MigrateOverlayGlowMode(profile)
     local npo = profile.nameplateOverlay
     if not npo then return end
-    if npo.glowMode == "all" and npo.showGlow == false then
+    if (npo.glowMode == "all" or npo.glowMode == "shared") and npo.showGlow == false then
         npo.glowMode = "none"
     end
     npo.showGlow = nil
@@ -491,6 +559,9 @@ function JustAC:NormalizeSavedData()
     MigrateQueueVisibility(profile)
     MigrateDefensiveDisplayMode(profile)
     MigrateOverlayGlowMode(profile)
+    MigrateContextOrder(profile)
+    MigrateMergedToggles(profile)
+    MigrateSharedGlow(profile)
 end
 
 function JustAC:OnInitialize()
@@ -509,7 +580,9 @@ function JustAC:OnInitialize()
     
     self.db.RegisterCallback(self, "OnProfileChanged", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileCopied", "RefreshConfig")
-    self.db.RegisterCallback(self, "OnProfileReset", "OnProfileReset")
+    -- Reset: AceDB restores profile defaults itself; character data (blacklist,
+    -- spec profiles) is intentionally preserved - a refresh is all that's needed.
+    self.db.RegisterCallback(self, "OnProfileReset", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileDeleted", "OnProfileDeleted")
     
     if Options and Options.Initialize then
@@ -658,7 +731,8 @@ function JustAC:OnEnable()
     self:RegisterEvent("BAG_UPDATE_DELAYED", "OnBagUpdate")
 
     -- ── Vehicle + override bars ──────────────────────────────────────────────────
-    self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR",  "OnVehicleChanged")
+    -- Vehicle enter/exit rides on UNIT_ENTERED/EXITED_VEHICLE (unit-filtered);
+    -- override/possess events below cover bar-content changes.
     self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR", "OnOverrideBarChanged")
     self:RegisterEvent("UPDATE_POSSESS_BAR",        "OnPossessBarChanged")
 
@@ -674,8 +748,8 @@ function JustAC:OnEnable()
         end, self)
         EventRegistry:RegisterCallback("AssistedCombatManager.RotationSpellsUpdated", function()
             if SpellQueue then
-                if SpellQueue.ClearAvailabilityCache then
-                    SpellQueue.ClearAvailabilityCache()
+                if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then
+                    BlizzardAPI.ClearAvailabilityCache()
                 end
                 if SpellQueue.InvalidateRotationCache then
                     SpellQueue.InvalidateRotationCache()
@@ -692,41 +766,32 @@ function JustAC:OnEnable()
         end, self)
     end
     
-    if self.db.char.firstRun then
-        self.db.char.firstRun = false
-        local numSpecs = GetNumSpecializations()
-        for i = 1, numSpecs do
-            local role = GetSpecializationRole(i)
-            if role == "HEALER" then
-                self.db.char.specProfiles[i] = "DISABLED"
-            end
-        end
-    end
-    
-    self:ScheduleTimer("DelayedValidation", 2)
+    -- Healer specs are enabled by default (the assist queue is their damage
+    -- rotation; heals are filtered from the tail). Earlier versions auto-wrote
+    -- "DISABLED" for healer specs at first run - characters carrying that
+    -- stored state keep it, and the one-time hint in OnSpecChange plus
+    -- /jac enable are their way back in.
+    self.db.char.firstRun = false
+
+    self:ScheduleTimer("ValidateAssistedCombatSetup", 2)
 end
 
 function JustAC:InitializeCaches()
-    if SpellQueue then
-        if SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
-        if SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
-    end
-    
     if FormCache and FormCache.OnPlayerLogin then
         FormCache.OnPlayerLogin()
     end
-    
+
     if ActionBarScanner then
         if ActionBarScanner.RebuildKeybindCache then
             ActionBarScanner.RebuildKeybindCache()
         end
-        
-        if ActionBarScanner.OnUIChanged then
-            ActionBarScanner.OnUIChanged()
+
+        if ActionBarScanner.OnSpecialBarChanged then
+            ActionBarScanner.OnSpecialBarChanged()
         end
     end
-    
-    self:InvalidateCaches({macros = true, auras = true})
+
+    self:InvalidateCaches({spells = true, macros = true, auras = true})
 
     if BlizzardAPI and BlizzardAPI.RefreshFeatureAvailability then
         BlizzardAPI.RefreshFeatureAvailability()
@@ -743,10 +808,6 @@ function JustAC:InitializeCaches()
             BlizzardAPI.RefreshItemSpellCache()
         end
     end, 3)
-end
-
-function JustAC:DelayedValidation()
-    self:ValidateAssistedCombatSetup()
 end
 
 function JustAC:OnCVarUpdate(event, cvarName, value)
@@ -857,6 +918,12 @@ function JustAC:ExitDisabledMode()
         if profile.defensives.showTargetHealthBar and UIHealthBar.UpdateTargetVisibility then
             UIHealthBar.UpdateTargetVisibility(self)
         end
+        -- Power bars: EnterDisabledMode hides them and nothing else Show()s the
+        -- primary (UpdatePower early-outs while hidden) - the secondary would
+        -- re-show alone on the next UNIT_DISPLAYPOWER, orphaning its segments.
+        if UIHealthBar.ShowPower then
+            UIHealthBar.ShowPower(self)
+        end
     end
 
     -- Restore nameplate overlay if enabled
@@ -880,6 +947,12 @@ function JustAC:RefreshConfig()
     -- move on a profile switch, so wipe the cache explicitly.
     if SpellQueue and SpellQueue.InvalidateBurstTriggers then
         SpellQueue.InvalidateBurstTriggers()
+    end
+    -- FULL rotation invalidation (no keepSetupIfUnchanged): Always Show / Hold Until
+    -- Charged pins live on the profile, and the setup pass that resolves them is
+    -- skipped for an unchanged spec-level list - a profile switch must force it.
+    if SpellQueue and SpellQueue.InvalidateRotationCache then
+        SpellQueue.InvalidateRotationCache()
     end
 
     self:UpdateFrameSize()
@@ -915,14 +988,6 @@ function JustAC:RefreshConfig()
     end
 end
 
--- Only on explicit profile reset (not change/copy)
--- Character data (blacklist, spec profiles) is intentionally preserved;
--- Profile-level data (hotkey overrides, settings) is cleared - that's what a reset does.
--- AceDB already resets profile-level settings to defaults.
-function JustAC:OnProfileReset()
-    self:RefreshConfig()
-end
-
 -- Clean up spec-profile mappings that reference a deleted profile.
 -- AceDB fires OnProfileDeleted(db, profileKey) after removing the profile data.
 function JustAC:OnProfileDeleted(event, db, deletedName)
@@ -954,7 +1019,9 @@ function JustAC:OnHealthChanged(event, unit)
         if UIHealthBar and UIHealthBar.UpdateTarget then UIHealthBar.UpdateTarget(self) end
         return
     end
-    if DefensiveEngine then DefensiveEngine.OnHealthChanged(self, event, unit) end
+    -- Propagate the handled/skipped verdict: false = the 0.1s rebuild throttle
+    -- swallowed this call, so the update loop must keep its dirty flag and retry.
+    if DefensiveEngine then return DefensiveEngine.OnHealthChanged(self, event, unit) end
 end
 
 -- Player power/resource bar: value on UNIT_POWER_FREQUENT, color on UNIT_DISPLAYPOWER
@@ -979,16 +1046,11 @@ function JustAC:InitializeDefensiveSpells()
     if GapCloserEngine then
         GapCloserEngine.InitializeGapClosers(self)
     end
-    -- Burst-ready cue: migrate the retired burst-injection settings. The cue is
-    -- OFF by default (like the old feature); users who had burst injection enabled
-    -- with its glow on carry over as opted-in. Per-spec trigger overrides feed the
-    -- new burst-trigger list; the old table is dropped (injection lists retire).
+    -- Migrate the retired burst-injection settings: per-spec trigger overrides feed
+    -- the new burst-trigger list; the old table is dropped (injection lists retire).
+    -- The cue glow itself now defaults ON, so no opt-in carry-over is needed.
     local profile = self.db and self.db.profile
     if profile and profile.burstInjection then
-        if profile.burstInjection.enabled and profile.burstInjection.showGlow ~= false
-           and profile.burstCueGlow == nil then
-            profile.burstCueGlow = true
-        end
         local oldTriggers = profile.burstInjection.triggerSpells
         if oldTriggers then
             for specKey, list in pairs(oldTriggers) do
@@ -1039,15 +1101,6 @@ function JustAC:UpdateAlternateControlState()
         or (IsPossessBarVisible and IsPossessBarVisible() or false)
 end
 
-function JustAC:UpdateDefensiveCooldowns()
-    if self.playerInAlternateControl then
-        -- Clear defensive icons immediately; leave them hidden until we regain control.
-        if UIRenderer then UIRenderer.HideDefensiveIcons(self) end
-        return
-    end
-    if DefensiveEngine then DefensiveEngine.UpdateDefensiveCooldowns(self) end
-end
-
 function JustAC:LoadModules()
     -- Each module already resolved its own inter-module deps at load time.
     -- This function resolves them into JustAC.lua's own local upvalues,
@@ -1067,6 +1120,8 @@ function JustAC:LoadModules()
     DotTracker = LibStub("JustAC-DotTracker", true)
     CustomQueueOpts = LibStub("JustAC-OptionsCustomQueue", true)
     SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+    MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+    CastInterruptTracker = LibStub("JustAC-CastInterruptTracker", true)
     
     if not UIRenderer then self:Print("Error: UIRenderer module not found"); self:Disable(); return end
     if not UIFrameFactory then self:Print("Error: UIFrameFactory module not found"); self:Disable(); return end
@@ -1141,8 +1196,8 @@ function JustAC:GetProfile() return self.db and self.db.profile end
 -- Closures capture the module upvalues by reference, so they see post-LoadModules values.
 local CACHE_INVALIDATORS = {
     spells = function()
-        if SpellQueue and SpellQueue.ClearSpellCache then SpellQueue.ClearSpellCache() end
-        if SpellQueue and SpellQueue.ClearAvailabilityCache then SpellQueue.ClearAvailabilityCache() end
+        if BlizzardAPI and BlizzardAPI.ClearSpellCache then BlizzardAPI.ClearSpellCache() end
+        if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then BlizzardAPI.ClearAvailabilityCache() end
     end,
     macros = function()
         if MacroParser and MacroParser.InvalidateMacroCache then MacroParser.InvalidateMacroCache() end
@@ -1192,8 +1247,10 @@ function JustAC:UpdateSpellQueue()
         if SpellQueue.NoteQueueBlank then
             SpellQueue.NoteQueueBlank("alternate control (vehicle / possess)")
         end
-        UIRenderer.RenderSpellQueue(self, {})
-        if UINameplateOverlay then UINameplateOverlay.Render(self, {}) end
+        -- EMPTY_QUEUE is a shared read-only constant (renderers only iterate it);
+        -- two fresh tables per tick here ran at 40-66/sec for a whole vehicle ride.
+        UIRenderer.RenderSpellQueue(self, EMPTY_QUEUE)
+        if UINameplateOverlay then UINameplateOverlay.Render(self, EMPTY_QUEUE) end
         return
     end
 
@@ -1219,9 +1276,8 @@ function JustAC:PLAYER_ENTERING_WORLD()
 
     -- Re-apply the cosmetic Cooldown Manager hide. Blizzard rebuilds those viewers across
     -- loading screens, so a one-shot at login would be lost on the first zone change.
-    local MT = LibStub("JustAC-MaintenanceTracker", true)
-    if MT and MT.ApplyViewerVisibility and self.db and self.db.profile then
-        MT.ApplyViewerVisibility(self.db.profile)
+    if MaintenanceTracker and MaintenanceTracker.ApplyViewerVisibility and self.db and self.db.profile then
+        MaintenanceTracker.ApplyViewerVisibility(self.db.profile)
     end
 
     -- Re-evaluate vehicle/possess state after loading screens (may enter a phased vehicle zone).
@@ -1288,8 +1344,8 @@ function JustAC:OnCombatEvent(event)
         -- First-engage warmup: availability cache can contain startup false entries
         -- (before spell APIs are fully ready), which suppresses defensives until
         -- a later refresh. Clear on combat entry so first target evaluates fresh.
-        if SpellQueue and SpellQueue.ClearAvailabilityCache then
-            SpellQueue.ClearAvailabilityCache()
+        if BlizzardAPI and BlizzardAPI.ClearAvailabilityCache then
+            BlizzardAPI.ClearAvailabilityCache()
         end
         -- Entering combat: animate glows
         if UIRenderer and UIRenderer.SetCombatState then
@@ -1373,7 +1429,6 @@ function JustAC:OnSpecChange(event, unit)
 
     -- The tracked aura instance belongs to the OLD spec's maintenance buff; keeping it would
     -- point the new spec's slot at a buff it does not use.
-    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
     if MaintenanceTracker and MaintenanceTracker.Reset then MaintenanceTracker.Reset() end
     -- Layout anchors are computed once at frame creation; a spec swap can add or drop the
     -- maintenance slot, so re-seat them here the same way RefreshConfig does.
@@ -1383,6 +1438,16 @@ function JustAC:OnSpecChange(event, unit)
         local target = self.db.char.specProfiles[newSpec]
 
         if target == "DISABLED" then
+            -- One-line breadcrumb, once per spec per character: the first-run
+            -- default disables healer specs silently, which reads as "addon
+            -- broken" to anyone who installed it on a healer.
+            if GetSpecializationRole(newSpec) == "HEALER" then
+                self.db.char.healerHintShown = self.db.char.healerHintShown or {}
+                if not self.db.char.healerHintShown[newSpec] then
+                    self.db.char.healerHintShown[newSpec] = true
+                    self:Print("This spec is disabled for this character. |cff2ecc71/jac enable|r turns the assist queue back on.")
+                end
+            end
             self:EnterDisabledMode()
             return
         end
@@ -1502,7 +1567,6 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
 
     -- Maintenance buff: bind a pending cast to its new aura instance, and catch removal so
     -- the button glows the moment the buff actually drops rather than on a guessed timer.
-    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
     if MaintenanceTracker and MaintenanceTracker.OnPlayerAuraUpdate then
         if MaintenanceTracker.OnPlayerAuraUpdate(updateInfo) then
             defensiveQueueDirty = true
@@ -1565,7 +1629,14 @@ function JustAC:OnActionBarChanged(event, slot)
     if ActionBarScanner and ActionBarScanner.InvalidateAssistedSlot then
         ActionBarScanner.InvalidateAssistedSlot()
     end
-    self:ForceUpdate()
+    -- In combat, dirty-flag only: [mod]-macro bursts fire this many times per
+    -- second, and the immediate-wake path made each one a full pass. The poll
+    -- picks the flag up within one tick; OOC keeps the immediate wake (no poll).
+    if inCombat then
+        spellQueueDirty = true
+    else
+        self:ForceUpdate()
+    end
 end
 
 function JustAC:OnSpecialBarChanged()
@@ -1679,9 +1750,11 @@ function JustAC:OnTargetChanged()
         UIHealthBar.UpdateTargetVisibility(self)
     end
     -- Invalidate rotation cache so Blizzard is re-queried for the new target
-    -- (prevents stale spells from previous target persisting).
+    -- (prevents stale spells from previous target persisting). keepSetupIfUnchanged:
+    -- the rotation is spec-level, so when the refetched list is identical the heavy
+    -- setup half (pins / tracking / seeding) is skipped instead of rerun per swap.
     if SpellQueue and SpellQueue.InvalidateRotationCache then
-        SpellQueue.InvalidateRotationCache()
+        SpellQueue.InvalidateRotationCache(true)
     end
     -- DoT tracking is current-target only; the new target starts fresh.
     if DotTracker and DotTracker.Reset then
@@ -1693,11 +1766,12 @@ end
 
 -- Shared by the cooldown and usability event handlers: both fire in bursts (~10x per
 -- cast in combat via the GCD cascade, and again OOC as things come off cooldown). In
--- combat, reset the timer immediately for low-latency response. OOC, coalesce the burst
--- and let the 0.5s idle cycle pick it up rather than waking the loop dozens of times.
-local function MarkQueuesDirtyThrottled(addon)
-    local inCombat = UnitAffectingCombat("player")
-    if not inCombat then
+-- combat, dirty flags only - the 20-33Hz poll picks them up within one tick, and
+-- zeroing the timer per event woke the loop on every frame of a burst. OOC, coalesce
+-- the burst and let the 0.5s idle cycle pick it up rather than waking the loop
+-- dozens of times.
+local function MarkQueuesDirtyThrottled()
+    if not UnitAffectingCombat("player") then
         local now = GetTime()
         if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
             return
@@ -1707,9 +1781,6 @@ local function MarkQueuesDirtyThrottled(addon)
 
     spellQueueDirty = true
     defensiveQueueDirty = true
-    if inCombat and addon.updateTimeLeft then
-        addon.updateTimeLeft = 0
-    end
 end
 
 function JustAC:OnActionUsableChanged(_, changes)
@@ -1717,7 +1788,7 @@ function JustAC:OnActionUsableChanged(_, changes)
     if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
         BlizzardAPI.OnActionUsableChanged(changes)
     end
-    MarkQueuesDirtyThrottled(self)
+    MarkQueuesDirtyThrottled()
 end
 
 -- Both handlers compare FRAMES, not unit tokens: the old UnitIsUnit(nameplateUnit, "target")
@@ -1765,6 +1836,12 @@ function JustAC:OnPetChanged(event, unit)
     if UIHealthBar and UIHealthBar.ReanchorPower then
         UIHealthBar.ReanchorPower(self)
     end
+    -- Overlay counterpart: its bar anchoring only runs when the defensive COUNT
+    -- changes, which a pet summon/dismiss doesn't touch - force the next pass to
+    -- re-run it (shows the pet bar / closes the gap it left).
+    if UINameplateOverlay and UINameplateOverlay.InvalidateBarLayout then
+        UINameplateOverlay.InvalidateBarLayout()
+    end
     self:OnHealthChanged(nil, "pet")
     self:ForceUpdate()
 end
@@ -1781,7 +1858,6 @@ end
 -- Bags changed (loot, used a potion, leveled into a new tier) - mark the emergency
 -- healing-item scan stale so it re-resolves the best owned pot on the next OOC build.
 function JustAC:OnBagUpdate()
-    local SpellDB = LibStub("JustAC-SpellDB", true)
     if SpellDB and SpellDB.MarkHealingBagsDirty then
         SpellDB.MarkHealingBagsDirty()
     end
@@ -1802,7 +1878,6 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
 
     -- Arm the maintenance-buff bridge. NOT combat-gated, unlike the DoT tracker: binding the
     -- instance out of combat is what gives the button a live timer the moment a pull starts.
-    local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
     if MaintenanceTracker and MaintenanceTracker.OnCastSucceeded then
         -- Pressing the upkeep button changes what the slot must draw RIGHT NOW (fresh swipe,
         -- glow off), so redraw on the next tick instead of waiting for the periodic defensive
@@ -1817,6 +1892,12 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         BlizzardAPI.NoteDefensiveItemUse(spellID)
     end
 
+    -- Gap-closer post-fire debounce: while the confirmed charge/leap travels, the
+    -- engine must not offer the next gap closer (the melee probe lags the flight).
+    if GapCloserEngine and GapCloserEngine.NoteSpellcastSucceeded then
+        GapCloserEngine.NoteSpellcastSucceeded(self, spellID)
+    end
+
     -- If a CC spell landed, suppress the interrupt icon for CC_APPLIED_SUPPRESS seconds so
     -- the next CC suggestion doesn't flash before the game registers the CC state on target.
     -- spellID from UNIT_SPELLCAST_SUCCEEDED reads plain for the player's own cast (the event is
@@ -1826,7 +1907,7 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         -- One call covers both renderers: the CC debounce state lives in UIRenderer and the
         -- overlay reads it from there. (The overlay used to carry a forwarder for this; it had
         -- no callers and is gone - do not re-add one, call UIRenderer directly.)
-        if UIRenderer and UIRenderer.NotifyCCApplied then UIRenderer.NotifyCCApplied() end
+        if CastInterruptTracker and CastInterruptTracker.NotifyCCApplied then CastInterruptTracker.NotifyCCApplied() end
         -- Notify CC-failure learning: if the target was mid-cast, check shortly after
         -- whether that cast actually stopped.
         -- Guard: skip for pure interrupt spells (Kick, Wind Shear, etc.) - they apply a lockout
@@ -1886,7 +1967,7 @@ function JustAC:OnPlayerChannelStop(event, unit)
 end
 
 function JustAC:OnCooldownUpdate()
-    MarkQueuesDirtyThrottled(self)
+    MarkQueuesDirtyThrottled()
 end
 
 --- Marks queues dirty and ensures the next OnUpdate tick processes immediately.
@@ -1954,10 +2035,17 @@ local function OnUpdateTick(_, elapsed)
         return
     end
 
-    -- Freeze updates while the frame is being dragged (smooth drag, no wasted work)
+    -- Freeze updates while the frame is being dragged (smooth drag, no wasted work).
+    -- Trust but verify: press-grab drags end in an OnMouseUp, which - unlike the old
+    -- OnDragStop - is not guaranteed if the handler is torn down mid-press. A stuck
+    -- flag would freeze the whole panel forever, and with the left button up there
+    -- IS no drag - so clear it and carry on instead of trusting it blindly.
     if JustAC.isDragging then
-        JustAC.updateTimeLeft = 0.1
-        return
+        if IsMouseButtonDown("LeftButton") then
+            JustAC.updateTimeLeft = 0.1
+            return
+        end
+        JustAC.isDragging = false
     end
 
     -- Early exit: skip all work if UI is completely hidden (saves CPU when mounted, etc.)
@@ -2015,9 +2103,12 @@ local function OnUpdateTick(_, elapsed)
         and BlizzardAPI.IsPlayerChanneling()
     local shouldUpdateSpellQueue = inCombat or spellQueueDirty
     if shouldUpdateSpellQueue then
-        -- When dirty, bypass SpellQueue's internal throttle so event-driven updates
-        -- get the same low-latency path as explicit ForceUpdate() calls.
-        if spellQueueDirty and not channeling and SpellQueue and SpellQueue.ForceUpdate then
+        -- When dirty OUT of combat, bypass SpellQueue's internal throttle so rare
+        -- event-driven updates render immediately. In combat, let the internal
+        -- 0.03s floor stand: the GCD cascade fires ~10 cooldown/usability events
+        -- per cast, and the bypass turned that into a full build on consecutive
+        -- frames - the 20-33Hz poll already bounds latency at one tick.
+        if spellQueueDirty and not inCombat and not channeling and SpellQueue and SpellQueue.ForceUpdate then
             SpellQueue.ForceUpdate()
         end
         JustAC:UpdateSpellQueue()
@@ -2027,12 +2118,15 @@ local function OnUpdateTick(_, elapsed)
     -- Only update defensive cooldowns if dirty or periodic check
     local defensiveInterval = inCombat and IDLE_CHECK_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
     if defensiveQueueDirty or (now - lastFullUpdate) > defensiveInterval then
-        -- Full queue rebuild: nil event bypasses DefensiveEngine throttle.
-        -- Always rebuild (not just cooldown swipes) so "always" and "combatOnly"
-        -- modes surface new icons promptly when cooldowns expire.
-        JustAC:OnHealthChanged(nil, "player")
-        defensiveQueueDirty = false
-        lastFullUpdate = now
+        -- Full queue rebuild (not just cooldown swipes) so "always" and "combatOnly"
+        -- modes surface new icons promptly when cooldowns expire. Clear the dirty
+        -- flag only when the rebuild actually ran: DefensiveEngine's 0.1s throttle
+        -- can skip this call (e.g. the first frame after combat exit), and eating
+        -- the flag then deferred the rebuild to the 1s idle cycle.
+        if JustAC:OnHealthChanged(nil, "player") ~= false then
+            defensiveQueueDirty = false
+            lastFullUpdate = now
+        end
     end
 end
 
