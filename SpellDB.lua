@@ -409,7 +409,11 @@ end
 --------------------------------------------------------------------------------
 SpellDB.CLASS_MAINTAINED_BUFFS = {
     DRUID = {
-        { group = { 1126 }, default = 1126, raidWide = true },         -- Mark of the Wild
+        -- Two aura identities: the base cast id plus the 432661 variant (both named
+        -- "Mark of the Wild" in the 68974 export). Matching only 1126 read a member
+        -- carrying the variant as unbuffed - a recast nag that never cleared.
+        { group = { 1126 }, default = 1126, raidWide = true,
+          auraIDs = { 1126, 432661 } },                                -- Mark of the Wild
     },
     EVOKER = {
         -- Blessing of the Bronze does NOT apply its own cast id: the cast triggers one of
@@ -422,7 +426,10 @@ SpellDB.CLASS_MAINTAINED_BUFFS = {
                       381756, 381757, 381758 } },
     },
     MAGE = {
-        { group = { 1459 }, default = 1459, raidWide = true },         -- Arcane Intellect
+        -- Same two-identity shape as Mark of the Wild: 432778 is a second
+        -- "Arcane Intellect" aura id at 68974.
+        { group = { 1459 }, default = 1459, raidWide = true,
+          auraIDs = { 1459, 432778 } },                                -- Arcane Intellect
     },
     PALADIN = {
         -- Auras are stance-style toggles but DO register as normal player auras under

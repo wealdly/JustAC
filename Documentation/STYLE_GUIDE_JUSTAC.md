@@ -326,15 +326,17 @@ In raw entries, capture the addon from the enclosing scope
 WoW runs Lua 5.1, which enforces per-function limits AT COMPILE TIME. Exceeding
 one kills the ENTIRE file - it never executes, its `LibStub:NewLibrary` never
 runs, and the only visible symptom is a downstream "module not found" error.
-`tools/luasyntax.py` parses with a 5.3 grammar and CANNOT catch these.
+`tools/luasyntax.py` now counts upvalues per function (transitive, like the
+compiler): it hard-FAILS above 60 and WARNs from 55 up, so run it after every
+edit - the whole codebase currently sits below the warning line.
 
 - **60 upvalues per function** (hit in the field 2026-08: SpellQueue's
-  `GetCurrentSpellQueue` crossed 60 and the whole module vanished; it sits at
-  ~56 - treat its budget as spent). Every distinct module-local referenced
-  inside a function costs one slot. When adding functionality to a large
-  function, hang new helpers/state off the module table it already captures
-  (`SpellQueue.Foo(...)`, `SpellQueue._field`) instead of new file-locals -
-  module-table access reuses the existing upvalue.
+  `GetCurrentSpellQueue` crossed 60 and the whole module vanished; the stage
+  decomposition brought it down to ~21). Every distinct module-local
+  referenced inside a function costs one slot. When adding functionality to a
+  large function, hang new helpers/state off the module table it already
+  captures (`SpellQueue.Foo(...)`, `SpellQueue._field`) instead of new
+  file-locals - module-table access reuses the existing upvalue.
 - **200 local variables per scope** - same failure mode; large files sit far
   below this today.
 - The client error (enable `scriptErrors`) names the true line:

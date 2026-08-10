@@ -799,6 +799,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     button.hasInterruptGlow = false
     button.hasProcGlow      = false
     button.hasDefensiveGlow = false
+    button.hasPrecombatGlow = false
 
     -- Do NOT set alpha to 0 here - defensive icons set it before showing via ShowDefensiveIcon,
     -- and DPS icons are shown directly via icon:Show() without a fadeIn:Play() call.

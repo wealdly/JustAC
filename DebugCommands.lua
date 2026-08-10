@@ -5622,3 +5622,248 @@ function DebugCommands.ProbeSession(addon, arg)
     addon:Print("|cff888888  For the engine-signal leg: keep a debuffed target, kick something, and take a shield/absorb.|r")
     addon:Print("|cffffff00Then: /jac inspect audit off  ->  /reload|r  (log lands in SavedVariables/JustAC.lua)")
 end
+
+--------------------------------------------------------------------------------
+-- /jac inspect glows - inventory every VISIBLE frame overlapping the defensive
+-- cluster / resource-bar region, with its texture regions. Built for the
+-- "orphan glow floating near the queue" class of report: run it WHILE the
+-- artifact is on screen and the listing names the frame, its owner chain, its
+-- texture atlas (which identifies the glow style at a glance), and whether its
+-- alpha aspect is ENGINE-OWNED (HasSecretAspect) - the one mechanism in this
+-- addon that can hold a frame visible against a manual SetAlpha(0).
+--------------------------------------------------------------------------------
+function DebugCommands.GlowInventory(addon)
+    local issecret = issecretvalue
+    local function plainNum(x)
+        return type(x) == "number" and not (issecret and issecret(x))
+    end
+
+    -- Our anchor frames: rect sources for the search box, and ancestry roots
+    -- for the ours/foreign tag.
+    local roots, sources = {}, {}
+    local function AddRoot(f)
+        if f then roots[f] = true; sources[#sources + 1] = f end
+    end
+    local UIHealthBar = LibStub("JustAC-UIHealthBar", true)
+    AddRoot(UIHealthBar and UIHealthBar.GetFrame and UIHealthBar.GetFrame())
+    AddRoot(addon.maintenanceIcon)
+    AddRoot(addon.defensiveFrame)
+    AddRoot(addon.interruptIcon)
+    if addon.interruptIcon then AddRoot(addon.interruptIcon.sootheCue) end
+    for _, icon in ipairs(addon.defensiveIcons or {}) do AddRoot(icon) end
+    for _, icon in ipairs(addon.spellIcons or {}) do AddRoot(icon) end
+
+    local L, B, R, T
+    for _, f in ipairs(sources) do
+        local ok, l, b, w, h = pcall(f.GetRect, f)
+        if ok and plainNum(l) and plainNum(b) and plainNum(w) and plainNum(h) then
+            if not L or l < L then L = l end
+            if not B or b < B then B = b end
+            if not R or l + w > R then R = l + w end
+            if not T or b + h > T then T = b + h end
+        end
+    end
+    if not L then
+        addon:Print("glows: no placeable anchor frames (displays disabled?) - nothing to search around")
+        return
+    end
+    local PAD = 90
+    L, B, R, T = L - PAD, B - PAD, R + PAD, T + PAD
+    addon:Print(string.format("|cff00ff00=== glow inventory ===|r box (%.0f,%.0f)-(%.0f,%.0f) - run WHILE the artifact is visible", L, B, R, T))
+
+    local function IsOurs(f)
+        local depth = 0
+        while f and depth < 12 do
+            if roots[f] then return true end
+            local ok, p = pcall(f.GetParent, f)
+            f = ok and p or nil
+            depth = depth + 1
+        end
+        return false
+    end
+    local function Label(f)
+        local ok, n = pcall(f.GetName, f)
+        if ok and n then return n end
+        local okT, t = pcall(f.GetObjectType, f)
+        return "(anon " .. (okT and t or "?") .. ")"
+    end
+
+    local hits, ourSecretRect, printed = 0, 0, 0
+    local f = EnumerateFrames()
+    while f do
+        local okF, forbidden = pcall(f.IsForbidden, f)
+        local okV, vis = pcall(f.IsVisible, f)
+        if okF and not forbidden and okV and vis == true then
+            local ok, l, b, w, h = pcall(f.GetRect, f)
+            if not (ok and plainNum(l) and plainNum(b) and plainNum(w) and plainNum(h)) then
+                -- Visible but unplaceable: only interesting if it is one of ours.
+                if IsOurs(f) then
+                    ourSecretRect = ourSecretRect + 1
+                    addon:Print("|cffff6600OURS, SECRET rect (cannot place):|r " .. Label(f))
+                end
+            elseif w < 800 and h < 800 and l < R and l + w > L and b < T and b + h > B then
+                hits = hits + 1
+                if printed < 25 then
+                    printed = printed + 1
+                    local okA, a = pcall(f.GetAlpha, f)
+                    local aStr = (okA and plainNum(a)) and string.format("%.2f", a) or "SECRET"
+                    local owned = ""
+                    if f.HasSecretAspect and Enum and Enum.SecretAspect and Enum.SecretAspect.Alpha then
+                        local okO, o = pcall(f.HasSecretAspect, f, Enum.SecretAspect.Alpha)
+                        if okO and o == true then owned = " |cffff6600[alpha ENGINE-OWNED]|r" end
+                    end
+                    local pChain, p, okP = {}, f, nil
+                    for _ = 1, 3 do
+                        okP, p = pcall(p.GetParent, p)
+                        if not okP or not p then break end
+                        pChain[#pChain + 1] = Label(p)
+                    end
+                    local okS, strata = pcall(f.GetFrameStrata, f)
+                    local okLv, lvl = pcall(f.GetFrameLevel, f)
+                    addon:Print(string.format("%d) %s%s %dx%d @(%.0f,%.0f) %s/%s a=%s%s < %s",
+                        printed, Label(f), IsOurs(f) and " |cff2ecc71(ours)|r" or " |cffcccccc(foreign)|r",
+                        w, h, l, b, okS and strata or "?", okLv and tostring(lvl) or "?", aStr, owned,
+                        table.concat(pChain, " < ")))
+                    local okN, numRegions = pcall(f.GetNumRegions, f)
+                    for i = 1, (okN and numRegions or 0) do
+                        local r = select(i, f:GetRegions())
+                        local okSh, shown = pcall(r.IsShown, r)
+                        if okSh and shown == true then
+                            local okOT, ot = pcall(r.GetObjectType, r)
+                            if okOT and ot == "Texture" then
+                                local _, atlas = pcall(r.GetAtlas, r)
+                                local _, tex = pcall(r.GetTexture, r)
+                                local _, blend = pcall(r.GetBlendMode, r)
+                                local what = (type(atlas) == "string" and atlas)
+                                    or (type(tex) == "string" and tex)
+                                    or (plainNum(tex) and ("fileID " .. tex))
+                                    or "?"
+                                -- Color forensics: vertex tint + desaturation state identify a
+                                -- tinted-glow frame whose desaturation silently failed (cyan
+                                -- over the gold base reads as olive/yellow).
+                                local okC, vr, vg, vb = pcall(r.GetVertexColor, r)
+                                local col = (okC and plainNum(vr) and plainNum(vg) and plainNum(vb))
+                                    and string.format("%.2f,%.2f,%.2f", vr, vg, vb) or "secret"
+                                local okD, desat = pcall(r.IsDesaturated, r)
+                                addon:Print(string.format("     tex: %s (%s) tint=%s desat=%s", what,
+                                    tostring(blend), col, okD and tostring(desat) or "?"))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        f = EnumerateFrames(f)
+    end
+    addon:Print(string.format("=== %d visible frame(s) in the box, %d printed%s ===",
+        hits, printed, ourSecretRect > 0 and (", " .. ourSecretRect .. " ours-with-secret-rect") or ""))
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect groupbuff - verbose mirror of the pre-combat "party member is
+-- missing my raid buff" detection (PrecombatEngine.PartyMemberMissingBuff),
+-- showing every gate's actual answer per member: the readable-boolean probes
+-- (nil = SECRET = member skipped), the aura-scan outcome, and where a secret
+-- spellId forced the fail-silent bail. Run it when the recast nudge seems
+-- wrong (nagging while everyone is buffed / silent while someone is not).
+--------------------------------------------------------------------------------
+function DebugCommands.GroupBuffProbe(addon)
+    local issecret = issecretvalue
+    local function RB(v)  -- ReadableBool: true/false when plain, "SECRET" when not
+        if v == nil then return "nil" end
+        if issecret and issecret(v) then return "SECRET" end
+        return v and "T" or "F"
+    end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local class = select(2, UnitClass("player"))
+    local groups = SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS and SpellDB.CLASS_MAINTAINED_BUFFS[class]
+    addon:Print(string.format("|cff00ff00=== group buff probe ===|r class=%s groups=%s inGroup=%s inRaid=%s combat=%s aurasRestricted=%s",
+        tostring(class), groups and #groups or 0, RB(IsInGroup()), RB(IsInRaid()),
+        tostring(InCombatLockdown()), tostring(BlizzardAPI and BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret())))
+    if not groups then return end
+    local get = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+    for gi, grp in ipairs(groups) do
+        local family = grp.auraIDs or grp.group
+        local famStr = table.concat(family, "/")
+        local active
+        for _, spellID in ipairs(grp.group) do
+            if IsPlayerSpell(spellID) and get then
+                local a = get(spellID)
+                if not a and grp.auraIDs then
+                    for _, auraID in ipairs(grp.auraIDs) do
+                        a = get(auraID); if a then break end
+                    end
+                end
+                if a then active = spellID break end
+            end
+        end
+        addon:Print(string.format("group %d [%s] raidWide=%s: player active=%s",
+            gi, famStr, tostring(grp.raidWide or false), tostring(active)))
+        if grp.raidWide then
+            for i = 1, 4 do
+                local unit = "party" .. i
+                local okE, ex = pcall(UnitExists, unit)
+                if okE and ex == true then
+                    local okN, name = pcall(UnitName, unit)
+                    local okP, isPlayer = pcall(UnitIsPlayer, unit)
+                    local okC, conn = pcall(UnitIsConnected, unit)
+                    local okD, dead = pcall(UnitIsDeadOrGhost, unit)
+                    local okR, inRange = pcall(UnitInRange, unit)
+                    -- Every gate reduced to a plain STRING once; all verdicts below compare
+                    -- strings, never the raw returns (a secret boolean burns any == test -
+                    -- this very probe learned that in the field).
+                    local connS  = okC and RB(conn) or "err"
+                    local deadS  = okD and RB(dead) or "err"
+                    local urS    = okR and RB(inRange) or "err"
+                    local srS    = "n/a"
+                    if active and C_Spell and C_Spell.IsSpellInRange then
+                        local okS, sr = pcall(C_Spell.IsSpellInRange, active, unit)
+                        srS = okS and RB(sr) or "err"
+                    end
+                    -- Point queries per family id: the real detection's primary probe now.
+                    local pq = "n/a"
+                    local byId = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+                    if byId then
+                        pq = "ABSENT"
+                        for _, fid in ipairs(family) do
+                            local okQ, data = pcall(byId, unit, fid)
+                            if okQ and data ~= nil then pq = "HAS " .. fid; break end
+                            if not okQ then pq = "THROW"; break end
+                        end
+                    end
+                    local auras = BlizzardAPI and BlizzardAPI.GetAuras and BlizzardAPI.GetAuras(unit, "HELPFUL")
+                    local scan, secretAt, found = "no-auras", nil, nil
+                    if auras then
+                        scan = "MISSING"
+                        for ai = 1, #auras do
+                            local sid = auras[ai].spellId
+                            if sid == nil or (issecret and issecret(sid)) then
+                                secretAt = ai; scan = "BAIL(secret id)"; break
+                            end
+                            for _, fid in ipairs(family) do
+                                if sid == fid then found = sid; scan = "HAS"; break end
+                            end
+                            if found then break end
+                        end
+                    end
+                    local playerS = okP and RB(isPlayer) or "err"
+                    addon:Print(string.format("  %s (%s): isPlayer=%s conn=%s dead=%s unitRange=%s spellRange=%s pointQuery=%s bulk=%s(%s)%s%s",
+                        unit, (okN and name) or "?", playerS, connS, deadS,
+                        urS, srS, pq, scan, auras and #auras or "nil",
+                        found and (" " .. found) or "", secretAt and (" @" .. secretAt) or ""))
+                    -- The real check's verdict for this member (new gates: NPCs excluded,
+                    -- spell-range preferred over unit-range, point query over bulk scan):
+                    local rangeOK = (srS == "T") or (srS ~= "F" and urS == "T")
+                    local counted = playerS == "T" and connS == "T" and deadS == "F" and rangeOK
+                    local missing = (pq == "ABSENT") or (pq ~= "n/a" and pq == "THROW" and scan == "MISSING")
+                        or (pq == "n/a" and scan == "MISSING")
+                    if counted and missing then
+                        addon:Print("     |cffff6600-> this member triggers the recast nudge|r")
+                    elseif not counted then
+                        addon:Print("     |cff888888-> skipped by gates (not counted either way)|r")
+                    end
+                end
+            end
+        end
+    end
+end

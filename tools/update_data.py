@@ -98,11 +98,26 @@ def diff_tables(csv_dir, tables, old_build, new_build):
 
 
 def load_rows(path):
+    # Key on the table's ID column, located via the header - NOT column 0.
+    # Several tables lead with a text/data column whose values repeat, which
+    # collapsed thousands of rows onto duplicate keys and made the diff report
+    # nonsense (25 "rows" for a 17,756-row SkillLineAbility export). Tables
+    # with no ID header fall back to whole-row keys: presence-only diff,
+    # 'chgd' reads 0 there by construction.
     rows = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
-        for row in csv.reader(f):
-            if row:
-                rows[row[0]] = row
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return rows
+        id_idx = header.index("ID") if "ID" in header else None
+        for row in reader:
+            if not row:
+                continue
+            if id_idx is not None and id_idx < len(row):
+                rows[row[id_idx]] = row
+            else:
+                rows[tuple(row)] = row
     return rows
 
 

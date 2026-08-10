@@ -1222,7 +1222,12 @@ function UINameplateOverlay.UpdateAnchor(addon)
             icon:Hide()
         end
         -- The maintenance slot is anchored off defIcons[1], which was just cleared.
+        -- Clear THROUGH the shared helper: a bare Hide() left the maintenance glow
+        -- frame shown and _maintGlow true, so the re-show skipped re-arming.
         if maintenanceIcon then
+            if UIRenderer and UIRenderer.ClearMaintenanceSlot then
+                UIRenderer.ClearMaintenanceSlot(maintenanceIcon)
+            end
             maintenanceIcon:ClearAllPoints()
             maintenanceIcon:Hide()
         end
@@ -1751,7 +1756,14 @@ function UINameplateOverlay.HideAll()
         if UIAnimations then UIAnimations.StopAllGlows(icon) end
         icon:Hide()
     end
-    if maintenanceIcon then maintenanceIcon:Hide() end
+    if maintenanceIcon then
+        -- Same rule as UpdateAnchor's detach: clear through the shared helper so
+        -- the glow frame and _maintGlow can't go stale across the hide.
+        if UIRenderer and UIRenderer.ClearMaintenanceSlot then
+            UIRenderer.ClearMaintenanceSlot(maintenanceIcon)
+        end
+        maintenanceIcon:Hide()
+    end
     if healthBar then healthBar:Hide() end
     if petHealthBar then petHealthBar:Hide() end
     if overlayPowerBar then overlayPowerBar:Hide() end

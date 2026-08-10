@@ -90,10 +90,15 @@ local function DriveCue(cue)
         if not slot then
             -- CreateBaseIcon can fail; skip rather than erroring on every tick.
         elseif a then
-            pcall(function()
+            local ok = pcall(function()
                 local c = gadtc("target", a.auraInstanceID, sel)
                 slot:SetAlpha(c.a)  -- secret in combat; 1 iff dispel type 9
             end)
+            -- A throw between the index scan and here (aura dropped mid-tick, restricted
+            -- instance) must fail DARK: without this the slot keeps its PREVIOUS secret
+            -- alpha - a glow that outlives its enrage (field-reported as an orphan
+            -- gold-ish glow floating by the cue).
+            if not ok then slot:SetAlpha(0) end
             -- Pass through the cleansed aura's icon (secret texture -> SetTexture, no read),
             -- exactly like the interrupt's castAura clones the cast icon.
             if slot.auraIcon and a.icon then slot.auraIcon:SetTexture(a.icon) end
@@ -160,9 +165,16 @@ end
 --- Point the cue at a (new) soothe spell: icon + hotkey text + cyan cleanse glow.
 function UISootheCue.SetSpell(cue, sootheSpellID)
     if not cue or cue.spellID == sootheSpellID then return end
-    cue.spellID = sootheSpellID
     local info   = sootheSpellID and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sootheSpellID)
     local iconID = info and info.iconID
+    if sootheSpellID and not iconID then
+        -- Spell not in the client cache yet (login / spec swap): do NOT record the id and
+        -- do NOT arm anything - the same-spell guard above would block every retry, leaving
+        -- the cue permanently armed with glows over an icon that never resolved (the orphan
+        -- glow artifact). Leaving cue.spellID unset makes the next render call retry.
+        return
+    end
+    cue.spellID = sootheSpellID
     local hotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
                     and ActionBarScanner.GetSpellHotkey(sootheSpellID)) or ""
     for i = 1, MAX_SLOTS do
@@ -171,13 +183,19 @@ function UISootheCue.SetSpell(cue, sootheSpellID)
             if iconID then
                 slot.iconTexture:SetTexture(iconID)
                 slot.iconTexture:Show()   -- CreateBaseIcon leaves it hidden until a spell lands
+                -- Armed ONLY beside a resolved icon: glow and art arm together or not at all.
+                UIAnimations.ShowSootheProcGlow(slot)  -- renders only when the slot's alpha is 1
+            else
+                -- No spell (spec lost its soothe): disarm, so nothing lingers from the
+                -- previous spec's arming.
+                slot.iconTexture:Hide()
+                UIAnimations.HideColoredProcGlow(slot, "SootheProcGlowFrame")
             end
             if slot.hotkeyText then slot.hotkeyText:SetText(hotkey) end
             -- Lets the shared cooldown updater resolve this slot's swipe (GCD + soothe's own
             -- cooldown). Without it a soothe on the global looked perfectly castable.
             slot.spellID = sootheSpellID
             slot.isItem = false
-            UIAnimations.ShowSootheProcGlow(slot)  -- renders only when the slot's alpha is 1
         end
     end
 end

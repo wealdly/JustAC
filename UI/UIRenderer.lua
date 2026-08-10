@@ -2608,6 +2608,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             local icon = spellIconsRef[i]
             if icon then
                 UIAnimations.StopAllGlows(icon)
+                -- StopAllGlows doesn't know the execute cue's frameKey; without this
+                -- the orange rim survives the hide with _executeCue still true.
+                ClearExecuteCue(icon)
                 if icon.spreadArrow and icon.spreadArrow:IsShown() then icon.spreadArrow:Hide() end
             end
         end
