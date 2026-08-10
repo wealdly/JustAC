@@ -4603,6 +4603,17 @@ function DebugCommands.HealProbe(addon, arg)
             if not ui then return nil end
             return ui[u] ~= nil end)))
     end
+    -- Same signal through the shipping wrapper: these must agree with the raw
+    -- reads above, or the wrapper's guards are wrong.
+    if BlizzardAPI and BlizzardAPI.GetPartyLowCount then
+        local parts = {}
+        for _, u in ipairs(HEALPROBE_UNITS) do
+            parts[#parts + 1] = u:gsub("party", "p") .. "=" .. tostring(BlizzardAPI.IsUnitLow(u))
+        end
+        addon:Print(string.format("  |cff888888via BlizzardAPI:|r available=%s count=%s  %s",
+            tostring(BlizzardAPI.IsPartyLowAvailable()),
+            tostring(BlizzardAPI.GetPartyLowCount()), table.concat(parts, " ")))
+    end
 
     -- B. Plain per-unit gates the queue would branch on.
     addon:Print("|cff66ccffB. roster gates (per unit: exists/conn/dead/role/name/maxHP/threat/cmp)|r")

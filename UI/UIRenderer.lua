@@ -1207,6 +1207,23 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         return
     end
 
+    -- EMERGENCY GROUP HEAL - the OH SHIT claimant. Several allies low at once: the biggest
+    -- ready group cooldown takes the slot (Tranquility-class, press-and-done - targeted heals
+    -- are out of scope by design). The claim is PLAIN (the ally-low count reads plain), so a
+    -- normal `if` arbitrates: CC escape outranks it - you cannot cast while held - and it
+    -- outranks the pet heal's secret alpha layer, the only legal ordering (plain above secret).
+    local emergencyHealID
+    if not ccSpellID then
+        local DE = DefensiveEngineRef
+        if not DE then
+            DE = LibStub("JustAC-DefensiveEngine", true)
+            DefensiveEngineRef = DE
+        end
+        if DE and DE.GetEmergencyHealID then
+            emergencyHealID = DE.GetEmergencyHealID(addon)
+        end
+    end
+
     -- PET HEAL, the Sustain slot's third claimant. Pet health is SECRET in combat, so unlike
     -- upkeep and CC escape this one can never be decided by us: the icon is shown unconditionally
     -- while a live pet exists, and its ALPHA is handed to the engine keyed on the pet's health
@@ -1220,7 +1237,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- other way round. Upkeep never collides: pet-heal classes (Hunter, Warlock) have no tank
     -- spec, so the slot is otherwise dead space for them.
     local petSpellID
-    if not ccSpellID and profile and profile.showPetHealCue ~= false
+    if not ccSpellID and not emergencyHealID and profile and profile.showPetHealCue ~= false
        and profile.defensives and profile.defensives.enabled
        and UnitExists("pet") and not UnitIsDeadOrGhost("pet") then
         local DE = DefensiveEngineRef
@@ -1254,15 +1271,15 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
 
     local active, entry = false, nil
     if MT and MT.IsSlotActive then active, entry = MT.IsSlotActive(profile) end
-    -- A pet-heal claim makes the slot live on its own, exactly as CC escape does.
-    if petSpellID then active = true end
+    -- A pet-heal or emergency-heal claim makes the slot live on its own, as CC escape does.
+    if petSpellID or emergencyHealID then active = true end
     local state, inst = "none", nil
     -- Plain assignment, NOT `local` - shadowing `state` here silently kills the glow.
     if active and entry and MT and MT.GetState then state, _, inst = MT.GetState() end
 
     -- Live if EITHER use has something to show. `entry` may legitimately be nil (CC escape with
     -- no maintenance buff), so it can no longer gate the whole slot.
-    if not active or (not entry and not ccSpellID and not petSpellID) then
+    if not active or (not entry and not ccSpellID and not petSpellID and not emergencyHealID) then
         -- Guard the common case: this runs every render tick and inactive is the norm.
         if icon._maintShown then ClearMaintenanceSlot(icon) end
         return
@@ -1270,7 +1287,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
 
     -- No `or entry.aura` fallback: a future cast-less entry must fail loudly rather than run
     -- range and usability checks against an aura id.
-    local displayID = ccSpellID or petSpellID or entry.cast
+    local displayID = ccSpellID or emergencyHealID or petSpellID or entry.cast
 
     -- Icon art only changes on a spec change, so refresh it on transition.
     if icon._maintID ~= displayID then
@@ -1327,10 +1344,10 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, ccDurObj)
                 applied = true
             end
-        elseif petSpellID then
-            -- The heal's OWN cooldown (Mend Pet and friends). `entry` is nil on this path -
-            -- every branch below reads it, which is why pet heal is handled here rather than
-            -- being allowed to fall through.
+        elseif petSpellID or emergencyHealID then
+            -- The heal's OWN cooldown (Mend Pet / the emergency group heal). `entry` is nil on
+            -- this path - every branch below reads it, which is why both heal claims are
+            -- handled here rather than being allowed to fall through.
             if C_Spell and C_Spell.GetSpellCooldownDuration
                and icon.cooldown.SetCooldownFromDurationObject then
                 local okD, durObj = pcall(C_Spell.GetSpellCooldownDuration, displayID, false)
@@ -1396,8 +1413,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- width-measured layout path. Nothing here measures it.
     if icon.chargeText then
         local shown = false
-        if ccSpellID or petSpellID then
-            shown = false   -- neither an escape button nor a pet heal has a meaningful count
+        if ccSpellID or petSpellID or emergencyHealID then
+            shown = false   -- escape / pet heal / emergency heal have no meaningful count
         elseif entry.chargeGated then
             -- CHARGES, not aura stacks. maxCharges is NeverSecret so it is safe to compare;
             -- currentCharges is SECRET in combat, so it goes straight to SetText and the engine
@@ -1497,7 +1514,7 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- case to guard. Safe despite the secret gate because frame alpha cascades to children -
     -- with the icon at alpha 0 the glow is invisible too, so it can only appear once the engine
     -- has decided the pet is actually hurt.
-    local wantGlow = (ccSpellID or petSpellID) and true
+    local wantGlow = (ccSpellID or petSpellID or emergencyHealID) and true
         or ((state == "down" or state == "refresh") and usable and ready)
 
     -- Marker cues, same rules as the other surfaces. Off-GCD is the valuable one here:

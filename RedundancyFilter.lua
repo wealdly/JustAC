@@ -288,7 +288,7 @@ function RedundancyFilter.ClearActivationTracking()
     wipe(pendingActivations)
 end
 
---- Flush all four aura instance ID maps.
+--- Flush the aura instance ID maps.
 --- Called on ENCOUNTER_START and CHALLENGE_MODE_START because WoW 12.0.5
 --- re-randomizes auraInstanceID values at encounter entry, invalidating any
 --- pre-built instance→spell mappings.  The maps are rebuilt immediately from

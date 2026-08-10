@@ -27,6 +27,7 @@ local OOC_EVENT_DIRTY_THROTTLE = 0.2     -- Coalesce OOC cooldown/usability even
 local lastOOCDirtyEvent = 0
 local OOC_ACTIONBAR_THROTTLE = 0.25      -- Coalesce OOC action-bar churn (cities/macros)
 local lastOOCActionBarEvent = 0
+local lastPartyLowCount = 0              -- Edge detector for the party-health handler
 
 -- CVar cache (only needed by OnUpdateTick, but kept here for co-location with the rest)
 local cachedUpdateRate = nil
@@ -86,6 +87,12 @@ local defaults = {
         interruptAlertSound = "None",       -- Alert sound (LSM key); "None" = disabled
         burstCueGlow = true,               -- Purple glow on the spec's major cooldown when a burst window is called for
         casterFiller = {},                 -- [specKey]=true: suppress melee-weave suggestions for this healer spec
+        -- Healer group-heal surface. Off until the player opts in; the signal it
+        -- rides (Blizzard's party health alert) is a setting they must enable too.
+        healing = {
+            enabled = false,
+            emergencyCount = 3,       -- allies low before the emergency heal claims the Sustain slot
+        },
         -- Cue dots on queue icons. showMoveCastDot is deliberately NOT declared here:
         -- nil means "per-spec auto" (ranged/healer on, melee off) - see MoveCastDotEnabled.
         -- Off by default: the arrow keys off AC re-recommending an active DoT, and not
@@ -683,6 +690,34 @@ function JustAC:OnEnable()
         self.targetHealthFrame:SetScript("OnEvent", function(_, event, unit)
             self:OnHealthChanged(event, unit)
         end)
+        -- Party health: edge triggers for the group-heal pass. The PAYLOAD IS
+        -- NEVER READ - the handler only marks the defensive queue dirty, and the
+        -- rebuild asks Blizzard's alert manager who is low. Two frames because
+        -- RegisterUnitEvent takes at most two units each.
+        -- EDGE, not event: UNIT_HEALTH on four party members is a near-continuous
+        -- stream in group combat, and dirtying on every event ran the full
+        -- defensive rebuild at the update-loop cap instead of its 0.5s combat
+        -- cadence. Every consumer keys off the low COUNT (heal injection: >0,
+        -- emergency claim: >= threshold), which changes only at threshold
+        -- crossings - so dirty only when the count itself moves. The count read
+        -- is plain and allocation-free (see GetPartyLowCount).
+        self.partyHealthFrames = { CreateFrame("Frame"), CreateFrame("Frame") }
+        for _, f in ipairs(self.partyHealthFrames) do
+            f:SetScript("OnEvent", function()
+                -- Cheap gate first: no heal surface, no work. isDisabledMode is
+                -- checked because live health events re-showing hidden icons in
+                -- disabled mode is a bug this addon has had once already.
+                if self.isDisabledMode then return end
+                local p = self.db and self.db.profile
+                if not (p and p.healing and p.healing.enabled) then return end
+                local n = (BlizzardAPI and BlizzardAPI.GetPartyLowCount
+                    and BlizzardAPI.GetPartyLowCount()) or 0
+                if n ~= lastPartyLowCount then
+                    lastPartyLowCount = n
+                    defensiveQueueDirty = true
+                end
+            end)
+        end
     end
     local uf = self.unitEventFrame
     uf:RegisterUnitEvent("UNIT_HEALTH", "player", "pet")
@@ -699,6 +734,8 @@ function JustAC:OnEnable()
     uf:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
     uf:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
     self.targetHealthFrame:RegisterUnitEvent("UNIT_HEALTH", "target")
+    self.partyHealthFrames[1]:RegisterUnitEvent("UNIT_HEALTH", "party1", "party2")
+    self.partyHealthFrames[2]:RegisterUnitEvent("UNIT_HEALTH", "party3", "party4")
 
     -- ── Action bar + keybinds ───────────────────────────────────────────────────
     self:RegisterEvent("ACTIONBAR_SLOT_CHANGED", "OnActionBarChanged")
@@ -1692,6 +1729,11 @@ function JustAC:OnEncounterStart()
     -- IDs; drop them so stale entries can't briefly mis-report a DoT as still live.
     if DotTracker and DotTracker.Reset then
         DotTracker.Reset()
+    end
+    -- And the maintenance slot's aura bindings: a stale instance dying reads as the
+    -- buff dropping, which is the false "re-press" glow that module guards against.
+    if MaintenanceTracker and MaintenanceTracker.FlushInstanceBindings then
+        MaintenanceTracker.FlushInstanceBindings()
     end
     self:MarkQueueDirty()
 end

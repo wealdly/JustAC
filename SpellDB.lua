@@ -1394,6 +1394,65 @@ SpellDB.CLASS_PETHEAL_DEFAULTS = {
     WARLOCK = {755},                                 -- Health Funnel
 }
 
+--------------------------------------------------------------------------------
+-- Healer group-heal data (spec-keyed; healer specs only, so a non-healer spec
+-- resolves to nil and the heal surface never appears).
+--
+-- Every ID below was verified against the client data export for build
+-- 12.0.7.68974 - name, cooldown, cast class and target type - rather than
+-- recalled. Ordering follows the defensive-list convention: cheap/rotational
+-- first, cast-time heals later.
+--------------------------------------------------------------------------------
+
+-- Group-heal suggestions injected into the defensive queue while allies are
+-- low, in priority order. MULTI-TARGET HEALS ONLY: single-target heals are
+-- out of scope by design - aiming a heal at a person is a group-frame job.
+-- A targeted AoE (Wild Growth, Chain Heal) is fine: cast with no friendly
+-- target it lands on the player and the splash still covers the group.
+SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
+    -- Restoration Druid: Wild Growth, Efflorescence, Grove Guardians
+    DRUID_4 = {48438, 145205, 102693},
+    -- Holy Paladin: Light of Dawn (cone), Divine Toll (multi Holy Shock)
+    PALADIN_1 = {85222, 375576},
+    -- Discipline Priest: multi-target ATONEMENT APPLICATORS - Discipline
+    -- heals by damaging while Atonement is out. Radiance (target + allies),
+    -- Prayer of Healing.
+    PRIEST_1 = {194509, 596},
+    -- Holy Priest: Prayer of Mending (bounces), Circle of Healing,
+    -- HW: Sanctify (ground), Prayer of Healing, Halo
+    PRIEST_2 = {33076, 204883, 34861, 596, 120517},
+    -- Restoration Shaman: Chain Heal (bounces), Healing Stream Totem,
+    -- Healing Rain (ground), Wellspring (wave)
+    SHAMAN_3 = {1064, 5394, 73920, 197995},
+    -- Mistweaver Monk: Vivify (cleaves to Renewing Mist holders),
+    -- Renewing Mist (self-spreading HoT)
+    MONK_2 = {116670, 119611},
+    -- Preservation Evoker: Emerald Blossom, Dream Breath + Spiritbloom
+    -- (empowered), Temporal Anomaly (wave)
+    EVOKER_2 = {355913, 382614, 367226, 373861},
+}
+
+-- Group-crisis ladder for the emergency slot: first READY spell wins, so these
+-- are ordered strongest-first. Dedicated group cooldowns only, DISJOINT from
+-- CLASS_GROUPHEAL_DEFAULTS - a spell must never render on both surfaces at
+-- once. Group-save DR cooldowns (Aura Mastery, Spirit Link, Zephyr) belong
+-- here too: at 3+ allies low, stopping damage is healing.
+SpellDB.HEAL_EMERGENCY_LADDER = {
+    DRUID_4   = {740, 197721},                      -- Tranquility, Flourish
+    PALADIN_1 = {31821, 216331},                    -- Aura Mastery, Avenging Crusader
+    PRIEST_1  = {62618, 421453, 47536},             -- PW: Barrier, Ultimate Penitence, Rapture
+    PRIEST_2  = {64843},                            -- Divine Hymn
+    SHAMAN_3  = {108280, 207399, 98008, 108281},    -- Healing Tide, Ancestral Protection, Spirit Link, Ancestral Guidance
+    MONK_2    = {388615, 322118, 325197, 231633},   -- Restoral, Yu'lon, Chi-Ji, Essence Font
+    EVOKER_2  = {363534, 374227},                   -- Rewind, Zephyr
+}
+
+-- True when this spec has group-heal data (drives heal-surface visibility).
+function SpellDB.SpecHasGroupHeals(specKey)
+    if not specKey then specKey = SpellDB.GetSpecKey() end
+    return specKey ~= nil and SpellDB.CLASS_GROUPHEAL_DEFAULTS[specKey] ~= nil
+end
+
 -- Returns true if the given class has any pet rez or heal defaults (drives pet-UI visibility).
 function SpellDB.ClassHasPetDefaults(playerClass)
     if not playerClass then return false end

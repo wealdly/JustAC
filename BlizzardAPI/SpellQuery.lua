@@ -480,6 +480,19 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         return cached
     end
 
+    -- Passives are never suggestible: they cannot be cast, they own no action-bar
+    -- slot (so any glow or hotkey drawn for one is anchored to nothing), and both
+    -- authoritative checks below answer TRUE for a passive you know. This must
+    -- therefore run BEFORE them - it used to sit at the bottom, where it could
+    -- only ever confirm a false the function was already returning.
+    if C_Spell_IsSpellPassive then
+        local ok, isPassive = pcall(C_Spell_IsSpellPassive, spellID)
+        if ok and isPassive then
+            spellAvailabilityCache[spellID] = false
+            return false
+        end
+    end
+
     -- Authoritative checks first: IsSpellKnown/IsPlayerSpell are definitive
     -- for active spells and correctly exclude unselected choice-node talents.
     if IsSpellKnown then
@@ -507,14 +520,6 @@ function BlizzardAPI.IsSpellAvailable(spellID)
             end
             spellAvailabilityCache[spellID] = true
             return true
-        end
-    end
-
-    if C_Spell_IsSpellPassive then
-        local isPassive = C_Spell_IsSpellPassive(spellID)
-        if isPassive then
-            spellAvailabilityCache[spellID] = false
-            return false
         end
     end
 

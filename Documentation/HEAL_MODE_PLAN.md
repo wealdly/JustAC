@@ -111,18 +111,60 @@ specs fall back to "ac" ordering silently — ship as-is.
 
 **Phase 2 opens with a capacity refactor** (lesson of the 2026-08 upvalue
 incident): GetCurrentSpellQueue is at ~56/60 upvalues with an 18-argument
-helper — its budget is spent in both dimensions. Before any heal-queue code,
-decompose it into stages (pos-1 assembly / gap-closer injection / source
-resolution / tail assembly / burst cue) passing ONE per-build context table;
-each stage gets a fresh 60-slot budget and the arg explosion collapses. Done
-as its own change against a known-good baseline, never mixed with features.
+helper — its budget is spent in both dimensions. Executed incrementally, each
+step leaving the file loadable and verified (luasyntax + upvalue estimate +
+in-game reload). Baseline commit: ad34a91.
+
+Stage map (line anchors at ad34a91): gate/throttle+setup 956-1028 stays in the
+coordinator; A pos-1 assembly 1030-1094; B gap-closer injection 1096-1147;
+C spellbook procs 1149-1151 (already a function); D rotation-source resolution
+1153-1271; E context inference 1272-1333; F tail ordering+assembly 1336-1380;
+G burst cue 1382-~1480; H final copy/dedup ~1483-1513.
+
+Mechanics: ONE pooled per-build context table `SpellQueue._b` (wiped each
+build) carrying profile/blacklist/inCombat/now/maxIcons/hideItems/spellCount/
+primarySpellID/ctx*/ordering fields. Stages become `SpellQueue._StageX(b)`
+module-table functions — each captures only its own module-locals from a fresh
+60-slot budget, and the coordinator's references collapse toward just
+SpellQueue + b.
+
+**STATUS: COMPLETE 2026-08-09.** All eight stages extracted verbatim
+(_StagePrimary/_StageGapCloser/AddSpellbookProcs(b)/_StageResolveSource/
+_StageContext/_StageTail/_StageBurstCue/_StageFinalize + _ClearSituationMemory);
+the coordinator is a ~50-line pipeline. Measured upvalues: coordinator ~21/60
+(was >60 at the crisis), every stage 6-13/60. Lazy engine-ref resolution moved
+into _StageGapCloser (first per-build user). Stages A-D verified in-game;
+E-H pending one reload+pull. Heal-queue feature work may now begin.
 
 The defensive-cluster builder gains a heal surface in Heal mode. Self-defensives
 remain (self-low signals are the richest we have); ally-low promotes heals; both plain.
 
 - New per-spec list `groupHealSpells` in `defensives.classSpells[specKey]`
   (shape/fallback/options identical to petHealSpells), seeded from
-  `CLASS_GROUPHEAL_DEFAULTS` (Phase 5 tables).
+  `CLASS_GROUPHEAL_DEFAULTS`. **LANDED 2026-08-09 (inert until consumed):**
+  `SpellDB.CLASS_GROUPHEAL_DEFAULTS` / `HEAL_EMERGENCY_LADDER` /
+  `HEAL_EXTERNAL_LADDER` for all 7 healer specs + `SpellDB.SpecHasGroupHeals`
+  (`HEAL_EXTERNAL_LADDER` deleted 2026-08-10 with the targeted-heal descope;
+  the other two trimmed to multi-target-only per the DECIDED block),
+  and the signal wrapper `BlizzardAPI.GetPartyLowCount` / `IsUnitLow` /
+  `IsPartyLowAvailable` (StateHelpers, read-keys-only discipline documented at
+  the call site; `healprobe` census cross-checks wrapper vs raw reads).
+  **ENGINE v0 LANDED 2026-08-09:** SPELL_LIST_CONFIG row (healer specs only —
+  ResolveDefaults returns nil elsewhere), the heal pass in
+  GetDefensiveSpellQueue (in-combat AND lowCount>0, above the self-defensive
+  pass), `profile.healing.enabled` (default off), the Defensive Queue toggle +
+  live alert-status line, and party1-4 UNIT_HEALTH dirty triggers (payload
+  never read, gated on healing.enabled and isDisabledMode). NOT yet done: tier
+  permutation by unitCount (needs per-heal target-type metadata), sticky
+  smoothing, who-chips, emergency slot 0, cue row.
+- **Two hard rules from the 2026-08-09 dungeon trace** (a full follower-dungeon
+  run at threshold index 2): (1) the low-keys PERSIST OUT OF COMBAT — the trace
+  ends `unitCount -> 3  combat=false` while the group walks around at partial
+  health, so every heal-tier and emergency trigger MUST be ANDed with inCombat
+  or it fires permanently while nothing is happening; (2) transitions flap hard
+  near the threshold (units flipping true/false within the same second), which
+  is why the AoE tier needs the sticky hold — an unsmoothed `unitCount >= N`
+  would thrash the queue mid-triage.
 - **One queue, tier-permuted** by plain state (never two parallel queues):
   - 0 low → maintenance order (upkeep, cadence HoTs, filler bright)
   - 1 low → ST tier floats + who-chip; AoE sinks
@@ -160,7 +202,163 @@ remain (self-low signals are the richest we have); ally-low promotes heals; both
   rapid boundary flapping — the field case for the emergency tier's sticky-hold
   smoothing; managed default should sit mid-band, index 6-7 ≈ 50/40%).
 
-## Phase 3 — Triage cue row (hover-to-aim)
+## Product scoping + healer display model (settled 2026-08-09, owner-driven)
+
+> **SUPERSEDED 2026-08-10** — the display-model priority list below (beacons /
+> cursor companion / sound / cue row) is retired: targeted heal advice left
+> the scope entirely. See the DECIDED block under the ecosystem survey for
+> the final shape. Kept for the reasoning record.
+
+**The product is a DPS-first copilot with a heal interrupt**, not a healing
+rotation bot: the healer catweaves off the DPS queue; when party members drop,
+the addon interrupts — heal suggestions replace the filler, and the player is
+routed to the right target fast. (The shipped v0 already behaves this way:
+heals appear only in combat while someone is low.) The always-watched heal
+rotation is explicitly out of scope.
+
+Display model (the mockup-session conclusion): the suggestion COMES TO THE
+EYES — never a panel the eyes must visit. Priority order:
+1. **On-frame beacons**: the hurt member's party frame grows the suggested
+   heal's icon + its hotkey label + an urgency rim. Who/what/key at the point
+   of action. KEY FACT: per-member low flags are PLAIN booleans, so beacons are
+   ordinary alpha/animation code — zero secret machinery. Constraint: overlays
+   anchor to frames OUT of combat only (target-frame taint lesson); frames are
+   static in combat, so pre-anchored overlays only change alpha/content
+   mid-fight; mid-combat roster change hides beacons until regen. Structural
+   frame detection with a stand-down fallback when frames are replaced.
+2. **Cursor companion**: the current suggestion (+ emergency tint) rides the
+   cursor — covers travel between frames and replaced-frame setups. Own
+   unprotected frame following GetCursorPosition; alpha-driven content.
+   **LANDED 2026-08-09** (UI/UICursorCompanion.lua) on the shared payload
+   `DefensiveEngine.GetHealSuggestion` (0.1s memo; rotational pick from the
+   heal list, emergency/external ladders on `unitCount >= emergencyCount` (3)
+   or tank-low with the measured 8s sticky hold; exactly-one-other-TANK rule;
+   hotkey via ActionBarScanner). Toggle: Defensive Queue tab, healing.cursorCompanion.
+3. **Emergency sound** (LSM, like the interrupt alert): the OH SHIT moment
+   needs zero eyes.
+4. **Cue row** (secure unit buttons, click-to-target/hover-to-aim) DEMOTED to
+   an optional fallback for players without usable frames/mouseover habits.
+   Native party-target keybinds (read via GetBindingKey, shown on beacons or
+   chips) answer "fast targeting" for keyboard players.
+
+Fast-targeting answer (addons cannot target programmatically): click a cue box
+(secure *type1=target), hover beacon/frame + mouseover bind, or the native
+party-targeting keys surfaced next to the suggestion.
+
+## Midnight ecosystem survey (2026-08-09) — field evidence from updated addons
+
+Surveyed: the four Midnight-updated (Interface 120000+) addons in the local
+AddOns directory — a click-heal addon (updated two days before this survey), a
+unit-frame addon, an avoidable-damage audio alerter, a group-frame sorter —
+plus the public status/changelogs of the major raid-frame, heal, dispel, and
+click-casting addons.
+
+### Convergent verdicts
+
+1. **Triage is dead ecosystem-wide.** No surviving addon ranks allies by
+   health. Both "emergency / lowest-health highlight" features found in
+   surveyed heal addons are inert in combat (gated on reading a now-secret
+   value). Deficit sorting, overheal text, and AoE-heal advisory modules were
+   removed, not re-engineered. **No addon anywhere references the
+   party-health audio-alert manager keys** — the plain per-unit ally-low
+   signal this plan is built on is uncontested territory. Blizzard's blue
+   post names the audio alert system ("health, buffs, and combat events") as
+   a sanctioned signal channel, which is the channel we consume.
+2. **Directing a heal survived untouched: the human is the comparator.** All
+   surviving click-heal flow is secure unit buttons + hover/mouseover
+   routing; the spell attribute never knows the target, the *button* does.
+   Unit attributes are written out of combat and frozen for the fight (writes
+   deferred to a regen-drained queue — same discipline as Phase 3's static
+   attributes). One friction: 12.0 reworked default frame clicks, so
+   click-casting setups must explicitly bind target/menu.
+3. **Rendering is pure engine passthrough.** Secret health flows into
+   StatusBar SetValue; coloring via UnitHealthPercent + curve objects;
+   incoming heals via the heal-prediction calculator object. Addons that
+   moved rendering/detection into the engine survived; addons that needed to
+   *read* died (the damage alerter shipped "with much of its functionality
+   gone" — its detection is now engine-side private-aura sound registration).
+
+### Techniques adopted into this plan
+
+- **Ally range, per spell:** `C_Spell.IsSpellInRange` stays PLAIN for allies
+  in combat (both local survivors use it as their real range source; generic
+  `UnitInRange` is secret). New invalidation events `UNIT_IN_RANGE_UPDATE` /
+  `UNIT_DISTANCE_CHECK_UPDATE` fire per unit. → Beacons/cue row can honestly
+  dim an unreachable heal. Verify in game once, then rely on it.
+- **Dispellable triage without reading anything:** the `RAID_PLAYER_DISPELLABLE`
+  / `HARMFUL|RAID` filters are server-side predicates — "this debuff is
+  dispellable *by you*". Combined with our validated plain `#GetUnitAuras`
+  count (non-boolean secret truthiness is documented branchable on the wiki),
+  that yields "party N has a debuff I can dispel" as a branchable per-ally
+  fact, plus the cache-plain-boolean-per-spellID pattern seen in the field.
+  This CLOSES the Phase 0 dispel-filter probe without a debuffing pack.
+- **Heal prediction:** `CreateUnitHealPredictionCalculator` +
+  `UnitGetDetailedHealPrediction`, with **`calc:HasSecretValues()` as a
+  branchable boolean** gating any arithmetic. Display-only otherwise.
+- **Non-secret healer-aura whitelist:** a Blizzard data hotfix makes ~100
+  healer spell IDs return readable AuraData in combat (list liftable from a
+  unit-frame addon's source; Blizzard accepts whitelist requests). My-HoT
+  tracking on party units may be plainly readable for whitelisted IDs —
+  cross-checks our own "player-sourced aura spellIds plain" finding.
+- **Gradient without branches:** a 3-point ColorCurve through
+  `UnitHealthPercent` replaces threshold if/else ladders wholesale.
+- **Misc portable idioms:** `issecretvalue(x) or x ~= cached` as universal
+  change-detection (secret ⇒ assume changed); identical-signature shim pairs
+  (classic vs Midnight implementations selected once by feature-detect);
+  `Frame:HasSecretAspect(Enum.SecretAspect.Alpha)` to detect
+  secret-contaminated alpha; `UnitHealthMissing` / `AbbreviateNumbers` for
+  engine-side deficit/formatting; `C_ClassColor.GetClassColor` accepts a
+  secret class token; `UnitIsDeadOrGhost` stays plain (liveness boolean).
+
+### Cautions surfaced
+
+- **Aura instanceIDs re-randomize** on entering an encounter / M+ / PvP match
+  (12.0.5). Any tracker holding an instanceID across that boundary silently
+  wedges. Audit queued for RedundancyFilter / MaintenanceTracker / DotTracker.
+- **`SetStatusBarColor` secret acceptance is disputed in the field** — one
+  surveyed addon routes around it (tints the fill texture instead), another
+  feeds it curve-derived RGB; the wiki lists it as a sink. Probe before
+  relying on it; texture `SetVertexColor` is the undisputed path.
+- **Per-call-site guards leak.** The click-heal addon hand-guarded ~98 sites
+  and missed one (unguarded arithmetic on a secret max-health in a sort
+  branch → in-combat error in a niche config). Centralized fail-open helpers
+  (our BlizzardAPI layer) are the pattern its mistakes argue for. Its master
+  gate also disables ~40 features even OUT of combat where values are
+  readable — gate on combat, not on client version.
+- **Aura tracking by spell NAME died in 12.0.1** — spellID-only (we comply).
+- A third-party rewrite claims a widget-readback (`SetValue`→`GetValue`)
+  works for health text; this contradicts our closed continuous-resource
+  sweep and the laundering rules — treat as stale/patched. Its
+  `CheckInteractDistance` non-secret range fallback claim is plausible but
+  redundant given per-spell range above.
+
+### Implication for the open display fork
+
+**DECIDED (owner, 2026-08-10): targeted heal advice is OUT OF SCOPE
+entirely.** Directing a heal at a person is group/raid-frame addon territory —
+the survey shows those addons own that input point and do it well. JustAC's
+heal surface is exactly three things:
+1. Personal self-heals in the defensive queue, as always.
+2. **Multi-target group heals** injected into the defensive queue while the
+   group-low signal is live. The criterion is "heals several allies per
+   cast", NOT targeting: a targeted AoE (Wild Growth, Chain Heal) cast with
+   no friendly target defaults to the player and the splash still covers the
+   group. Strictly single-target heals never appear — the queue cannot say
+   *who*, so it never suggests anything that needs a *who*.
+3. **The OH SHIT claimant**: when several allies are low at once
+   (`healing.emergencyCount`, default 3, with the measured 8s sticky hold),
+   the first READY spell of `HEAL_EMERGENCY_LADDER` claims the Sustain slot
+   (defensive slot 0) — arbitrated in `RenderMaintenanceSlot` between CC
+   escape (above, plain) and pet heal (below, secret alpha). LANDED
+   2026-08-10 (`DefensiveEngine.GetEmergencyHealID`).
+
+Consequences: the cursor companion is REMOVED (landed 2026-08-09, deleted
+2026-08-10 — it competed with the frames instead of joining them); on-frame
+beacons and the secure cue row are CANCELLED; `HEAL_EXTERNAL_LADDER`
+(tank-save externals) deleted — externals are targeted. The ladder and the
+injected list are kept DISJOINT by curation so a spell never renders twice.
+
+## Phase 3 — Triage cue row (hover-to-aim) — CANCELLED (out of scope, see above)
 
 Up to four party cue icons + pet, the pet-heal pattern generalized:
 - Created as **SecureUnitButtonTemplate** buttons with STATIC unit attributes
@@ -175,7 +373,7 @@ Up to four party cue icons + pet, the pet-heal pattern generalized:
   mouse; we cannot toggle EnableMouse from health — that would be a branch).
 - The addon never casts. No dynamic secure attributes anywhere.
 
-## Phase 4 — Slot 0 claimant stack (the emergency slot)
+## Phase 4 — Slot 0 claimant stack (the emergency slot) — LANDED 2026-08-10 (see decided scope above)
 
 Claimant priority (all plain → ordinary ifs; CC-break stays on top deliberately —
 if the crisis hits while stunned, the correct button IS the CC-break):
@@ -200,7 +398,8 @@ situation (probe-gated); a set focus overrides both as the designated upkeep tar
 
 ## Phase 5 — Per-spec data (audit-grounded, build 12.0.7.68887)
 
-New tables: `CLASS_GROUPHEAL_DEFAULTS`, `HEAL_EMERGENCY_LADDER`, `HEAL_EXTERNAL_LADDER`,
+New tables: `CLASS_GROUPHEAL_DEFAULTS`, `HEAL_EMERGENCY_LADDER` (both later trimmed
+to multi-target-only; `HEAL_EXTERNAL_LADDER` deleted with the targeted-heal descope),
 heal metadata (target type / cast class / HoT duration), friendly-dispel table, upkeep
 entries. All user-overridable via the existing priority-list UI. Alpha-build caveat:
 audited at 12.0.7.68887, re-audited at 12.0.7.68974 (incl. the full trait-condition

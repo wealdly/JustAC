@@ -94,6 +94,9 @@ local SPELL_LIST_CONFIG = {
     { listKey = "defensiveSpells", restoreKey = "defensive", defaultsKey = "CLASS_DEFENSIVE_DEFAULTS" },
     { listKey = "petHealSpells",   restoreKey = "petheal",   defaultsKey = "CLASS_PETHEAL_DEFAULTS" },
     { listKey = "petRezSpells",    restoreKey = "petrez",    defaultsKey = "CLASS_PET_REZ_DEFAULTS" },
+    -- Healer specs only: ResolveDefaults returns nil for every other spec, so
+    -- the list is never created and the heal pass below finds nothing.
+    { listKey = "groupHealSpells", restoreKey = "groupheal", defaultsKey = "CLASS_GROUPHEAL_DEFAULTS" },
 }
 
 -- Copy a source spell list into dest[listKey], used by init/restore.
@@ -280,6 +283,21 @@ function DefensiveEngine.InitializeDefensiveSpells(addon)
             if defaults then
                 CopySpellList(cs, cfg.listKey, defaults)
             end
+        end
+    end
+
+    -- One-time reseed: the group-heal list's contract changed to MULTI-TARGET
+    -- HEALS ONLY (see SpellDB.CLASS_GROUPHEAL_DEFAULTS) after early builds
+    -- seeded it with single-target heals. The feature never shipped, so a
+    -- stored list from those builds is a stale seed, not player customization -
+    -- replace it once. The populate-empty loop above can't do this: it only
+    -- fires on lists that don't exist yet.
+    if not cs.groupHealAoeReseed then
+        cs.groupHealAoeReseed = true
+        local defaults = SpellDB and SpellDB.CLASS_GROUPHEAL_DEFAULTS
+            and SpellDB.ResolveDefaults(SpellDB.CLASS_GROUPHEAL_DEFAULTS, specKey, playerClass)
+        if defaults then
+            CopySpellList(cs, "groupHealSpells", defaults)
         end
     end
 
@@ -1008,6 +1026,27 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- Early exit: proc passes filled the queue
     if #results >= maxIcons then return results, alreadyAdded end
 
+    -- Group heals: offered while at least one party member is below the alert
+    -- threshold. Two constraints, both measured in a live dungeon run:
+    --   * IN COMBAT ONLY. The low-keys persist out of combat (a party walking
+    --     around at partial health keeps the count non-zero), so without this
+    --     the heal list would sit on screen permanently between pulls.
+    --   * Availability, not health, decides which heal shows: the count says
+    --     SOMEONE needs healing, never who or how badly - that stays the
+    --     player's read off their own frames.
+    -- Placed above the self-defensive pass on purpose: with allies dropping,
+    -- the heals are the answer, and the cluster is only maxIcons wide.
+    if inCombat and profile.healing and profile.healing.enabled
+       and SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals()
+       and BlizzardAPI and BlizzardAPI.GetPartyLowCount
+       and BlizzardAPI.GetPartyLowCount() > 0 then
+        local healList = DefensiveEngine.GetClassSpellList(addon, "groupHealSpells")
+        if healList then
+            AppendUsableSpells(addon, results, healList, maxIcons, alreadyAdded)
+            if #results >= maxIcons then return results, alreadyAdded end
+        end
+    end
+
     -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
     local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
     if showAllAvailable or isLow then
@@ -1044,6 +1083,66 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     end
 
     return results, alreadyAdded
+end
+
+--------------------------------------------------------------------------------
+-- Emergency group heal - the Sustain slot's OH SHIT claimant. When several
+-- allies are low at once, the biggest ready group cooldown claims defensive
+-- slot 0 (arbitrated in UIRenderer.RenderMaintenanceSlot: CC escape outranks
+-- it, it outranks the pet heal's secret alpha layer - legal only because this
+-- claim is PLAIN). Targeted heals are out of scope by design: directing a heal
+-- at a person is group-frame territory; this addon only suggests
+-- press-and-done casts.
+--------------------------------------------------------------------------------
+
+local emergencyHealID = nil
+local emergencyCheckTime = 0
+local emergencyHeldUntil = 0    -- sticky hold: the low-flags flap at the
+                                -- threshold (measured in a live dungeon run),
+                                -- so an emergency, once called, holds ~8s
+local EMERGENCY_MEMO = 0.1
+local EMERGENCY_HOLD_SECONDS = 8
+
+--- First spell in `ladder` that is known and ready (local CD tracking).
+local function FirstReadyInLadder(ladder)
+    if not ladder then return nil end
+    for i = 1, #ladder do
+        local id = ladder[i]
+        if BlizzardAPI.IsSpellAvailable(id)
+           and (not BlizzardAPI.IsSpellReady or BlizzardAPI.IsSpellReady(id)) then
+            return id
+        end
+    end
+    return nil
+end
+
+--- SpellID of the emergency group heal while the claim is live, else nil.
+--- Memoized at 0.1s - the render tick calls this every frame.
+function DefensiveEngine.GetEmergencyHealID(addon)
+    local now = GetTime()
+    if now - emergencyCheckTime < EMERGENCY_MEMO then
+        return emergencyHealID
+    end
+    emergencyCheckTime = now
+    emergencyHealID = nil
+
+    local profile = addon and addon:GetProfile()
+    local healing = profile and profile.healing
+    if not (healing and healing.enabled) then return nil end
+    if not (SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals()) then return nil end
+    if not UnitAffectingCombat("player") then return nil end
+    if not (BlizzardAPI and BlizzardAPI.GetPartyLowCount) then return nil end
+
+    if BlizzardAPI.GetPartyLowCount() >= (healing.emergencyCount or 3) then
+        emergencyHeldUntil = now + EMERGENCY_HOLD_SECONDS
+    end
+    if now >= emergencyHeldUntil then return nil end
+
+    local specKey = SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    emergencyHealID = specKey
+        and FirstReadyInLadder(SpellDB.HEAL_EMERGENCY_LADDER and SpellDB.HEAL_EMERGENCY_LADDER[specKey])
+        or nil
+    return emergencyHealID
 end
 
 function DefensiveEngine.GetBuildStats()

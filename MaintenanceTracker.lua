@@ -30,7 +30,7 @@
 -- which is worse than showing nothing - so unknown renders the icon with no swipe and no
 -- glow. That state is bounded, never indefinite: it lasts only while a cast is still waiting
 -- on the bridge (BRIDGE_WINDOW), after which the pending flag is expired rather than leaked.
-local MaintenanceTracker = LibStub:NewLibrary("JustAC-MaintenanceTracker", 8)
+local MaintenanceTracker = LibStub:NewLibrary("JustAC-MaintenanceTracker", 9)
 if not MaintenanceTracker then return end
 
 local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -741,6 +741,23 @@ function MaintenanceTracker.Reset()
     -- the OLD spec's entry until the next tick.
     pickCache.t = nil
     MaintenanceTracker._activeEntry = nil
+end
+
+--- WoW 12.0.5 re-randomizes every auraInstanceID at encounter/M+/PvP entry, so an instance
+--- bound before that boundary is dead - and its death is ADMINISTRATIVE, not evidence.
+--- Without this flush, EntryState watches the stale id stop existing and latches
+--- observedDrop, producing the false "down" glow this module names as its worst failure.
+--- The old id also never appears in removedAuraInstanceIDs again, so removal-based clearing
+--- cannot recover it. Bindings only: cast clocks, projections, learned durations and
+--- cooldownIDs key on our own timestamps and spell/cooldown ids, which survive the boundary.
+--- pendingCastAt survives too - a cast still inside its bridge window binds against
+--- POST-randomization added auras, whose fresh ids are the valid ones.
+function MaintenanceTracker.FlushInstanceBindings()
+    for _, s in pairs(states) do
+        s.trackedInstance = nil
+        s.bindExact = false
+    end
+    pickCache.t = nil
 end
 
 --- Local clock for the swipe: our own cast time plus the entry's static duration. Plain
