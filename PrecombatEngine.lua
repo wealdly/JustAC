@@ -317,7 +317,23 @@ end
 -- that the party check goes quiet wherever auras are secret - the right trade for a feature
 -- whose only failure mode would otherwise be nagging about a buff that is already up.
 local function UnitHasHelpfulAura(unit, auraIDs)
-    if not auraIDs or not BlizzardAPI or not BlizzardAPI.GetAuras then return true end
+    if not auraIDs then return true end
+    -- Point queries FIRST: the by-spellID probe answers presence/absence as a plain
+    -- table-or-nil even where bulk iteration comes back empty (measured: the bulk
+    -- fetch returns nothing for open-world party members, which the fail-silent
+    -- rule below reads as "has it" - muting the whole feature). A throw means a
+    -- restricted read, not absence - fall through to the scan's silent verdict.
+    local byId = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+    if byId then
+        local sawThrow = false
+        for j = 1, #auraIDs do
+            local ok, data = pcall(byId, unit, auraIDs[j])
+            if ok and data ~= nil then return true end
+            if not ok then sawThrow = true end
+        end
+        if not sawThrow then return false end   -- every id answered plainly: true absence
+    end
+    if not BlizzardAPI or not BlizzardAPI.GetAuras then return true end
     local auras = BlizzardAPI.GetAuras(unit, "HELPFUL")
     if not auras then return true end
     for i = 1, #auras do
@@ -336,7 +352,7 @@ end
 -- outright. Dead / disconnected / out-of-range members are excluded so every cue is one
 -- the player can act on immediately. Note UnitInRange is ~40yd while these buffs reach
 -- further - the mismatch errs toward silence, never toward a false cue.
-local function PartyMemberMissingBuff(auraIDs)
+local function PartyMemberMissingBuff(castID, auraIDs)
     -- Group-membership probes go through the same readable-boolean gate: anything we can't
     -- read plainly means we can't establish there's a party to check, so offer nothing.
     if ReadableBool(IsInGroup and IsInGroup()) ~= true then return false end
@@ -347,10 +363,30 @@ local function PartyMemberMissingBuff(auraIDs)
             -- Compare against explicit true/false, never a bare truthiness test: a secret
             -- probe resolves to nil here and the member is skipped, which is the only safe
             -- reading of "we cannot tell whether they are buffable".
+            -- NPCs (dungeon followers, companions) never carry player raid buffs, so a
+            -- follower party would nag forever - no recast can satisfy the check. And a
+            -- cross-faction open-world member the buff cannot legally reach is noise, not
+            -- a cue: UnitCanAssist filters those (plain reaction booleans, both).
+            local isPlayer  = ReadableBool(UnitIsPlayer(unit))
+            local canAssist = ReadableBool(UnitCanAssist("player", unit))
             local connected = ReadableBool(UnitIsConnected(unit))
             local dead      = ReadableBool(UnitIsDeadOrGhost(unit))
-            local inRange   = ReadableBool(UnitInRange(unit))
-            if connected == true and dead == false and inRange == true
+            -- Range via the BUFF's own spell-range query, which stays PLAIN for allies
+            -- where the generic 40yd probe reads secret (measured 2026-08-10: UnitInRange
+            -- returned a secret boolean for an open-world party member OUT of combat, so
+            -- this gate silently skipped everyone and the recast nudge never fired). It
+            -- is also the truer question - "can my recast reach them". The generic probe
+            -- stays as fallback when the spell query has no answer.
+            local inRange
+            if castID and C_Spell and C_Spell.IsSpellInRange then
+                local ok, sr = pcall(C_Spell.IsSpellInRange, castID, unit)
+                if ok then inRange = ReadableBool(sr) end
+            end
+            if inRange == nil then
+                inRange = ReadableBool(UnitInRange(unit))
+            end
+            if isPlayer == true and canAssist == true
+               and connected == true and dead == false and inRange == true
                and not UnitHasHelpfulAura(unit, auraIDs) then
                 return true
             end
@@ -447,7 +483,7 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 -- re-cast covers everyone, so offer it even though the player's own
                 -- copy is nowhere near lapsing.
                 if not offered and grp.raidWide
-                   and PartyMemberMissingBuff(grp.auraIDs or grp.group) then
+                   and PartyMemberMissingBuff(active, grp.auraIDs or grp.group) then
                     out[#out + 1] = active
                 end
             else
@@ -501,10 +537,15 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
     --     player is always shown the heal.
     --   * TOP-OFF (35-100%): the opt-in "top off between pulls" reminder, gated by the toggle
     --     (offerTopoff). Health is secret out of combat in the open world, so detect below-full
-    --     from never-secret signals: the exact read where available (rested/cities), else
-    --     sustained regen ticks (health only regenerates BELOW full - airtight, and it goes
-    --     false the moment you hit full) plus a short post-combat window to bridge the
-    --     regen-start delay.
+    --     from never-secret signals: the exact read where available (rested/cities); in a
+    --     party, the party health alert's PLAIN per-unit key for "player" (the keys persist
+    --     out of combat - a nuisance for the group-heal feature, exactly right here: between
+    --     pulls it still says "below the alert threshold"); else sustained regen ticks
+    --     (health only regenerates BELOW full - airtight, and it goes false the moment you
+    --     hit full) plus a short post-combat window to bridge the regen-start delay. The
+    --     alert key is a POSITIVE signal only: its absence means "above the ALERT threshold",
+    --     which says nothing about the user's own topoffThreshold, so it must never suppress
+    --     the regen heuristic.
     if not InCombatLockdown() and not restricted and get and recupKnown
         and not get(SpellDB.RECUPERATE_AURA) then
         local hurt = false
@@ -515,9 +556,11 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
             elseif offerTopoff then
                 if pct and not estimated then
                     hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
-                elseif (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
+                elseif (BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable()
+                        and BlizzardAPI.IsUnitLow and BlizzardAPI.IsUnitLow("player"))
+                    or (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
                     or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime()) then
-                    hurt = true                              -- secret: regen / post-combat
+                    hurt = true                              -- secret: alert key / regen / post-combat
                 end
             end
         end

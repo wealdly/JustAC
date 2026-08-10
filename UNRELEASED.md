@@ -1,2 +1,6 @@
 ## [Unreleased]
 
+### Fixed
+- Stray glows are gone. The enrage-cleanse cue's glow could outlive its enrage or arm itself before its icon was ready - leaving an empty glow floating near the queue - a proc glow could come back from the dead on entering combat after being hidden, the execute cue's orange rim could survive the queue being hidden, and the nameplate overlay could carry a stale maintenance-slot glow across a hide. A full audit of the glow system closed every one of these paths: each glow's on and off can no longer disagree
+- The "party member is missing your buff" recast nudge actually works now, in both directions: it silently never fired in the open world, where the range and aura checks it relied on read as unavailable; it could nag forever at a fully-buffed party, because some raid buffs (Mark of the Wild, Arcane Intellect) carry a second identity it didn't recognize; and it counted dungeon follower companions, who can never receive player buffs, so no recast could ever satisfy it. It now asks range through the buff's own spell, matches every identity the buff can wear, and only counts real players
+- The between-pulls heal reminder is more accurate in open-world groups: with the party health alert enabled, it now knows you are actually below the alert threshold instead of guessing from health regeneration alone

@@ -358,6 +358,11 @@ function UIHealthBar.Update(addon)
 end
 
 -- Show the health bar
+-- Diagnostics accessor (the glow-inventory probe centers its search box here).
+function UIHealthBar.GetFrame()
+    return healthBarFrame
+end
+
 function UIHealthBar.Show()
     if healthBarFrame then
         healthBarFrame:Show()

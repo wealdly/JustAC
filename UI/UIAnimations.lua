@@ -115,10 +115,15 @@ local function ShowProcGlow(icon, isInCombat)
     if not procFrame then
         procFrame = CreateProcGlowFrame(icon, "ProcGlowFrame")
     end
-    
+    -- The PRIMITIVE owns hasProcGlow (audit 2026-08-10): flag writes scattered
+    -- across call sites left it desynced from the frame - a stale true made
+    -- ResumeIconGlows resurrect a hidden glow on combat entry, a missing true
+    -- (the defensive path never set it) made StopAllGlows skip the hide.
+    icon.hasProcGlow = true
+
     local width = icon.cachedIconSize or icon:GetWidth()
     procFrame:SetScale(width / 45)
-    
+
     procFrame:SetAlpha(1.0)
     procFrame:Show()
     
@@ -139,8 +144,10 @@ end
 
 -- Hide proc glow
 local function HideProcGlow(icon)
-    if not icon or not icon.ProcGlowFrame then return end
-    
+    if not icon then return end
+    icon.hasProcGlow = false   -- primitive owns the flag; see ShowProcGlow
+    if not icon.ProcGlowFrame then return end
+
     icon.ProcGlowFrame:Hide()
     if icon.ProcGlowFrame.ProcLoop:IsPlaying() then
         icon.ProcGlowFrame.ProcLoop:Stop()
@@ -202,8 +209,9 @@ local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
 end
 
--- No Hide counterpart on purpose: this only ever glows soothe-cue slots, and the cue
--- frame owns them, so hiding the cue takes the glow with it.
+-- No dedicated Hide wrapper: hiding the cue frame takes the glow with it, and the one
+-- explicit disarm (a spec losing its soothe spell) goes through the generic
+-- HideColoredProcGlow with this frame key from UISootheCue.SetSpell.
 local function ShowSootheProcGlow(icon)
     ShowColoredProcGlow(icon, "SootheProcGlowFrame", SOOTHE_PROC_R, SOOTHE_PROC_G, SOOTHE_PROC_B)
 end
@@ -308,8 +316,12 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
             highlightFrame.Flipbook:SetAlpha(1)
         end
         highlightFrame:Show()
-        icon[config.flagField] = true
     end
+    -- Unconditional (audit 2026-08-10): the set lived inside the shown-guard while
+    -- StopMarchingAntsGlow clears unconditionally, so an externally-cleared flag on
+    -- a still-shown frame could never re-assert - glow visible, flag false, every
+    -- flag-gated stop skipping it.
+    icon[config.flagField] = true
 
     -- Animation state management
     local pauseField = config.pauseField
@@ -353,7 +365,7 @@ local function StopMarchingAntsGlow(icon, config)
     end
 
     if config.clearsProc then
-        HideProcGlow(icon)
+        HideProcGlow(icon)   -- clears hasProcGlow itself; the primitive owns that flag
     end
 
     icon[config.flagField] = false
