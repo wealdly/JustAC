@@ -3,6 +3,31 @@
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-08-10
+
+### Added
+- New Ability Overrides tab: search any spell or item and manage everything about it in one card - visibility (formerly the Blacklist tab), pins, item aura-linking, priority-list membership, and its hotkey label - plus a "Your Customizations" list of every ability you've changed. The Blacklist and Hotkeys tabs are retired; their settings and your existing entries all live on the card
+- Healer specs now work out of the box: the queue suggests your damage rotation - the same one Blizzard's Assisted Combat drives - for soloing, delves, and dungeon downtime, with healing spells kept out of the damage slots across every healer class. A new Caster Filler toggle also keeps melee suggestions out for healers who stay at range. Characters where a healer spec was previously switched off keep that choice; a one-time hint points at the new `/jac enable` command
+- Group Heal Suggestions (Defensive Queue tab, healer specs): in combat, when party members drop below the game's party health alert threshold, your group heals - the ones that heal several allies at once - join the defensive queue in a priority order you can edit. When several allies are low at once, your strongest ready group cooldown takes over the slot beside the queue as an emergency cue, holding a few seconds so it can't flicker while your heals land. Single-target heals are deliberately left out: aiming a heal at the right person is your party frames' job, and this addon never competes with them. Cast a group heal with no target and it simply lands on you, still covering the group. Needs the party health alert enabled in the game's Accessibility settings (set its volume to 0 if you would rather not hear it): that alert is the only thing an addon can know about ally health in combat, and it only says that someone crossed the line - never who, or how badly
+- Paladin Auras join the pre-combat suggestions: with no Aura active, one is offered (Devotion by default) - like a rogue's poisons or a shaman's shield
+
+### Fixed
+- A talent that replaces an active ability with a passive effect no longer puts that passive in any queue - a passive can't be pressed - and the stray glow it brought along is gone; the queue moves on to your next ability
+- Fixed a crash in the Burst-Ready Cue that could freeze the entire queue for a whole fight - with the cue now on by default this would have hit everyone, and it explains the queue "sticking" mid-combat for players who had it enabled
+- Pre-combat poison and shield suggestions now follow Assisted Combat's own picks, in its own order - a suggestion can no longer get stuck asking for one poison while you carry another
+- Gap closers no longer double up or waste themselves: after one fires, the suggestion stands down while you travel, and none are offered when the target is only barely out of melee reach - walk the last couple of steps instead. A new "Only Suggest For Real Gaps" toggle turns the distance check off
+- The Disruption slot respects range: a melee kick is no longer suggested as if usable from across the room - a reachable alternative is preferred, or your interrupt shows dimmed as a reminder - and area abilities centered on you only appear when the target is confirmed inside their radius, because pressing one out of reach fires anyway and wastes the cooldown
+- Dragging now picks a frame up the instant you press, and it stays exactly where you grabbed it - no more late starts, frames trailing beside the cursor, docked panels jumping when a drag begins, or accidental nudges from a press without movement
+- A long list of placement fixes: everything lines up at any icon scale; the nameplate overlay reliably moves Blizzard's crowd-control displays clear of its icons, even in combat, and a blocked attempt can no longer leave badges misplaced; attaching to a target frame that another addon keeps hidden stands down and re-attaches on its own; pet bars and power bars appear and disappear promptly; the pre-combat "click" hint follows the frame while you drag it
+- Smaller fixes: custom hotkey labels on items survive a reload; a group member changing talents no longer resets cooldown tracking mid-fight; a nameplate-only setup no longer inherits the main queue's visibility conditions; no more keypress error after a mid-combat reload
+
+### Changed
+- Substantially lower CPU and memory use in combat
+- The options are reorganized around what they hold: one Display tab carries both display surfaces plus the Shared Behavior they follow; DPS Queue and Defensive Queue hold the two suggestion queues; Ability Overrides sits after them; General keeps the Disruption slot, input, and Blizzard UI integration. Controls that can't currently take effect grey themselves out and say why
+- Simpler controls, same choices: queue ordering is now a single preset (Smart, Match Blizzard's pick, or Fixed order) with a Customize expander for mixed setups; each display is enabled with a checkbox at the top of its own page; one shared Highlight Mode covers every surface, with per-surface overrides still available; the paired grey-out and tint toggles are merged. Existing choices are preserved throughout
+- Now on by default: gap-closer suggestions, and the Burst-Ready Cue (purple glow on your spec's major cooldown when a burst window is called for)
+- Reset to Defaults is properly scoped: the General tab's reset no longer switches your displays on or off, and the Defensive Queue tab has its own reset button covering all its sub-tabs
+
 ## [4.59.0] - 2026-08-02
 
 ### Changed
