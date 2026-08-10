@@ -5768,6 +5768,9 @@ end
 -- wrong (nagging while everyone is buffed / silent while someone is not).
 --------------------------------------------------------------------------------
 function DebugCommands.GroupBuffProbe(addon)
+    -- No file-local BlizzardAPI in this file - resolve it, or every gated
+    -- BlizzardAPI.* read below silently short-circuits to nil.
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     local issecret = issecretvalue
     local function RB(v)  -- ReadableBool: true/false when plain, "SECRET" when not
         if v == nil then return "nil" end
@@ -5865,5 +5868,147 @@ function DebugCommands.GroupBuffProbe(addon)
                 end
             end
         end
+    end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect textlaunder - test the FontString SetText->GetText laundering
+-- claim (seen in a Midnight-native frames addon: "SetText accepts a secret
+-- string, GetText() hands back a PLAIN string"). Our continuous-read sweep
+-- concluded the opposite (Text aspect goes secret permanently). Three possible
+-- verdicts, in descending order of consequence:
+--   LAUNDERS   - GetText returns a PLAIN readable string: reopens the whole
+--                continuous-read family. (Expect Blizzard to patch it.)
+--   ZERO-GATE  - GetText returns a SECRET string, but `not result` is safe
+--                (documented non-boolean truthiness rule) and empty text
+--                collapses to plain nil: a legal presence/zero detector.
+--   SEALED     - readback secret and truthiness throws: sweep verdict stands.
+-- Run IN COMBAT with a target (or in a follower dungeon: NPC ally max-health
+-- reads secret even out of combat).
+--------------------------------------------------------------------------------
+function DebugCommands.TextLaunderProbe(addon)
+    local issecret = issecretvalue
+    if not issecret then
+        addon:Print("textlaunder: no issecretvalue on this client - nothing to test")
+        return
+    end
+
+    -- Find a live secret value to feed the widget.
+    local candidates = {
+        { "UnitHealth(target)",     function() return UnitHealth("target") end },
+        { "UnitHealthMax(target)",  function() return UnitHealthMax("target") end },
+        { "UnitHealth(player)",     function() return UnitHealth("player") end },
+        { "UnitHealthMax(party1)",  function() return UnitHealthMax("party1") end },
+        { "UnitPower(player)",      function() return UnitPower("player") end },
+    }
+    local srcName, secretVal
+    for _, c in ipairs(candidates) do
+        local ok, v = pcall(c[2])
+        if ok and v ~= nil and issecret(v) then
+            srcName, secretVal = c[1], v
+            break
+        end
+    end
+    addon:Print("|cff00ff00=== text launder probe ===|r")
+    if not secretVal then
+        addon:Print("no SECRET source available here (all candidate reads plain) - get in combat with a target, or stand in a follower dungeon party, and rerun")
+        return
+    end
+    addon:Print("secret source: " .. srcName)
+
+    -- Secret-safe formatter for chat output: tostring() and string.format("%s")
+    -- PROPAGATE secrecy silently (field-measured 2026-08-10 - the poisoned string
+    -- sailed through both and only blew up in the chat library's table.concat),
+    -- so every possibly-secret value must be reduced HERE, before the message.
+    local function safe(v)
+        if v ~= nil and issecret(v) then return "<SECRET " .. type(v) .. ">" end
+        return tostring(v)
+    end
+
+    -- FRESH FontString every run: the Text aspect is STICKY - one secret SetText
+    -- poisons the widget so even a plain "42" reads back secret forever after
+    -- (field-measured: a pooled scratch widget failed its own control on re-run).
+    -- A leaked FontString per probe run is an acceptable debug cost.
+    if not DebugCommands._launderHolder then
+        DebugCommands._launderHolder = CreateFrame("Frame")
+        DebugCommands._launderHolder:Hide()
+    end
+    local fs = DebugCommands._launderHolder:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+
+    -- Control on the fresh widget: plain round-trip must be plain.
+    fs:SetText("42")
+    local ctrl = fs:GetText()
+    addon:Print(string.format("control (fresh widget): GetText() = %s (secret=%s)",
+        safe(ctrl), tostring(ctrl ~= nil and issecret(ctrl) or false)))
+
+    -- Leg 1: secret in, what comes out?
+    local okSet = pcall(fs.SetText, fs, secretVal)
+    addon:Print("SetText(secret): " .. (okSet and "accepted" or "REJECTED (threw)"))
+    if not okSet then
+        addon:Print("|cffff6600verdict: SEALED at the door - SetText no longer accepts this secret|r")
+        return
+    end
+    local aspect = "n/a"
+    if fs.HasSecretAspect and Enum and Enum.SecretAspect and Enum.SecretAspect.Text then
+        local okA, a = pcall(fs.HasSecretAspect, fs, Enum.SecretAspect.Text)
+        aspect = okA and tostring(a) or "err"
+    end
+    local okGet, back = pcall(fs.GetText, fs)
+    if not okGet then
+        addon:Print("GetText() THREW - aspect=" .. aspect)
+        addon:Print("|cffff6600verdict: SEALED (readback itself is blocked)|r")
+        return
+    end
+    local backSecret = back ~= nil and issecret(back) or false
+    addon:Print(string.format("GetText(): type=%s secret=%s aspect(Text)=%s value=%s",
+        type(back), tostring(backSecret), aspect, safe(back)))
+
+    if back ~= nil and not backSecret then
+        addon:Print("|cffff0000verdict: LAUNDERS - plain readback of a secret. The continuous-read family just reopened; expect this to be patched, build nothing load-bearing on it.|r")
+        return
+    end
+
+    -- Leg 2: secret readback - is the documented truthiness rule usable on it?
+    local okTruth, truthy = pcall(function() return not back end)
+    addon:Print(string.format("truthiness test (`not result`): %s -> %s",
+        okTruth and "SAFE" or "THREW", okTruth and safe(truthy) or "-"))
+
+    -- Leg 3: empty-collapse on the POISONED widget - does empty text read back
+    -- as plain nil (the zero-detector's load-bearing half)?
+    fs:SetText("")
+    local emptyBack = fs:GetText()
+    addon:Print(string.format("empty-collapse: SetText('') -> GetText() = %s (secret=%s)",
+        safe(emptyBack), tostring(emptyBack ~= nil and issecret(emptyBack) or false)))
+
+    -- Leg 4: stickiness - plain write to the poisoned widget.
+    fs:SetText("42")
+    local sticky = fs:GetText()
+    addon:Print(string.format("sticky-aspect: plain '42' into poisoned widget -> secret=%s",
+        tostring(sticky ~= nil and issecret(sticky) or false)))
+
+    if okTruth and emptyBack == nil then
+        addon:Print("|cffffff00verdict: ZERO-GATE - readback stays secret but presence/absence is branchable (truthiness + plain-nil empty-collapse). A legal zero-detector, not a laundering hole.|r")
+    elseif okTruth then
+        addon:Print("|cffffff00verdict: PARTIAL - truthiness is safe on the readback, but empty text does not collapse to plain nil, so the zero-detector needs the truthiness leg alone.|r")
+    else
+        addon:Print("|cff888888verdict: SEALED - readback secret and truthiness blocked; the sweep's conclusion stands.|r")
+    end
+
+    -- Applied check: the top-off feature's live gate. Run this AT FULL HEALTH -
+    -- expect true (verifies the engine treats the deficit API's "-0 at full"
+    -- quirk as zero); hurt yourself and rerun - expect false.
+    -- This file has NO file-local BlizzardAPI - resolve it here (a bare reference
+    -- is a nil global and silently skipped this whole block once already).
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not UnitHealthMissing then
+        addon:Print("applied: SKIPPED - UnitHealthMissing API not present on this client")
+    elseif not (BAPI and BAPI.IsSecretZero) then
+        addon:Print("applied: SKIPPED - BlizzardAPI.IsSecretZero unavailable")
+    else
+        local missing = UnitHealthMissing("player")
+        local atFull
+        if missing ~= nil then atFull = BAPI.IsSecretZero(missing) end
+        addon:Print(string.format("applied: IsSecretZero(UnitHealthMissing(player)) = %s  (at full: expect true)",
+            tostring(atFull)))
     end
 end

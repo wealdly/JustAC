@@ -110,6 +110,40 @@ end
 -- API-Specific Secret-Aware Helpers
 --------------------------------------------------------------------------------
 
+-- Branchable "is this (possibly secret) amount zero or absent?" - the
+-- scratch-FontString emptiness gate, in-game validated 2026-08-10
+-- (`/jac inspect textlaunder`). The legal mechanics it composes:
+--   * C_StringUtil.TruncateWhenZero accepts secrets and yields nil for zero,
+--     a (secret) string otherwise - the engine makes the only decision.
+--   * SetText("") reads back as PLAIN nil even on a widget whose Text aspect
+--     is already poisoned, so ONE pooled widget is safe here: the sticky-aspect
+--     trap only bites PLAIN-content readback, which this never does.
+--   * Truthiness of the secret-string readback is legal (non-boolean rule).
+-- Returns true (zero/absent), false (non-zero), or NIL when the technique is
+-- unavailable on this client - callers MUST treat nil as "no answer" and fall
+-- back to their heuristics, never as either verdict.
+local zeroScratch
+local TruncateWhenZero = C_StringUtil and C_StringUtil.TruncateWhenZero
+function BlizzardAPI.IsSecretZero(v)
+    if v == nil then return true end
+    if not (IsSecretValue and IsSecretValue(v)) then
+        -- Plain fast path: no widget needed, and non-numbers are "no answer".
+        if type(v) == "number" then return v == 0 end
+        return nil
+    end
+    if not TruncateWhenZero then return nil end
+    if not zeroScratch then
+        local holder = CreateFrame("Frame")
+        holder:Hide()
+        zeroScratch = holder:CreateFontString(nil, "BACKGROUND", "GameFontNormal")
+    end
+    local ok = pcall(function()
+        zeroScratch:SetText(TruncateWhenZero(v) or "")
+    end)
+    if not ok then return nil end
+    return not zeroScratch:GetText()
+end
+
 function BlizzardAPI.GetAuraTiming(unit, index, filter)
     if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end
     local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
