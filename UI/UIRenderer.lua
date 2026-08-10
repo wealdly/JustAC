@@ -765,11 +765,47 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     icon.appliedDefGlowState = want
 end
 
+-- "Provably at full health" via the zero-gate (BlizzardAPI.IsSecretZero on the
+-- engine-side deficit; field-certified both directions 2026-08-10). Memoized:
+-- this feeds a per-icon per-pass glow decision, and the secret path costs a
+-- widget round-trip. Returns true ONLY on a certain answer - nil/false both
+-- mean "do not suppress anything".
+local atFullCache, atFullCacheAt = nil, 0
+local function PlayerProvablyFull()
+    local now = GetTime()
+    if now - atFullCacheAt < 0.25 then return atFullCache end
+    atFullCacheAt = now
+    atFullCache = nil
+    if UnitHealthMissing and BlizzardAPI and BlizzardAPI.IsSecretZero then
+        local missing = UnitHealthMissing("player")
+        if missing ~= nil then
+            atFullCache = BlizzardAPI.IsSecretZero(missing) == true
+        end
+    end
+    return atFullCache
+end
+
 -- The one glow-priority rule, computed from icon state both paths maintain.
 local function ComputeDefensiveGlowState(icon, isProc)
     if icon.isWaiting then return "none" end
     local mode = icon.defGlowMode or "all"
-    if isProc and (mode == "all" or mode == "procOnly") then return "proc" end
+    if isProc and (mode == "all" or mode == "procOnly") then
+        -- A procced HEAL only glows while there is something to heal: at full
+        -- health the "press me" burst is noise (field report: Clearcasting's
+        -- free Regrowth bursting gold between pulls). Suppress ONLY on a
+        -- provable at-full answer - nil keeps the glow, failing toward the old
+        -- behavior, never toward hiding a real cue - and NEVER while the group
+        -- is low: an injected group heal's proc is exactly the right press
+        -- then, whatever the player's own health. Non-heal procs are untouched.
+        local id = icon.currentID or icon.spellID
+        if id and SpellDB and SpellDB.IsHealingSpell and SpellDB.IsHealingSpell(id)
+            and PlayerProvablyFull()
+            and (not BlizzardAPI.GetPartyLowCount or BlizzardAPI.GetPartyLowCount() == 0) then
+            -- fall through: the icon keeps precombat/marching eligibility
+        else
+            return "proc"
+        end
+    end
     if icon.isPrecombatBuff then return "precombat" end
     if icon.defShowGlow and (mode == "all" or mode == "primaryOnly") then return "marching" end
     return "none"

@@ -172,8 +172,9 @@ local INSPECT_TOPICS = {
     enragelog   = "EnrageLog",
     glows       = "GlowInventory",
     groupbuff   = "GroupBuffProbe",
+    textlaunder = "TextLaunderProbe",
 }
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, healprobe [arm|show|watch], validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear], glows, groupbuff"
+local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, healprobe [arm|show|watch], validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear], glows, groupbuff, textlaunder"
 
 -------------------------------------------------------------------------------
 -- Slash command handler

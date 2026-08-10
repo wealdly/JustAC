@@ -318,11 +318,12 @@ end
 -- whose only failure mode would otherwise be nagging about a buff that is already up.
 local function UnitHasHelpfulAura(unit, auraIDs)
     if not auraIDs then return true end
-    -- Point queries FIRST: the by-spellID probe answers presence/absence as a plain
-    -- table-or-nil even where bulk iteration comes back empty (measured: the bulk
-    -- fetch returns nothing for open-world party members, which the fail-silent
-    -- rule below reads as "has it" - muting the whole feature). A throw means a
-    -- restricted read, not absence - fall through to the scan's silent verdict.
+    -- Point queries FIRST: the by-spellID probe is the only mechanism that yields
+    -- an AUTHORITATIVE negative under 12.0 (presence/absence as plain table-or-nil;
+    -- the rule the Midnight-native frames addons converged on). The bulk scan below
+    -- stays as fallback, but its fail-silent rule reads any doubt as "has it", so
+    -- routing through it first muted the feature wherever reads were partial. A
+    -- throw here means a restricted read, not absence - fall through to the scan.
     local byId = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
     if byId then
         local sawThrow = false
@@ -556,11 +557,30 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
             elseif offerTopoff then
                 if pct and not estimated then
                     hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
-                elseif (BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable()
-                        and BlizzardAPI.IsUnitLow and BlizzardAPI.IsUnitLow("player"))
-                    or (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
-                    or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime()) then
-                    hurt = true                              -- secret: alert key / regen / post-combat
+                else
+                    -- EXACT TIER: zero-gate the engine-side deficit
+                    -- (BlizzardAPI.IsSecretZero - the validated scratch-FontString
+                    -- technique). true = at full: never nudge, and no heuristic may
+                    -- override. false = genuinely below full: nudge - the 90%
+                    -- threshold can't be honored here (the heuristics couldn't
+                    -- either), but unlike them this also STOPS the instant you top
+                    -- off. nil = no answer: the heuristic tiers decide, as before.
+                    local atFull
+                    if UnitHealthMissing and BlizzardAPI.IsSecretZero then
+                        local missing = UnitHealthMissing("player")
+                        if missing ~= nil then
+                            atFull = BlizzardAPI.IsSecretZero(missing)
+                        end
+                    end
+                    if atFull == false then
+                        hurt = true                          -- exact: below full
+                    elseif atFull == nil
+                        and ((BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable()
+                              and BlizzardAPI.IsUnitLow and BlizzardAPI.IsUnitLow("player"))
+                          or (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
+                          or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime())) then
+                        hurt = true                          -- heuristics: alert key / regen / post-combat
+                    end
                 end
             end
         end
