@@ -370,6 +370,74 @@ function BlizzardAPI.GetLowHealthState()
     return true, isCritical, alpha
 end
 
+--------------------------------------------------------------------------------
+-- Ally-low detection (party1-4) - the ONLY branchable "an ally needs healing"
+-- signal in 12.0.
+--
+-- Blizzard's combat audio-alert manager watches player+party1-4 and, in its own
+-- UNTAINTED code, inserts/removes a plain Lua table KEY per unit exactly when
+-- that unit crosses the CAAPartyHealthPercent threshold. Key existence is the
+-- laundered boolean: the comparison happened privileged, so what reaches us is
+-- an ordinary table lookup, not a secret. Validated in game 2026-08-09 (Resto
+-- Druid, follower dungeon, thresholds 90/70/60%): keys flip both directions in
+-- combat, unitCount stays consistent with them, and it all works with the alert
+-- VOLUME at 0 (volume gates the speech, not the processing).
+--
+-- Rules this must never break:
+--   * READ KEYS ONLY. The stored values (frequency/updateAfter) are derived from
+--     secret health - touching them re-secrets what we just laundered.
+--   * READ ONLY, never write a field on the manager (a Lua write taints the
+--     frame and breaks Blizzard's own secret comparison).
+--   * The addon does not enable the feature here; a managed setup toggle owns
+--     that. Feature off -> the manager clears its table -> count 0 -> callers
+--     see "nobody low", which is the correct fail-open direction.
+--   * party1-4 only; there is no raid equivalent.
+--------------------------------------------------------------------------------
+
+--- Number of watched units currently below the alert threshold (0 when the
+--- feature is off, ungrouped, or the value is unreadable). Plain integer.
+-- Probe closure hoisted through an upvalue: this runs per party UNIT_HEALTH
+-- event in combat (the edge-trigger in JustAC.lua), and an inline closure
+-- would allocate on every call.
+local lowCountProbeInfo
+local function LowCountProbe() return lowCountProbeInfo.unitCount end
+
+function BlizzardAPI.GetPartyLowCount()
+    local mgr = CombatAudioAlertManager ---@diagnostic disable-line: undefined-global
+    local info = mgr and mgr.partyHealthInfo
+    if not info then return 0 end
+    lowCountProbeInfo = info
+    local ok, n = pcall(LowCountProbe)
+    if not ok or type(n) ~= "number" then return 0 end
+    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(n) then return 0 end
+    return n
+end
+
+--- Is this unit currently below the alert threshold? Key existence only.
+--- @param unit string "player" or "party1".."party4"
+function BlizzardAPI.IsUnitLow(unit)
+    if not unit then return false end
+    local mgr = CombatAudioAlertManager ---@diagnostic disable-line: undefined-global
+    local info = mgr and mgr.partyHealthInfo
+    local byUnit = info and info.unitInfo
+    if not byUnit then return false end
+    local ok, present = pcall(function() return byUnit[unit] ~= nil end)
+    return ok and present == true
+end
+
+--- True when the ally-low signal is actually running (feature enabled with a
+--- non-zero threshold). Callers use this to distinguish "nobody is hurt" from
+--- "we cannot see who is hurt" - the emergency tier stays dark for the latter
+--- rather than pretending the group is healthy.
+function BlizzardAPI.IsPartyLowAvailable()
+    local api = C_CombatAudioAlert ---@diagnostic disable-line: undefined-global
+    if not (api and api.IsEnabled) then return false end
+    local ok, enabled = pcall(api.IsEnabled)
+    if not (ok and enabled == true) then return false end
+    local threshold = tonumber(GetCVar and GetCVar("CAAPartyHealthPercent"))
+    return (threshold or 0) > 0
+end
+
 --- Primary resource at cap, via the player-frame full-power pulse: the engine
 --- branches on the secret amount and Plays/Stops the animation, leaving a plain
 --- IsPlaying() (validated in combat 2026-07-24 - oscillates exactly with

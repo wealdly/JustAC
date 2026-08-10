@@ -39,6 +39,11 @@ local isHealerSpec = nil
 local healerTailBuf = {}
 local FormCache = nil   -- lazily resolved; false once known-absent
 SpellQueue._rotationIsCustom = false
+-- Pooled per-build context (wiped every build). Carries what the build stages
+-- need so they take (b) instead of long positional signatures, and so the
+-- coordinator can reference stage inputs through ONE table instead of dozens
+-- of upvalue slots (see the 60-upvalue note above).
+SpellQueue._b = {}
 
 local function IsHealerSpecActive()
     if isHealerSpec == nil then
@@ -468,7 +473,11 @@ function SpellQueue.GetQueueBlankInfo()
 end
 
 --- Inject procced spellbook spells (e.g. Fel Blade) after position 1.
-local function AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
+local function AddSpellbookProcs(b)
+    -- Unpacked build context; body unchanged from the positional-argument era.
+    local profile, blacklist = b.profile, b.blacklist
+    local addedSpellIDs, recommendedSpells = b.addedSpellIDs, b.recommendedSpells
+    local spellCount, maxIcons, hideItems = b.spellCount, b.maxIcons, b.hideItems
     local spellbookProcs = ActionBarScanner and ActionBarScanner.GetSpellbookProccedSpells and ActionBarScanner.GetSpellbookProccedSpells()
     if not spellbookProcs then return spellCount end
 
@@ -776,7 +785,17 @@ local function rankOf(spellID, simcRec)
     return 1
 end
 
-local function CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, bypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
+local function CategorizeAndAssembleRotation(rotationList, b)
+    -- Unpack the build context once; the body below is unchanged from the
+    -- 18-positional-argument era.
+    local profile, blacklist = b.profile, b.blacklist
+    local addedSpellIDs, recommendedSpells = b.addedSpellIDs, b.recommendedSpells
+    local spellCount, maxIcons, hideItems = b.spellCount, b.maxIcons, b.hideItems
+    local bypassProcs = b.effectiveBypassProcs
+    local ctxArch, ctxRange, ctxRole = b.ctxArch, b.ctxRange, b.ctxRole
+    local ctxExecute, ctxOutOfMelee = b.ctxExecute, b.ctxOutOfMelee
+    local contextOrder, sinkCooldowns = b.contextOrder, b.sinkCooldowns
+    local simcCtx, pickWindows = b.simcCtx, b.pickWindows
     wipe(proccedSpells)
     wipe(normalSpells)
     wipe(proccedRank)
@@ -952,204 +971,291 @@ function SpellQueue.GetEffectiveMaxIcons(profile)
     return maxIcons
 end
 
-function SpellQueue.GetCurrentSpellQueue()
-    local profile = BlizzardAPI.GetProfile()
-    if not profile or profile.isManualMode then
-        return lastSpellIDs or {}
+--------------------------------------------------------------------------------
+-- Build stages. Each takes the pooled build context `b` (SpellQueue._b) and
+-- mutates it (b.spellCount in particular). Module-table functions on purpose:
+-- the coordinator rides its single SpellQueue upvalue slot, and every stage
+-- gets a fresh Lua 5.1 60-upvalue budget (see the compile-limit note above).
+--------------------------------------------------------------------------------
+
+--- Clears the situation memory (sticky context + execute latch). Called from
+--- the coordinator's OOC visibility early-return so a stale latch never
+--- survives into the next fight (evade-reset mobs return at full health).
+function SpellQueue._ClearSituationMemory()
+    stickyArch, stickyRange, executeLatchGUID = nil, nil, nil
+end
+
+--- Stage E - context inference: the AC pick's archetype/range/role/execute
+--- tags, enemy-count promotion, sticky/latch temporal smoothing, the
+--- out-of-melee probe, and the /jac inspect rank snapshot. Fills b.ctx*.
+function SpellQueue._StageContext(b)
+    local primarySpellID, inCombat, now = b.primarySpellID, b.inCombat, b.now
+    -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
+    -- pick (the original recommendation, before any gap-closer injection).
+    local ctxArch, ctxRange, ctxRole, ctxExecute
+    if primarySpellID and SpellDB then
+        ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
+        ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
+        ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
+        ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
-
-    -- Channel-hold: while channeling, the current suggestion IS being executed - rebuilding
-    -- mid-channel only flickers the queue as the engine's pick churns. Freeze CONTENT here,
-    -- at the single source every caller shares, so rendering keeps running and the channel
-    -- grey-out/fill actually paints. (This hold used to live in the main loop, where it
-    -- skipped the whole render pass - the channeled spell then still LOOKED available.)
-    -- Own-channel info is plain in combat (validated 2026-07-24).
-    if BlizzardAPI.IsPlayerChanneling and BlizzardAPI.IsPlayerChanneling() then
-        return lastSpellIDs or {}
-    end
-
-    local now = GetTime()
-    -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
-    -- Internal safety throttle - main loop in JustAC.lua is the primary rate limiter
-    -- (CVar-driven, min 0.03s).  These match the main loop's minimum intervals so
-    -- SpellQueue never bottlenecks the caller.
-    local inCombat = UnitAffectingCombat("player")
-    local throttleInterval = inCombat and 0.03 or 0.05
-
-    if now - lastQueueUpdate < throttleInterval then
-        return lastSpellIDs or {}
-    end
-    
-    local queueVisible, hiddenReason = EvaluateQueueVisibility(profile, inCombat)
-    if not queueVisible then
-        if #lastSpellIDs > 0 then SpellQueue.NoteQueueBlank(hiddenReason) end
-        lastShouldShowQueue = false
-        lastQueueUpdate = now
-        -- Clear situation memory here too: with combat-only visibility this early
-        -- return is the only path that runs OOC, and a stale execute latch must not
-        -- survive into the next fight (evade-reset mobs return at full health).
-        if not inCombat then
-            stickyArch, stickyRange, executeLatchGUID = nil, nil, nil
-        end
-        wipe(lastSpellIDs)
-        return lastSpellIDs
-    end
-
-    -- All visibility conditions passed: queue should be shown.
-    lastShouldShowQueue = true
-    lastQueueUpdate = now
-    if profile.debugMode then
-        if spellQueueBuildCount == 0 then
-            spellQueueResetTime = now
-        end
-        spellQueueBuildCount = spellQueueBuildCount + 1
-    end
-
-    wipe(filterResultCache)
-    wipe(rotationFilterCache)
-    if BlizzardAPI.ClearProcCache then BlizzardAPI.ClearProcCache() end
-
-    local bypassProcs = BlizzardAPI.IsProcFeatureAvailable
-        and not BlizzardAPI.IsProcFeatureAvailable() or false
-    local blacklist = GetBlacklistTable()
-
-    wipe(recommendedSpells)
-    wipe(addedSpellIDs)
-    wipe(syntheticProcs)
-    wipe(displacedPrimary)
-    wipe(burstCueSpells)
-    wipe(cooldownSpells)
-    local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
-    local spellCount = 0
-    local hideItems = profile.hideItemAbilities
-
-    -- Resolve late-bound engine refs (load after SpellQueue in TOC; resolved once, then cached).
-    if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
-    if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
-
-    -- Position 1: Blizzard's primary suggestion. A full blacklist entry hides it here too
-    -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
-    -- position 1 (isPrimary=true) so the rotation keeps advancing.
-    local primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
-
-    -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on
-    -- the current target (outside its refresh window), which means it wants the DoT
-    -- on OTHER targets. IsDotActiveOnCurrentTarget returns false during the pandemic
-    -- window, so a genuine refresh-this-target pick does not trigger the arrow.
-    dotSpreadActive = false
-    if profile.showDotSpreadArrow == true and primarySpellID and primarySpellID > 0
-       and DotTracker and DotTracker.IsDotActiveOnCurrentTarget
-       and SpellDB and SpellDB.IsTargetDot then
-        local pd = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-        if (SpellDB.IsTargetDot(primarySpellID) or SpellDB.IsTargetDot(pd))
-           and DotTracker.IsDotActiveOnCurrentTarget(pd) then
-            dotSpreadActive = true
+    -- Direct enemy count (secret-safe, AC-independent): promote the context to
+    -- cleave/aoe from the number of enemies actually engaged with us, catching AoE
+    -- that a single AC-pick archetype misses. Promote-only - never downgrades AC's
+    -- own aoe/cleave read.
+    if inCombat and BlizzardAPI.GetEngagedEnemyCount then
+        local enemies = BlizzardAPI.GetEngagedEnemyCount()
+        if enemies >= 2 then
+            ctxArch = (enemies >= 3 or ctxArch == "aoe") and "aoe" or "cleave"
         end
     end
+    -- Temporal smoothing of the revealed context (see module-state comment):
+    -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
+    local stickyApplied, executeLatched = false, false
+    if inCombat then
+        -- UnitGUID("target") is SECRET for NPCs in combat (see DotTracker header);
+        -- treat a secret GUID as no-GUID so the latch never compares a secret.
+        local targetGUID = UnitGUID("target")
+        if targetGUID and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(targetGUID) then
+            targetGUID = nil
+        end
+        if ctxExecute and targetGUID then
+            executeLatchGUID = targetGUID
+        elseif executeLatchGUID then
+            if targetGUID == executeLatchGUID then
+                ctxExecute = true
+                executeLatched = true
+            else
+                executeLatchGUID = nil
+            end
+        end
+        if ctxArch == "aoe" or ctxArch == "cleave" then
+            stickyArch, stickyRange, stickyTime = ctxArch, ctxRange, now
+        elseif stickyArch then
+            if now - stickyTime <= STICKY_CTX_SECONDS then
+                ctxArch, ctxRange = stickyArch, stickyRange
+                stickyApplied = true
+            else
+                stickyArch, stickyRange = nil, nil
+            end
+        end
+    else
+        stickyArch, stickyRange = nil, nil
+        executeLatchGUID = nil
+    end
+    -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
+    -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
+    -- no demote (fail-safe). Lets us sink uncastable melee spells in positions 2+.
+    local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false
+    -- Snapshot for /jac inspect rank.
+    lastCtx.pickID = primarySpellID
+    lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
+    lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
+    lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
+    b.ctxArch, b.ctxRange, b.ctxRole = ctxArch, ctxRange, ctxRole
+    b.ctxExecute, b.ctxOutOfMelee = ctxExecute, ctxOutOfMelee
+end
 
-    -- AC never recommends an uncastable spell: expire any stale local CD/charge
-    -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
-    -- can't keep sinking this spell in later builds.
-    if primarySpellID and primarySpellID > 0 and BlizzardAPI.NoteSpellRecommended then
-        BlizzardAPI.NoteSpellRecommended(primarySpellID)
-        local primaryDisplay = BlizzardAPI.GetDisplaySpellID(primarySpellID)
-        if primaryDisplay ~= primarySpellID then
-            BlizzardAPI.NoteSpellRecommended(primaryDisplay)
+--- Stage F - tail ordering and assembly: ordering settings, the SimC->AC
+--- fallback, pick-revealed buff windows, the healer tail filter, and the
+--- categorize/assemble pass over positions 2+.
+function SpellQueue._StageTail(b)
+    if not cachedRotationList then return end
+    local profile, primarySpellID = b.profile, b.primarySpellID
+    -- Ordering settings (profile-level; apply to both the custom list and
+    -- Blizzard's default rotation): "procs first" off folds procced spells into
+    -- the normal bucket (kept in source order); "cooldowns last" off leaves
+    -- on-CD spells in their source slot instead of trailing.
+    local effectiveBypassProcs = b.bypassProcs or profile.orderProcsFirst == false
+    local sinkCooldowns = profile.orderSinkCooldowns ~= false
+    -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
+    -- priority, the default - falls back to "ac" below when no data for this spec).
+    local contextOrder = profile.contextOrder or "simc"
+    -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
+    local simcCtx = (b.ctxArch == "aoe" and "aoe") or (b.ctxArch == "cleave" and "cleave") or "st"
+    if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
+       and RotationImport.HasRotation()) then
+        contextOrder = "ac"
+    end
+    -- Buff windows the AC pick IMPLIES: AC only recommends a window-gated spell inside its
+    -- window, so the pick's positive buff gates reveal those windows are up - readable even
+    -- when the buff aura itself is secret (IsBuffWindowActive's aura probe is blind to secret
+    -- auras). Siblings sharing a revealed window then promote like a live proc.
+    local pickWindows
+    if contextOrder == "simc" and RotationImport and RotationImport.GetEntry and primarySpellID then
+        local pickRec = RotationImport.GetEntry(primarySpellID, simcCtx)
+        if pickRec and pickRec.gates then
+            for i = 1, #pickRec.gates do
+                local g = pickRec.gates[i]
+                if g.t == "buff" and not g.neg and g.id then
+                    -- Pooled: wiped on first acquisition each build (stays nil on
+                    -- builds with no windows, which downstream checks rely on).
+                    if not pickWindows then
+                        wipe(pickWindowsBuf)
+                        pickWindows = pickWindowsBuf
+                    end
+                    pickWindows[g.id] = true
+                end
+            end
         end
     end
+    lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
+    b.effectiveBypassProcs = effectiveBypassProcs
+    b.contextOrder, b.sinkCooldowns = contextOrder, sinkCooldowns
+    b.simcCtx, b.pickWindows = simcCtx, pickWindows
+    -- Healer specs: heals (and melee-weave entries in caster mode) out of
+    -- the DPS tail - see SpellQueue.FilterHealerTail. Position 1 (the AC
+    -- pick) is inserted elsewhere and is never filtered.
+    local rotationList = SpellQueue.FilterHealerTail(cachedRotationList, profile)
+    b.spellCount = CategorizeAndAssembleRotation(rotationList, b)
+end
 
-    if primarySpellID and primarySpellID > 0 then
-        -- Caster filler treats a melee/form pick like a blacklisted one: the
-        -- highlight lookahead below supplies AC's next-best suggestion.
-        local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)
-        local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
-        if displaySpellID
-           and not casterSuppressed
-           and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist, true) then
-            spellCount = spellCount + 1
-            recommendedSpells[spellCount] = displaySpellID
+--- Stage G - burst-ready cue: emphasize a burst trigger only when a burst
+--- window is actually CALLED FOR - inferred from Blizzard's recommendation
+--- system, the only system that can read the secret in-combat context. The
+--- signals, per trigger, evaluated against its own SimC burst condition
+--- (positive buff-window gates - e.g. Feral's Berserk is gated on Tiger's Fury):
+---   1) AC's pick IS the trigger                    -> glow position 1.
+---   2) The trigger's window is up: plain self-buff probe, or revealed by the
+---      pick's own gates when the aura is secret (pickWindows).
+---   3) AC's pick IS the window opener (pick = Tiger's Fury while the trigger
+---      needs the TF buff) - the window is about to exist.
+--- A trigger whose SimC entry has NO window gate AND is not delegated is a
+--- cast-on-cooldown CD by the data (Darkglare, DRW): ready-in-combat is its
+--- window, negative gates still veto. A DELEGATED entry without a window gate
+--- (Convoke: resource/state conditions we can't read) gets NO readiness cue -
+--- its condition lives in state only AC can see, so the only signal left is
+--- AC picking it (signal 1). USER-ADDED triggers are the exception: an explicit
+--- custom list is intent, so those cue whenever ready (only their own active
+--- window vetoes). The cued trigger surfaces at position 2 (promoted or
+--- inserted) - never position 1, which stays AC's alone. In-combat only.
+function SpellQueue._StageBurstCue(b)
+    if not (b.inCombat and b.profile.burstCueGlow == true) then return end
+    local blacklist, recommendedSpells = b.blacklist, b.recommendedSpells
+    local addedSpellIDs, primarySpellID = b.addedSpellIDs, b.primarySpellID
+    local simcCtx, pickWindows = b.simcCtx, b.pickWindows
+    local spellCount, maxIcons = b.spellCount, b.maxIcons
+    local triggers, triggerList = ResolveBurstTriggers()
+    if triggers and triggerList then
+        local pos1 = recommendedSpells[1]
+        if pos1 and IsBurstTrigger(triggers, pos1) then
+            -- Signal 1: Blizzard says press it. Glow, touch nothing.
+            burstCueSpells[pos1] = true
+            if primarySpellID and primarySpellID ~= pos1 then
+                burstCueSpells[primarySpellID] = true
+            end
         else
-            -- Undo claim if blacklisted
-            if displaySpellID then
-                addedSpellIDs[primarySpellID] = nil
-                addedSpellIDs[displaySpellID] = nil
-            end
-            -- Highlight-mode lookahead: if the blacklisted spell is hidden from
-            -- action bars (removed or behind a modifier macro), Blizzard's
-            -- visible-button-only mode may return the next rotation spell instead.
-            if BlizzardAPI.GetHighlightCastSpell then
-                local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
-                if hlSpellID and hlSpellID > 0
-                   and hlSpellID ~= primarySpellID
-                   and not SpellQueue.IsCasterSuppressedPick(hlSpellID, profile)
-                   and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist, true) then
-                    local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
-                    if hlDisplay then
-                        spellCount = spellCount + 1
-                        recommendedSpells[spellCount] = hlDisplay
+            local pos1Display = pos1 and BlizzardAPI.GetDisplaySpellID(pos1) or pos1
+            for i = 1, #triggerList do
+                local tid = triggerList[i]
+                local display = BlizzardAPI.GetDisplaySpellID(tid) or tid
+                -- blacklist is nil for a spec with no hidden abilities (the common
+                -- case) - indexing it raw crashed every combat build the moment the
+                -- cue was enabled, freezing the whole queue. Any entry vetoes, full
+                -- or 2+-only: the cue surfaces at position 2, which both cover.
+                if not (blacklist and (blacklist[tid] or blacklist[display]))
+                   and BlizzardAPI.IsSpellAvailable(display)
+                   and not BlizzardAPI.IsSpellOnCooldown(display) then
+                    local rec = RotationImport and RotationImport.GetEntry
+                        and RotationImport.GetEntry(tid, simcCtx)
+                    local called = false
+                    if cachedBurstSource == "custom" then
+                        -- Explicit intent: the user put this spell on the list,
+                        -- so ready cues it; only its own running window vetoes.
+                        called = not (rec and SimcNegativeBuffBlocks(rec.gates))
+                    elseif rec then
+                        local gates = rec.gates
+                        if HasPositiveBuffGate(gates) then
+                            called = (SimcBuffWindowActive(gates)
+                                    or GateInPickWindows(gates, pickWindows)
+                                    or TriggerWindowOpenerIsPick(gates, primarySpellID, pos1Display))
+                                and not SimcNegativeBuffBlocks(gates)
+                        elseif not rec.delegated then
+                            -- Unconditional by the data: SimC's own line is
+                            -- "cast on cooldown".
+                            called = not SimcNegativeBuffBlocks(gates)
+                        end
+                        -- else: delegated with no window gate - condition
+                        -- unreadable, wait for AC to pick it (signal 1).
+                    end
+                    if called then
+                        -- Locate in the assembled queue: promote to position 2,
+                        -- or insert there when AC's rotation list omits it.
+                        local at, atSid
+                        for p = 2, spellCount do
+                            local s = recommendedSpells[p]
+                            if s == display or s == tid then at, atSid = p, s break end
+                        end
+                        if at then
+                            if at > 2 then
+                                -- Shift 2..at-1 down one, seat the trigger at 2.
+                                for j = at, 3, -1 do
+                                    recommendedSpells[j] = recommendedSpells[j - 1]
+                                end
+                                recommendedSpells[2] = atSid
+                            end
+                            burstCueSpells[atSid] = true
+                        else
+                            -- ponytail: on a full queue the last icon falls off -
+                            -- the cue outranks the lowest-priority tail slot.
+                            local insertAt = (spellCount >= 1) and 2 or 1
+                            if spellCount < maxIcons then spellCount = spellCount + 1 end
+                            for j = spellCount, insertAt + 1, -1 do
+                                recommendedSpells[j] = recommendedSpells[j - 1]
+                            end
+                            recommendedSpells[insertAt] = display
+                            addedSpellIDs[tid] = true
+                            addedSpellIDs[display] = true
+                            burstCueSpells[display] = true
+                        end
+                        break
                     end
                 end
             end
         end
     end
+    b.spellCount = spellCount
+end
 
-    -- Gap-closer injection: promote to position 1 when target is out of melee range.
-    if spellCount < maxIcons then
-        if cachedGapCloserEngine and cachedGapCloserEngine.GetGapCloserSpell and cachedAddon then
-            local pos1Display = recommendedSpells[1]
-            local pos1IsGapCloser = false
-            if cachedGapCloserEngine.IsGapCloserSpell then
-                pos1IsGapCloser = (primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
-                    or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
-            end
-
-            if not pos1IsGapCloser then
-                local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
-                if gcSpell then
-                    local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
-                    if spellCount >= 1 then
-                        if pos1Display then displacedPrimary[pos1Display] = true end
-                        if primarySpellID and primarySpellID ~= pos1Display then
-                            displacedPrimary[primarySpellID] = true
-                        end
-                        for i = spellCount, 1, -1 do
-                            recommendedSpells[i + 1] = recommendedSpells[i]
-                        end
-                    end
-                    recommendedSpells[1] = gcSpell
-                    spellCount = spellCount + 1
-                    addedSpellIDs[gcSpell] = true
-                    addedSpellIDs[gcDisplay] = true
-                    if gcBase and gcBase ~= gcSpell then
-                        addedSpellIDs[gcBase] = true
-                    end
-                    syntheticProcs[gcSpell] = true
-                    syntheticProcs[gcDisplay] = true
-                end
-            end
-
-            -- Suppress gap-closers from rotation list - our injection controls placement.
-            -- (MarkGapCloserSpellIDs is a no-op while gap-closers are disabled.) Marks go
-            -- through a scratch set so a user's Always Show pin can beat the suppression:
-            -- a pinned gap-closer stays visible in the queue AND still injects at slot 1
-            -- when the target leaves melee range. pinnedAlwaysShow carries every ID form,
-            -- so this is a pure table read per marked spell.
-            if cachedGapCloserEngine.MarkGapCloserSpellIDs then
-                wipe(gcSuppressScratch)
-                cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, gcSuppressScratch)
-                for sid in pairs(gcSuppressScratch) do
-                    if not pinnedAlwaysShow[sid] then
-                        addedSpellIDs[sid] = true
-                    end
-                end
+--- Stage H - finalize: blank-episode bookkeeping, pet-summon dedup, and the
+--- copy into lastSpellIDs (the shared return buffer).
+function SpellQueue._StageFinalize(b)
+    local spellCount, recommendedSpells = b.spellCount, b.recommendedSpells
+    -- When Blizzard returns no spells (e.g. target out of range OOC) but
+    -- visibility conditions passed, preserve the previous queue so the frame
+    -- stays visible with stale icons instead of hiding entirely.
+    if spellCount == 0 and #lastSpellIDs == 0 then
+        -- Nothing built AND nothing to fall back on: the frame really does go away here.
+        SpellQueue.NoteQueueBlank("build produced no spells and no previous queue to hold")
+    end
+    if spellCount > 0 then
+        blankActive = false   -- icons are back: the next blank starts a new episode
+        wipe(lastSpellIDs)
+        -- Pet summons are ALTERNATIVES, so only the first survives. Every summon you know is
+        -- individually non-redundant while you have no pet out, and the per-spell filter is
+        -- stateless, so nothing upstream can notice they are the same decision offered three
+        -- times (measured: Felguard, Imp and Felhunter queued together on a petless Warlock).
+        -- Done here rather than in the filter because "is one already queued" is a property of
+        -- the queue, not of the spell. Keeping the FIRST preserves the engine's own pick.
+        local haveSummon = false
+        for i = 1, spellCount do
+            local sid = recommendedSpells[i]
+            local isSummon = RedundancyFilter and RedundancyFilter.IsPetSummonSpell
+                and RedundancyFilter.IsPetSummonSpell(sid)
+            if isSummon and haveSummon then
+                -- skip: a second way to solve a problem already solved at position 1
+            else
+                if isSummon then haveSummon = true end
+                lastSpellIDs[#lastSpellIDs + 1] = sid
             end
         end
     end
+end
 
-    if profile.showSpellbookProcs then
-        spellCount = AddSpellbookProcs(profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems)
-    end
-
+--- Stage D - rotation-source resolution: the cached positions-2+ list (user
+--- custom queue or Blizzard's rotation), with the setup skip, Always Show pin
+--- resolution, tracking registration, and CD seeding on list change.
+function SpellQueue._StageResolveSource(b)
     -- Positions 2+: rotation spells, cached until InvalidateRotationCache().
     -- Custom Queue: if enabled for this spec, use user-defined spell list instead.
     if not cachedRotationList then
@@ -1269,246 +1375,237 @@ function SpellQueue.GetCurrentSpellQueue()
         end
         end  -- if not sameSetup
     end
-    -- Fixed-queue context: bias positions 2+ by the archetype of Blizzard's position-1
-    -- pick (the original recommendation, before any gap-closer injection).
-    local ctxArch, ctxRange, ctxRole, ctxExecute
-    if primarySpellID and SpellDB then
-        ctxArch  = SpellDB.GetArch  and SpellDB.GetArch(primarySpellID)
-        ctxRange = SpellDB.GetRange and SpellDB.GetRange(primarySpellID)
-        ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
-        ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
-    end
-    -- Direct enemy count (secret-safe, AC-independent): promote the context to
-    -- cleave/aoe from the number of enemies actually engaged with us, catching AoE
-    -- that a single AC-pick archetype misses. Promote-only - never downgrades AC's
-    -- own aoe/cleave read.
-    if inCombat and BlizzardAPI.GetEngagedEnemyCount then
-        local enemies = BlizzardAPI.GetEngagedEnemyCount()
-        if enemies >= 2 then
-            ctxArch = (enemies >= 3 or ctxArch == "aoe") and "aoe" or "cleave"
-        end
-    end
-    -- Temporal smoothing of the revealed context (see module-state comment):
-    -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
-    local stickyApplied, executeLatched = false, false
-    if inCombat then
-        -- UnitGUID("target") is SECRET for NPCs in combat (see DotTracker header);
-        -- treat a secret GUID as no-GUID so the latch never compares a secret.
-        local targetGUID = UnitGUID("target")
-        if targetGUID and BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(targetGUID) then
-            targetGUID = nil
-        end
-        if ctxExecute and targetGUID then
-            executeLatchGUID = targetGUID
-        elseif executeLatchGUID then
-            if targetGUID == executeLatchGUID then
-                ctxExecute = true
-                executeLatched = true
-            else
-                executeLatchGUID = nil
-            end
-        end
-        if ctxArch == "aoe" or ctxArch == "cleave" then
-            stickyArch, stickyRange, stickyTime = ctxArch, ctxRange, now
-        elseif stickyArch then
-            if now - stickyTime <= STICKY_CTX_SECONDS then
-                ctxArch, ctxRange = stickyArch, stickyRange
-                stickyApplied = true
-            else
-                stickyArch, stickyRange = nil, nil
-            end
-        end
-    else
-        stickyArch, stickyRange = nil, nil
-        executeLatchGUID = nil
-    end
-    -- Out-of-melee: a REAL range check (IsSpellInRange-based), not inferred from archetype.
-    -- True only on a CONFIRMED beyond-5yd read; unknown (no probe / low level) → false →
-    -- no demote (fail-safe). Lets us sink uncastable melee spells in positions 2+.
-    local ctxOutOfMelee = SpellDB and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == false
-    -- Snapshot for /jac inspect rank.
-    lastCtx.pickID = primarySpellID
-    lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
-    lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
-    lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
-    -- Hoisted for the burst cue below: the trigger-gate evaluation reuses the
-    -- SimC context tier and the pick-revealed windows computed in this block.
-    local simcCtx, pickWindows
-    if cachedRotationList then
-        -- Ordering settings (profile-level; apply to both the custom list and
-        -- Blizzard's default rotation): "procs first" off folds procced spells into
-        -- the normal bucket (kept in source order); "cooldowns last" off leaves
-        -- on-CD spells in their source slot instead of trailing.
-        local effectiveBypassProcs = bypassProcs or profile.orderProcsFirst == false
-        local sinkCooldowns = profile.orderSinkCooldowns ~= false
-        -- Context ordering: "off" | "ac" (match Blizzard's pick) | "simc" (theorycraft
-        -- priority, the default - falls back to "ac" below when no data for this spec).
-        local contextOrder = profile.contextOrder or "simc"
-        -- SimC ordering needs data for this spec; otherwise fall back to the AC heuristic.
-        simcCtx = (ctxArch == "aoe" and "aoe") or (ctxArch == "cleave" and "cleave") or "st"
-        if contextOrder == "simc" and not (RotationImport and RotationImport.HasRotation
-           and RotationImport.HasRotation()) then
-            contextOrder = "ac"
-        end
-        -- Buff windows the AC pick IMPLIES: AC only recommends a window-gated spell inside its
-        -- window, so the pick's positive buff gates reveal those windows are up - readable even
-        -- when the buff aura itself is secret (IsBuffWindowActive's aura probe is blind to secret
-        -- auras). Siblings sharing a revealed window then promote like a live proc.
-        if contextOrder == "simc" and RotationImport and RotationImport.GetEntry and primarySpellID then
-            local pickRec = RotationImport.GetEntry(primarySpellID, simcCtx)
-            if pickRec and pickRec.gates then
-                for i = 1, #pickRec.gates do
-                    local g = pickRec.gates[i]
-                    if g.t == "buff" and not g.neg and g.id then
-                        -- Pooled: wiped on first acquisition each build (stays nil on
-                        -- builds with no windows, which downstream checks rely on).
-                        if not pickWindows then
-                            wipe(pickWindowsBuf)
-                            pickWindows = pickWindowsBuf
-                        end
-                        pickWindows[g.id] = true
-                    end
-                end
-            end
-        end
-        lastCtx.pickWindows = pickWindows   -- for /jac inspect gates
-        -- Healer specs: heals (and melee-weave entries in caster mode) out of
-        -- the DPS tail - see SpellQueue.FilterHealerTail. Position 1 (the AC
-        -- pick) is inserted elsewhere and is never filtered.
-        local rotationList = SpellQueue.FilterHealerTail(cachedRotationList, profile)
-        spellCount = CategorizeAndAssembleRotation(rotationList, profile, blacklist, addedSpellIDs, recommendedSpells, spellCount, maxIcons, hideItems, effectiveBypassProcs, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, contextOrder, sinkCooldowns, simcCtx, pickWindows)
+end
+
+--- Stage B - gap-closer injection: promote a gap closer to position 1 when the
+--- target is out of melee range, and suppress gap closers from the rotation
+--- tail (a user's Always Show pin beats the suppression).
+function SpellQueue._StageGapCloser(b)
+    -- Resolve late-bound engine refs here, the first per-build user (they load
+    -- after SpellQueue in the TOC; resolved once, then cached). Stage D's
+    -- custom-queue lookup relies on cachedAddon being resolved by this point.
+    if not cachedAddon then cachedAddon = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true) end
+    if not cachedGapCloserEngine then cachedGapCloserEngine = LibStub("JustAC-GapCloserEngine", true) end
+    if b.spellCount >= b.maxIcons then return end
+    if not (cachedGapCloserEngine and cachedGapCloserEngine.GetGapCloserSpell and cachedAddon) then return end
+    local spellCount = b.spellCount
+    local recommendedSpells, addedSpellIDs = b.recommendedSpells, b.addedSpellIDs
+    local primarySpellID = b.primarySpellID
+
+    local pos1Display = recommendedSpells[1]
+    local pos1IsGapCloser = false
+    if cachedGapCloserEngine.IsGapCloserSpell then
+        pos1IsGapCloser = (primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
+            or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
     end
 
-    -- Burst-ready cue: emphasize a burst trigger only when a burst window is
-    -- actually CALLED FOR - inferred from Blizzard's recommendation system, the
-    -- only system that can read the secret in-combat context. The signals, per
-    -- trigger, evaluated against its own SimC burst condition (positive
-    -- buff-window gates - e.g. Feral's Berserk is gated on Tiger's Fury):
-    --   1) AC's pick IS the trigger                    -> glow position 1.
-    --   2) The trigger's window is up: plain self-buff probe, or revealed by the
-    --      pick's own gates when the aura is secret (pickWindows).
-    --   3) AC's pick IS the window opener (pick = Tiger's Fury while the trigger
-    --      needs the TF buff) - the window is about to exist.
-    -- A trigger whose SimC entry has NO window gate AND is not delegated is a
-    -- cast-on-cooldown CD by the data (Darkglare, DRW): ready-in-combat is its
-    -- window, negative gates still veto. A DELEGATED entry without a window gate
-    -- (Convoke: resource/state conditions we can't read) gets NO readiness cue -
-    -- its condition lives in state only AC can see, so the only signal left is
-    -- AC picking it (signal 1). USER-ADDED triggers are the exception: an explicit
-    -- custom list is intent, so those cue whenever ready (only their own active
-    -- window vetoes). The cued trigger surfaces at position 2 (promoted or
-    -- inserted) - never position 1, which stays AC's alone. In-combat only.
-    if inCombat and profile.burstCueGlow == true then
-        local triggers, triggerList = ResolveBurstTriggers()
-        if triggers and triggerList then
-            local pos1 = recommendedSpells[1]
-            if pos1 and IsBurstTrigger(triggers, pos1) then
-                -- Signal 1: Blizzard says press it. Glow, touch nothing.
-                burstCueSpells[pos1] = true
-                if primarySpellID and primarySpellID ~= pos1 then
-                    burstCueSpells[primarySpellID] = true
+    if not pos1IsGapCloser then
+        local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
+        if gcSpell then
+            local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
+            if spellCount >= 1 then
+                if pos1Display then displacedPrimary[pos1Display] = true end
+                if primarySpellID and primarySpellID ~= pos1Display then
+                    displacedPrimary[primarySpellID] = true
                 end
-            else
-                local pos1Display = pos1 and BlizzardAPI.GetDisplaySpellID(pos1) or pos1
-                for i = 1, #triggerList do
-                    local tid = triggerList[i]
-                    local display = BlizzardAPI.GetDisplaySpellID(tid) or tid
-                    -- blacklist is nil for a spec with no hidden abilities (the common
-                    -- case) - indexing it raw crashed every combat build the moment the
-                    -- cue was enabled, freezing the whole queue. Any entry vetoes, full
-                    -- or 2+-only: the cue surfaces at position 2, which both cover.
-                    if not (blacklist and (blacklist[tid] or blacklist[display]))
-                       and BlizzardAPI.IsSpellAvailable(display)
-                       and not BlizzardAPI.IsSpellOnCooldown(display) then
-                        local rec = RotationImport and RotationImport.GetEntry
-                            and RotationImport.GetEntry(tid, simcCtx)
-                        local called = false
-                        if cachedBurstSource == "custom" then
-                            -- Explicit intent: the user put this spell on the list,
-                            -- so ready cues it; only its own running window vetoes.
-                            called = not (rec and SimcNegativeBuffBlocks(rec.gates))
-                        elseif rec then
-                            local gates = rec.gates
-                            if HasPositiveBuffGate(gates) then
-                                called = (SimcBuffWindowActive(gates)
-                                        or GateInPickWindows(gates, pickWindows)
-                                        or TriggerWindowOpenerIsPick(gates, primarySpellID, pos1Display))
-                                    and not SimcNegativeBuffBlocks(gates)
-                            elseif not rec.delegated then
-                                -- Unconditional by the data: SimC's own line is
-                                -- "cast on cooldown".
-                                called = not SimcNegativeBuffBlocks(gates)
-                            end
-                            -- else: delegated with no window gate - condition
-                            -- unreadable, wait for AC to pick it (signal 1).
-                        end
-                        if called then
-                            -- Locate in the assembled queue: promote to position 2,
-                            -- or insert there when AC's rotation list omits it.
-                            local at, atSid
-                            for p = 2, spellCount do
-                                local s = recommendedSpells[p]
-                                if s == display or s == tid then at, atSid = p, s break end
-                            end
-                            if at then
-                                if at > 2 then
-                                    -- Shift 2..at-1 down one, seat the trigger at 2.
-                                    for j = at, 3, -1 do
-                                        recommendedSpells[j] = recommendedSpells[j - 1]
-                                    end
-                                    recommendedSpells[2] = atSid
-                                end
-                                burstCueSpells[atSid] = true
-                            else
-                                -- ponytail: on a full queue the last icon falls off -
-                                -- the cue outranks the lowest-priority tail slot.
-                                local insertAt = (spellCount >= 1) and 2 or 1
-                                if spellCount < maxIcons then spellCount = spellCount + 1 end
-                                for j = spellCount, insertAt + 1, -1 do
-                                    recommendedSpells[j] = recommendedSpells[j - 1]
-                                end
-                                recommendedSpells[insertAt] = display
-                                addedSpellIDs[tid] = true
-                                addedSpellIDs[display] = true
-                                burstCueSpells[display] = true
-                            end
-                            break
-                        end
+                for i = spellCount, 1, -1 do
+                    recommendedSpells[i + 1] = recommendedSpells[i]
+                end
+            end
+            recommendedSpells[1] = gcSpell
+            spellCount = spellCount + 1
+            addedSpellIDs[gcSpell] = true
+            addedSpellIDs[gcDisplay] = true
+            if gcBase and gcBase ~= gcSpell then
+                addedSpellIDs[gcBase] = true
+            end
+            syntheticProcs[gcSpell] = true
+            syntheticProcs[gcDisplay] = true
+        end
+    end
+
+    -- Suppress gap-closers from rotation list - our injection controls placement.
+    -- (MarkGapCloserSpellIDs is a no-op while gap-closers are disabled.) Marks go
+    -- through a scratch set so a user's Always Show pin can beat the suppression:
+    -- a pinned gap-closer stays visible in the queue AND still injects at slot 1
+    -- when the target leaves melee range. pinnedAlwaysShow carries every ID form,
+    -- so this is a pure table read per marked spell.
+    if cachedGapCloserEngine.MarkGapCloserSpellIDs then
+        wipe(gcSuppressScratch)
+        cachedGapCloserEngine.MarkGapCloserSpellIDs(cachedAddon, gcSuppressScratch)
+        for sid in pairs(gcSuppressScratch) do
+            if not pinnedAlwaysShow[sid] then
+                addedSpellIDs[sid] = true
+            end
+        end
+    end
+
+    b.spellCount = spellCount
+end
+
+--- Stage A - position 1: the spread-DoT signal, stale local-CD expiry, and
+--- Blizzard's primary pick inserted with caster/blacklist awareness plus the
+--- highlight-lookahead fallback.
+function SpellQueue._StagePrimary(b)
+    local profile, primarySpellID = b.profile, b.primarySpellID
+    local blacklist, addedSpellIDs = b.blacklist, b.addedSpellIDs
+    local recommendedSpells = b.recommendedSpells
+
+    -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on
+    -- the current target (outside its refresh window), which means it wants the DoT
+    -- on OTHER targets. IsDotActiveOnCurrentTarget returns false during the pandemic
+    -- window, so a genuine refresh-this-target pick does not trigger the arrow.
+    dotSpreadActive = false
+    if profile.showDotSpreadArrow == true and primarySpellID and primarySpellID > 0
+       and DotTracker and DotTracker.IsDotActiveOnCurrentTarget
+       and SpellDB and SpellDB.IsTargetDot then
+        local pd = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+        if (SpellDB.IsTargetDot(primarySpellID) or SpellDB.IsTargetDot(pd))
+           and DotTracker.IsDotActiveOnCurrentTarget(pd) then
+            dotSpreadActive = true
+        end
+    end
+
+    -- AC never recommends an uncastable spell: expire any stale local CD/charge
+    -- entry (an unobserved proc-driven reset/refund leaves one behind) so it
+    -- can't keep sinking this spell in later builds.
+    if primarySpellID and primarySpellID > 0 and BlizzardAPI.NoteSpellRecommended then
+        BlizzardAPI.NoteSpellRecommended(primarySpellID)
+        local primaryDisplay = BlizzardAPI.GetDisplaySpellID(primarySpellID)
+        if primaryDisplay ~= primarySpellID then
+            BlizzardAPI.NoteSpellRecommended(primaryDisplay)
+        end
+    end
+
+    if primarySpellID and primarySpellID > 0 then
+        -- Caster filler treats a melee/form pick like a blacklisted one: the
+        -- highlight lookahead below supplies AC's next-best suggestion.
+        local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)
+        local displaySpellID = ClaimSpellID(primarySpellID, addedSpellIDs)
+        if displaySpellID
+           and not casterSuppressed
+           and not SpellQueue.IsSpellBlacklisted(primarySpellID, blacklist, true) then
+            b.spellCount = b.spellCount + 1
+            recommendedSpells[b.spellCount] = displaySpellID
+        else
+            -- Undo claim if blacklisted
+            if displaySpellID then
+                addedSpellIDs[primarySpellID] = nil
+                addedSpellIDs[displaySpellID] = nil
+            end
+            -- Highlight-mode lookahead: if the blacklisted spell is hidden from
+            -- action bars (removed or behind a modifier macro), Blizzard's
+            -- visible-button-only mode may return the next rotation spell instead.
+            if BlizzardAPI.GetHighlightCastSpell then
+                local hlSpellID = BlizzardAPI.GetHighlightCastSpell()
+                if hlSpellID and hlSpellID > 0
+                   and hlSpellID ~= primarySpellID
+                   and not SpellQueue.IsCasterSuppressedPick(hlSpellID, profile)
+                   and not SpellQueue.IsSpellBlacklisted(hlSpellID, blacklist, true) then
+                    local hlDisplay = ClaimSpellID(hlSpellID, addedSpellIDs)
+                    if hlDisplay then
+                        b.spellCount = b.spellCount + 1
+                        recommendedSpells[b.spellCount] = hlDisplay
                     end
                 end
             end
         end
     end
+end
 
-    -- When Blizzard returns no spells (e.g. target out of range OOC) but
-    -- visibility conditions passed, preserve the previous queue so the frame
-    -- stays visible with stale icons instead of hiding entirely.
-    if spellCount == 0 and #lastSpellIDs == 0 then
-        -- Nothing built AND nothing to fall back on: the frame really does go away here.
-        SpellQueue.NoteQueueBlank("build produced no spells and no previous queue to hold")
+function SpellQueue.GetCurrentSpellQueue()
+    local profile = BlizzardAPI.GetProfile()
+    if not profile or profile.isManualMode then
+        return lastSpellIDs or {}
     end
-    if spellCount > 0 then
-        blankActive = false   -- icons are back: the next blank starts a new episode
+
+    -- Channel-hold: while channeling, the current suggestion IS being executed - rebuilding
+    -- mid-channel only flickers the queue as the engine's pick churns. Freeze CONTENT here,
+    -- at the single source every caller shares, so rendering keeps running and the channel
+    -- grey-out/fill actually paints. (This hold used to live in the main loop, where it
+    -- skipped the whole render pass - the channeled spell then still LOOKED available.)
+    -- Own-channel info is plain in combat (validated 2026-07-24).
+    if BlizzardAPI.IsPlayerChanneling and BlizzardAPI.IsPlayerChanneling() then
+        return lastSpellIDs or {}
+    end
+
+    local now = GetTime()
+    -- Compute inCombat once; reused for both the throttle interval and all visibility checks below.
+    -- Internal safety throttle - main loop in JustAC.lua is the primary rate limiter
+    -- (CVar-driven, min 0.03s).  These match the main loop's minimum intervals so
+    -- SpellQueue never bottlenecks the caller.
+    local inCombat = UnitAffectingCombat("player")
+    local throttleInterval = inCombat and 0.03 or 0.05
+
+    if now - lastQueueUpdate < throttleInterval then
+        return lastSpellIDs or {}
+    end
+    
+    local queueVisible, hiddenReason = EvaluateQueueVisibility(profile, inCombat)
+    if not queueVisible then
+        if #lastSpellIDs > 0 then SpellQueue.NoteQueueBlank(hiddenReason) end
+        lastShouldShowQueue = false
+        lastQueueUpdate = now
+        -- Clear situation memory here too: with combat-only visibility this early
+        -- return is the only path that runs OOC.
+        if not inCombat then
+            SpellQueue._ClearSituationMemory()
+        end
         wipe(lastSpellIDs)
-        -- Pet summons are ALTERNATIVES, so only the first survives. Every summon you know is
-        -- individually non-redundant while you have no pet out, and the per-spell filter is
-        -- stateless, so nothing upstream can notice they are the same decision offered three
-        -- times (measured: Felguard, Imp and Felhunter queued together on a petless Warlock).
-        -- Done here rather than in the filter because "is one already queued" is a property of
-        -- the queue, not of the spell. Keeping the FIRST preserves the engine's own pick.
-        local haveSummon = false
-        for i = 1, spellCount do
-            local sid = recommendedSpells[i]
-            local isSummon = RedundancyFilter and RedundancyFilter.IsPetSummonSpell
-                and RedundancyFilter.IsPetSummonSpell(sid)
-            if isSummon and haveSummon then
-                -- skip: a second way to solve a problem already solved at position 1
-            else
-                if isSummon then haveSummon = true end
-                lastSpellIDs[#lastSpellIDs + 1] = sid
-            end
-        end
+        return lastSpellIDs
     end
+
+    -- All visibility conditions passed: queue should be shown.
+    lastShouldShowQueue = true
+    lastQueueUpdate = now
+    if profile.debugMode then
+        if spellQueueBuildCount == 0 then
+            spellQueueResetTime = now
+        end
+        spellQueueBuildCount = spellQueueBuildCount + 1
+    end
+
+    wipe(filterResultCache)
+    wipe(rotationFilterCache)
+    if BlizzardAPI.ClearProcCache then BlizzardAPI.ClearProcCache() end
+
+    local bypassProcs = BlizzardAPI.IsProcFeatureAvailable
+        and not BlizzardAPI.IsProcFeatureAvailable() or false
+    local blacklist = GetBlacklistTable()
+
+    wipe(recommendedSpells)
+    wipe(addedSpellIDs)
+    wipe(syntheticProcs)
+    wipe(displacedPrimary)
+    wipe(burstCueSpells)
+    wipe(cooldownSpells)
+    local maxIcons = SpellQueue.GetEffectiveMaxIcons(profile)
+    local hideItems = profile.hideItemAbilities
+
+    -- Per-build context: pooled, wiped, threaded through the build stages.
+    -- Stages read their inputs from b and mutate it (b.spellCount especially).
+    local b = SpellQueue._b
+    wipe(b)
+    b.profile, b.blacklist, b.inCombat, b.now = profile, blacklist, inCombat, now
+    b.addedSpellIDs, b.recommendedSpells = addedSpellIDs, recommendedSpells
+    b.maxIcons, b.hideItems, b.bypassProcs = maxIcons, hideItems, bypassProcs
+    b.spellCount = 0
+
+    -- Position 1: Blizzard's primary suggestion. A full blacklist entry hides it here too
+    -- (which can stall Blizzard's dynamic recommendation); a 2+-only entry is exempt at
+    -- position 1 (isPrimary=true) so the rotation keeps advancing.
+    b.primarySpellID = BlizzardAPI.GetNextCastSpell and BlizzardAPI.GetNextCastSpell()
+
+    SpellQueue._StagePrimary(b)        -- A: spread-DoT signal, stale-CD expiry, position-1 insert
+    SpellQueue._StageGapCloser(b)      -- B: gap-closer injection + rotation suppression marks
+    if profile.showSpellbookProcs then -- C: spellbook proc injection
+        b.spellCount = AddSpellbookProcs(b)
+    end
+    SpellQueue._StageResolveSource(b)  -- D: rotation source (fills cachedRotationList)
+    SpellQueue._StageContext(b)        -- E: context inference (fills b.ctx*)
+    SpellQueue._StageTail(b)           -- F: tail ordering + assembly over positions 2+
+    SpellQueue._StageBurstCue(b)       -- G: burst-ready cue at position 2
+    SpellQueue._StageFinalize(b)       -- H: blank bookkeeping, dedup, copy-out
     return lastSpellIDs
 end
 

@@ -306,6 +306,21 @@ local cacheKey = slot .. "_" .. spellID .. "_" .. currentForm .. "_" .. currentS
 
 ---
 
+## Options callback convention (W.toggle vs raw entries)
+
+Two calling conventions coexist in `Options/`, and mixing them fails SILENTLY -
+the control just greys itself forever:
+
+- `W.toggle(addon, key, {...})` / `W.range(...)` wrap their callbacks and pass
+  the **addon**, so `disabled = function(a) return a.db.profile... end` works.
+- A **raw** AceConfig table (`{ type = "toggle", ... }`) is called by AceConfig
+  itself, so `disabled`/`hidden`/`get`/`set` receive the **info table**. Passing
+  that to a helper expecting the addon yields `profile == nil`, and most helpers
+  fail closed (`return true`) - a permanently disabled control.
+
+In raw entries, capture the addon from the enclosing scope
+(`function() return helper(addon) end`), never the callback argument.
+
 ## Lua 5.1 Compile Limits (silent file killers)
 
 WoW runs Lua 5.1, which enforces per-function limits AT COMPILE TIME. Exceeding

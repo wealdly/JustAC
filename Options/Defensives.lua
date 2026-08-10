@@ -234,6 +234,66 @@ function Defensives.CreateTabArgs(addon)
                             return not HasMaintenanceDefensive() or defensivesUnreachable(a)
                         end,
                     }),
+                    -- Group heals: healer specs only. Rides the defensive cluster
+                    -- for now, so it lives beside the other cluster content.
+                    groupHeals = {
+                        type = "toggle",
+                        name = "Group Heal Suggestions",
+                        desc = "In combat, when a party member drops below Blizzard's party health alert threshold, your group heals - the ones that heal several allies at once - join the defensive queue in priority order. When several allies are low, your strongest ready group cooldown claims the slot beside the queue as an emergency cue.\n\n"
+                            .. "Single-target heals are deliberately left out: aiming a heal at a person is your party frames' job. Cast a group heal with no target and it lands on you, still covering the group.\n\n"
+                            .. "Renders in the defensive cluster, so that must be enabled for a display.\n\n"
+                            .. "Requires the party health alert in Blizzard's Accessibility settings (set its volume to 0 if you don't want the voice). "
+                            .. "The alert is the only signal an addon can read about an ally's health in combat: it says SOMEONE is below the line, never who or how badly - your party frames stay the place you read that.",
+                        order = 2.5,
+                        width = "double",
+                        hidden = function()
+                            local SpellDB = LibStub("JustAC-SpellDB", true)
+                            return not (SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals())
+                        end,
+                        get = function()
+                            local h = addon.db.profile.healing
+                            return (h and h.enabled) or false
+                        end,
+                        set = function(_, val)
+                            addon.db.profile.healing = addon.db.profile.healing or {}
+                            addon.db.profile.healing.enabled = val
+                            addon:InitializeDefensiveSpells()   -- seed the list on first enable
+                            addon:ForceUpdateAll()
+                        end,
+                        -- Raw AceConfig entry: `disabled` is called with the info
+                        -- table, NOT the addon (W.toggle is what passes the addon).
+                        -- Capture it instead, or this greys itself permanently.
+                        disabled = function() return defensivesUnreachable(addon) end,
+                    },
+                    -- Both prerequisites are invisible from here (one lives on
+                    -- another tab, one in Blizzard's settings), so a greyed or
+                    -- silent toggle must say WHICH one is missing.
+                    groupHealsStatus = {
+                        type = "description",
+                        name = function()
+                            if defensivesUnreachable(addon) then
+                                return "|cffff6600The defensive cluster is off|r - heal suggestions render there. Turn on Defensive Icons for a display (Display tab) first."
+                            end
+                            local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+                            if not (BlizzardAPI and BlizzardAPI.IsPartyLowAvailable) then return "" end
+                            if BlizzardAPI.IsPartyLowAvailable() then
+                                return "|cff2ecc71Party health alert: on|r - ally-low suggestions can appear."
+                            end
+                            return "|cffff6600Party health alert: off|r - enable it in Blizzard's Accessibility settings, or no ally-low suggestions can appear."
+                        end,
+                        order = 2.6,
+                        fontSize = "small",
+                        hidden = function()
+                            local SpellDB = LibStub("JustAC-SpellDB", true)
+                            if not (SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals()) then
+                                return true
+                            end
+                            -- Visible while the toggle is on, and while it is greyed
+                            -- (that is exactly when the reason is needed).
+                            local h = addon.db.profile.healing
+                            return not ((h and h.enabled) or defensivesUnreachable(addon))
+                        end,
+                    },
                     -- Pet heal: hidden rather than greyed for non-pet classes - class is
                     -- not switchable, so there is nothing to discover.
                     showPetHealCue = W.toggle(addon, "showPetHealCue", {
