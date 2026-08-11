@@ -18,7 +18,7 @@ Same addon, same queue, nothing to set up. It shows what your spec needs:
 
 **Healers** - Keep your healing addon. JustAC isn't one, and what it adds is the other half of your job: the queue becomes a damage priority with heals kept out of the follow-ups, and an optional caster mode drops melee-weave suggestions, so your filler time between casts still contributes. Group heal suggestions ride alongside as a nudge. An ally who's taken real damage points you at an area heal, and a group in trouble raises your biggest save. Multi-target only, so who to heal stays your call.
 
-**Pet classes** - Hunters and Warlocks get a pet heal reminder in the queue, so a hurt pet reaches you without you having to watch its frame mid-fight.
+**Pet classes** - Hunters get a pet heal reminder in the queue, so a hurt pet reaches you without you having to watch its frame mid-fight. Every pet class gets summon and revive reminders.
 
 **Everyone** - Interrupts, CC and cleanses, the pre-combat checklist, and an escape button when a stun, fear or root has you.
 
