@@ -75,6 +75,31 @@ new table, download it once by hand from
 **one build**; generators join across tables. Full flag list: the header of
 `tools/update_data.py`.
 
+### Auditing the hand-curated tables
+
+`Data/*.lua` regenerates itself, but the curated tables in `SpellDB.lua` do not, so
+they rot silently across patches. Run this after every CSV refresh:
+
+```
+python tools/audit_defensives.py
+```
+
+It checks `CLASS_DEFENSIVE_DEFAULTS` and `DEFENSE_TIER` for the failure that has no
+in-game symptom: an id with a live `SpellName` row but **no acquisition route**
+(`SkillLineAbility` / `TraitDefinition` / `SpecializationSpells`). The known-spell
+gate hides those forever, so each one quietly consumes a queue slot. The 12.1 pass
+found ten, including a dead Fortifying Brew in every Monk spec. It also enforces the
+table's cast-time ordering rule and flags tier tags on unlisted spells.
+
+`--strict` exits non-zero for pre-release use. The fourth check (untagged spells
+whose effects look like survival buttons) is advisory only and never fails the run -
+the tier table's exclusions are deliberate and documented beside it.
+
+Note this check does **not** transfer to `Data/SimcRotations.lua`. Unobtainable ids
+are correct there: SimC names the button you actually press, so override forms
+(`death_sweep`, `swipe_cat`, `templar_slash`) are what match Assisted Combat's live
+pick. Rewriting those to base ids would break the matching.
+
 ### CSV source tables (which generator reads what)
 
 Most generators share a resolution **spine**: `SpellName` (id -> name),
