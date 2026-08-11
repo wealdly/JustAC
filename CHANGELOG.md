@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [5.1.1] - 2026-08-11
+
+### Fixed
+- A sweep of every built-in suggestion list against the current game data turned up entries that could never appear - abilities the game no longer grants under that name, and abilities that are now passives rather than something you press. Each one quietly held a slot open for a button you can't press. Affected Blood Death Knights, Protection Paladins, Warlocks, Vengeance Demon Hunters, Hunters and Evokers in the defensive lists; Holy Priests (Circle of Healing), Restoration Druids (Grove Guardians) and Discipline Priests (Rapture) in the healer suggestions; and the emergency group heal for Restoration Druids and Mistweaver Monks. All now point at the live ability, or are gone where there no longer is one
+- Preservation Evokers: Dream Breath is suggested as the version you actually cast
+- Unholy Death Knights: the burst reminder never lit up for Dark Transformation, because it was watching a version of the ability that no longer exists
+- Warlocks: the Succubus is summoned as Sayaad now, so the pet summon reminder works again
+- Divine Protection (Paladin) and Death Pact (Death Knight) are now treated as what they are - a major damage-reduction cooldown and a big instant heal - so they rise when you're in trouble instead of sitting among the routine fillers. Sacrificial Pact joins them
+- Feral Druids: Regrowth no longer sits above Renewal in the defensive list. Renewal is instant and Regrowth is a cast, and the faster button should come first
+
+### Changed
+- Translations are complete again in every supported language. The options rework had left around fifty labels showing English to everyone else; German, French, Italian, Russian, Spanish, Portuguese, Korean and both Chinese locales are caught up
+- The Warlock pet heal reminder has been retired. Health Funnel is gone from the game and nothing has replaced it, so the cue could never appear - it returns the moment a Warlock pet heal exists again. Hunter pet heals are unaffected
+
 ## [5.1.0] - 2026-08-11
 
 ### Added
