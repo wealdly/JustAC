@@ -1435,9 +1435,12 @@ end
 
 -- Pet rez/summon spells (shown when pet is dead or missing - reliable in combat via UnitIsDead/UnitExists)
 SpellDB.CLASS_PET_REZ_DEFAULTS = {
-    HUNTER = {982, 55709, 883},                      -- Revive Pet, Heart of the Phoenix, Call Pet 1
-    WARLOCK = {688, 697, 712, 691, 30146},           -- Summon Imp/Voidwalker/Succubus/Felhunter/Felguard
-    WARLOCK_2 = {30146, 688, 697, 712, 691},         -- Demonology: Felguard first (its mandatory pet), others as fallback
+    -- Heart of the Phoenix (55709) removed: no acquisition route at 12.1.
+    HUNTER = {982, 883},                             -- Revive Pet, Call Pet 1
+    -- Succubus is Summon Sayaad (366222) at 12.1; 712 and its 18 same-name siblings have
+    -- no acquisition route.
+    WARLOCK = {688, 697, 366222, 691, 30146},        -- Summon Imp/Voidwalker/Sayaad/Felhunter/Felguard
+    WARLOCK_2 = {30146, 688, 697, 366222, 691},      -- Demonology: Felguard first (its mandatory pet), others as fallback
     DEATHKNIGHT_3 = {46584, 46585},                  -- Raise Dead (Unholy only - permanent ghoul 46584; 46585 covers the temporary variant. Blood/Frost ghoul is a Guardian, not a pet)
 }
 
@@ -1445,17 +1448,22 @@ SpellDB.CLASS_PET_REZ_DEFAULTS = {
 -- In 12.0 combat, UnitHealth("pet") is secret so pet heals cannot trigger.
 SpellDB.CLASS_PETHEAL_DEFAULTS = {
     HUNTER = {136, 109304},                          -- Mend Pet, Exhilaration (heals pet too)
-    WARLOCK = {755},                                 -- Health Funnel
+    -- WARLOCK has no entry at 12.1: Health Funnel (755) and all ten same-name ids have no
+    -- acquisition route, and no other Warlock pet heal is reachable. The cue was already
+    -- dead in play - the known-spell gate hid it - so removing it only makes the data
+    -- honest. Restore a WARLOCK list the moment a castable pet heal exists again.
 }
 
 --------------------------------------------------------------------------------
 -- Healer group-heal data (spec-keyed; healer specs only, so a non-healer spec
 -- resolves to nil and the heal surface never appears).
 --
--- Every ID below was verified against the client data export for build
--- 12.0.7.68974 - name, cooldown, cast class and target type - rather than
--- recalled. Ordering follows the defensive-list convention: cheap/rotational
--- first, cast-time heals later.
+-- Every ID below is checked against the CURRENT client data export by
+-- tools/audit_defensives.py - name, acquisition route and passive flag - rather
+-- than recalled. Re-run it after every data refresh: this block was last hand-
+-- verified at 12.0.7.68974 and had silently drifted by 12.1.0.
+-- Ordering follows the defensive-list convention: cheap/rotational first,
+-- cast-time heals later.
 --------------------------------------------------------------------------------
 
 -- Group-heal suggestions injected into the defensive queue while allies are
@@ -1464,17 +1472,21 @@ SpellDB.CLASS_PETHEAL_DEFAULTS = {
 -- A targeted AoE (Wild Growth, Chain Heal) is fine: cast with no friendly
 -- target it lands on the player and the splash still covers the group.
 SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
-    -- Restoration Druid: Wild Growth, Efflorescence, Grove Guardians
-    DRUID_4 = {48438, 145205, 102693},
+    -- Restoration Druid: Wild Growth, Efflorescence
+    -- (Grove Guardians 102693 removed at 12.1: no acquisition route, and the only other id
+    -- carrying the name - 1226140 - is a passive node with no castable button behind it.)
+    DRUID_4 = {48438, 145205},
     -- Holy Paladin: Light of Dawn (cone), Divine Toll (multi Holy Shock)
     PALADIN_1 = {85222, 375576},
     -- Discipline Priest: multi-target ATONEMENT APPLICATORS - Discipline
     -- heals by damaging while Atonement is out. Radiance (target + allies),
     -- Prayer of Healing.
     PRIEST_1 = {194509, 596},
-    -- Holy Priest: Prayer of Mending (bounces), Circle of Healing,
-    -- HW: Sanctify (ground), Prayer of Healing, Halo
-    PRIEST_2 = {33076, 204883, 34861, 596, 120517},
+    -- Holy Priest: Prayer of Mending (bounces), HW: Sanctify (ground),
+    -- Prayer of Healing, Halo
+    -- (Circle of Healing 204883 removed at 12.1: none of its six ids has an acquisition
+    -- route, so it could never be suggested.)
+    PRIEST_2 = {33076, 34861, 596, 120517},
     -- Restoration Shaman: Chain Heal (bounces), Healing Stream Totem,
     -- Healing Rain (ground), Wellspring (wave)
     SHAMAN_3 = {1064, 5394, 73920, 197995},
@@ -1483,7 +1495,9 @@ SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
     MONK_2 = {116670, 119611},
     -- Preservation Evoker: Emerald Blossom, Dream Breath + Spiritbloom
     -- (empowered), Temporal Anomaly (wave)
-    EVOKER_2 = {355913, 382614, 367226, 373861},
+    -- Dream Breath is 355936, not 382614 - the latter is one of seven ids sharing the
+    -- name and has no acquisition route; 355936 is the one the talent tree grants.
+    EVOKER_2 = {355913, 355936, 367226, 373861},
 }
 
 -- Group-crisis ladder for the emergency slot: first READY spell wins, so these
@@ -1494,7 +1508,7 @@ SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
 SpellDB.HEAL_EMERGENCY_LADDER = {
     DRUID_4   = {740},                              -- Tranquility (Flourish 197721 is PASSIVE)
     PALADIN_1 = {31821, 216331},                    -- Aura Mastery, Avenging Crusader
-    PRIEST_1  = {62618, 421453, 47536},             -- PW: Barrier, Ultimate Penitence, Rapture
+    PRIEST_1  = {62618, 421453},                    -- PW: Barrier, Ultimate Penitence (Rapture 47536 has no route at 12.1)
     PRIEST_2  = {64843},                            -- Divine Hymn
     SHAMAN_3  = {108280, 207399, 98008, 108281},    -- Healing Tide, Ancestral Protection, Spirit Link, Ancestral Guidance
     MONK_2    = {388615, 322118, 325197},           -- Restoral, Yu'lon, Chi-Ji (Essence Font 231633 is PASSIVE)

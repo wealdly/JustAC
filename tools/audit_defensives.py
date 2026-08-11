@@ -161,9 +161,28 @@ def main():
             sys.exit(f"could not locate {pattern} in SpellDB.lua")
         return m.group(1)
 
+    def strip_comments(text):
+        """Lua line comments carry ids in prose; scanning them invents findings."""
+        return "\n".join(re.sub(r"--.*$", "", ln) for ln in text.split("\n"))
+
     lists = {m.group(1): [int(x) for x in re.findall(r"\d+", m.group(2))]
              for m in re.finditer(r"^\s*([A-Z]+(?:_\d)?)\s*=\s*\{([^}]*)\}",
-                                  section(r"SpellDB\.CLASS_DEFENSIVE_DEFAULTS"), re.M)}
+                                  strip_comments(section(r"SpellDB\.CLASS_DEFENSIVE_DEFAULTS")), re.M)}
+
+    # Sibling tables that also name spells the player is asked to CAST. Aura-bearing
+    # tables are deliberately absent: an aura id is what we look FOR, never something
+    # cast, so it has no acquisition row and would be pure noise here.
+    for extra in ("CLASS_GROUPHEAL_DEFAULTS", "HEAL_EMERGENCY_LADDER", "CLASS_TOPOFF_HEALS",
+                  "CLASS_PETHEAL_DEFAULTS", "CLASS_PET_REZ_DEFAULTS",
+                  "CLASS_GAPCLOSER_DEFAULTS", "CLASS_BURST_TRIGGER_DEFAULTS"):
+        m = re.search(r"SpellDB\." + extra + r"\s*=\s*\{(.*?)\n\}", src, re.S)
+        if not m:
+            continue
+        for e in re.finditer(r"^\s*([A-Z]+(?:_\d)?)\s*=\s*\{([^}]*)\}",
+                             strip_comments(m.group(1)), re.M):
+            ids = [int(x) for x in re.findall(r"\d+", e.group(2))]
+            if ids:
+                lists[f"{extra}:{e.group(1)}"] = ids
     tiers = {int(a): int(b) for a, b in
              re.findall(r"\[(\d+)\]\s*=\s*(\d)", section(r"local DEFENSE_TIER"))}
 
@@ -208,24 +227,32 @@ def main():
             bad.append(f"{key}[{i}] {sid} {names.get(sid,'?')!r} is PASSIVE {hint}")
     report("no entry is a passive", bad)
 
-    # 2. cast-time heals last
+    # 2. cast-time heals last - CLASS_DEFENSIVE_DEFAULTS ONLY. That table documents the
+    # rule ("a heal you must stand still for is the wrong answer while any instant is
+    # available"); the sibling tables have no such rule and several are cast-time BY
+    # NATURE - Chain Heal and Prayer of Healing are the core group heals, pet summons
+    # are 6s casts. Applying it there produced 17 findings, every one of them noise.
     bad = []
     for key, ids in sorted(lists.items()):
+        if ":" in key:
+            continue
         for i, sid in enumerate(ids, 1):
             base = cast_base.get(cast_index.get(sid, 0), 0)
             if base > 0 and i != len(ids):
                 bad.append(f"{key}[{i}/{len(ids)}] {sid} {names.get(sid,'?')!r} "
                            f"{base}ms - cast-time heals must be last")
-    report("cast-time heals sit last in their list", bad)
+    report("cast-time heals sit last in their list (defensive defaults)", bad)
 
-    # 3. tier orphans
+    # 3. tier orphans - DEFENSE_TIER only governs CLASS_DEFENSIVE_DEFAULTS, so 'listed'
+    # for this check means that table alone.
+    defensive_ids = {s for k, v in lists.items() if ":" not in k for s in v}
     report("no tier tag on an unlisted spell",
            [f"{sid} {names.get(sid,'?')!r} tier {t}"
-            for sid, t in sorted(tiers.items()) if sid not in listed])
+            for sid, t in sorted(tiers.items()) if sid not in defensive_ids])
 
     # 4. tier gaps (advisory)
     gaps = []
-    for sid in sorted(listed):
+    for sid in sorted(defensive_ids):
         if tiers.get(sid, 3) != 3:
             continue
         sig = effects.get(sid, set())
