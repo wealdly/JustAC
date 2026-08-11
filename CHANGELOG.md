@@ -3,6 +3,17 @@
 
 ## [Unreleased]
 
+## [5.1.2] - 2026-08-11
+
+### Fixed
+- Game patch 12.1.0 changed what an addon may read about buffs during a fight, and JustAC was still asking the old way in several places. That caused errors in combat and could leave the queue blank or stop it updating. The queue, damage-over-time tracking and the tank maintenance slot all work again
+- Some settings showed an error instead of their description, and the Cooldown Manager settings described precision the game no longer allows. Both read correctly now
+
+### Changed
+- Tanks: the flare for a dropped mitigation buff no longer needs Blizzard's Cooldown Manager turned on, so the two-stage cue works out of the box. With it on you still get the sharper version, which also catches an absorb used up early
+- Around forty more abilities are ranked against the pull instead of sitting neutral. Ones that deal their damage through a follow-up effect - Frostbolt, Execute, Fury's Whirlwind and more - were not being recognised as damage at all
+- The enrage cleanse cue no longer appears in combat. Game patch 12.1.0 closed every way to tell which buff on an enemy is an enrage, so it stands down rather than risk being wrong, and returns if a way back opens
+
 ## [5.1.1] - 2026-08-11
 
 ### Fixed

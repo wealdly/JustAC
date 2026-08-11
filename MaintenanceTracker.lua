@@ -132,6 +132,10 @@ end
 --- issecretvalue can tell them apart. This bit us once; do not reintroduce it.
 local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue or function() return false end
 
+--- Value if readable, nil if secret. Used on the UNIT_AURA payload lists, which are
+--- themselves secret in 12.1.0 combat - ipairs() on one throws.
+local Unsecret = BlizzardAPI and BlizzardAPI.Unsecret or function(v) return v end
+
 --- Path (a): find the instance by spell id. Works OUT of combat, where spellId is plain, and
 --- in combat too whenever this aura happens not to be secreted. In combat identity otherwise
 --- comes from the cast->instance bridge.
@@ -666,8 +670,12 @@ local function UpdateEntry(entry, updateInfo)
     ExpireStalePendingCast(entry)
 
     -- Removal first: authoritative "it dropped".
-    if updateInfo and updateInfo.removedAuraInstanceIDs and s.trackedInstance then
-        for _, id in ipairs(updateInfo.removedAuraInstanceIDs) do
+    -- 12.1.0: the payload lists are secret in combat, so unwrap before iterating -
+    -- ipairs() on a secret throws. Unreadable means we lose the authoritative drop
+    -- for that tick and fall back to the duration-based expiry below.
+    local removed = updateInfo and Unsecret(updateInfo.removedAuraInstanceIDs)
+    if removed and s.trackedInstance then
+        for _, id in ipairs(removed) do
             if id == s.trackedInstance then
                 s.trackedInstance = nil
                 s.observedDrop = true   -- authoritative: the engine says it went away
@@ -700,15 +708,17 @@ local function UpdateEntry(entry, updateInfo)
                 if only == nil then only = id end
             end
         end
-        if updateInfo.addedAuras then
-            for _, aura in ipairs(updateInfo.addedAuras) do
+        local added = Unsecret(updateInfo.addedAuras)
+        if added then
+            for _, aura in ipairs(added) do
                 if aura then Collect(aura.auraInstanceID) end
             end
         end
         -- Only fall through to updates when ADDED offered nothing; an ambiguous ADDED batch
         -- must not be rescued by a different aura merely refreshing in the same tick.
-        if count == 0 and updateInfo.updatedAuraInstanceIDs then
-            for _, id in ipairs(updateInfo.updatedAuraInstanceIDs) do
+        local updated = count == 0 and Unsecret(updateInfo.updatedAuraInstanceIDs)
+        if updated then
+            for _, id in ipairs(updated) do
                 Collect(id)
             end
         end
@@ -1011,6 +1021,22 @@ local function EntryState(entry)
         local casts = LiveCasts(entry, s)
         if casts and #casts > 0 then
             return LiveVerdict(entry, s), entry, nil
+        end
+        -- Every projected application has expired. That is EVIDENCE, not ignorance, and the
+        -- distinction is exact: s.casts only exists once a cast of ours landed, and a confirmed
+        -- drop clears it to nil (and sets observedDrop, caught below). So a present-but-EMPTY
+        -- list means one thing only - we watched our own applications run out and nothing
+        -- refreshed them. LiveCasts returns nil when the duration is unknown, which correctly
+        -- keeps that case at "unknown".
+        --
+        -- Without this the whole second stage of the cue needed a client CVar: with no Cooldown
+        -- Manager there is no viewer boolean, 12.1.0 closed both routes to an aura instance, and
+        -- a ContextuallySecret buff reads nothing - so the slot showed the refresh ants and then
+        -- went silent, never reaching the "you have LOST it" flare. Measured in game 2026-08-11.
+        -- The projection deliberately runs PROJECTION_SAFETY (0.25s) short, so this errs a
+        -- quarter-second toward "re-press" rather than toward saying nothing at all.
+        if casts then
+            return "down", entry, nil
         end
     end
 

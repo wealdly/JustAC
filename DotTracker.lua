@@ -141,8 +141,12 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
     if not next(instanceToDot) and #pendingCasts == 0 then return false end
     local changed = false
 
-    if updateInfo.removedAuraInstanceIDs then
-        for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+    -- 12.1.0: these payload lists are secret in combat, so ipairs() on one throws.
+    -- Unwrap first; secret means no incremental update this tick and the post-cast
+    -- window fallback carries the DoT until a readable batch arrives.
+    local removed = BlizzardAPI and BlizzardAPI.Unsecret(updateInfo.removedAuraInstanceIDs)
+    if removed then
+        for _, instanceID in ipairs(removed) do
             local ids = instanceToDot[instanceID]
             if ids then
                 for _, id in ipairs(ids) do
@@ -155,7 +159,8 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
         end
     end
 
-    if updateInfo.addedAuras and #pendingCasts > 0 then
+    local added = BlizzardAPI and BlizzardAPI.Unsecret(updateInfo.addedAuras)
+    if added and #pendingCasts > 0 then
         local now = GetTime()
         for i = #pendingCasts, 1, -1 do
             if now - pendingCasts[i].time > BRIDGE_WINDOW then tremove(pendingCasts, i) end
@@ -164,7 +169,7 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
         -- (aura batch order follows cast order), consuming the pending entry so
         -- two DoTs confirming in the same UNIT_AURA batch don't both map to the
         -- most recent cast.
-        for _, auraData in ipairs(updateInfo.addedAuras) do
+        for _, auraData in ipairs(added) do
             if #pendingCasts == 0 then break end
             local instanceID = auraData.auraInstanceID
             if instanceID then

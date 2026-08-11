@@ -25,7 +25,15 @@ local UIAnimations     = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory   = LibStub("JustAC-UIFrameFactory", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local SpellDB          = LibStub("JustAC-SpellDB", true)
+local BlizzardAPI      = LibStub("JustAC-BlizzardAPI", true)
 if not (UIAnimations and UIFrameFactory) then return end
+
+-- 12.1.0: GetAuraDataByIndex is not merely secret-returning, it is ACCESS-DENIED to a
+-- tainted caller once auras are secret ("Auras cannot be accessed when secret while
+-- tainted by 'JustAC'"). It throws rather than handing back a secret, so the pcall
+-- around the dispel-colour lookup below never saw it - the throw happened one line
+-- earlier, five times a tick, for the whole fight. Ask the engine first instead.
+local AurasSecret = BlizzardAPI and BlizzardAPI.AreAurasSecret or function() return false end
 
 local CreateFrame  = CreateFrame
 local CreateColor  = CreateColor
@@ -81,12 +89,17 @@ local function DriveCue(cue)
     -- shows up in profiling.
     local UIRenderer = LibStub("JustAC-UIRenderer", true)
     local UpdateCooldowns = UIRenderer and UIRenderer.UpdateButtonCooldowns
-    local live  = sel and UnitExists("target") and UnitCanAttack("player", "target")
+    local live  = sel and not AurasSecret() and UnitExists("target") and UnitCanAttack("player", "target")
         and not (cue.spellID and SpellDB and SpellDB.IsInterruptOnCooldown
                  and SpellDB.IsInterruptOnCooldown(cue.spellID))
     for i = 1, MAX_SLOTS do
         local slot = cue.slots[i]
-        local a = slot and live and gadbi("target", i, "HELPFUL") or nil
+        -- pcall even behind the gate: AreAurasSecret answers for the general case, but a
+        -- per-unit or per-spell override can still deny this one call, and the cost of
+        -- being wrong is an error every tick rather than a dark slot.
+        local gotAura, a = false, nil
+        if slot and live then gotAura, a = pcall(gadbi, "target", i, "HELPFUL") end
+        if not gotAura then a = nil end
         if not slot then
             -- CreateBaseIcon can fail; skip rather than erroring on every tick.
         elseif a then

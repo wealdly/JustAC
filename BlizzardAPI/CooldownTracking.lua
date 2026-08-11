@@ -619,7 +619,17 @@ function BlizzardAPI.IsBuffWindowActive(spellID)
     local aura = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
     local instId = aura and aura.auraInstanceID
     if not instId then return false end
-    return DurationObjectActive(C_UnitAuras.GetAuraDuration("player", instId))
+    -- 12.1.0: GetAuraDuration is ACCESS-DENIED to a tainted caller while auras are secret,
+    -- and the denial ignores the aura's OWN exemption - a NeverSecret buff whose data reads
+    -- fully plain still throws here. That is why this needs a pcall even though the lookup
+    -- above just succeeded: reaching an aura and reading its duration are separate permissions.
+    -- Unguarded, the throw propagated into the queue build (SimcBuffWindowActive /
+    -- SimcNegativeBuffBlocks) and blanked the queue mid-fight rather than degrading it.
+    -- false on denial is the same answer as "no such aura", which the SimC gate layer already
+    -- compensates for: positive windows fall back to AC's pick, negative gates fail open.
+    local ok, dur = pcall(C_UnitAuras.GetAuraDuration, "player", instId)
+    if not ok then return false end
+    return DurationObjectActive(dur)
 end
 
 --- Diagnostic: which of the given self-buff ids are active right now.
