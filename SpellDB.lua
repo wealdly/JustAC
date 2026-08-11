@@ -965,9 +965,10 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     DEMONHUNTER   = {198589, 196555, 196718},                   -- Blur, Netherwalk, Darkness
     -- Vengeance (tank): Soul Cleave heal, Demon Spikes, Fiery Brand, Metamorphosis (a
     -- Vengeance SURVIVAL cd, not a DPS burst - unlike Havoc's), then Blur
-    -- Soul Barrier is 1265924, not 263648: the old id has no acquisition row in 12.1 and
-    -- eight ids share the name. Verified the replacement resolves to the Demon Hunter tree.
-    DEMONHUNTER_2 = {228477, 203720, 204021, 187827, 198589, 1265924}, -- Soul Cleave, Demon Spikes, Fiery Brand, Metamorphosis, Blur, Soul Barrier
+    -- Soul Barrier REMOVED: nine ids carry the name and not one is castable - the only one
+    -- with a talent row (1265924) is a PASSIVE node with no castable button behind it, and
+    -- the rest have no acquisition route at all. It could never render.
+    DEMONHUNTER_2 = {228477, 203720, 204021, 187827, 198589}, -- Soul Cleave, Demon Spikes, Fiery Brand, Metamorphosis, Blur
 
     -- ── Druid ───────────────────────────────────────────────────────────────
     -- Class fallback (Balance): self-heals then CDs. Rejuvenation, Survival Instincts and
@@ -1007,14 +1008,16 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Class fallback (all specs): self-heals then defensive CDs. Renewing Blaze, Zephyr and
     -- Emerald Communion are class talents (verified live in 12.1 DB2); dropped by the
     -- known-spell gate when untalented.
-    EVOKER        = {360995, 374348, 363916, 374227, 370960},   -- Verdant Embrace, Renewing Blaze, Obsidian Scales, Zephyr, Emerald Communion
+    -- Renewing Blaze (374348) REMOVED: PASSIVE in 12.1 (attrs 0x10040) - never castable.
+    EVOKER        = {360995, 363916, 374227, 370960},           -- Verdant Embrace, Obsidian Scales, Zephyr, Emerald Communion
 
     -- ── Hunter ──────────────────────────────────────────────────────────────
     -- Class fallback (all specs)
     -- 281195 dropped: it was carried as the "Lone Wolf" variant of Survival of the Fittest,
     -- but it has no acquisition row in 12.1 and 264735 (already here) is the live one. Note
     -- 203965 also reads "Survival of the Fittest" and is a DRUID ability - do not use it.
-    HUNTER        = {109304, 264735, 186265, 388035},  -- Exhilaration, Survival of the Fittest, Aspect of the Turtle, Fortitude of the Bear
+    -- Fortitude of the Bear (388035) REMOVED: PASSIVE in 12.1 - never castable.
+    HUNTER        = {109304, 264735, 186265},          -- Exhilaration, Survival of the Fittest, Aspect of the Turtle
 
     -- ── Mage ────────────────────────────────────────────────────────────────
     -- Class fallback (Fire/Frost). The spec-appropriate barrier is auto-learned; all three
@@ -1028,12 +1031,14 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
 
     -- ── Monk ────────────────────────────────────────────────────────────────
     -- Class fallback (Windwalker): Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
-    -- FORTIFYING BREW is 388917 everywhere below. The four ids this table used to carry
-    -- (115203 base, 120954 Brewmaster, 243435 Mistweaver, 201318 Windwalker) are all
-    -- legacy: nine ids share the name and only 388917 has an acquisition row in 12.1,
-    -- resolving to the Monk tree. The per-spec variants no longer exist as separate
-    -- learnable spells, so listing them cost every Monk spec its Fortifying Brew entry.
-    MONK          = {322101, 388917, 122278, 122783},          -- Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
+    -- FORTIFYING BREW is 115203 - the CASTABLE button. 388917 is the PASSIVE talent node
+    -- that grants it (TraitDefinition.VisibleSpellID 388917 -> 115203), so the node owns the
+    -- acquisition row and the button owns none. That is exactly why "has an acquisition row"
+    -- is the wrong test on its own: a passive id here is dropped by IsSpellAvailable and the
+    -- slot stays empty forever, which is the same dead slot as an unobtainable id.
+    -- The per-spec variants ARE dead (120954 Brewmaster, 243435 Mistweaver, 201318
+    -- Windwalker): no route, and no node makes them visible. Removed.
+    MONK          = {322101, 115203, 122278, 122783},          -- Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic
     -- Brewmaster (tank): Purifying Brew first (stagger is the real damage signal - the
     -- float hint below surfaces it whenever Moderate/Heavy Stagger is up), then Celestial
     -- Brew, Expel Harm, Fortifying Brew, then class-talent DR (Dampen Harm / Diffuse Magic /
@@ -1044,14 +1049,14 @@ SpellDB.CLASS_DEFENSIVE_DEFAULTS = {
     -- Harm, Diffuse Magic, Zen Meditation, Celestial Brew, Purifying Brew) has both.
     -- The known-spell gate was hiding it, so this costs nothing and removes the pretence
     -- of coverage. Do not restore it without a SkillLineAbility or TraitDefinition row.
-    MONK_1        = {119582, 322507, 322101, 388917, 122278, 122783, 115176}, -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic, Zen Meditation
+    MONK_1        = {119582, 322507, 322101, 115203, 122278, 122783, 115176}, -- Purifying Brew, Celestial Brew, Expel Harm, Fortifying Brew, Dampen Harm, Diffuse Magic, Zen Meditation
     -- Mistweaver: Life Cocoon leads - a big instant absorb it can cast on ITSELF, and the
     -- spec's single strongest defensive - then the DR CDs. Vivify is last: it is a hardcast,
     -- and the case where it is the right button - instant off its own proc - is promoted
     -- automatically without needing a high slot here.
-    MONK_2        = {116849, 388917, 122278, 122783, 388615, 116670}, -- Life Cocoon, Fortifying Brew, Dampen Harm, Diffuse Magic, Restoral, Vivify
+    MONK_2        = {116849, 115203, 122278, 122783, 388615, 116670}, -- Life Cocoon, Fortifying Brew, Dampen Harm, Diffuse Magic, Restoral, Vivify
     -- Windwalker: Expel Harm, Touch of Karma, Fortifying Brew, Diffuse Magic
-    MONK_3        = {322101, 122470, 388917, 122278, 122783}, -- Expel Harm, Touch of Karma, Fortifying Brew, Dampen Harm, Diffuse Magic
+    MONK_3        = {322101, 122470, 115203, 122278, 122783}, -- Expel Harm, Touch of Karma, Fortifying Brew, Dampen Harm, Diffuse Magic
 
     -- ── Paladin ─────────────────────────────────────────────────────────────
     -- Class fallback (Ret): Word of Glory, Divine Protection, Divine Shield, Lay on Hands
@@ -1184,10 +1189,8 @@ local DEFENSE_TIER = {
     [61336] = 4,  -- Survival Instincts (Druid)
     [31850] = 4,  -- Ardent Defender (Paladin)
     [86659] = 4,  -- Guardian of Ancient Kings (Paladin)
-    [388917] = 4,  -- Fortifying Brew (Monk). ONE id: the base and per-spec variant ids
-                   -- (115203/120954/243435/201318) are all legacy and unobtainable in 12.1,
-                   -- so tagging them tiered a spell nobody can cast while leaving the live
-                   -- one untagged - i.e. defaulting Fortifying Brew to tier 3 filler.
+    [115203] = 4,  -- Fortifying Brew (Monk). The CASTABLE id, not the 388917 passive node
+                   -- that grants it - tagging the node tiers a spell that never renders.
     [55233] = 4,  -- Vampiric Blood (Death Knight)
     [48792] = 4,  -- Icebound Fortitude (Death Knight)
     [204021] = 4,  -- Fiery Brand (Demon Hunter)
@@ -1489,12 +1492,12 @@ SpellDB.CLASS_GROUPHEAL_DEFAULTS = {
 -- once. Group-save DR cooldowns (Aura Mastery, Spirit Link, Zephyr) belong
 -- here too: at 3+ allies low, stopping damage is healing.
 SpellDB.HEAL_EMERGENCY_LADDER = {
-    DRUID_4   = {740, 197721},                      -- Tranquility, Flourish
+    DRUID_4   = {740},                              -- Tranquility (Flourish 197721 is PASSIVE)
     PALADIN_1 = {31821, 216331},                    -- Aura Mastery, Avenging Crusader
     PRIEST_1  = {62618, 421453, 47536},             -- PW: Barrier, Ultimate Penitence, Rapture
     PRIEST_2  = {64843},                            -- Divine Hymn
     SHAMAN_3  = {108280, 207399, 98008, 108281},    -- Healing Tide, Ancestral Protection, Spirit Link, Ancestral Guidance
-    MONK_2    = {388615, 322118, 325197, 231633},   -- Restoral, Yu'lon, Chi-Ji, Essence Font
+    MONK_2    = {388615, 322118, 325197},           -- Restoral, Yu'lon, Chi-Ji (Essence Font 231633 is PASSIVE)
     EVOKER_2  = {363534, 374227},                   -- Rewind, Zephyr
 }
 
@@ -1588,7 +1591,9 @@ SpellDB.CLASS_BURST_TRIGGER_DEFAULTS = {
     -- Death Knight
     DEATHKNIGHT_1 = {49028},                         -- Blood: Dancing Rune Weapon (120s)
     DEATHKNIGHT_2 = {51271, 152279},                 -- Frost: Pillar of Frost (60s), Breath of Sindragosa (120s)
-    DEATHKNIGHT_3 = {63560, 42650},                  -- Unholy: Dark Transformation (60s), Army of the Dead (180s)
+    -- Dark Transformation is 1233448, the castable id. 63560 and 325554 both carry the name
+    -- and are both PASSIVE, so the burst cue could never fire on them.
+    DEATHKNIGHT_3 = {1233448, 42650},                -- Unholy: Dark Transformation (60s), Army of the Dead (180s)
 
     -- Demon Hunter
     DEMONHUNTER_1 = {191427},                        -- Havoc: Metamorphosis (180s)

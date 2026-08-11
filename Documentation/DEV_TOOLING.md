@@ -84,15 +84,36 @@ they rot silently across patches. Run this after every CSV refresh:
 python tools/audit_defensives.py
 ```
 
-It checks `CLASS_DEFENSIVE_DEFAULTS` and `DEFENSE_TIER` for the failure that has no
-in-game symptom: an id with a live `SpellName` row but **no acquisition route**
-(`SkillLineAbility` / `TraitDefinition` / `SpecializationSpells`). The known-spell
-gate hides those forever, so each one quietly consumes a queue slot. The 12.1 pass
-found ten, including a dead Fortifying Brew in every Monk spec. It also enforces the
-table's cast-time ordering rule and flags tier tags on unlisted spells.
+It checks `CLASS_DEFENSIVE_DEFAULTS` and `DEFENSE_TIER` for the failure mode with no
+in-game symptom: an entry the player can never press. `IsSpellAvailable` hides it
+forever, so it quietly consumes a queue slot and nothing says why.
+
+**Two distinct ways to land there, and they need different tests.**
+
+*Unreachable* — a live `SpellName` row with no acquisition route at all. Legacy ids
+left behind by a rework look exactly like current ones.
+
+*Passive* — reachable but not castable, and this is the one that bites. For a
+talent-granted active, the **talent node** carries the acquisition row and is
+passive; the **button** it grants is castable and usually has no row of its own,
+reachable only through `TraitDefinition.VisibleSpellID`:
+
+```
+node 388917 (PASSIVE)  --VisibleSpellID-->  115203 (castable)
+                Fortifying Brew
+```
+
+So "has an acquisition row" is **not** the test on its own. Applying it alone during
+the 12.1 pass replaced the correct castable Fortifying Brew with the passive node in
+all four Monk lists — trading one dead entry for another while looking like a fix.
+The rule is `castable = reachable AND NOT SPELL_ATTR0_PASSIVE (0x40)`.
+
+The same trap caught Soul Barrier, Renewing Blaze, Fortitude of the Bear, Flourish,
+Essence Font and Dark Transformation — several of which had shipped that way for a
+while, since a passive entry looks identical to a correct one in the source.
 
 `--strict` exits non-zero for pre-release use. The fourth check (untagged spells
-whose effects look like survival buttons) is advisory only and never fails the run -
+whose effects look like survival buttons) is advisory only and never fails the run —
 the tier table's exclusions are deliberate and documented beside it.
 
 Note this check does **not** transfer to `Data/SimcRotations.lua`. Unobtainable ids
