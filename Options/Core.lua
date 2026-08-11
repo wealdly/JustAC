@@ -126,55 +126,19 @@ local function CreateOptionsTable(addon)
 end
 
 -------------------------------------------------------------------------------
--- /jac inspect <topic> dispatch: topic → DebugCommands method. Every method
--- accepts (addon, topicArg); the no-arg diagnostics simply ignore topicArg.
+-- /jac inspect <topic> dispatch. The topic list itself lives in DebugCommands,
+-- next to the methods it names, so the dispatch, the usage line and the help
+-- listing cannot drift apart (they had). Every method accepts (addon, topicArg);
+-- the no-arg diagnostics simply ignore topicArg.
 -------------------------------------------------------------------------------
-local INSPECT_TOPICS = {
-    modules     = "ModuleDiagnostics",
-    cooldown    = "TestCooldownAPIs",
-    defensives  = "DefensiveDiagnostics",
-    interrupts  = "InterruptDiagnostics",
-    burst       = "BurstDiagnostics",
-    auras       = "AuraDiagnostics",
-    buffs       = "PrecombatBuffDiagnostics",
-    perf        = "PerformanceDiagnostics",
-    rank        = "ContextRankDiagnostics",
-    dots        = "DotDiagnostics",
-    gates       = "GateDiagnostics",
-    aoe         = "AoeDiagnostics",
-    resource    = "ResourceDiagnostics",
-    rotation    = "RotationOrderProbe",
-    resourcepoints = "ResourcePointProbe",
-    secrecy = "SecrecyProbe",
-    stacks = "StacksProbe",
-    maintenance = "MaintenanceProbe",
-    maintlog    = "MaintenanceLog",
-    locwatch    = "LossOfControlWatch",
-    enrage      = "EnrageProbe",
-    durprobe    = "DurationProbe",
-    chargediag  = "ChargeDiagnostics",
-    castdiag    = "CastDiagnostics",
-    healthprobe = "HealthProbe",
-    healthgate  = "HealthGatePreview",
-    healprobe   = "HealProbe",
-    validate    = "ValidateAssumptions",
-    selfcast    = "SelfCastProbe",
-    auraids     = "AuraInstanceIdsProbe",
-    blank       = "QueueBlankReport",
-    ccdb        = "CCImmunityDB",
-    cdfields    = "CooldownFieldsProbe",
-    secrecymap  = "SecrecyMapProbe",
-    frames      = "FrameStateProbe",
-    cvitems     = "CooldownViewerItemsProbe",
-    enginesig   = "EngineSignalsProbe",
-    audit       = "ProbeSession",
-    errors      = "ErrorCapture",
-    enragelog   = "EnrageLog",
-    glows       = "GlowInventory",
-    groupbuff   = "GroupBuffProbe",
-    textlaunder = "TextLaunderProbe",
-}
-local INSPECT_USAGE = "Topics: modules, cooldown [spell], defensives, interrupts, burst, auras, buffs, perf [reset], rank, dots, gates, aoe, resource, rotation, resourcepoints, secrecy, stacks, maintenance, maintlog [on|off|clear], enrage [off], durprobe [spell], locwatch, chargediag [spell], castdiag, healthprobe, healthgate, healprobe [arm|show|watch], validate [arm], selfcast, auraids, blank, ccdb [clear], cdfields, secrecymap, frames, cvitems, enginesig, audit [off|clear], errors [off|clear|show], enragelog [off|clear], glows, groupbuff, textlaunder"
+local function InspectTopics()
+    local DC = LibStub("JustAC-DebugCommands", true)
+    return (DC and DC.GetInspectTopics and DC.GetInspectTopics()) or {}
+end
+local function InspectUsage()
+    local DC = LibStub("JustAC-DebugCommands", true)
+    return (DC and DC.GetInspectUsage and DC.GetInspectUsage()) or "Topics: (unavailable)"
+end
 
 -------------------------------------------------------------------------------
 -- Slash command handler
@@ -304,16 +268,16 @@ local function HandleSlashCommand(addon, input)
         end
         if not topic then
             addon:Print("Usage: /jac inspect <topic>")
-            addon:Print(INSPECT_USAGE)
+            addon:Print(InspectUsage())
             return
         end
         topic = topic:lower()
-        local method = INSPECT_TOPICS[topic]
+        local method = InspectTopics()[topic]
         if method then
             CallDebug(method, topicArg)
         else
             addon:Print("Unknown inspect topic: '" .. topic .. "'")
-            addon:Print(INSPECT_USAGE)
+            addon:Print(InspectUsage())
         end
 
     elseif command == "help" then

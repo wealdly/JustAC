@@ -71,7 +71,6 @@ local MECHANIC_BREAKERS = {
         [172160]=116925,  -- Free Action (item 116925)
         [175817]=116276,  -- Draenic Living Action Potion (item 116276)
         [342890]=183823,  -- Unhindered Passing (item 183823)
-        [358267]=0,  -- Hover
         [370960]=0,  -- Emerald Communion
         [1264446]=259092,  -- Void-Tinged Free Action Potion (item 259092)
     },

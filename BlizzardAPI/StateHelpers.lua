@@ -10,6 +10,7 @@ local BlizzardAPI = LibStub("JustAC-BlizzardAPI")
 -- Hot path cache
 local math_max         = math.max
 local math_min         = math.min
+local math_floor       = math.floor
 local GetTime          = GetTime
 local GetItemCount     = GetItemCount
 local GetItemCooldown  = GetItemCooldown
@@ -438,6 +439,555 @@ function BlizzardAPI.IsPartyLowAvailable()
     return (threshold or 0) > 0
 end
 
+--------------------------------------------------------------------------------
+-- Zero-gate consumers (BlizzardAPI.IsSecretZero - see SecretValues.lua).
+-- Each returns true / false / NIL, where nil means "no answer": callers must
+-- treat it as unknown and keep their fallback, never as a verdict.
+--------------------------------------------------------------------------------
+
+--- Is this unit provably at FULL health? The deficit is computed engine-side
+--- (UnitHealthMissing) and only its zero-ness is read, so no secret is touched.
+--- Certified in game 2026-08-10 both directions, including the at-full "-0".
+function BlizzardAPI.IsUnitFullHealth(unit)
+    if not (unit and UnitHealthMissing and BlizzardAPI.IsSecretZero) then return nil end
+    local ok, missing = pcall(UnitHealthMissing, unit)
+    if not ok or missing == nil then return nil end
+    return BlizzardAPI.IsSecretZero(missing)
+end
+
+--------------------------------------------------------------------------------
+-- THRESHOLD GATES - "is this unit below N% health/power", for any unit and any
+-- percentage. Nothing else in 12.0 provides this: the party health alert's
+-- threshold is configurable but its table only exists while UnitInParty("player")
+-- (Blizzard's own IsInPartyHealthMode), and every other player-health signal is
+-- pinned at 20% or 35%.
+--
+-- THE ENGINE DOES THE COMPARING. A curve maps "below the threshold" to a large
+-- number and "at or above" to 0; UnitHealthPercent/UnitPowerPercent evaluates it
+-- against the secret value and returns a secret result; the zero-gate reads only
+-- that result's zero-ness. No secret is compared, ordered, or read in Lua.
+-- Validated in game 2026-08-10 on a player at full and a damaged hostile target.
+--
+-- LINEAR, never Step: step-curve band semantics cannot be verified from Lua
+-- (they cost us an invisible top-off icon), so the threshold is a steep ramp
+-- between two FLAT segments - unambiguous under interpolation, and its 0.2% width
+-- is far finer than any threshold a feature sets.
+--
+-- SCOPE RULE, deliberate: these answer QUESTIONS, never values. Asking one
+-- threshold to make a decision is what the engine's curve mechanism is for;
+-- chaining many to binary-search the hidden number back out is precisely what
+-- the secret-value system exists to prevent, would break our legitimate uses
+-- when it got patched, and is not something this addon does. There is no
+-- "what percent is it" function here, and there should not be one.
+--------------------------------------------------------------------------------
+
+-- ONE curve cache for the whole addon, keyed by domain and threshold: a curve has
+-- no idea whether it is being evaluated against health, power or a duration, so
+-- every consumer of "below 35%" shares the same object. Seconds thresholds live
+-- here too under their own domain - see GetSecondsCurve.
+local thresholdCurves, thresholdCurveCount = {}, 0
+local THRESHOLD_CURVE_CAP = 64   -- distinct thresholds; real use is under a dozen
+
+--- Normalize a requested percentage into a cache key: 0.1% resolution, clamped in
+--- range, NaN rejected. Quantizing bounds the curve cache and lifts the memo hit
+--- rate when generated data (SimC absolute->percent conversion) yields long
+--- fractions that differ meaninglessly.
+local function NormalizePct(pct)
+    if type(pct) ~= "number" or pct ~= pct then return nil end   -- nil / NaN
+    if pct < 0 then pct = 0 elseif pct > 100 then pct = 100 end
+    return math_floor(pct * 10 + 0.5) / 10
+end
+
+--- Build + SELF-TEST one threshold curve: flat-high below `t`, flat-zero at and
+--- above it, joined by a ramp `eps` wide. Runs inside a pcall (see below): every
+--- step here is an engine call that could change shape between patches, and a
+--- throw must disable this one threshold, never propagate into a render pass.
+--- `domain` is the upper bound of the value being evaluated - 1 for the 0-1
+--- fraction the percent APIs use, SECONDS_DOMAIN for a raw duration.
+local function BuildStepCurve(t, eps, domain)
+    local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+    local linear = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Linear
+    if not (cu and cu.CreateCurve and linear) then return nil end
+    local c = cu.CreateCurve()
+    if not c then return nil end
+    c:SetType(linear)
+    -- BELOW_VALUE is 100, not 1: the zero-gate's transform (TruncateWhenZero)
+    -- formats "as an integer, ROUNDING DOWN", so anything the ramp interpolates
+    -- below 1.0 would floor to zero and read as "above threshold". A large value
+    -- keeps every interpolated point inside the ramp comfortably non-zero.
+    c:AddPoint(0, 100)
+    c:AddPoint(math_max(0, t - eps), 100)
+    c:AddPoint(math_min(domain, t + eps), 0)
+    c:AddPoint(domain, 0)
+    -- SELF-TEST, with PLAIN inputs: Evaluate takes an ordinary number, so the
+    -- curve can prove itself before we ever trust it with a secret. This pins down
+    -- the two things we cannot otherwise verify from Lua - that the domain really
+    -- is what we think, and that interpolation lands where we expect. Fail -> the
+    -- curve is marked unusable and every caller falls back, so this can be
+    -- wrong-or-absent but never silently backwards.
+    -- Five epsilons out: guaranteed clear of the ramp in either domain, and still
+    -- close enough to the threshold that the test means something.
+    local probe = eps * 5
+    local okLo, lo = pcall(c.Evaluate, c, math_max(0, t - probe))
+    local okHi, hi = pcall(c.Evaluate, c, math_min(domain, t + probe))
+    if okLo and okHi and type(lo) == "number" and type(hi) == "number"
+        and lo >= 1 and hi < 1 then
+        return c
+    end
+    return nil
+end
+
+--- Cached curve, or nil when unavailable. `false` is the memo for "this threshold
+--- failed to build" so a broken one is not retried every frame. The cap is pure
+--- paranoia against generated data asking for unbounded distinct thresholds.
+local function GetStepCurve(key, t, eps, domain)
+    local curve = thresholdCurves[key]
+    if curve ~= nil then
+        if curve == false then return nil end
+        return curve
+    end
+    if thresholdCurveCount >= THRESHOLD_CURVE_CAP then
+        wipe(thresholdCurves)
+        thresholdCurveCount = 0
+    end
+    local ok, built = pcall(BuildStepCurve, t, eps, domain)
+    curve = (ok and built) or false
+    thresholdCurves[key] = curve
+    thresholdCurveCount = thresholdCurveCount + 1
+    if curve == false then return nil end
+    return curve
+end
+
+--- Curve for a NORMALIZED percentage, evaluated against the 0-1 FRACTION that
+--- UnitHealthPercent / UnitPowerPercent / EvaluateRemainingPercent all share.
+local function GetThresholdCurve(pct)
+    local t = pct / 100
+    if t < 0.002 then t = 0.002 elseif t > 0.998 then t = 0.998 end
+    return GetStepCurve(pct, t, 0.001, 1)
+end
+
+--- Shared evaluation: hand the curve to the engine, read the result's zero-ness.
+--- `unmodified`/`predicted` are both false deliberately - an incoming heal or a
+--- transient modifier must not flip a threshold gate back and forth.
+local function EvaluateBelow(unit, pct, isPower, powerType)
+    local curve = GetThresholdCurve(pct)
+    if not (curve and unit and BlizzardAPI.IsSecretZero) then return nil end
+    local ok, result
+    if isPower then
+        if not UnitPowerPercent then return nil end
+        ok, result = pcall(UnitPowerPercent, unit, powerType, false, curve)
+    else
+        if not UnitHealthPercent then return nil end
+        ok, result = pcall(UnitHealthPercent, unit, false, curve)
+    end
+    if not ok or result == nil then return nil end
+    local zero = BlizzardAPI.IsSecretZero(result)
+    if zero == nil then return nil end
+    return not zero
+end
+
+-- Per-tick memo. A rotation build asks the same question many times inside one
+-- update, and every miss costs a curve evaluation plus a widget round-trip.
+-- "?" stands in for nil, which a Lua table cannot store as a cached answer.
+local belowMemo, belowMemoAt = {}, 0
+local BELOW_MEMO_WINDOW = 0.1
+local NO_ANSWER = "?"
+-- Cost counters. Each MISS is a curve evaluation plus a FontString round-trip;
+-- hits are table lookups. Surfaced by /jac inspect perf so the real cost of this
+-- layer is measured rather than assumed.
+local belowHits, belowMisses, belowWipes = 0, 0, 0
+function BlizzardAPI.GetThresholdGateStats()
+    return belowHits, belowMisses, belowWipes, thresholdCurveCount
+end
+local function CachedBelow(unit, pct, isPower, powerType)
+    if type(unit) ~= "string" then return nil end
+    -- Normalize ONCE, here: the memo key and the curve cache must agree, or two
+    -- spellings of the same threshold would each build a curve and never share
+    -- a memo entry.
+    pct = NormalizePct(pct)
+    if not pct then return nil end
+    local now = GetTime()
+    if now - belowMemoAt >= BELOW_MEMO_WINDOW then
+        wipe(belowMemo)
+        belowMemoAt = now
+        belowWipes = belowWipes + 1
+    end
+    local key = (isPower and "p" or "h") .. tostring(powerType or "") .. "|" .. unit .. "|" .. pct
+    local hit = belowMemo[key]
+    if hit ~= nil then
+        belowHits = belowHits + 1
+        if hit == NO_ANSWER then return nil end
+        return hit
+    end
+    belowMisses = belowMisses + 1
+    local result = EvaluateBelow(unit, pct, isPower, powerType)
+    belowMemo[key] = (result == nil) and NO_ANSWER or result
+    return result
+end
+
+--- Plain true/false, or nil when the value cannot be read. Never test a possibly
+--- secret boolean for truthiness directly - that throws.
+local function ReadableBool(v)
+    if v == nil then return nil end
+    if IsSecretValue and IsSecretValue(v) then return nil end
+    if type(v) ~= "boolean" then return v and true or false end
+    return v
+end
+
+--- Can this party member actually receive a heal right now? Dead members need a
+--- rez, not a heal, and a direct health gate would otherwise count a corpse as
+--- the lowest-health ally in the group.
+local function IsHealableParty(unit)
+    if ReadableBool(UnitExists(unit)) ~= true then return false end
+    if ReadableBool(UnitIsDeadOrGhost(unit)) ~= false then return false end
+    if ReadableBool(UnitIsConnected(unit)) == false then return false end
+    return true
+end
+
+--- How many party members are below `pct` health, read DIRECTLY. Returns nil if
+--- any member cannot be answered, so callers can fall back to the alert-key path
+--- rather than acting on a partial count.
+--- Direct beats the alert keys on every axis: no accessibility CVar, exact
+--- thresholds instead of 10% steps, and it works past party4.
+function BlizzardAPI.GetPartyBelowCount(pct)
+    local n = 0
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if IsHealableParty(unit) then
+            local below = CachedBelow(unit, pct, false, nil)
+            if below == nil then return nil end
+            if below then n = n + 1 end
+        end
+    end
+    return n
+end
+
+--- Is one specific ally below `pct`? nil = cannot answer.
+function BlizzardAPI.IsPartyUnitBelow(unit, pct)
+    if not IsHealableParty(unit) then return false end
+    return CachedBelow(unit, pct, false, nil)
+end
+
+--- Is the whole threshold-gate mechanism usable on this client right now? One
+--- probe against the player, so callers and diagnostics can distinguish "the
+--- answer is no" from "we cannot answer". Cheap: it rides the same memo.
+function BlizzardAPI.IsThresholdGateAvailable()
+    return CachedBelow("player", 50, false, nil) ~= nil
+end
+
+function BlizzardAPI.IsUnitHealthBelow(unit, pct)
+    return CachedBelow(unit, pct, false, nil)
+end
+
+--- Is this unit's power below `pct` percent? Same engine-side comparison as the
+--- health gate (UnitPowerPercent takes the identical curve argument), which is
+--- what finally makes CONTINUOUS resources gateable: mana, energy, focus, rage,
+--- runic power, astral power. Until now the only power fact available was
+--- IsSpellUsable().insufficientPower - "can I afford this right now", never
+--- "am I saving up". DISCRETE points (combo points, holy power, chi) have an
+--- exact read of their own; keep using that instead of this.
+--- @param powerType number|nil Enum.PowerType; nil = the unit's current type
+function BlizzardAPI.IsUnitPowerBelow(unit, pct, powerType)
+    return CachedBelow(unit, pct, true, powerType)
+end
+
+--- Which band does this unit's health fall in? `boundaries` is an ASCENDING
+--- list of percentages; returns 1 for "below the first", #boundaries+1 for "at
+--- or above the last", or nil if any gate could not answer.
+--- Costs one gate per boundary tested (it short-circuits at the first hit), so
+--- keep the list short and DECISION-shaped: boundaries should come from what a
+--- feature does differently, never from wanting resolution. There is
+--- deliberately no "what percent is it" call anywhere in this file.
+function BlizzardAPI.GetHealthBand(unit, boundaries)
+    if type(boundaries) ~= "table" then return nil end
+    for i = 1, #boundaries do
+        local below = CachedBelow(unit, boundaries[i], false, nil)
+        if below == nil then return nil end
+        if below then return i end
+    end
+    return #boundaries + 1
+end
+
+--- Power equivalent of GetHealthBand.
+function BlizzardAPI.GetPowerBand(unit, boundaries, powerType)
+    if type(boundaries) ~= "table" then return nil end
+    for i = 1, #boundaries do
+        local below = CachedBelow(unit, boundaries[i], true, powerType)
+        if below == nil then return nil end
+        if below then return i end
+    end
+    return #boundaries + 1
+end
+
+--- "There is nothing to heal right now": the player is provably at full AND no
+--- party member is below the alert threshold. TRUE only on certain answers -
+--- any doubt returns false, because every caller uses this to SUPPRESS a cue
+--- and a wrong suppression hides a real one. Memoized at 0.25s: it feeds
+--- per-icon decisions on the render path.
+local healUnneededCache, healUnneededAt = false, 0
+function BlizzardAPI.IsHealingUnneeded()
+    local now = GetTime()
+    if now - healUnneededAt < 0.25 then return healUnneededCache end
+    healUnneededAt = now
+    healUnneededCache = false
+    if BlizzardAPI.IsUnitFullHealth("player") == true then
+        healUnneededCache = (BlizzardAPI.GetPartyLowCount() == 0)
+    end
+    return healUnneededCache
+end
+
+--------------------------------------------------------------------------------
+-- DURATION THRESHOLDS - "is this aura/cooldown below N% or N seconds remaining".
+-- The same engine-side comparison as the health gates: LuaDurationObject's
+-- Evaluate* methods take the identical curve argument, and the zero-gate reads the
+-- result. Field-verified in combat 2026-08-10 against ground truth in both states.
+--
+-- Two facts that had to be measured rather than assumed, both settled:
+--   * EvaluateRemainingPercent's domain is the 0-1 FRACTION - the same as
+--     UnitHealthPercent - so the percentage curves below are shared with them.
+--   * The result is SECRET for a cooldown in combat and PLAIN for a non-secret
+--     aura. Costs nothing: IsSecretZero has a plain fast path, so one call covers
+--     both. Callers must still never read the number - see the SCOPE RULE above;
+--     plainness is a property of one aura, not of the API.
+--------------------------------------------------------------------------------
+
+-- Seconds thresholds evaluate against a raw duration, not the 0-1 fraction, so
+-- they need their own domain - but the same builder and the same cache. The key
+-- is prefixed so "below 5 seconds" and "below 5 percent" can never collide.
+local SECONDS_DOMAIN = 3600      -- an hour; longer than any buff or cooldown
+local function GetSecondsCurve(sec)
+    if type(sec) ~= "number" or sec ~= sec or sec <= 0 then return nil end
+    sec = math_floor(sec * 10 + 0.5) / 10
+    -- Epsilon from the THRESHOLD, never the domain bound: a domain-scaled one
+    -- makes a multi-second ramp that interpolates instead of stepping, which turns
+    -- a threshold into a value read.
+    return GetStepCurve("s" .. sec, sec, math_max(sec * 0.002, 0.001), SECONDS_DOMAIN)
+end
+
+--- Shared tail: evaluate one method against one curve and read the result's
+--- zero-ness. The curve is 100 BELOW the threshold and 0 at/above it, so a
+--- non-zero result means below. nil = no answer; callers must keep their fallback.
+--- Counted into the SAME miss counter as the unit-threshold gates. Deliberately not
+--- memoised: a duration object is a fresh userdata per call, so there is no stable
+--- key to memo on, and the per-tick caches that would work live at the CALLER (a
+--- DoT entry, a maintenance entry) where the identity is stable. Counting them here
+--- means /jac inspect perf sees the real total instead of reporting only half the
+--- layer - the DoT path runs per rotation spell per build and would otherwise be
+--- invisible.
+local function DurationBelow(durObj, method, curve)
+    local fn = curve and durObj and durObj[method]
+    if not fn then return nil end
+    belowMisses = belowMisses + 1
+    local ok, result = pcall(fn, durObj, curve)
+    if not ok or result == nil then return nil end
+    local zero = BlizzardAPI.IsSecretZero(result)
+    if zero == nil then return nil end
+    return not zero
+end
+
+--- Is less than `pct` percent of this duration left?
+function BlizzardAPI.IsDurationBelowPercent(durObj, pct)
+    pct = NormalizePct(pct)
+    if not pct then return nil end
+    return DurationBelow(durObj, "EvaluateRemainingPercent", GetThresholdCurve(pct))
+end
+
+--- Are fewer than `seconds` seconds left?
+function BlizzardAPI.IsDurationBelowSeconds(durObj, seconds)
+    return DurationBelow(durObj, "EvaluateRemainingDuration", GetSecondsCurve(seconds))
+end
+
+--- Is this duration's TOTAL length under `seconds`? Distinct from the question
+--- above in the way that matters for interrupts: "how long is this cast" is a
+--- property of the spell, "how much is left" is a property of the moment, and a
+--- kick wants both (see BlizzardAPI.ShouldInterruptNow).
+function BlizzardAPI.IsDurationTotalBelowSeconds(durObj, seconds)
+    return DurationBelow(durObj, "EvaluateTotalDuration", GetSecondsCurve(seconds))
+end
+
+--------------------------------------------------------------------------------
+-- INTERRUPT TIMING - kick LATE in a long cast, immediately in a short one.
+--
+-- Kicking the instant a cast starts is the common mistake: against anything with a
+-- real cast time the target can simply start again, and against a player it invites
+-- a deliberate fake-cast. Waiting is only correct when there IS time to wait -
+-- holding a kick through a 1.5s cast risks missing it outright.
+--
+-- So the rule needs BOTH facts, and 12.0 hid both behind the cast bar's secret
+-- duration. Two threshold reads answer it without reading either number:
+--   short cast  (total < LONG_CAST)      -> kick NOW, there is no room to wait
+--   long cast   + remaining < LATE_KICK  -> kick NOW, we are late enough
+--   long cast   + plenty left            -> HOLD
+-- Any unreadable answer returns nil, and callers must treat that as "no opinion"
+-- and keep suggesting the kick - never as HOLD, which would silently withhold an
+-- interrupt. Fail-open is the only safe direction here.
+--------------------------------------------------------------------------------
+-- Tuned off the failure asymmetry, not the midpoint. Kicking too EARLY costs one
+-- interrupt cooldown (they simply cast again). Kicking too LATE lets the cast land,
+-- which is the expensive half - and the player still has to see the cue and press,
+-- so a threshold with no reaction margin is effectively "too late" by default.
+-- Both numbers therefore bias toward pressing: hold only when the cast is long
+-- enough that waiting genuinely buys something, and stop holding with a full second
+-- still on the clock.
+local LONG_CAST_SECONDS = 2.5   -- below this, waiting buys less than it risks
+local LATE_KICK_SECONDS = 1.0   -- "late" = inside this much of the finish
+
+--- @return boolean|nil true = press it now, false = hold, nil = cannot tell
+function BlizzardAPI.ShouldInterruptNow(unit)
+    if not (unit and UnitCastingInfo and UnitChannelInfo) then return nil end
+    local durObj
+    if UnitCastingDuration then                     ---@diagnostic disable-line: undefined-global
+        local ok, d = pcall(UnitCastingDuration, unit)  ---@diagnostic disable-line: undefined-global
+        if ok then durObj = d end
+    end
+    -- A channel is already "in progress" from the first tick, so there is no early
+    -- window to avoid - it is only ever worth kicking now.
+    if not durObj then return nil end
+    local shortCast = BlizzardAPI.IsDurationTotalBelowSeconds(durObj, LONG_CAST_SECONDS)
+    if shortCast == nil then return nil end
+    if shortCast then return true end               -- no room to wait
+    local late = BlizzardAPI.IsDurationBelowSeconds(durObj, LATE_KICK_SECONDS)
+    if late == nil then return nil end
+    return late
+end
+
+--- The duration object for a live aura instance, or nil. Verified in combat
+--- 2026-08-10: the spellID->instanceID hop is NOT blocked, so callers that already
+--- track an instance (MaintenanceTracker, DotTracker) can go straight here.
+function BlizzardAPI.GetAuraDurationObject(unit, auraInstanceID)
+    if not (unit and auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDuration) then
+        return nil
+    end
+    local ok, d = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
+    return ok and d or nil
+end
+
+--- Does this unit carry an absorb shield? UnitGetTotalAbsorbs is secret, so
+--- before the zero-gate this was unknowable for anyone but ourselves (the
+--- absorb GLOW booleans cover the player only). nil = no answer.
+function BlizzardAPI.UnitHasAbsorb(unit)
+    if not (unit and UnitGetTotalAbsorbs and BlizzardAPI.IsSecretZero) then return nil end
+    local ok, amount = pcall(UnitGetTotalAbsorbs, unit)
+    if not ok or amount == nil then return nil end
+    local zero = BlizzardAPI.IsSecretZero(amount)
+    if zero == nil then return nil end
+    return not zero
+end
+
+--- Is this aura at or above `threshold` stacks? The engine renders the count
+--- ONLY at/above the threshold (nil below it), so the nil-vs-string answer is
+--- itself the boolean - the count is never read, and `~= nil` on a secret
+--- string is a type-mismatch short-circuit (field-proven safe, no compare).
+function BlizzardAPI.AuraStacksAtLeast(unit, auraInstanceID, threshold)
+    local fn = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
+    if not (fn and unit and auraInstanceID and threshold) then return nil end
+    local ok, text = pcall(fn, unit, auraInstanceID, threshold)
+    if not ok then return nil end
+    return text ~= nil
+end
+
+--- The same question addressed by SPELL id instead of instance id - the form SimC
+--- speaks. The spellID -> auraInstanceID hop is the one IsBuffWindowActive has used
+--- in production since the buff-window gates shipped.
+--- @return boolean|nil true / false / nil when the answer cannot be trusted
+function BlizzardAPI.GetAuraStackAtLeast(unit, spellID, threshold)
+    if not (unit and spellID and threshold and C_UnitAuras
+            and BlizzardAPI.AuraStacksAtLeast) then return nil end
+    if threshold <= 0 then return true end          -- "at least zero" is always true
+    local ok, aura
+    if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
+        ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+    elseif C_UnitAuras.GetUnitAuraBySpellID then
+        ok, aura = pcall(C_UnitAuras.GetUnitAuraBySpellID, unit, spellID)
+    else
+        return nil
+    end
+    if not ok then return nil end
+    local instId = aura and aura.auraInstanceID
+    if not instId then
+        -- Nothing came back. That means ZERO STACKS only where the lookup can be
+        -- trusted: these queries are RequiresNonSecretAura, so under aura secrecy a
+        -- PRESENT aura also returns nothing and absent-vs-hidden is undecidable.
+        -- Answer only in the clear; otherwise say nothing and let callers fail open.
+        if BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret() then return nil end
+        return false
+    end
+    return BlizzardAPI.AuraStacksAtLeast(unit, instId, threshold)
+end
+
+--------------------------------------------------------------------------------
+-- Managed setup for the party health alert (the signal group heals ride on).
+--
+-- Without this the player must find the alert in Blizzard's Accessibility
+-- settings themselves, which is most of the reason the feature goes unused.
+-- The addon may configure it because a controlled experiment (2026-08-09,
+-- armed error capture) PROVED an addon-side SetCVar here does NOT taint the
+-- alert manager: its laundered keys kept flipping plainly through several
+-- fights after the write, with zero taint blocks recorded.
+--
+-- Discipline, mirroring the nameplate-CVar precedent: save exactly what we
+-- found BEFORE the first write, never overwrite that snapshot with our own
+-- values, and hand it all back when switched off. Writes are pcall'd - CVar
+-- sets have been combat-restricted on some clients.
+--------------------------------------------------------------------------------
+
+local PARTY_ALERT_DEFAULT_PERCENT = 50
+
+--- CVar value for a threshold percent, from Blizzard's own option table when
+--- it is loaded (settings definitions are load-on-demand), else the shipped
+--- layout: 0 = off, then 100, 90 ... 10.
+function BlizzardAPI.PartyAlertValueForPercent(pct)
+    local util = CombatAudioAlertUtil ---@diagnostic disable-line: undefined-global
+    local get = util and util.GetPartyHealthPercentInfo
+    if get then
+        for v = 1, 20 do
+            local ok, info = pcall(get, v)
+            if not ok or type(info) ~= "table" then break end
+            if info.percentVal == pct then return v end
+        end
+    end
+    if pct and pct >= 10 and pct <= 100 and pct % 10 == 0 then return (110 - pct) / 10 end
+    return nil
+end
+
+--- Turn the alert on at `pct`, silently. `store` is a persistent table (the
+--- addon's saved variables) that receives the pre-change snapshot.
+--- @return boolean applied, number|nil percent
+function BlizzardAPI.ApplyManagedPartyAlert(store, pct)
+    if type(store) ~= "table" or not SetCVar then return false end
+    pct = pct or PARTY_ALERT_DEFAULT_PERCENT
+    local value = BlizzardAPI.PartyAlertValueForPercent(pct)
+    if not value then return false end
+    -- Snapshot ONCE: a second apply must not capture our own values as the
+    -- "originals" - that is how a restore silently becomes a no-op.
+    if type(store.saved) ~= "table" then
+        store.saved = {
+            enabled = GetCVar("CAAEnabled"),
+            percent = GetCVar("CAAPartyHealthPercent"),
+            volume  = GetCVar("CAAPartyHealthVolume"),
+        }
+    end
+    local ok = true
+    ok = pcall(SetCVar, "CAAEnabled", "1") and ok
+    ok = pcall(SetCVar, "CAAPartyHealthPercent", tostring(value)) and ok
+    ok = pcall(SetCVar, "CAAPartyHealthVolume", "0") and ok
+    store.percent = pct
+    return ok, pct
+end
+
+--- Hand back exactly what was there before. Keeps the snapshot when a write
+--- fails (combat restriction) so a later attempt can still restore it.
+function BlizzardAPI.RestoreManagedPartyAlert(store)
+    local saved = type(store) == "table" and store.saved or nil
+    if not saved or not SetCVar then return true end
+    local ok = true
+    if saved.enabled ~= nil then ok = pcall(SetCVar, "CAAEnabled", saved.enabled) and ok end
+    if saved.percent ~= nil then ok = pcall(SetCVar, "CAAPartyHealthPercent", saved.percent) and ok end
+    if saved.volume  ~= nil then ok = pcall(SetCVar, "CAAPartyHealthVolume",  saved.volume)  and ok end
+    if ok then store.saved = nil end
+    return ok
+end
+
 --- Primary resource at cap, via the player-frame full-power pulse: the engine
 --- branches on the secret amount and Plays/Stops the animation, leaving a plain
 --- IsPlaying() (validated in combat 2026-07-24 - oscillates exactly with
@@ -466,6 +1016,41 @@ function BlizzardAPI.IsUnitCrowdControlled(unit)
     if not okN or type(n) ~= "number" then return false end
     if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(n) then return false end
     return n > 0
+end
+
+--- How long is this unit's crowd control good for? Returns true when EVERY engine
+--- classified CC aura on the unit expires within `seconds` - i.e. "the CC is about
+--- to break". false when at least one is comfortably long, nil when it cannot be
+--- answered (no CC, technique unavailable, or a duration that will not resolve).
+---
+--- Why this one is cheap where target DoTs were not: the aura filter hands back
+--- PLAIN instance ids directly, so it skips the spellID -> auraInstanceID hop that
+--- IS blocked for secret target auras (measured in combat 2026-08-10). The engine
+--- both classifies the aura and supplies the handle; nothing is read or compared.
+---
+--- ADDON-INDEPENDENT, which is the point. Every other CC signal this file carries
+--- is either inferred (a cast that kept going) or scraped from text the client
+--- prints, and both are sensitive to what else is loaded and to locale. This asks
+--- the aura system, so a UI replacement cannot affect the answer.
+--- @return boolean|nil
+function BlizzardAPI.IsCrowdControlExpiring(unit, seconds)
+    if not (unit and seconds and C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs
+            and BlizzardAPI.IsDurationBelowSeconds) then return nil end
+    local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, "HARMFUL|CROWD_CONTROL")
+    if not ok or type(ids) ~= "table" then return nil end
+    local answered, allExpiring = false, true
+    for i = 1, #ids do
+        local durObj = BlizzardAPI.GetAuraDurationObject(unit, ids[i])
+        local below = durObj and BlizzardAPI.IsDurationBelowSeconds(durObj, seconds)
+        if below ~= nil then
+            answered = true
+            -- One CC with real time left means the unit stays locked, whatever the
+            -- others are doing - so a single `false` settles it.
+            if not below then allExpiring = false break end
+        end
+    end
+    if not answered then return nil end
+    return allExpiring
 end
 
 --- Channeling right now? Own-unit channel info is fully plain in combat -
@@ -881,16 +1466,26 @@ function BlizzardAPI.SafeUnitIsUnit(unit1, unit2, default)
     return result and true or false
 end
 
-function BlizzardAPI.IsTargetCCImmune()
-    -- 1) World bosses and boss-frame mobs are always CC-immune.
-    --    UnitClassification: NeverSecret (no SecretWhenUnitIdentityRestricted).
-    --    UnitIsUnit is NOT NeverSecret - the "verified 2026-02-23" claim is retracted; the
-    --    generated docs annotate it SecretWhenUnitComparisonRestricted.
-    --    Unreadable defaults to FALSE: lose boss detection, not all CC for the instance.
+--- Is the current target an actual boss - a world boss, or a mob the encounter
+--- engine put on a boss frame? UnitClassification is NeverSecret (no
+--- SecretWhenUnitIdentityRestricted, re-checked against the 12.1 docs);
+--- UnitIsUnit is not, so it goes through SafeUnitIsUnit and an unreadable
+--- comparison counts as "not a boss".
+--- Fail-open in both directions it is used: CC immunity loses a boss check, and
+--- the wasted-cooldown guard declines to suppress. Never the reverse - a mob
+--- wrongly called a boss would let CC through; a boss wrongly called trash would
+--- suppress cooldowns during a real execute phase, which is far worse.
+function BlizzardAPI.IsTargetBoss()
     if UnitClassification("target") == "worldboss" then return true end
     for i = 1, 5 do
         if BlizzardAPI.SafeUnitIsUnit("target", BOSS_UNITS[i], false) then return true end
     end
+    return false
+end
+
+function BlizzardAPI.IsTargetCCImmune()
+    -- 1) World bosses and boss-frame mobs are always CC-immune.
+    if BlizzardAPI.IsTargetBoss() then return true end
 
     -- 2) Minions (pets, totems, treants, guardians) are CC-immune.
     --    UnitIsMinion: NeverSecret (no SecretWhenUnitIdentityRestricted,

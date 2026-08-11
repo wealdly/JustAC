@@ -134,6 +134,38 @@ local function IsPetHealClass()
     return SDB and SDB.CLASS_PETHEAL_DEFAULTS and SDB.CLASS_PETHEAL_DEFAULTS[pc]
 end
 
+-- Managed party-health-alert state. Stored in the ACCOUNT-wide saved variable,
+-- not a profile: the thing being remembered is the player's own game CVars, and
+-- those are client-wide - a per-profile snapshot would hand back the wrong
+-- values (or none) after a profile switch.
+local function ManagedAlertStore()
+    _G.JustACGlobal = _G.JustACGlobal or {}
+    _G.JustACGlobal.managedPartyAlert = _G.JustACGlobal.managedPartyAlert or {}
+    return _G.JustACGlobal.managedPartyAlert
+end
+
+--- Managed setup is ON exactly while we are holding the player's original
+--- values (the snapshot IS the record - no separate flag to drift out of sync).
+local function ManagedAlertActive()
+    local g = _G.JustACGlobal
+    local store = g and g.managedPartyAlert
+    return (store and type(store.saved) == "table") and true or false
+end
+
+--- Hand the alert CVars back if we are managing them. Called when the managed
+--- toggle is switched off AND when Group Heals itself is - the settings exist
+--- for that feature, so they go home with it.
+local function ReleaseManagedAlert(addon)
+    if not ManagedAlertActive() then return end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.RestoreManagedPartyAlert then
+        BAPI.RestoreManagedPartyAlert(ManagedAlertStore())
+        if addon and addon.Print then
+            addon:Print("Party health alert restored to your previous settings.")
+        end
+    end
+end
+
 function Defensives.CreateTabArgs(addon)
     local tab = {
         type = "group",
@@ -242,8 +274,7 @@ function Defensives.CreateTabArgs(addon)
                         desc = "In combat, when a party member drops below Blizzard's party health alert threshold, your group heals - the ones that heal several allies at once - join the defensive queue in priority order. When several allies are low, your strongest ready group cooldown claims the slot beside the queue as an emergency cue.\n\n"
                             .. "Single-target heals are deliberately left out: aiming a heal at a person is your party frames' job. Cast a group heal with no target and it lands on you, still covering the group.\n\n"
                             .. "Renders in the defensive cluster, so that must be enabled for a display.\n\n"
-                            .. "Requires the party health alert in Blizzard's Accessibility settings (set its volume to 0 if you don't want the voice). "
-                            .. "The alert is the only signal an addon can read about an ally's health in combat: it says SOMEONE is below the line, never who or how badly - your party frames stay the place you read that.",
+                            .. "Reads each party member's health directly. On a client where that isn't available it falls back to the game's party health alert (Accessibility settings), which only reports that SOMEONE crossed a line - never who. Either way, your party frames stay the place you read the details.",
                         order = 2.5,
                         width = "double",
                         hidden = function()
@@ -257,6 +288,9 @@ function Defensives.CreateTabArgs(addon)
                         set = function(_, val)
                             addon.db.profile.healing = addon.db.profile.healing or {}
                             addon.db.profile.healing.enabled = val
+                            -- Turning the feature off hands back any game settings
+                            -- we changed on its behalf.
+                            if not val then ReleaseManagedAlert(addon) end
                             addon:InitializeDefensiveSpells()   -- seed the list on first enable
                             addon:ForceUpdateAll()
                         end,
@@ -275,11 +309,14 @@ function Defensives.CreateTabArgs(addon)
                                 return "|cffff6600The defensive cluster is off|r - heal suggestions render there. Turn on Defensive Icons for a display (Display tab) first."
                             end
                             local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-                            if not (BlizzardAPI and BlizzardAPI.IsPartyLowAvailable) then return "" end
-                            if BlizzardAPI.IsPartyLowAvailable() then
-                                return "|cff2ecc71Party health alert: on|r - ally-low suggestions can appear."
+                            if not BlizzardAPI then return "" end
+                            if BlizzardAPI.IsThresholdGateAvailable and BlizzardAPI.IsThresholdGateAvailable() then
+                                return "|cff2ecc71Reading ally health directly|r - no game settings needed."
                             end
-                            return "|cffff6600Party health alert: off|r - enable it in Blizzard's Accessibility settings, or no ally-low suggestions can appear."
+                            if BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable() then
+                                return "|cff2ecc71Using the party health alert|r (fallback) - suggestions can appear."
+                            end
+                            return "|cffff6600No ally-health signal available|r - direct reading is unavailable on this client and the party health alert is off. Use \"Set Up The Alert For Me\" below, or enable it in Blizzard's Accessibility settings."
                         end,
                         order = 2.6,
                         fontSize = "small",
@@ -292,6 +329,46 @@ function Defensives.CreateTabArgs(addon)
                             -- (that is exactly when the reason is needed).
                             local h = addon.db.profile.healing
                             return not ((h and h.enabled) or defensivesUnreachable(addon))
+                        end,
+                    },
+                    -- The alert lives in Blizzard's Accessibility settings, which is
+                    -- most of the reason this feature goes unused. Offer to set it
+                    -- up - and say exactly what changes, since these are the
+                    -- player's own game settings, not ours.
+                    managedAlert = {
+                        type = "toggle",
+                        name = "Set Up The Alert For Me",
+                        desc = "Turn on the game's party health alert the way this feature needs it, without the voice:\n\n"
+                            .. "- Combat audio alerts: on\n"
+                            .. "- Party health alert: below 50%\n"
+                            .. "- Party health alert volume: 0 (silent)\n\n"
+                            .. "Your previous values are remembered and put back when you switch this off (or turn Group Heal Suggestions off). "
+                            .. "Other combat audio alert categories keep their own settings - if you had them speaking, they still will.",
+                        order = 2.7,
+                        width = "double",
+                        hidden = function()
+                            local SpellDB = LibStub("JustAC-SpellDB", true)
+                            return not (SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals())
+                        end,
+                        get = function() return ManagedAlertActive() end,
+                        set = function(_, val)
+                            local BAPI = LibStub("JustAC-BlizzardAPI", true)
+                            if val then
+                                if not (BAPI and BAPI.ApplyManagedPartyAlert) then return end
+                                local ok, pct = BAPI.ApplyManagedPartyAlert(ManagedAlertStore(), 50)
+                                if ok then
+                                    addon:Print(("Party health alert enabled at below %d%%, silent. Your previous settings are saved."):format(pct or 50))
+                                else
+                                    addon:Print("Could not change the party health alert right now - try again out of combat.")
+                                end
+                            else
+                                ReleaseManagedAlert(addon)
+                            end
+                            addon:ForceUpdateAll()
+                        end,
+                        disabled = function()
+                            local h = addon.db.profile.healing
+                            return not (h and h.enabled) or defensivesUnreachable(addon)
                         end,
                     },
                     -- Pet heal: hidden rather than greyed for non-pet classes - class is

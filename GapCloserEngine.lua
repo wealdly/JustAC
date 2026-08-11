@@ -168,6 +168,23 @@ end
 -- Public API
 --------------------------------------------------------------------------------
 
+--- Copy this spec's stock gap-closer list into the profile. Shared by first-time
+--- setup and the Restore Defaults button; `clearWhenNone` is the only difference
+--- between them - setup leaves an unlisted spec alone, Restore wipes it.
+--- @return boolean changed
+local function SeedDefaults(profile, specKey, clearWhenNone)
+    local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS
+        and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
+    if not defaults then
+        if clearWhenNone then profile.gapClosers.classSpells[specKey] = nil end
+        return clearWhenNone or false
+    end
+    local list = {}
+    for i, spellID in ipairs(defaults) do list[i] = spellID end
+    profile.gapClosers.classSpells[specKey] = list
+    return true
+end
+
 --- Initialize gap-closer defaults for the current spec if not yet populated
 function GapCloserEngine.InitializeGapClosers(addon)
     local profile = addon:GetProfile()
@@ -183,13 +200,9 @@ function GapCloserEngine.InitializeGapClosers(addon)
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return end
 
-    if not profile.gapClosers.classSpells[specKey] or #profile.gapClosers.classSpells[specKey] == 0 then
-        local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
-        if defaults then
-            profile.gapClosers.classSpells[specKey] = {}
-            for i, spellID in ipairs(defaults) do
-                profile.gapClosers.classSpells[specKey][i] = spellID
-            end
+    local existing = profile.gapClosers.classSpells[specKey]
+    if not existing or #existing == 0 then
+        if SeedDefaults(profile, specKey, false) then
             GapCloserEngine.InvalidateGapCloserCache()
         end
     end
@@ -395,15 +408,6 @@ function GapCloserEngine.RestoreGapCloserDefaults(addon)
         profile.gapClosers.classSpells = {}
     end
 
-    local defaults = SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
-    if defaults then
-        profile.gapClosers.classSpells[specKey] = {}
-        for i, spellID in ipairs(defaults) do
-            profile.gapClosers.classSpells[specKey][i] = spellID
-        end
-    else
-        profile.gapClosers.classSpells[specKey] = nil
-    end
-
+    SeedDefaults(profile, specKey, true)
     GapCloserEngine.InvalidateGapCloserCache()
 end

@@ -124,6 +124,14 @@ local function FindVisibleCastBar(nameplate)
     return nil, nil
 end
 
+--- The bar the tracker would actually use, exposed for /jac inspect castdiag.
+--- Diagnostics must probe the SAME frame production picked, not a lookalike - the
+--- whole question is what happens on a replaced bar, and re-deriving it in the
+--- probe would answer it for a different frame.
+function CastInterruptTracker.DebugFindCastBar(nameplate)
+    return FindVisibleCastBar(nameplate)
+end
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- INTERRUPT DETECTION - what's secret, what works (verified 2026-06-28 via
 -- /jac inspect castdiag; READ THIS before concluding interruptibility is "sealed").

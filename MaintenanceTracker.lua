@@ -251,6 +251,30 @@ local function ClearProjection(s)
     if s then s.casts = nil end
 end
 
+--- Does this Cooldown Manager record belong to our entry? Match the WHOLE
+--- associated id set against BOTH our ids: 4 of the 5 specs have cast ~= aura, so
+--- matching on one id alone would silently miss them.
+local function Matches(entry, info)
+    if type(info) ~= "table" then return false end
+    local function hit(v)
+        return type(v) == "number" and (v == entry.cast or v == entry.aura)
+    end
+    if hit(info.spellID) or hit(info.overrideSpellID)
+       or hit(info.overrideTooltipSpellID) or hit(info.linkedSpellID) then return true end
+    local ls = info.linkedSpellIDs
+    if type(ls) == "table" then
+        for i = 1, #ls do if hit(ls[i]) then return true end end
+    end
+    return false
+end
+
+--- Every Cooldown Manager id that maps to this entry, as `id -> category`. The
+--- category is carried because it costs nothing here and the diagnostic probe
+--- would otherwise re-implement this whole scan to report it - which is how a
+--- probe ends up describing a code path production does not take (it did, and it
+--- kept a hardcoded 0..3 range that 12.1.0's nine categories broke).
+--- Categories start at 0 and 0 is truthy in Lua, so `wantIDs[cid]` membership
+--- tests are unaffected.
 local function ResolveCooldownIDs(entry)
     local s = S(entry)
     if not s then return nil end
@@ -260,27 +284,28 @@ local function ResolveCooldownIDs(entry)
     if not (CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo) then
         return s.cooldownIDs
     end
-    local function Matches(info)
-        if type(info) ~= "table" then return false end
-        local function hit(v)
-            return type(v) == "number" and (v == entry.cast or v == entry.aura)
+    -- Scan EVERY category and keep every hit. No early return.
+    -- Enumerated from Enum.CooldownViewerCategory rather than a literal range: 12.0.7
+    -- had exactly four (Essential/Utility/TrackedBuff/TrackedBar) and 12.1.0 added five
+    -- more - GroupBuff, SpecAgnosticEssential, SpecAgnosticTracked, EquipSlotEssential,
+    -- EquipSlotTracked. A hardcoded 0..3 silently stopped finding any buff Blizzard
+    -- moved into a new category, which costs the EXACT-bind path and drops the entry
+    -- back to the bridge. Reading the enum means the next patch's categories are picked
+    -- up without a code change; the literal range stays only as a fallback.
+    local maxCat = 3
+    local catEnum = Enum and Enum.CooldownViewerCategory
+    if type(catEnum) == "table" then
+        for _, v in pairs(catEnum) do
+            if type(v) == "number" and v > maxCat then maxCat = v end
         end
-        if hit(info.spellID) or hit(info.overrideSpellID)
-           or hit(info.overrideTooltipSpellID) or hit(info.linkedSpellID) then return true end
-        local ls = info.linkedSpellIDs
-        if type(ls) == "table" then
-            for i = 1, #ls do if hit(ls[i]) then return true end end
-        end
-        return false
     end
-    -- Scan ALL four categories and keep every hit. No early return.
-    for cat = 0, 3 do   -- Essential, Utility, TrackedBuff, TrackedBar
+    for cat = 0, maxCat do
         local okC, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
         if okC and type(ids) == "table" then
             for j = 1, #ids do
                 local okN, info = pcall(CV.GetCooldownViewerCooldownInfo, ids[j])
-                if okN and Matches(info) and type(ids[j]) == "number" then
-                    s.cooldownIDs[ids[j]] = true
+                if okN and Matches(entry, info) and type(ids[j]) == "number" then
+                    s.cooldownIDs[ids[j]] = cat
                 end
             end
         end
@@ -817,13 +842,56 @@ function MaintenanceTracker.IsBindExact(entry)
     return (s and s.trackedInstance ~= nil and s.bindExact) or false
 end
 
+--- Diagnostics only: the id -> category map production actually joins on, and the
+--- matcher behind it. Exported so the probe reports on production's answer rather
+--- than a second copy that can drift from it.
+MaintenanceTracker.ResolveCooldownIDs = ResolveCooldownIDs
+MaintenanceTracker.MatchesCooldownInfo = Matches
+
 --- Live-buff verdict: "refresh" once inside the refresh window (when the entry has a
 --- clock), else "up". Shared by the instance path and the viewer-boolean path.
 --- chargeGated entries never pre-warn (pressing early throws away buff time); lead in
 --- SECONDS if the entry specifies one, else the proportional fallback.
-local function LiveVerdict(entry, s)
+local function LiveVerdict(entry, s, instanceID)
     local effDur = entry.chargeGated and nil or EffectiveDuration(entry)
-    if effDur and s.lastCastAt then
+    -- No clock at all (Bone Shield, chargeGated) - never pre-warn. Checked FIRST so
+    -- the engine path below inherits exactly the same eligibility: the aura does
+    -- carry a real 30s duration the engine would happily threshold, and asking it
+    -- would resurrect the fabricated warning the curation exists to prevent.
+    if not effDur then return "up" end
+
+    -- ENGINE TRUTH, when we hold the live instance. The aura's own remaining time,
+    -- thresholded by the engine and read through the zero-gate (field-verified in
+    -- combat 2026-08-10). This needs NO duration data - not the learned value, not
+    -- the static book number, not a cast-time anchor - which retires every failure
+    -- mode this function has had: a stale learned duration firing the cue seconds
+    -- early, and a static number a talent had lengthened.
+    -- Falls through on nil rather than guessing, so a client where the technique is
+    -- unavailable behaves exactly as it did before.
+    -- NOT for stacking entries. Those put every application in its OWN instance, so
+    -- the one we hold is a single stack's clock, not the buff's - reading it would
+    -- announce "refresh" while other stacks are still healthy. That is precisely the
+    -- failure this module already paid for once (see the projecting-stacks note in
+    -- EntryState: it cleared the swipe and glowed at a tank mid-uptime). For those
+    -- the projection remains the authority. Refreshing buffs have exactly one
+    -- instance, so its remaining time IS the buff's, and the engine wins.
+    if instanceID and not entry.stacks and BlizzardAPI then
+        local durObj = BlizzardAPI.GetAuraDurationObject
+            and BlizzardAPI.GetAuraDurationObject("player", instanceID)
+        if durObj then
+            local below
+            if entry.lead and BlizzardAPI.IsDurationBelowSeconds then
+                below = BlizzardAPI.IsDurationBelowSeconds(durObj, entry.lead)
+            elseif BlizzardAPI.IsDurationBelowPercent then
+                below = BlizzardAPI.IsDurationBelowPercent(durObj, REFRESH_LEAD * 100)
+            end
+            if below ~= nil then return below and "refresh" or "up" end
+        end
+    end
+
+    -- Fallback: the cast-time projection. Unchanged, and still the only answer for
+    -- projected/stacking entries, which reach here with no instance.
+    if s.lastCastAt then
         local elapsed = GetTime() - s.lastCastAt
         local fireAt = entry.lead and (effDur - entry.lead)
                        or (effDur * (1 - REFRESH_LEAD))
@@ -862,7 +930,7 @@ local function EntryState(entry)
         -- those, skip the early "refresh" cue entirely and only signal once it has actually
         -- dropped - re-press then, if a charge happens to be banked. The pre-warning only makes
         -- sense for a resource dump (Ironfur, Marrowrend) where an early press costs nothing.
-        return LiveVerdict(entry, s), entry, trackedInstance
+        return LiveVerdict(entry, s, trackedInstance), entry, trackedInstance
     end
     if trackedInstance then
         -- Held an id the engine no longer knows: it expired without a removal batch. Still

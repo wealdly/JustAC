@@ -413,74 +413,39 @@ local function EvaluateConditions(conditionString, currentSpec, currentForm)
             end
             if not match then allConditionsMet = false; break end
 
-        elseif trimmed:match("^noform") then
-            local formList = trimmed:match("noform:([%d/]+)")
+        -- [stance] and [form] are the same conditional under two names, and so are
+        -- their negations. Two shapes, not four. The id list is read after the
+        -- first colon rather than by name, which is what lets one arm serve both.
+        elseif trimmed:match("^noform") or trimmed:match("^nostance") then
+            local formList = trimmed:match(":([%d/]+)")
             if formList then
                 for formStr in formList:gmatch("([^/]+)") do
-                    local reqForm = tonumber(formStr)
-                    if reqForm and currentForm == reqForm then
+                    if tonumber(formStr) == currentForm then
                         allConditionsMet = false
                         break
                     end
                 end
-            else
-                -- bare [noform] = only pass if not in any form
-                if currentForm ~= 0 then allConditionsMet = false end
+            elseif currentForm ~= 0 then
+                -- bare [noform] / [nostance] = only pass if not in any form
+                allConditionsMet = false
             end
             if not allConditionsMet then break end
 
-        elseif trimmed:match("^form") then
+        elseif trimmed:match("^form") or trimmed:match("^stance") then
             local match = false
-            local formList = trimmed:match("form:([%d/]+)")
+            local formList = trimmed:match(":([%d/]+)")
             if formList then
                 for formStr in formList:gmatch("([^/]+)") do
-                    local reqForm = tonumber(formStr)
-                    if reqForm and currentForm == reqForm then
+                    if tonumber(formStr) == currentForm then
                         match = true
-                        formMatched = true
                         break
                     end
                 end
             else
-                -- bare [form] = any form active
+                -- bare [form] / [stance] = any form active
                 match = (currentForm ~= 0)
-                if match then formMatched = true end
             end
-            if not match then allConditionsMet = false; break end
-
-        elseif trimmed:match("^nostance") then
-            local stanceList = trimmed:match("nostance:([%d/]+)")
-            if stanceList then
-                for stanceStr in stanceList:gmatch("([^/]+)") do
-                    local reqForm = tonumber(stanceStr)
-                    if reqForm and currentForm == reqForm then
-                        allConditionsMet = false
-                        break
-                    end
-                end
-            else
-                -- bare [nostance] = only pass if not in any stance
-                if currentForm ~= 0 then allConditionsMet = false end
-            end
-            if not allConditionsMet then break end
-
-        elseif trimmed:match("^stance") then
-            local match = false
-            local stanceList = trimmed:match("stance:([%d/]+)")
-            if stanceList then
-                for stanceStr in stanceList:gmatch("([^/]+)") do
-                    local reqForm = tonumber(stanceStr)
-                    if reqForm and currentForm == reqForm then
-                        match = true
-                        formMatched = true
-                        break
-                    end
-                end
-            else
-                -- bare [stance] = any stance active
-                match = (currentForm ~= 0)
-                if match then formMatched = true end
-            end
+            if match then formMatched = true end
             if not match then allConditionsMet = false; break end
 
         elseif trimmed:match("^known") then

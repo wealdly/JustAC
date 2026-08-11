@@ -779,10 +779,13 @@ end
 --   range = "melee" | "ranged"           → soft-demote melee spells when the
 --                                          context spell is ranged (out of melee)
 --   gate  = "stealth"                    → reserved (usability tint already greys it)
---           "execute"                    → HP-gated finisher. When Blizzard's position-1
---                                          pick carries this gate, the target is below the
---                                          execute threshold (a secret-free target-HP read),
---                                          so other execute-gated spells are boosted in 2+.
+--           "execute"                    → HP-gated finisher. Execute phase is now DETECTED
+--                                          directly (target-health threshold gate, SpellQueue
+--                                          _StageContext); this gate is the FALLBACK, covering
+--                                          the 20-35% window where only Massacre-class
+--                                          thresholds are live and DB2 gives us no per-spell
+--                                          percentage. Either source boosts execute-gated
+--                                          spells in positions 2+.
 -- Sourced from DB2 (wago.tools): arch from SpellEffect ImplicitTarget + MaxTargets,
 -- range from SpellRange. Intended to grow into a full auto-generated table.
 --------------------------------------------------------------------------------

@@ -3,6 +3,29 @@
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-08-11
+
+### Added
+- Updated for game patch 12.1.0, including this patch's spell, talent and consumable changes, and refreshed rotation priorities
+- Group buff reminders now also follow the game's own raid-buff list, so a buff your class gains in a future patch is picked up without waiting for an addon update
+- Group Heal Suggestions no longer need the game's party health alert switched on, and no longer stop at the first four party members. An ally who has taken meaningful damage counts toward an area heal, and one in serious trouble raises the emergency cue on their own. Where that alert is the only signal available, it is still used automatically
+- "Set Up The Alert For Me" (Defensive Queue tab, with Group Heal Suggestions): one click configures the game's party health alert the way group heals need it - on, watching for allies below 50%, and silent - instead of sending you into the Accessibility settings to do it by hand. It says exactly what it changes, remembers what you had, and puts it back when you switch it (or Group Heal Suggestions) off
+
+### Fixed
+- The between-pulls heal reminder no longer flickers, and no longer turns invisible while you are hurt. It is now an ordinary suggestion icon - fully visible for as long as it is up
+
+### Changed
+- The between-pulls heal reminder now honors its Top-Off Threshold anywhere in the world: it appears once you are below the percentage you set, and clears as soon as you are back above it. It also waits a couple of seconds before appearing, so a scratch that heals on its own never makes it pop up
+- A free-heal proc (Clearcasting and friends) no longer glows at you, or pushes its way to the front of the defensive queue, while you are at full health and nobody in the party needs healing - both return the moment there is actually something to heal. Other procs are unchanged
+- The pet heal cue now appears only while your pet is below your Pet Heal Threshold, and steps aside otherwise - leaving the slot beside the queue free for whatever else needs it
+- Execute abilities rise in the queue as soon as your target is low enough to be worth finishing
+- Rotation ordering now understands priorities that depend on how many stacks of a buff you are holding, so abilities that want a specific stack count stop being suggested before you have it
+- Tanks: the "refresh your mitigation" cue now lands at the right moment on talent-extended buffs, and no longer warns you early. It also arrives in two stages - a marching-ants ring a few seconds before the buff lapses, brightening into a full glow if you let it drop - so a warning you can safely finish your cast through looks different from one you cannot
+- Damage-over-time abilities come back for refreshing at the right moment. Keeping a DoT rolling no longer makes its refresh cue creep earlier and earlier the longer you maintain it, and haste and talents are accounted for automatically
+- Big offensive cooldowns stop being suggested - and stop glowing as ready - when the one enemy still fighting you is nearly dead. Nothing is hidden, so you can still press them; they simply stop being pushed at you for the last few seconds of a mob's life. Bosses are exempt, because that is exactly when you should be spending everything
+- Defensive suggestions now sort by how much trouble you are actually in, in three grades instead of two: damage reduction leads while you are taking chip damage, big heals lead once you have taken a real hit, and immunities jump the queue only when you are close to dying
+- The emergency ordering of defensive suggestions - and "Hide Emergency Until Low" - now switches over closer to the health level those settings describe
+
 ## [5.0.1] - 2026-08-10
 
 ### Fixed

@@ -86,7 +86,6 @@ local MaintenanceTrackerRef, PrecombatEngineRef
 -- Forward declarations for functions referenced before definition
 local AppendUsableSpells
 local ResolveHealthState
-local healthIsCritical = false  -- latched by ResolveHealthState, read by OrderByEmergencyTier
 
 -- Spell list type configuration - maps restoreKey (used by Options) to
 -- the profile listKey and SpellDB defaults table name.
@@ -180,30 +179,103 @@ local function ApplyOverlayQueue(addon, npoQueue)
     end
 end
 
--- Resolve player health into isLow; also latches the ~20% critical flag
--- (healthIsCritical, read by OrderByEmergencyTier in the same rebuild).
--- 12.0: UnitHealth() is secret in combat and most open-world contexts, so the
--- LowHealthFrame vignette (~35% shown / ~20% critical, NeverSecret) is the
--- baseline signal. When the exact percent IS readable (unrestricted contexts)
--- prefer it, with thresholds matching the vignette so behavior is identical
--- either way. Levels above 35% stay indistinguishable in restricted contexts.
-local LOW_HEALTH_PCT, CRITICAL_HEALTH_PCT = 35, 20
-ResolveHealthState = function()
-    local isLow
-    if BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
-        local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
-        if pct and estimated == false then
-            healthIsCritical = pct <= CRITICAL_HEALTH_PCT
-            isLow = pct <= LOW_HEALTH_PCT
+--- Ally-low counts for the heal surface: how many party members are HURT enough
+--- to be worth an area heal, and how many are in actual danger.
+--- DIRECT per-ally threshold gates first - exact percentages, no accessibility
+--- CVar, and they answer past party4. The alert-key path stays as the fallback
+--- for clients where the gate can't answer; it has only ONE threshold, so the
+--- urgent count comes back nil there and callers must not treat that as zero.
+--- @return number|nil lowCount, number|nil urgentCount
+local HEAL_LOW_PCT, HEAL_URGENT_PCT = 80, 50
+local function GetAllyLowCounts(healing)
+    if not BlizzardAPI then return nil, nil end
+    local lowPct    = (healing and healing.lowThreshold) or HEAL_LOW_PCT
+    local urgentPct = (healing and healing.urgentThreshold) or HEAL_URGENT_PCT
+    if BlizzardAPI.GetPartyBelowCount then
+        local low = BlizzardAPI.GetPartyBelowCount(lowPct)
+        if low ~= nil then
+            -- Skip the urgent scan when nobody is even hurt. The urgent threshold
+            -- is BELOW the low one, so "below urgent" implies "below low" - a zero
+            -- low count proves a zero urgent count without asking. Halves the gate
+            -- calls in the common case (a healthy party, every rebuild).
+            if low == 0 and urgentPct <= lowPct then return 0, 0 end
+            return low, BlizzardAPI.GetPartyBelowCount(urgentPct)
         end
     end
+    if BlizzardAPI.GetPartyLowCount then
+        return BlizzardAPI.GetPartyLowCount(), nil
+    end
+    return nil, nil
+end
+
+-- Player health resolves to a BAND, not a boolean. Players think about defensives
+-- in grades - "chip damage, use a wall" is a different decision from "I am about
+-- to die, press the bubble" - and the threshold gates finally make the middle
+-- grade knowable. Ascending boundaries; band 1 is the worst.
+--
+-- GRACEFUL DEGRADATION IS THE POINT HERE. Three sources, tried in order, each
+-- coarser than the last, and NONE of them is assumed present:
+--   1. threshold gates      - all three boundaries, exactly.
+--   2. exact percent        - unrestricted contexts only, same three boundaries.
+--   3. LowHealthFrame       - the vignette. An ESTIMATE, and it only knows two
+--                             levels (~35% shown, ~20% critical), so it answers
+--                             MAJOR and PANIC and never claims to see MITIGATE.
+--                             That is honest: a band it cannot measure must read
+--                             as healthy, not be guessed at.
+-- If the gate layer is ever blocked, this file keeps working exactly as it did
+-- before the layer existed. Nothing downstream may assume band 3 is reachable.
+local HEALTH_BANDS = { 25, 50, 80 }
+local BAND_PANIC, BAND_MAJOR, BAND_MITIGATE, BAND_HEALTHY = 1, 2, 3, 4
+local healthBand, healthBandSource = BAND_HEALTHY, "none"
+local healthBandEscalated = false
+
+--- Which band + which source answered, for /jac inspect. Diagnostics only - which
+--- is why the escalation suffix is composed HERE and not stored: the resolve path
+--- runs every combat rebuild and must not allocate a string for a label nobody
+--- reads unless the probe is open.
+function DefensiveEngine.GetHealthBandInfo()
+    return healthBand, healthBandEscalated and (healthBandSource .. "+dmg") or healthBandSource,
+        HEALTH_BANDS
+end
+
+ResolveHealthState = function()
+    local isLow
+    healthBand, healthBandSource, healthBandEscalated = BAND_HEALTHY, "none", false
+    -- 1) DIRECT: one call, short-circuiting at the first boundary it crosses, so a
+    -- healthy player costs three gates and a dying one costs one. nil if ANY
+    -- boundary could not be answered - a partial band is not a band.
+    if BlizzardAPI and BlizzardAPI.GetHealthBand then
+        local band = BlizzardAPI.GetHealthBand("player", HEALTH_BANDS)
+        if band then
+            healthBand, healthBandSource = band, "gate"
+            isLow = band <= BAND_MAJOR
+        end
+    end
+    -- 2) The exact percent, where the client still hands one over.
+    if isLow == nil and BlizzardAPI and BlizzardAPI.GetPlayerHealthPercentSafe then
+        local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
+        if pct and estimated == false then
+            -- `<`, not `<=`: the gate path asks "below N%", and a player sitting
+            -- exactly on a boundary must land in the same band either way.
+            healthBand = BAND_HEALTHY
+            for i = 1, #HEALTH_BANDS do
+                if pct < HEALTH_BANDS[i] then healthBand = i break end
+            end
+            healthBandSource = "percent"
+            isLow = healthBand <= BAND_MAJOR
+        end
+    end
+    -- 3) The vignette. Two levels only - see the header.
     if isLow == nil then
         local low, isCritical
         if BlizzardAPI and BlizzardAPI.GetLowHealthState then
             low, isCritical = BlizzardAPI.GetLowHealthState()
         end
-        healthIsCritical = isCritical == true
-        isLow = low == true
+        healthBand = (isCritical == true and BAND_PANIC)
+            or (low == true and BAND_MAJOR)
+            or BAND_HEALTHY
+        healthBandSource = "vignette"
+        isLow = healthBand <= BAND_MAJOR
     end
     -- Escalation (validated in combat 2026-07-24): low health while STILL taking
     -- unabsorbed hits promotes to the critical tier - a stable 30% and a dropping
@@ -215,10 +287,16 @@ ResolveHealthState = function()
     -- auras is read, never an aura's identity, so this survives combat secrecy
     -- where a curated spellId check cannot. nil = couldn't tell, so escalate as
     -- before rather than silently swallowing a real emergency.
-    if isLow and not healthIsCritical and BlizzardAPI and BlizzardAPI.IsActivelyTakingDamage
+    -- Now a promotion by ONE band rather than a jump straight to critical, which
+    -- also gives the new middle band its escalation: 60% and dropping asks for a
+    -- major, not just a wall.
+    if healthBand > BAND_PANIC and healthBand < BAND_HEALTHY
+       and BlizzardAPI and BlizzardAPI.IsActivelyTakingDamage
        and BlizzardAPI.IsActivelyTakingDamage()
        and not (BlizzardAPI.HasBigDefensive and BlizzardAPI.HasBigDefensive("player") == true) then
-        healthIsCritical = true
+        healthBand = healthBand - 1
+        healthBandEscalated = true
+        isLow = healthBand <= BAND_MAJOR
     end
     return isLow
 end
@@ -671,7 +749,17 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
                 elseif m.realProc then
                     -- Check per-spell proc-priority setting (default true)
                     local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
-                    if not spellSettings or spellSettings.procPriority ~= false then
+                    -- A free heal with nothing to heal (player provably full, nobody
+                    -- low) does not get to reorder the cluster around itself - the
+                    -- same gate that suppresses its glow, so the two can't disagree.
+                    -- Still marked procced: if the situation changes mid-list it
+                    -- renders normally on the next build.
+                    local healNotNeeded = SpellDB and SpellDB.IsHealingSpell
+                        and SpellDB.IsHealingSpell(resolvedID)
+                        and BlizzardAPI.IsHealingUnneeded and BlizzardAPI.IsHealingUnneeded()
+                    if healNotNeeded then
+                        nonProccedBuffer[#nonProccedBuffer + 1] = m
+                    elseif not spellSettings or spellSettings.procPriority ~= false then
                         proccedBuffer[#proccedBuffer + 1] = m
                     else
                         -- Procced but priority disabled: keep in list order, still marked procced for glow
@@ -733,25 +821,52 @@ AppendUsableSpells = function(addon, results, spellList, maxIcons, alreadyAdded,
     end
 end
 
--- Reorder a defensive list by emergency tier, stable within each tier so the user's
--- configured order is preserved as the tiebreaker. Below ~35% big heals lead and
--- immunity bubbles follow; at critical (~20%, healthIsCritical) bubbles jump the
--- queue - the true panic tier is reserved for actual panic. Returns a fresh table;
--- used only below the low-health threshold. ponytail: builds one small table per
--- low-health rebuild - fine, rebuilds are cached/throttled.
+-- Reorder a defensive list by health band, stable within each tier so the user's
+-- configured order is preserved as the tiebreaker. One ordering per band, which is
+-- the whole point of grading the health read: what leads the cluster should be what
+-- the situation actually calls for.
+--   MITIGATE - chip damage. Cheap walls lead, panic buttons sit at the bottom.
+--   MAJOR    - a real hit taken. Big heals lead, walls behind them.
+--   PANIC    - about to die. Immunity bubbles jump everything.
+-- Returns a fresh table. ponytail: one small table per rebuild - rebuilds are
+-- cached/throttled, so this is not worth pooling harder than it already is.
 local emergencyOrderBuf = {}
--- Every tier value MUST appear in both arrays: the loop below builds its output by walking
--- these, so an unlisted tier is silently dropped from the queue rather than mis-sorted.
-local TIER_ORDER_LOW      = { 2, 4, 1, 3 }  -- big heal -> wall -> bubble -> rest
-local TIER_ORDER_CRITICAL = { 1, 2, 4, 3 }  -- bubble -> big heal -> wall -> rest
+local TIER_ORDER_BY_BAND = {
+    [BAND_PANIC]    = { 1, 2, 4, 3 },  -- bubble -> big heal -> wall -> rest
+    [BAND_MAJOR]    = { 2, 4, 1, 3 },  -- big heal -> wall -> bubble -> rest
+    [BAND_MITIGATE] = { 4, 3, 2, 1 },  -- wall -> rest -> big heal -> bubble
+}
 local function OrderByEmergencyTier(list)
     wipe(emergencyOrderBuf)
-    local order = healthIsCritical and TIER_ORDER_CRITICAL or TIER_ORDER_LOW
+    -- BAND_MAJOR is the fallback, not BAND_MITIGATE: this is only reached when the
+    -- caller has decided the cluster needs reordering at all, and under-reacting to
+    -- an unreadable band is the worse of the two mistakes.
+    local order = TIER_ORDER_BY_BAND[healthBand] or TIER_ORDER_BY_BAND[BAND_MAJOR]
+    local n = 0
     for i = 1, #order do
         local tier = order[i]
         for _, sid in ipairs(list) do
             if (SpellDB and SpellDB.GetDefenseTier and SpellDB.GetDefenseTier(sid) or 3) == tier then
-                emergencyOrderBuf[#emergencyOrderBuf + 1] = sid
+                n = n + 1
+                emergencyOrderBuf[n] = sid
+            end
+        end
+    end
+    -- Sweep whatever no order array named. Walking the order arrays used to mean a
+    -- tier missing from one of them vanished from the queue outright - a lost
+    -- defensive, not a mis-sorted one - enforced only by a comment. This turns that
+    -- into "it trails", so adding a fifth tier can never silently hide a button.
+    -- ponytail: O(n^2) sweep, but n is the icon count (<=7) and the guard means it
+    -- does not run at all while the arrays are complete.
+    if n < #list then
+        for _, sid in ipairs(list) do
+            local seen = false
+            for j = 1, n do
+                if emergencyOrderBuf[j] == sid then seen = true break end
+            end
+            if not seen then
+                n = n + 1
+                emergencyOrderBuf[n] = sid
             end
         end
     end
@@ -962,7 +1077,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         -- alreadyAdded so the later proc/defensive passes don't re-add them.
         if PrecombatEngine.GetMissingClassBuffs then
             local offerTopoff = profile.precombatBuffs.topoffHeal == true
-            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff)) do
+            local topoffPct = profile.precombatBuffs.topoffThreshold
+            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)) do
                 if #results >= maxIcons then break end
                 -- topoff: the health top-off heal specifically, not the poisons/imbues beside
                 -- it. Flagged because the renderer drives ITS alpha from a health curve - out
@@ -1038,8 +1154,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- the heals are the answer, and the cluster is only maxIcons wide.
     if inCombat and profile.healing and profile.healing.enabled
        and SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals()
-       and BlizzardAPI and BlizzardAPI.GetPartyLowCount
-       and BlizzardAPI.GetPartyLowCount() > 0 then
+       and (GetAllyLowCounts(profile.healing) or 0) > 0 then
         local healList = DefensiveEngine.GetClassSpellList(addon, "groupHealSpells")
         if healList then
             AppendUsableSpells(addon, results, healList, maxIcons, alreadyAdded)
@@ -1055,13 +1170,15 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         -- proc pass; on-CD spells still sink within GetUsableDefensiveSpells.
         local listToShow = defensiveSpells
         if defensiveSpells then
-            if isLow then
-                -- Below ~35%: float survival buttons above fillers (big heals first;
-                -- bubbles jump ahead only at critical - see OrderByEmergencyTier).
+            if healthBand < BAND_HEALTHY then
+                -- Hurt at all: one ordering per band - walls, then majors, then
+                -- bubbles as it gets worse. See OrderByEmergencyTier.
                 listToShow = OrderByEmergencyTier(defensiveSpells)
             else
-                -- Above the threshold: park emergency panic buttons at the end (big heals,
-                -- immunity bubbles at the very bottom); fillers/mitigation stay up top.
+                -- At (or unreadably near) full: park emergency panic buttons at the end
+                -- (big heals, immunity bubbles at the very bottom); fillers stay up top.
+                -- Also where every client whose band read is blocked above MAJOR lands,
+                -- which is exactly the behaviour that shipped before bands existed.
                 listToShow = OrderEmergencyLast(defensiveSpells)
             end
         end
@@ -1131,9 +1248,14 @@ function DefensiveEngine.GetEmergencyHealID(addon)
     if not (healing and healing.enabled) then return nil end
     if not (SpellDB and SpellDB.SpecHasGroupHeals and SpellDB.SpecHasGroupHeals()) then return nil end
     if not UnitAffectingCombat("player") then return nil end
-    if not (BlizzardAPI and BlizzardAPI.GetPartyLowCount) then return nil end
+    if not BlizzardAPI then return nil end
 
-    if BlizzardAPI.GetPartyLowCount() >= (healing.emergencyCount or 3) then
+    -- Two ways in, and the second is the one direct gates made possible: several
+    -- allies merely hurt, OR anyone in real danger. The alert-key fallback can
+    -- only express the first (one threshold), so urgent is nil there rather than
+    -- zero - and nil must not read as "nobody is in danger".
+    local low, urgent = GetAllyLowCounts(healing)
+    if (low or 0) >= (healing.emergencyCount or 3) or (urgent or 0) > 0 then
         emergencyHeldUntil = now + EMERGENCY_HOLD_SECONDS
     end
     if now >= emergencyHeldUntil then return nil end

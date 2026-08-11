@@ -18,6 +18,7 @@ local StopDefensiveGlow
 local StopGapCloserGlow
 local StopBurstGlow
 local StopPrecombatGlow
+local StopMaintenanceGlow
 
 -- Create marching ants glow to show active abilities (Blizzard's rotation helper style)
 local function CreateMarchingAntsFrame(parent, frameKey)
@@ -282,6 +283,18 @@ local GLOW_CONFIG = {
         pauseField  = nil,
         clearsProc  = false,
     },
+    MAINTENANCE = {
+        frameKey    = "MaintenanceHighlightFrame",
+        -- Same blue as the maintenance proc burst it escalates into, so the two stages
+        -- read as one cue getting louder rather than as two unrelated signals.
+        r = 0.55, g = 0.78, b = 1.00,       -- Blue (matches MAINTENANCE_GLOW in UIRenderer)
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- The warning is only ever raised in combat
+        flagField   = "hasMaintenanceGlow",
+        pauseField  = nil,
+        clearsProc  = false,
+    },
     PRECOMBAT = {
         frameKey    = "PrecombatHighlightFrame",
         -- Magenta, not green: these render inside the DEFENSIVE cluster next to the green glow.
@@ -406,6 +419,14 @@ end
 
 StopBurstGlow = function(icon)
     StopMarchingAntsGlow(icon, GLOW_CONFIG.BURST)
+end
+
+local function StartMaintenanceGlow(icon, isInCombat)
+    StartMarchingAntsGlow(icon, GLOW_CONFIG.MAINTENANCE, isInCombat)
+end
+
+StopMaintenanceGlow = function(icon)
+    StopMarchingAntsGlow(icon, GLOW_CONFIG.MAINTENANCE)
 end
 
 local function StartPrecombatGlow(icon, isInCombat)
@@ -788,12 +809,14 @@ local function StopAllGlows(icon)
     if icon.hasGapCloserGlow then StopGapCloserGlow(icon) end
     if icon.hasBurstGlow     then StopBurstGlow(icon)     end
     if icon.hasPrecombatGlow then StopPrecombatGlow(icon) end
+    if icon.hasMaintenanceGlow then StopMaintenanceGlow(icon) end
     if icon.hasProcGlow      then HideProcGlow(icon)      end
     icon.hasAssistedGlow  = false
     icon.hasDefensiveGlow = false
     icon.hasGapCloserGlow = false
     icon.hasBurstGlow     = false
     icon.hasPrecombatGlow = false
+    icon.hasMaintenanceGlow = false
     icon.hasProcGlow      = false
     -- We just force-hid the defensive glow from outside UIRenderer's arbiter, so its
     -- cached state would still claim the glow is applied and the next RenderDefensives
@@ -813,6 +836,8 @@ UIAnimations.StartGapCloserGlow = StartGapCloserGlow
 UIAnimations.StopGapCloserGlow = StopGapCloserGlow
 UIAnimations.StartBurstGlow = StartBurstGlow
 UIAnimations.StopBurstGlow = StopBurstGlow
+UIAnimations.StartMaintenanceGlow = StartMaintenanceGlow
+UIAnimations.StopMaintenanceGlow = StopMaintenanceGlow
 UIAnimations.StartPrecombatGlow = StartPrecombatGlow
 UIAnimations.StopPrecombatGlow = StopPrecombatGlow
 UIAnimations.ShowProcGlow = ShowProcGlow

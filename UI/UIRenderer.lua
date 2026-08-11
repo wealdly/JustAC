@@ -765,42 +765,21 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     icon.appliedDefGlowState = want
 end
 
--- "Provably at full health" via the zero-gate (BlizzardAPI.IsSecretZero on the
--- engine-side deficit; field-certified both directions 2026-08-10). Memoized:
--- this feeds a per-icon per-pass glow decision, and the secret path costs a
--- widget round-trip. Returns true ONLY on a certain answer - nil/false both
--- mean "do not suppress anything".
-local atFullCache, atFullCacheAt = nil, 0
-local function PlayerProvablyFull()
-    local now = GetTime()
-    if now - atFullCacheAt < 0.25 then return atFullCache end
-    atFullCacheAt = now
-    atFullCache = nil
-    if UnitHealthMissing and BlizzardAPI and BlizzardAPI.IsSecretZero then
-        local missing = UnitHealthMissing("player")
-        if missing ~= nil then
-            atFullCache = BlizzardAPI.IsSecretZero(missing) == true
-        end
-    end
-    return atFullCache
-end
-
 -- The one glow-priority rule, computed from icon state both paths maintain.
 local function ComputeDefensiveGlowState(icon, isProc)
     if icon.isWaiting then return "none" end
     local mode = icon.defGlowMode or "all"
     if isProc and (mode == "all" or mode == "procOnly") then
         -- A procced HEAL only glows while there is something to heal: at full
-        -- health the "press me" burst is noise (field report: Clearcasting's
-        -- free Regrowth bursting gold between pulls). Suppress ONLY on a
-        -- provable at-full answer - nil keeps the glow, failing toward the old
-        -- behavior, never toward hiding a real cue - and NEVER while the group
-        -- is low: an injected group heal's proc is exactly the right press
-        -- then, whatever the player's own health. Non-heal procs are untouched.
+        -- health with nobody low, the "press me" burst is noise (field report:
+        -- Clearcasting's free Regrowth bursting gold between pulls).
+        -- IsHealingUnneeded is true only on a CERTAIN answer, so any doubt
+        -- keeps the glow - failing toward the cue, never toward hiding one.
+        -- The same gate orders the defensive list (DefensiveEngine), so glow
+        -- and position can't disagree. Non-heal procs are untouched.
         local id = icon.currentID or icon.spellID
         if id and SpellDB and SpellDB.IsHealingSpell and SpellDB.IsHealingSpell(id)
-            and PlayerProvablyFull()
-            and (not BlizzardAPI.GetPartyLowCount or BlizzardAPI.GetPartyLowCount() == 0) then
+            and BlizzardAPI.IsHealingUnneeded and BlizzardAPI.IsHealingUnneeded() then
             -- fall through: the icon keeps precombat/marching eligibility
         else
             return "proc"
@@ -1064,36 +1043,29 @@ local function PetHealFraction(profile)
     return pct / 100
 end
 
--- Health top-off bands. BOTH of the precombat heal's tiers in one curve, because the alpha it
--- returns is secret and cannot be compared - so the tiers cannot be an `if`. Graded alpha does
--- the job instead: the DIMMING is what distinguishes "top off between pulls" from "you are about
--- to die", with no branch anywhere.
---   below 35%  - emergency, full brightness. Matches PrecombatEngine's LOW_HEALTH_PCT.
---   35% - 90%  - the opt-in top-off nudge, dimmed. Matches RECUPERATE_HEALTH_PCT.
---   above 90%  - invisible.
--- This is what stops the open-world nag at 99%: out of combat health is secret there, so the
--- engine's arming signal (regen is running) can only prove below FULL. The curve is the only
--- thing that can honour 90% outside a rested area.
--- The upper band is user-configurable; the emergency band is NOT, deliberately - it is the
--- "you are about to die" tier and must not be reachable by a slider that could switch it off.
--- One cached points table per threshold, so SetAlphaFromHealthCurve's identity caching holds.
-local TOPOFF_EMERGENCY_FRACTION = 0.35
-local TOPOFF_DEFAULT_PCT = 90
-local topoffBands = {}
-local function TopoffBands(profile)
-    local pb = profile and profile.precombatBuffs
-    local pct = pb and pb.topoffThreshold
-    if type(pct) ~= "number" then pct = TOPOFF_DEFAULT_PCT end
-    -- Clamp above the emergency band: the option's own min is 50, but a hand-edited saved
-    -- variable must not produce out-of-order curve points.
-    if pct < 40 then pct = 40 end
-    local bands = topoffBands[pct]
-    if not bands then
-        bands = { {0, 1.0}, {TOPOFF_EMERGENCY_FRACTION, 0.55}, {pct / 100, 0} }
-        topoffBands[pct] = bands
+--- Does the pet actually need the heal? DIRECT threshold gate, so the claim is
+--- taken only when the pet is really below the configured percentage instead of
+--- being taken always and hidden by engine alpha. Falls back to "not provably at
+--- full" and then to the alpha curve below, which is the old behaviour.
+local function PetNeedsHeal(profile)
+    if not BlizzardAPI then return true end
+    local pct = profile and profile.petHealThreshold
+    if type(pct) ~= "number" then pct = PET_HEAL_DEFAULT_PCT end
+    if BlizzardAPI.IsUnitHealthBelow then
+        local below = BlizzardAPI.IsUnitHealthBelow("pet", pct)
+        if below ~= nil then return below end
     end
-    return bands
+    return not (BlizzardAPI.IsUnitFullHealth and BlizzardAPI.IsUnitFullHealth("pet") == true)
 end
+
+-- The health top-off icon used to drive its alpha through a multi-band health curve, so the
+-- engine could express "emergency / top off / not needed" without us reading a secret. That
+-- machinery is GONE: the zero-gate (BlizzardAPI.IsUnitFullHealth) now answers "are you at
+-- full?" outright, and the reminder only ever needed that one bit. The icon is a plain
+-- suggestion again - shown when offered, hidden when not, at normal opacity like every other
+-- pre-combat entry. Do not reintroduce a curve here: it made this icon the only defensive
+-- one with an engine-owned alpha, which the frame-opacity sweep at the end of RenderSpellQueue
+-- then fought over (a visible flicker), and its band edges were never verifiable in Lua.
 
 local function ClearExecuteCue(icon)
     if not icon._executeCue then return end
@@ -1133,8 +1105,9 @@ end
 local function ClearMaintenanceSlot(icon)
     if not icon then return end
     UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+    if icon.hasMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
     icon:SetAlpha(0)
-    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, false, nil, nil
+    icon._maintShown, icon._maintGlow, icon._maintID, icon.lastVisualState = false, nil, nil, nil
     icon.maintenanceAuraID = nil
     if icon.chargeText then icon.chargeText:Hide() end
 end
@@ -1235,10 +1208,14 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         local showHotkeys = not to or not to.hotkey or to.hotkey.show ~= false
         icon.cachedHotkey = key
         SetIconHotkeyText(icon, key, showHotkeys)
-        if not icon._maintGlow then
+        -- Always the burst, never the ants: being held is not an early warning. Stop the ants
+        -- first in case the escape claimed a slot that was mid-warning - same escalation rule
+        -- as the maintenance path below, and the states share one field.
+        if icon._maintGlow ~= "burst" then
+            if icon._maintGlow == "ants" then UIAnimations.StopMaintenanceGlow(icon) end
             UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
                 MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-            icon._maintGlow = true
+            icon._maintGlow = "burst"
         end
         return
     end
@@ -1272,10 +1249,16 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- the PLAIN claimant - a normal `if` suppresses the secret layer. It would be unsolvable the
     -- other way round. Upkeep never collides: pet-heal classes (Hunter, Warlock) have no tank
     -- spec, so the slot is otherwise dead space for them.
+    -- Yield the slot when the pet is PROVABLY at full (zero-gate on its
+    -- engine-side deficit). Before this the claim was taken unconditionally
+    -- and the engine's alpha did the hiding - which is why it had to sit at
+    -- the bottom of the claimant order, squatting invisibly on a slot another
+    -- claimant could have used. nil (no answer) keeps the old behaviour.
     local petSpellID
     if not ccSpellID and not emergencyHealID and profile and profile.showPetHealCue ~= false
        and profile.defensives and profile.defensives.enabled
-       and UnitExists("pet") and not UnitIsDeadOrGhost("pet") then
+       and UnitExists("pet") and not UnitIsDeadOrGhost("pet")
+       and PetNeedsHeal(profile) then
         local DE = DefensiveEngineRef
         if not DE then
             DE = LibStub("JustAC-DefensiveEngine", true)
@@ -1525,12 +1508,19 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
     end
 
-    -- ONE cue: the proc burst, raised at the refresh threshold (~3s before decay) and held if
-    -- the buff actually lapses. A two-stage version was tried - marching-ants crawl for
-    -- "refresh", burst for "down" - and rejected in play: the crawl is too faint to register
-    -- mid-pull, which defeats the point of a cue you must catch at a glance. Do not reintroduce
-    -- a low-contrast stage here; if "soon" and "gone" ever need distinguishing, find a
-    -- difference that survives a busy screen.
+    -- TWO stages, same blue, escalating: marching ants at the refresh threshold (~3s before
+    -- decay), proc burst once the buff has actually lapsed.
+    --
+    -- An earlier two-stage attempt was rejected for being too quiet, and the fix is NOT that
+    -- ants are louder than they were - it is that the two stages were mapped the wrong way
+    -- round. The old version put the faint cue on "refresh" and the loud one on "down", so the
+    -- moment you could still act on was the moment that whispered. Here the ants are an EARLY
+    -- WARNING you may legitimately ignore for a couple of seconds, and the burst means you have
+    -- already lost the buff - which is the state that deserves to shout.
+    -- Not every entry reaches "refresh": charge-gated buffs never pre-warn, and Bone Shield has
+    -- no clock at all (its stacks are eaten by damage, not time). Those go straight to the
+    -- burst, exactly as they did before, so no spec loses its alarm.
+    -- Same hue for both on purpose: one cue getting louder, not two signals to learn.
     -- Never on "unknown": that state means we could not identify the aura, and glowing there
     -- tells a tank to re-press a buff that may well be live.
     -- Gated on usable AND ready. `usable` alone is NOT enough: C_Spell.IsSpellUsable reports
@@ -1550,8 +1540,15 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- case to guard. Safe despite the secret gate because frame alpha cascades to children -
     -- with the icon at alpha 0 the glow is invisible too, so it can only appear once the engine
     -- has decided the pet is actually hurt.
-    local wantGlow = (ccSpellID or petSpellID or emergencyHealID) and true
-        or ((state == "down" or state == "refresh") and usable and ready)
+    -- nil | "ants" (early warning) | "burst" (gone). A claim on the slot by the escape, pet
+    -- heal or emergency heal is always the loud one - none of those has a "soon" stage.
+    local wantGlow
+    if ccSpellID or petSpellID or emergencyHealID then
+        wantGlow = "burst"
+    elseif usable and ready then
+        if state == "down" then wantGlow = "burst"
+        elseif state == "refresh" then wantGlow = "ants" end
+    end
 
     -- Marker cues, same rules as the other surfaces. Off-GCD is the valuable one here:
     -- Ignore Pain and Shield of the Righteous are off the global, so topping up your
@@ -1561,11 +1558,19 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         MoveCastDotEnabled(profile) and IsMoveCastableNow(displayID, nil),
         profile and profile.showOffGcdDot and IsOffGCDSpell(displayID))
     if wantGlow ~= icon._maintGlow then
-        if wantGlow then
+        -- Stop the outgoing stage before starting the incoming one: refresh -> down runs both
+        -- branches on the same pass, and leaving the ants up under the burst reads as a third,
+        -- muddier cue rather than an escalation.
+        if icon._maintGlow == "ants" then
+            UIAnimations.StopMaintenanceGlow(icon)
+        elseif icon._maintGlow == "burst" then
+            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
+        end
+        if wantGlow == "ants" then
+            UIAnimations.StartMaintenanceGlow(icon, true)
+        elseif wantGlow == "burst" then
             UIAnimations.ShowColoredProcGlow(icon, "maintenanceGlow",
                 MAINTENANCE_GLOW.r, MAINTENANCE_GLOW.g, MAINTENANCE_GLOW.b)
-        else
-            UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
         end
         icon._maintGlow = wantGlow
     end
@@ -1801,12 +1806,6 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
         if entry and entry.spellID then
             local showGlow = (i == 1)
             UIRenderer.ShowDefensiveIcon(addon, entry.spellID, entry.isItem, icon, showGlow, nil, entry.waiting, entry.precombat)
-            -- Health top-off: hand the alpha ShowDefensiveIcon just set straight to the engine.
-            -- Must come AFTER it, since that call sets alpha itself.
-            if entry.topoff then
-                UIFrameFactory.SetAlphaFromHealthCurve(icon, "player",
-                    TopoffBands(addon.db and addon.db.profile), true)
-            end
             anyVisible = true
         else
             UIRenderer.HideDefensiveIcon(icon, hasReal)
@@ -2830,6 +2829,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
             addon.defensiveFrame:SetAlpha(frameOpacity)
         end
     elseif addon.defensiveIcons then
+        -- Blanket alpha write, on the MAIN queue's cadence rather than the defensive
+        -- rebuild's. Nothing here may have an engine-driven alpha: this sweep would
+        -- overwrite it on a different beat and the icon would flicker (that is exactly
+        -- what the health top-off's old health curve did). Anything needing engine-owned
+        -- alpha belongs outside this array, like the maintenance slot.
         for _, defIcon in ipairs(addon.defensiveIcons) do
             if defIcon then
                 defIcon:SetAlpha(frameOpacity)

@@ -522,6 +522,8 @@ end
 ---             target-HP read), so every execute-gated spell floats to 0 regardless of profile.
 ---   sink    - a melee spell with the target CONFIRMED out of melee (real IsSpellInRange-based
 ---             read via SpellDB.IsTargetWithin(5)) is uncastable, so it trails at RANK_SINK.
+---   dying   - the last thing fighting us is nearly dead and is not a boss, so the spec's
+---             major cooldowns trail at RANK_SINK too (see the guard in _StageContext).
 --- Fail-safe: an untagged pick (ctxArch nil) makes every spell ARCH_UNK -> uniform -> source
 --- order preserved. ctxOutOfMelee is only true on a confirmed read; unknown -> no sink.
 --- Target count is AC's to read, not ours: when AC offers a cleave ability while an AoE sits
@@ -533,6 +535,11 @@ local ARCH_UNK  = 3   -- one side untagged: neutral middle, neither boost nor bu
 local GEOM_PEN  = 1   -- melee-multi <-> ranged-multi: same AoE need, different delivery
 local ROLE_PEN  = 1   -- builder <-> spender: wrong resource phase
 local RANK_SINK = 9   -- uncastable (melee, target out of range): trails everything
+-- Wasted-cooldown guard threshold (see _StageContext). 20%, matching the execute
+-- probe, so the two share one memo entry per tick instead of costing two curve
+-- evaluations; it is also where a lone trash mob is genuinely a few globals from
+-- dead. Bosses are excluded before this is ever asked.
+local DYING_TARGET_PCT = 20
 -- SimC-mode blend: a ranked entry sorts by ctx*CONTEXT_STRIDE + simc, so the ContextRank
 -- fit-bucket (0..RANK_SINK) always dominates and the SimC list index only orders within a
 -- bucket. STRIDE exceeds any SimC rank component; an ability the SimC list omits takes
@@ -548,9 +555,16 @@ local function pattern(arch, range)
     if arch == "st"     then return "st" end
     return nil
 end
-local function ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee)
+local function ContextRank(spellID, ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, ctxDying)
     if ctxExecute and SpellDB and SpellDB.GetGate and SpellDB.GetGate(spellID) == "execute" then
         return 0
+    end
+    -- Below the execute float on purpose: an execute-gated finisher is exactly the
+    -- right press on a dying mob and keeps its promotion. It is the multi-minute
+    -- cooldowns that buy nothing here.
+    if ctxDying then
+        local triggers = ResolveBurstTriggers()
+        if triggers and IsBurstTrigger(triggers, spellID) then return RANK_SINK end
     end
     local range = SpellDB and SpellDB.GetRange and SpellDB.GetRange(spellID)
     if ctxOutOfMelee and range == "melee" then
@@ -737,24 +751,183 @@ local function IsSpenderSpell(spellID)
     return verdict
 end
 
-local function SimcResourceGateBlocks(gates, resCount, resName)
+local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
     if not gates or not resCount then return false end
     for i = 1, #gates do
         local g = gates[i]
         if g.t == "resource" and g.res == resName and g.op and g.n then
-            local ok
-            if     g.op == ">=" then ok = resCount >= g.n
-            elseif g.op == "<=" then ok = resCount <= g.n
-            elseif g.op == ">"  then ok = resCount >  g.n
-            elseif g.op == "<"  then ok = resCount <  g.n
-            elseif g.op == "="  then ok = resCount == g.n
-            elseif g.op == "!=" then ok = resCount ~= g.n
+            -- `.deficit` asks how much ROOM is left (max - current). For countable
+            -- resources both numbers are plain - the point-widget read returns
+            -- current AND max - so this is ordinary arithmetic and needs no gate.
+            -- Unknown max -> skip this one rather than guess (fails open).
+            local value = resCount
+            if g.deficit then
+                value = (type(resMax) == "number" and resMax > 0) and (resMax - resCount) or nil
             end
-            if ok == false then return true end
+            if value then
+                local ok
+                if     g.op == ">=" then ok = value >= g.n
+                elseif g.op == "<=" then ok = value <= g.n
+                elseif g.op == ">"  then ok = value >  g.n
+                elseif g.op == "<"  then ok = value <  g.n
+                elseif g.op == "="  then ok = value == g.n
+                elseif g.op == "!=" then ok = value ~= g.n
+                end
+                if ok == false then return true end
+            end
         end
     end
     return false
 end
+
+-- SimC resource token -> Enum.PowerType, resolved lazily so a missing Enum can
+-- never break file load. Only CONTINUOUS resources belong here; the countable
+-- ones (combo points, chi, shards...) have their own exact read above.
+local simcPowerTypes
+local function SimcPowerType(res)
+    if not simcPowerTypes then
+        local E = (Enum and Enum.PowerType) or {}
+        simcPowerTypes = {
+            mana = E.Mana, rage = E.Rage, focus = E.Focus, energy = E.Energy,
+            runic_power = E.RunicPower, astral_power = E.LunarPower,
+            maelstrom = E.Maelstrom, insanity = E.Insanity,
+            fury = E.Fury, pain = E.Pain,
+        }
+    end
+    return simcPowerTypes[res]
+end
+
+--- The ONE verdict rule for every threshold gate: given the engine's
+--- below/at-or-above answer, does this gate block? An unreadable answer (nil)
+--- never blocks - an unevaluable gate must keep the entry's delegated behaviour
+--- rather than bury it on a guess.
+--- `.deficit` inverts the sense: "lots of room left" IS "the level is low".
+local function ThresholdGateBlocks(g, below)
+    if below == nil then return false end
+    local wantBelow
+    if     g.op == ">=" or g.op == ">"  then wantBelow = false
+    elseif g.op == "<"  or g.op == "<=" then wantBelow = true
+    else return false end                      -- = / != are not thresholds
+    if g.deficit then wantBelow = not wantBelow end
+    return below ~= wantBelow
+end
+
+--- The percentage a continuous-resource gate resolves to, plus its power type.
+--- SimC states these in ABSOLUTE units while the gate takes a percentage, so the
+--- conversion goes through UnitPowerMax - plain, and read LIVE because talents
+--- move maximums. `.pct` forms arrive as percentages already; `.deficit` asks
+--- about the room left, so the threshold becomes max-N (the comparison flips in
+--- ThresholdGateBlocks). Shared with the simcgates probe so the number it
+--- displays is the number this actually uses.
+function SpellQueue.PowerGateThreshold(g)
+    local pt = g and g.res and SimcPowerType(g.res)
+    if not (pt and g.n) then return nil, nil end
+    if g.ispct and not g.deficit then return g.n, pt end
+    local max = UnitPowerMax("player", pt)
+    if type(max) ~= "number" or max <= 0
+       or (issecretvalue and issecretvalue(max)) then return nil, pt end
+    return (g.deficit and (100 * (max - g.n) / max) or (100 * g.n / max)), pt
+end
+
+local function SimcPowerGateBlocks(gates)
+    if not gates or not BlizzardAPI.IsUnitPowerBelow then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "power" and g.op and g.n and g.res then
+            local pct, pt = SpellQueue.PowerGateThreshold(g)
+            if pct and ThresholdGateBlocks(g, BlizzardAPI.IsUnitPowerBelow("player", pct, pt)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+--- Health threshold gates. "execute" asks about the TARGET (its percentage comes
+--- from SimC's APLs, the only place per-spell execute thresholds exist - DB2 has
+--- no health-threshold column); "health" asks the same question of the PLAYER,
+--- which defensive APL lines lean on. One loop, since only the unit differs.
+--- No target = no opinion on execute gates (fail open).
+local function SimcHealthGateBlocks(gates)
+    if not gates or not BlizzardAPI.IsUnitHealthBelow then return false end
+    local haveTarget = UnitExists("target") and UnitCanAttack("player", "target")
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.pct and g.op then
+            local unit
+            if g.t == "execute" then
+                unit = (haveTarget and not g.neg) and "target" or nil
+            elseif g.t == "health" then
+                unit = "player"
+            end
+            if unit and ThresholdGateBlocks(g, BlizzardAPI.IsUnitHealthBelow(unit, g.pct)) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+--- Aura-STACK gates. The count is secret, but the engine renders it only at or
+--- above a minimum we name, so "at least N" is the one question available - and
+--- every SimC comparison reduces to one or two of them. `=` is the only form that
+--- costs two. Unanswerable at any step -> nil -> the gate does not block.
+local function StackAtLeast(unit, id, k)
+    if k <= 0 then return true end
+    return BlizzardAPI.GetAuraStackAtLeast(unit, id, k)
+end
+
+--- Does one stack gate HOLD? true / false / nil (unanswerable).
+local function StackHolds(unit, g)
+    local n, op, id = g.n, g.op, g.id
+    if op == ">=" then return StackAtLeast(unit, id, n) end
+    if op == ">"  then return StackAtLeast(unit, id, n + 1) end
+    local a
+    if op == "<" then
+        a = StackAtLeast(unit, id, n)
+    elseif op == "<=" then
+        a = StackAtLeast(unit, id, n + 1)
+    elseif op == "=" then
+        a = StackAtLeast(unit, id, n)
+        if a == nil then return nil end
+        if not a then return false end          -- below n, so not equal to n
+        local hi = StackAtLeast(unit, id, n + 1)
+        if hi == nil then return nil end
+        return not hi                            -- at n, and not above it
+    else
+        return nil
+    end
+    if a == nil then return nil end
+    return not a
+end
+
+local function SimcStackGateBlocks(gates)
+    if not (gates and BlizzardAPI.GetAuraStackAtLeast) then return false end
+    for i = 1, #gates do
+        local g = gates[i]
+        if g.t == "stack" and g.id and g.op and g.n then
+            -- `tgt` gates read the TARGET's debuff; no target means no opinion.
+            local unit = g.tgt and "target" or "player"
+            if not g.tgt or UnitExists("target") then
+                if StackHolds(unit, g) == false then return true end
+            end
+        end
+    end
+    return false
+end
+SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simcgates)
+
+--- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
+--- Both call sites use this rather than the individual blockers, so a new gate
+--- type cannot be wired into one and forgotten at the other.
+local function SimcGateBlocks(gates, resCount, resName, resMax)
+    if not gates then return false end
+    return SimcResourceGateBlocks(gates, resCount, resName, resMax)
+        or SimcPowerGateBlocks(gates)
+        or SimcHealthGateBlocks(gates)
+        or SimcStackGateBlocks(gates)
+end
+SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
 
 local function SimcNegativeBuffBlocks(gates)
     if not gates then return false end
@@ -772,15 +945,15 @@ end
 -- below (same pattern as rankSortComparator) - defining this inline allocated a closure
 -- every build tick.
 local rankSimcMode, rankContextOrder
-local rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee
+local rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying
 local function rankOf(spellID, simcRec)
     if rankSimcMode then
-        local ctx = ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee)
+        local ctx = ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying)
         local simc = (simcRec and simcRec.rank) or SIMC_UNRANKED
         if simc > SIMC_UNRANKED then simc = SIMC_UNRANKED end
         return ctx * CONTEXT_STRIDE + simc
     elseif rankContextOrder == "ac" then
-        return ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee)
+        return ContextRank(spellID, rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying)
     end
     return 1
 end
@@ -793,7 +966,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local spellCount, maxIcons, hideItems = b.spellCount, b.maxIcons, b.hideItems
     local bypassProcs = b.effectiveBypassProcs
     local ctxArch, ctxRange, ctxRole = b.ctxArch, b.ctxRange, b.ctxRole
-    local ctxExecute, ctxOutOfMelee = b.ctxExecute, b.ctxOutOfMelee
+    local ctxExecute, ctxOutOfMelee, ctxDying = b.ctxExecute, b.ctxOutOfMelee, b.ctxDying
     local contextOrder, sinkCooldowns = b.contextOrder, b.sinkCooldowns
     local simcCtx, pickWindows = b.simcCtx, b.pickWindows
     wipe(proccedSpells)
@@ -814,10 +987,10 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- Discrete class-resource count once per build (combo points / holy power / chi / shards /
     -- runes / essence / arcane charges), for the SimC resource gates. nil = unknown -> those
     -- gates fail open. Only needed in SimC mode, where gates exist.
-    local resCount, resName
+    local resCount, resName, resMax
     if simcMode and BlizzardAPI.GetClassResourcePoints then
-        local c, _, r = BlizzardAPI.GetClassResourcePoints()
-        resCount, resName = c, r
+        local c, m, r = BlizzardAPI.GetClassResourcePoints()
+        resCount, resName, resMax = c, r, m   -- max feeds the `.deficit` gates
     end
     -- Primary resource capped (engine full-power pulse, plain - validated in combat
     -- 2026-07-24): promote ready, affordable spenders so regen stops going to waste.
@@ -825,8 +998,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
     -- Arm the hoisted rankOf for this build (see its definition above).
     rankSimcMode, rankContextOrder = simcMode, contextOrder
-    rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee =
-        ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee
+    rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying =
+        ctxArch, ctxRange, ctxRole, ctxExecute, ctxOutOfMelee, ctxDying
 
     for i = 1, #rotationList do
         local spellID = rotationList[i]
@@ -912,13 +1085,13 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                                 and (SimcBuffWindowActive(simcRec.gates)
                                      or GateInPickWindows(simcRec.gates, pickWindows))
                                 and not SimcNegativeBuffBlocks(simcRec.gates)
-                                and not SimcResourceGateBlocks(simcRec.gates, resCount, resName)))
+                                and not SimcGateBlocks(simcRec.gates, resCount, resName, resMax)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec)
                     elseif sinkCooldowns and (not ready or starved or held or locLocked
-                           or (simcRec and SimcResourceGateBlocks(simcRec.gates, resCount, resName))
+                           or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax))
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
                            or (not alwaysShow and DotTracker
@@ -999,15 +1172,46 @@ function SpellQueue._StageContext(b)
         ctxRole  = SpellDB.GetRole  and SpellDB.GetRole(primarySpellID)
         ctxExecute = SpellDB.GetGate and SpellDB.GetGate(primarySpellID) == "execute"
     end
+    -- Execute phase, DETECTED rather than inferred. The line above only learns of
+    -- execute range when AC happens to pick an execute spell; a target-health
+    -- threshold gate answers whenever there IS a target, so it leads and the
+    -- AC-pick inference becomes the fallback.
+    -- 20% deliberately, not 35: every execute-class finisher is live at 20%, so a
+    -- hit here can't boost something the player cannot press. The 20-35% window
+    -- belongs to Massacre-class talents whose per-spell thresholds we do not have
+    -- (DB2 carries no health-threshold column) - and that window is exactly what
+    -- the AC-pick fallback still covers, because AC will pick such a spell when it
+    -- is live. Direct where it is certain, inference where it is not.
+    if not ctxExecute and inCombat and BlizzardAPI.IsUnitHealthBelow
+        and UnitExists("target") and UnitCanAttack("player", "target") then
+        ctxExecute = BlizzardAPI.IsUnitHealthBelow("target", 20) == true
+    end
     -- Direct enemy count (secret-safe, AC-independent): promote the context to
     -- cleave/aoe from the number of enemies actually engaged with us, catching AoE
     -- that a single AC-pick archetype misses. Promote-only - never downgrades AC's
     -- own aoe/cleave read.
-    if inCombat and BlizzardAPI.GetEngagedEnemyCount then
-        local enemies = BlizzardAPI.GetEngagedEnemyCount()
-        if enemies >= 2 then
-            ctxArch = (enemies >= 3 or ctxArch == "aoe") and "aoe" or "cleave"
-        end
+    local enemies = (inCombat and BlizzardAPI.GetEngagedEnemyCount
+        and BlizzardAPI.GetEngagedEnemyCount()) or 0
+    if enemies >= 2 then
+        ctxArch = (enemies >= 3 or ctxArch == "aoe") and "aoe" or "cleave"
+    end
+    -- Wasted-cooldown guard: the one thing still fighting us is nearly dead and is
+    -- not a boss, so a multi-minute cooldown spent now is spent on a corpse. Sinks
+    -- the spec's own burst triggers in positions 2+ (ContextRank) and silences the
+    -- burst-ready cue (Stage G) - it never HIDES anything, so a player who wants it
+    -- anyway just presses it.
+    -- Every clause must be a POSITIVE read, because each unknown has to leave the
+    -- guard off:
+    --   * exactly one engaged enemy. 0 means we could not count (nameplates off,
+    --     no threat table yet), which must not read as "only one left".
+    --   * not a boss. A boss below the threshold is an execute phase, where burning
+    --     everything is correct - the opposite call.
+    --   * a CONFIRMED below-threshold health gate (== true, never just non-false).
+    local ctxDying = false
+    if inCombat and enemies == 1 and BlizzardAPI.IsUnitHealthBelow
+        and UnitExists("target") and UnitCanAttack("player", "target")
+        and not (BlizzardAPI.IsTargetBoss and BlizzardAPI.IsTargetBoss()) then
+        ctxDying = BlizzardAPI.IsUnitHealthBelow("target", DYING_TARGET_PCT) == true
     end
     -- Temporal smoothing of the revealed context (see module-state comment):
     -- latch execute per target, hold multi evidence for STICKY_CTX_SECONDS.
@@ -1052,8 +1256,9 @@ function SpellQueue._StageContext(b)
     lastCtx.arch, lastCtx.range, lastCtx.role = ctxArch, ctxRange, ctxRole
     lastCtx.execute, lastCtx.outOfMelee = ctxExecute or false, ctxOutOfMelee or false
     lastCtx.stickyApplied, lastCtx.executeLatched = stickyApplied, executeLatched
+    lastCtx.dying, lastCtx.enemies = ctxDying, enemies
     b.ctxArch, b.ctxRange, b.ctxRole = ctxArch, ctxRange, ctxRole
-    b.ctxExecute, b.ctxOutOfMelee = ctxExecute, ctxOutOfMelee
+    b.ctxExecute, b.ctxOutOfMelee, b.ctxDying = ctxExecute, ctxOutOfMelee, ctxDying
 end
 
 --- Stage F - tail ordering and assembly: ordering settings, the SimC->AC
@@ -1129,8 +1334,11 @@ end
 --- custom list is intent, so those cue whenever ready (only their own active
 --- window vetoes). The cued trigger surfaces at position 2 (promoted or
 --- inserted) - never position 1, which stays AC's alone. In-combat only.
+--- The wasted-cooldown guard (b.ctxDying) silences the whole stage: "press your
+--- big cooldown" is the wrong shout at a lone mob that is about to fall over, and
+--- a glow shouting it is more misleading than a tail position.
 function SpellQueue._StageBurstCue(b)
-    if not (b.inCombat and b.profile.burstCueGlow == true) then return end
+    if not (b.inCombat and b.profile.burstCueGlow == true) or b.ctxDying then return end
     local blacklist, recommendedSpells = b.blacklist, b.recommendedSpells
     local addedSpellIDs, primarySpellID = b.addedSpellIDs, b.primarySpellID
     local simcCtx, pickWindows = b.simcCtx, b.pickWindows
@@ -1631,7 +1839,8 @@ end
 
 --- Rank a spell against the last build's context. Diagnostic only (/jac inspect rank).
 function SpellQueue.DebugRankSpell(spellID)
-    return ContextRank(spellID, lastCtx.arch, lastCtx.range, lastCtx.role, lastCtx.execute, lastCtx.outOfMelee)
+    return ContextRank(spellID, lastCtx.arch, lastCtx.range, lastCtx.role, lastCtx.execute,
+        lastCtx.outOfMelee, lastCtx.dying)
 end
 
 --- Returns true if spellID was injected as a synthetic proc (gap-closer, etc.)

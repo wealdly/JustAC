@@ -45,6 +45,19 @@ RotationImport.RegisterGated({
       {id=49184,gates={},delegated=true},  -- howling_blast
       {id=49143,gates={},delegated=true},  -- frost_strike
     },
+    cleave = {
+      {id=196770,gates={},delegated=true},  -- remorseless_winter
+      {id=439843,gates={{t="cd"}},delegated=true},  -- reapers_mark
+      {id=51271,gates={},delegated=true},  -- pillar_of_frost
+      {id=1249658,gates={{t="buff",id=1249658,neg=true}},delegated=true},  -- breath_of_sindragosa
+      {id=279302,gates={},delegated=true},  -- frostwyrms_fury
+      {id=46585,gates={}},  -- raise_dead
+      {id=47568,gates={},delegated=true},  -- empower_rune_weapon
+      {id=207230,gates={},delegated=true},  -- frostscythe
+      {id=49143,gates={},delegated=true},  -- frost_strike
+      {id=49020,gates={},delegated=true},  -- obliterate
+      {id=49184,gates={},delegated=true},  -- howling_blast
+    },
     aoe = {
       {id=196770,gates={},delegated=true},  -- remorseless_winter
       {id=439843,gates={{t="cd"}},delegated=true},  -- reapers_mark
@@ -98,7 +111,7 @@ RotationImport.RegisterGated({
       {id=370965,gates={{t="buff",id=191427,neg=true},{t="cd"}},delegated=true},  -- the_hunt
       {id=232893,gates={},delegated=true},  -- felblade
       {id=195072,gates={},delegated=true},  -- fel_rush
-      {id=258860,gates={{t="cd"}},delegated=true},  -- essence_break
+      {id=258860,gates={{t="power",res="fury",op=">=",n=35},{t="cd"}},delegated=true},  -- essence_break
       {id=198013,gates={},delegated=true},  -- eye_beam
       {id=185123,gates={},delegated=true},  -- throw_glaive
       {id=188499,gates={},delegated=true},  -- blade_dance
@@ -113,7 +126,7 @@ RotationImport.RegisterGated({
       {id=191427,gates={},delegated=true},  -- metamorphosis
       {id=370965,gates={{t="buff",id=191427,neg=true},{t="cd"}},delegated=true},  -- the_hunt
       {id=195072,gates={},delegated=true},  -- fel_rush
-      {id=258860,gates={{t="cd"}},delegated=true},  -- essence_break
+      {id=258860,gates={{t="power",res="fury",op=">=",n=35},{t="cd"}},delegated=true},  -- essence_break
       {id=198013,gates={},delegated=true},  -- eye_beam
       {id=185123,gates={},delegated=true},  -- throw_glaive
       {id=232893,gates={},delegated=true},  -- felblade
@@ -126,9 +139,9 @@ RotationImport.RegisterGated({
       {id=232893,gates={},delegated=true},  -- felblade
       {id=187827,gates={},delegated=true},  -- metamorphosis
       {id=442294,gates={{t="buff",id=442294}},delegated=true},  -- reavers_glaive
-      {id=247454,gates={},delegated=true},  -- spirit_bomb
+      {id=247454,gates={{t="power",res="fury",op=">",n=75}},delegated=true},  -- spirit_bomb
       {id=258920,gates={}},  -- immolation_aura
-      {id=212084,gates={},delegated=true},  -- fel_devastation
+      {id=212084,gates={{t="power",res="fury",op=">=",n=85}}},  -- fel_devastation
       {id=204596,gates={}},  -- sigil_of_flame
       {id=207407,gates={}},  -- soul_carver
       {id=198793,gates={{t="cd"}}},  -- vengeful_retreat
@@ -188,7 +201,7 @@ RotationImport.RegisterGated({
       {id=194223,gates={}},  -- celestial_alignment
       {id=191034,gates={},delegated=true},  -- starfall
       {id=78674,gates={},delegated=true},  -- starsurge
-      {id=194153,gates={},delegated=true},  -- starfire
+      {id=194153,gates={{t="power",res="astral_power",op="<",n=80}}},  -- starfire
       {id=391528,gates={},delegated=true},  -- convoke_the_spirits
       {id=274281,gates={},delegated=true},  -- new_moon
       {id=274282,gates={},delegated=true},  -- half_moon
@@ -269,7 +282,7 @@ RotationImport.RegisterGated({
       {id=1253799,gates={},delegated=true},  -- sundering_roar
       {id=50334,gates={{t="cd"}},delegated=true},  -- berserk
       {id=77758,gates={}},  -- thrash
-      {id=6807,gates={},delegated=true},  -- maul
+      {id=6807,gates={{t="power",res="rage",op=">=",n=40}},delegated=true},  -- maul
       {id=33917,gates={{t="dot",id=1252871}}},  -- mangle
       {id=1822,gates={{t="buff",id=768,neg=true},{t="cd"}},delegated=true},  -- rake
       {id=22568,gates={},delegated=true},  -- ferocious_bite
@@ -286,7 +299,7 @@ RotationImport.RegisterGated({
       {id=1253799,gates={},delegated=true},  -- sundering_roar
       {id=50334,gates={{t="cd"}},delegated=true},  -- berserk
       {id=77758,gates={}},  -- thrash
-      {id=6807,gates={},delegated=true},  -- maul
+      {id=6807,gates={{t="power",res="rage",op=">=",n=40}},delegated=true},  -- maul
       {id=33917,gates={{t="dot",id=1252871}}},  -- mangle
       {id=1822,gates={{t="buff",id=768,neg=true},{t="cd"}},delegated=true},  -- rake
       {id=22568,gates={},delegated=true},  -- ferocious_bite
@@ -413,7 +426,6 @@ RotationImport.RegisterGated({
       {id=186289,gates={},delegated=true},  -- aspect_of_the_eagle
       {id=34026,gates={},delegated=true},  -- kill_command
       {id=1250646,gates={},delegated=true},  -- takedown
-      {id=1251592,gates={}},  -- flamefang_pitch
       {id=259495,gates={},delegated=true},  -- wildfire_bomb
       {id=1261193,gates={},delegated=true},  -- boomstick
       {id=186270,gates={},delegated=true},  -- raptor_strike
@@ -428,7 +440,7 @@ RotationImport.RegisterGated({
       {id=30451,gates={},delegated=true},  -- arcane_blast
       {id=321507,gates={},delegated=true},  -- touch_of_the_magi
       {id=365350,gates={}},  -- arcane_surge
-      {id=12051,gates={{t="buff",id=365350,neg=true},{t="cd"}},delegated=true},  -- evocation
+      {id=12051,gates={{t="power",res="mana",op="<",n=10,ispct=true},{t="buff",id=365350,neg=true},{t="cd"}},delegated=true},  -- evocation
       {id=44425,gates={},delegated=true},  -- arcane_barrage
       {id=205025,gates={},delegated=true},  -- presence_of_mind
     },
@@ -591,9 +603,9 @@ RotationImport.RegisterGated({
     st = {
       {id=32379,gates={},delegated=true},  -- shadow_word_death
       {id=335467,gates={{t="dot",id=335467}},delegated=true},  -- shadow_word_madness
-      {id=1227280,gates={},delegated=true},  -- tentacle_slam
+      {id=1227280,gates={{t="dot",id=34914}},delegated=true},  -- tentacle_slam
       {id=263165,gates={},delegated=true},  -- void_torrent
-      {id=589,gates={{t="dot",id=589},{t="execute"},{t="dot",id=34914}}},  -- shadow_word_pain
+      {id=589,gates={{t="dot",id=589},{t="execute"}},delegated=true},  -- shadow_word_pain
       {id=8092,gates={},delegated=true},  -- mind_blast
       {id=34914,gates={{t="dot",id=34914},{t="execute"}},delegated=true},  -- vampiric_touch
       {id=132157,gates={}},  -- holy_nova
@@ -606,9 +618,9 @@ RotationImport.RegisterGated({
       {id=228260,gates={},delegated=true},  -- voidform
       {id=32379,gates={},delegated=true},  -- shadow_word_death
       {id=335467,gates={{t="dot",id=335467}},delegated=true},  -- shadow_word_madness
-      {id=1227280,gates={},delegated=true},  -- tentacle_slam
+      {id=1227280,gates={{t="dot",id=34914}},delegated=true},  -- tentacle_slam
       {id=263165,gates={},delegated=true},  -- void_torrent
-      {id=589,gates={{t="dot",id=589},{t="execute"},{t="dot",id=34914}}},  -- shadow_word_pain
+      {id=589,gates={{t="dot",id=589},{t="execute"}},delegated=true},  -- shadow_word_pain
       {id=8092,gates={},delegated=true},  -- mind_blast
       {id=34914,gates={{t="dot",id=34914},{t="execute"}},delegated=true},  -- vampiric_touch
       {id=132157,gates={}},  -- holy_nova
@@ -618,7 +630,7 @@ RotationImport.RegisterGated({
   ["ROGUE_1"] = {
     burst = {360194, 385627},  -- deathmark kingsbane
     st = {
-      {id=381623,gates={},delegated=true},  -- thistle_tea
+      {id=1298826,gates={{t="power",res="energy",op="<",n=50,ispct=true}},delegated=true},  -- thistle_tea
       {id=8676,gates={},delegated=true},  -- ambush
       {id=360194,gates={{t="dot",id=703},{t="dot",id=1943},{t="cd"}},delegated=true},  -- deathmark
       {id=385627,gates={{t="dot",id=703},{t="dot",id=1943},{t="buff",id=32645}},delegated=true},  -- kingsbane
@@ -626,10 +638,10 @@ RotationImport.RegisterGated({
       {id=703,gates={},delegated=true},  -- garrote
       {id=1943,gates={{t="resource",res="combo_points",op=">=",n=5},{t="dot",id=1943},{t="execute"}},delegated=true},  -- rupture
       {id=1247227,gates={},delegated=true},  -- crimson_tempest
-      {id=5938,gates={},delegated=true},  -- shiv
+      {id=5938,gates={{t="resource",res="combo_points",op="=",n=1,deficit=true}},delegated=true},  -- shiv
       {id=51723,gates={}},  -- fan_of_knives
       {id=1329,gates={},delegated=true},  -- mutilate
-      {id=32645,gates={},delegated=true},  -- envenom
+      {id=32645,gates={}},  -- envenom
     },
   },
   ["ROGUE_2"] = {
@@ -670,15 +682,15 @@ RotationImport.RegisterGated({
     burst = {121471},  -- shadow_blades
     st = {
       {id=121471,gates={{t="cd"}},delegated=true},  -- shadow_blades
-      {id=185313,gates={},delegated=true},  -- shadow_dance
-      {id=1856,gates={{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- vanish
+      {id=185313,gates={{t="power",res="energy",op=">=",n=30}},delegated=true},  -- shadow_dance
+      {id=1856,gates={{t="power",res="energy",op=">=",n=50},{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- vanish
       {id=185438,gates={},delegated=true},  -- shadowstrike
       {id=197835,gates={{t="cd"}},delegated=true},  -- shuriken_storm
       {id=196819,gates={},delegated=true},  -- eviscerate
       {id=280719,gates={{t="cd"}},delegated=true},  -- secret_technique
       {id=441776,gates={},delegated=true},  -- coup_de_grace
       {id=319175,gates={},delegated=true},  -- black_powder
-      {id=426591,gates={},delegated=true},  -- goremaws_bite
+      {id=426591,gates={{t="resource",res="combo_points",op=">=",n=3,deficit=true}}},  -- goremaws_bite
       {id=200758,gates={},delegated=true},  -- gloomblade
       {id=53,gates={},delegated=true},  -- backstab
     },
@@ -691,7 +703,7 @@ RotationImport.RegisterGated({
       {id=470411,gates={},delegated=true},  -- flame_shock
       {id=470057,gates={},delegated=true},  -- voltaic_blaze
       {id=114050,gates={},delegated=true},  -- ascendance
-      {id=51505,gates={},delegated=true},  -- lava_burst
+      {id=51505,gates={{t="power",res="maelstrom",op=">",n=15,deficit=true}},delegated=true},  -- lava_burst
       {id=452201,gates={},delegated=true},  -- tempest
       {id=188196,gates={{t="buff",id=191634}},delegated=true},  -- lightning_bolt
       {id=117014,gates={}},  -- elemental_blast
@@ -704,7 +716,7 @@ RotationImport.RegisterGated({
       {id=470411,gates={},delegated=true},  -- flame_shock
       {id=470057,gates={},delegated=true},  -- voltaic_blaze
       {id=114050,gates={},delegated=true},  -- ascendance
-      {id=51505,gates={},delegated=true},  -- lava_burst
+      {id=51505,gates={{t="power",res="maelstrom",op=">",n=15,deficit=true}},delegated=true},  -- lava_burst
       {id=452201,gates={},delegated=true},  -- tempest
       {id=188196,gates={{t="buff",id=191634}},delegated=true},  -- lightning_bolt
       {id=117014,gates={}},  -- elemental_blast
@@ -718,8 +730,8 @@ RotationImport.RegisterGated({
       {id=470411,gates={},delegated=true},  -- flame_shock
       {id=470057,gates={},delegated=true},  -- voltaic_blaze
       {id=114050,gates={},delegated=true},  -- ascendance
-      {id=117014,gates={},delegated=true},  -- elemental_blast
-      {id=61882,gates={},delegated=true},  -- earthquake
+      {id=117014,gates={{t="stack",id=452201,op="<",n=2}},delegated=true},  -- elemental_blast
+      {id=61882,gates={{t="stack",id=452201,op="<",n=2}},delegated=true},  -- earthquake
       {id=51505,gates={},delegated=true},  -- lava_burst
       {id=452201,gates={},delegated=true},  -- tempest
       {id=188443,gates={{t="buff",id=191634}},delegated=true},  -- chain_lightning
@@ -764,7 +776,7 @@ RotationImport.RegisterGated({
   ["WARLOCK_1"] = {
     burst = {205180},  -- summon_darkglare
     st = {
-      {id=316099,gates={},delegated=true},  -- unstable_affliction
+      {id=1259790,gates={},delegated=true},  -- unstable_affliction
       {id=27243,gates={},delegated=true},  -- seed_of_corruption
       {id=198590,gates={},delegated=true},  -- drain_soul
       {id=686,gates={},delegated=true},  -- shadow_bolt
@@ -777,7 +789,7 @@ RotationImport.RegisterGated({
       {id=442726,gates={}},  -- malevolence
     },
     cleave = {
-      {id=316099,gates={},delegated=true},  -- unstable_affliction
+      {id=1259790,gates={},delegated=true},  -- unstable_affliction
       {id=27243,gates={},delegated=true},  -- seed_of_corruption
       {id=198590,gates={},delegated=true},  -- drain_soul
       {id=686,gates={},delegated=true},  -- shadow_bolt
@@ -789,7 +801,7 @@ RotationImport.RegisterGated({
       {id=442726,gates={}},  -- malevolence
     },
     aoe = {
-      {id=316099,gates={},delegated=true},  -- unstable_affliction
+      {id=1259790,gates={},delegated=true},  -- unstable_affliction
       {id=27243,gates={},delegated=true},  -- seed_of_corruption
       {id=198590,gates={},delegated=true},  -- drain_soul
       {id=686,gates={},delegated=true},  -- shadow_bolt
@@ -821,7 +833,7 @@ RotationImport.RegisterGated({
     burst = {1122},  -- summon_infernal
     st = {
       {id=6353,gates={{t="resource",res="soul_shard",op="<=",n=4}}},  -- soul_fire
-      {id=116858,gates={{t="execute"}},delegated=true},  -- chaos_bolt
+      {id=116858,gates={{t="execute",op=">",pct=20}},delegated=true},  -- chaos_bolt
       {id=17962,gates={},delegated=true},  -- conflagrate
       {id=1122,gates={}},  -- summon_infernal
       {id=442726,gates={}},  -- malevolence
@@ -926,11 +938,11 @@ RotationImport.RegisterGated({
       {id=85288,gates={}},  -- raging_blow
       {id=190411,gates={}},  -- whirlwind
       {id=107570,gates={{t="buff",id=227847}}},  -- storm_bolt
-      {id=435222,gates={},delegated=true},  -- thunder_blast
+      {id=435222,gates={{t="stack",id=435222,op="=",n=2}}},  -- thunder_blast
       {id=6343,gates={{t="buff",id=107574}}},  -- thunder_clap
     },
     aoe = {
-      {id=190411,gates={},delegated=true},  -- whirlwind
+      {id=190411,gates={{t="stack",id=190411,op="=",n=0}}},  -- whirlwind
       {id=1719,gates={}},  -- recklessness
       {id=107574,gates={}},  -- avatar
       {id=184367,gates={},delegated=true},  -- rampage
@@ -943,7 +955,7 @@ RotationImport.RegisterGated({
       {id=23881,gates={}},  -- bloodthirst
       {id=85288,gates={}},  -- raging_blow
       {id=107570,gates={{t="buff",id=227847}}},  -- storm_bolt
-      {id=435222,gates={},delegated=true},  -- thunder_blast
+      {id=435222,gates={{t="stack",id=435222,op="=",n=2}}},  -- thunder_blast
       {id=6343,gates={},delegated=true},  -- thunder_clap
     },
   },
@@ -952,31 +964,15 @@ RotationImport.RegisterGated({
     st = {
       {id=107574,gates={},delegated=true},  -- avatar
       {id=228920,gates={}},  -- ravager
+      {id=435222,gates={{t="stack",id=435222,op="=",n=2}}},  -- thunder_blast
       {id=1160,gates={}},  -- demoralizing_shout
       {id=376079,gates={}},  -- champions_spear
       {id=436358,gates={},delegated=true},  -- demolish
       {id=385952,gates={}},  -- shield_charge
       {id=23922,gates={}},  -- shield_slam
-      {id=6343,gates={}},  -- thunder_clap
-      {id=6572,gates={{t="buff",id=228920}}},  -- revenge
-      {id=163201,gates={},delegated=true},  -- execute
-      {id=384110,gates={}},  -- wrecking_throw
-      {id=64382,gates={}},  -- shattering_throw
-      {id=20243,gates={}},  -- devastate
-      {id=435222,gates={}},  -- thunder_blast
-    },
-    cleave = {
-      {id=107574,gates={},delegated=true},  -- avatar
-      {id=228920,gates={}},  -- ravager
-      {id=1160,gates={}},  -- demoralizing_shout
-      {id=376079,gates={}},  -- champions_spear
-      {id=435222,gates={},delegated=true},  -- thunder_blast
-      {id=436358,gates={},delegated=true},  -- demolish
-      {id=385952,gates={}},  -- shield_charge
-      {id=23922,gates={}},  -- shield_slam
-      {id=6343,gates={}},  -- thunder_clap
-      {id=6572,gates={{t="buff",id=228920}}},  -- revenge
-      {id=163201,gates={},delegated=true},  -- execute
+      {id=6343,gates={},delegated=true},  -- thunder_clap
+      {id=163201,gates={}},  -- execute
+      {id=6572,gates={{t="buff",id=6572}}},  -- revenge
       {id=384110,gates={}},  -- wrecking_throw
       {id=64382,gates={}},  -- shattering_throw
       {id=20243,gates={}},  -- devastate
@@ -984,14 +980,14 @@ RotationImport.RegisterGated({
     aoe = {
       {id=107574,gates={},delegated=true},  -- avatar
       {id=228920,gates={}},  -- ravager
+      {id=435222,gates={{t="stack",id=435222,op="=",n=2}}},  -- thunder_blast
       {id=1160,gates={}},  -- demoralizing_shout
       {id=376079,gates={}},  -- champions_spear
-      {id=435222,gates={},delegated=true},  -- thunder_blast
       {id=436358,gates={},delegated=true},  -- demolish
       {id=385952,gates={}},  -- shield_charge
-      {id=6343,gates={{t="dot"}}},  -- thunder_clap
+      {id=6343,gates={{t="buff",id=228920},{t="dot"}}},  -- thunder_clap
+      {id=6572,gates={{t="buff",id=6572}}},  -- revenge
       {id=23922,gates={},delegated=true},  -- shield_slam
-      {id=6572,gates={},delegated=true},  -- revenge
       {id=163201,gates={},delegated=true},  -- execute
       {id=384110,gates={}},  -- wrecking_throw
       {id=64382,gates={}},  -- shattering_throw

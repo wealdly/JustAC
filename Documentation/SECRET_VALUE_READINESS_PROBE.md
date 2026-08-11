@@ -38,8 +38,15 @@ sets -> reads -> resets, so the read always reflects the duration object just fe
 ### What we get / don't get
 
 - **Get:** the boolean "on cooldown?" / "aura active?" - enough to evaluate a gate.
-- **Do NOT get:** the remaining *time* (still secret). Anything that needs a number
-  (a "% remaining" bar, `dot.remains < N`) is out of reach this way.
+- **Do NOT get:** the remaining *time* (still secret) **by this route**. See below.
+
+> **SUPERSEDED 2026-08-10 for thresholds.** This section used to say `dot.remains < N`
+> was out of reach. That is true of the shown-state boolean here, but a *threshold* on
+> the remaining time IS now reachable - the engine evaluates a curve against the secret
+> duration and the zero-gate reads the result. `EvaluateRemainingDuration` even takes
+> seconds directly. See
+> [SECRET_VALUE_THRESHOLD_GATES.md](SECRET_VALUE_THRESHOLD_GATES.md).
+> The exact number remains out of reach, deliberately - see that doc's scope rule.
 
 ### Where it's used
 

@@ -14,10 +14,12 @@ if not SpellDB or not SpellDB.RegisterHealingItems then return end
 SpellDB.RegisterHealingItems({
     -- ── Midnight / current ──
     241298,  -- Amani Extract
+    271884,  -- Concentrated Silvermoon Health Potion
     245918,  -- Fleeting Silvermoon Health Potion
     241306,  -- Refreshing Serum
     241304,  -- Silvermoon Health Potion
     241299,  -- Amani Extract
+    271883,  -- Concentrated Silvermoon Health Potion
     245919,  -- Fleeting Silvermoon Health Potion
     241307,  -- Refreshing Serum
     241305,  -- Silvermoon Health Potion

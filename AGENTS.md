@@ -185,25 +185,26 @@ if actionType == "spell" and type(id) == "string" and id == "assistedcombat" the
 ## Debug Commands
 
 ```
-/jac inspect modules          - Module health check
-/jac inspect cooldown [spell] - Cooldown API diagnostics (defaults to AC suggestion)
-/jac inspect defensives       - Defensive system state
-/jac inspect interrupts       - Interrupt/CC queue state
-/jac inspect burst            - Burst-ready cue state
-/jac inspect auras            - Aura cache state
-/jac inspect buffs            - Pre-combat buff checklist state
-/jac inspect rank             - Queue context inference / per-spell ordering
-/jac inspect dots             - Maintained-DoT tracking state for the current target
-/jac inspect perf [reset]     - Queue build rate statistics (requires debug mode)
-/jac inspect chargediag [sp]  - Armed 60s charge-event/secrecy probe
-/jac inspect castdiag         - Armed one-shot cast-interruptibility probe
-/jac inspect healthprobe      - OOC health-detection channel sweep (run while hurt)
-/jac inspect validate [arm]   - Validate every secrecy/API assumption; arm = diff on combat enter/exit
-/jac inspect maintenance      - Tank maintenance slot: aura secrecy, CDM join, per-instance
-                                identity, bridge counters (run IN combat with the buff up)
+/jac help                     - EVERY inspect topic with its one-liner
 /jac find [spell]             - Locate spell on action bars (defaults to AC suggestion)
 /jac why <spell>              - Per-stage verdict on why a spell is/isn't in the queue
 ```
+
+The topic list is **not duplicated here**. `INSPECT_TOPICS` at the top of
+`DebugCommands.lua` is the single source for the slash dispatch, the usage line and
+the `/jac help` listing; a copy in this file would be a fourth list to keep in sync,
+and every previous copy had already drifted. Add a probe by adding one row there.
+
+**When a feature stops working, start with these three**, in order - they separate
+"the client changed" from "the addon broke":
+
+| Command | Answers |
+|---|---|
+| `/jac inspect validate` | Did a secrecy predicate flip, or did one of the techniques the addon rides on (threshold curves, the zero-gate, duration evaluation, stack counts) stop producing its known-correct answer? `arm` diffs across a combat enter/exit. |
+| `/jac inspect errors` | Did we start getting taint or secret-value errors? Run it after a fight. |
+| `/jac inspect secrecy` | Which values actually read plain vs secret right now, in and out of combat. |
+
+Then reach for the probe covering the specific subsystem (`/jac help` lists them).
 
 ## Reading in-game results from disk
 
@@ -296,6 +297,12 @@ NOT repeated here - they live in `Documentation/12.0_COMPATIBILITY.md`. Update t
 - `Documentation/AURA_IDENTITY_12.0.md` - Identifying a SPECIFIC spell's aura in combat: the two
   routes that work, their conditions, and the measured dead ends. Read before proposing any
   "just look up the aura by spell id" solution
+- `Documentation/SECRET_VALUE_READINESS_PROBE.md` - recovering a BOOLEAN from a secret duration
+  (is it on cooldown / is the buff up) via the scratch-Cooldown shown-state probe
+- `Documentation/SECRET_VALUE_THRESHOLD_GATES.md` - recovering a THRESHOLD from a secret value
+  (is it below N% / under N seconds) via the zero-gate + threshold curves. Covers health, power,
+  aura and cooldown durations, and aura stacks. **Read before adding any new threshold, and read
+  its SCOPE RULE before proposing anything that reconstructs a hidden number**
 - `Documentation/VERSION_CONDITIONALS.md` - Version-conditional patterns for 12.0 compatibility
 - `README.md` - User-facing docs, installation, credits
 - `CHANGELOG.md` - Release history (GPL-3.0-or-later since v2.95)
