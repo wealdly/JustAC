@@ -40,6 +40,17 @@ BUILD=$(basename "$SE" | sed -E 's/^SpellEffect\.(.*)\.csv$/\1/')
 
 awk -F',' -v ids="$IDS" '
 function basef(p,  a,n){ n=split(p,a,"/"); return a[n] }
+# Shape of one spell from its own damage rows: "" when it has none (or only ambiguous
+# targets), which is the signal to try its trigger children instead.
+function classify(s,   mt){
+    if(s in AREAD){
+        mt=MAXT[s]
+        if((s in ICONE)||(CONE[s]>0)||(mt>=2 && mt<=8)) return "cleave"
+        return "aoe"
+    }
+    if(s in SINGD) return "st"
+    return ""
+}
 BEGIN{
     split("15 16 24 28 54 104", X, " "); for(i in X) AREA[X[i]]=1;   # area-enemy targets
     split("24 54 104", C, " ");          for(i in C) CONET[C[i]]=1;  # cone-enemy targets
@@ -63,11 +74,22 @@ file ~ /^SpellPower\./ {                                             # point-res
 }
 file ~ /^SpellEffect\./ {
     sid=$NF+0
-    if(!(sid in PLAYER)) next
-    if(($5+0)==30 && (($(NF-10)+0) in POINT)) ENGPT[sid]=1           # ENERGIZE a point pool = builder
+    e=$5+0
+    if((sid in PLAYER) && e==30 && (($(NF-10)+0) in POINT)) ENGPT[sid]=1  # ENERGIZE a point pool = builder
+    # Trigger links, player spells only (only they are ever emitted). A button whose damage
+    # lives in a CHILD spell has no damage row of its own: Whirlwind and Execute are
+    # TRIGGER_SPELL(64), Frostbolt is TRIGGER_MISSILE(32), Blizzard is CREATE_AREATRIGGER(179).
+    # Remember the child so the parent can inherit its shape below.
+    if((sid in PLAYER) && (e==64 || e==32 || e==179 || e==3)) {
+        ch=$17+0                                                     # EffectTriggerSpell
+        if(ch>0) TRIG[sid]=TRIG[sid] " " ch
+    }
+    # Damage targets are recorded for EVERY spell, not just player ones. A triggered child is
+    # usually not a class-family spell, so the old `if(!(sid in PLAYER)) next` gate here threw
+    # away precisely the rows a parent needs to inherit from. Emission is still player-only.
     # Damage = direct SchoolDamage (Effect 2) OR a periodic-damage aura (Effect 6 w/ a
     # periodic-damage EffectAura $2) - the latter picks up DoTs/bleeds the direct pass missed.
-    if(($5+0)!=2 && !(($5+0)==6 && (($2+0) in PERIODIC))) next
+    if(e!=2 && !(e==6 && (($2+0) in PERIODIC))) next
     DMG[sid]=1
     t0=$(NF-2)+0; t1=$(NF-1)+0
     if((t0 in AREA)||(t1 in AREA))     AREAD[sid]=1
@@ -76,17 +98,35 @@ file ~ /^SpellEffect\./ {
     next
 }
 END{
-    for(sid in DMG){
-        if(sid in AREAD){
-            mt=MAXT[sid]
-            if((sid in ICONE)||(CONE[sid]>0)||(mt>=2 && mt<=8)) arch="cleave"
-            else arch="aoe"
-        } else if(sid in SINGD){
-            arch="st"
-        } else continue                                             # ambiguous -> untagged
+    for(sid in PLAYER){
+        arch=classify(sid); via=""
+        if(arch==""){
+            # No damage row of its own - inherit from whatever it triggers. The CHILD is what
+            # actually hits, so it decides st/cleave/aoe; the PARENT is what the player presses,
+            # so it keeps its own range. First child that resolves wins.
+            if(sid in TRIG){
+                n=split(TRIG[sid], kids, " ")
+                for(i=1;i<=n;i++){
+                    if(kids[i]=="") continue
+                    a=classify(kids[i]+0)
+                    if(a!=""){ arch=a; via=kids[i]; break }
+                }
+            }
+        }
+        if(arch=="") continue                                       # ambiguous -> untagged
         rmax=RANGE[MRANGE[sid]]
+        # RangeMax 100 is the "no target-range check" sentinel, not a 100-yard spell, and it
+        # does NOT imply either answer: it covers self-centered melee AoE (Whirlwind,
+        # Consecration) and ground-targeted ranged AoE (Earthquake, Frozen Orb) alike. For an
+        # INHERITED entry that is a new claim we cannot substantiate, so skip it and leave the
+        # spell neutral - the same "never a wrong boost" rule that left it untagged before.
+        # Directly-classified spells carrying this sentinel are left exactly as they were:
+        # ~1000 entries, a mix of right and wrong, and re-deciding them is its own pass, not a
+        # side effect of this one.
+        if(via!="" && rmax>=100) continue
         rng=(rmax<=8)?"melee":"ranged"
         nm=NAME[sid]; gsub(/[\t\r"]/,"",nm)
+        if(via!="") nm=nm " (via " via ")"
         print arch "\t" sid "\t" rng "\t" nm
     }
     for(sid in PLAYER){                                             # builder/spender (cost wins over energize)

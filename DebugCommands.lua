@@ -530,8 +530,23 @@ function DebugCommands.ModuleDiagnostics(addon)
     local hasAPI = C_AssistedCombat and C_AssistedCombat.GetRotationSpells
     addon:Print("  C_AssistedCombat: " .. (hasAPI and "|cff00ff00OK|r" or "|cffff0000MISSING|r"))
 
-    local assistedMode = GetCVarBool("assistedMode")
-    addon:Print("  assistedMode CVar: " .. (assistedMode and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
+    -- IsAvailable() is the authority, not the CVar. On 12.1.0 the assistedMode CVar reads
+    -- false while IsAvailable() returns true and the rotation is live - it was the master
+    -- switch when this line was written, and no longer answers for the API. Reporting the
+    -- CVar first put a red DISABLED directly under a healthy "C_AssistedCombat: OK", which
+    -- is a diagnostic sending you after a problem you do not have. Lead with the truth and
+    -- keep the CVar as a footnote, distinguishing "off" from "no such CVar".
+    local available, reason
+    if C_AssistedCombat and C_AssistedCombat.IsAvailable then
+        available, reason = C_AssistedCombat.IsAvailable()
+    end
+    addon:Print("  IsAvailable(): " .. (available and "|cff00ff00YES|r"
+        or ("|cffff0000NO|r" .. (reason and (" (" .. tostring(reason) .. ")") or ""))))
+
+    local cvar = GetCVar("assistedMode")
+    addon:Print("  assistedMode CVar: " .. (cvar == nil and "|cff808080not present on this client|r"
+        or (GetCVarBool("assistedMode") and "|cff00ff00on|r" or "|cffffff00off|r")
+           .. " |cff808080(informational - IsAvailable() decides)|r"))
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI then
@@ -1664,9 +1679,21 @@ function DebugCommands.ContextRankDiagnostics(addon)
     end
     addon:Print("Dying-target guard: " .. dyingWhy)
 
+    -- State the ACTIVE ordering mode, not just the disabled case. In "simc" - the default -
+    -- the sort key is a COMPOSITE (context * stride + SimC position), applied within buckets
+    -- that run procs -> normal -> unavailable. Printing the bare context rank there shows the
+    -- major key only, so a spell sunk for being uncastable reads as a mis-sorted one. That is
+    -- how a healthy queue (Rip rank=4 below Rake rank=5, because Rip was in the sunk bucket)
+    -- looks like an ordering bug.
     local profile = addon.db and addon.db.profile
-    if profile and profile.contextOrder == "off" then
-        addon:Print("|cffffff00Context ordering is OFF - ranks below are not applied.|r")
+    local mode = (profile and profile.contextOrder) or "simc"
+    if mode == "off" then
+        addon:Print("|cffffff00Ordering: OFF|r - source order; ranks below are NOT applied.")
+    elseif mode == "ac" then
+        addon:Print("|cff00ff00Ordering: ac|r - the rank below IS the sort key.")
+    else
+        addon:Print("|cff00ff00Ordering: simc|r - sort key is |cffffff00ctx*stride + simc|r, "
+            .. "bucketed procs -> normal -> unavailable. The rank below is the ctx part only.")
     end
 
     addon:Print("")
@@ -1683,8 +1710,22 @@ function DebugCommands.ContextRankDiagnostics(addon)
             local range = SpellDB and SpellDB.GetRange and SpellDB.GetRange(sid)
             local role = SpellDB and SpellDB.GetRole and SpellDB.GetRole(sid)
             local gate = SpellDB and SpellDB.GetGate and SpellDB.GetGate(sid)
-            local rankTag = (i == 1) and "|cff888888AC slot|r"
-                or ("rank=" .. tostring(SpellQueue.DebugRankSpell and SpellQueue.DebugRankSpell(sid)))
+            -- In simc mode show the SimC component too: context alone cannot explain the
+            -- order, and the pair does - two spells sharing a context rank are separated by
+            -- it, and one sitting below a worse context rank was bucketed, not mis-sorted.
+            local rankTag
+            if i == 1 then
+                rankTag = "|cff888888AC slot|r"
+            else
+                rankTag = "rank=" .. tostring(SpellQueue.DebugRankSpell and SpellQueue.DebugRankSpell(sid))
+                if mode ~= "off" and mode ~= "ac" then
+                    local RI = LibStub("JustAC-RotationImport", true)
+                    local simcCtx = (ctx.arch == "aoe" and "aoe")
+                        or (ctx.arch == "cleave" and "cleave") or "st"
+                    local rec = RI and RI.GetEntry and RI.GetEntry(sid, simcCtx)
+                    rankTag = rankTag .. " simc=" .. tostring((rec and rec.rank) or "unranked")
+                end
+            end
             addon:Print(string.format("  %d. %s (%d)  arch=%s range=%s role=%s gate=%s  %s",
                 i, spellName(sid), sid, tostring(arch), tostring(range), tostring(role), tostring(gate), rankTag))
         else
@@ -4109,6 +4150,28 @@ function DebugCommands.MaintenanceProbe(addon)
     end
     addon:Print("direct GetPlayerAuraBySpellID -> " .. SafeSecret(direct))
 
+    -- The last untested crack in the tainted-legal aura surface. Of the six C_UnitAuras
+    -- functions marked AllowedWhenTainted, every live-state one is blocked by a second flag:
+    -- GetAuraBaseDuration / GetRefreshExtendedDuration carry RequiresUnitAuraAccess (the
+    -- "cannot be accessed when secret while tainted" denial), and this one carries
+    -- RequiresNonSecretAura - yet ALSO SecretWhenUnitAuraRestricted, which says the opposite.
+    -- If it returns secret-but-PRESENT data rather than nil, that secret is something the
+    -- zero-gate could turn into a branchable up/down and the maintenance slot would no longer
+    -- need the Cooldown Manager at all. nil here closes the question for good.
+    if C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID then
+        local okU, u = pcall(C_UnitAuras.GetUnitAuraBySpellID, "player", entry.aura)
+        if not okU then
+            addon:Print("GetUnitAuraBySpellID -> |cffff6600THREW|r (access denied while tainted)")
+        elseif u == nil then
+            addon:Print("GetUnitAuraBySpellID -> |cff888888nil|r (RequiresNonSecretAura wins - route closed)")
+        else
+            addon:Print(string.format(
+                "GetUnitAuraBySpellID -> |cff2ecc71DATA|r inst=%s exp=%s dur=%s"
+                .. "  |cffffff00<- gateable if these read secret|r",
+                SafeSecret(u.auraInstanceID), SafeSecret(u.expirationTime), SafeSecret(u.duration)))
+        end
+    end
+
     -- Q2/Q3. NEVER call item:GetSpellID() - it returns the SECRET auraSpellID first. Only
     -- GetCooldownInfo (static layout data) and GetAuraSpellInstanceID (already materialized
     -- plain by untainted code) are safe to touch here.
@@ -4293,6 +4356,11 @@ function DebugCommands.MaintenanceProbe(addon)
                 addon:Print(string.format("   |cff2ecc71EXACT IDENTITY|r via instance %d - no frame, no CDM needed", hit))
             elseif #ids == 0 then
                 addon:Print("   |cffff6600enumerated ZERO|r - auras silently absent, not secret")
+            elseif readable > 0 and secretN == 0 then
+                -- Nothing is hidden, so "ours is secret" cannot be the explanation: the buff
+                -- is simply not applied right now. Saying "secret" here sends you hunting a
+                -- secrecy problem when the answer is "re-run with it up".
+                addon:Print("   |cffff6600no instance is ours|r - and nothing is secret, so the buff is not applied; re-run with it up")
             elseif readable > 0 then
                 addon:Print("   |cffff6600readable instances exist, none is ours|r - ours is among the secret set")
             else

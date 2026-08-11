@@ -175,10 +175,15 @@ function BlizzardAPI.IsSecretZero(v)
     return not text
 end
 
+--- 12.1.0: GetAuraDataByIndex is ACCESS-DENIED to a tainted caller while auras are secret -
+--- it throws rather than returning secrets, and the denial applies even where the caller has
+--- already read that aura's fields plainly. So the pcall is not belt-and-braces: this is
+--- reached from RefreshAuraCache's NOT-secret branch, where a readable NeverSecret aura in
+--- combat still cannot be re-read by index. nil,nil is the existing "timing unknown" answer.
 function BlizzardAPI.GetAuraTiming(unit, index, filter)
     if not C_UnitAuras or not C_UnitAuras.GetAuraDataByIndex then return nil, nil end
-    local aura = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
-    if not aura then return nil, nil end
+    local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+    if not ok or not aura then return nil, nil end
     return Unsecret(aura.duration), Unsecret(aura.expirationTime)
 end
 

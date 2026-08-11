@@ -60,6 +60,20 @@ try {
             $code = 2
         }
     }
+    # Locale keys, whole-addon runs only. A key the code asks for but no locale defines
+    # throws "Missing entry for '<key>'" in game, and comparing the locale files against
+    # each other cannot see it - they are all equally missing it. Source is the only truth.
+    if (-not $Files) {
+        $py = Get-Command python -ErrorAction SilentlyContinue
+        if ($py) {
+            $locales = & $py.Source (Join-Path $tools 'audit_locales.py') 2>&1
+            if ($LASTEXITCODE -ne 0 -or ($locales -match '^FAIL')) {
+                Write-Host ''
+                $locales | ForEach-Object { Write-Host $_ }
+                if ($code -eq 0) { $code = 1 }
+            }
+        }
+    }
 }
 finally { Pop-Location }
 exit $code

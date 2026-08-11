@@ -306,12 +306,20 @@ end
 -- Called from JustAC:OnUnitAura with the updateInfo payload.
 -- Processes addedAuras (new auras with possibly non-secret data even in combat)
 -- and removedAuraInstanceIDs (clean removal from instance maps).
+--
+-- 12.1.0: the payload LISTS are themselves secret in combat, not just the fields
+-- inside them - ipairs() on one throws "table expected, got secret" and aborts the
+-- whole UNIT_AURA handler, taking the queue's cache invalidation down with it. So
+-- every list is unwrapped through Unsecret() before iterating: readable means the
+-- incremental path runs as before, secret means we skip it and fall back to the
+-- trusted out-of-combat snapshot (already this module's fail-open direction).
 --------------------------------------------------------------------------------
 function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     if not updateInfo then return end
-    
-    if updateInfo.removedAuraInstanceIDs then
-        for _, instanceID in ipairs(updateInfo.removedAuraInstanceIDs) do
+
+    local removed = BlizzardAPI.Unsecret(updateInfo.removedAuraInstanceIDs)
+    if removed then
+        for _, instanceID in ipairs(removed) do
             -- Record the spellID before removing, so trusted cache merge doesn't re-add it
             local removedSpellID = instanceToSpellMap[instanceID]
             if removedSpellID then
@@ -329,16 +337,17 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
     -- In 12.0, addedAuras is an array of AuraData tables for newly applied auras.
     -- The spellId/name may be secret in combat, but we try anyway - if readable,
     -- we get immediate mapping; if secret, match against pendingActivations by timing.
-    if updateInfo.addedAuras then
+    local added = BlizzardAPI.Unsecret(updateInfo.addedAuras)
+    if added then
         local now = GetTime()
-        
+
         for i = #pendingActivations, 1, -1 do
             if now - pendingActivations[i].time > PENDING_ACTIVATION_WINDOW then
                 table_remove(pendingActivations, i)
             end
         end
-        
-        for _, auraData in ipairs(updateInfo.addedAuras) do
+
+        for _, auraData in ipairs(added) do
             local instanceID = auraData.auraInstanceID
             if instanceID then
                 local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
