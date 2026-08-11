@@ -219,7 +219,7 @@ L["Show Gap-Closer Glow desc"] = "在衝鋒技能圖示上顯示金色發光效�
 
 -- Burst-ready cue
 L["Burst Ready Cue"] = "爆發就緒提示"
-L["Burst Ready Cue desc"] = "當你的專精主要爆發冷卻技能就緒並出現在佇列中時顯示紫色光效——提示你開啟爆發。"
+L["Burst Ready Cue desc"] = "當你的專精主要爆發冷卻技能就緒並出現在佇列中時顯示紫色光效——提示你開啟爆發。\n\n當唯一還在與你戰鬥的敵人快死時，光效不會亮起；首領除外——那正是該傾瀉所有冷卻的時候。"
 L["Burst Triggers"] = "爆發觸發技能"
 L["Burst Triggers desc"] = "哪些技能會顯示爆發就緒提示。預設清單來自 SimulationCraft 為你的專精標記的爆發窗口（如無則使用職業預設值）。在下方新增技能即可改用自己的清單。自己新增的觸發技能只要就緒就會亮起。"
 L["Burst Triggers Active"] = "生效（%s）："

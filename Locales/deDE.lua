@@ -219,7 +219,7 @@ L["Show Gap-Closer Glow desc"] = "Goldenes Leuchten auf Annäherungssymbolen anz
 
 -- Burst-ready cue
 L["Burst Ready Cue"] = "Burst-Hinweis"
-L["Burst Ready Cue desc"] = "Lila Leuchten auf dem großen Angriffs-Cooldown Eurer Spezialisierung, wenn er einsatzbereit in der Leiste erscheint - das Zeichen, den Burst zu starten."
+L["Burst Ready Cue desc"] = "Lila Leuchten auf dem großen Angriffs-Cooldown Eurer Spezialisierung, wenn er einsatzbereit in der Leiste erscheint - das Zeichen, den Burst zu starten.\n\nEs bleibt dunkel, wenn der einzige Gegner, der Euch noch bekämpft, fast tot ist - außer bei Bossen, denn genau dann sollt Ihr alles verbrauchen."
 L["Burst Triggers"] = "Burst-Auslöser"
 L["Burst Triggers desc"] = "Welche Zauber den Burst-Hinweis erhalten. Die Standardliste stammt aus den Burst-Fenster-Markierungen von SimulationCraft für Eure Spezialisierung (oder aus kuratierten Klassen-Standardwerten). Fügt unten Zauber hinzu, um stattdessen eine eigene Liste zu verwenden. Eigene Auslöser leuchten immer, sobald sie bereit sind."
 L["Burst Triggers Active"] = "Aktiv (%s):"

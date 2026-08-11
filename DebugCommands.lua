@@ -4,19 +4,207 @@
 local DebugCommands = LibStub:NewLibrary("JustAC-DebugCommands", 37)
 if not DebugCommands then return end
 
--- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
--- plain string. Event args and struct fields can be secret in ways IsSecretValue
--- misses, so force the value through the operations a secret throws on (compare +
--- concat) inside a pcall and treat any throw as secret.
-local function SafeSecret(v)
-    if v == nil then return "nil" end
+--------------------------------------------------------------------------------
+-- Shared probe primitives.
+--
+-- Every probe in this file has to answer the same first question - "did that read
+-- come back plain, secret, absent, or blocked?" - and the whole point of the file
+-- is that those answers stay trustworthy when the client changes underneath us. So
+-- there is ONE definition of each, and the probes format it rather than re-deriving
+-- it. Copies drift, and a probe that disagrees with the next probe about what
+-- "secret" means is worse than no probe at all: it sends you looking in the wrong
+-- layer. (One did exactly that - the heal grid used the weak test below and would
+-- print a struct field as plain when it was not.)
+--------------------------------------------------------------------------------
+
+-- The ENGINE primitive, not our wrapper around it. BlizzardAPI.IsSecretValue is a
+-- nil-guarded passthrough to exactly this, and a probe should measure the client
+-- rather than the addon's opinion of the client - if the two ever disagree, that
+-- disagreement is the finding.
+local function IsSecret(v)
+    return v ~= nil and issecretvalue ~= nil and issecretvalue(v) or false
+end
+
+-- The STRONG secrecy test, and the reason SafeSecret is not just IsSecret: event
+-- args and struct fields can be secret in ways IsSecretValue misses, so force the
+-- value through the operations a secret throws on (compare + concat) inside a
+-- pcall and treat any throw as secret.
+-- @return string|nil plain text, or nil when the value is secret
+local function PlainText(v)
     local ok, s = pcall(function()
         local str = tostring(v)
         local _ = (str == "")
         return str .. ""
     end)
     if ok and type(s) == "string" then return s end
-    return "<secret>"
+    return nil
+end
+
+-- Print-safe stringify: "nil" for nil, "<secret>" for secret values, else the
+-- plain string.
+local function SafeSecret(v)
+    if v == nil then return "nil" end
+    return PlainText(v) or "<secret>"
+end
+
+--- Perform one candidate read and classify what came back. THE primitive every
+--- probe's per-read verdict is built on.
+--- @param fn function the read, called under pcall
+--- @param cap number|nil truncate the plain text to this many characters
+--- @return string status one of "err" | "nil" | "secret" | "plain"
+--- @return string text the error message, "nil", "<secret>", or the plain value
+--- @return any value the raw value, for probes that need to measure it further
+local function ProbeRead(fn, cap)
+    local ok, v = pcall(fn)
+    if not ok then
+        return "err", tostring(v):gsub("^.-:%d+: ", ""):sub(1, 52), nil
+    end
+    if v == nil then return "nil", "nil", nil end
+    local s = PlainText(v)
+    if not s then return "secret", "<secret>", v end
+    if cap and #s > cap then s = s:sub(1, cap) .. ".." end
+    return "plain", s, v
+end
+
+--- Forward declaration: ClassifyRead is defined with the secrecy sweeps further
+--- down (it needs their branch/compare columns), but ProbeReport below closes over
+--- it. Without this the closure would bind a nil global instead of the upvalue.
+local ClassifyRead
+
+--- The line shape the capability sweeps print: "  <label> = <classified read>".
+--- Returns a closure so the sweeps read as a flat list of the things they measure
+--- rather than repeating the formatting on every row.
+local function ProbeReport(addon)
+    return function(label, fn)
+        addon:Print("  " .. label .. " = " .. ClassifyRead(fn))
+    end
+end
+
+--- Walk a global frame path, nil-safe at every hop: FramePath("PlayerFrame",
+--- "PlayerFrameContent", ...). Blizzard renames and re-nests these between
+--- patches, which is the whole reason the probes read them - so a missing hop is
+--- an ANSWER ("that node is gone"), not an error.
+local function FramePath(root, ...)
+    local node = _G[root]
+    for i = 1, select("#", ...) do
+        if node == nil then return nil end
+        node = node[select(i, ...)]
+    end
+    return node
+end
+
+--- The player health bar, wherever it currently lives. Two probes read this and
+--- they must agree: if one resolved the frame and the other did not, the reports
+--- would disagree about whether the FRAME moved or the READ broke - which is the
+--- exact question they exist to answer. The retail path first, then the legacy
+--- alias a unit-frame replacement addon may still expose.
+local function PlayerHealthBar()
+    return FramePath("PlayerFrame", "PlayerFrameContent", "PlayerFrameContentMain",
+                     "HealthBarsContainer", "HealthBar")
+        or FramePath("PlayerFrame", "healthbar")
+end
+
+--- "Name (id)" for a spell, or "? (id)" when the client has not streamed it in.
+local function SpellLabel(id)
+    local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    return (n or "?") .. " (" .. tostring(id) .. ")"
+end
+
+--- One colour per status, so a green cell means the same thing in every probe.
+local function ProbeColour(status)
+    return (status == "err" and "|cffff6666") or (status == "nil" and "|cff888888")
+        or (status == "secret" and "|cffff6600") or "|cff2ecc71"
+end
+
+--- ProbeRead, pre-coloured for a report line.
+--- @return string coloured cell
+--- @return string status
+--- @return any value
+local function ProbeCell(fn, cap)
+    local status, text, value = ProbeRead(fn, cap)
+    return ProbeColour(status) .. text .. "|r", status, value
+end
+
+--------------------------------------------------------------------------------
+-- THE topic registry: `/jac inspect <topic>` -> method, argument spec, one-liner.
+--
+-- One table, three consumers - the dispatch and the usage line in Options/Core,
+-- and the help listing below. It used to be three hand-kept lists, and they had
+-- drifted: nine probes were dispatchable but absent from the help, so the only way
+-- to find them was to read the source. A probe you cannot find is a probe you do
+-- not have on the day the client changes under you.
+--
+-- ORDER MATTERS for the listing: entries run roughly general -> specific, so add
+-- new ones next to the thing they diagnose rather than at the end.
+--------------------------------------------------------------------------------
+local INSPECT_TOPICS = {
+    { "modules",     "ModuleDiagnostics",        nil,  "Check module health" },
+    { "cooldown",    "TestCooldownAPIs",         "[spell]", "Test cooldown APIs (defaults to AC suggestion)" },
+    { "defensives",  "DefensiveDiagnostics",     nil,  "Diagnose defensive system" },
+    { "interrupts",  "InterruptDiagnostics",     nil,  "Diagnose interrupt/CC queue state" },
+    { "burst",       "BurstDiagnostics",         nil,  "Burst-ready cue state" },
+    { "auras",       "AuraDiagnostics",          nil,  "Diagnose aura cache state" },
+    { "buffs",       "PrecombatBuffDiagnostics", nil,  "Diagnose pre-combat buff checklist (out of combat)" },
+    { "groupbuff",   "GroupBuffProbe",           nil,  "Per-member raid-buff detection, every gate's answer" },
+    { "perf",        "PerformanceDiagnostics",   "[reset]", "Queue build rate + threshold-gate cost (requires debug mode)" },
+    { "rank",        "ContextRankDiagnostics",   nil,  "Queue context inference and per-spell ordering ranks" },
+    { "dots",        "DotDiagnostics",           nil,  "Maintained-DoT tracking state for the current target" },
+    { "gates",       "GateDiagnostics",          nil,  "SimC gate layer: buff-window tracker + live gate eval (in combat)" },
+    { "simcgates",   "SimcGateProbe",            "[st|aoe|cleave]", "Evaluate this spec's SimC gates live, with their inputs" },
+    { "blank",       "QueueBlankReport",         nil,  "Why the queue last went empty (run right after it vanishes)" },
+    { "glows",       "GlowInventory",            nil,  "Inventory frames overlapping the queue (orphan-glow reports)" },
+    { "maintenance", "MaintenanceProbe",         nil,  "Can the tank maintenance slot bind its aura exactly? (in combat)" },
+    { "maintlog",    "MaintenanceLog",           "[on|off|clear]", "Record maintenance state 1/s to SavedVariables" },
+    { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
+    { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
+    { "timeline",    "EncounterTimelineProbe",   nil,  "Can we see a big hit coming? Boss-mechanic timeline read" },
+
+    -- Capability probes: run these when a feature stops working and you need to
+    -- know whether the CLIENT changed or the addon did.
+    { "validate",    "ValidateAssumptions",      "[arm]", "START HERE if something stopped working: every secrecy/API assumption plus a self-test of each technique the addon rides on; arm = diff on combat enter/exit" },
+    { "errors",      "ErrorCapture",             "[off|clear|show]", "Capture taint/secret errors (run after a fight)" },
+    { "secrecy",     "SecrecyProbe",             nil,  "Measure which combat values read plain vs secret (in AND out of combat)" },
+    { "secrecymap",  "SecrecyMapProbe",          nil,  "One-shot OOC: per-spell/power SecrecyLevel exemption dump" },
+    { "durcurve",    "DurationCurveProbe",       "[spellID]", "Duration thresholds: percent + seconds curves, and the value-leak check" },
+    { "durprobe",    "DurationProbe",            "[spell]", "Verify the scratch-Cooldown readiness probe on a spell" },
+    { "textlaunder", "TextLaunderProbe",         nil,  "The FontString zero-gate: does secret text launder back plain?" },
+    { "healthprobe", "HealthProbe",              nil,  "Sweep every OOC health-detection channel (run while hurt)" },
+    { "healthgate",  "HealthGatePreview",        nil,  "Toggle live swatches proving the curve gate tracks health" },
+    { "healprobe",   "HealProbe",                "[arm|show|watch]", "Heal-mode party probes: low-bridge, roster gates, curves, AC feed" },
+    { "resource",    "ResourceDiagnostics",      nil,  "Probe secret-safe resource inference from usability" },
+    { "resourcepoints", "ResourcePointProbe",    nil,  "Do class resource points (combo/holy power/chi) read plain?" },
+    { "aoe",         "AoeDiagnostics",           nil,  "Probe secret-safe enemy counting (AC-independent AoE detection)" },
+    { "rotation",    "RotationOrderProbe",       nil,  "Is GetRotationSpells' tail live-ordered? (A/B across state)" },
+    { "stacks",      "StacksProbe",              nil,  "OOC: is a stacking buff N aura instances or one secret counter?" },
+    { "auraids",     "AuraInstanceIdsProbe",     nil,  "One-shot: are aura instance-ID lists plain/countable in combat?" },
+    { "cdfields",    "CooldownFieldsProbe",      nil,  "One-shot: NeverSecret cooldown fields + proc overlay per rotation spell" },
+    { "cvitems",     "CooldownViewerItemsProbe", nil,  "One-shot: Cooldown Manager item booleans (CD flash, buff active, pandemic)" },
+    { "frames",      "FrameStateProbe",          nil,  "One-shot: laundered frame booleans (low HP, capped power, absorbs)" },
+    { "enginesig",   "EngineSignalsProbe",       nil,  "One-shot: unused engine signals (batch auras, classifiers, cast-on-me)" },
+    { "enrage",      "EnrageProbe",              "[off]", "Probe secret-safe enrage detection (DispelType 9 color curve)" },
+    { "enragelog",   "EnrageLog",                "[off|clear]", "Log enrage detections to SavedVariables" },
+    { "castdiag",    "CastDiagnostics",          nil,  "Arm a one-shot cast-interruptibility probe" },
+    { "chargediag",  "ChargeDiagnostics",        "[spell]", "Arm a 60s charge-event/secrecy probe" },
+    { "selfcast",    "SelfCastProbe",            nil,  "Arm a capture of own-cast info secrecy (cast + channel something)" },
+    { "locwatch",    "LossOfControlWatch",       nil,  "Arm a 10min loss-of-control capture (get CC'd; prints real locType)" },
+    { "audit",       "ProbeSession",             "[off|clear]", "ARM the probe battery: auto-snapshots on combat enter/exit" },
+}
+
+--- topic -> method name, for the slash dispatch.
+function DebugCommands.GetInspectTopics()
+    local map = {}
+    for i = 1, #INSPECT_TOPICS do map[INSPECT_TOPICS[i][1]] = INSPECT_TOPICS[i][2] end
+    return map
+end
+
+--- The one-line "Topics: ..." usage string.
+function DebugCommands.GetInspectUsage()
+    local parts = {}
+    for i = 1, #INSPECT_TOPICS do
+        local t = INSPECT_TOPICS[i]
+        parts[i] = t[3] and (t[1] .. " " .. t[3]) or t[1]
+    end
+    return "Topics: " .. table.concat(parts, ", ")
 end
 
 --------------------------------------------------------------------------------
@@ -33,45 +221,13 @@ function DebugCommands.ShowHelp(addon)
     addon:Print("/jac profile list - List profiles")
     addon:Print("/jac find [spell] - Find spell on action bars (defaults to AC suggestion)")
     addon:Print("/jac why <spell> - Explain why a spell is or isn't showing in the queue")
-    addon:Print("/jac inspect modules - Check module health")
-    addon:Print("/jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)")
-    addon:Print("/jac inspect defensives - Diagnose defensive system")
-    addon:Print("/jac inspect interrupts - Diagnose interrupt/CC queue state")
-    addon:Print("/jac inspect burst - Burst-ready cue state")
-    addon:Print("/jac inspect auras - Diagnose aura cache state")
-    addon:Print("/jac inspect buffs - Diagnose pre-combat buff checklist (out of combat)")
-    addon:Print("/jac inspect perf - Queue build rate statistics (requires debug mode)")
-    addon:Print("/jac inspect perf reset - Reset build counters")
-    addon:Print("/jac inspect rank - Queue context inference and per-spell ordering ranks")
-    addon:Print("/jac inspect dots - Maintained-DoT tracking state for the current target")
-    addon:Print("/jac inspect gates - SimC gate layer: buff-window tracker + live gate eval (run in combat)")
-    addon:Print("/jac inspect aoe - Probe secret-safe enemy counting (AC-independent AoE detection)")
-    addon:Print("/jac inspect resource - Probe secret-safe resource inference from usability")
-    addon:Print("/jac inspect rotation - Probe whether GetRotationSpells' tail is live-ordered (A/B across state)")
-    addon:Print("/jac inspect resourcepoints - Probe whether class resource points (combo/holy power/chi) read plain")
-    addon:Print("/jac inspect secrecy - Measure which combat values actually read plain vs secret (run in AND out of combat)")
-    addon:Print("/jac inspect stacks - Out of combat: is a stacking buff N aura instances or one secret counter?")
-    addon:Print("/jac inspect maintenance - Can the tank maintenance slot bind its aura exactly? (run IN combat)")
-    addon:Print("/jac inspect maintlog [on|off|clear] - Record maintenance state 1/s to SavedVariables")
-    addon:Print("/jac inspect enrage [off] - Probe secret-safe enrage detection (DispelType 9 color curve)")
-    addon:Print("/jac inspect durprobe [spell] - Verify the scratch-Cooldown readiness probe on a spell")
-    addon:Print("/jac inspect locwatch - Arm a 10min loss-of-control capture (get CC'd; prints real locType)")
-    addon:Print("/jac inspect chargediag [spell] - Arm a 60s charge-event/secrecy probe")
-    addon:Print("/jac inspect castdiag - Arm a one-shot cast-interruptibility probe")
-    addon:Print("/jac inspect healthprobe - Sweep every OOC health-detection channel (run while hurt)")
-    addon:Print("/jac inspect healthgate - Toggle live on-screen swatches proving the curve gate tracks health")
-    addon:Print("/jac inspect healprobe [arm|show|watch] - Heal-mode party probes: low-bridge, roster gates, curves, dispel filter, AC feed")
-    addon:Print("/jac inspect validate [arm] - Validate every secrecy/API assumption; arm = diff on combat enter/exit")
-    addon:Print("/jac inspect audit [off|clear] - ARM the 68887 probe battery: auto-snapshots on combat enter/exit to SavedVariables")
-    addon:Print("/jac inspect selfcast - Arm a capture of own-cast info secrecy (cast + channel something)")
-    addon:Print("/jac inspect auraids - One-shot: are aura instance-ID lists plain/countable in combat?")
-    addon:Print("/jac inspect blank - Why the queue last went empty (run right after it vanishes)")
-    addon:Print("/jac inspect ccdb [clear] - Mob types learned to be CC-immune (persists across sessions)")
-    addon:Print("/jac inspect cdfields - One-shot: NeverSecret cooldown fields + proc overlay per rotation spell")
-    addon:Print("/jac inspect secrecymap - One-shot OOC: per-spell/power SecrecyLevel exemption dump")
-    addon:Print("/jac inspect frames - One-shot: laundered frame booleans (low HP, capped power, absorbs)")
-    addon:Print("/jac inspect cvitems - One-shot: Cooldown Manager item booleans (CD flash, buff active, pandemic)")
-    addon:Print("/jac inspect enginesig - One-shot: unused engine signals (batch auras, spell classifiers, cast-on-me, absorb clamps)")
+    for i = 1, #INSPECT_TOPICS do
+        -- Indexed, NOT unpack(): the no-argument rows carry a nil in slot 3, and the
+        -- length of a table with a hole is undefined - unpack would truncate them.
+        local t = INSPECT_TOPICS[i]
+        addon:Print(string.format("/jac inspect %s%s - %s",
+            t[1], t[3] and (" " .. t[3]) or "", t[4]))
+    end
     addon:Print("/jac hud - Toggle a live diagnostic HUD (context, source, AC pick, buff windows)")
     addon:Print("/jac help - Show this help")
 end
@@ -83,20 +239,11 @@ end
 -- every read is pcall-guarded, nothing is written or branched on a secret.
 --------------------------------------------------------------------------------
 function DebugCommands.HealthProbe(addon)
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local IsSecret = BlizzardAPI and BlizzardAPI.IsSecretValue or function() return false end
-    local function safe(v)
-        if IsSecret(v) then return "<secret>" end
-        local ok, s = pcall(tostring, v)
-        return ok and s or "<?>"
-    end
-    -- Read via pcall; classify: SEALED (threw), <secret>, or the plain value.
-    local function rd(fn)
-        local ok, v = pcall(fn)
-        if not ok then return "|cffff6666SEALED|r" end
-        if IsSecret(v) then return "|cffff6600<secret>|r" end
-        return "|cff00ff00" .. safe(v) .. "|r"
-    end
+    -- Read via pcall; classify: threw / <secret> / the plain value. The shared
+    -- primitive uses the STRONGER secrecy test than this probe used to (compare +
+    -- concat, not IsSecretValue alone), so struct fields stop reading as plain.
+    local safe = SafeSecret
+    local rd = ProbeCell
 
     addon:Print("===== OOC Health Probe (run while HURT) =====")
 
@@ -156,11 +303,7 @@ function DebugCommands.HealthProbe(addon)
     -- E. Frame-derived reads: Blizzard frames consume the secret engine-side;
     --    is any RESULTING widget state an ordinary number?
     addon:Print("E. frame-derived reads:")
-    local hb = PlayerFrame and PlayerFrame.PlayerFrameContent
-        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain
-        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer
-        and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer.HealthBar
-    hb = hb or (PlayerFrame and PlayerFrame.healthbar)
+    local hb = PlayerHealthBar()
     if hb then
         addon:Print("  PlayerFrame bar: GetValue=" .. rd(function() return hb:GetValue() end)
             .. " minmax=" .. rd(function() local _, mx = hb:GetMinMaxValues(); return mx end))
@@ -1365,7 +1508,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
             addon:Print(string.format("  group %d: rotation-listed: %s", gi,
                 #inRot > 0 and table.concat(inRot, ", ") or "|cff888888none|r"))
         end
-        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal) or {}) do
+        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
+                addon.db.profile.precombatBuffs.topoffThreshold) or {}) do
             addon:Print("  offering: " .. SpellName(s))
         end
     end
@@ -1438,11 +1582,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         -- plain number, width/barWidth = exact health fraction even where UnitHealth
         -- is secret - that would replace the activity heuristic outright.
         local function FillRatio()
-            local hb = PlayerFrame and PlayerFrame.PlayerFrameContent
-                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain
-                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer
-                and PlayerFrame.PlayerFrameContent.PlayerFrameContentMain.HealthBarsContainer.HealthBar
-            hb = hb or (PlayerFrame and PlayerFrame.healthbar)
+            local hb = PlayerHealthBar()
             if not hb then return "|cff888888no healthbar frame found|r" end
             local ok, ratio = pcall(function()
                 local tex = hb.GetStatusBarTexture and hb:GetStatusBarTexture()
@@ -1457,7 +1597,8 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         end
         addon:Print("  health-bar fill-width probe: " .. FillRatio())
         local surfaced = false
-        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal) or {}) do
+        for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
+                addon.db.profile.precombatBuffs.topoffThreshold) or {}) do
             if s == sid then surfaced = true break end
         end
         addon:Print("  would surface: " .. (surfaced and "|cff00ff00YES|r" or "|cffff6666NO|r"))
@@ -1502,6 +1643,26 @@ function DebugCommands.ContextRankDiagnostics(addon)
         tostring(ctx.execute),
         ctx.executeLatched and " |cffadd8e6(latched)|r" or "",
         tostring(ctx.outOfMelee)))
+    -- Wasted-cooldown guard. Prints WHY it is off as well as whether it is: the
+    -- enemy count and the boss read are the two clauses that silently keep it off,
+    -- and a guard that never fires looks identical to one that is broken.
+    -- Fetched locally: BlizzardAPI is not a file-local here, and reading it bare
+    -- would be a nil global (a probe that errors instead of reporting).
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local dyingWhy
+    if ctx.dying then
+        dyingWhy = "|cffff8800sinking burst cooldowns|r"
+    elseif (ctx.enemies or 0) ~= 1 then
+        dyingWhy = string.format("|cff888888off - engaged enemies = %d (needs exactly 1)|r",
+            ctx.enemies or 0)
+    elseif BAPI and BAPI.IsTargetBoss and BAPI.IsTargetBoss() then
+        dyingWhy = "|cff888888off - target is a boss (execute phase, burn everything)|r"
+    elseif not UnitExists("target") then
+        dyingWhy = "|cff888888off - no target|r"
+    else
+        dyingWhy = "|cff888888off - target above the threshold (or gate unavailable)|r"
+    end
+    addon:Print("Dying-target guard: " .. dyingWhy)
 
     local profile = addon.db and addon.db.profile
     if profile and profile.contextOrder == "off" then
@@ -1569,13 +1730,18 @@ function DebugCommands.DotDiagnostics(addon)
     end
     for _, e in ipairs(s.entries) do
         local est = SpellDB and SpellDB.GetTargetDotDuration and SpellDB.GetTargetDotDuration(e.spellID)
-        addon:Print(string.format("  %s (%d)  %s  src=%s  expiresIn=%.1fs%s  est=%s",
+        -- engine= is what DECIDED when it is not nil; est/pandemicIn is the
+        -- cast-time projection it replaced. They diverge on a pandemic-refreshed
+        -- DoT, where the projection fires early - the case this exists to fix.
+        local engine = (e.enginePandemic == nil) and "|cff888888n/a (estimate used)|r"
+            or (e.enginePandemic and "|cffffaa00INSIDE pandemic|r" or "|cff2ecc71live|r")
+        addon:Print(string.format("  %s (%d)  %s  src=%s  expiresIn=%.1fs%s  est=%s  engine=%s",
             spellName(e.spellID), e.spellID,
             e.active and "|cffff5555SUNK|r" or "|cff55ff55shown|r",
             e.confirmed and "instance" or "window",
             e.expiresIn,
             e.pandemicIn and string.format("  pandemicIn=%.1fs", e.pandemicIn) or "",
-            est and (est .. "s") or "unknown"))
+            est and (est .. "s") or "unknown", engine))
     end
     addon:Print("================================")
 end
@@ -1597,10 +1763,7 @@ function DebugCommands.GateDiagnostics(addon)
         return
     end
 
-    local function nm(id)
-        local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        return (n or "?") .. " (" .. tostring(id) .. ")"
-    end
+    local nm = SpellLabel
 
     addon:Print("|cff00ccff== SimC gate diagnostics ==|r")
 
@@ -1683,10 +1846,6 @@ end
 --- correctly; this boolean is the foundation the SimC gate layer will branch on.
 function DebugCommands.DurationProbe(addon, arg)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function sec(v)
-        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
-    end
-
     if not (C_Spell and C_Spell.GetSpellCooldownDuration) then
         addon:Print("|cffff6600C_Spell.GetSpellCooldownDuration unavailable - can't probe|r")
         return
@@ -1713,10 +1872,7 @@ function DebugCommands.DurationProbe(addon, arg)
         if b == nil then return "|cff888888nil|r" end
         return b and ("|cff00ff00" .. t .. "|r") or ("|cffcccccc" .. f .. "|r")
     end
-    local function nm(id)
-        local n = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        return (n or "?") .. " (" .. tostring(id) .. ")"
-    end
+    local nm = SpellLabel
 
     addon:Print("|cff00ccff== duration-object boolean probe ==|r")
     addon:Print("combat: " .. (UnitAffectingCombat("player")
@@ -1748,8 +1904,8 @@ function DebugCommands.DurationProbe(addon, arg)
         local ci = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(id)
         if ci then
             local st, act = ci.startTime, ci.isActive
-            numStr = sec(st) and "|cffff6600startTime SECRET|r" or ("startTime=" .. tostring(st))
-            if not sec(act) and act ~= nil then
+            numStr = IsSecret(st) and "|cffff6600startTime SECRET|r" or ("startTime=" .. tostring(st))
+            if not IsSecret(act) and act ~= nil then
                 numStr = numStr .. " isActive=" .. tostring(act)
             end
         end
@@ -1778,7 +1934,7 @@ function DebugCommands.DurationProbe(addon, arg)
                 local ok, v = pcall(fn, durObj)
                 if not ok then
                     parts[#parts + 1] = m .. "=|cffff6600THREW|r"
-                elseif sec(v) then
+                elseif IsSecret(v) then
                     parts[#parts + 1] = m .. "=|cffff6600SECRET|r"
                 else
                     parts[#parts + 1] = m .. "=|cff00ff00" .. tostring(v) .. "|r"
@@ -1834,11 +1990,6 @@ end
 --- calibrate the number line (a Magic buff -> type=1 == its dispelName).
 --- '/jac inspect enrage off' hides the row.
 function DebugCommands.EnrageProbe(addon, arg)
-    local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function sec(v)
-        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
-    end
-
     local cu       = C_CurveUtil ---@diagnostic disable-line: undefined-global
     local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
     local gadtc    = C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor
@@ -1880,13 +2031,13 @@ function DebugCommands.EnrageProbe(addon, arg)
             any = true
             local decoded, note, idc
             if pcall(function() idc = gadtc(unit, a.auraInstanceID, ident) end) and idc then
-                if sec(idc.r) then note = "SECRET" else decoded = math.floor((idc.r or 0) * 32 + 0.5) end
+                if IsSecret(idc.r) then note = "SECRET" else decoded = math.floor((idc.r or 0) * 32 + 0.5) end
             else
                 note = "call-failed"
             end
-            local name = (a.name and not sec(a.name)) and tostring(a.name) or "|cff888888?secret?|r"
+            local name = (a.name and not IsSecret(a.name)) and tostring(a.name) or "|cff888888?secret?|r"
             local dn   = a.dispelName
-            local dnStr = (dn and not sec(dn) and dn ~= "") and (" dispelName=" .. dn) or ""
+            local dnStr = (dn and not IsSecret(dn) and dn ~= "") and (" dispelName=" .. dn) or ""
             local dtStr = decoded and ("type=" .. decoded .. (decoded == 9 and " |cffff3333<ENRAGE>|r" or ""))
                                   or ("type=|cffff6600" .. tostring(note) .. "|r")
             addon:Print(string.format("  [%s] %-20s %s%s", tostring(a.auraInstanceID), name, dtStr, dnStr))
@@ -2005,13 +2156,9 @@ end
 --- branched on, so the probe itself never trips a secret.
 function DebugCommands.AoeDiagnostics(addon)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function sec(v)
-        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
-    end
-
     addon:Print("|cff00ccff== AoE-context probe (secret-safe enemy counting) ==|r")
     local pc = UnitAffectingCombat("player")
-    addon:Print("player in combat: " .. (sec(pc) and "|cffff6600SECRET|r"
+    addon:Print("player in combat: " .. (IsSecret(pc) and "|cffff6600SECRET|r"
         or "|cff00ff00" .. tostring(pc) .. "|r"))
 
     if not (C_NamePlate and C_NamePlate.GetNamePlates) then
@@ -2021,7 +2168,7 @@ function DebugCommands.AoeDiagnostics(addon)
     local plates = C_NamePlate.GetNamePlates()
     local total = plates and #plates or 0
     addon:Print("nameplates enumerated: " .. total
-        .. "  (count secret=" .. tostring(sec(total)) .. ")")
+        .. "  (count secret=" .. tostring(IsSecret(total)) .. ")")
 
     -- Nameplate FRAMES are restricted in 12.0 (their fields read secret/nil), so
     -- resolve via the unit TOKENS directly (nameplate1..40) and filter: hostile,
@@ -2033,23 +2180,23 @@ function DebugCommands.AoeDiagnostics(addon)
     for i = 1, 40 do
         local u = "nameplate" .. i
         local ex = UnitExists(u)
-        if sec(ex) then
+        if IsSecret(ex) then
             sExists = true
         elseif ex then
             nUnits = nUnits + 1
             local ca = UnitCanAttack("player", u)   -- value first, secret-test before branching
-            if sec(ca) then
+            if IsSecret(ca) then
                 sHostile = true
             elseif ca then
                 nHostile = nHostile + 1
                 local r = C_Spell and C_Spell.IsSpellInRange and C_Spell.IsSpellInRange(RANGE_PROBE, u)
-                if sec(r) then sRange = true elseif r then nRange = nRange + 1 end
+                if IsSecret(r) then sRange = true elseif r then nRange = nRange + 1 end
                 local ic = UnitAffectingCombat(u)              -- engaged with anyone
-                if sec(ic) then sCombat = true elseif ic then nCombat = nCombat + 1 end
+                if IsSecret(ic) then sCombat = true elseif ic then nCombat = nCombat + 1 end
                 local threatFn = _G.UnitThreatSituation         -- on its threat table = fighting ME
                 if threatFn then
                     local ts = threatFn("player", u)
-                    if sec(ts) then sThreat = true elseif ts ~= nil then nThreat = nThreat + 1 end
+                    if IsSecret(ts) then sThreat = true elseif ts ~= nil then nThreat = nThreat + 1 end
                 end
             end
         end
@@ -2085,17 +2232,13 @@ end
 --- insufficientPower flag per rotation ability (secret-tested before use).
 function DebugCommands.ResourceDiagnostics(addon)
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function sec(v)
-        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
-    end
-
     addon:Print("|cff00ccff== Resource-inference probe ==|r")
 
     -- 1. The direct read we're routing around (expected SECRET in combat).
     if UnitPower and UnitPowerType then
         local pt = UnitPowerType("player")
         local val = UnitPower("player", pt)
-        addon:Print("UnitPower direct read: " .. (sec(val)
+        addon:Print("UnitPower direct read: " .. (IsSecret(val)
             and "|cffff6600SECRET (can't read)|r" or "|cff00ff00" .. tostring(val) .. "|r"))
     end
 
@@ -2125,7 +2268,7 @@ function DebugCommands.ResourceDiagnostics(addon)
     for _, id in ipairs(list) do
         local ready = BAPI.IsSpellReady and BAPI.IsSpellReady(id)
         local usable, noPower = C_Spell.IsSpellUsable(id)
-        local secHit = sec(usable) or sec(noPower)
+        local secHit = IsSecret(usable) or IsSecret(noPower)
         if secHit then anySecret = true end
         local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or id
         local tag
@@ -2316,10 +2459,6 @@ local RESOURCE_BAR_FRAMES = {
       isFilled = function(v) return v == 4 end },
 }
 function DebugCommands.ResourcePointProbe(addon)
-    local BAPI = LibStub("JustAC-BlizzardAPI", true)
-    local function sec(v)
-        return (BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)) and true or false
-    end
     addon:Print("|cff00ccff== Class resource-point probe ==|r")
 
     -- Context: the personal resource display re-parents these same bars, so note its state.
@@ -2370,17 +2509,17 @@ function DebugCommands.ResourcePointProbe(addon)
                 local p, val, from, raw = points[i], nil, nil, nil
                 for _, f in ipairs(BOOL_FIELDS) do
                     local v = p and p[f]
-                    if sec(v) then anySecret = true end
+                    if IsSecret(v) then anySecret = true end
                     if val == nil and type(v) == "boolean" then val, from, raw = (v and 1 or 0), f, v end
                 end
                 for _, f in ipairs(FILL_FIELDS) do
                     local v = p and p[f]
-                    if sec(v) then anySecret = true end
+                    if IsSecret(v) then anySecret = true end
                     if val == nil and type(v) == "number" and v >= 0 and v <= 1 then val, from, raw = v, f, v end
                 end
                 if val == nil and def.state and def.isFilled then
                     local v = p and p[def.state]
-                    if sec(v) then anySecret = true end
+                    if IsSecret(v) then anySecret = true end
                     if type(v) == "number" and v % 1 == 0 and v >= def.min and v <= def.max then
                         val, from, raw = (def.isFilled(v) and 1 or 0), def.state, v
                     end
@@ -2511,14 +2650,12 @@ local function CountPlayerAuraInstances()
 end
 
 --- Classify one candidate read. Never throws.
-local function ClassifyRead(fn)
-    local ok, v = pcall(fn)
-    if not ok then
-        return string.format("|cffff6600ERROR|r %s", tostring(v):gsub("^.-:%d+: ", ""):sub(1, 52))
-    end
-    if v == nil then return "|cff888888nil|r (absent - not evidence either way)" end
+function ClassifyRead(fn)   -- forward-declared local, see ProbeReport
+    local status, text, v = ProbeRead(fn, 24)
+    if status == "err" then return "|cffff6600ERROR|r " .. text end
+    if status == "nil" then return "|cff888888nil|r (absent - not evidence either way)" end
 
-    local isSecret = (issecretvalue and issecretvalue(v)) and true or false
+    local isSecret = status == "secret"
     -- `if v then` is ALLOWED on a secret NUMBER (its truthiness is always true, so it leaks
     -- nothing) but THROWS on a secret BOOLEAN (there, truthiness IS the secret). That is the
     -- whole rule: the engine permits exactly the operations that leak no information. So this
@@ -2529,13 +2666,7 @@ local function ClassifyRead(fn)
     local isNum = (type(v) == "number") or (isSecret and not pcall(function() return v == true end))
     local cmpOk = isNum and pcall(function() return v > 0 end) or false
 
-    local shown
-    if isSecret then
-        shown = "|cffff6600SECRET|r"
-    else
-        local s = tostring(v)
-        shown = "|cff2ecc71plain|r=" .. (#s > 24 and (s:sub(1, 24) .. "..") or s)
-    end
+    local shown = isSecret and "|cffff6600SECRET|r" or ("|cff2ecc71plain|r=" .. text)
     return string.format("%s [%s] branch:%s cmp:%s", shown, type(v),
         branchOk and "|cff2ecc71y|r" or "|cffff6600n THROWS|r",
         isNum and (cmpOk and "|cff2ecc71y|r" or "|cffff6600n|r") or "|cff888888-|r")
@@ -2814,6 +2945,39 @@ function DebugCommands.PerformanceDiagnostics(addon, subCommand)
         addon:Print("  DefensiveEngine stats: |cffff0000not available|r")
     end
 
+    -- Threshold-gate layer cost. A MISS is a curve evaluation plus a FontString
+    -- round-trip; a HIT is a table lookup. Misses per second is the number that
+    -- matters - it should sit near (distinct thresholds asked) x (memo wipes/s),
+    -- not scale with how many spells are in the queue.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.GetThresholdGateStats then
+        local hits, misses, wipes, curves = BAPI.GetThresholdGateStats()
+        local total = hits + misses
+        local elapsed = sqStats and sqStats.resetTime > 0 and (now - sqStats.resetTime) or nil
+        addon:Print(string.format("Threshold gates: |cffadd8e6%d|r calls (%d miss / %d hit, %.0f%% cached), %d curves cached",
+            total, misses, hits, total > 0 and (hits / total * 100) or 0, curves or 0))
+        if elapsed and elapsed > 0 then
+            addon:Print(string.format("  |cffadd8e6%.1f|r evaluations/s (%d memo windows over %.0fs)",
+                misses / elapsed, wipes, elapsed))
+        end
+    end
+
+    -- Which health band the defensive cluster is ordering by, and WHICH SOURCE
+    -- answered. The source is the line that matters if this ever degrades: "gate"
+    -- is the direct read, "percent" the unrestricted-context exact read, and
+    -- "vignette" the estimate that cannot see the mitigation band at all.
+    local DE = LibStub("JustAC-DefensiveEngine", true)
+    if DE and DE.GetHealthBandInfo then
+        local band, source, bounds = DE.GetHealthBandInfo()
+        local BAND_NAMES = { "PANIC", "MAJOR", "MITIGATE", "HEALTHY" }
+        addon:Print(string.format("Health band: |cffadd8e6%s|r (band %d, source=%s, boundaries %s)",
+            BAND_NAMES[band] or "?", band or -1, tostring(source),
+            bounds and table.concat(bounds, "/") .. "%" or "?"))
+        if source == "vignette" then
+            addon:Print("  |cffffff00vignette fallback: MITIGATE is unreachable here - expected if the gate layer is blocked|r")
+        end
+    end
+
     local inCombat = UnitAffectingCombat("player")
     addon:Print("In combat: " .. (inCombat and "|cffff6600YES|r" or "NO"))
 
@@ -3013,6 +3177,57 @@ function DebugCommands.CastDiagnostics(addon)
         end
         probeIconHidden("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
         probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+
+        -- ZERO-GATE ON THE SHIELD'S ALPHA. The shield route was written off because
+        -- BorderShield:IsShown() is a secret BOOLEAN, and a secret boolean cannot be
+        -- branched on. But GetAlpha() returns a secret NUMBER - and a secret number
+        -- is exactly what IsSecretZero eats. If this reads, the sealed
+        -- notInterruptible flag has a back door that needs no untainted frame:
+        --     alpha zero   -> shield not drawn -> cast IS interruptible
+        --     alpha non-0  -> shield drawn     -> cast is NOT interruptible
+        -- Two reasons this stays a PROBE until measured in a fight:
+        --   * alpha and shown are different things. A shield hidden with Hide() can
+        --     still report alpha 1, which reads as "uninterruptible" on a kickable
+        --     cast - and that is the direction that costs an interrupt.
+        --   * the existing cascade is fail-open by design; a half-trusted new signal
+        --     could turn a safe "no suggestion" into a confidently wrong one.
+        -- Cross-check every line against the icon-hidden verdict directly above: on a
+        -- Blizzard-driven bar they must agree, and any row where they disagree is the
+        -- interesting one.
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        local function probeShieldAlpha(label, bar)
+            if not bar then return end
+            for _, key in ipairs({ "BorderShield", "Shield" }) do
+                local sh = bar[key]
+                if sh and sh.GetAlpha then
+                    local aOk, alpha = pcall(sh.GetAlpha, sh)
+                    local isSec = aOk and BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(alpha) or false
+                    local zero = aOk and BAPI and BAPI.IsSecretZero and BAPI.IsSecretZero(alpha)
+                    local shOk, shown = pcall(function() return sh:IsShown() and true or false end)
+                    probeLines[#probeLines + 1] = string.format(
+                        "  %s .%s: read=%s secret=%s shown=%s  zero-gate => %s",
+                        label, key, tostring(aOk), tostring(isSec),
+                        shOk and safe(shown) or "?",
+                        (zero == true and "|cff2ecc71alpha 0 = INTERRUPTIBLE|r")
+                            or (zero == false and "|cffff6600alpha>0 = NOT interruptible|r")
+                            or "|cff888888no answer|r")
+                end
+            end
+        end
+        probeShieldAlpha("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
+        probeShieldAlpha("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        -- The replaced/reskinned bar the tracker would actually have found. This is the
+        -- row that matters for the addon-interaction complaint: if the zero-gate answers
+        -- HERE, layer 2 stops degrading when a third-party bar is in play.
+        local Tracker = LibStub("JustAC-CastInterruptTracker", true)
+        if Tracker and Tracker.DebugFindCastBar and np then
+            local found, src = Tracker.DebugFindCastBar(np)
+            if found then
+                probeShieldAlpha("discovered bar (" .. tostring(src) .. ")", found)
+            else
+                probeLines[#probeLines + 1] = "  discovered bar: none found on this nameplate"
+            end
+        end
         -- LIVENESS of the (possibly hidden) Blizzard bar: a replacing addon that merely
         -- Hide()s it leaves its UNTAINTED event handlers running - the icon-hidden read
         -- above then stays trustworthy even invisible. An addon that unregistered its
@@ -3234,26 +3449,23 @@ end
 
 -- C_Secrets function count at last full audit (12.0.7, 2026-07-05). If the live
 -- count differs, the secrecy surface changed and every assumption needs re-audit.
+-- Re-checked against the 12.1.0 generated docs before that patch shipped: the
+-- C_Secrets surface is unchanged, so this guard should stay quiet across it.
 local SECRETS_SURFACE_COUNT = 27
 
+--- @return string class the diff key - what a CHANGE between snapshots means
+--- @return string display the coloured cell
 local function ValidateClassify(fn)
-    local ok, v = pcall(fn)
-    if not ok then return "SEALED", "|cffff6666SEALED|r" end
-    if v == nil then return "nil", "|cff888888nil|r" end
-    -- Force compare+concat: catches secrets IsSecretValue misses (struct fields,
-    -- event args) - same approach as chargediag/castdiag.
-    local ok2, s = pcall(function()
-        local str = tostring(v)
-        local _ = (str == "")
-        return str .. ""
-    end)
-    if not ok2 or type(s) ~= "string" then return "secret", "|cffff6600<secret>|r" end
+    local status, text, v = ProbeRead(fn, 24)
+    local cell = ProbeColour(status) .. (status == "err" and "SEALED" or text) .. "|r"
+    if status == "err" then return "SEALED", cell end
+    if status == "nil" then return "nil", cell end
+    if status == "secret" then return "secret", cell end
     -- Booleans are state, not noise: track the VALUE so a predicate flipping
     -- false->true in combat shows in the diff. Numbers (cooldown clocks etc.)
     -- churn constantly - class-only for those.
-    if type(v) == "boolean" then return "ok:" .. s, "|cff00ff00" .. s .. "|r" end
-    if #s > 24 then s = s:sub(1, 24) .. ".." end
-    return "ok", "|cff00ff00" .. s .. "|r"
+    if type(v) == "boolean" then return "ok:" .. text, cell end
+    return "ok", cell
 end
 
 -- First rotation spell if plainly readable, else the GCD reference spell.
@@ -3461,6 +3673,69 @@ local function BuildValidateProbes()
         add("gate.aura", function() return BAPI.GetFeatureAvailability().auraAccess end)
         add("gate.proc", function() return BAPI.GetFeatureAvailability().procAccess end)
     end
+
+    -- TECHNIQUE SELF-TESTS. Everything above measures what the client will TELL us;
+    -- these measure whether the mechanisms the addon is BUILT ON still work. That is
+    -- a different failure and a much quieter one: when a threshold curve or the
+    -- zero-gate stops answering, nothing errors - every caller fails open, the
+    -- addon silently reverts to its estimates, and the only symptom is that cues
+    -- feel slightly wrong. Each check below has a KNOWN answer, so "ok" means the
+    -- mechanism actually produced the right result, not merely that the API exists.
+    add("tech.curveAPI", function()
+        return (C_CurveUtil and C_CurveUtil.CreateCurve
+            and Enum.LuaCurveType.Linear ~= nil) and true or false
+    end)
+    add("tech.curveShape", function()
+        -- A 50% threshold curve, evaluated with PLAIN inputs either side of it. The
+        -- domain is the 0-1 fraction; below the threshold reads high, at/above reads
+        -- zero. Backwards or flat here means every threshold gate in the addon is
+        -- silently inverted or dead.
+        local c = C_CurveUtil.CreateCurve()
+        c:SetType(Enum.LuaCurveType.Linear)
+        c:AddPoint(0, 100); c:AddPoint(0.499, 100); c:AddPoint(0.501, 0); c:AddPoint(1, 0)
+        return (c:Evaluate(0.4) >= 1 and c:Evaluate(0.6) < 1) and "ok" or "BROKEN"
+    end)
+    add("tech.zeroGate", function()
+        -- The zero-gate, end to end on PLAIN numbers: truncate-when-zero collapses 0
+        -- to nil and leaves a non-zero alone, and a FontString hands the result back
+        -- readable. Both halves must hold - this is what turns a secret into a
+        -- branchable boolean everywhere in the addon.
+        if not (C_StringUtil and C_StringUtil.TruncateWhenZero) then return "no API" end
+        local fs = DebugCommands._validateFS
+        if not fs then
+            fs = UIParent:CreateFontString(nil, "BACKGROUND", "GameFontNormal")
+            fs:Hide(); DebugCommands._validateFS = fs
+        end
+        fs:SetText(C_StringUtil.TruncateWhenZero(0) or "")
+        local emptyReadsNil = fs:GetText() == nil
+        fs:SetText(C_StringUtil.TruncateWhenZero(42) or "")
+        local valueReadsBack = fs:GetText() ~= nil
+        return (emptyReadsNil and valueReadsBack) and "ok" or "BROKEN"
+    end)
+    add("tech.zeroGatePlain", function()
+        -- The addon's own wrapper on its PLAIN fast path (0 is zero). Only proves the
+        -- module loaded and the fast path is sane; the secret-widget path needs a live
+        -- secret, which durcurve exercises. Disagreeing with the raw check above
+        -- localises a break to our code rather than the client.
+        return BAPI and BAPI.IsSecretZero and BAPI.IsSecretZero(0)
+    end)
+    add("tech.thresholdGate", function()
+        return BAPI and BAPI.IsThresholdGateAvailable and BAPI.IsThresholdGateAvailable()
+    end)
+    add("tech.durationEval", function()
+        -- The three Evaluate* entry points the duration thresholds ride on. Method
+        -- presence only: a real verdict needs a live aura, which durcurve does.
+        local d = C_Spell.GetSpellCooldownDuration(sid)
+        if not d then return "no durObj" end
+        return (d.EvaluateRemainingPercent and d.EvaluateRemainingDuration
+            and d.EvaluateTotalDuration) and "ok" or "MISSING"
+    end)
+    add("tech.stackCount", function()
+        return (C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount) ~= nil
+    end)
+    add("tech.groupBuffItems", function()
+        return (C_CooldownViewer and C_CooldownViewer.GetGroupBuffItems) ~= nil
+    end)
 
     return probes
 end
@@ -3764,6 +4039,52 @@ function DebugCommands.MaintenanceProbe(addon)
         addon:Print("|cffff6600Out of combat|r - Q1/Q3 only mean something mid-fight. Re-run with the buff up.")
     end
 
+    -- Q0: is the refresh cue on ENGINE TRUTH or on the cast-time estimate? The two
+    -- disagree exactly when the estimate is wrong, which is the whole reason the
+    -- engine path exists - and a silent fall back to the estimate looks identical
+    -- in the queue, so it has to be visible here.
+    do
+        local BAPI = LibStub("JustAC-BlizzardAPI", true)
+        -- Two calls, NOT `local a, _, c = MT and MT.GetState and MT.GetState()`: an
+        -- `and` chain yields a single value, so the 3rd return would always be nil
+        -- and this probe would report "no live instance" forever. GetState memoizes
+        -- per frame, so the second call is a table read.
+        local state, inst
+        if MT and MT.GetState then
+            state = MT.GetState()
+            inst = select(3, MT.GetState())
+        end
+        addon:Print(string.format("Q0 refresh source: state=%s instance=%s",
+            tostring(state), tostring(inst)))
+        -- Whether PRODUCTION uses the engine answer, which is not the same as
+        -- whether one is available: stacking and charge-gated entries are excluded
+        -- on purpose (see LiveVerdict). Printing the reading without saying who
+        -- acts on it is how a probe starts describing a path nobody takes.
+        local eligible = not entry.stacks and not entry.chargeGated
+        addon:Print(string.format("   production uses: |cff%s|r  %s",
+            eligible and "2ecc71ENGINE" or "ffff00cast-time estimate",
+            eligible and "(single-instance refresh buff)"
+                or (entry.stacks and "(stacking entry - one instance is a single stack's clock,"
+                    .. " not the buff's; projection stays authoritative)"
+                    or "(chargeGated - never pre-warns)")))
+        if inst and BAPI and BAPI.GetAuraDurationObject then
+            local d = BAPI.GetAuraDurationObject("player", inst)
+            if d then
+                addon:Print(string.format("   engine reads%s  below30%%=%s  below5s=%s  below2s=%s",
+                    eligible and ":" or " |cff888888(shown for comparison only)|r:",
+                    tostring(BAPI.IsDurationBelowPercent and BAPI.IsDurationBelowPercent(d, 30)),
+                    tostring(BAPI.IsDurationBelowSeconds and BAPI.IsDurationBelowSeconds(d, 5)),
+                    tostring(BAPI.IsDurationBelowSeconds and BAPI.IsDurationBelowSeconds(d, 2))))
+                addon:Print("|cff888888   these should march true as the buff runs down;"
+                    .. " below2s must not lead below30%|r")
+            else
+                addon:Print("   |cffffff00no duration object|r - falling back to the cast-time estimate")
+            end
+        else
+            addon:Print("   |cffffff00no live instance|r - projected/viewer path, estimate is expected here")
+        end
+    end
+
     -- Q1: per-spell aura secrecy.
     local CS = C_Secrets
     if CS and CS.GetSpellAuraSecrecy then
@@ -3791,69 +4112,41 @@ function DebugCommands.MaintenanceProbe(addon)
     -- Q2/Q3. NEVER call item:GetSpellID() - it returns the SECRET auraSpellID first. Only
     -- GetCooldownInfo (static layout data) and GetAuraSpellInstanceID (already materialized
     -- plain by untainted code) are safe to touch here.
-    -- Match the WHOLE associated id set against BOTH our ids: 4 of the 5 specs have
-    -- cast ~= aura, so matching on one id alone would silently miss them.
-    local function MatchesEntry(info)
-        if type(info) ~= "table" then return false end
-        local function hit(v)
-            return type(v) == "number" and (v == entry.cast or v == entry.aura)
+    --
+    -- Q2 the FRAME-INDEPENDENT way, straight off PRODUCTION's own resolver. This probe
+    -- used to re-implement the category scan, and drifted: it kept the 0..3 range from
+    -- when there were four categories while production moved to enumerating them, so on
+    -- 12.1.0 (nine categories) it reported "not in any category set" for a buff the
+    -- addon was binding perfectly. A probe with its own copy of the logic is a probe
+    -- that can lie about the thing it exists to check.
+    local trackedIDs = (MT and MT.ResolveCooldownIDs and MT.ResolveCooldownIDs(entry)) or {}
+    local trackedCooldownID, trackedViewer = nil, nil
+    do
+        -- Category names by reverse lookup rather than a literal table, for the same
+        -- reason production enumerates them: the next patch's categories name themselves.
+        local catNames = {}
+        if type(Enum) == "table" and type(Enum.CooldownViewerCategory) == "table" then
+            for name, v in pairs(Enum.CooldownViewerCategory) do catNames[v] = name end
         end
-        if hit(info.spellID) or hit(info.overrideSpellID)
-           or hit(info.overrideTooltipSpellID) or hit(info.linkedSpellID) then return true end
-        local ls = info.linkedSpellIDs
-        if type(ls) == "table" then
-            for i = 1, #ls do if hit(ls[i]) then return true end end
-        end
-        return false
-    end
-
-    -- Q2 the FRAME-INDEPENDENT way. GetCooldownViewerCategorySet is pure data - it answers
-    -- "is this spell tracked at all" even when every viewer is hidden, which the frame walk
-    -- below cannot. 4 categories: 0 Essential, 1 Utility, 2 TrackedBuff, 3 TrackedBar.
-    local CV = C_CooldownViewer
-    local trackedCooldownID = nil
-    local trackedIDs = {}
-    local trackedViewer = nil
-    if CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo then
-        local CATS = { [0] = "Essential", [1] = "Utility", [2] = "TrackedBuff", [3] = "TrackedBar" }
-        local hitCat, total = nil, 0
-        for cat = 0, 3 do
-            local okC, ids = pcall(CV.GetCooldownViewerCategorySet, cat, true)
-            if okC and type(ids) == "table" then
-                total = total + #ids
-                for j = 1, #ids do
-                    local okN, info = pcall(CV.GetCooldownViewerCooldownInfo, ids[j])
-                    -- Collect EVERY category hit. The same spell carries a different
-                    -- cooldownID per category, so stopping at the first found the Utility id
-                    -- and missed TrackedBar, where these buffs live by default.
-                    if okN and MatchesEntry(info) then
-                        hitCat = (hitCat and (hitCat .. ", ") or "")
-                                 .. string.format("%s=%s", CATS[cat], tostring(ids[j]))
-                        if trackedCooldownID == nil and type(ids[j]) == "number" then
-                            trackedCooldownID = ids[j]
-                        end
-                        trackedViewer = trackedViewer or ({ [0] = "EssentialCooldownViewer",
-                                           [1] = "UtilityCooldownViewer",
-                                           [2] = "BuffIconCooldownViewer",
-                                           [3] = "BuffBarCooldownViewer" })[cat]
-                        -- The real join key, as a SET: frames expose GetCooldownID() and the
-                        -- spell can appear on more than one bar under different ids.
-                        if type(ids[j]) == "number" then trackedIDs[ids[j]] = true end
-                    end
-                end
-            end
+        local VIEWER_BY_CAT = { [0] = "EssentialCooldownViewer", [1] = "UtilityCooldownViewer",
+                                [2] = "BuffIconCooldownViewer", [3] = "BuffBarCooldownViewer" }
+        local hitCat
+        for id, cat in pairs(trackedIDs) do
+            hitCat = (hitCat and (hitCat .. ", ") or "")
+                     .. string.format("%s=%s", catNames[cat] or ("cat" .. tostring(cat)), tostring(id))
+            trackedCooldownID = trackedCooldownID or id
+            trackedViewer = trackedViewer or VIEWER_BY_CAT[cat]
         end
         if hitCat then
-            -- "ELIGIBLE", not "tracked": allowUnlearned=true returns everything the category
-            -- COULD contain, not the subset the player put on their bar. Q3 is what decides
-            -- whether a frame actually exists. Conflating the two cost a debugging round.
-            addon:Print(string.format("Q2 |cff2ecc71ELIGIBLE|r for %s  |cff888888(%d ids in category data; Q3 says if it is on the bar)|r", hitCat, total))
+            -- "ELIGIBLE", not "tracked": production scans with allowUnlearned=true, so this
+            -- is everything the categories COULD contain, not the subset the player put on
+            -- their bar. Q3 is what decides whether a frame actually exists. Conflating the
+            -- two cost a debugging round.
+            addon:Print(string.format("Q2 |cff2ecc71ELIGIBLE|r for %s  |cff888888(Q3 says if it is on the bar)|r", hitCat))
         else
-            addon:Print(string.format("Q2 |cffff6600NOT in any category set|r |cff888888(%d ids scanned)|r", total))
+            addon:Print("Q2 |cffff6600NOT in any category set|r")
             addon:Print("|cff888888   spell genuinely absent from the Cooldown Manager data -> join impossible|r")
         end
-    else
-        addon:Print("Q2 |cffff6600C_CooldownViewer category API unavailable|r")
     end
 
     -- Why the viewers may be hidden. A hidden viewer never computes auraInstanceID at all:
@@ -3862,6 +4155,7 @@ function DebugCommands.MaintenanceProbe(addon)
         return C_CVar and C_CVar.GetCVarBool and C_CVar.GetCVarBool("cooldownViewerEnabled")
     end)
     local okAv, avail, why = pcall(function()
+        local CV = C_CooldownViewer
         if CV and CV.IsCooldownViewerAvailable then return CV.IsCooldownViewerAvailable() end
     end)
     addon:Print(string.format("CooldownManager: cvar=%s available=%s %s",
@@ -3893,7 +4187,8 @@ function DebugCommands.MaintenanceProbe(addon)
                 if not isMatch and not next(trackedIDs) then
                     -- No cooldownID to join on: fall back to the spell-id set.
                     local okI, info = pcall(item.GetCooldownInfo, item)
-                    isMatch = okI and MatchesEntry(info)
+                    isMatch = okI and MT and MT.MatchesCooldownInfo
+                        and MT.MatchesCooldownInfo(entry, info) or false
                 end
                 if isMatch and not found then
                     local okA, inst = pcall(item.GetAuraSpellInstanceID, item)
@@ -4353,13 +4648,14 @@ local HEALPROBE_UNITS = { "player", "party1", "party2", "party3", "party4" }
 local HEALPROBE_PARTY = { party1 = true, party2 = true, party3 = true, party4 = true }
 
 --- Compact classifier for per-unit grid lines (ClassifyRead is too wide there).
+--- Narrow cells only; the verdict itself comes from the shared primitive, which
+--- catches the struct fields IsSecretValue alone misses - this grid reads aura and
+--- heal-prediction structs, which is exactly where that gap showed up.
 local function HealCR(fn)
-    local ok, v = pcall(fn)
-    if not ok then return "|cffff6600ERR|r" end
-    if v == nil then return "|cff888888nil|r" end
-    if issecretvalue and issecretvalue(v) then return "|cffff6600SECRET|r" end
-    local s = tostring(v)
-    return "|cff2ecc71" .. (#s > 14 and (s:sub(1, 14) .. "..") or s) .. "|r"
+    local cell, status = ProbeCell(fn, 14)
+    if status == "secret" then return "|cffff6600SECRET|r" end
+    if status == "err" then return "|cffff6600ERR|r" end
+    return cell
 end
 
 --- `show`: one swatch per party slot, alpha handed to the engine per tick.
@@ -4878,17 +5174,8 @@ end
 --- changes; every read is guarded. MUST be re-run with a unit-frame replacement
 --- addon enabled before any feature ships on these (frozen-frame precedent).
 function DebugCommands.FrameStateProbe(addon)
-    local function walk(root, ...)
-        local node = _G[root]
-        for i = 1, select("#", ...) do
-            if node == nil then return nil end
-            node = node[select(i, ...)]
-        end
-        return node
-    end
-    local function report(label, fn)
-        addon:Print("  " .. label .. " = " .. ClassifyRead(fn))
-    end
+    local walk = FramePath
+    local report = ProbeReport(addon)
     addon:Print(string.format("|cff00ccff== frames ==|r combat=%s", tostring(UnitAffectingCombat("player"))))
 
     report("LowHealthFrame:IsShown (<=35% hp)", function() return LowHealthFrame and LowHealthFrame:IsShown() end)
@@ -5045,9 +5332,7 @@ end
 --- Run OOC for a baseline, then in combat, ideally targeting something with a
 --- defensive up and something crowd-controlled.
 function DebugCommands.EngineSignalsProbe(addon)
-    local function report(label, fn)
-        addon:Print("  " .. label .. " = " .. ClassifyRead(fn))
-    end
+    local report = ProbeReport(addon)
     addon:Print(string.format("|cff00ccff== enginesig ==|r combat=%s",
         tostring(UnitAffectingCombat("player"))))
 
@@ -5538,14 +5823,7 @@ function DebugCommands.ProbeSession(addon, arg)
     -- invisible to sampling. This logs TRANSITIONS only (a handful of lines/fight).
     local edgeState = {}
     local function edgeSample()
-        local function walk2(root, ...)
-            local node = _G[root]
-            for i = 1, select("#", ...) do
-                if node == nil then return nil end
-                node = node[select(i, ...)]
-            end
-            return node
-        end
+        local walk2 = FramePath
         local reads = {
             lowHealth = function() return LowHealthFrame and LowHealthFrame:IsShown() end,
             animLoss = function()
@@ -5633,9 +5911,8 @@ end
 -- addon that can hold a frame visible against a manual SetAlpha(0).
 --------------------------------------------------------------------------------
 function DebugCommands.GlowInventory(addon)
-    local issecret = issecretvalue
     local function plainNum(x)
-        return type(x) == "number" and not (issecret and issecret(x))
+        return type(x) == "number" and not IsSecret(x)
     end
 
     -- Our anchor frames: rect sources for the search box, and ancestry roots
@@ -5771,15 +6048,40 @@ function DebugCommands.GroupBuffProbe(addon)
     -- No file-local BlizzardAPI in this file - resolve it, or every gated
     -- BlizzardAPI.* read below silently short-circuits to nil.
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-    local issecret = issecretvalue
     local function RB(v)  -- ReadableBool: true/false when plain, "SECRET" when not
         if v == nil then return "nil" end
-        if issecret and issecret(v) then return "SECRET" end
+        if IsSecret(v) then return "SECRET" end
         return v and "T" or "F"
     end
     local SpellDB = LibStub("JustAC-SpellDB", true)
     local class = select(2, UnitClass("player"))
     local groups = SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS and SpellDB.CLASS_MAINTAINED_BUFFS[class]
+
+    -- ENGINE REGISTRY vs CURATED TABLE (12.1.0+). The whole reason to adopt
+    -- GetGroupBuffItems is that curation cannot keep up with patches, so the useful
+    -- output is the DIFFERENCE: an engine entry the curated groups do not claim is
+    -- coverage we only get from the engine, and a curated group with no engine
+    -- counterpart is either an aura-variant detail the registry omits or curation
+    -- that has gone stale.
+    local engine = BlizzardAPI and BlizzardAPI.GetGroupBuffItems and BlizzardAPI.GetGroupBuffItems()
+    if not engine then
+        addon:Print("|cff888888engine registry: C_CooldownViewer.GetGroupBuffItems unavailable"
+            .. " (pre-12.1.0) - curated table is the only source|r")
+    else
+        local covered = {}
+        for _, grp in ipairs(groups or {}) do
+            for _, id in ipairs(grp.group) do covered[id] = true end
+            for _, id in ipairs(grp.auraIDs or {}) do covered[id] = true end
+        end
+        addon:Print(string.format("|cff00ccffengine registry:|r %d entries", #engine))
+        for i = 1, #engine do
+            local it = engine[i]
+            addon:Print(string.format("   %-28s (%d) known=%s hideByDefault=%s  %s",
+                tostring(it.name), it.spellID, tostring(it.isKnown), tostring(it.hideByDefault),
+                covered[it.spellID] and "|cff888888curated|r"
+                    or (it.isKnown and "|cff2ecc71NEW - engine-only coverage|r" or "not known")))
+        end
+    end
     addon:Print(string.format("|cff00ff00=== group buff probe ===|r class=%s groups=%s inGroup=%s inRaid=%s combat=%s aurasRestricted=%s",
         tostring(class), groups and #groups or 0, RB(IsInGroup()), RB(IsInRaid()),
         tostring(InCombatLockdown()), tostring(BlizzardAPI and BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret())))
@@ -5840,7 +6142,7 @@ function DebugCommands.GroupBuffProbe(addon)
                         scan = "MISSING"
                         for ai = 1, #auras do
                             local sid = auras[ai].spellId
-                            if sid == nil or (issecret and issecret(sid)) then
+                            if sid == nil or IsSecret(sid) then
                                 secretAt = ai; scan = "BAIL(secret id)"; break
                             end
                             for _, fid in ipairs(family) do
@@ -5887,8 +6189,7 @@ end
 -- reads secret even out of combat).
 --------------------------------------------------------------------------------
 function DebugCommands.TextLaunderProbe(addon)
-    local issecret = issecretvalue
-    if not issecret then
+    if not issecretvalue then
         addon:Print("textlaunder: no issecretvalue on this client - nothing to test")
         return
     end
@@ -5904,7 +6205,7 @@ function DebugCommands.TextLaunderProbe(addon)
     local srcName, secretVal
     for _, c in ipairs(candidates) do
         local ok, v = pcall(c[2])
-        if ok and v ~= nil and issecret(v) then
+        if ok and v ~= nil and IsSecret(v) then
             srcName, secretVal = c[1], v
             break
         end
@@ -5921,7 +6222,7 @@ function DebugCommands.TextLaunderProbe(addon)
     -- sailed through both and only blew up in the chat library's table.concat),
     -- so every possibly-secret value must be reduced HERE, before the message.
     local function safe(v)
-        if v ~= nil and issecret(v) then return "<SECRET " .. type(v) .. ">" end
+        if v ~= nil and IsSecret(v) then return "<SECRET " .. type(v) .. ">" end
         return tostring(v)
     end
 
@@ -5939,7 +6240,7 @@ function DebugCommands.TextLaunderProbe(addon)
     fs:SetText("42")
     local ctrl = fs:GetText()
     addon:Print(string.format("control (fresh widget): GetText() = %s (secret=%s)",
-        safe(ctrl), tostring(ctrl ~= nil and issecret(ctrl) or false)))
+        safe(ctrl), tostring(ctrl ~= nil and IsSecret(ctrl) or false)))
 
     -- Leg 1: secret in, what comes out?
     local okSet = pcall(fs.SetText, fs, secretVal)
@@ -5959,7 +6260,7 @@ function DebugCommands.TextLaunderProbe(addon)
         addon:Print("|cffff6600verdict: SEALED (readback itself is blocked)|r")
         return
     end
-    local backSecret = back ~= nil and issecret(back) or false
+    local backSecret = back ~= nil and IsSecret(back) or false
     addon:Print(string.format("GetText(): type=%s secret=%s aspect(Text)=%s value=%s",
         type(back), tostring(backSecret), aspect, safe(back)))
 
@@ -5978,13 +6279,13 @@ function DebugCommands.TextLaunderProbe(addon)
     fs:SetText("")
     local emptyBack = fs:GetText()
     addon:Print(string.format("empty-collapse: SetText('') -> GetText() = %s (secret=%s)",
-        safe(emptyBack), tostring(emptyBack ~= nil and issecret(emptyBack) or false)))
+        safe(emptyBack), tostring(emptyBack ~= nil and IsSecret(emptyBack) or false)))
 
     -- Leg 4: stickiness - plain write to the poisoned widget.
     fs:SetText("42")
     local sticky = fs:GetText()
     addon:Print(string.format("sticky-aspect: plain '42' into poisoned widget -> secret=%s",
-        tostring(sticky ~= nil and issecret(sticky) or false)))
+        tostring(sticky ~= nil and IsSecret(sticky) or false)))
 
     if okTruth and emptyBack == nil then
         addon:Print("|cffffff00verdict: ZERO-GATE - readback stays secret but presence/absence is branchable (truthiness + plain-nil empty-collapse). A legal zero-detector, not a laundering hole.|r")
@@ -6010,5 +6311,660 @@ function DebugCommands.TextLaunderProbe(addon)
         if missing ~= nil then atFull = BAPI.IsSecretZero(missing) end
         addon:Print(string.format("applied: IsSecretZero(UnitHealthMissing(player)) = %s  (at full: expect true)",
             tostring(atFull)))
+        -- Every shipped zero-gate consumer, exercised together.
+        addon:Print(string.format("  IsUnitFullHealth: player=%s pet=%s",
+            tostring(BAPI.IsUnitFullHealth and BAPI.IsUnitFullHealth("player")),
+            tostring(BAPI.IsUnitFullHealth and BAPI.IsUnitFullHealth("pet"))))
+        addon:Print(string.format("  IsHealingUnneeded (glow + ordering gate) = %s   [partyLow=%s]",
+            tostring(BAPI.IsHealingUnneeded and BAPI.IsHealingUnneeded()),
+            tostring(BAPI.GetPartyLowCount and BAPI.GetPartyLowCount())))
+        -- Curve shape + DOMAIN, proved with plain inputs only (Evaluate takes an
+        -- ordinary number). A threshold-80 curve must read 100 below the line and
+        -- 0 above it. Whichever of the 0-1 / 0-100 pairs behaves that way is the
+        -- domain UnitHealthPercent feeds the curve.
+        local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+        if cu and cu.CreateCurve and Enum and Enum.LuaCurveType then
+            local okC, c = pcall(cu.CreateCurve)
+            if okC and c then
+                pcall(c.SetType, c, Enum.LuaCurveType.Linear)
+                pcall(c.AddPoint, c, 0, 100)
+                pcall(c.AddPoint, c, 0.799, 100)
+                pcall(c.AddPoint, c, 0.801, 0)
+                pcall(c.AddPoint, c, 1, 0)
+                local function ev(x)
+                    local ok, y = pcall(c.Evaluate, c, x)
+                    return ok and tostring(y) or "err"
+                end
+                addon:Print(string.format("  curve self-test (t=80): as fraction E(.75)=%s E(.85)=%s | as percent E(75)=%s E(85)=%s",
+                    ev(0.75), ev(0.85), ev(75), ev(85)))
+            end
+        end
+        -- Curve-encoded threshold gate: the engine compares, we read zero-ness.
+        -- At full health every line should read false; hurt yourself and they
+        -- flip to true one band at a time as you drop past each percentage.
+        -- nil here = the curve failed its own self-test and callers fell back.
+        if BAPI.IsUnitHealthBelow then
+            local yourPct = addon.db and addon.db.profile and addon.db.profile.precombatBuffs
+                and addon.db.profile.precombatBuffs.topoffThreshold
+            addon:Print(string.format("  IsUnitHealthBelow(player): 95=%s 90=%s 50=%s 35=%s | YOUR top-off %s=%s",
+                tostring(BAPI.IsUnitHealthBelow("player", 95)),
+                tostring(BAPI.IsUnitHealthBelow("player", 90)),
+                tostring(BAPI.IsUnitHealthBelow("player", 50)),
+                tostring(BAPI.IsUnitHealthBelow("player", 35)),
+                tostring(yourPct or "unset"),
+                tostring(yourPct and BAPI.IsUnitHealthBelow("player", yourPct))))
+            if UnitExists("target") then
+                addon:Print(string.format("  IsUnitHealthBelow(target): 90=%s 35=%s 20=%s",
+                    tostring(BAPI.IsUnitHealthBelow("target", 90)),
+                    tostring(BAPI.IsUnitHealthBelow("target", 35)),
+                    tostring(BAPI.IsUnitHealthBelow("target", 20))))
+            end
+        end
+        -- Power gate + bands. Spend some resource before running this: the
+        -- power lines should flip as you cross each percentage, and the band
+        -- number should climb as you regenerate (1 = below the first boundary).
+        if BAPI.IsUnitPowerBelow then
+            addon:Print(string.format("  IsUnitPowerBelow(player): 90=%s 50=%s 20=%s | band{20,50,90}=%s",
+                tostring(BAPI.IsUnitPowerBelow("player", 90)),
+                tostring(BAPI.IsUnitPowerBelow("player", 50)),
+                tostring(BAPI.IsUnitPowerBelow("player", 20)),
+                tostring(BAPI.GetPowerBand and BAPI.GetPowerBand("player", {20, 50, 90}))))
+        end
+        if BAPI.GetHealthBand then
+            -- The boundaries the DEFENSIVE CLUSTER actually uses, asked for rather
+            -- than hardcoded: a demo band would keep printing happily after the
+            -- production one moved, and the whole point of this line is to check
+            -- the live layer.
+            local DE = LibStub("JustAC-DefensiveEngine", true)
+            local bounds = DE and DE.GetHealthBandInfo and select(3, DE.GetHealthBandInfo())
+                or { 35, 80 }
+            addon:Print(string.format("  GetHealthBand{%s}: player=%s target=%s  (1 = below the first boundary; %d = above the last)",
+                table.concat(bounds, ","),
+                tostring(BAPI.GetHealthBand("player", bounds)),
+                UnitExists("target") and tostring(BAPI.GetHealthBand("target", bounds)) or "no target",
+                #bounds + 1))
+        end
+        addon:Print(string.format("  UnitHasAbsorb: target=%s player=%s  (new capability - shield on ANY unit)",
+            tostring(BAPI.UnitHasAbsorb and BAPI.UnitHasAbsorb("target")),
+            tostring(BAPI.UnitHasAbsorb and BAPI.UnitHasAbsorb("player"))))
+        -- Stack gate: first player buff carrying an instance id, asked ">= 2".
+        local auras = BAPI.GetAuras and BAPI.GetAuras("player", "HELPFUL")
+        local inst = auras and auras[1] and auras[1].auraInstanceID
+        if inst and BAPI.AuraStacksAtLeast then
+            addon:Print(string.format("  AuraStacksAtLeast(player, first buff, 2) = %s",
+                tostring(BAPI.AuraStacksAtLeast("player", inst, 2))))
+        end
     end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect timeline - can we see a BIG HIT coming?
+--
+-- C_EncounterTimeline is Blizzard's own boss-mechanic timeline and JustAC does not
+-- touch it. Every defensive decision the addon makes today is REACTIVE - inferred
+-- from health that has already dropped. "Something lands in 3 seconds" is a
+-- different category of signal, and the access rules are unusually generous:
+--
+--   PLAIN (no restriction):  IsFeatureEnabled, HasActiveEvents, GetEventList,
+--                            GetSortedEventList, GetEventHighlightTime, GetEventTrack
+--   NeverSecret FIELDS:      info.id, info.source, info.duration, info.maxQueueDuration
+--   SECRET in an encounter:  info.spellID, info.spellName, info.icons, info.severity
+--
+-- So TIMING is readable and CLASSIFICATION is not. GetSortedEventList takes a
+-- maxEventDuration filter, which makes "how many events land within N seconds" a
+-- plain count - branchable with no curve at all.
+--
+-- The open question this probe exists to answer: can the severity/icon class be
+-- recovered anyway? GetEventColor(eventID, colorCurve, trigger) is shaped exactly
+-- like GetAuraDispelTypeColor, which this addon already uses to isolate Enrage via
+-- a selector curve. If the same trick lands here, "a DEADLY / TANK-ROLE event is
+-- due in N seconds" becomes available - which is the cue a tank actually wants.
+--------------------------------------------------------------------------------
+function DebugCommands.EncounterTimelineProbe(addon)
+    local ET = C_EncounterTimeline ---@diagnostic disable-line: undefined-global
+    addon:Print("|cff00ccff== encounter timeline probe ==|r")
+    if not ET then
+        addon:Print("|cffff6600C_EncounterTimeline unavailable on this client|r")
+        return
+    end
+    local function call(name, ...)
+        local fn = ET[name]
+        if not fn then return nil, "absent" end
+        local ok, a, b = pcall(fn, ...)
+        if not ok then return nil, "THREW" end
+        return a, nil, b
+    end
+    local enabled = call("IsFeatureEnabled")
+    local active  = call("HasActiveEvents")
+    addon:Print(string.format("feature enabled=%s  active events=%s  highlight lead=%ss",
+        tostring(enabled), tostring(active), tostring(call("GetEventHighlightTime"))))
+    if enabled ~= true then
+        addon:Print("|cff888888Feature off or unavailable - the rest needs it on, in an encounter.|r")
+    end
+
+    -- THE BRANCHABLE TIMING SIGNAL. A count of events inside a window, with no
+    -- curve and no secret: this alone is enough to raise defensive priority.
+    for _, window in ipairs({ 3, 5, 10 }) do
+        local list = call("GetSortedEventList", nil, window, true, true)
+        local n = (type(list) == "table") and #list or nil
+        addon:Print(string.format("  events within %2ds: %s%s", window,
+            tostring(n),
+            (n and n > 0) and "  |cffff8800<- something is coming|r" or ""))
+    end
+
+    local list = call("GetSortedEventList", 4, 30, true, true)
+    if type(list) ~= "table" or #list == 0 then
+        addon:Print("|cff888888No events on the timeline right now - run this during a boss fight.|r")
+        return
+    end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    addon:Print("|cffffff00-- per-event: which fields survive, and does the timer gate? --|r")
+    for i = 1, #list do
+        local id = list[i]
+        local info = call("GetEventInfo", id)
+        local track = call("GetEventTrack", id)
+        -- Per-field secrecy: id/source/duration/maxQueueDuration are NeverSecret,
+        -- the rest are not. Reduce each to a word rather than printing it - a
+        -- tostring on a secret would propagate secrecy into the chat message.
+        local function field(v)
+            if v == nil then return "nil" end
+            if BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v) then return "|cffff6600secret|r" end
+            return "|cff2ecc71" .. tostring(v) .. "|r"
+        end
+        addon:Print(string.format("  #%d track=%s  dur=%s  severity=%s  icons=%s  spellID=%s",
+            i, tostring(track),
+            field(info and info.duration), field(info and info.severity),
+            field(info and info.icons), field(info and info.spellID)))
+        -- Does the event's own timer threshold-gate like every other duration?
+        local timer = call("GetEventTimer", id)
+        if timer and BAPI and BAPI.IsDurationBelowSeconds then
+            addon:Print(string.format("     timer: <3s=%s  <8s=%s",
+                tostring(BAPI.IsDurationBelowSeconds(timer, 3)),
+                tostring(BAPI.IsDurationBelowSeconds(timer, 8))))
+        end
+    end
+    addon:Print("|cff00ccffWhat to look for:|r if severity/icons print |cffff6600secret|r, the class"
+        .. " filter needs the GetEventColor selector-curve route (same shape as the Enrage probe)."
+        .. " If they print green, a big-hit filter is a plain table read and we are done.")
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect durcurve [spellID] - can a DURATION be threshold-gated?
+--
+-- The question: LuaDurationObject:EvaluateRemainingPercent(curve, modifier) carries
+-- the same annotation pair as UnitHealthPercent - SecretWhenCurveSecret, and
+-- SecretArguments AllowedWhenUntainted - which is the exact API the working health
+-- threshold gate rides. If the composition transfers, "is this aura/cooldown below
+-- N% remaining" becomes branchable, and remaining-duration is the single largest
+-- class of SimC conditions still delegated (675 `.remains` atoms across the APLs).
+--
+-- Prior art, and why this is a RE-test rather than a new one: probed in game
+-- 2026-07-06, the evaluated result came back issecretvalue()==true in combat, and
+-- the path was filed as display-only. That verdict was correct at the time - there
+-- was no way to branch on a secret result. The zero-gate is exactly that way, and
+-- it did not exist until 2026-08-10. Same API, new tool.
+--
+-- Two things are unknown and BOTH are measured here, because guessing either wrong
+-- produces a confident wrong answer:
+--   1. Is the result secret? The 2026-07-06 run says yes, which is the GOOD case:
+--      secret plus a working zero-gate is a branchable answer. The doc annotation
+--      hints otherwise (no SecretReturns, unlike UnitHealthPercent) - measurement
+--      beats inference, so the probe reports whichever it actually finds.
+--   2. What is the curve's DOMAIN? UnitHealthPercent turned out to take the 0-1
+--      fraction, not 0-100 (an assumption that already cost one invisible icon).
+--      So every threshold is asked TWICE - once as a fraction, once as a percent -
+--      and only the one matching ground truth is real.
+-- Ground truth comes from the scratch-Cooldown IsShown() boolean we already trust
+-- (active / not active) plus, out of combat, whatever plain numbers the client hands
+-- over. Nothing here writes to a production path.
+--------------------------------------------------------------------------------
+
+-- Ramp from `lo` (below the threshold) to 0 at/above it, over an explicit domain.
+-- Output 100 rather than 1 for the same reason the production builder does:
+-- TruncateWhenZero formats as an integer ROUNDING DOWN, so an interpolated 0.4
+-- would floor to zero and read as "above threshold".
+local function DurProbeCurve(threshold, hi)
+    local cu = C_CurveUtil
+    local linear = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Linear
+    if not (cu and cu.CreateCurve and linear) then return nil end
+    local ok, c = pcall(cu.CreateCurve)
+    if not ok or not c then return nil end
+    -- Epsilon off the THRESHOLD, not the domain bound. The first version used
+    -- hi*0.001, which for a 3600s domain is a 3.6-SECOND epsilon: a 7.2s-wide ramp
+    -- masquerading as a step, so the "threshold" columns returned interpolated
+    -- values instead of 100/0. (That accident is what exposed the value leak the
+    -- reveal ramp below now measures on purpose.)
+    local eps = math.max(threshold * 0.002, 0.001)
+    local okAll = pcall(function()
+        c:SetType(linear)
+        c:AddPoint(0, 100)
+        c:AddPoint(math.max(0, threshold - eps), 100)
+        c:AddPoint(threshold + eps, 0)
+        c:AddPoint(hi, 0)
+    end)
+    return okAll and c or nil
+end
+
+-- A straight 0..hi -> 0..1000 ramp. Where the evaluated result comes back PLAIN,
+-- inverting it recovers the INPUT - i.e. the actual remaining seconds or fraction.
+-- DIAGNOSTIC ONLY, and it is here precisely to find out whether that is possible:
+-- in combat this should go secret, and the scope rule in StateHelpers means no
+-- production path may ever reconstruct a value this way even if it stays plain.
+local function DurRevealCurve(hi)
+    local cu = C_CurveUtil
+    local linear = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Linear
+    if not (cu and cu.CreateCurve and linear) then return nil end
+    local ok, c = pcall(cu.CreateCurve)
+    if not ok or not c then return nil end
+    local okAll = pcall(function()
+        c:SetType(linear)
+        c:AddPoint(0, 0)
+        c:AddPoint(hi, 1000)
+    end)
+    return okAll and c or nil
+end
+
+--- Invert the reveal ramp: evaluated -> the input the engine fed it.
+--- @return string the recovered value, or why it could not be recovered
+local function DurReveal(durObj, method, hi, unit, modifier)
+    local curve = DurRevealCurve(hi)
+    local fn = curve and durObj and durObj[method]
+    if not fn then return "|cff888888n/a|r" end
+    local ok, result = pcall(fn, durObj, curve, modifier)
+    if not ok then return "|cffff6666THREW|r" end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(result) then
+        return "|cff00ff00secret|r"          -- the good outcome: no value leaks
+    end
+    if type(result) ~= "number" then return tostring(result) end
+    return string.format("|cffff6600%.2f%s|r", result / 1000 * hi, unit)
+end
+
+--- Evaluate one method with one curve and describe what came back.
+--- @return string a single human-readable verdict cell
+local function DurProbeCell(durObj, method, curve, modifier)
+    local fn = durObj and durObj[method]
+    if not fn then return "|cff888888no method|r" end
+    local ok, result = pcall(fn, durObj, curve, modifier)
+    if not ok then return "|cffff6666THREW|r" end
+    if result == nil then return "nil" end
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local isSecret = BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(result)
+    if not isSecret then
+        -- PLAIN. Then the number is readable outright - report it verbatim, since
+        -- that is a bigger finding than the gate this probe was written to test.
+        return string.format("|cff00ff00PLAIN|r %s", tostring(result))
+    end
+    local zero = BAPI and BAPI.IsSecretZero and BAPI.IsSecretZero(result)
+    if zero == nil then return "secret, |cffff6666zero-gate cannot answer|r" end
+    -- Curve is 100 BELOW the threshold and 0 at/above it, so non-zero = below.
+    return string.format("secret, below=%s", tostring(not zero))
+end
+
+function DebugCommands.DurationCurveProbe(addon, arg)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    addon:Print("|cff00ccff== duration curve probe ==|r")
+    if not (C_CurveUtil and C_CurveUtil.CreateCurve) then
+        addon:Print("|cffff6600C_CurveUtil.CreateCurve unavailable - nothing to test|r")
+        return
+    end
+    local RealTime = (Enum and Enum.DurationTimeModifier and Enum.DurationTimeModifier.RealTime) or 0
+
+    -- Source: an explicit spell's cooldown if asked for, else the first player buff
+    -- carrying a duration. Both are the SAME object type, so either answers the
+    -- question; the aura is preferred because a fresh buff has a known ~100%.
+    local durObj, source
+    local auraNotes = {}        -- why each aura lookup did not supply the object
+    local sid = tonumber(arg)
+    local sName = sid and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
+    sName = (sName and sName.name) or (sid and tostring(sid))
+    -- A named spell prefers its own AURA while that aura is up, and falls back to
+    -- its cooldown otherwise. Both are duration objects, but only this ordering
+    -- makes a CONTROLLED test possible: pick a short self-buff and the same command
+    -- measures the buff running down, then the cooldown running down.
+    -- Order: player aura, then TARGET aura, then cooldown. The target leg is what
+    -- reaches SimC's `dot.`/`debuff.` atoms, which are most of the prize and sit
+    -- behind the same aura secrecy predicate as the player's - so a DoT on the
+    -- target is the single most representative subject this probe can take.
+    if sid and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+        local lookups = {
+            { "player", C_UnitAuras.GetPlayerAuraBySpellID, "BUFF %s (%d) on player" },
+            { "target", C_UnitAuras.GetUnitAuraBySpellID,   "DOT/DEBUFF %s (%d) on target" },
+        }
+        for i = 1, #lookups do
+            local unit, getter, label = lookups[i][1], lookups[i][2], lookups[i][3]
+            if not getter then
+                auraNotes[#auraNotes + 1] = unit .. ": no lookup API"
+            elseif unit == "target" and not UnitExists("target") then
+                auraNotes[#auraNotes + 1] = "target: no target"
+            else
+                local okA, aura
+                if unit == "player" then okA, aura = pcall(getter, sid)
+                else okA, aura = pcall(getter, unit, sid) end
+                local inst = okA and aura and aura.auraInstanceID
+                if inst then
+                    local okD, d = pcall(C_UnitAuras.GetAuraDuration, unit, inst)
+                    if okD and d then
+                        durObj, source = d, string.format(label, sName, sid)
+                        break
+                    end
+                    auraNotes[#auraNotes + 1] = unit .. ": have instance, GetAuraDuration gave nothing"
+                elseif not okA then
+                    auraNotes[#auraNotes + 1] = unit .. ": lookup THREW"
+                else
+                    -- The distinction that matters. GetUnitAuraBySpellID is
+                    -- RequiresNonSecretAura: under aura secrecy it returns NO VALUES
+                    -- for an aura that is genuinely present, so "absent" and "hidden"
+                    -- look identical here. AreAurasSecret is the only thing that
+                    -- separates them, and if it is true this is a BLOCKED path, not a
+                    -- missing aura - which is a finding, not a failed test.
+                    local secret = BAPI and BAPI.AreAurasSecret and BAPI.AreAurasSecret()
+                    auraNotes[#auraNotes + 1] = unit .. ": no aura returned ("
+                        .. (secret and "|cffffff00UNDECIDABLE - absent OR blocked; aura secrecy is"
+                                    .. " on, so a present aura also returns nothing. Re-run naming"
+                                    .. " an aura you KNOW is on this unit|r"
+                                   or "auras readable, so it is genuinely not applied") .. ")"
+                end
+            end
+        end
+    end
+    if not durObj and sid and C_Spell and C_Spell.GetSpellCooldownDuration then
+        local ok, d = pcall(C_Spell.GetSpellCooldownDuration, sid, true)
+        if ok and d then
+            durObj, source = d, string.format("COOLDOWN of %s (%d)", sName, sid)
+        end
+    end
+    if not durObj and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+        local auras = BAPI and BAPI.GetAuras and BAPI.GetAuras("player", "HELPFUL")
+        for i = 1, (auras and #auras or 0) do
+            local inst = auras[i] and auras[i].auraInstanceID
+            if inst then
+                local ok, d = pcall(C_UnitAuras.GetAuraDuration, "player", inst)
+                if ok and d then
+                    durObj = d
+                    source = string.format("player buff #%d (auraInstanceID %s)", i, tostring(inst))
+                    break
+                end
+            end
+        end
+    end
+    if not durObj then
+        addon:Print("|cffff6600No duration object available.|r Get a buff on yourself, or"
+            .. " name a spell you have buffed or on cooldown: /jac inspect durcurve 5217")
+        return
+    end
+    addon:Print("source: " .. source)
+    -- Printed whenever an aura leg was tried and did not win. A silent fallthrough
+    -- to the cooldown looks exactly like a successful aura test in the output, which
+    -- is how a run can appear to pass while measuring something else entirely.
+    for i = 1, #auraNotes do
+        addon:Print("  |cff888888aura lookup ->|r " .. auraNotes[i])
+    end
+    if not sid then
+        addon:Print("|cff888888(arbitrary buff - for a CONTROLLED test name a short one,"
+            .. " e.g. /jac inspect durcurve 5217)|r")
+    end
+
+    -- What the object offers, and the baseline we already trust.
+    local methods = {}
+    for _, m in ipairs({ "EvaluateRemainingPercent", "EvaluateRemainingDuration",
+                         "EvaluateElapsedPercent", "EvaluateTotalDuration" }) do
+        methods[#methods + 1] = m:gsub("Evaluate", "") .. "=" .. (durObj[m] and "y" or "|cffff6666n|r")
+    end
+    addon:Print("methods: " .. table.concat(methods, " "))
+    addon:Print(string.format("baseline (scratch-Cooldown IsShown, today's boolean): active=%s",
+        tostring(BAPI and BAPI.IsDurationObjectActive and BAPI.IsDurationObjectActive(durObj))))
+    addon:Print(string.format("in combat: %s  |cff888888(secrecy differs OOC - run this both ways)|r",
+        tostring(UnitAffectingCombat("player"))))
+    -- PRODUCTION IMPACT CHECK. IsBuffWindowActive takes the very same spellID ->
+    -- auraInstanceID hop, and the SimC buff-window gates plus the burst cue's
+    -- "window is up" signal ride on it. If that hop is blocked in combat, this
+    -- reads false for a buff that IS up - a live bug, not a probe curiosity.
+    if sid and BAPI and BAPI.IsBuffWindowActive then
+        addon:Print(string.format("production IsBuffWindowActive(%d) = %s  "
+            .. "|cff888888(same instance-id hop; if you KNOW this buff is up and this says"
+            .. " false, the buff gates are dead in combat)|r",
+            sid, tostring(BAPI.IsBuffWindowActive(sid))))
+    end
+
+    -- PERCENT methods, asked in BOTH candidate domains. Exactly one column should
+    -- track reality; if they agree everywhere the curve is not being evaluated at all.
+    addon:Print("|cffffff00-- percent methods: 50% threshold, both domains --|r")
+    local frac50, pct50 = DurProbeCurve(0.5, 1), DurProbeCurve(50, 100)
+    for _, m in ipairs({ "EvaluateRemainingPercent", "EvaluateElapsedPercent" }) do
+        addon:Print(string.format("  %-26s fraction-domain: %s", m,
+            frac50 and DurProbeCell(durObj, m, frac50, RealTime) or "curve build failed"))
+        addon:Print(string.format("  %-26s percent-domain : %s", "",
+            pct50 and DurProbeCell(durObj, m, pct50, RealTime) or "curve build failed"))
+    end
+
+    -- SECONDS methods. Domain is unambiguous here, so a working result is the
+    -- cleanest possible confirmation: "under 5s left" with no percentage involved.
+    addon:Print("|cffffff00-- seconds methods: 5s and 30s thresholds --|r")
+    local s5, s30 = DurProbeCurve(5, 3600), DurProbeCurve(30, 3600)
+    for _, m in ipairs({ "EvaluateRemainingDuration", "EvaluateTotalDuration" }) do
+        addon:Print(string.format("  %-26s <5s: %s", m,
+            s5 and DurProbeCell(durObj, m, s5, RealTime) or "curve build failed"))
+        addon:Print(string.format("  %-26s <30s: %s", "",
+            s30 and DurProbeCell(durObj, m, s30, RealTime) or "curve build failed"))
+    end
+
+    -- DIRECT GETTERS AND PREDICATES. Not part of the original question, and worth
+    -- more than it: LuaDurationObject carries a whole predicate surface the curve
+    -- work never touched.
+    --   HasSecretValues is annotated ReturnsNeverSecret - a duration object can be
+    --     ASKED whether it holds secrets, instead of us inferring it from a trial
+    --     read. If that holds, IsSecretZero's plain-vs-secret branch stops guessing.
+    --   IsActive / HasExpired / HasStarted / IsZero carry NO SecretReturns. If they
+    --     read plain in combat, IsActive() replaces the scratch-Cooldown
+    --     SetCooldownFromDurationObject + IsShown() probe this addon ships today
+    --     with one call - the same answer, none of the widget round-trip.
+    --   GetRemainingDuration / GetTotalDuration are the raw numbers; expect secret
+    --     wherever the reveal ramp below is also secret. Disagreement is the finding.
+    -- Measured, NOT trusted: tonight already showed these docs under-describe
+    -- secrecy for duration objects (EvaluateRemainingPercent carries no
+    -- SecretReturns yet came back secret in combat).
+    addon:Print("|cffffff00-- direct getters / predicates --|r")
+    local function cell(method)
+        local fn = durObj[method]
+        if not fn then return method .. "=|cff888888absent|r" end
+        local okc, v = pcall(fn, durObj)
+        if not okc then return method .. "=|cffff6666THREW|r" end
+        local sec = BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v)
+        return string.format("%s=%s", method, sec and "|cffff6600secret|r"
+            or ("|cff2ecc71" .. tostring(v) .. "|r"))
+    end
+    addon:Print("  " .. table.concat({
+        cell("HasSecretValues"), cell("IsZero"), cell("IsActive"),
+    }, "  "))
+    addon:Print("  " .. table.concat({
+        cell("HasStarted"), cell("HasExpired"),
+    }, "  "))
+    addon:Print("  " .. table.concat({
+        cell("GetRemainingDuration"), cell("GetTotalDuration"), cell("GetRemainingPercent"),
+    }, "  "))
+    addon:Print("|cff888888  green = plain (branchable). If IsActive is green in combat it"
+        .. " supersedes the scratch-Cooldown readiness probe.|r")
+
+    -- REVEAL ROW. A straight ramp inverts back to the engine's own input, so where
+    -- the result is plain this prints the ACTUAL remaining time. Two jobs: it makes
+    -- every run above interpretable (you can see what state each threshold was
+    -- judging), and it is the test for whether a value leaks at all. "secret" here
+    -- is the outcome that keeps the threshold gates legitimate.
+    addon:Print("|cffffff00-- reveal ramp (diagnostic: does the exact value leak?) --|r")
+    addon:Print(string.format("  remaining: %s   total: %s   elapsed%%: %s   remaining%%: %s",
+        DurReveal(durObj, "EvaluateRemainingDuration", 3600, "s", RealTime),
+        DurReveal(durObj, "EvaluateTotalDuration",     3600, "s", RealTime),
+        DurReveal(durObj, "EvaluateElapsedPercent",       1, "",  RealTime),
+        DurReveal(durObj, "EvaluateRemainingPercent",     1, "",  RealTime)))
+
+    -- NOT probed, deliberately: UnitHealPredictionCalculator is the other curve
+    -- surface, but CreateUnitHealPredictionCalculator takes no unit and the object
+    -- is populated with SetPredictedValues, which is AllowedWhenUntainted - addon
+    -- code cannot hand it a secret. It computes on numbers we already have, so it
+    -- can reveal nothing. A probe there would print a confident meaningless result.
+
+    addon:Print("|cff00ccffReading this:|r PLAIN = the number is readable outright."
+        .. "  secret+below=<t/f> = the ZERO-GATE works and durations become gateable."
+        .. "  THREW / cannot answer = the composition does not transfer.")
+    addon:Print("Cross-check against the baseline above, and re-run at a DIFFERENT"
+        .. " remaining time - a column that never changes is not measuring anything.")
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect simcgates [st|aoe|cleave] - evaluate this spec's SimC gates live.
+-- The verification tool for the threshold layer feeding the rotation: every entry
+-- carrying an EVALUABLE gate is listed with the gate's inputs and the verdict the
+-- queue acts on, so a wrong gate is visible instead of quietly reordering things.
+-- "-"/nil anywhere means unevaluable, which always fails OPEN (never blocks).
+-- Countable resource gates are listed but not evaluated here - they need the live
+-- point count the queue passes in.
+--------------------------------------------------------------------------------
+function DebugCommands.SimcGateProbe(addon, arg)
+    local RI   = LibStub("JustAC-RotationImport", true)
+    local SQ   = LibStub("JustAC-SpellQueue", true)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    if not (RI and RI.GetRotationGated and SQ and BAPI) then
+        addon:Print("simcgates: modules unavailable")
+        return
+    end
+    local ctx = (arg == "aoe" or arg == "cleave") and arg or "st"
+    local blocks = SQ._SimcGateBlocks
+
+    addon:Print(string.format("|cff00ff00=== simc gates (%s) ===|r thresholdGate=%s target=%s",
+        ctx, tostring(BAPI.IsThresholdGateAvailable and BAPI.IsThresholdGateAvailable()),
+        UnitExists("target") and (UnitName("target") or "?") or "none"))
+
+    -- Real inputs, so the verdict shown is the one the queue actually computes.
+    local resCount, resMax, resName
+    if BAPI.GetClassResourcePoints then
+        resCount, resMax, resName = BAPI.GetClassResourcePoints()
+    end
+    addon:Print(string.format("  countable resource: %s cur=%s max=%s",
+        tostring(resName), tostring(resCount), tostring(resMax)))
+
+    local list = RI.GetRotationGated(ctx) or {}
+    local shown, blocked = 0, 0
+    for i = 1, #list do
+        local e = list[i]
+        local gates = e and e.gates
+        if gates then
+            local parts = {}
+            for gi = 1, #gates do
+                local g = gates[gi]
+                if g.t == "power" then
+                    -- Ask the RUNTIME for the threshold rather than recomputing it -
+                    -- a probe that mirrors the logic drifts from it.
+                    local pctVal, pt = SQ.PowerGateThreshold and SQ.PowerGateThreshold(g)
+                    local below = pctVal and BAPI.IsUnitPowerBelow
+                        and BAPI.IsUnitPowerBelow("player", pctVal, pt)
+                    parts[#parts + 1] = string.format("%s%s%s%d [max=%s -> %s%%] below=%s",
+                        g.res, g.deficit and ".deficit" or "", g.op, g.n,
+                        tostring(pt and UnitPowerMax("player", pt)),
+                        pctVal and string.format("%.1f", pctVal) or "-", tostring(below))
+                elseif g.t == "execute" and g.pct then
+                    parts[#parts + 1] = string.format("target.hp%s%d below=%s", g.op, g.pct,
+                        tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("target", g.pct)))
+                elseif g.t == "health" and g.pct then
+                    parts[#parts + 1] = string.format("my.hp%s%d below=%s", g.op, g.pct,
+                        tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("player", g.pct)))
+                elseif g.t == "stack" and g.id and g.n then
+                    -- Ask the runtime's own verdict, then show the raw ">= n" read
+                    -- beside it: the two disagree exactly when the operator logic is
+                    -- wrong, which is the part worth being able to see.
+                    local unit = g.tgt and "target" or "player"
+                    local holds = SQ._StackHolds and SQ._StackHolds(unit, g)
+                    local atN = BAPI.GetAuraStackAtLeast and BAPI.GetAuraStackAtLeast(unit, g.id, g.n)
+                    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(g.id)
+                    parts[#parts + 1] = string.format("%s(%s).stack%s%d [>=%d is %s] holds=%s",
+                        (info and info.name) or tostring(g.id), unit,
+                        g.op, g.n, g.n, tostring(atN), tostring(holds))
+                elseif g.t == "resource" then
+                    local value = resCount
+                    if g.deficit and type(resMax) == "number" and type(resCount) == "number" then
+                        value = resMax - resCount
+                    elseif g.deficit then
+                        value = nil
+                    end
+                    parts[#parts + 1] = string.format("%s%s%s%d [is=%s]", g.res,
+                        g.deficit and ".deficit" or "", g.op, g.n,
+                        (g.res == resName) and tostring(value) or "other resource")
+                end
+            end
+            if #parts > 0 then
+                shown = shown + 1
+                local isBlocked = blocks and blocks(gates, resCount, resName, resMax) or false
+                if isBlocked then blocked = blocked + 1 end
+                local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(e.id)
+                addon:Print(string.format("  %s|r %s %s {%s}",
+                    isBlocked and "|cffff6600BLOCK" or "|cff2ecc71ok   ",
+                    (info and info.name) or tostring(e.id),
+                    e.delegated and "|cff888888(delegated)|r" or "",
+                    table.concat(parts, ", ")))
+            end
+        end
+    end
+    addon:Print(string.format("=== %d gated entr%s, %d blocked right now ===",
+        shown, shown == 1 and "y" or "ies", blocked))
+    if shown == 0 then
+        addon:Print("|cff888888This spec's rotation carries no threshold-evaluable gates - expected for many specs.|r")
+    end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect topoff [off] - watch the between-pulls heal reminder decide.
+-- Samples every 0.25s and prints only TRANSITIONS, so a flicker shows up as a
+-- pair of lines with a timestamp gap instead of a wall of text. Every input the
+-- decision uses is listed side by side, so the oscillating one is obvious.
+--------------------------------------------------------------------------------
+function DebugCommands.TopoffWatch(addon, arg)
+    if DebugCommands._topoffWatch then
+        DebugCommands._topoffWatch:SetScript("OnUpdate", nil)
+        DebugCommands._topoffWatch = nil
+        addon:Print("topoff watch: OFF")
+        if arg == "off" then return end
+    elseif arg == "off" then
+        addon:Print("topoff watch: not running")
+        return
+    end
+
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local Engine = LibStub("JustAC-PrecombatEngine", true)
+    if not (BAPI and Engine) then addon:Print("topoff watch: modules unavailable") return end
+
+    local f = CreateFrame("Frame")
+    DebugCommands._topoffWatch = f
+    local last, t = nil, 0
+    f:SetScript("OnUpdate", function(_, e)
+        t = t + e
+        if t < 0.25 then return end
+        t = 0
+        local profile = addon.db and addon.db.profile
+        local offerTopoff = profile and profile.precombatBuffs and profile.precombatBuffs.topoffHeal == true
+        local topoffPct = profile and profile.precombatBuffs and profile.precombatBuffs.topoffThreshold
+        -- Ask the engine for the live list, exactly as the defensive queue does.
+        local list = Engine.GetMissingClassBuffs and Engine.GetMissingClassBuffs(offerTopoff, topoffPct) or {}
+        local offered = Engine.offeredTopoffHeal
+        local inList = false
+        for i = 1, #list do if list[i] == offered then inList = true break end end
+
+        local pct, estimated = BAPI.GetPlayerHealthPercentSafe and BAPI.GetPlayerHealthPercentSafe()
+        local state = table.concat({
+            "offer=" .. tostring(offered),
+            "inList=" .. tostring(inList),
+            "full=" .. tostring(BAPI.IsUnitFullHealth and BAPI.IsUnitFullHealth("player")),
+            "below" .. tostring(topoffPct or "?") .. "=" .. tostring(BAPI.IsUnitHealthBelow
+                and topoffPct and BAPI.IsUnitHealthBelow("player", topoffPct)),
+            "sustainedRegen=" .. tostring(BAPI.HasSustainedPlayerHealthActivity and BAPI.HasSustainedPlayerHealthActivity()),
+            "recentEvent=" .. tostring(BAPI.HasRecentPlayerHealthActivity and BAPI.HasRecentPlayerHealthActivity()),
+            "postCombat=" .. tostring(BAPI.IsInPostCombatDowntime and BAPI.IsInPostCombatDowntime()),
+            "allyLowKey=" .. tostring(BAPI.IsUnitLow and BAPI.IsUnitLow("player")),
+            "pct=" .. tostring(pct) .. (estimated and "(est)" or "(exact)"),
+        }, " ")
+        if state ~= last then
+            last = state
+            addon:Print(string.format("|cff888888[%.1f]|r %s", GetTime() % 1000, state))
+        end
+    end)
+    addon:Print("|cff00ff00topoff watch: ON|r - stand damaged out of combat and watch which value flips with the icon. /jac inspect topoff off")
 end

@@ -189,6 +189,34 @@ end
 
 --- True when the current target already has this DoT live (so the queue should
 --- sink it). Confirmed instance > early-drop > post-cast window fallback.
+--- Is this entry's DoT inside its pandemic window, according to the ENGINE?
+--- true / false / nil (no confirmed instance, or the technique is unavailable).
+--- Shared by the live query and the /jac inspect dots probe so the probe can never
+--- report on a code path production does not take.
+local function EnginePandemicVerdict(e)
+    if not (e and next(e.instances) and BlizzardAPI
+            and BlizzardAPI.IsDurationBelowPercent and BlizzardAPI.GetAuraDurationObject) then
+        return nil
+    end
+    -- The LONGEST-lived application decides, so a single "has time left" settles it.
+    -- Returning the first instance that answered would let an old or nearly-spent
+    -- application outvote a fresh one - `pairs` order is arbitrary, and an entry can
+    -- hold more than one instance (a re-application can mint a new id, and 12.0.5
+    -- re-randomises ids on encounter start, so a spent one can linger a moment).
+    -- The result would be a reapply cue on a DoT that is actually full.
+    local answered = false
+    for instanceID in pairs(e.instances) do
+        local durObj = BlizzardAPI.GetAuraDurationObject("target", instanceID)
+        local below = durObj and BlizzardAPI.IsDurationBelowPercent(durObj, PANDEMIC_LEAD * 100)
+        if below ~= nil then
+            answered = true
+            if not below then return false end   -- one application still has time
+        end
+    end
+    -- Answered by at least one, and every one of them was inside the window.
+    return answered or nil
+end
+
 function DotTracker.IsDotActiveOnCurrentTarget(spellID)
     -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
     -- This query runs per rotation spell per build, so keeping it free when no DoT
@@ -201,6 +229,22 @@ function DotTracker.IsDotActiveOnCurrentTarget(spellID)
     end
     if not e then return false end
     local now = GetTime()
+    -- ENGINE TRUTH for the pandemic window, wherever we hold a confirmed instance.
+    -- This is not merely more precise than the estimate below - it fixes a class of
+    -- error the estimate CANNOT express. Refreshing a DoT carries up to 30% of the
+    -- remaining time into the new application, so a refreshed DoT really runs up to
+    -- 1.3x its book duration, while `castTime + dur * 0.7` still assumes exactly the
+    -- book value. Every refreshed DoT therefore reaches its reapply cue early, and
+    -- the error compounds the longer a DoT is kept rolling. Asking the aura for its
+    -- own remaining time removes all of it, and needs no duration data at all -
+    -- talent and haste scaling come for free.
+    -- A stale instance id (a DoT that expired between target updates) simply yields
+    -- no answer here - GetAuraDuration requires a VALID instance - so the loop falls
+    -- through to the estimate instead of trusting a dead binding.
+    -- Inside the window -> report NOT active, which un-sinks the DoT so the player
+    -- reapplies. Outside it -> live, keep it sunk.
+    local engineBelow = EnginePandemicVerdict(e)
+    if engineBelow ~= nil then return not engineBelow end
     -- Inside the pandemic refresh window: un-sink so the player can reapply, even
     -- though the debuff is still technically live. For known durations this also
     -- caps a stale confirmed instance (a DoT that expired between target updates).
@@ -234,6 +278,11 @@ function DotTracker.DebugState()
             confirmed = next(e.instances) ~= nil,
             expiresIn = e.expiry - now,
             pandemicIn = e.pandemicPoint and (e.pandemicPoint - now) or nil,
+            -- Which source actually decided, and what the engine says. The estimate
+            -- and the engine disagree exactly when the estimate is wrong (a
+            -- pandemic-refreshed DoT), so showing only the verdict would hide the
+            -- one case this is here to fix.
+            enginePandemic = EnginePandemicVerdict(e),
         }
     end
     return out

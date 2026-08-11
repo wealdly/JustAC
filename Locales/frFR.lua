@@ -219,7 +219,7 @@ L["Show Gap-Closer Glow desc"] = "Affiche une lueur dorée sur les icônes d'app
 
 -- Burst-ready cue
 L["Burst Ready Cue"] = "Signal de burst"
-L["Burst Ready Cue desc"] = "Lueur violette sur le temps de recharge majeur de votre spécialisation lorsqu'il apparaît prêt dans la file - le signal pour lancer votre burst."
+L["Burst Ready Cue desc"] = "Lueur violette sur le temps de recharge majeur de votre spécialisation lorsqu'il apparaît prêt dans la file - le signal pour lancer votre burst.\n\nElle reste éteinte quand le seul ennemi qui vous combat encore est presque mort - sauf sur un boss, car c'est justement le moment de tout dépenser."
 L["Burst Triggers"] = "Déclencheurs de burst"
 L["Burst Triggers desc"] = "Quels sorts reçoivent le signal de burst. La liste par défaut provient des marqueurs de fenêtre de burst de SimulationCraft pour votre spécialisation (ou de valeurs par défaut de classe). Ajoutez des sorts ci-dessous pour utiliser votre propre liste. Vos propres déclencheurs s'illuminent dès qu'ils sont prêts."
 L["Burst Triggers Active"] = "Actifs (%s) :"

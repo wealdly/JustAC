@@ -164,9 +164,20 @@ def split_and(expr):
 
 # Discrete (countable) class resources only - see classify_atom for why continuous ones stay
 # delegated. `soul_shards`/`runes` plural forms normalize to the singular token the runtime uses.
+# `.deficit` (max - current) is how APLs express pooling - "don't spend while
+# regeneration would be wasted". Countable resources get it for free: the runtime
+# reads current AND max as plain numbers, so it is plain arithmetic there.
 _RESOURCE_ATOM = re.compile(
     r'(combo_points|holy_power|chi|soul_shards?|runes?|essence|arcane_charges)'
-    r'\s*(>=|<=|>|<|=|!=)\s*(\d+)')
+    r'(\.deficit)?\s*(>=|<=|>|<|=|!=)\s*(\d+)')
+
+# Continuous (bar-fill) resources. Ordered comparisons only - see classify_atom.
+# `.pct` marks a value that is ALREADY a percentage (runtime skips its
+# absolute->percent conversion); `.deficit` restates the threshold as max-N and
+# flips the comparison, both handled at runtime where the maximum is readable.
+_CONT_RESOURCE_ATOM = re.compile(
+    r'(energy|rage|mana|astral_power|fury|runic_power|maelstrom|insanity|focus|pain)'
+    r'(\.pct|\.deficit)?\s*(>=|<=|>|<)\s*(\d+)')
 
 
 def classify_atom(atom, resolve):
@@ -188,10 +199,37 @@ def classify_atom(atom, resolve):
         if bid:
             return {"t": "buff", "id": bid, "neg": neg or suf == "down"}, False
         return None, True  # unknown buff -> can't evaluate -> delegate
-    if re.match(r'buff\.\w+\.(remains|stack)', a):
-        return None, True  # aura duration / stacks are secret
+    # Aura STACK counts. The count itself is secret, but the engine renders an
+    # application count ONLY at or above a minimum the caller names
+    # (C_UnitAuras.GetAuraApplicationDisplayCount), so "is it at least N" is
+    # answerable without reading it - and every comparison SimC uses reduces to one
+    # or two of those questions. Unlike the power gates, `=` is expressible here
+    # (>=n and not >=n+1), so it is NOT delegated.
+    # `debuff.` is the TARGET's aura, `buff.` the player's - hence `tgt`.
+    m = re.match(r'(buff|debuff)\.(\w+)\.stack\s*(>=|<=|>|<|=)\s*(\d+)$', a)
+    if m and not neg:
+        sid = resolve(m.group(2))
+        if sid:
+            return {"t": "stack", "id": sid, "op": m.group(3), "n": int(m.group(4)),
+                    "tgt": m.group(1) == "debuff"}, False
+        return None, True  # unknown aura -> can't evaluate -> delegate
+    if re.match(r'(buff|debuff)\.\w+\.(remains|stack)', a):
+        # Remaining DURATION is genuinely secret. A stack atom only lands here when
+        # it was negated or its aura token did not resolve.
+        return None, True
+    # Execute WITH its percentage. SimC's APLs are the only place per-spell execute
+    # thresholds exist (DB2 has no health-threshold column), and the runtime can now
+    # test a target-health threshold directly - so keep the number instead of
+    # collapsing every execute line into one shared "execute phase" flag.
+    m = re.match(r'target\.health\.pct\s*(>=|<=|>|<)\s*(\d+)', a)
+    if m and not neg:
+        return {"t": "execute", "op": m.group(1), "pct": int(m.group(2))}, False
     if re.match(r'(target\.health\.pct|target\.time_to_die)', a):
         return {"t": "execute", "neg": neg}, False
+    # Player health, which defensive APL lines lean on.
+    m = re.match(r'health\.pct\s*(>=|<=|>|<)\s*(\d+)', a)
+    if m and not neg:
+        return {"t": "health", "op": m.group(1), "pct": int(m.group(2))}, False
     if re.match(r'(spell_targets|active_enemies|desired_targets)', a):
         return None, False  # target count -> handled by the tier split
     if re.match(r'(talent|hero_tree|runeforge|set_bonus|equipped)\.', a):
@@ -202,14 +240,25 @@ def classify_atom(atom, resolve):
     # charges) are readable at runtime WITHOUT a secret: Blizzard's own resource bar branches on
     # the secret UnitPower in privileged code and leaves per-point `isActive` frame state behind
     # (BlizzardAPI.GetClassResourcePoints). So these become real gates instead of delegating.
-    # CONTINUOUS resources (energy, rage, mana, astral_power, fury, runic_power) stay delegated -
-    # they are bar-fill, not points, so there is nothing plain to count. A negated form is left
-    # to delegation rather than risking an inverted gate.
+    # CONTINUOUS resources (energy, rage, mana, astral_power...) are bar-fill, not points, so
+    # there is nothing plain to COUNT - but a THRESHOLD is testable engine-side, which is all
+    # these comparisons need. Emitted as "power", distinct from the countable "resource" gates,
+    # because the runtime evaluates them differently: SimC states them in ABSOLUTE units and the
+    # gate takes a percentage, so the runtime converts through UnitPowerMax (plain, read live
+    # because talents move maximums). Ordered comparisons only - = and != cannot be expressed by
+    # a threshold - and a negated form is left to delegation rather than risking an inverted gate.
     m = _RESOURCE_ATOM.fullmatch(a)
     if m and not neg:
         res = {"soul_shards": "soul_shard", "runes": "rune"}.get(m.group(1), m.group(1))
-        return {"t": "resource", "res": res, "op": m.group(2), "n": int(m.group(3))}, False
-    return None, True  # continuous resources / time / prev_gcd / variable -> delegate
+        return {"t": "resource", "res": res, "op": m.group(3), "n": int(m.group(4)),
+                "deficit": bool(m.group(2))}, False
+    m = _CONT_RESOURCE_ATOM.fullmatch(a)
+    if m and not neg:
+        suffix = m.group(2) or ""
+        return {"t": "power", "res": m.group(1), "op": m.group(3),
+                "n": int(m.group(4)), "ispct": suffix == ".pct",
+                "deficit": suffix == ".deficit"}, False
+    return None, True  # time / prev_gcd / variable / compound -> delegate
 
 
 def classify_if(expr, resolve):
@@ -374,6 +423,25 @@ def gate_lua(g):
         parts.append('op="%s"' % g["op"])
     if g.get("n") is not None:
         parts.append("n=%d" % g["n"])
+    # Threshold percentage (execute / health gates). Distinct from `ispct`, which
+    # only marks that a POWER gate's n is already a percentage - conflating the two
+    # silently mis-converted mana.pct thresholds through UnitPowerMax.
+    if g.get("pct") is not None:
+        parts.append("pct=%d" % g["pct"])
+    if g.get("ispct"):
+        parts.append("ispct=true")
+    if g.get("deficit"):
+        parts.append("deficit=true")
+    # `own` marks a bare `refreshable`/`ticking` - the entry's OWN dot rather than a
+    # named one. It was being dropped, flattening those gates to a bare {t="dot"}
+    # with no subject at all; the runtime does not consume it yet, but the data
+    # should say what the classifier meant. (Found by the schema guard below.)
+    if g.get("own"):
+        parts.append("own=true")
+    # `tgt` marks a gate that asks about the TARGET rather than the player (a SimC
+    # `debuff.` stack). Without it a target debuff would be probed on the player.
+    if g.get("tgt"):
+        parts.append("tgt=true")
     if g.get("neg"):
         parts.append("neg=true")
     return "{" + ",".join(parts) + "}"
@@ -386,9 +454,11 @@ def entry_lua(e):
 
 
 def entry_sig(e):
-    return (e["id"], tuple(sorted((x["t"], x.get("id", 0), x.get("neg", False),
-                                   x.get("res", ""), x.get("op", ""), x.get("n", 0))
-                                  for x in e["gates"])), e["delegated"])
+    # Signature taken off the CANONICAL serialization rather than a hand-listed key
+    # tuple. The old list named six keys, so every key added since (pct, ispct,
+    # deficit, own, tgt) was invisible to dedup and two entries differing only in
+    # one of them collapsed into a single entry - a dropped rotation line, silently.
+    return (e["id"], tuple(sorted(gate_lua(x) for x in e["gates"])), e["delegated"])
 
 
 def list_sig(lst):
@@ -522,14 +592,87 @@ def _selftest():
     assert branch_defer("set_bonus.tww3_4pc&spell_targets=1", {})
     assert branch_defer("variable.t&spell_targets=1", {"t": "hero_tree.x&set_bonus.tww3_4pc"})
     assert not branch_defer("variable.t", {"t": "buff.x.up"}) and not branch_defer("buff.x.up", {})
-    # Discrete resources become real gates; continuous ones and negations stay delegated.
+    # Discrete resources become countable gates; negations still delegate.
     g, d = classify_atom("combo_points>=5", lambda t: None)
-    assert g == {"t": "resource", "res": "combo_points", "op": ">=", "n": 5} and not d
+    assert g == {"t": "resource", "res": "combo_points", "op": ">=", "n": 5, "deficit": False} and not d
     g, d = classify_atom("soul_shards<3", lambda t: None)
-    assert g == {"t": "resource", "res": "soul_shard", "op": "<", "n": 3} and not d
-    assert classify_atom("energy>=50", lambda t: None) == (None, True)          # continuous
-    assert classify_atom("astral_power>=90", lambda t: None) == (None, True)    # continuous
+    assert g == {"t": "resource", "res": "soul_shard", "op": "<", "n": 3, "deficit": False} and not d
+    # .deficit - pooling conditions. Countable: plain arithmetic at runtime.
+    g, d = classify_atom("combo_points.deficit>=2", lambda t: None)
+    assert g == {"t": "resource", "res": "combo_points", "op": ">=", "n": 2, "deficit": True} and not d
+    # Continuous: the runtime restates it as max-N and flips the comparison.
+    g, d = classify_atom("runic_power.deficit<20", lambda t: None)
+    assert g == {"t": "power", "res": "runic_power", "op": "<", "n": 20,
+                 "ispct": False, "deficit": True} and not d
+    assert gate_lua({"t": "resource", "res": "chi", "op": ">=", "n": 2, "deficit": True}) \
+        == '{t="resource",res="chi",op=">=",n=2,deficit=true}'
+    # Aura stacks. `=` is kept (unlike the power gates) because the runtime can ask
+    # ">=n and not >=n+1"; an unresolved aura token still delegates, as does a
+    # negation, and `remains` stays delegated because a duration really is secret.
+    g, d = classify_atom("buff.maelstrom_weapon.stack>=5", lambda t: 344179)
+    assert g == {"t": "stack", "id": 344179, "op": ">=", "n": 5, "tgt": False} and not d
+    g, d = classify_atom("debuff.x.stack<2", lambda t: 7)
+    assert g == {"t": "stack", "id": 7, "op": "<", "n": 2, "tgt": True} and not d
+    assert classify_atom("buff.x.stack=3", lambda t: 7)[0]["op"] == "="
+    assert classify_atom("buff.x.stack>=5", lambda t: None) == (None, True)   # unresolved
+    assert classify_atom("!buff.x.stack>=5", lambda t: 7) == (None, True)     # negated
+    assert classify_atom("buff.x.remains>5", lambda t: 7) == (None, True)     # duration is secret
+    assert gate_lua({"t": "stack", "id": 7, "op": "<", "n": 2, "tgt": True}) \
+        == '{t="stack",id=7,op="<",n=2,tgt=true}'
+    # entry_sig must separate entries that differ ONLY in a key the old hand-listed
+    # tuple ignored - the dropped-rotation-line bug that motivated the rewrite.
+    mk = lambda gs: {"id": 1, "gates": gs, "delegated": False, "token": "x"}
+    assert entry_sig(mk([{"t": "stack", "id": 7, "op": ">=", "n": 2}])) \
+        != entry_sig(mk([{"t": "stack", "id": 7, "op": ">=", "n": 2, "tgt": True}]))
+    # SCHEMA GUARD. Every key classify_atom can put on a gate must survive
+    # gate_lua - a key the classifier emits and the serializer ignores is
+    # invisible until it silently changes runtime behaviour, which is exactly how
+    # `pct` once shipped inert (every execute gate evaluated as if it had no
+    # threshold). The runtime reads these by name, so this is the seam where
+    # Python and Lua agree; nothing else checks it.
+    SAMPLES = ("cooldown.x.ready", "dot.y.ticking", "buff.z.up", "refreshable",
+               "target.health.pct<20", "target.time_to_die<10", "health.pct<35",
+               "combo_points>=5", "combo_points.deficit>=2",
+               "energy>=50", "mana.pct<30", "runic_power.deficit<20",
+               "buff.maelstrom_weapon.stack>=5", "debuff.x.stack<2")
+    keys = set()
+    for atom in SAMPLES:
+        gate, _ = classify_atom(atom, lambda t: 123)
+        if gate:
+            keys.update(gate.keys())
+    for k in sorted(keys - {"t"}):
+        probe = {"t": "probe", k: 1 if k in ("id", "n", "pct") else
+                 ("x" if k in ("res", "op") else True)}
+        assert k + "=" in gate_lua(probe), "gate_lua drops gate key %r" % k
     assert classify_atom("!combo_points>=5", lambda t: None) == (None, True)    # negated -> delegate
+    # Continuous resources become THRESHOLD gates (were delegated before threshold
+    # gates existed). Absolute values stay absolute here - the runtime converts to a
+    # percentage with UnitPowerMax, which only it can read.
+    g, d = classify_atom("energy>=50", lambda t: None)
+    assert g == {"t": "power", "res": "energy", "op": ">=", "n": 50,
+                 "ispct": False, "deficit": False} and not d
+    g, d = classify_atom("astral_power>=90", lambda t: None)
+    assert g == {"t": "power", "res": "astral_power", "op": ">=", "n": 90,
+                 "ispct": False, "deficit": False} and not d
+    g, d = classify_atom("mana.pct<30", lambda t: None)
+    assert g == {"t": "power", "res": "mana", "op": "<", "n": 30,
+                 "ispct": True, "deficit": False} and not d
+    # Serialization must carry the threshold through - a dropped pct silently
+    # disabled every execute gate the first time this shipped.
+    assert gate_lua({"t": "execute", "op": "<", "pct": 20}) == '{t="execute",op="<",pct=20}'
+    assert gate_lua({"t": "power", "res": "mana", "op": "<", "n": 30, "ispct": True}) \
+        == '{t="power",res="mana",op="<",n=30,ispct=true}'
+    assert classify_atom("energy=50", lambda t: None) == (None, True)     # = not expressible
+    assert classify_atom("!energy>=50", lambda t: None) == (None, True)   # negated -> delegate
+    # Execute keeps its per-spell percentage; time_to_die stays the generic flag.
+    g, d = classify_atom("target.health.pct<20", lambda t: None)
+    assert g == {"t": "execute", "op": "<", "pct": 20} and not d
+    g, d = classify_atom("target.health.pct<35", lambda t: None)
+    assert g == {"t": "execute", "op": "<", "pct": 35} and not d
+    g, d = classify_atom("target.time_to_die<10", lambda t: None)
+    assert g == {"t": "execute", "neg": False} and not d
+    g, d = classify_atom("health.pct<35", lambda t: None)
+    assert g == {"t": "health", "op": "<", "pct": 35} and not d
 
 
 def main():

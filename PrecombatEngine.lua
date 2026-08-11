@@ -29,6 +29,24 @@ local RECUPERATE_HEALTH_PCT = 90
 -- shows, regardless of the top-off toggle - a critical-health survival cue.
 local LOW_HEALTH_PCT = 35
 
+-- How long an ARMED top-off offer survives without a fresh arming signal. The
+-- signals that can arm it while health is secret (regen ticks, the post-combat
+-- window, the ally-low key) are intermittent, and the offer must not blink out
+-- between two of them. "Provably at full" cancels the hold immediately, so this
+-- can only ever keep an offer alive a little longer, never resurrect a stale one.
+local TOPOFF_HOLD_SECONDS = 3
+local topoffHeldUntil = 0
+
+-- Onset debounce: "not at full" must persist this long before the reminder
+-- appears. Health can dip below full for a moment for uninteresting reasons (a
+-- scratch that regen erases immediately, a passive's no-change snapshot), and a
+-- reminder that pops for one frame each time is worse than no reminder.
+-- Deliberately ASYMMETRIC: appearing is delayed, but reaching full clears it
+-- instantly - being told to top off when you are already topped off is the one
+-- state this feature must never show.
+local TOPOFF_ONSET_SECONDS = 2
+local notFullSince = 0
+
 -- Re-offer a buff once it has this much time left, rather than waiting for it to lapse
 -- outright. FLAT time remaining, not a fraction of the duration: what matters is whether
 -- the buff outlasts the pull, and a 60-minute flask with 20 minutes on it needs nothing.
@@ -399,7 +417,10 @@ end
 --- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
 ---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
 ---   and imbues are unaffected - only the health top-off reminder honors this flag.
-function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
+--- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
+---   than read here for the same reason as offerTopoff: this module never touches the
+---   profile. nil falls back to "below full".
+function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
         return cachedClassBuffs
@@ -499,6 +520,37 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 if pick and IsPlayerSpell(pick) then out[#out + 1] = pick end
             end
         end
+
+    end
+
+    -- ENGINE-KNOWN group buffs the curated table does not cover (12.1.0+).
+    -- C_CooldownViewer.GetGroupBuffItems is Blizzard's own registry, so a class buff
+    -- added or reworked in a patch appears here without a data update. Kept strictly
+    -- ADDITIVE - the curated groups above run first and own anything they claim -
+    -- because a GroupBuffItem names only its cast id and carries no aura FAMILY, so
+    -- detection for it is the plain by-id probe and nothing more.
+    -- Skips hideByDefault entries: Blizzard de-emphasises those deliberately.
+    --
+    -- OUTSIDE the `groups` block on purpose. A class with NO curated entry is exactly
+    -- the case this registry exists to cover, and nesting it under `groups` would
+    -- have skipped precisely those classes - the gap it was added to close.
+    -- `get`/`restricted` are still required: without a readable aura probe every buff
+    -- reads as missing and we would nag for buffs already up.
+    local engineBuffs = (not InCombatLockdown()) and get and not restricted
+        and BlizzardAPI and BlizzardAPI.GetGroupBuffItems and BlizzardAPI.GetGroupBuffItems()
+    if engineBuffs then
+        local covered = {}
+        for _, grp in ipairs(groups or {}) do
+            for _, id in ipairs(grp.group) do covered[id] = true end
+            for _, id in ipairs(grp.auraIDs or {}) do covered[id] = true end
+        end
+        for i = 1, #engineBuffs do
+            local it = engineBuffs[i]
+            if it.isKnown and not it.hideByDefault and not covered[it.spellID]
+               and IsPlayerSpell(it.spellID) and not get(it.spellID) then
+                out[#out + 1] = it.spellID
+            end
+        end
     end
     -- Weapon imbue (Enhancement shaman): a temp weapon ENCHANT, not a player aura, so it can't
     -- ride the group loop above. Suggest the known imbue while the main hand is bare or the
@@ -558,28 +610,41 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff)
                 if pct and not estimated then
                     hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
                 else
-                    -- EXACT TIER: zero-gate the engine-side deficit
-                    -- (BlizzardAPI.IsSecretZero - the validated scratch-FontString
-                    -- technique). true = at full: never nudge, and no heuristic may
-                    -- override. false = genuinely below full: nudge - the 90%
-                    -- threshold can't be honored here (the heuristics couldn't
-                    -- either), but unlike them this also STOPS the instant you top
-                    -- off. nil = no answer: the heuristic tiers decide, as before.
-                    local atFull
-                    if UnitHealthMissing and BlizzardAPI.IsSecretZero then
-                        local missing = UnitHealthMissing("player")
-                        if missing ~= nil then
-                            atFull = BlizzardAPI.IsSecretZero(missing)
-                        end
+                    -- ONE QUESTION: are you below your top-off threshold? The
+                    -- ENGINE answers it - IsUnitHealthBelow encodes the threshold
+                    -- as a curve, so the comparison happens where secrets are
+                    -- allowed and only a plain yes/no comes back. Two fallbacks,
+                    -- in descending precision: the exact full/not-full bit, then
+                    -- the old arming heuristics.
+                    local below
+                    if topoffPct and BlizzardAPI.IsUnitHealthBelow then
+                        below = BlizzardAPI.IsUnitHealthBelow("player", topoffPct)
                     end
-                    if atFull == false then
-                        hurt = true                          -- exact: below full
-                    elseif atFull == nil
-                        and ((BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable()
-                              and BlizzardAPI.IsUnitLow and BlizzardAPI.IsUnitLow("player"))
-                          or (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
-                          or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime())) then
-                        hurt = true                          -- heuristics: alert key / regen / post-combat
+                    if below == nil and BlizzardAPI.IsUnitFullHealth then
+                        local atFull = BlizzardAPI.IsUnitFullHealth("player")
+                        if atFull ~= nil then below = (atFull == false) end
+                    end
+                    if below ~= nil then
+                        if below then
+                            if notFullSince == 0 then notFullSince = now end
+                            hurt = (now - notFullSince) >= TOPOFF_ONSET_SECONDS
+                        else
+                            notFullSince = 0        -- above the line: clear at once
+                        end
+                        topoffHeldUntil = 0
+                    else
+                        -- No zero-gate on this client: fall back to the old arming
+                        -- signals, which can only ever prove "below full" anyway.
+                        -- They arrive in bursts (regen ticks), so hold the offer
+                        -- briefly once armed or the icon blinks between them.
+                        local armed = (BlizzardAPI.IsPartyLowAvailable and BlizzardAPI.IsPartyLowAvailable()
+                                and BlizzardAPI.IsUnitLow and BlizzardAPI.IsUnitLow("player"))
+                            or (BlizzardAPI.HasSustainedPlayerHealthActivity and BlizzardAPI.HasSustainedPlayerHealthActivity())
+                            or (BlizzardAPI.IsInPostCombatDowntime and BlizzardAPI.IsInPostCombatDowntime())
+                        if armed then
+                            topoffHeldUntil = now + TOPOFF_HOLD_SECONDS
+                        end
+                        hurt = armed or (now < topoffHeldUntil)
                     end
                 end
             end

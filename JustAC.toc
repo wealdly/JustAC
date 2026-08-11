@@ -1,8 +1,8 @@
-## Interface: 120001, 120005, 120007
+## Interface: 120100
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 5.0.1
+## Version: 5.1.0
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal

@@ -538,6 +538,70 @@ local function DurationObjectActive(durObj)
     return shown and true or false
 end
 
+--------------------------------------------------------------------------------
+-- Group buffs, straight from the engine (12.1.0+).
+--
+-- C_CooldownViewer.GetGroupBuffItems is Blizzard's own registry of raid/group
+-- buffs: plain spellID, name, and - the part curation cannot keep up with -
+-- `isKnown`. No secrecy annotations at all, so this is an ordinary read.
+--
+-- It does NOT replace SpellDB.CLASS_MAINTAINED_BUFFS. A GroupBuffItem names ONE
+-- spellID, while the curated groups also carry the aura FAMILY a buff can land as
+-- (Mark of the Wild applies 1126 or 432661), and detection needs that family or a
+-- buffed player reads as unbuffed forever. So the engine answers "which group
+-- buffs exist and can I cast them" and curation keeps answering "what does it look
+-- like once applied".
+--
+-- Cached until SPELLS_CHANGED-ish staleness: the answer only moves on talent or
+-- spec changes, and the call allocates a table per invocation.
+--------------------------------------------------------------------------------
+local groupBuffCache, groupBuffCacheAt = nil, -1
+local GROUP_BUFF_CACHE_SECONDS = 5
+
+--- @return table|nil array of { spellID, name, isKnown, hideByDefault }, or nil
+---         when the client predates the API or the call fails.
+function BlizzardAPI.GetGroupBuffItems()
+    local now = GetTime()
+    if groupBuffCache ~= nil and (now - groupBuffCacheAt) < GROUP_BUFF_CACHE_SECONDS then
+        return groupBuffCache or nil
+    end
+    groupBuffCacheAt = now
+    groupBuffCache = false
+    local CV = C_CooldownViewer ---@diagnostic disable-line: undefined-global
+    if not (CV and CV.GetGroupBuffItems) then return nil end
+    local ok, items = pcall(CV.GetGroupBuffItems)
+    if not ok or type(items) ~= "table" then return nil end
+    local hideFlag = Enum and Enum.GroupBuffItemFlags and Enum.GroupBuffItemFlags.HideByDefault
+    local out = {}
+    for i = 1, #items do
+        local it = items[i]
+        if type(it) == "table" and type(it.spellID) == "number" then
+            out[#out + 1] = {
+                spellID = it.spellID,
+                name    = it.name,
+                isKnown = it.isKnown == true,
+                -- Blizzard marks some entries as de-emphasised. Carried through rather
+                -- than filtered here so callers decide; the buff list honours it.
+                hideByDefault = (hideFlag and type(it.flags) == "number"
+                    and bit.band(it.flags, hideFlag) ~= 0) or false,
+            }
+        end
+    end
+    groupBuffCache = out
+    return out
+end
+
+--- Clear the group-buff cache (talent/spec change invalidates `isKnown`).
+function BlizzardAPI.FlushGroupBuffItems()
+    groupBuffCache, groupBuffCacheAt = nil, -1
+end
+
+--- The active/not boolean for any duration object, exposed so diagnostics can use
+--- the SAME trusted baseline the production readers do rather than a lookalike.
+function BlizzardAPI.IsDurationObjectActive(durObj)
+    return DurationObjectActive(durObj)
+end
+
 --- True while spellID is on a REAL cooldown (GCD excluded), read as engine truth.
 function BlizzardAPI.IsSpellOnCooldown(spellID)
     if not (spellID and C_Spell and C_Spell.GetSpellCooldownDuration) then return false end

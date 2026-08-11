@@ -219,7 +219,7 @@ L["Show Gap-Closer Glow desc"] = "Exibe um brilho dourado nos ícones de aproxim
 
 -- Burst-ready cue
 L["Burst Ready Cue"] = "Aviso de burst"
-L["Burst Ready Cue desc"] = "Brilho roxo no tempo de recarga principal da sua especialização quando ele aparece pronto na fila - o sinal para iniciar seu burst."
+L["Burst Ready Cue desc"] = "Brilho roxo no tempo de recarga principal da sua especialização quando ele aparece pronto na fila - o sinal para iniciar seu burst.\n\nEle fica apagado quando o único inimigo que ainda luta com você está quase morto - exceto em chefes, pois é justamente quando você deve gastar tudo."
 L["Burst Triggers"] = "Gatilhos de burst"
 L["Burst Triggers desc"] = "Quais feitiços recebem o aviso de burst. A lista padrão vem dos marcadores de janela de burst do SimulationCraft para a sua especialização (ou de padrões de classe selecionados). Adicione feitiços abaixo para usar a sua própria lista. Seus próprios gatilhos acendem sempre que estiverem prontos."
 L["Burst Triggers Active"] = "Ativos (%s):"

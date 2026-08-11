@@ -91,7 +91,9 @@ local defaults = {
         -- rides (Blizzard's party health alert) is a setting they must enable too.
         healing = {
             enabled = false,
-            emergencyCount = 3,       -- allies low before the emergency heal claims the Sustain slot
+            emergencyCount = 3,       -- allies below lowThreshold before the emergency heal claims the Sustain slot
+            lowThreshold = 80,        -- an ally this hurt is worth an area heal
+            urgentThreshold = 50,     -- an ally this hurt is an emergency on their own
         },
         -- Cue dots on queue icons. showMoveCastDot is deliberately NOT declared here:
         -- nil means "per-spec auto" (ranged/healer on, melee off) - see MoveCastDotEnabled.
@@ -1533,6 +1535,12 @@ end
 
 function JustAC:OnSpellsChanged()
     if SpellQueue and SpellQueue.OnSpellsChanged then SpellQueue.OnSpellsChanged() end
+    -- The engine group-buff registry caches `isKnown`, which a talent or spec change
+    -- moves. Its own 5s window would heal this eventually; flushing here means the
+    -- buff list is right on the first rebuild after the change rather than the second.
+    if BlizzardAPI and BlizzardAPI.FlushGroupBuffItems then
+        BlizzardAPI.FlushGroupBuffItems()
+    end
     -- Invalidate options spellbook cache so new/removed spells appear in search
     if SpellSearch and SpellSearch.InvalidateSpellbookCache then
         SpellSearch.InvalidateSpellbookCache()

@@ -197,20 +197,21 @@ local instanceToSpellMap = {}   -- auraInstanceID → spellID
 local instanceToNameMap = {}    -- auraInstanceID → spell name
 local instanceToTimingMap = {}  -- auraInstanceID → {duration, expirationTime, count, halfwayThreshold}
 
--- Fraction of an aura's duration still remaining at the pandemic window: refreshing at or
--- past this point no longer clips the existing application.
-local PANDEMIC_REMAINING = 0.2
-
 --- Build the timing record every aura cache stores, including the pandemic threshold as an
 --- ABSOLUTE timestamp. The subtraction has to happen here, at capture time, because in
 --- combat duration/expirationTime are secret and cannot be read or subtracted - only the
---- already-computed threshold can be compared against `now` later. Every caller goes
---- through this so that rule (and the 0.2) is stated once.
+--- already-computed threshold can be compared against `now` later.
+--- Uses PANDEMIC_THRESHOLD, the same 0.30 the live path above uses. It previously had its
+--- own PANDEMIC_REMAINING = 0.2, so the SAME buff was called refreshable at 30% remaining
+--- through one path and 20% through the other - and which path answered depended on cache
+--- age, not on anything about the buff. 0.30 is the correct figure: WoW's pandemic carries
+--- leftover time over when a periodic effect is refreshed at or below 30% remaining, so
+--- refreshing there is the earliest point that wastes nothing. 0.2 gave up that window.
 local function BuildAuraTiming(dur, exp, count)
     dur, exp = dur or 0, exp or 0
     local halfwayThreshold
     if dur > 0 and exp > 0 then
-        halfwayThreshold = exp - (dur * PANDEMIC_REMAINING)
+        halfwayThreshold = exp - (dur * PANDEMIC_THRESHOLD)
     end
     return {
         duration = dur,

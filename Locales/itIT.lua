@@ -219,7 +219,7 @@ L["Show Gap-Closer Glow desc"] = "Mostra un bagliore dorato sulle icone di avvic
 
 -- Burst-ready cue
 L["Burst Ready Cue"] = "Segnale di burst"
-L["Burst Ready Cue desc"] = "Bagliore viola sul tempo di recupero principale della tua specializzazione quando appare pronto nella coda: il segnale per iniziare il burst."
+L["Burst Ready Cue desc"] = "Bagliore viola sul tempo di recupero principale della tua specializzazione quando appare pronto nella coda: il segnale per iniziare il burst.\n\nResta spento quando l'unico nemico che ti sta ancora combattendo è quasi morto, tranne sui boss: è proprio lì che devi spendere tutto."
 L["Burst Triggers"] = "Attivatori di burst"
 L["Burst Triggers desc"] = "Quali incantesimi ricevono il segnale di burst. L'elenco predefinito deriva dai marcatori della finestra di burst di SimulationCraft per la tua specializzazione (o dai valori predefiniti di classe). Aggiungi incantesimi qui sotto per usare il tuo elenco. I tuoi attivatori si illuminano ogni volta che sono pronti."
 L["Burst Triggers Active"] = "Attivi (%s):"

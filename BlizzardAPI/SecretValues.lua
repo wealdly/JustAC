@@ -123,7 +123,40 @@ end
 -- unavailable on this client - callers MUST treat nil as "no answer" and fall
 -- back to their heuristics, never as either verdict.
 local zeroScratch
-local TruncateWhenZero = C_StringUtil and C_StringUtil.TruncateWhenZero
+local zeroCanClear      -- widget supports ClearText (12.1+) and it worked once
+local zeroProbeArg      -- hoisted: a per-call closure would allocate on a hot path
+local function ZeroProbe()
+    -- Clear FIRST where the client allows it (12.1 ClearText is documented as
+    -- removing the Text secret aspect). Then the zero branch reads back from a
+    -- widget carrying no aspect at all, instead of resting on the observation
+    -- that a POISONED widget's empty readback still comes back plain. Same
+    -- answer either way today; this one stays right if that ever changes.
+    if zeroCanClear then zeroScratch:ClearText() end
+    -- Resolved per call, not at file load: C_StringUtil may not exist yet when this
+    -- file runs, and a nil captured then would disable the gate for the session.
+    zeroScratch:SetText(C_StringUtil.TruncateWhenZero(zeroProbeArg) or "")
+    return zeroScratch:GetText()
+end
+
+local function GetZeroScratch()
+    if zeroScratch then return zeroScratch end
+    local ok, holder = pcall(CreateFrame, "Frame")
+    if not ok or not holder then return nil end
+    holder:Hide()
+    local okFS, fs = pcall(holder.CreateFontString, holder, nil, "BACKGROUND", "GameFontNormal")
+    if not okFS or not fs then return nil end
+    -- A FontString with no font ERRORS on SetText. The template above supplies one,
+    -- but a broken/replaced font object would take the whole gate down, so make sure.
+    if not fs:GetFontObject() and not fs:GetFont() then
+        pcall(fs.SetFontObject, fs, GameFontNormal)
+    end
+    -- Probed ONCE here, not per call: a per-probe pcall would double the cost of
+    -- the hot path to guard a method that either exists and works or does not.
+    zeroCanClear = fs.ClearText ~= nil and pcall(fs.ClearText, fs) or false
+    zeroScratch = fs
+    return fs
+end
+
 function BlizzardAPI.IsSecretZero(v)
     if v == nil then return true end
     if not (IsSecretValue and IsSecretValue(v)) then
@@ -131,17 +164,15 @@ function BlizzardAPI.IsSecretZero(v)
         if type(v) == "number" then return v == 0 end
         return nil
     end
-    if not TruncateWhenZero then return nil end
-    if not zeroScratch then
-        local holder = CreateFrame("Frame")
-        holder:Hide()
-        zeroScratch = holder:CreateFontString(nil, "BACKGROUND", "GameFontNormal")
-    end
-    local ok = pcall(function()
-        zeroScratch:SetText(TruncateWhenZero(v) or "")
-    end)
+    if not (C_StringUtil and C_StringUtil.TruncateWhenZero) then return nil end
+    if not GetZeroScratch() then return nil end
+    zeroProbeArg = v
+    local ok, text = pcall(ZeroProbe)
+    zeroProbeArg = nil          -- never hold a secret alive in an upvalue
     if not ok then return nil end
-    return not zeroScratch:GetText()
+    -- Truthiness on a (secret) string is legal - the non-boolean rule. Empty text
+    -- comes back as plain nil, which is the zero answer.
+    return not text
 end
 
 function BlizzardAPI.GetAuraTiming(unit, index, filter)

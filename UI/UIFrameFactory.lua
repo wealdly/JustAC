@@ -198,6 +198,17 @@ end
 -- Panel interaction helpers.
 -- panelInteraction always resolves: it has a profile default, and the legacy panelLocked
 -- bool it replaced is migrated into it on load, so no fallback arm is reachable.
+--- Right-click on any of our draggable surfaces opens the options. Four click
+--- handlers wanted the same two-line fallback; one owner means a future change to
+--- how options open cannot land on three of them and miss the fourth.
+local function OpenOptions(addon)
+    if addon.OpenOptionsPanel then
+        addon:OpenOptionsPanel()
+    else
+        Settings.OpenToCategory("JustAssistedCombat")
+    end
+end
+
 local function IsPanelLocked(profile)
     if not profile then return false end
     return (profile.panelInteraction or "unlocked") ~= "unlocked"
@@ -992,11 +1003,7 @@ local function CreateDetachedDefensiveFrame(addon)
 
     frame:SetScript("OnMouseDown", function(_, mouseButton)
         if mouseButton == "RightButton" then
-            if addon.OpenOptionsPanel then
-                addon:OpenOptionsPanel()
-            else
-                Settings.OpenToCategory("JustAssistedCombat")
-            end
+            OpenOptions(addon)
         end
     end)
 
@@ -1119,11 +1126,7 @@ local function BuildGrabTab(addon, opts)
         if opts.onShiftRightClick and IsShiftKeyDown() then
             opts.onShiftRightClick()
         else
-            if addon.OpenOptionsPanel then
-                addon:OpenOptionsPanel()
-            else
-                Settings.OpenToCategory("JustAssistedCombat")
-            end
+            OpenOptions(addon)
         end
     end)
 
@@ -1524,11 +1527,7 @@ function UIFrameFactory.CreateMainFrame(addon)
                     addon:Print("Panel |cff00ff00UNLOCKED|r - drag it by the handle at its end.")
                 end
             else
-                if addon.OpenOptionsPanel then
-                    addon:OpenOptionsPanel()
-                else
-                    Settings.OpenToCategory("JustAssistedCombat")
-                end
+                OpenOptions(addon)
             end
         end
     end)
@@ -1810,11 +1809,7 @@ function UIFrameFactory.CreateSingleSpellIcon(addon, index, offset, profile)
                     local status = nowLocked and "|cffff6666LOCKED|r" or "|cff00ff00UNLOCKED|r"
                     if addon.DebugPrint then addon:DebugPrint("Panel " .. status) end
                 else
-                    if addon.OpenOptionsPanel then
-                        addon:OpenOptionsPanel()
-                    else
-                        Settings.OpenToCategory("JustAssistedCombat")
-                    end
+                    OpenOptions(addon)
                 end
             end
         end
