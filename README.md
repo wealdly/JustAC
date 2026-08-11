@@ -57,12 +57,12 @@ The slot ahead of the DPS queue, holding everything that takes away what the ene
 
 The defensive queue's "position 0", holding what keeps you *contributing* rather than what keeps you alive - a lapsed mitigation buff, a stun and a dying pet all cost you the same thing. Which member claims it depends on your class and what is happening; they never collide, because the tank buff and the pet cue belong to mutually exclusive classes.
 
-- **Tank maintenance** - tanks get the slot for the one mitigation buff the spec keeps rolling (Shield Block, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield). It counts down the buff's remaining time, shows the keybind, and greys out when the cast is out of reach or unaffordable. The slot pulses to prompt a refresh (about 3s before decay for a buff that runs on a timer, or once it drops for one spent by damage), and learns the buff's real duration in play so talents that extend it don't fire the cue early. It also adapts per ability: a charge-limited button like Shield Block shows charges and its recharge, while a resource button like Ignore Pain shows the shield remaining. Blood's slot points at Marrowrend, so it can appear in the rotation and here at once. Combat only, tank specs only, on by default under Defensive Queue → Tank Maintenance Slot. Brewmaster isn't covered yet
+- **Tank maintenance** - tanks get the slot for the one mitigation buff the spec keeps rolling (Ignore Pain, Shield of the Righteous, Ironfur, Demon Spikes, Bone Shield). It counts down the buff's remaining time, shows the keybind, and greys out when the cast is out of reach or unaffordable. The refresh cue is two-stage: a marching-ants ring at the refresh threshold (~3s before decay), escalating to a full proc glow once the buff has actually lapsed - an early warning you can finish a cast through reads differently from one you can't. Buffs with no timer of their own (Bone Shield, whose stacks are spent by damage rather than time) only ever reach the second stage. It also adapts per ability: a charge-limited button like Demon Spikes shows charges and its recharge, while a resource button like Ignore Pain shows the shield remaining. Blood's slot points at Marrowrend, so it can appear in the rotation and here at once. Combat only, tank specs only, on by default under Defensive Queue → Tank Maintenance Slot. Brewmaster isn't covered yet
 - **Crowd Control Escape** *(Experimental, opt-in)* - while you're held by crowd control the game reports to addons (stuns, roots, fears) and carry something ready to break it, the Sustain slot turns into that escape button, counting down the effect until you're free. Any spec, tank or not. Movement slows can't be detected in combat, so they aren't covered. Off by default under Defensive Queue → Crowd Control Escape
-- **Pet heal reminder** - Hunters and Warlocks get the slot when their pet drops low, **in combat as well as out**. 12.0 hides your pet's health once a fight starts, so the cue is rendered without ever reading it: the pet's health fraction is handed to the engine as a curve index and the engine decides whether the icon is visible. Threshold configurable from 10-90% (default 50) under Defensive Queue → Sustain
-- **Exact vs. estimated maintenance tracking** - in combat the game hides which buff is which, so the slot identifies yours through Blizzard's Cooldown Manager. That needs two things: the Cooldown Manager enabled, and its **Tracked Bars** widget left visible in Edit Mode (that one widget is enough - the other Cooldown Manager panels can stay hidden). With it you get the buff's true remaining time and, for Ironfur and Bone Shield, a live stack count. Without it the slot estimates the countdown from your own cast and shows no number, rather than risk displaying another buff's - the refresh cue works either way. Background: [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
+- **Pet heal reminder** - Hunters and Warlocks get the slot when their pet drops low, **in combat as well as out**. Pet health can't be read by an addon mid-fight, so the cue is rendered without ever reading it: the pet's health fraction is handed to the engine as a curve index and the engine decides whether the icon is visible. Threshold configurable from 10-90% (default 50) under Defensive Queue → Sustain
+- **Exact vs. estimated maintenance tracking** - in combat the game hides which buff is which, so the slot identifies yours through Blizzard's Cooldown Manager. That needs two things: the Cooldown Manager enabled, and its **Tracked Bars** widget left visible in Edit Mode (that one widget is enough - the other Cooldown Manager panels can stay hidden). With it, a single-instance refresh buff like Shield of the Righteous is thresholded against the aura's own remaining time, and Bone Shield gets a live stack count. Stacking buffs (Ironfur, Ignore Pain) are deliberately tracked from your own casts either way: each application is a separate aura instance with its own expiry, so one instance's clock is a single stack's, not the buff's. Without the Cooldown Manager everything falls back to the cast-time projection - the refresh cue works either way. Background: [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
 - **Absorb-barrier awareness** - a shield that outlasts its own cooldown (Ice Barrier, Blazing Barrier, Prismatic Barrier, Rune Tap) sinks to the back while the barrier holds and returns as it runs low, instead of being re-suggested into a wasted overwrite. Defensives that genuinely stack, like Ironfur and Ignore Pain, are exempt
-- **Low-health emergency ordering** - below the ~35% threshold the queue leads with big instant heals and immunity bubbles, ahead of mitigation and small fillers; above the threshold fast/free fillers and procs stay first for routine upkeep
+- **Graded emergency ordering** - the queue sorts by how much trouble you're actually in, across three bands rather than one on/off threshold: damage reduction leads while you're taking chip damage (below 80%), big heals lead once you've taken a real hit (below 50%), and immunity bubbles jump the queue only when you're close to dying (below 25%). Above all three, fast/free fillers and procs stay first for routine upkeep. Sustained incoming damage promotes you one band early
 - **Emergency heals held until you need them** *(on by default)* - above the low-health threshold, panic buttons (immunity bubbles, big instant heals, health potions) sit parked at the end of the queue with a WAIT tag instead of being suggested while you're healthy. Damage-reduction cooldowns are deliberately exempt and stay live at any health: a wall like Shield Wall or Pain Suppression is meant to be pressed *before* a hit lands, so holding it back would coach the wrong habit
 - **Execute-range cue** - when your target drops into execute range, the HP-gated finisher (Kill Shot, Touch of Death and the like) lights up wherever it sits in the queue. Target health is secret in combat, so this too is engine-rendered rather than read
 - Procced defensives (Victory Rush, free heals) shown at any health level
@@ -72,14 +72,23 @@ The defensive queue's "position 0", holding what keeps you *contributing* rather
 - Items supported (potions, healthstones) with auto-detection from action bars - optional aura linking and combat hiding per item
 - **Emergency healing potion** auto-picks the best potion you're carrying, ranked by how much it actually restores - a potion that heals a share of your maximum health can out-rank a bigger fixed-amount one, and the reverse; the tile's tooltip explains the pick
 - **Form-aware (Druid)** - defensives that strictly require Bear Form leave the row while you're in Cat Form and vice versa, in combat too (where usability normally can't be read); automatically disabled with Fluid Form
-- Combat-safe health detection via LowHealthFrame signal (~35%) for 12.0 secret-value compatibility
+- Combat-safe health detection: the engine compares your (secret) health against a threshold the addon authors and reports only whether it crossed, so exact bands work in combat without the addon ever reading a number. The low-health vignette (~35% binary) and the health-event activity signal remain as fallbacks where that path is unavailable
+
+### Healer Support
+
+JustAC is not a healing addon and doesn't try to be one - keep yours. What it adds is the *other* half of a healer's job, plus a nudge when the group is in trouble.
+
+- **Damage priority with your heals filtered out** - the assist queue reads as a damage rotation rather than a mixed bag, so filler time between casts still contributes. Fails open: if removing heals would empty the list, the unfiltered one comes back rather than leaving you with nothing
+- **Caster mode** *(per spec, opt-in)* - suppresses melee-weave suggestions and form-shift buttons for healers who stay at range. Blizzard's own pick still adapts to where you're standing
+- **Group heal suggestions** - an ally who has taken meaningful damage counts toward an area heal, and a group in serious trouble raises your biggest save (Tranquility, Aura Mastery, Healing Tide, Divine Hymn, Restoral, Rewind). Multi-target only by design - aiming a heal at one specific person is a job for your group frames
+- **No accessibility CVar required** - the party health alert is used automatically where it's the only signal available, but group heals no longer depend on it and no longer stop at the first four party members. **"Set Up The Alert For Me"** configures it in one click if you'd rather have it, states exactly what it changes, and puts your settings back when switched off
 
 ### Pre-Combat Buffs
 
 - Out of combat, the defensive queue surfaces the buffs you're **missing but own** as clickable icons with a green glow - flask, food, augment rune, weapon enchant
 - **Class maintained buffs** - rogue poisons, shaman shields and weapon imbues, and the standard party/raid buffs. You're reminded when one is missing or has dropped below half its remaining duration; a lapsed buff is refilled with whatever your rotation ranks highest, and rogues get both a lethal and a non-lethal poison at once
 - **Party-aware group buffs** - if you have a group buff up but a party member doesn't (they joined late, released, or were out of range), the buff is offered again so one re-cast covers everyone. Party only, and only for members who are alive, online and in range, so every reminder is actionable. Personal buffs like poisons and shields are unaffected
-- **Recuperate** *(opt-in, off by default)* - the all-classes out-of-combat self-heal is offered like any other missing buff whenever you're hurt (below 90% where exact health is readable; via never-secret recovery signals where 12.0.7 hides it), and hides while its heal-over-time is running. Enable under Defensive Queue → Pre-Combat Buffs
+- **Recuperate** *(opt-in, off by default)* - the all-classes out-of-combat self-heal is offered like any other missing buff whenever you're below your **Top-Off Threshold**, and hides while its heal-over-time is running. The threshold is honoured anywhere in the world, and the cue waits a couple of seconds before appearing so a scratch that heals on its own never makes it pop up. Enable under Defensive Queue → Pre-Combat Buffs
 - **Click-to-use** - a hover highlight and click-to-use layer sits over every out-of-combat icon (like an action button), casting the spell or using the item straight from the queue
 - **Eating / applying feedback** - while a buff is being applied (eating food and the like) the whole queue greys out with a channel-style progress sweep across the buff window
 - Buff data is DB2-generated (discovered by item class and buff aura, stat decoded from the effect chain) and spans all expansions, so leveling characters are covered too; weapon-enchant suggestions respect your equipped weapon so you're never offered an oil or stone it can't take
@@ -145,7 +154,7 @@ Options are organized into 6 tabs:
 | **Ability Overrides** | One card per ability: visibility (the blacklist), pins, item aura-linking, list membership, hotkey label - plus a list of everything you've customized |
 | **Profiles** | AceDB profiles with automatic per-spec switching |
 
-- **Localization** - English, German, French, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
+- **Localization** - English, German, French, Italian, Russian, Spanish (ES/MX), Portuguese (BR), Korean, Simplified/Traditional Chinese
 
 ## Acknowledgments & Credits
 
@@ -191,11 +200,12 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 
 ## Technical Notes
 
-- **WoW 12.0 Midnight Compliant** - Handles secret values gracefully; `auraInstanceID` mapping for combat-safe buff detection; `isOnGCD` for cooldown readiness; opaque cooldown pipeline; NeverSecret aura whitelist; fail-open design throughout
+- **Midnight compliant, currently live on 12.1.0** - Built around the secret-value system rather than patched over it: `auraInstanceID` mapping for combat-safe buff detection, `isOnGCD` for cooldown readiness, opaque cooldown pipeline, NeverSecret aura whitelist, fail-open design throughout. `/jac inspect validate` self-tests each of these against a known-correct answer, so a patch that changes the rules reports itself instead of degrading quietly
 - **Secret-safe visuals** - Where a combat state is a "secret value" that can't be read or branched on (e.g. cast interruptibility), it's forwarded straight into a display sink (`SetAlphaFromBoolean` / `SetCooldownFromDurationObject`) so the engine renders it without the addon ever seeing the value
 - **Curve selectors** - The same idea generalised: a secret number is handed to the engine as an *index* into a curve the addon authors, and the resulting colour sinks into a display property. The enrage cleanse indexes by dispel type; the pet-heal, execute and health top-off cues index by health fraction (`UnitHealthPercent` + `C_CurveUtil`). Graded alphas let one evaluation express several thresholds at once, so a two-tier policy needs no comparison. Display-only by construction - the result is secret, so it can never feed ordering or a gate
 - **Taint is fatal around secrets** - Tainted execution cannot read a secret at all, so writing any Lua field on a frame that reads secrets (Blizzard's Cooldown Manager viewers) breaks *Blizzard's* code, not just ours. Reads and widget C methods are safe; mixin methods that store state are not. See [AURA_IDENTITY_12.0.md](Documentation/AURA_IDENTITY_12.0.md)
-- **Never-secret signals** - Where values are hidden, readable side-channels stand in: the low-health vignette (~35% binary), and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
+- **Threshold gates** - The engine evaluates a curve the addon authors against a secret value and returns a secret result; the addon reads only whether that result is *zero*. Nothing is compared, ordered or read in Lua, but the answer to "is this below N" is an ordinary branchable boolean. Health, power and aura/cooldown remaining time all go through the same path, which is what makes graded defensive bands and stack-aware ordering possible in combat. Deliberately scoped to answering *questions*, never recovering values
+- **Never-secret signals** - Readable side-channels stand in where even that is unavailable: the low-health vignette (~35% binary), and player `UNIT_HEALTH` *event activity* - out-of-combat regen fires events while below full health and goes silent at full, so the firing itself is a "still recovering" signal even when the payload is secret
 - **No External Spell Databases** - Native spell classification (`SpellDB` + generated `Data/` tables: archetypes, categories, base cooldowns & charges, aura stack counts, form/stealth requirements, caster-aura requirements, pure self-buffs, healing items, pre-combat buffs) replaces LibPlayerSpells; tables regenerate per patch from client data exports via `tools/`
 - **Modular Architecture** - Lua modules across the `BlizzardAPI`, `UI`, `Options`, `Locales`, and `Data` subdirectories, plus library dependencies, with a clear load/dependency order
 - **Event-Driven** - Minimal polling; push-based cooldown/range/usability events mark queues dirty for responsive updates
@@ -212,32 +222,19 @@ To everyone who has contributed to wowace.com, curseforge, GitHub discussions, a
 /jac find [spell]             - Find spell on action bars (defaults to AC suggestion)
 /jac why [spell]              - Explain stage by stage why an ability is or isn't showing
 /jac hud                      - Toggle the diagnostic HUD
-/jac inspect modules          - Check module health
-/jac inspect cooldown [spell] - Test cooldown APIs (defaults to AC suggestion)
-/jac inspect defensives       - Diagnose defensive system
-/jac inspect interrupts       - Diagnose interrupt/CC queue state
-/jac inspect burst            - Burst-ready cue state
-/jac inspect auras            - Diagnose aura cache state
-/jac inspect perf             - Queue build rate statistics (requires /jac debug)
-/jac inspect perf reset       - Reset build counters
-/jac inspect buffs            - Diagnose pre-combat buff checklist (out of combat)
-/jac inspect rank             - Queue context inference and per-spell ordering
-/jac inspect rotation         - Dump the resolved SimC priority list for your spec
-/jac inspect gates            - Show SimC gate evaluation (buff/resource thresholds)
-/jac inspect aoe              - Target-count inference (single-target vs. multi-target)
-/jac inspect dots             - Damage-over-time tracking state on your target
-/jac inspect stacks           - Aura stack counts behind stack-aware filtering
-/jac inspect resource         - Resource bar detection and power channels
-/jac inspect resourcepoints   - Discrete point-resource read (combo points, runes, chi...)
-/jac inspect enrage           - Enrage detection, dispel matching, and a PASS/FAIL walk of the cue's gates
-/jac inspect enragelog        - Log target dispellable-aura counts vs cue state through a fight
-/jac inspect errors [off|show]- Capture Lua errors AND taint blocks to SavedVariables, deduped with counts
-/jac inspect chargediag [sp]  - Armed charge-event probe (60s window)
-/jac inspect castdiag         - Diagnose in-combat interrupt detection (one-shot probe)
-/jac inspect healthprobe      - Sweep health-detection channels (run while hurt)
-/jac inspect validate [arm]   - Check API readability where you stand; arm = diff on combat enter/exit
-/jac help                     - Show all commands in-game
+/jac help                     - Every command and inspect topic, with descriptions
 ```
+
+`/jac inspect <topic>` covers ~47 diagnostics. The list isn't duplicated here - it
+lives next to the code it inspects and `/jac help` prints it, so the two can't
+drift apart. Three are worth knowing by name if something stops working, because
+they separate "the game changed" from "the addon broke":
+
+| Command | Answers |
+|---|---|
+| `/jac inspect validate` | Did a secrecy rule change, or did one of the techniques the addon relies on stop producing its known-correct answer? `arm` diffs across a combat enter/exit |
+| `/jac inspect errors` | Did we start taking Lua errors or taint blocks? Run it after a fight |
+| `/jac inspect secrecy` | Which combat values actually read plain vs. hidden, right where you're standing |
 
 ## License
 
