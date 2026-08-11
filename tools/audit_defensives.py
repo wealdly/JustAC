@@ -10,23 +10,44 @@ Run after every client-data refresh:
 
 WHY THIS EXISTS
 ---------------
-A defensive list entry that cannot be learned is worse than a missing one. The
-runtime known-spell gate hides it forever, so it silently occupies one of the four
-slots the queue shows by default, and nothing in game says why. "The id is in DB2"
-does not catch it - a spell can have a live SpellName row and no acquisition route
-at all. The 12.1 audit found ten such entries, including every Monk spec carrying a
-dead Fortifying Brew.
+A list entry the player can never press is worse than a missing one. The runtime
+gate (BlizzardAPI.IsSpellAvailable) hides it forever, so it silently occupies one of
+the four slots the queue shows by default, and nothing in game says why.
+
+There are TWO ways to land in that state, and they need different tests:
+
+  UNREACHABLE - a live SpellName row with no acquisition route at all. Legacy ids
+                left behind by a rework look exactly like current ones.
+
+  PASSIVE     - reachable, but not castable. This is the subtle one. For a
+                talent-granted active, the TALENT NODE carries the acquisition row
+                and is passive; the BUTTON it grants is castable and usually has no
+                row of its own, reachable only via TraitDefinition.VisibleSpellID:
+
+                    node 388917 (PASSIVE)  --VisibleSpellID-->  115203 (castable)
+                                Fortifying Brew
+
+                So "has an acquisition row" is not the test. Applying it alone during
+                the 12.1 audit replaced the correct castable Fortifying Brew with the
+                passive node in all four Monk lists - trading one dead entry for
+                another, and looking like a fix while doing it. Test BOTH:
+
+                    castable = reachable AND NOT SPELL_ATTR0_PASSIVE
 
 Checks
-  1. OBTAINABLE   - every id has a SkillLineAbility, TraitDefinition or
-                    SpecializationSpells row; reports live same-name alternatives.
-  2. ORDERING     - cast-time heals must be last in their list (the table's own rule).
-  3. TIER ORPHANS - DEFENSE_TIER must not tag an id no list carries.
-  4. TIER GAPS    - untagged entries whose DB2 effects look like a survival button.
+  1a. REACHABLE   - some acquisition route exists (row, or VisibleSpellID of a node).
+  1b. PASSIVE     - no entry is passive; reports the castable id where one exists.
+  2.  ORDERING    - cast-time heals must be last in their list (the table's own rule).
+  3.  TIER ORPHANS- DEFENSE_TIER must not tag an id no list carries.
+  4.  TIER GAPS   - untagged entries whose DB2 effects look like a survival button.
 
 Check 4 is ADVISORY. The tier table is hand-curated for good reasons documented
 beside it (school-limited walls, HoTs and group utility are deliberately untiered),
 so a hit here means "confirm this is still deliberate", not "fix it".
+
+Scope note: this does NOT apply to Data/SimcRotations.lua. Unreachable ids are
+correct there - SimC names the button you actually press, so override forms
+(death_sweep, swipe_cat, templar_slash) are what match Assisted Combat's live pick.
 """
 import argparse
 import collections
@@ -76,9 +97,37 @@ def main():
     for sid, nm in names.items():
         by_name[nm.lower()].append(sid)
 
-    obtainable = ints("SkillLineAbility", "Spell")
-    obtainable |= ints("SpecializationSpells", "SpellID")
-    obtainable |= ints("TraitDefinition", "SpellID")
+    # REACHABLE is not the same as CASTABLE, and conflating them is how a passive
+    # talent node ends up in a priority list. A trait node has the acquisition row
+    # and is PASSIVE; the button it grants is castable and usually has no row of its
+    # own, reached only through TraitDefinition.VisibleSpellID. So a list entry must
+    # be reachable by SOME route AND not passive.
+    reachable = ints("SkillLineAbility", "Spell")
+    reachable |= ints("SpecializationSpells", "SpellID")
+    reachable |= ints("TraitDefinition", "SpellID")
+    granted_by = collections.defaultdict(set)   # castable id -> node ids that reveal it
+    for r in rows("TraitDefinition"):
+        node = int(r["SpellID"]) if r.get("SpellID", "").isdigit() else 0
+        v = r.get("VisibleSpellID", "")
+        if v.isdigit() and int(v):
+            granted_by[int(v)].add(node)
+            reachable.add(int(v))
+
+    SPELL_ATTR0_PASSIVE = 0x40
+    passive = set()
+    for r in rows("SpellMisc"):
+        sid = r.get("SpellID", "")
+        if sid.isdigit():
+            try:
+                if int(r["Attributes_0"]) & SPELL_ATTR0_PASSIVE:
+                    passive.add(int(sid))
+            except (ValueError, KeyError):
+                pass
+
+    def castable_alternatives(sid):
+        """Live, castable ids sharing this spell's name."""
+        return [a for a in by_name.get(names.get(sid, "").lower(), [])
+                if a != sid and a in reachable and a not in passive]
 
     cast_index = {int(r["SpellID"]): int(r["CastingTimeIndex"]) for r in rows("SpellMisc")
                   if r.get("SpellID", "").isdigit() and r.get("CastingTimeIndex", "").isdigit()}
@@ -136,17 +185,28 @@ def main():
         if not advisory:
             failures += len(items)
 
-    # 1. obtainable
+    # 1a. unreachable
     bad = []
     for key, ids in sorted(lists.items()):
         for i, sid in enumerate(ids, 1):
-            if sid in obtainable:
+            if sid in reachable:
                 continue
-            nm = names.get(sid, "?")
-            alts = [a for a in by_name.get(nm.lower(), []) if a in obtainable and a != sid]
-            hint = f"-> live same-name id {alts}" if alts else "(no live same-name id)"
-            bad.append(f"{key}[{i}] {sid} {nm!r} {hint}")
-    report("every entry is obtainable", bad)
+            alts = castable_alternatives(sid)
+            hint = f"-> castable same-name id {alts}" if alts else "(no castable same-name id)"
+            bad.append(f"{key}[{i}] {sid} {names.get(sid,'?')!r} {hint}")
+    report("every entry is reachable", bad)
+
+    # 1b. passive - reachable but never castable, so it renders as an empty slot
+    bad = []
+    for key, ids in sorted(lists.items()):
+        for i, sid in enumerate(ids, 1):
+            if sid not in passive:
+                continue
+            alts = castable_alternatives(sid)
+            hint = (f"-> castable id {alts}" if alts else
+                    f"(no castable form; granted-by nodes {sorted(granted_by.get(sid, [])) or '-'})")
+            bad.append(f"{key}[{i}] {sid} {names.get(sid,'?')!r} is PASSIVE {hint}")
+    report("no entry is a passive", bad)
 
     # 2. cast-time heals last
     bad = []
