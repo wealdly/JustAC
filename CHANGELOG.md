@@ -3,6 +3,16 @@
 
 ## [Unreleased]
 
+## [5.1.3] - 2026-08-11
+
+### Fixed
+- Crowd control is suggested again when an enemy is casting something you cannot interrupt. Game patch 12.1.0 moved the part of the interface this reads, and without it your kick was suggested instead and then correctly hidden - so you heard the alert with nothing to press
+- The interrupt alert no longer sounds for a suggestion you cannot see. It now only plays when the icon is certain to be visible
+- Resource tracking works for players whose unit frames are replaced by another addon. It was meant to fall back to the game's personal resource display, and that fallback had never actually been reachable
+
+### Changed
+- The enrage cleanse cue is back, and plainer than it was: the icon and its keybind, without the countdown swipe or the pulsing glow. Game patch 12.1.0 removed every way an addon could watch an enemy's buffs directly, and the replacement the game provides can show the cue but not decorate it. The timing is unchanged - it appears the moment an enemy enrages and clears when the enrage ends
+
 ## [5.1.2] - 2026-08-11
 
 ### Fixed

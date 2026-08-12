@@ -2039,29 +2039,47 @@ end
 --      resource read. Whichever bar is LIVE first wins; all carry identical data when up.
 local RESOURCE_BAR_DEFS = {
     { class = "DRUID", res = "combo_points", event = "UNIT_POWER_FREQUENT",   -- isActive (boolean)
-      frames = { "prdClassFrame", "DruidComboPointBarFrame", "ClassNameplateBarFeralDruidFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "DruidComboPointBarFrame", "ClassNameplateBarFeralDruidFrame" } },
     { class = "ROGUE", res = "combo_points", event = "UNIT_POWER_FREQUENT",   -- isFull   (boolean)
-      frames = { "prdClassFrame", "RogueComboPointBarFrame", "ClassNameplateBarRogueFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "RogueComboPointBarFrame", "ClassNameplateBarRogueFrame" } },
     { class = "MONK", res = "chi", event = "UNIT_POWER_FREQUENT",             -- active   (boolean)
-      frames = { "prdClassFrame", "MonkHarmonyBarFrame", "ClassNameplateBarWindwalkerMonkFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "MonkHarmonyBarFrame", "ClassNameplateBarWindwalkerMonkFrame" } },
     { class = "WARLOCK", res = "soul_shard", event = "UNIT_POWER_FREQUENT",   -- fillAmount (0..1 fractional)
-      frames = { "prdClassFrame", "WarlockPowerFrame", "ClassNameplateBarWarlockFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "WarlockPowerFrame", "ClassNameplateBarWarlockFrame" } },
     { class = "MAGE", res = "arcane_charges", event = "UNIT_POWER_FREQUENT",
-      frames = { "prdClassFrame", "MageArcaneChargesFrame", "ClassNameplateBarMageFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "MageArcaneChargesFrame", "ClassNameplateBarMageFrame" } },
     { class = "EVOKER", res = "essence", event = "UNIT_POWER_FREQUENT",
-      frames = { "prdClassFrame", "EssencePlayerFrame", "ClassNameplateBarDracthyrFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "EssencePlayerFrame", "ClassNameplateBarDracthyrFrame" } },
     -- Paladin: runes hang off the bar as rune1..runeN. PaladinPowerBar.VisualState =
     -- 1 Inactive / 2 Active / 3 SpellReady -> filled when > 1.
     { class = "PALADIN", res = "holy_power", event = "UNIT_POWER_FREQUENT", indexed = "rune",
       state = "visualState", min = 1, max = 3, isFilled = function(v) return v > 1 end,
-      frames = { "prdClassFrame", "PaladinPowerBarFrame", "ClassNameplateBarPaladinFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "PaladinPowerBarFrame", "ClassNameplateBarPaladinFrame" } },
     -- Death Knight: runes live in bar.Runes. RuneButtonMixin.VisualState =
     -- 1 Empty / 2 OnCooldown / 3 CooldownEnding / 4 Ready -> AVAILABLE ONLY at 4. Note this is a
     -- different enum to Paladin's under the same field name, hence per-bar semantics.
     { class = "DEATHKNIGHT", res = "rune", event = "RUNE_POWER_UPDATE", array = "Runes",
       state = "visualState", min = 1, max = 4, isFilled = function(v) return v == 4 end,
-      frames = { "prdClassFrame", "RuneFrame", "DeathKnightResourceOverlayFrame" } },
+      frames = { "PersonalResourceDisplayFrame.classFrame", "RuneFrame", "DeathKnightResourceOverlayFrame" } },
 }
+
+--- Resolve a frame by global name, or by a dotted path off a global ("A.b.c").
+--- The Personal Resource Display's class bar has NO global: SetupClassBar creates it with
+--- FrameUtil.CreateFrame(nil, ...) - a nil name arg - so it is only ever reachable as
+--- PersonalResourceDisplayFrame.classFrame. The old entry named a global "PersonalResourceDisplayFrame.classFrame"
+--- that has never existed (zero occurrences in the entire UI source), so the PRD source -
+--- listed FIRST precisely because it survives a replacement unit-frame addon - silently
+--- never resolved and every class fell through to the player-frame bar. Fail-safe, and
+--- therefore invisible: exactly the frame-path class of bug that hid the nameplate cast bar.
+local function ResolveFrame(path)
+    if type(path) ~= "string" then return nil end
+    local obj
+    for part in path:gmatch("[^.]+") do
+        obj = (obj == nil) and _G[part] or obj[part]
+        if obj == nil then return nil end
+    end
+    return obj
+end
 
 local RESOURCE_BARS = {}
 for _, def in ipairs(RESOURCE_BAR_DEFS) do
@@ -2202,7 +2220,7 @@ function BlizzardAPI.GetClassResourcePoints()
         local def = RESOURCE_BARS[i]
         -- Only this character's bar: another class's global exists but is never initialised, so
         -- skipping it avoids both the wasted scan and any chance of reading a foreign resource.
-        local bar = (def.class == playerClass) and _G[def.frame] or nil
+        local bar = (def.class == playerClass) and ResolveFrame(def.frame) or nil
         if bar and BarIsLive(bar, def) then
             local pts = BarPoints(bar, def)
             if pts then

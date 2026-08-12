@@ -71,7 +71,8 @@ local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, inte
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Cast bar discovery. Source-verified frame paths (2026-03-01) covering the Blizzard
 -- default and the common third-party cast-bar / nameplate addons:
---   "blizzard"     : nameplate.UnitFrame.castBar  (capital U)
+--   "blizzard"     : nameplate.UnitFrame.CastBarsContainer.castBar  (12.x nesting)
+--   "blizzardFlat" : nameplate.UnitFrame.castBar  (pre-container clients)
 --   "lowercaseUF"  : nameplate.unitFrame.castBar  (lowercase u)
 --   "childCastbar" : a nameplate child's .Castbar  (unit-frame-library element)
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -88,9 +89,21 @@ local function FindVisibleCastBar(nameplate)
 
     local uf = nameplate.UnitFrame
     if uf then
-        local bar = uf.castBar
+        -- 12.x nests the cast bar inside CastBarsContainer; there is NO uf.castBar alias any
+        -- more (every Blizzard reference goes through the container). Missing it costs the ONE
+        -- readable interruptibility signal there is, so CC substitution silently stops and the
+        -- kick is offered on shielded casts instead - reported in game as a ding with no icon,
+        -- because the secret alpha sink then correctly hides that kick. Checked first; the flat
+        -- path below stays for older clients and is simply nil on current ones.
+        local container = uf.CastBarsContainer
+        local bar = container and container.castBar
         if bar and bar.IsVisible and bar:IsVisible() then
             return bar, "blizzard"
+        end
+
+        bar = uf.castBar
+        if bar and bar.IsVisible and bar:IsVisible() then
+            return bar, "blizzardFlat"
         end
     end
 
@@ -188,14 +201,14 @@ local function IsTargetCastInterruptible(nameplate)
             end
         end
         if not BlizzardAPI.IsSecretValue(spell) and not spell then
-            return false, false, nil
+            return false, false, nil, true
         end
         barSource = "api"
     end
 
     -- Event tracker is definitive (real boolean, never secret).
     if evtKnown then
-        return true, evtInterruptible, bar
+        return true, evtInterruptible, bar, true
     end
 
     if bar then
@@ -208,7 +221,7 @@ local function IsTargetCastInterruptible(nameplate)
         -- there only as a local/parameter - so on a stock bar this is always nil and falls
         -- through. Kept for a replacement bar that does expose it as a field.
         local niOk, ni = pcall(function() return bar.notInterruptible and true or false end)
-        if niOk and ni then return true, false, bar end
+        if niOk and ni then return true, false, bar, true end
 
         -- Icon hidden when not interruptible. CastingBarMixin:ShouldIconBeShown returns false
         -- from TWO guards BEFORE it ever tests interruptibility: `showIcon` (false when the
@@ -223,20 +236,20 @@ local function IsTargetCastInterruptible(nameplate)
                 and (bar.look == nil or bar.look == "UNITFRAME")
                 and not bar.Icon:IsShown()
         end)
-        if iconOk and iconHidden then return true, false, bar end
+        if iconOk and iconHidden then return true, false, bar, true end
 
         -- BorderShield visible = not interruptible (IsShown/GetAlpha inherit secret)
         local shieldOk, shieldShown = pcall(function()
             return bar.BorderShield and bar.BorderShield:IsShown() and (bar.BorderShield:GetAlpha() or 0) > 0.5
         end)
-        if shieldOk and shieldShown then return true, false, bar end
+        if shieldOk and shieldShown then return true, false, bar, true end
 
         -- child-element cast bars use .Shield instead of .BorderShield
         if barSource == "childCastbar" then
             local altOk, altShown = pcall(function()
                 return bar.Shield and bar.Shield:IsShown() and (bar.Shield:GetAlpha() or 0) > 0.5
             end)
-            if altOk and altShown then return true, false, bar end
+            if altOk and altShown then return true, false, bar, true end
         end
     end
 
@@ -250,15 +263,16 @@ local function IsTargetCastInterruptible(nameplate)
         end
         -- notInterruptible is a secret boolean in 12.0 - check before comparing.
         if BlizzardAPI.IsSecretValue(notInt) then
-            return true, true, nil  -- secret → fail-open
+            return true, true, nil, false  -- secret → fail-open, NOT authoritative
         end
         if notInt ~= nil then
-            return true, not notInt, nil
+            return true, not notInt, nil, true
         end
     end
 
-    -- Fail-open: no negative signal → assume interruptible.
-    return true, true, bar
+    -- Fail-open: no negative signal → assume interruptible. NOT authoritative: we did not
+    -- learn the cast is interruptible, we merely failed to prove otherwise.
+    return true, true, bar, false
 end
 
 -- Diagnostic hook (/jac inspect castdiag): the live verdict the addon actually computes for
@@ -330,6 +344,10 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
     local shouldShow = false
     local intSpellID = nil
     local castBar    = nil
+    -- Reset every evaluation: these are cached on a shared table, and a stale "we knew it was
+    -- interruptible" from a previous cast would let the alert fire for an icon the sink hides.
+    cachedIntResult.interruptible      = nil
+    cachedIntResult.interruptibleKnown = false
 
     -- Fears scatter packs and break on damage; excluded from suggestions by default.
     -- nil profile → exclude (fail-safe to the default-off behavior).
@@ -343,7 +361,9 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
         local nameplate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target", false)
 
         -- Unified interruptibility check: event tracker → cast bar fields → API fallback.
-        local isCasting, interruptible, bar = IsTargetCastInterruptible(nameplate)
+        local isCasting, interruptible, bar, interruptibleKnown = IsTargetCastInterruptible(nameplate)
+        cachedIntResult.interruptible      = interruptible
+        cachedIntResult.interruptibleKnown = interruptibleKnown and true or false
 
         if isCasting then
             local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()

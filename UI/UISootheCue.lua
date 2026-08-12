@@ -24,134 +24,126 @@ if not UISootheCue then return end
 local UIAnimations     = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory   = LibStub("JustAC-UIFrameFactory", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
-local SpellDB          = LibStub("JustAC-SpellDB", true)
-local BlizzardAPI      = LibStub("JustAC-BlizzardAPI", true)
+-- SpellDB/BlizzardAPI are gone with the old driver: the soothe-on-cooldown check and the
+-- aura-secrecy gate were both inputs to a per-tick visibility decision this no longer makes.
 if not (UIAnimations and UIFrameFactory) then return end
-
--- 12.1.0: GetAuraDataByIndex is not merely secret-returning, it is ACCESS-DENIED to a
--- tainted caller once auras are secret ("Auras cannot be accessed when secret while
--- tainted by 'JustAC'"). It throws rather than handing back a secret, so the pcall
--- around the dispel-colour lookup below never saw it - the throw happened one line
--- earlier, five times a tick, for the whole fight. Ask the engine first instead.
-local AurasSecret = BlizzardAPI and BlizzardAPI.AreAurasSecret or function() return false end
 
 local CreateFrame  = CreateFrame
 local CreateColor  = CreateColor
-local UnitExists   = UnitExists
-local UnitCanAttack = UnitCanAttack
 local pcall        = pcall
-local C_UnitAuras  = C_UnitAuras
 local C_Spell      = C_Spell
 local C_CurveUtil  = C_CurveUtil ---@diagnostic disable-line: undefined-global
 
 local MAX_SLOTS       = 5      -- target HELPFUL auras scanned (the OR); enrage past this is missed
--- The addon-wide widget-refresh cadence, not a private number: the cue's sink pass should
--- tick at the same rate as every other cooldown/urgency widget.
-local UPDATE_INTERVAL = UIFrameFactory.COOLDOWN_UPDATE_INTERVAL or 0.08
-
--- Selector curve (built once): alpha 1 ONLY at dispel type 9 (Enrage), else 0.
-local selectorCurve
-local function GetSelectorCurve()
-    if selectorCurve ~= nil then return selectorCurve or nil end
+-- Selector curves (built once each): transparent everywhere except dispel type 9 (Enrage).
+--
+-- The curve drives the texture's VERTEX COLOUR, not just its alpha, and it is registered
+-- PER TEXTURE - so the colour at point 9 is the tint that texture takes while the target is
+-- enraged. That is why there are two: a white one leaves the spell icon its natural colours,
+-- and a cyan one tints the glow art. Setting a texture's own vertex colour instead does not
+-- work: AddDispelTypeTexture stamps SecretAspect.VertexColor and the curve overwrites it,
+-- which is what turned an earlier attempt into a raw yellow box.
+--
+-- Cyan, not green: this sits on the SAME position-0 slot as the red interrupt glow, and
+-- red/green is the most common colour-vision deficiency (see SOOTHE_PROC_* in UIAnimations).
+local curves = {}
+local function GetSelectorCurve(r, g, b)
+    local key = (r or 1) .. "," .. (g or 1) .. "," .. (b or 1)
+    local cached = curves[key]
+    if cached ~= nil then return cached or nil end
     local cu       = C_CurveUtil
     local stepType = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
     if not (cu and cu.CreateColorCurve and stepType and CreateColor) then
-        selectorCurve = false
+        curves[key] = false
         return nil
     end
     local c = cu.CreateColorCurve()
     c:SetType(stepType)
     c:AddPoint(0,  CreateColor(0, 0, 0, 0))
-    c:AddPoint(9,  CreateColor(1, 1, 1, 1))   -- Enrage
+    c:AddPoint(9,  CreateColor(r or 1, g or 1, b or 1, 1))   -- Enrage
     c:AddPoint(10, CreateColor(0, 0, 0, 0))
-    selectorCurve = c
+    curves[key] = c
     return c
 end
 
 function UISootheCue.Available()
-    return (C_UnitAuras and C_UnitAuras.GetAuraDispelTypeColor
-        and C_UnitAuras.GetAuraDataByIndex and GetSelectorCurve() ~= nil) and true or false
+    -- 12.1.0 no longer lets US call GetAuraDataByIndex / GetAuraDispelTypeColor, so their
+    -- presence is no longer the question. The aura container is: it makes both calls on our
+    -- behalf from untainted code. The style enum only exists on clients carrying it.
+    local styles = Enum and Enum.CustomAuraButtonDispelTypeTextureStyle
+    return (styles and styles.PreserveAsset ~= nil and GetSelectorCurve() ~= nil) and true or false
 end
 
--- Per-frame driver: gate each slot by its aura's dispel type (secret alpha -> SetAlpha, no
--- read) and pass through that aura's icon into the slot's "cleansed aura" clone.
-local function DriveCue(cue)
-    local sel   = GetSelectorCurve()
-    local gadbi = C_UnitAuras.GetAuraDataByIndex
-    local gadtc = C_UnitAuras.GetAuraDispelTypeColor
-    -- Cooldown swipe via the SHARED updater (resolved lazily: UIRenderer loads after this
-    -- file). It covers the GCD as well as soothe's own cooldown, which is the whole point -
-    -- a slot with no swipe reads as "press me" while the global is still running.
-    -- Called for every slot because which one is visible is decided by a SECRET alpha, so we
-    -- cannot know which. Only the WIDGET writes are change-guarded downstream; the query
-    -- chain runs per slot per tick. ponytail: 5 identical query chains while the cue is
-    -- live - split UpdateButtonCooldowns into query/apply if this transient state ever
-    -- shows up in profiling.
-    local UIRenderer = LibStub("JustAC-UIRenderer", true)
-    local UpdateCooldowns = UIRenderer and UIRenderer.UpdateButtonCooldowns
-    local live  = sel and not AurasSecret() and UnitExists("target") and UnitCanAttack("player", "target")
-        and not (cue.spellID and SpellDB and SpellDB.IsInterruptOnCooldown
-                 and SpellDB.IsInterruptOnCooldown(cue.spellID))
-    for i = 1, MAX_SLOTS do
-        local slot = cue.slots[i]
-        -- pcall even behind the gate: AreAurasSecret answers for the general case, but a
-        -- per-unit or per-spell override can still deny this one call, and the cost of
-        -- being wrong is an error every tick rather than a dark slot.
-        local gotAura, a = false, nil
-        if slot and live then gotAura, a = pcall(gadbi, "target", i, "HELPFUL") end
-        if not gotAura then a = nil end
-        if not slot then
-            -- CreateBaseIcon can fail; skip rather than erroring on every tick.
-        elseif a then
-            local ok = pcall(function()
-                local c = gadtc("target", a.auraInstanceID, sel)
-                slot:SetAlpha(c.a)  -- secret in combat; 1 iff dispel type 9
-            end)
-            -- A throw between the index scan and here (aura dropped mid-tick, restricted
-            -- instance) must fail DARK: without this the slot keeps its PREVIOUS secret
-            -- alpha - a glow that outlives its enrage (field-reported as an orphan
-            -- gold-ish glow floating by the cue).
-            if not ok then slot:SetAlpha(0) end
-            -- Pass through the cleansed aura's icon (secret texture -> SetTexture, no read),
-            -- exactly like the interrupt's castAura clones the cast icon.
-            if slot.auraIcon and a.icon then slot.auraIcon:SetTexture(a.icon) end
-            if UpdateCooldowns then UpdateCooldowns(slot) end
-        else
-            slot:SetAlpha(0)
-        end
+-- WHAT A SLOT INSIDE A CONTAINER BUTTON CAN AND CANNOT DO - measured 2026-08-11, in this
+-- order, each one a separate in-game error:
+--   works:  icon texture, hotkey text, border/mask chrome, the cleansed-aura sub-icon
+--   blocked: SetScript of any kind      ("cannot replace a forbidden script handler" on the
+--                                        container; "blocked by secret aspects" on a descendant)
+--   blocked: the proc glow              (its frame needs an OnHide)
+--   blocked: SetCooldownFromDurationObject ("Attempt to access forbidden object")
+--
+-- Everything descended from a container button inherits that button's secret aspects, so we
+-- may add CONTENT to the subtree but never BEHAVIOUR. There is therefore no cooldown-swipe
+-- driver here: the swipe cannot be drawn at all on these slots, and calling the shared updater
+-- only produced nine errors a second. That is the cost of the gate being Blizzard's - the old
+-- cue owned its frames outright and could draw anything, but could no longer SEE the enrage.
+
+-- Build one soothe slot on the container button, using the SHARED CreateBaseIcon so this
+-- looks identical to the interrupt icon it sits over - same border, mask, slot background,
+-- hotkey font and placement - rather than a hand-rolled lookalike that drifts from it.
+--
+-- CreateBaseIcon was briefly abandoned here after it rendered an empty frame. That was
+-- misdiagnosed: the cause was the container button having NO SIZE (fixed below), which would
+-- have broken any construction. What genuinely cannot happen inside a container button is
+-- BEHAVIOUR - SetScript, an animated proc glow (its frame needs an OnHide at creation), and
+-- SetCooldownFromDurationObject. Creating a Cooldown widget is harmless; only writing to it
+-- throws, so simply never driving it is enough.
+local function BuildSlot(parent, sz, profile)
+    -- Size the button FIRST: pooled buttons have no intrinsic size and the group's layout
+    -- options are spacing-only, so anything anchored to it renders at zero pixels - invisible,
+    -- with every other gate reporting healthy.
+    pcall(parent.SetSize, parent, sz, sz)
+
+    -- pcall'd: CreateBaseIcon is a large builder and a single guarded call inside it would
+    -- take the whole cue down. The bare-texture fallback below keeps a usable cue if that
+    -- ever happens on a future client.
+    local ok, slot = pcall(UIFrameFactory.CreateBaseIcon, parent, sz, false, true)
+    if ok and slot then
+        slot:SetAllPoints(parent)
+        slot:EnableMouse(false)
+        -- CreateBaseIcon ends with Hide(); visibility is the CONTAINER's to decide here, and
+        -- the button it lives in exists only while a matching aura does.
+        slot:Show()
+        slot:SetAlpha(1)
+        -- Cyan halo BEHIND the icon. Its tint comes from its own curve - a SetVertexColor here
+        -- would be overwritten, which is what produced a raw yellow box on an earlier attempt.
+        local glow = slot:CreateTexture(nil, "BACKGROUND")
+        glow:SetSize(sz * 1.6, sz * 1.6)
+        glow:SetPoint("CENTER", slot, "CENTER", 0, 0)
+        glow:SetTexture("Interface\\SpellActivationOverlay\\IconAlert")
+        glow:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
+        glow:SetBlendMode("ADD")
+        slot.glow = glow
+        return slot
     end
-end
 
--- Build one COMPLETE soothe slot from the SHARED CreateBaseIcon, so it inherits the cooldown
--- swipe a hand-built subset kept missing (a soothe on GCD read as castable). Cost: a full
--- button per slot instead of a light frame, times MAX_SLOTS - the N-slot trade noted up top.
-local function BuildSlot(cue, sz, profile)
-    -- Not clickable: this is a display overlay pinned over the interrupt, never pressed.
-    local slot = UIFrameFactory.CreateBaseIcon(cue, sz, false, true)
-    if not slot then return nil end
-    slot:SetAllPoints(cue)
-    slot:EnableMouse(false)
-
-    -- "Cleansed aura" clone: a small sub-icon showing the enrage buff about to be removed.
-    -- Stays bespoke because it is soothe-specific, exactly as the interrupt's castAura is
-    -- specific to the interrupt - but it takes its ANCHOR from the shared helper so the two
-    -- cannot disagree about where a sub-icon on this slot belongs.
-    local aura = UIFrameFactory.CreateAuraSubIcon(slot, sz, profile, profile and profile.queueOrientation or "LEFT")
-    aura:SetFrameLevel(slot:GetFrameLevel() + 4)  -- above CreateBaseIcon's borderFrame (+3)
-    slot.auraIcon  = aura.iconTexture
-    slot.auraFrame = aura  -- kept for ReanchorAuras (the overlay re-seats per expansion)
-
-    -- SHOWN, at alpha 0 - not hidden. The whole cue works by handing a SECRET alpha to
-    -- SetAlpha and letting the engine decide; a hidden frame draws nothing whatever its alpha,
-    -- so hiding a slot does not "hide it harder", it permanently disables it.
-    -- CreateBaseIcon ends with button:Hide(), which is right for every other caller (they call
-    -- Show() when a spell lands) and silently wrong here - visibility is not ours to decide.
-    -- This is the one line that has to differ from the shared builder's contract; without it
-    -- the cue is invisible while every gate still reports healthy, because the CONTAINER is
-    -- shown and only the slots inside are dead.
-    slot:Show()
-    slot:SetAlpha(0)
-    return slot
+    -- Fallback: bare textures on the button. No chrome, but the cue still functions.
+    local bare = { button = parent }
+    local glow = parent:CreateTexture(nil, "BACKGROUND")
+    glow:SetSize(sz * 1.6, sz * 1.6)
+    glow:SetPoint("CENTER", parent, "CENTER", 0, 0)
+    glow:SetTexture("Interface\\SpellActivationOverlay\\IconAlert")
+    glow:SetBlendMode("ADD")
+    bare.glow = glow
+    local icon = parent:CreateTexture(nil, "ARTWORK")
+    icon:SetSize(sz, sz)
+    icon:SetPoint("CENTER", parent, "CENTER", 0, 0)
+    icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    bare.iconTexture = icon
+    local hk = parent:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+    hk:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2, -2)
+    bare.hotkeyText = hk
+    return bare
 end
 
 --- Re-seat every slot's cleansed-aura clone for the OVERLAY's expansion. The slots
@@ -175,70 +167,104 @@ function UISootheCue.ReanchorAuras(cue, expansion)
     end
 end
 
---- Point the cue at a (new) soothe spell: icon + hotkey text + cyan cleanse glow.
+--- Record which soothe the cue is for. Deliberately writes NOTHING to a slot: both of a
+--- slot's textures were handed to AddDispelTypeTexture and are forbidden objects now, so the
+--- icon is stamped at construction (see Init) and a CHANGED spell rebuilds the container
+--- instead. There is no RemoveAuraGroup either, so rebuilding is the only way to re-stamp.
 function UISootheCue.SetSpell(cue, sootheSpellID)
     if not cue or cue.spellID == sootheSpellID then return end
     local info   = sootheSpellID and C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sootheSpellID)
     local iconID = info and info.iconID
     if sootheSpellID and not iconID then
-        -- Spell not in the client cache yet (login / spec swap): do NOT record the id and
-        -- do NOT arm anything - the same-spell guard above would block every retry, leaving
-        -- the cue permanently armed with glows over an icon that never resolved (the orphan
-        -- glow artifact). Leaving cue.spellID unset makes the next render call retry.
+        -- Not in the client cache yet (login / spec swap). Do NOT record the id: the
+        -- same-spell guard above would block every retry and leave the cue armed over an
+        -- icon that never resolved.
         return
     end
     cue.spellID = sootheSpellID
-    local hotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
-                    and ActionBarScanner.GetSpellHotkey(sootheSpellID)) or ""
-    for i = 1, MAX_SLOTS do
-        local slot = cue.slots[i]
-        if slot then
-            if iconID then
-                slot.iconTexture:SetTexture(iconID)
-                slot.iconTexture:Show()   -- CreateBaseIcon leaves it hidden until a spell lands
-                -- Armed ONLY beside a resolved icon: glow and art arm together or not at all.
-                UIAnimations.ShowSootheProcGlow(slot)  -- renders only when the slot's alpha is 1
-            else
-                -- No spell (spec lost its soothe): disarm, so nothing lingers from the
-                -- previous spec's arming.
-                slot.iconTexture:Hide()
-                UIAnimations.HideColoredProcGlow(slot, "SootheProcGlowFrame")
-            end
-            if slot.hotkeyText then slot.hotkeyText:SetText(hotkey) end
-            -- Lets the shared cooldown updater resolve this slot's swipe (GCD + soothe's own
-            -- cooldown). Without it a soothe on the global looked perfectly castable.
-            slot.spellID = sootheSpellID
-            slot.isItem = false
-        end
-    end
+    cue._hotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
+                   and ActionBarScanner.GetSpellHotkey(sootheSpellID)) or ""
 end
 
 --- Create (once) the cue pinned over `anchorIcon` (the interrupt icon = position 0).
 function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
     if not (anchorIcon and UISootheCue.Available()) then return nil end
     local cue = anchorIcon.sootheCue
+    -- A changed soothe means a NEW container: the slots' textures are forbidden to us now, so
+    -- they cannot be re-stamped, and the container has no RemoveAuraGroup. Orphan the old one -
+    -- this runs per spec change, not per frame.
+    if cue and cue.spellID and cue.spellID ~= sootheSpellID then
+        pcall(cue.Hide, cue)
+        pcall(cue.SetParent, cue, nil)
+        anchorIcon.sootheCue, cue = nil, nil
+    end
     if not cue then
         -- GetWidth() is secret on nameplate-parented frames (see UIFrameFactory
         -- cachedIconSize note); never call it here.
         local sz = anchorIcon.cachedIconSize or iconSize or 32
         if sz <= 0 then sz = 32 end
-        cue = CreateFrame("Frame", nil, anchorIcon:GetParent())
+        -- An AuraContainer, not a plain Frame: only these carry allowUntaintedCreation, so the
+        -- frame does not run in our taint and Blizzard will drive it from secret aura data.
+        local okC
+        okC, cue = pcall(CreateFrame, "AuraContainer", nil, anchorIcon:GetParent(),
+                         "CustomAuraContainerTemplate")
+        if not okC or not cue then return nil end
         cue:SetAllPoints(anchorIcon)                 -- tracks position 0 even when the kick is hidden
         cue:SetFrameStrata(anchorIcon:GetFrameStrata())
-        cue:EnableMouse(false)
+        pcall(cue.EnableMouse, cue, false)
         local ok, lvl = pcall(function() return anchorIcon:GetFrameLevel() end)
         cue:SetFrameLevel((ok and lvl or 0) + 16)    -- above the kick's hotkeyFrame (+15) -> full replace
         cue.slots = {}
         local addon = LibStub("AceAddon-3.0", true)
         addon = addon and addon:GetAddon("JustAssistedCombat", true)
         local profile = addon and addon.db and addon.db.profile
-        for i = 1, MAX_SLOTS do cue.slots[i] = BuildSlot(cue, sz, profile) end
-        cue:SetScript("OnUpdate", function(self, e)
-            self._t = (self._t or 0) + e
-            if self._t < UPDATE_INTERVAL then return end
-            self._t = 0
-            DriveCue(self)
-        end)
+
+        -- One slot per container button, built by initializeFrame during AddAuraGroup. The
+        -- filter narrows to auras the player can dispel - which per Blizzard's own comment
+        -- includes helpful enrages on enemies - so a button, and therefore a slot, exists ONLY
+        -- while the target is enraged. We cannot call that filter ourselves in combat; the
+        -- container can. The dispel-type-9 curve is applied per slot below as a second gate.
+        pcall(cue.SetUnit, cue, "target")
+        -- Resolve the icon BEFORE AddAuraGroup and stamp it inside Init. SetSpell runs AFTER
+        -- the group is added, so a slot built at any other moment than that one call would
+        -- never receive an icon - the frame renders, empty. Stamping at construction makes it
+        -- independent of when Blizzard chooses to build its buttons.
+        UISootheCue.SetSpell(cue, sootheSpellID)   -- resolves cue._hotkey before Init runs
+        local firstInfo = sootheSpellID and C_Spell and C_Spell.GetSpellInfo
+                          and C_Spell.GetSpellInfo(sootheSpellID)
+        local firstIcon = firstInfo and firstInfo.iconID
+
+        local function Init(button)
+            local slot = BuildSlot(button, sz, profile)
+            if not slot then return end
+            cue.slots[#cue.slots + 1] = slot
+            if firstIcon then slot.iconTexture:SetTexture(firstIcon) end
+            slot.hotkeyText:SetText(cue._hotkey or "")
+
+            -- Hand BOTH textures to Blizzard, each with its own curve: they become forbidden
+            -- to us afterwards, which is why the icon and hotkey are stamped ABOVE this and
+            -- never touched again. Each is opaque only at dispel type 9 (Enrage) - the icon in
+            -- its natural colours, the glow tinted cyan.
+            local opts = {
+                showAlways = true,   -- enrage is not a dispelName; default criteria would suppress it
+                style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
+            }
+            opts.customDispelColorCurve = GetSelectorCurve(0.55, 0.90, 1.00)
+            pcall(button.AddDispelTypeTexture, button, slot.glow, opts)
+
+            opts.customDispelColorCurve = GetSelectorCurve(1, 1, 1)
+            pcall(button.AddDispelTypeTexture, button, slot.iconTexture, opts)
+        end
+        if not pcall(cue.AddAuraGroup, cue, "jacSoothe", "HELPFUL|RAID_PLAYER_DISPELLABLE",
+                     { maxFrameCount = MAX_SLOTS, initializeFrame = Init }) then
+            pcall(cue.AddAuraGroup, cue, "jacSoothe", "HELPFUL",
+                  { maxFrameCount = MAX_SLOTS, initializeFrame = Init })
+        end
+
+        -- No driver of any kind. The container refreshes itself from UNIT_AURA (its own
+        -- OnUpdate is forbidden to us, which is how it does that), and the cooldown swipe -
+        -- the only thing our old driver still had to do - cannot be drawn on these slots at
+        -- all. See the note above DriveCooldowns' former home.
         cue:Hide()
         anchorIcon.sootheCue = cue
     end

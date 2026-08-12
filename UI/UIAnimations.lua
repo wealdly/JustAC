@@ -295,6 +295,20 @@ local GLOW_CONFIG = {
         pauseField  = nil,
         clearsProc  = false,
     },
+    SOOTHE = {
+        frameKey    = "SootheAntsGlowFrame",
+        -- The SAME cyan as the soothe proc burst it rides with (SOOTHE_PROC_* above), so the
+        -- ring and the burst read as one cue rather than two. Green is deliberately NOT used
+        -- here for the reason documented at SOOTHE_PROC_*: this sits on the same position-0
+        -- slot as the RED interrupt glow, and red/green is the most common colour deficiency.
+        r = 0.55, g = 0.90, b = 1.00,       -- Cyan
+        desaturate  = true,
+        scaleMul    = 1.0,
+        pauseOOC    = false,                 -- An enrage is worth the emphasis whenever it is up
+        flagField   = "hasSootheAntsGlow",
+        pauseField  = nil,
+        clearsProc  = false,
+    },
     PRECOMBAT = {
         frameKey    = "PrecombatHighlightFrame",
         -- Magenta, not green: these render inside the DEFENSIVE cluster next to the green glow.
