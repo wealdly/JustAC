@@ -9,11 +9,12 @@
 -- The interrupt icon shows the KICK (branchable). This shows the player's SOOTHE while the
 -- target is ENRAGED - and "enraged" is a secret in combat, so we can't branch on it or
 -- texture-swap the kick. Instead: enrage == dispel type 9 (C_UnitAuras.GetAuraDispelTypeColor),
--- auraInstanceID is NeverSecret, and the (combat-secret) selector alpha sinks straight into
--- each slot's SetAlpha with no read. One COMPLETE slot per target HELPFUL aura (the OR is
--- done in render). Each slot is built by the SHARED CreateBaseIcon - the same builder the
--- interrupt and tank-maintenance slots use - so it gets icon, border, hotkey, cooldown swipe
--- and the rest for free, plus a soothe-specific "cleansed aura" sub-icon.
+-- auraInstanceID is NeverSecret, and the (combat-secret) selector colour sinks straight into
+-- each slot texture with no read. One COMPLETE slot per target HELPFUL aura (the OR is done
+-- by the container). Each slot is built by the SHARED CreateBaseIcon - the same builder the
+-- interrupt and tank-maintenance slots use - so it gets icon, border, mask, slot background
+-- and hotkey for free. Whether the cleanse is CASTABLE is not drawn on the slot at all; it
+-- decides whether the container is shown in the first place (see Show).
 -- Drawn ABOVE the interrupt icon's hotkey (+15), so a shown slot fully replaces the
 -- kick (no lingering kick hotkey / missing frame art) and, being on top, wins collisions.
 -- ponytail: N complete slots + N idle glows is the cost of the secret-safe OR (can't collapse
@@ -24,15 +25,17 @@ if not UISootheCue then return end
 local UIAnimations     = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory   = LibStub("JustAC-UIFrameFactory", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
--- SpellDB/BlizzardAPI are gone with the old driver: the soothe-on-cooldown check and the
--- aura-secrecy gate were both inputs to a per-tick visibility decision this no longer makes.
+-- SpellDB is back for one thing only: the cleanse's own cooldown. See Show().
+local SpellDB          = LibStub("JustAC-SpellDB", true)
 if not (UIAnimations and UIFrameFactory) then return end
 
-local CreateFrame  = CreateFrame
-local CreateColor  = CreateColor
-local pcall        = pcall
-local C_Spell      = C_Spell
-local C_CurveUtil  = C_CurveUtil ---@diagnostic disable-line: undefined-global
+local CreateFrame   = CreateFrame
+local CreateColor   = CreateColor
+local UnitExists    = UnitExists
+local UnitCanAttack = UnitCanAttack
+local pcall         = pcall
+local C_Spell       = C_Spell
+local C_CurveUtil   = C_CurveUtil ---@diagnostic disable-line: undefined-global
 
 local MAX_SLOTS       = 5      -- target HELPFUL auras scanned (the OR); enrage past this is missed
 -- Selector curves (built once each): transparent everywhere except dispel type 9 (Enrage).
@@ -79,14 +82,21 @@ end
 --   works:  icon texture, hotkey text, border/mask chrome, the cleansed-aura sub-icon
 --   blocked: SetScript of any kind      ("cannot replace a forbidden script handler" on the
 --                                        container; "blocked by secret aspects" on a descendant)
---   blocked: the proc glow              (its frame needs an OnHide)
 --   blocked: SetCooldownFromDurationObject ("Attempt to access forbidden object")
+-- The proc glow was on the blocked list too, wrongly: what it needed was the SetScript, not
+-- the animation. An AnimationGroup is engine-side and needs no handler, and the OnHide it
+-- normally carries only stops a loop - so a glow that never stops does not need one. See
+-- BuildSlot / UIAnimations.CreateUndrivenProcGlow.
 --
 -- Everything descended from a container button inherits that button's secret aspects, so we
 -- may add CONTENT to the subtree but never BEHAVIOUR. There is therefore no cooldown-swipe
 -- driver here: the swipe cannot be drawn at all on these slots, and calling the shared updater
 -- only produced nine errors a second. That is the cost of the gate being Blizzard's - the old
 -- cue owned its frames outright and could draw anything, but could no longer SEE the enrage.
+--
+-- So "the cleanse is not castable right now" cannot be drawn INSIDE a slot. It is said one
+-- level up instead, by hiding the whole container - see Show(). That state is entirely ours
+-- and entirely plain (a player-side cooldown, never a secret), so no sink is needed for it.
 
 -- Build one soothe slot on the container button, using the SHARED CreateBaseIcon so this
 -- looks identical to the interrupt icon it sits over - same border, mask, slot background,
@@ -95,9 +105,10 @@ end
 -- CreateBaseIcon was briefly abandoned here after it rendered an empty frame. That was
 -- misdiagnosed: the cause was the container button having NO SIZE (fixed below), which would
 -- have broken any construction. What genuinely cannot happen inside a container button is
--- BEHAVIOUR - SetScript, an animated proc glow (its frame needs an OnHide at creation), and
--- SetCooldownFromDurationObject. Creating a Cooldown widget is harmless; only writing to it
--- throws, so simply never driving it is enough.
+-- BEHAVIOUR - SetScript and SetCooldownFromDurationObject. Creating a Cooldown widget is
+-- harmless; only writing to it throws, so simply never driving it is enough. The proc glow
+-- is the same story: drop the OnHide it only needs in order to STOP, and the animation
+-- itself is engine-side and perfectly welcome here.
 local function BuildSlot(parent, sz, profile)
     -- Size the button FIRST: pooled buttons have no intrinsic size and the group's layout
     -- options are spacing-only, so anything anchored to it renders at zero pixels - invisible,
@@ -115,15 +126,16 @@ local function BuildSlot(parent, sz, profile)
         -- the button it lives in exists only while a matching aura does.
         slot:Show()
         slot:SetAlpha(1)
-        -- Cyan halo BEHIND the icon. Its tint comes from its own curve - a SetVertexColor here
-        -- would be overwritten, which is what produced a raw yellow box on an earlier attempt.
-        local glow = slot:CreateTexture(nil, "BACKGROUND")
-        glow:SetSize(sz * 1.6, sz * 1.6)
-        glow:SetPoint("CENTER", slot, "CENTER", 0, 0)
-        glow:SetTexture("Interface\\SpellActivationOverlay\\IconAlert")
-        glow:SetTexCoord(0.00781250, 0.50781250, 0.27734375, 0.52734375)
-        glow:SetBlendMode("ADD")
-        slot.glow = glow
+        -- The SAME animated proc glow the interrupt icon wears, in cyan instead of red: this
+        -- slot REPLACES the kick on screen, so it has to speak the same visual language. Its
+        -- tint comes from the cue's curve, not from SetVertexColor - the container owns
+        -- VertexColor on a registered texture and would overwrite us, which is what produced
+        -- a raw yellow box on an earlier attempt. The glow is never driven again after this;
+        -- if the flipbook ever stops animating it freezes on the frame CreateProcGlowFrame
+        -- primed it to, i.e. degrades to a still glow rather than to nothing.
+        local procFrame = UIAnimations.CreateUndrivenProcGlow
+                          and UIAnimations.CreateUndrivenProcGlow(slot, "SootheProcGlowFrame", sz / 45)
+        slot.glow = procFrame and procFrame.ProcLoopFlipbook
         return slot
     end
 
@@ -249,7 +261,8 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
                 showAlways = true,   -- enrage is not a dispelName; default criteria would suppress it
                 style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
             }
-            opts.customDispelColorCurve = GetSelectorCurve(0.55, 0.90, 1.00)
+            local cyan = UIAnimations.SOOTHE_PROC_COLOR or { r = 0.55, g = 0.90, b = 1.00 }
+            opts.customDispelColorCurve = GetSelectorCurve(cyan.r, cyan.g, cyan.b)
             pcall(button.AddDispelTypeTexture, button, slot.glow, opts)
 
             opts.customDispelColorCurve = GetSelectorCurve(1, 1, 1)
@@ -272,23 +285,35 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
     return cue
 end
 
---- Show the cue (starts the driver). Idempotent.
+--- Arm the cue - but only while the cleanse is one the player could actually press.
+--- Idempotent; called every render pass by both surfaces.
+---
+--- The container answers exactly one question, "is the target enraged", and it is the only
+--- thing here that can. Everything else the old per-tick driver checked is PLAIN - a
+--- player-side cooldown, a hostile target - so the AND is done by showing or hiding the
+--- whole container, which is ours and unrestricted. Without this the cue sat over the kick
+--- for the entire enrage no matter what state the cleanse was in.
+---
+--- Charge-aware (IsInterruptOnCooldown -> IsSpellReady). The GCD is deliberately NOT part
+--- of it: a cue that vanishes on every global would strobe for the whole fight, and the
+--- swipe that used to say "wait" cannot be drawn on these slots.
 function UISootheCue.Show(cue)
-    if cue and not cue:IsShown() then cue:Show() end
+    if not cue then return end
+    local onCD = cue.spellID and SpellDB and SpellDB.IsInterruptOnCooldown
+                 and SpellDB.IsInterruptOnCooldown(cue.spellID)
+    if onCD or not (UnitExists("target") and UnitCanAttack("player", "target")) then
+        return UISootheCue.Hide(cue)
+    end
+    if not cue:IsShown() then cue:Show() end
 end
 
---- Hide the cue (stops the driver) and blank every slot. Free when already
---- hidden: a hidden frame renders no children, so blanked-or-not is moot, and
---- the overlay's hidden-state render path calls this every pass.
+--- Hide the cue. Hiding the container is the whole job: it hides its own subtree, and
+--- Blizzard drops the container's UNIT_AURA registration on hide and re-reads every aura
+--- on show, so nothing goes stale across a hidden stretch. Slots are deliberately NOT
+--- blanked - a slot lives inside a container button, where our writes are denied once
+--- auras are secret, and the alpha was never restored on the way back up.
 function UISootheCue.Hide(cue)
-    if not cue or not cue:IsShown() then return end
-    if cue.slots then
-        for i = 1, MAX_SLOTS do
-            local slot = cue.slots[i]
-            if slot then slot:SetAlpha(0) end
-        end
-    end
-    if cue:IsShown() then cue:Hide() end
+    if cue and cue:IsShown() then cue:Hide() end
 end
 
 return UISootheCue
