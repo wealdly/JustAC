@@ -278,6 +278,8 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 
 **Live secrecy gates (validated 2026-07-05, all contexts):** the `C_Secrets.Should*BeSecret` predicates flip exactly at combat edges, both directions. Use `BlizzardAPI.AreCooldownsSecret()` / `BlizzardAPI.AreAurasSecret()` as the "is this data readable" signal - never `InCombatLockdown()` as a secrecy proxy. Per-spell secrecy overrides the globals: `C_Secrets.GetSpellAuraSecrecy(id) == 0` means that aura stays readable even mid-combat (RedundancyFilter's `IsNeverSecretAura` caches this; forced evaluation via its `ForceReadNumber`/`ForceReadString` reads exempt fields past the generic secret mark).
 
+**12.1.0 (69214) added a second, harsher failure mode for AURAS: the call is DENIED, not secreted.** `GetAuraDataByIndex`, `GetUnitAuras` (every filter), `GetAuraDuration` and friends now THROW for a tainted caller when auras are secret - the denial is a property of the FUNCTION, not of the aura, so holding a plain aura table is no evidence the next call will be allowed. Consequences: pcall every aura call (a pcall around the known-risky one does nothing for a sibling that only became risky later), gate hot loops on `AreAurasSecret()` first so they do not throw per tick, and treat `type(x) == "secret"` as a real case when reading UNIT_AURA payloads (the payload LISTS are secret now, so `ipairs` throws). Grep the generated docs for `Requires*`, not `SecretArguments`, when asking "can we call this". For hostile-unit auras nothing readable remains - see `Documentation/AURA_CONTAINER_12.1.md`.
+
 **Secret Values (WoW 12.0+):** Blizzard hides certain combat data to prevent automation.
 A secret value cannot be compared, used in arithmetic, or branched on - it can only be
 handed back to the engine (`FontString:SetText`, `Cooldown:SetCooldownFromDurationObject`,
@@ -294,6 +296,13 @@ NOT repeated here - they live in `Documentation/12.0_COMPATIBILITY.md`. Update t
 - `Documentation/MACRO_PARSING_DEEP_DIVE.md` - Macro conditional parsing
 - `Documentation/12.0_COMPATIBILITY.md` - API compatibility, secret values, implementation status
 - `Documentation/AURA_DETECTION_ALTERNATIVES.md` - Alternative aura detection methods for 12.0
+- `Documentation/AURA_CONTAINER_12.1.md` - the ONLY route left to a hostile unit's aura state,
+  and the most exact route to the PLAYER's: an engine-driven DISPLAY via `Blizzard_AuraContainer`.
+  On an enemy the selector is a dispel-type colour curve; on the player you may name the spell id
+  outright. Covers what can and cannot be built inside a container button, the full set of widgets
+  the container will drive for you (swipe, countdown text, stack count, pandemic region - several
+  of which look blocked because calling them directly throws), and how to AND plain state onto a
+  secret one. **Read before proposing anything that reacts to a buff**
 - `Documentation/AURA_IDENTITY_12.0.md` - Identifying a SPECIFIC spell's aura in combat: the two
   routes that work, their conditions, and the measured dead ends. Read before proposing any
   "just look up the aura by spell id" solution

@@ -874,12 +874,6 @@ local function AnchorToNameplate(nameplate, anchor, iconSize, showDefensives, ex
                 interruptIcon.castAura:SetPoint("BOTTOM", interruptIcon, "TOP", 0, 2)
             end
         end
-        -- The soothe cue's cleansed-aura clones hang off the same slot and must follow
-        -- the same expansion rule - they were built with the STANDARD queue's
-        -- orientation and popped over dpsIcons[1] on "up" overlays.
-        if interruptIcon.sootheCue and UISootheCue.ReanchorAuras then
-            UISootheCue.ReanchorAuras(interruptIcon.sootheCue, expansion)
-        end
         interruptIcon:Hide()
     end
 

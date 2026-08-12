@@ -2,7 +2,7 @@
 ## Title: JustAC
 ## Notes: Displays a queue of assisted highlight abilities with hotkeys
 ## Author: wealdly
-## Version: 5.1.4
+## Version: 5.1.5
 ## License: GPL-3.0-or-later
 ## IconTexture: Interface/Icons/Ability_DualWield
 ## SavedVariables: JustACDB JustACGlobal
@@ -70,12 +70,13 @@ DotTracker.lua
 MaintenanceTracker.lua
 SpellQueue.lua
 
-# UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UISootheCue → UIRenderer → UINameplateOverlay)
+# UI  (UIAnimations → UIHealthBar/CastInterruptTracker → UIFrameFactory → UISootheCue/UIMaintenanceAura → UIRenderer → UINameplateOverlay)
 UI\UIAnimations.lua
 UI\UIHealthBar.lua
 UI\CastInterruptTracker.lua
 UI\UIFrameFactory.lua
 UI\UISootheCue.lua
+UI\UIMaintenanceAura.lua
 UI\UIRenderer.lua
 UI\UINameplateOverlay.lua
 UI\UIPrecombatOverlay.lua

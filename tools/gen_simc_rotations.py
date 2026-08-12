@@ -328,7 +328,15 @@ def make_entry(token, mods, resolve, unresolved, k):
             g = {"t": "dot", "id": sid}
         if g not in uniq:
             uniq.append(g)
-    return {"id": sid, "token": token, "gates": uniq, "delegated": delegated}
+    e = {"id": sid, "token": token, "gates": uniq, "delegated": delegated}
+    # Release tier for an EMPOWERED cast (`consumption,empower_to=1`). Deliberately NOT a
+    # gate: it never decides WHETHER to press, only how long to hold before letting go, so
+    # nothing in the runtime evaluator should ever test it. Carried as plain data for the
+    # icon to show.
+    emp = mods.get("empower_to", "")
+    if emp.isdigit() and int(emp) > 0:
+        e["empower"] = int(emp)
+    return e
 
 
 def build_varmap(lists):
@@ -404,11 +412,21 @@ def flatten(lists, k, resolve, unresolved, varmap):
 
     walk("main", 0)
     occ.sort(key=lambda x: (x[0], x[1]))   # defer-0 first, stable within a defer class
-    out, seen = [], set()
+    out, seen = [], {}
     for _d, _s, e in occ:
-        if e["id"] not in seen:
-            seen.add(e["id"])
+        kept = seen.get(e["id"])
+        if kept is None:
+            seen[e["id"]] = e
             out.append(e)
+        elif kept.get("empower") != e.get("empower"):
+            # Same spell, DIFFERENT release tier. SimC chooses between those lines on
+            # conditions this generator could not classify - Eternity Surge picks its tier by
+            # target count against TALENT-dependent thresholds (`active_enemies<=2+2*talent.
+            # eternitys_span`), which _COUNT_ATOM cannot evaluate, so every tier survives to
+            # here and first-wins would ship whichever came first as if it were the answer.
+            # Drop the tier instead and show none: a wrong release tier is worse than no
+            # advice, and the entry itself is still correct without it.
+            kept.pop("empower", None)
     return out
 
 
@@ -450,7 +468,8 @@ def gate_lua(g):
 def entry_lua(e):
     g = "{" + ",".join(gate_lua(x) for x in e["gates"]) + "}"
     d = ",delegated=true" if e["delegated"] else ""
-    return "      {id=%d,gates=%s%s},  -- %s" % (e["id"], g, d, e["token"])
+    emp = ",empower=%d" % e["empower"] if e.get("empower") else ""
+    return "      {id=%d,gates=%s%s%s},  -- %s" % (e["id"], g, d, emp, e["token"])
 
 
 def entry_sig(e):
@@ -458,7 +477,11 @@ def entry_sig(e):
     # tuple. The old list named six keys, so every key added since (pct, ispct,
     # deficit, own, tgt) was invisible to dedup and two entries differing only in
     # one of them collapsed into a single entry - a dropped rotation line, silently.
-    return (e["id"], tuple(sorted(gate_lua(x) for x in e["gates"])), e["delegated"])
+    # `empower` is an ENTRY key, not a gate key, so it has to be named here explicitly -
+    # gate_lua never sees it, and without it a context list differing only by release tier
+    # would compare equal to another and be dropped as a duplicate.
+    return (e["id"], tuple(sorted(gate_lua(x) for x in e["gates"])), e["delegated"],
+            e.get("empower"))
 
 
 def list_sig(lst):
@@ -673,6 +696,15 @@ def _selftest():
     assert g == {"t": "execute", "neg": False} and not d
     g, d = classify_atom("health.pct<35", lambda t: None)
     assert g == {"t": "health", "op": "<", "pct": 35} and not d
+
+    # Empower tier: parsed off the mod, serialized, and part of the dedup signature. The
+    # last two are what a dropped key looks like - the data still generates, just without
+    # the tier, exactly like the gate keys that went missing before the schema guard.
+    e = make_entry("consumption", {"empower_to": "1"}, lambda t: 42, set(), 1)
+    assert e.get("empower") == 1
+    assert "empower=1" in entry_lua(e)
+    assert entry_sig(e) != entry_sig(make_entry("consumption", {}, lambda t: 42, set(), 1))
+    assert make_entry("x", {"empower_to": "0"}, lambda t: 42, set(), 1).get("empower") is None
 
 
 def main():

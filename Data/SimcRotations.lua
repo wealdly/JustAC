@@ -27,7 +27,7 @@ RotationImport.RegisterGated({
       {id=195182,gates={},delegated=true},  -- marrowrend
       {id=195292,gates={{t="resource",res="rune",op="<",n=4}},delegated=true},  -- deaths_caress
       {id=50842,gates={}},  -- blood_boil
-      {id=1263824,gates={{t="buff",id=49028,neg=true}}},  -- consumption
+      {id=1263824,gates={{t="buff",id=49028,neg=true}},empower=1},  -- consumption
       {id=206930,gates={}},  -- heart_strike
     },
   },
@@ -331,9 +331,21 @@ RotationImport.RegisterGated({
     st = {
       {id=357210,gates={},delegated=true},  -- deep_breath
       {id=375087,gates={{t="execute"}},delegated=true},  -- dragonrage
+      {id=359073,gates={},empower=1},  -- eternity_surge
+      {id=370553,gates={},delegated=true},  -- tip_the_scales
+      {id=357208,gates={},empower=1},  -- fire_breath
+      {id=356995,gates={},delegated=true},  -- disintegrate
+      {id=357211,gates={},delegated=true},  -- pyre
+      {id=361469,gates={},delegated=true},  -- living_flame
+      {id=355913,gates={}},  -- emerald_blossom
+      {id=362969,gates={}},  -- azure_strike
+    },
+    aoe = {
+      {id=357210,gates={},delegated=true},  -- deep_breath
+      {id=375087,gates={{t="execute"}},delegated=true},  -- dragonrage
       {id=359073,gates={}},  -- eternity_surge
       {id=370553,gates={},delegated=true},  -- tip_the_scales
-      {id=357208,gates={}},  -- fire_breath
+      {id=357208,gates={},empower=1},  -- fire_breath
       {id=356995,gates={},delegated=true},  -- disintegrate
       {id=357211,gates={},delegated=true},  -- pyre
       {id=361469,gates={},delegated=true},  -- living_flame
@@ -352,7 +364,7 @@ RotationImport.RegisterGated({
       {id=357210,gates={}},  -- deep_breath
       {id=403631,gates={{t="execute"}},delegated=true},  -- breath_of_eons
       {id=357208,gates={},delegated=true},  -- fire_breath
-      {id=396286,gates={},delegated=true},  -- upheaval
+      {id=396286,gates={},delegated=true,empower=1},  -- upheaval
       {id=404977,gates={{t="buff",id=370553,neg=true}},delegated=true},  -- time_skip
       {id=355913,gates={},delegated=true},  -- emerald_blossom
       {id=361469,gates={},delegated=true},  -- living_flame
