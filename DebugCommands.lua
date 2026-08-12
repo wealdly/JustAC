@@ -2224,10 +2224,10 @@ function DebugCommands.EnrageProbe(addon, arg)
     local sid = soothe and soothe[1] and soothe[1].spellID
     if gate("ResolveSootheSpells() returned a spell", sid ~= nil,
             sid and ("spellID=" .. sid) or "nil - no known soothe for this spec") and SDB then
-        -- The `live` gate inside DriveCue: an on-cooldown soothe blanks every slot, so a stuck
-        -- cooldown state looks exactly like "detection broken".
+        -- The castability gate inside UISootheCue.Show: an on-cooldown soothe hides the whole
+        -- cue, so a stuck cooldown state looks exactly like "detection broken".
         local onCD = SDB.IsInterruptOnCooldown and SDB.IsInterruptOnCooldown(sid)
-        gate("soothe not on cooldown (DriveCue 'live' gate)", not onCD,
+        gate("soothe not on cooldown (UISootheCue.Show gate)", not onCD,
              onCD and "IsSpellReady says NOT ready" or "ready")
     end
 

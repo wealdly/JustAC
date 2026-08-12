@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+## [5.1.4] - 2026-08-11
+
+### Fixed
+- The enrage cleanse reminder no longer stays on screen while your cleanse is on
+  cooldown, or when your target isn't one you can attack. It hides instead, so the
+  interrupt reminder underneath it is visible again.
+- The enrage cleanse reminder has its cyan glow back, animated to match the interrupt
+  reminder it sits over.
+
 ## [5.1.3] - 2026-08-11
 
 ### Fixed

@@ -57,7 +57,10 @@ local function CreateMarchingAntsFrame(parent, frameKey)
 end
 
 -- Create proc glow using WoW's native animations to match action button style
-local function CreateProcGlowFrame(parent, frameKey)
+-- skipHideScript: for a parent that forbids SetScript (an aura-container button). The
+-- OnHide below is bookkeeping only - it stops a loop nobody is watching - so a caller that
+-- never stops the loop can go without it. See CreateUndrivenProcGlow.
+local function CreateProcGlowFrame(parent, frameKey, skipHideScript)
     local procFrame = CreateFrame("FRAME", nil, parent)
     parent[frameKey] = procFrame
     procFrame:SetPoint("CENTER")
@@ -96,12 +99,14 @@ local function CreateProcGlowFrame(parent, frameKey)
     loopFlip:SetFlipBookFrameWidth(0)
     loopFlip:SetFlipBookFrameHeight(0)
     
-    procFrame:SetScript("OnHide", function()
-        if procFrame.ProcLoop:IsPlaying() then
-            procFrame.ProcLoop:Stop()
-        end
-    end)
-    
+    if not skipHideScript then
+        procFrame:SetScript("OnHide", function()
+            if procFrame.ProcLoop:IsPlaying() then
+                procFrame.ProcLoop:Stop()
+            end
+        end)
+    end
+
     loopGroup:Play()
     loopGroup:Stop()
     
@@ -210,11 +215,22 @@ local function HideInterruptProcGlow(icon)
     HideColoredProcGlow(icon, "InterruptProcGlowFrame")
 end
 
--- No dedicated Hide wrapper: hiding the cue frame takes the glow with it, and the one
--- explicit disarm (a spec losing its soothe spell) goes through the generic
--- HideColoredProcGlow with this frame key from UISootheCue.SetSpell.
-local function ShowSootheProcGlow(icon)
-    ShowColoredProcGlow(icon, "SootheProcGlowFrame", SOOTHE_PROC_R, SOOTHE_PROC_G, SOOTHE_PROC_B)
+-- The soothe cue's proc glow, for a parent that forbids SetScript AND owns none of the
+-- glow's colour: an aura-container button. Two things are different from the wrappers above.
+-- It is never driven again - the loop starts here and is left running, because the button's
+-- own (secret) visibility decides when it is on screen and there is nothing for an OnHide to
+-- clean up. And it is only DESATURATED, never tinted: the caller hands this flipbook to the
+-- container, whose dispel-type curve owns VertexColor from that moment on, so a tint here
+-- would simply be overwritten. Feed that curve SOOTHE_PROC_COLOR and the two agree.
+local function CreateUndrivenProcGlow(parent, frameKey, scale)
+    if not parent then return nil end
+    local procFrame = parent[frameKey] or CreateProcGlowFrame(parent, frameKey, true)
+    procFrame.ProcLoopFlipbook:SetDesaturated(true)
+    procFrame:SetScale(scale or 1)
+    procFrame:SetAlpha(1)
+    procFrame:Show()
+    procFrame.ProcLoop:Play()
+    return procFrame
 end
 
 local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
@@ -862,7 +878,10 @@ UIAnimations.ShowInterruptProcGlow = ShowInterruptProcGlow
 UIAnimations.ShowColoredProcGlow = ShowColoredProcGlow
 UIAnimations.HideColoredProcGlow = HideColoredProcGlow
 UIAnimations.HideInterruptProcGlow = HideInterruptProcGlow
-UIAnimations.ShowSootheProcGlow = ShowSootheProcGlow
+UIAnimations.CreateUndrivenProcGlow = CreateUndrivenProcGlow
+-- The cyan is exported, not duplicated: the cue's dispel-type curve applies it instead of
+-- SetVertexColor, and a drifted copy would make ring and burst two different blues.
+UIAnimations.SOOTHE_PROC_COLOR = { r = SOOTHE_PROC_R, g = SOOTHE_PROC_G, b = SOOTHE_PROC_B }
 UIAnimations.StartFlash = StartFlash
 UIAnimations.PauseAllGlows = PauseAllGlows
 UIAnimations.ResumeAllGlows = ResumeAllGlows
