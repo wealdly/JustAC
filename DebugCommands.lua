@@ -104,6 +104,23 @@ local function PlayerHealthBar()
         or FramePath("PlayerFrame", "healthbar")
 end
 
+--- The nameplate cast bar, resolved the way PRODUCTION resolves it. Every probe below used
+--- to hardcode `np.UnitFrame.castBar`, which 12.x emptied by nesting the bar under
+--- CastBarsContainer - so the probes reported "no cast bar" on a client that has one, and
+--- would have blamed a third-party addon for a path change. A probe that re-derives a frame
+--- differently from the code it is diagnosing answers a question nobody asked.
+local function NameplateCastBar(np)
+    if not np then return nil end
+    local CIT = LibStub("JustAC-CastInterruptTracker", true)
+    if CIT and CIT.DebugFindCastBar then
+        local bar = CIT.DebugFindCastBar(np)
+        if bar then return bar end
+    end
+    local uf = np.UnitFrame
+    if not uf then return nil end
+    return (uf.CastBarsContainer and uf.CastBarsContainer.castBar) or uf.castBar
+end
+
 --- "Name (id)" for a spell, or "? (id)" when the client has not streamed it in.
 local function SpellLabel(id)
     local n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
@@ -182,6 +199,8 @@ local INSPECT_TOPICS = {
     { "frames",      "FrameStateProbe",          nil,  "One-shot: laundered frame booleans (low HP, capped power, absorbs)" },
     { "enginesig",   "EngineSignalsProbe",       nil,  "One-shot: unused engine signals (batch auras, classifiers, cast-on-me)" },
     { "enrage",      "EnrageProbe",              "[off]", "Probe secret-safe enrage detection (DispelType 9 color curve)" },
+    { "auradump",    "AuraDumpProbe",            nil,  "EVERY aura on the target: every filter's count, every field, plain vs secret" },
+    { "auracontainer", "AuraContainerProbe",     nil,  "Can we create a 12.1 AuraContainer, and what methods does it expose?" },
     { "enragelog",   "EnrageLog",                "[off|clear]", "Log enrage detections to SavedVariables" },
     { "castdiag",    "CastDiagnostics",          nil,  "Arm a one-shot cast-interruptibility probe" },
     { "chargediag",  "ChargeDiagnostics",        "[spell]", "Arm a 60s charge-event/secrecy probe" },
@@ -1292,6 +1311,92 @@ function DebugCommands.InterruptDiagnostics(addon)
             i, name, sid, stype,
             cdColor, cdStr,
             tostring(localCD), tostring(ready), tostring(usable), isOnGCDStr))
+    end
+
+    -- The two things this probe could not previously answer, and which decide everything:
+    -- WHICH spell the tracker actually picked, and what the icon then did with it. A list of
+    -- healthy candidates plus a missing icon tells you nothing about where the chain broke -
+    -- selection, show, texture, or alpha are four different bugs with one symptom.
+    local CIT = LibStub("JustAC-CastInterruptTracker", true)
+    local prof = addon.db and addon.db.profile
+    if CIT and CIT.EvaluateInterrupt and SpellDB and SpellDB.ResolveInterruptSpells then
+        local mode = (prof and prof.interruptMode) or "kickPrefer"
+        local ok, res = pcall(CIT.EvaluateInterrupt, SpellDB.ResolveInterruptSpells(), mode, GetTime())
+        if ok and res then
+            local pickName = res.spellID and SpellLabel(res.spellID) or "none"
+            addon:Print(string.format("verdict: shouldShow=%s  pick=%s  castBar=%s",
+                res.shouldShow and "|cff00ff00true|r" or "|cffff6600false|r",
+                pickName, res.castBar and "found" or "|cff888888nil|r"))
+            if res.spellID and SpellDB.IsInterruptTypeSpell then
+                -- Decides the ALPHA PATH: a kick goes through the secret sink and is hidden on
+                -- a non-interruptible cast; a CC takes the plain path and must stay visible.
+                addon:Print("   alpha path: " .. (SpellDB.IsInterruptTypeSpell(res.spellID)
+                    and "|cffffff00secret sink|r (kick - hides on non-interruptible)"
+                    or "|cff00ff00plain|r (cc - should be visible)"))
+            end
+        else
+            addon:Print("verdict: |cffff6600EvaluateInterrupt threw|r")
+        end
+    end
+
+    -- Cast-bar discovery. CC substitution needs a BRANCHABLE interruptibility answer, and in
+    -- 12.x exactly one exists: Blizzard hides the nameplate cast bar's spell Icon on a
+    -- non-interruptible cast, and Icon:IsShown() is a concrete non-secret boolean. Everything
+    -- else (BorderShield, barType, UnitCastingInfo's notInterruptible) is secret.
+    -- That signal has three ways to vanish, and all three look identical from the outside:
+    --   * no nameplate for the target        -> nothing to read
+    --   * HideIconWhenNotInterruptible=false -> the CLASSIC cast bar style deliberately does
+    --     not hide the icon (Blizzard_NamePlates.lua ShouldHideIconWhenNotInterruptible),
+    --     so the signal is switched off at the source
+    --   * look ~= "UNITFRAME" / showIcon=false -> a reskin, or the player turned the icon off
+    -- Without the signal we fail OPEN to "interruptible", pick the kick, and the secret alpha
+    -- sink then hides it - a ding with no icon, and no CC offered.
+    if CIT and CIT.DebugFindCastBar then
+        local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit
+            and C_NamePlate.GetNamePlateForUnit("target", false)
+        local bar, src = CIT.DebugFindCastBar(np)
+        addon:Print(string.format("cast bar: nameplate=%s  bar=%s  source=%s",
+            np and "|cff00ff00yes|r" or "|cffff6600NO|r",
+            bar and "|cff00ff00found|r" or "|cffff6600none|r", tostring(src)))
+        if bar then
+            local function f(fn) return ProbeRead(fn) end
+            addon:Print(string.format(
+                "   HideIconWhenNotInterruptible=%s  showIcon=%s  look=%s  Icon:IsShown=%s",
+                f(function() return bar.HideIconWhenNotInterruptible end),
+                f(function() return bar.showIcon end),
+                f(function() return bar.look end),
+                f(function() return bar.Icon and bar.Icon:IsShown() end)))
+            local okH, hide = pcall(function() return bar.HideIconWhenNotInterruptible end)
+            if okH and hide == false then
+                addon:Print("   |cffff6600CLASSIC cast bar style|r - Blizzard does not hide the icon"
+                    .. " on this style, so the only readable interruptibility signal does not exist."
+                    .. " Switch the nameplate cast bar style to restore CC substitution.")
+            end
+        end
+    end
+
+    local icon = addon.interruptIcon
+    if icon then
+        local tex = icon.iconTexture
+        addon:Print(string.format("icon: shown=%s  alpha=%s  spellID=%s  texShown=%s  tex=%s",
+            tostring(icon:IsShown()), ProbeRead(function() return icon:GetAlpha() end),
+            tostring(icon.spellID), tex and tostring(tex:IsShown()) or "no texture object",
+            tex and ProbeRead(function() return tex:GetTexture() end) or "-"))
+        -- The soothe cue is a SEPARATE frame pinned over this icon at +16, so a slot left at a
+        -- non-zero alpha covers the kick/CC completely. Its slot alphas are secret once the
+        -- enrage sink has written them, hence ProbeRead rather than a bare GetAlpha.
+        local cue = icon.sootheCue
+        if cue then
+            local parts = {}
+            for i = 1, 5 do
+                local s = cue.slots and cue.slots[i]
+                parts[#parts + 1] = s and ProbeRead(function() return s:GetAlpha() end) or "-"
+            end
+            addon:Print("soothe overlay: shown=" .. tostring(cue:IsShown())
+                .. "  slot alphas=" .. table.concat(parts, ","))
+        end
+    else
+        addon:Print("icon: |cff888888addon.interruptIcon is nil (standard queue not built?)|r")
     end
 
     addon:Print("")
@@ -2473,15 +2578,15 @@ end
 -- BAR, not the field name: Paladin and DK both use `visualState` with DIFFERENT enums.
 local RESOURCE_BAR_FRAMES = {
     -- 12.x PRD builds its own class frame as the global `prdClassFrame` (live whenever PRD is on).
-    { "prdClassFrame", class="DRUID",   event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="ROGUE",   event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="MONK",    event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="MAGE",    event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="EVOKER",  event="UNIT_POWER_FREQUENT" },
-    { "prdClassFrame", class="PALADIN", event="UNIT_POWER_FREQUENT", indexed="rune",
+    { "PersonalResourceDisplayFrame.classFrame", class="DRUID",   event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="ROGUE",   event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="MONK",    event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="MAGE",    event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="EVOKER",  event="UNIT_POWER_FREQUENT" },
+    { "PersonalResourceDisplayFrame.classFrame", class="PALADIN", event="UNIT_POWER_FREQUENT", indexed="rune",
       state="visualState", min=1, max=3, isFilled=function(v) return v > 1 end },
-    { "prdClassFrame", class="DEATHKNIGHT", event="RUNE_POWER_UPDATE", array="Runes",
+    { "PersonalResourceDisplayFrame.classFrame", class="DEATHKNIGHT", event="RUNE_POWER_UPDATE", array="Runes",
       state="visualState", min=1, max=4, isFilled=function(v) return v == 4 end },
     { "DruidComboPointBarFrame", class="DRUID", event="UNIT_POWER_FREQUENT" }, { "RogueComboPointBarFrame", class="ROGUE", event="UNIT_POWER_FREQUENT" }, { "MonkHarmonyBarFrame", class="MONK", event="UNIT_POWER_FREQUENT" },
     { "WarlockPowerFrame", class="WARLOCK", event="UNIT_POWER_FREQUENT" }, { "MageArcaneChargesFrame", class="MAGE", event="UNIT_POWER_FREQUENT" }, { "EssencePlayerFrame", class="EVOKER", event="UNIT_POWER_FREQUENT" },
@@ -2517,7 +2622,15 @@ function DebugCommands.ResourcePointProbe(addon)
     for _, def in ipairs(RESOURCE_BAR_FRAMES) do
         local name = def[1]
         -- Only this character's bars; another class's global exists but is never initialised.
-        local bar = (def.class == playerClass) and _G[name] or nil
+        -- Dotted paths are walked: the PRD class bar has no global of its own (SetupClassBar
+        -- creates it with a nil name arg), so it is only reachable as a field.
+        local bar = nil
+        if def.class == playerClass then
+            for part in name:gmatch("[^.]+") do
+                bar = (bar == nil) and _G[part] or bar[part]
+                if bar == nil then break end
+            end
+        end
         local points = bar and bar.classResourceButtonTable
         if bar and (not points or #points == 0) and def.array then
             local a = bar[def.array]
@@ -3202,7 +3315,7 @@ function DebugCommands.CastDiagnostics(addon)
         end
         local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
         probeBar("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
-        probeBar("nameplate.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+        probeBar("nameplate.castBar", NameplateCastBar(np))
         -- Read the icon-hidden check on the BLIZZARD bars DIRECTLY, even if a third-party addon
         -- hides them and shows its own. If a hidden Blizzard bar still reports
         -- notInterruptible=true on a shielded cast, it is still Blizzard-DRIVEN and readable.
@@ -3217,7 +3330,7 @@ function DebugCommands.CastDiagnostics(addon)
                 label, tostring(hasIcon), tostring(flag), sOk and safe(shown) or "?", cOk and safe(chk) or "?")
         end
         probeIconHidden("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
-        probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        probeIconHidden("nameplate UnitFrame.castBar (Blizzard,capU)", NameplateCastBar(np))
 
         -- ZERO-GATE ON THE SHIELD'S ALPHA. The shield route was written off because
         -- BorderShield:IsShown() is a secret BOOLEAN, and a secret boolean cannot be
@@ -3256,7 +3369,7 @@ function DebugCommands.CastDiagnostics(addon)
             end
         end
         probeShieldAlpha("TargetFrame.spellbar (Blizzard)", TargetFrame and TargetFrame.spellbar)
-        probeShieldAlpha("nameplate UnitFrame.castBar (Blizzard,capU)", np and np.UnitFrame and np.UnitFrame.castBar)
+        probeShieldAlpha("nameplate UnitFrame.castBar (Blizzard,capU)", NameplateCastBar(np))
         -- The replaced/reskinned bar the tracker would actually have found. This is the
         -- row that matters for the addon-interaction complaint: if the zero-gate answers
         -- HERE, layer 2 stops degrading when a third-party bar is in play.
@@ -3299,7 +3412,7 @@ function DebugCommands.CastDiagnostics(addon)
             probeLines[#probeLines + 1] = "    => " .. verdict
         end
         probeLiveness("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
-        probeLiveness("nameplate UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+        probeLiveness("nameplate UnitFrame.castBar", NameplateCastBar(np))
         -- Focus-frame bar: a second untainted Blizzard bar if the player has focus=target
         if FocusFrame and FocusFrame.spellbar then
             probeIconHidden("FocusFrame.spellbar (Blizzard)", FocusFrame.spellbar)
@@ -3310,7 +3423,7 @@ function DebugCommands.CastDiagnostics(addon)
         -- reads a clean boolean matching the actual cast (and its shield is visually correct),
         -- we could read its answer instead of Blizzard's. Compare to what its bar shows.
         local puf = np and np.unitFrame
-        local pcb = puf and puf.castBar
+        local pcb = puf and ((puf.CastBarsContainer and puf.CastBarsContainer.castBar) or puf.castBar)
         if pcb then
             local function rd(field)
                 local ok, v = pcall(function() return pcb[field] end)
@@ -3380,7 +3493,7 @@ function DebugCommands.CastDiagnostics(addon)
             end
             probeShield("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
             local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
-            probeShield("nameplate.UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+            probeShield("nameplate.UnitFrame.castBar", NameplateCastBar(np))
             -- Q4: cast-bar color. If Blizzard sets it by branching on the secret (a plain
             -- constant result), GetStatusBarColor() is NON-secret -> we can read interruptibility
             -- directly (yellow ~ interruptible, grey ~ not). If it reads <secret>, it's piped.
@@ -3402,7 +3515,7 @@ function DebugCommands.CastDiagnostics(addon)
                 addon:Print("      atlas=" .. safe(atlas))
             end
             probeColor("TargetFrame.spellbar", TargetFrame and TargetFrame.spellbar)
-            probeColor("nameplate.UnitFrame.castBar", np and np.UnitFrame and np.UnitFrame.castBar)
+            probeColor("nameplate.UnitFrame.castBar", NameplateCastBar(np))
             -- Q5: can we PASS the secret shield state into display sinks without reading it?
             -- SetDesaturated greys the icon (non-occluding - keybind stays visible); SetShown
             -- drives a non-covering border/badge. ok = that cue is viable.
@@ -3681,7 +3794,7 @@ local function BuildValidateProbes()
     local function TargetCastBar()
         local np = C_NamePlate and C_NamePlate.GetNamePlateForUnit
             and C_NamePlate.GetNamePlateForUnit("target")
-        return np and np.UnitFrame and np.UnitFrame.castBar
+        return NameplateCastBar(np)
     end
     add("castbar.spellID", function() return TargetCastBar().spellID end)
     add("castbar.highlight", function() return TargetCastBar().highlightImportantCasts end)
@@ -5605,16 +5718,28 @@ end
 --
 -- Change-only sampling: a whole fight collapses to a handful of transitions.
 --------------------------------------------------------------------------------
+--- Call GetUnitAuras RAW so a THROW is distinguishable from an empty result.
+--- BlizzardAPI.GetAuras deliberately swallows that difference (it pcalls, then falls back to
+--- the by-index loop, which also throws in combat, yielding {}). For production that is the
+--- right fail-safe; for this question it is fatal - "the target has no buffs" and "the API
+--- refused us" both render as 0, and only one of them means the route is dead.
+local function RawAuraCount(filter)
+    local fn = C_UnitAuras and C_UnitAuras.GetUnitAuras
+    if not fn then return nil, "no API" end
+    local ok, list = pcall(fn, "target", filter)
+    if not ok then return nil, "THREW" end
+    if type(list) ~= "table" then return nil, "not a table" end
+    return #list, nil, list
+end
+
 local function EnrageSample()
-    local api = LibStub("JustAC-BlizzardAPI", true)
-    if not (api and api.GetAuras) or not UnitExists("target") then return nil end
-    local base = api.GetAuras("target", "HELPFUL")
-    local disp = api.GetAuras("target", "HELPFUL|RAID_PLAYER_DISPELLABLE")
-    if not (base and disp) then return nil end
-    local nb, nd = #base, #disp
-    -- Token honoured only if it actually narrowed something at least once.
-    local ignored = (nb > 1 and nd == nb)
-    return nb, nd, ignored, base
+    if not UnitExists("target") then return nil end
+    local nb, berr, base = RawAuraCount("HELPFUL")
+    local nd, derr = RawAuraCount("HELPFUL|RAID_PLAYER_DISPELLABLE")
+    -- Token honoured only if it actually narrowed something at least once. Needs nb > 1:
+    -- with a single aura present, a fail-open token is indistinguishable from a real answer.
+    local ignored = (nb and nd and nb > 1 and nd == nb)
+    return nb, nd, ignored, base, berr, derr
 end
 
 --- Per-aura dispel-type decode for the log. Uses the IDENTITY curve (r = type/32), so a
@@ -5651,6 +5776,350 @@ local function DecodeDispelTypes(auras)
     return " types=[" .. table.concat(out, " ") .. "]"
 end
 
+--------------------------------------------------------------------------------
+--- \jac inspect auradump - every aura on the target, every field, every filter.
+---
+--- Written because guessing which filter or field surfaces an enrage was costing runs.
+--- Do not infer the shape of the data: enumerate it. The player can confirm the enrage by
+--- NAME in game ("Seeing Red" on the test mob), so a dump that shows which fields read plain
+--- and which filters include that aura answers in one pull what a targeted probe kept
+--- failing to settle - including the case where the aura is present but every field is
+--- secret, which is a different answer from "no aura".
+---
+--- Every read is classified plain / secret / err individually: a secret field is EVIDENCE
+--- (the aura exists, we just cannot read that attribute), while a throw means the call
+--- itself was refused. Collapsing those two is what made the earlier probe inconclusive.
+--------------------------------------------------------------------------------
+local AURA_FILTERS = {
+    "HELPFUL",
+    "HELPFUL|RAID_PLAYER_DISPELLABLE",
+    "HELPFUL|DISPELLABLE",
+    "HELPFUL|IMPORTANT",
+    "HELPFUL|BIG_DEFENSIVE",
+    "HELPFUL|CROWD_CONTROL",
+    "HELPFUL|CANCELABLE",
+    "HELPFUL|!CANCELABLE",
+    "HARMFUL",
+}
+
+function DebugCommands.AuraDumpProbe(addon)
+    local unit = UnitExists("target") and "target" or "player"
+    addon:Print(string.format("== aura dump == unit=%s (%s)  combat=%s",
+        unit, tostring(UnitName(unit)), tostring(UnitAffectingCombat("player"))))
+
+    -- 1. Filter sweep. A token the engine does not recognise is IGNORED, returning the
+    --    unfiltered set - so a count equal to the HELPFUL baseline means "token ignored",
+    --    not "everything matched". IsValidFilterString (12.1.0) answers that directly
+    --    instead of inferring it from counts.
+    local valid = AuraUtil and AuraUtil.IsValidFilterString
+    local fn = C_UnitAuras and C_UnitAuras.GetUnitAuras
+    if not fn then addon:Print("  |cffff0000GetUnitAuras missing|r"); return end
+    local baseline
+    for i = 1, #AURA_FILTERS do
+        local f = AURA_FILTERS[i]
+        local vOK, vWhy = true, nil
+        if valid then vOK, vWhy = valid(f) end
+        local ok, list = pcall(fn, unit, f)
+        local n = (ok and type(list) == "table") and #list or nil
+        if f == "HELPFUL" then baseline = n end
+        local note = ""
+        if not vOK then note = " |cffff6600INVALID TOKEN|r " .. tostring(vWhy)
+        elseif not ok then note = " |cffff6600THREW|r"
+        elseif n and baseline and f ~= "HELPFUL" and n == baseline and baseline > 0 then
+            note = " |cffffff00(== HELPFUL, token may be ignored)|r"
+        end
+        -- Escape the pipes: the chat frame eats "|R" as a colour reset and "|C" as the start
+        -- of a colour code, so RAID_PLAYER_DISPELLABLE / CROWD_CONTROL / CANCELABLE printed
+        -- as mangled labels and made the sweep unreadable.
+        addon:Print(string.format("  %-34s n=%s%s", (f:gsub("|", "||")), tostring(n), note))
+    end
+
+    -- 2. Full field dump per aura. pairs() rather than a known-field list: the point is to
+    --    find what we did NOT think to ask for.
+    -- The border walk reads Blizzard's OWN frames and does not touch GetUnitAuras, so it must
+    -- run even when the enumeration above is refused - that is precisely the case where it is
+    -- the only thing left that can answer. It was previously called after the field dump and
+    -- got skipped by the early returns, i.e. it never ran when it mattered.
+    local ok, list = pcall(fn, unit, "HELPFUL")
+    if not ok then
+        addon:Print("  |cffff6600HELPFUL enumeration threw|r - GetUnitAuras is refused for a")
+        addon:Print("  tainted caller here, so no filter token is usable. Re-run OUT of combat:")
+        addon:Print("  if it answers there, the denial is combat-gated and the tokens are still")
+        addon:Print("  worth having for the pre-combat systems.")
+        DebugCommands.DumpTargetAuraBorders(addon)
+        return
+    end
+    if type(list) ~= "table" or #list == 0 then
+        addon:Print("  |cff888888no helpful auras returned|r")
+        DebugCommands.DumpTargetAuraBorders(addon)
+        return
+    end
+    for i = 1, #list do
+        local a = list[i]
+        addon:Print(string.format("  |cff00ccff[%d]|r", i))
+        local keys = {}
+        local okP = pcall(function() for k in pairs(a) do keys[#keys + 1] = tostring(k) end end)
+        if not okP then addon:Print("      |cffff6600pairs() refused|r"); end
+        table.sort(keys)
+        for j = 1, #keys do
+            local k = keys[j]
+            local kind, text = ProbeRead(function() return a[k] end, 46)
+            local colour = (kind == "plain" and "|cff2ecc71") or (kind == "secret" and "|cffffff00")
+                or "|cffff6600"
+            addon:Print(string.format("      %-30s %s%s|r", k, colour, text))
+        end
+    end
+    addon:Print("|cff888888green=plain (branchable)  yellow=secret  orange=err/nil|r")
+    DebugCommands.DumpTargetAuraBorders(addon)
+end
+
+--- The BORDERS Blizzard draws on the target's own buff buttons. Reported because a visible
+--- glow means Blizzard's UNTAINTED code already made the judgement, and if it left the answer
+--- as plain frame state we can read it - the laundering idiom this addon lives on.
+---
+--- Prediction on the source: TargetFrameBuffButtonPrivateMixin:ApplyAuraBorder does
+--- `StealableBorder:SetShown(auraData.isStealable and ...)`, and SetShown(expr) does NOT
+--- launder (unlike an if/else with Show()/Hide()), so IsShown() should read SECRET. Measuring
+--- anyway: that prediction has been wrong twice today, and if it reads PLAIN this is a
+--- branchable signal and strictly better than the container route.
+---
+--- Buttons are found by walking TargetFrame's descendants for a StealableBorder field rather
+--- than by a hardcoded path - the pooling shape changed in 12.x and a wrong path would read
+--- as "no borders" instead of "not found", which is the exact ambiguity that wasted runs today.
+function DebugCommands.DumpTargetAuraBorders(addon)
+    local tf = _G.TargetFrame
+    if not tf then addon:Print("  |cff888888TargetFrame absent|r"); return end
+
+    -- In 12.x the target's auras live in an <AuraContainer parentKey="Auras"> whose BUTTONS
+    -- carry Enum.ScriptObjectAccessRestriction.DenyTaintedAccessWhenAurasAreSecret. So the
+    -- container frame is reachable but its children may be refused to us in combat - a
+    -- THROW here is the answer ("sealed"), not a failure to look. Report it rather than
+    -- swallowing it, which is what made the first pass say "not found" and teach nothing.
+    local denied = 0
+    local found = 0
+    local function walk(frame, depth)
+        if depth > 8 or found >= 12 then return end
+        local okK, kids = pcall(function() return { frame:GetChildren() } end)
+        if not okK then
+            denied = denied + 1
+            if denied <= 3 then
+                addon:Print(string.format("  |cffffff00GetChildren refused at depth %d|r: %s",
+                    depth, tostring(kids):gsub("^.-:%d+: ", ""):sub(1, 70)))
+            end
+            return
+        end
+        for i = 1, #kids do
+            local f = kids[i]
+            local sb = f and rawget(f, "StealableBorder") or (f and f.StealableBorder)
+            local db = f and f.DispelBorder
+            if sb or db then
+                found = found + 1
+                local parts = {}
+                if sb then
+                    local k, t = ProbeRead(function() return sb:IsShown() end)
+                    parts[#parts + 1] = "StealableBorder:IsShown=" ..
+                        ((k == "plain") and ("|cff2ecc71" .. t .. "|r")
+                          or (k == "secret") and "|cffffff00<secret>|r" or ("|cffff6600" .. t .. "|r"))
+                end
+                if db then
+                    local k, t = ProbeRead(function() return db:IsShown() end)
+                    parts[#parts + 1] = "DispelBorder:IsShown=" ..
+                        ((k == "plain") and ("|cff2ecc71" .. t .. "|r")
+                          or (k == "secret") and "|cffffff00<secret>|r" or ("|cffff6600" .. t .. "|r"))
+                end
+                local vis = select(2, ProbeRead(function() return f:IsShown() end))
+                addon:Print(string.format("  aura button #%d shown=%s  %s",
+                    found, vis, table.concat(parts, "  ")))
+            end
+            walk(f, depth + 1)
+        end
+    end
+    addon:Print("== target aura button borders ==")
+    -- Name the aura container explicitly before walking: if this resolves but yields no
+    -- buttons, that separates "the container is gone" from "the container is sealed".
+    local auras
+    for _, path in ipairs({ "TargetFrameContent.TargetFrameContentMain.Auras",
+                            "TargetFrameContent.TargetFrameContentContextual.Auras",
+                            "Auras" }) do
+        local obj = tf
+        for part in path:gmatch("[^.]+") do
+            obj = obj and rawget(obj, part) or (obj and obj[part])
+            if obj == nil then break end
+        end
+        if obj then
+            auras = obj
+            addon:Print("  aura container found at TargetFrame." .. path
+                .. "  shown=" .. select(2, ProbeRead(function() return obj:IsShown() end)))
+            break
+        end
+    end
+    if not auras then addon:Print("  |cffffff00aura container not found by name|r") end
+
+    walk(tf, 1)
+    if found == 0 then
+        addon:Print("  |cff888888no StealableBorder/DispelBorder reachable|r"
+            .. (denied > 0 and (" - " .. denied .. " access refusals (SEALED, not absent)")
+                or " - and no access refusals, so they are genuinely not there"))
+    end
+end
+
+--------------------------------------------------------------------------------
+--- \jac inspect auracontainer - can we actually build one, and what is on it?
+---
+--- 12.1.0's Blizzard_AuraContainer is the ONLY remaining route to an enrage cue: its two XML
+--- files are the only places in the entire UI source carrying allowUntaintedCreation="true",
+--- which exists so an addon-created frame does NOT run in the addon's taint. That is the
+--- exact problem that sank the private-CastingBarFrame attempt.
+---
+--- This probe exists because AuraContainer is a C-side INTRINSIC: its real method surface is
+--- invisible in the Lua source, so the API shape cannot be read off disk (there is no SetUnit
+--- in the mixins, yet a container must be pointed at a unit somehow). Rather than guess and
+--- write a 300-line rewrite against an imagined API, create ONE and enumerate what it has.
+---
+--- Every step is reported separately: creation, mixin presence, and the method dump. A
+--- failure at any step is the answer - if creation throws under our taint the whole route is
+--- dead and the cue cannot come back at all.
+--------------------------------------------------------------------------------
+function DebugCommands.AuraContainerProbe(addon)
+    addon:Print("== aura container probe ==")
+
+    local okC, cont = pcall(CreateFrame, "AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+    if not okC or not cont then
+        addon:Print("  |cffff0000CreateFrame failed|r: " .. tostring(cont))
+        addon:Print("  |cffff6600Route closed - the enrage cue cannot be rebuilt this way.|r")
+        return
+    end
+    addon:Print("  |cff2ecc71created|r AuraContainer from CustomAuraContainerTemplate")
+
+    -- Method surface. Frame methods live on the metatable's __index, not the frame, so pairs()
+    -- on the frame alone finds nothing. Both are walked: the template's Lua mixins land
+    -- directly on the object, the intrinsic's C methods on the metatable.
+    local seen, names = {}, {}
+    local function collect(t, label)
+        if type(t) ~= "table" then return end
+        pcall(function()
+            for k, v in pairs(t) do
+                if type(v) == "function" and not seen[k] then
+                    seen[k] = true
+                    names[#names + 1] = tostring(k) .. label
+                end
+            end
+        end)
+    end
+    collect(cont, "")
+    local mt = getmetatable(cont)
+    collect(mt and mt.__index, "*")
+
+    table.sort(names)
+    addon:Print(string.format("  %d methods (|cff888888* = from metatable|r):", #names))
+    -- Chunked: one Print per method floods the frame and the useful ones scroll away.
+    local line = "    "
+    for i = 1, #names do
+        line = line .. names[i] .. "  "
+        if #line > 110 or i == #names then addon:Print(line); line = "    " end
+    end
+
+    -- The ones the rebuild would depend on. Absence here is the finding, not an error.
+    addon:Print("  wanted:")
+    for _, m in ipairs({ "AddAuraGroup", "AddAuraSlot", "HasAuraGroup", "SetUnit",
+                         "GetAuraGroupFrame", "GetAuraGroupFrameCount",
+                         "SetAuraGroupCandidateFilters", "SetAuraGroupLayout" }) do
+        local has = seen[m] and "|cff2ecc71yes|r" or "|cffff6600NO|r"
+        addon:Print(string.format("    %-30s %s", m, has))
+    end
+
+    -- Does a tainted AddAuraGroup call survive the inbound delegate? This is the real question:
+    -- creation succeeding proves nothing if configuring it from our side is refused.
+    -- END-TO-END: wire the real enrage curve to a real texture and leave it on screen.
+    -- This is the only step that proves the CHAIN works rather than its pieces: curve ->
+    -- Blizzard's untainted GetAuraDispelTypeColor -> vertex colour on a texture we own.
+    -- A green square appears over the centre of the screen ONLY while the target has a
+    -- dispel-type-9 aura. Layout is left at the container default deliberately - if the
+    -- buttons spread out, that tells us the layout needs configuring, which is cheaper to
+    -- learn here than inside a module rewrite.
+    if seen.AddAuraGroup and seen.SetUnit then
+        local cu = C_CurveUtil ---@diagnostic disable-line: undefined-global
+        local step = Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step
+        local style = Enum and Enum.CustomAuraButtonDispelTypeTextureStyle
+        if not (cu and cu.CreateColorCurve and step and style) then
+            addon:Print("  |cffff6600curve/enum API missing - cannot wire the end-to-end test|r")
+            return
+        end
+        local curve = cu.CreateColorCurve()
+        curve:SetType(step)
+        curve:AddPoint(0,  CreateColor(0, 0, 0, 0))
+        curve:AddPoint(9,  CreateColor(0, 1, 0, 1))   -- Enrage: opaque green
+        curve:AddPoint(10, CreateColor(0, 0, 0, 0))
+
+        cont:SetSize(64, 64)
+        cont:ClearAllPoints()
+        cont:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+        cont:SetFrameStrata("TOOLTIP")
+        pcall(cont.EnableMouse, cont, false)
+        local okU, uerr = pcall(cont.SetUnit, cont, "target")
+        addon:Print("  SetUnit('target') -> " ..
+            (okU and "|cff2ecc71ok|r" or ("|cffff6600" .. tostring(uerr):sub(1, 80) .. "|r")))
+
+        local made = 0
+        local okA, err = pcall(function()
+            -- Filter the GROUP, not just the texture. Blizzard applies this filter internally,
+            -- so the token we are refused when calling GetUnitAuras ourselves works here - and
+            -- if it selects enrages, a button EXISTS only for an enrage. That matters
+            -- architecturally: Blizzard shows a button for any aura matching the group
+            -- (SetShown(secretwrap(auraData ~= nil))) and only AddDispelTypeTexture elements are
+            -- dispel-gated, so a plain HELPFUL group can gate the icon but NOT the hotkey text
+            -- or cooldown swipe. Group-level filtering gates the whole button, restoring the
+            -- full cue instead of an icon-only one.
+            cont:AddAuraGroup("jacEnrage", "HELPFUL|RAID_PLAYER_DISPELLABLE", {
+                maxFrameCount = 8,
+                initializeFrame = function(button)
+                    made = made + 1
+                    -- The pooled button has NO intrinsic size and the group layout options are
+                    -- spacing-only, so a texture anchored with SetAllPoints on it renders at
+                    -- zero pixels - invisible, and indistinguishable from "the curve did not
+                    -- select". Size the button, and give the texture explicit dimensions too so
+                    -- neither depends on the other.
+                    pcall(button.SetSize, button, 48, 48)
+                    local tex = button:CreateTexture(nil, "OVERLAY")
+                    tex:SetSize(48, 48)
+                    tex:SetPoint("CENTER", button, "CENTER", 0, 0)
+                    tex:SetColorTexture(1, 1, 1, 1)   -- PreserveAsset keeps this white block
+                    button:AddDispelTypeTexture(tex, {
+                        showAlways = true,            -- enrage is NOT a dispelName; criteria would suppress it
+                        style = style.PreserveAsset,
+                        customDispelColorCurve = curve,
+                    })
+                end,
+            })
+        end)
+        addon:Print("  AddAuraGroup + dispel curve -> " ..
+            (okA and "|cff2ecc71accepted|r" or ("|cffff6600" .. tostring(err):sub(1, 90) .. "|r")))
+        addon:Print(string.format("  initializeFrame ran for %d button(s)", made))
+        if okA then
+            cont:Show()
+            -- Geometry readout: a zero-sized or off-screen button looks exactly like a curve
+            -- that never fires. Report it so the next run cannot be ambiguous the same way.
+            local okG, gf = pcall(cont.GetAuraGroupFrame, cont, "jacEnrage", 1)
+            if okG and gf then
+                addon:Print(string.format("  button#1 size=%s x %s  shown=%s  container=%s x %s",
+                    select(2, ProbeRead(function() return math.floor(gf:GetWidth() or 0) end)),
+                    select(2, ProbeRead(function() return math.floor(gf:GetHeight() or 0) end)),
+                    select(2, ProbeRead(function() return gf:IsShown() end)),
+                    tostring(math.floor(cont:GetWidth() or 0)),
+                    tostring(math.floor(cont:GetHeight() or 0))))
+            else
+                addon:Print("  |cffffff00GetAuraGroupFrame refused/nil|r - buttons not inspectable")
+            end
+            addon:Print("  |cff2ecc71WATCH ABOVE YOUR CHARACTER|r: a GREEN block appears at centre-screen")
+            addon:Print("  only while the target has an ENRAGE. Target the swine and let it enrage.")
+            addon:Print("  |cff888888/reload clears it.|r")
+            DebugCommands._auraContainerProbe = cont
+            return
+        end
+    end
+    pcall(function() cont:Hide() end)
+end
+
 function DebugCommands.EnrageLog(addon, arg)
     arg = arg and arg:lower() or nil
     if arg == "clear" then
@@ -5671,20 +6140,22 @@ function DebugCommands.EnrageLog(addon, arg)
     ProbeLogEmit(string.format("===== ENRAGELOG armed @ %.1f =====", GetTime()))
     local last = nil
     DebugCommands._enrageLog = C_Timer.NewTicker(0.2, function()
-        local nb, nd, ignored, auras = EnrageSample()
+        local nb, nd, ignored, auras, berr, derr = EnrageSample()
         -- Frame state is plain, so the cue's own verdict IS readable even though the
         -- alpha that drives it is not - this is the correlation that matters.
         local intIcon = addon.interruptIcon
         local cue = intIcon and intIcon.sootheCue
         local cueShown = (cue and cue:IsShown()) and true or false
-        local key = string.format("%s|%s|%s|%s", tostring(nb), tostring(nd),
-            tostring(ignored), tostring(cueShown))
+        local key = string.format("%s|%s|%s|%s|%s|%s", tostring(nb), tostring(nd),
+            tostring(ignored), tostring(cueShown), tostring(berr), tostring(derr))
         if key == last then return end
         last = key
         ProbeLogEmit(string.format(
             "ENR %.1f combat=%s target=%s helpful=%s dispellable=%s%s cueShown=%s",
             GetTime(), tostring(UnitAffectingCombat("player")),
-            tostring(UnitName("target")), tostring(nb), tostring(nd),
+            tostring(UnitName("target")),
+            berr and ("|cffff6600" .. berr .. "|r") or tostring(nb),
+            derr and ("|cffff6600" .. derr .. "|r") or tostring(nd),
             ignored and " |TOKEN-IGNORED|" or "", tostring(cueShown))
             .. DecodeDispelTypes(auras))
     end)

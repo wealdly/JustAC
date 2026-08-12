@@ -68,6 +68,7 @@ read_globals = {
   "C_Timer",
   "C_TooltipInfo",
   "C_UnitAuras",
+  "AuraUtil",
   "C_UnitHealth",
   "CreateColor",
   "CreateFrame",

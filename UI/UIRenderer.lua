@@ -1995,7 +1995,21 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             end
 
             if not intIcon:IsShown() then
-                if CastInterruptTracker then CastInterruptTracker.PlayInterruptAlertSound(ctx.profile) end
+                -- Only alert for a suggestion we can be sure the player will SEE. A kick goes
+                -- through the secret alpha sink below, so the engine - not us - decides whether
+                -- it renders; on a non-interruptible cast it lands at alpha 0. When our
+                -- interruptibility read was a fail-open guess rather than a definite answer
+                -- (12.1.0 made UnitCastingInfo's notInterruptible secret, so the API fallback
+                -- always guesses), that combination gives an alert for an invisible icon -
+                -- reported in game as "ding but no icon". A CC takes the plain-alpha path and
+                -- is always visible, so it always alerts.
+                local sinkDecides = SpellDB and SpellDB.IsInterruptTypeSpell
+                    and SpellDB.IsInterruptTypeSpell(intSpellID)
+                local certainVisible = not sinkDecides
+                    or (intResult.interruptibleKnown and intResult.interruptible ~= false)
+                if CastInterruptTracker and certainVisible then
+                    CastInterruptTracker.PlayInterruptAlertSound(ctx.profile)
+                end
                 intIcon:Show()
                 -- Fresh display: force the diffed plain writes below to re-apply.
                 intIcon.lastPlainAlpha, intIcon.lastIntDesat = nil, nil
