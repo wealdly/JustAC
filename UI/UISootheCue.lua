@@ -89,14 +89,16 @@ end
 -- BuildSlot / UIAnimations.CreateUndrivenProcGlow.
 --
 -- Everything descended from a container button inherits that button's secret aspects, so we
--- may add CONTENT to the subtree but never BEHAVIOUR. There is therefore no cooldown-swipe
--- driver here: the swipe cannot be drawn at all on these slots, and calling the shared updater
--- only produced nine errors a second. That is the cost of the gate being Blizzard's - the old
--- cue owned its frames outright and could draw anything, but could no longer SEE the enrage.
+-- may add CONTENT to the subtree but never BEHAVIOUR - we drive nothing per tick here.
 --
--- So "the cleanse is not castable right now" cannot be drawn INSIDE a slot. It is said one
--- level up instead, by hiding the whole container - see Show(). That state is entirely ours
--- and entirely plain (a player-side cooldown, never a secret), so no sink is needed for it.
+-- One correction, because the shape of it misleads: a swipe CAN be drawn on these slots. What
+-- is blocked is OUR call to SetCooldownFromDurationObject; button:SetDurationCooldown hands
+-- the widget over and the container makes that call itself, exactly as AddDispelTypeTexture
+-- does for a texture (UI/UIMaintenanceAura.lua uses it). It is absent here because of what it
+-- would draw, not because it cannot be drawn: a registered cooldown shows the AURA's remaining
+-- time, i.e. how long the enrage lasts, and this slot's swipe has always meant "your button is
+-- on cooldown". That is a player-side cooldown, never a secret and never in this container's
+-- gift, so it is said one level up instead - by hiding the whole cue. See Show().
 
 -- Build one soothe slot on the container button, using the SHARED CreateBaseIcon so this
 -- looks identical to the interrupt icon it sits over - same border, mask, slot background,
@@ -128,9 +130,8 @@ local function BuildSlot(parent, sz, profile)
         slot:SetAlpha(1)
         -- The SAME animated proc glow the interrupt icon wears, in cyan instead of red: this
         -- slot REPLACES the kick on screen, so it has to speak the same visual language. Its
-        -- tint comes from the cue's curve, not from SetVertexColor - the container owns
-        -- VertexColor on a registered texture and would overwrite us, which is what produced
-        -- a raw yellow box on an earlier attempt. The glow is never driven again after this;
+        -- tint comes from the cue's curve, not from SetVertexColor, for the reason at the top
+        -- of this file. The glow is never driven again after this;
         -- if the flipbook ever stops animating it freezes on the frame CreateProcGlowFrame
         -- primed it to, i.e. degrades to a still glow rather than to nothing.
         local procFrame = UIAnimations.CreateUndrivenProcGlow
@@ -156,27 +157,6 @@ local function BuildSlot(parent, sz, profile)
     hk:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -2, -2)
     bare.hotkeyText = hk
     return bare
-end
-
---- Re-seat every slot's cleansed-aura clone for the OVERLAY's expansion. The slots
---- are built with the STANDARD queue's orientation (BuildSlot above), which put the
---- clone on the wrong side of an "up"-expansion overlay - directly over dpsIcons[1].
---- Mirrors the overlay's own castAura convention (±2, no maintenance shift: the
---- overlay's maintenance slot lives on the defensive cluster and can't collide).
-function UISootheCue.ReanchorAuras(cue, expansion)
-    if not cue or not cue.slots then return end
-    for i = 1, MAX_SLOTS do
-        local slot = cue.slots[i]
-        local aura = slot and slot.auraFrame
-        if aura then
-            aura:ClearAllPoints()
-            if expansion == "up" then
-                aura:SetPoint("TOP", slot, "BOTTOM", 0, -2)
-            else
-                aura:SetPoint("BOTTOM", slot, "TOP", 0, 2)
-            end
-        end
-    end
 end
 
 --- Record which soothe the cue is for. Deliberately writes NOTHING to a slot: both of a
@@ -253,10 +233,19 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
             if firstIcon then slot.iconTexture:SetTexture(firstIcon) end
             slot.hotkeyText:SetText(cue._hotkey or "")
 
-            -- Hand BOTH textures to Blizzard, each with its own curve: they become forbidden
-            -- to us afterwards, which is why the icon and hotkey are stamped ABOVE this and
-            -- never touched again. Each is opaque only at dispel type 9 (Enrage) - the icon in
-            -- its natural colours, the glow tinted cyan.
+            -- Hand EVERY texture to Blizzard, each with a curve: they become forbidden to us
+            -- afterwards, which is why the icon and hotkey are stamped ABOVE this and never
+            -- touched again. Each is opaque only at dispel type 9 (Enrage) - the icon in its
+            -- natural colours, the glow tinted cyan, the chrome left as drawn.
+            --
+            -- The CHROME is registered for the same reason the icon is, and leaving it out was
+            -- a real bug: this slot sits over position 0 at +16 and is Show()n with alpha 1
+            -- whenever the container holds a matching aura, so an unregistered background or
+            -- border paints an opaque action-button box over the kick/CC while the spell icon
+            -- above it is correctly transparent. The icon underneath is fine and simply covered
+            -- - which is exactly how it reads in game: interrupt detection "working, but
+            -- inconsistent", the inconsistency being whether the target happens to carry a
+            -- matching aura right now.
             local opts = {
                 showAlways = true,   -- enrage is not a dispelName; default criteria would suppress it
                 style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
@@ -267,11 +256,27 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
 
             opts.customDispelColorCurve = GetSelectorCurve(1, 1, 1)
             pcall(button.AddDispelTypeTexture, button, slot.iconTexture, opts)
+            -- Same white curve: PreserveAsset keeps each atlas exactly as CreateBaseIcon drew
+            -- it, so on an enrage the slot still looks like the interrupt icon it replaces.
+            -- Named individually rather than walked, so a future addition to CreateBaseIcon
+            -- shows up as a visible gap here instead of being silently swept in.
+            pcall(button.AddDispelTypeTexture, button, slot.SlotBackground, opts)
+            pcall(button.AddDispelTypeTexture, button, slot.NormalTexture, opts)
         end
-        if not pcall(cue.AddAuraGroup, cue, "jacSoothe", "HELPFUL|RAID_PLAYER_DISPELLABLE",
+        -- WHICH filter was accepted decides how many slots ever exist, and therefore how much
+        -- of this cue is inert: the narrow one yields a button only for auras someone in the
+        -- raid can dispel (Blizzard's own comment: including helpful enrages on enemies), the
+        -- fallback yields one for EVERY helpful buff on the target. Recorded because the
+        -- difference is invisible in game and decides whether the un-curvable hotkey string is
+        -- a non-issue or a keybind sitting over position 0 all fight. See /jac inspect interrupts.
+        cue._filter = "HELPFUL|RAID_PLAYER_DISPELLABLE"
+        if not pcall(cue.AddAuraGroup, cue, "jacSoothe", cue._filter,
                      { maxFrameCount = MAX_SLOTS, initializeFrame = Init }) then
-            pcall(cue.AddAuraGroup, cue, "jacSoothe", "HELPFUL",
-                  { maxFrameCount = MAX_SLOTS, initializeFrame = Init })
+            cue._filter = "HELPFUL"
+            if not pcall(cue.AddAuraGroup, cue, "jacSoothe", cue._filter,
+                         { maxFrameCount = MAX_SLOTS, initializeFrame = Init }) then
+                cue._filter = "none (both refused)"
+            end
         end
 
         -- No driver of any kind. The container refreshes itself from UNIT_AURA (its own

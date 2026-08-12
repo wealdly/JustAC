@@ -11,6 +11,8 @@ local UIAnimations = LibStub("JustAC-UIAnimations", true)
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
 local SpellDB = LibStub("JustAC-SpellDB", true)
 local UISootheCue = LibStub("JustAC-UISootheCue", true)
+local UIMaintenanceAura = LibStub("JustAC-UIMaintenanceAura", true)
+local RotationImport = LibStub("JustAC-RotationImport", true)
 local CastInterruptTracker = LibStub("JustAC-CastInterruptTracker", true)
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat", true)
 
@@ -149,6 +151,22 @@ local defaultChargeInfo   = { currentCharges = 0, maxCharges = 0, cooldownStartT
 local itemCooldownScratch  = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 local localCooldownScratch = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
 
+-- Release stage for an EMPOWERED cast, as a Roman numeral, or nil.
+--
+-- Roman rather than arabic because this shares the charge-count corner, and a bare "1"
+-- next to a spell reads as "one charge left" - the single thing it must never be mistaken
+-- for. No empowered spell has charges, so the two can never want the corner at the same
+-- moment, and the caller only asks once the charge text has come back empty.
+--
+-- Static data (SimC's own `empower_to`), so this reads no combat state and is safe on the
+-- render path.
+local EMPOWER_NUMERAL = { "I", "II", "III", "IV" }
+local function EmpowerNumeral(spellID)
+    local tier = spellID and RotationImport and RotationImport.GetEmpowerTier
+                 and RotationImport.GetEmpowerTier(spellID)
+    return tier and (EMPOWER_NUMERAL[tier] or tostring(tier)) or nil
+end
+
 local function UpdateButtonCooldowns(button)
     if not button then return end
 
@@ -269,11 +287,29 @@ local function UpdateButtonCooldowns(button)
         end
     end
 
-    -- Slot-based fallback for charge text (NeverSecret, always readable).
-    -- Used when spell has no charges (maxCharges <= 1) or GetSpellCharges unavailable.
+    -- Slot-based fallback for charge text, used when the spell has no charges
+    -- (maxCharges <= 1) or GetSpellCharges is unavailable.
+    --
+    -- MEASURED IN COMBAT: this returns a SECRET STRING. The comment here used to claim it
+    -- was NeverSecret and always readable, and that was simply wrong - an attempt to test
+    -- the result for emptiness threw 103 times in one fight. From this line on, chargeText
+    -- may only be PASSED to SetText, never compared, tested for emptiness or concatenated.
+    --
+    -- The `== ""` guard on this line is the one survivor, and only by luck of TYPES: coming
+    -- in, chargeText is either the plain "" or a secret NUMBER (currentCharges), and Lua
+    -- settles a number-vs-string equality on the type mismatch without ever comparing the
+    -- values. Same-type is what throws, which is exactly what a secret STRING would be. Do
+    -- not copy this test to a point where chargeText could hold one.
     if chargeText == "" and directSlot and C_ActionBar_GetActionDisplayCount then
         chargeText = C_ActionBar_GetActionDisplayCount(directSlot)
     end
+
+    -- An empowered cast's release stage takes the charge corner outright rather than
+    -- filling it only when the count is empty. That is not a preference, it is the only
+    -- legal shape: "is there a count to display" cannot be asked once chargeText is secret.
+    -- Deciding by SPELL instead of by value keeps this entirely off the secret, and nothing
+    -- real is displaced - an empowered ability has no charges to report.
+    local empowerText = (not isItem) and EmpowerNumeral(cooldownID or id) or nil
 
     -- Apply cooldown swipe animation.
     local ci = cooldownInfo or defaultCooldownInfo
@@ -389,12 +425,15 @@ local function UpdateButtonCooldowns(button)
         )
     end
 
-    -- Apply charge/item count text.
+    -- Apply charge / item count / empower-stage text.
     if button.chargeText then
-        if isItem then
+        if empowerText then
+            button.chargeText:SetText(empowerText)
+        elseif isItem then
             local count = GetItemCount(id)
             button.chargeText:SetText(count and count > 1 and count or "")
         else
+            -- Pass-through only: chargeText is a secret string in combat (see above).
             button.chargeText:SetText(chargeText)
         end
         button.chargeText:Show()
@@ -1104,6 +1143,7 @@ end
 -- cluster hide, nameplate cluster hide) each used to clear a different subset.
 local function ClearMaintenanceSlot(icon)
     if not icon then return end
+    if UIMaintenanceAura then UIMaintenanceAura.Detach(icon) end
     UIAnimations.HideColoredProcGlow(icon, "maintenanceGlow")
     if icon.hasMaintenanceGlow then UIAnimations.StopMaintenanceGlow(icon) end
     icon:SetAlpha(0)
@@ -1188,6 +1228,9 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         SetDefensiveIconVisible(icon, true)
         icon:SetAlpha(icon.overlayOpacity or 1)
         icon._maintShown = true
+        -- The swipe below is the CC's remaining time, not a buff's, so the engine-drawn aura
+        -- displays must stand down or they would draw a second clock over it.
+        if UIMaintenanceAura then UIMaintenanceAura.Detach(icon) end
         icon._maintID = nil                 -- spell-path change detection must re-fire after this
         -- itemID with the rest: leaving it behind is a stale identity waiting for the first
         -- reader that trusts it on its own rather than checking isItem first.
@@ -1354,6 +1397,25 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- Conflating them showed a tank the buff timer on a button whose real constraint was the
     -- charge, which is the wrong question answered precisely.
     local exactBind = MT and MT.IsBindExact and MT.IsBindExact()
+
+    -- ENGINE-DRAWN aura displays. An aura container watching this exact buff on the player
+    -- renders its real remaining time and its real stack count, from untainted code, with no
+    -- instance binding and no Cooldown Manager involved. Where it takes over, ours must stand
+    -- down: two sweeps or two numbers on one button is worse than either alone.
+    -- Only ever armed on the UPKEEP path. Every other claimant of this slot - escape, pet heal,
+    -- emergency heal - draws its own ability's cooldown, which has nothing to do with the buff
+    -- the container is watching; a charge-gated entry is refused inside Attach for the same
+    -- reason. Returns false/false on any client or entry it cannot serve, and the ladders below
+    -- are then untouched, which is why nothing here is gated on a version or a feature flag.
+    local engineSweep, engineCount = false, false
+    if UIMaintenanceAura then
+        if entry and not (ccSpellID or petSpellID or emergencyHealID) then
+            engineSweep, engineCount = UIMaintenanceAura.Attach(icon, entry)
+        else
+            UIMaintenanceAura.Detach(icon)
+        end
+    end
+
     if icon.cooldown then
         local applied = false
         if ccSpellID then
@@ -1375,6 +1437,10 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
                     applied = true
                 end
             end
+        elseif engineSweep then
+            -- The container is already drawing this buff's real remaining time. `applied` stays
+            -- false on purpose, so our own cooldown is cleared below rather than left holding
+            -- whatever the estimate last put there.
         elseif entry.chargeGated then
             -- The ability's own recharge. Secret-safe: the DurationObject goes straight to the
             -- engine, never read. `false` = include the GCD, so a fresh press reads as busy.
@@ -1403,8 +1469,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             -- "unknown" is included on purpose: it means we never saw it drop, not that it is
             -- gone. An expired estimate draws nothing anyway, so a stale clock is self-limiting.
             local preferProjection = entry.project and entry.stacks
-            local durObj = (not preferProjection) and exactBind and MT and MT.GetDurationObject
-                           and MT.GetDurationObject(inst) or nil
+            local durObj = (not preferProjection) and exactBind and BlizzardAPI.GetAuraDurationObject
+                           and BlizzardAPI.GetAuraDurationObject("player", inst) or nil
             if durObj and icon.cooldown.SetCooldownFromDurationObject then
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durObj)
                 applied = true
@@ -1432,7 +1498,9 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- width-measured layout path. Nothing here measures it.
     if icon.chargeText then
         local shown = false
-        if ccSpellID or petSpellID or emergencyHealID then
+        if engineCount then
+            shown = false   -- the container renders the true count on its own text
+        elseif ccSpellID or petSpellID or emergencyHealID then
             shown = false   -- escape / pet heal / emergency heal have no meaningful count
         elseif entry.chargeGated then
             -- CHARGES, not aura stacks. maxCharges is NeverSecret so it is safe to compare;
@@ -1907,6 +1975,11 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
     -- retired values are rewritten by the load-time migrations).
     if interruptMode == "importantOnly" then interruptMode = "kickOnly" end
 
+    -- Hoisted out of the block below so the soothe cue can stand down for it. Plain, and it
+    -- has to be: this is the ONLY legal direction for the arbitration (see the soothe note at
+    -- the end of this function).
+    local interruptShown = false
+
     if ctx.resolvedInterrupts and ctx.active and interruptMode ~= "disabled" then
         -- Shared evaluation: both renderers see identical state and share one debounce timer.
         local intResult           = CastInterruptTracker
@@ -1922,6 +1995,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
         end
 
         if shouldShowInterrupt and intSpellID then
+            interruptShown = true
             local spellChanged = (intIcon.spellID ~= intSpellID)
             if spellChanged then
                 intIcon.spellID = intSpellID
@@ -2044,15 +2118,26 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
         UIRenderer.HideInterruptIcon(intIcon)
     end
 
-    -- Soothe (enrage-cleanse) cue: a sink-gated green layer over the interrupt slot,
-    -- visible only while the target is ENRAGED (dispel type 9). Independent of the kick's
-    -- own visibility (shows even with no interruptible cast) and drawn above it, so on a
-    -- kick/soothe collision the soothe wins. The cue self-gates on the enrage via its
-    -- per-frame sink; here we only arm/show it when this character has a soothe ability.
+    -- Soothe (enrage-cleanse) cue: a sink-gated layer over the interrupt slot, visible only
+    -- while the target is ENRAGED (dispel type 9). The cue self-gates on the enrage via its
+    -- per-frame sink; here we only arm it when this character has a soothe ability.
+    --
+    -- IT YIELDS TO A LIVE INTERRUPT SUGGESTION, and never the other way round. Two reasons,
+    -- and the second is the one that makes it a rule rather than a preference:
+    --   * an enrage APPLIED BY the cast in progress does not exist yet, so a cue offered
+    --     during that cast is telling the player to dispel something that is not on the
+    --     target - while covering the kick or CC that would have stopped it landing at all;
+    --   * these two claim the same square and the layering, not the logic, used to decide it.
+    --     The soothe layer is SECRET (an aura we may not read), the interrupt suggestion is
+    --     PLAIN, and a plain `if` can suppress a secret layer while the reverse is impossible.
+    --     So plain-above-secret is the only ordering that can be expressed at all - see
+    --     Documentation/AURA_CONTAINER_12.1.md on composing plain state with the secret.
+    -- Hiding the whole container is the suppression, exactly as Show() already does for the
+    -- cleanse's own cooldown: our frame, our decision, no sink involved.
     if UISootheCue then
         local sid = ctx.sootheSpellID
         if ctx.profile and ctx.profile.showSootheCue == false then sid = nil end
-        if sid and ctx.active then
+        if sid and ctx.active and not interruptShown then
             UISootheCue.Show(UISootheCue.Create(intIcon, sid, intIcon.cachedIconSize))
         elseif intIcon.sootheCue then
             UISootheCue.Hide(intIcon.sootheCue)

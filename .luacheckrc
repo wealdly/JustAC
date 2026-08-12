@@ -69,6 +69,8 @@ read_globals = {
   "C_TooltipInfo",
   "C_UnitAuras",
   "AuraUtil",
+  "AuraContainerSortMethod",
+  "EnumerateFrames",
   "C_UnitHealth",
   "CreateColor",
   "CreateFrame",

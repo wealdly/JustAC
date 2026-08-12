@@ -3,6 +3,29 @@
 
 ## [Unreleased]
 
+## [5.1.5] - 2026-08-12
+
+### Added
+- Abilities you hold down and release at a chosen stage now show which stage to aim for,
+  as a small numeral on the icon. Affects Death Knight's Consumption and Evoker's Fire
+  Breath, Eternity Surge and Upheaval. Where the best stage depends on how many enemies
+  you are fighting, no numeral is shown rather than a misleading one
+
+### Changed
+- The tank upkeep button now shows the buff's real remaining time. It used to estimate,
+  counting from when you pressed it, which ran early whenever a talent made the buff last
+  longer
+- Blood Death Knights see their Bone Shield stack count on that button with no setup. It
+  previously needed the game's Cooldown Manager enabled with Bone Shield on a visible bar
+- The enrage cleanse reminder now waits for the enemy to finish casting. It shares its spot
+  with the interrupt reminder, and while there is something to interrupt, the interrupt
+  keeps the spot - an enrage the current cast is about to apply isn't on the target yet
+
+### Fixed
+- The interrupt and crowd-control reminder no longer disappears when your target has a
+  buff on it. The enrage cleanse reminder was drawing its empty button frame on top
+- Blood Death Knights get a countdown on the upkeep button again
+
 ## [5.1.4] - 2026-08-11
 
 ### Fixed

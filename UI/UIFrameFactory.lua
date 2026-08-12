@@ -156,6 +156,16 @@ function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
         button.chargeText:SetPoint(anchor, button.hotkeyFrame, anchor, preset.ox, preset.oy)
         button.chargeText:SetJustifyH(preset.jh)
     end
+
+    -- The maintenance slot's engine-drawn stack count is a SEPARATE font string (it has to
+    -- live inside the aura container's own button), so it does not inherit the styling just
+    -- applied above. Push it across from here, the one place these settings are resolved, so
+    -- both maintenance surfaces are covered without either calling site knowing about it.
+    -- Resolved lazily: that module loads after this one.
+    if button._maintAura then
+        local UIMaintenanceAura = LibStub("JustAC-UIMaintenanceAura", true)
+        if UIMaintenanceAura then UIMaintenanceAura.Restyle(button) end
+    end
 end
 
 --- Apply text overlay settings to each icon in a list.

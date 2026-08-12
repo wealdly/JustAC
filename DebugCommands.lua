@@ -201,6 +201,9 @@ local INSPECT_TOPICS = {
     { "enrage",      "EnrageProbe",              "[off]", "Probe secret-safe enrage detection (DispelType 9 color curve)" },
     { "auradump",    "AuraDumpProbe",            nil,  "EVERY aura on the target: every filter's count, every field, plain vs secret" },
     { "auracontainer", "AuraContainerProbe",     nil,  "Can we create a 12.1 AuraContainer, and what methods does it expose?" },
+    { "channels",    "ChannelMatrix",            nil,  "Laundering matrix: feed a secret to every sink, read back every getter (in combat)" },
+    { "aurapanels",  "AuraPanelProbe",           nil,  "Blizzard's own aura panels: is each one live, and what do its buttons expose?" },
+    { "audioalerts", "AudioAlertProbe",          nil,  "Combat audio alerts: is it on, and are its stored health/power percents readable?" },
     { "enragelog",   "EnrageLog",                "[off|clear]", "Log enrage detections to SavedVariables" },
     { "castdiag",    "CastDiagnostics",          nil,  "Arm a one-shot cast-interruptibility probe" },
     { "chargediag",  "ChargeDiagnostics",        "[spell]", "Arm a 60s charge-event/secrecy probe" },
@@ -1392,8 +1395,23 @@ function DebugCommands.InterruptDiagnostics(addon)
                 local s = cue.slots and cue.slots[i]
                 parts[#parts + 1] = s and ProbeRead(function() return s:GetAlpha() end) or "-"
             end
+            -- The filter decides how many slots ever hold an aura, and therefore how much of
+            -- this overlay is sitting over position 0 at any moment. "err" alphas are normal:
+            -- a slot frame descends from a container button, so reading one is denied.
+            -- Pipes DOUBLED for display: "|" opens a chat escape, so an aura filter string
+            -- prints with its components eaten - "HELPFUL|RAID_..." came out as
+            -- "HELPFULAID_..." because |R is the colour-reset code. Any probe printing a
+            -- filter string has to do this.
+            local shownFilter = tostring(cue._filter):gsub("|", "||")
             addon:Print("soothe overlay: shown=" .. tostring(cue:IsShown())
-                .. "  slot alphas=" .. table.concat(parts, ","))
+                .. "  filter=" .. shownFilter
+                .. "  slots=" .. tostring(cue.slots and #cue.slots or 0)
+                .. " (pool batches at 10; only maxFrameCount can be live)"
+                .. "  alphas=" .. table.concat(parts, ","))
+            if cue._filter == "HELPFUL" then
+                addon:Print("   |cffff6600narrow filter refused|r - a slot exists for EVERY target"
+                    .. " buff, not just enrages")
+            end
         end
     else
         addon:Print("icon: |cff888888addon.interruptIcon is nil (standard queue not built?)|r")
@@ -1403,6 +1421,26 @@ function DebugCommands.InterruptDiagnostics(addon)
     addon:Print("Target interrupt-worthy: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetInterruptWorthy and BlizzardAPI.IsTargetInterruptWorthy()))
     addon:Print("Target CC-immune: " .. tostring(BlizzardAPI and BlizzardAPI.IsTargetCCImmune and BlizzardAPI.IsTargetCCImmune())
         .. "  (signal: " .. tostring(BlizzardAPI and BlizzardAPI.GetCCImmuneSignal and BlizzardAPI.GetCCImmuneSignal()) .. ")")
+    -- Already crowd-controlled: this alone suppresses every CC suggestion, and on a
+    -- practice mob you CC repeatedly it is the most likely reason a working substitution
+    -- looks intermittent - the second cast genuinely should not be offered a CC.
+    local alreadyCC = (UnitIsCrowdControlled and UnitIsCrowdControlled("target"))
+        or (BlizzardAPI and BlizzardAPI.IsUnitCrowdControlled and BlizzardAPI.IsUnitCrowdControlled("target"))
+        or false
+    addon:Print("Target already CC'd: " .. tostring(alreadyCC)
+        .. (alreadyCC and "  |cffff6600<- CC suggestions suppressed while true|r" or ""))
+
+    -- The two debounce windows. Both are deliberate, both silence the slot, and neither
+    -- was visible here before - so a report of "inconsistent" could not be told apart from
+    -- a detection failure.
+    if CIT and CIT.DebugSuppression then
+        local sinceInt, intWin, sinceCC, ccWin = CIT.DebugSuppression()
+        local intHot, ccHot = sinceInt < intWin, sinceCC < ccWin
+        addon:Print(string.format("suppression: sinceInterrupt=%.1fs/%.1f%s  sinceCC=%.1fs/%.1f%s",
+            sinceInt, intWin, intHot and " |cffff6600ACTIVE|r" or "",
+            sinceCC, ccWin, ccHot and " |cffff6600ACTIVE|r" or ""))
+    end
+
     local interruptMode = addon.db and addon.db.profile and (addon.db.profile.interruptMode or "kickPrefer") or "n/a"
     addon:Print("Interrupt mode: " .. interruptMode)
     addon:Print("===================================")
@@ -3895,11 +3933,11 @@ local function BuildValidateProbes()
 end
 
 local function PrintValidateEnv(addon)
+    -- SafeSecret, not tostring: tostring propagates secrecy silently, so the old body
+    -- could print a secret as if it were a plain value.
     local function vs(fn)
         local ok, v = pcall(fn)
-        if not ok then return "SEALED" end
-        local ok2, s = pcall(tostring, v)
-        return ok2 and s or "<secret>"
+        return ok and SafeSecret(v) or "SEALED"
     end
     addon:Print("  where: zone=" .. vs(function() return (GetInstanceInfo()) end)
         .. " type=" .. vs(function() return select(2, GetInstanceInfo()) end)
@@ -4082,7 +4120,7 @@ end
 --- throw: a recorder that breaks combat is worse than no recorder.
 ---
 --- `dur` is the field that localises a swipe delay. The renderer can only draw a swipe once
---- GetDurationObject returns something, and that needs a bound instance - so:
+--- the duration object resolves, and that needs a bound instance - so:
 ---   inst=nil                -> the bind is late (bridge/exact-path problem)
 ---   inst set but dur=nil    -> bound to an instance with no duration object (wrong instance,
 ---                              or the aura went away)
@@ -4094,10 +4132,10 @@ local function MaintLogSample()
     local okS, state, _, inst = pcall(MT.GetState)
     if not okS then return end
     local d = (MT.GetBridgeDiag and select(2, pcall(MT.GetBridgeDiag))) or nil
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
     local hasDur = "?"
-    if MT.GetDurationObject and type(inst) == "number" then
-        local okD, dur = pcall(MT.GetDurationObject, inst)
-        hasDur = (okD and dur ~= nil) and "1" or "0"
+    if BAPI and BAPI.GetAuraDurationObject and type(inst) == "number" then
+        hasDur = (BAPI.GetAuraDurationObject("player", inst) ~= nil) and "1" or "0"
     elseif type(inst) ~= "number" then
         hasDur = "-"
     end
@@ -4191,6 +4229,29 @@ function DebugCommands.MaintenanceProbe(addon)
         entry.cast, entry.aura, tostring(entry.stacks or false), tostring(inCombat)))
     if not inCombat then
         addon:Print("|cffff6600Out of combat|r - Q1/Q3 only mean something mid-fight. Re-run with the buff up.")
+    end
+
+    -- Q0b: engine-drawn displays. An aura container watching this exact buff on the player
+    -- replaces the cast-time sweep and the bind-gated stack count wherever it attaches. Its
+    -- failure mode is SILENCE - a container that never built, or one that built and draws
+    -- nothing - and on screen that is indistinguishable from the buff simply being down. So
+    -- the attachment has to be reportable, or the whole path is untestable from in game.
+    do
+        local ov = addon.maintenanceIcon and addon.maintenanceIcon._maintAura
+        if not ov then
+            addon:Print("Q0b engine displays: |cff888888not attached|r"
+                .. " |cff888888(standard-queue slot only; it has not rendered on the"
+                .. " upkeep path yet this session)|r")
+        elseif not ov.container then
+            addon:Print(string.format("Q0b engine displays: |cffff6600refused|r for aura %s"
+                .. " - the slot keeps its own estimate", tostring(ov.aura)))
+        else
+            addon:Print(string.format("Q0b engine displays: aura=%s sweep=%s count=%s container=%s",
+                tostring(ov.aura),
+                ov.sweep and "|cff2ecc71ENGINE|r" or "|cffffff00cast estimate|r",
+                ov.count and "|cff2ecc71ENGINE|r" or "|cffffff00projection/bind|r",
+                ov.container:IsShown() and "shown" or "|cffff6600hidden|r"))
+        end
     end
 
     -- Q0: is the refresh cue on ENGINE TRUTH or on the cast-time estimate? The two
@@ -4369,11 +4430,19 @@ function DebugCommands.MaintenanceProbe(addon)
                 if isMatch and not found then
                     local okA, inst = pcall(item.GetAuraSpellInstanceID, item)
                     local okU, unit = pcall(item.GetAuraDataUnit, item)
+                    -- type() is NOT a secrecy guard - a SECRET number reports type "number" -
+                    -- so this test called a secret plain, stored it, printed "IDENTITY
+                    -- AVAILABLE" over a <secret>, and handed it to the cross-check below, which
+                    -- compared it and threw. 12.1.0 is what made that reachable: this id used to
+                    -- read plain here and now comes back secret IN COMBAT (plain out of it).
+                    -- PlainText, not IsSecret: this is a struct field, and those can be secret
+                    -- in ways issecretvalue alone misses.
+                    local isPlain = okA and type(inst) == "number" and PlainText(inst) ~= nil
                     found = {
                         viewer = name, shown = shown, cid = cid,
-                        inst = (okA and type(inst) == "number") and inst or nil,
+                        inst = isPlain and inst or nil,
                         instStr = okA and SafeSecret(inst) or "err",
-                        plain = okA and type(inst) == "number",
+                        plain = isPlain,
                         unit = okU and tostring(unit) or "err",
                     }
                 end
@@ -4431,6 +4500,11 @@ function DebugCommands.MaintenanceProbe(addon)
             addon:Print("|cff2ecc71   IDENTITY AVAILABLE|r - exact bind works, bridge becomes fallback")
         else
             addon:Print("|cffff6600   unusable|r - nil/secret instance, or the frame is scanning another unit")
+            -- Deliberately not called "expected" or "normal": measured 2026-08-11, this id came
+            -- back SECRET for Ironfur in combat and PLAIN (bound, agreeing) for Bone Shield in
+            -- combat, so it is neither a flat combat rule nor a per-client one. Whatever decides
+            -- it, the slot does not depend on the answer any more - say where to look instead.
+            addon:Print("|cff888888   the exact bind is unavailable right now; Q0b shows what draws instead|r")
         end
     end
 
@@ -6118,6 +6192,665 @@ function DebugCommands.AuraContainerProbe(addon)
         end
     end
     pcall(function() cont:Hide() end)
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect channels - the LAUNDERING MATRIX
+--------------------------------------------------------------------------------
+-- Every capability this addon has for reading combat state is a CHAIN, never a single
+-- call: a secret goes into a C-side sink that accepts one, and we read back some other
+-- property of the same object that the engine forgot to seal. The shipped readiness probe
+-- is exactly that (secret duration -> Cooldown -> IsShown), and so is the enrage cue.
+--
+-- 12.1.0's generated API documentation says why a chain can exist at all, and it is not
+-- luck. Secrecy on a widget is per-(OBJECT, ASPECT): a getter carries
+-- `SecretReturnsForAspect = { Enum.SecretAspect.X }` and returns secret ONLY when aspect X
+-- is stamped on that object. So a getter whose declared aspects omit the aspect your sink
+-- stamped is an open channel, and the gaps are enumerable rather than guessable.
+--
+-- The clearest example, and the reason this probe exists: on a FontString, `GetText` is
+-- guarded by `SecretAspect.Text`, while `GetStringWidth`, `IsTruncated`, `GetNumLines`,
+-- `GetWrappedWidth` and `GetUnboundedStringWidth` are guarded by `SecretWhenAnchoringSecret`
+-- instead. If that is literally true, a FontString holding SECRET text still answers
+-- questions about the SHAPE of that text - which is a numeric readback of a secret, not
+-- merely a boolean one, and the formatters that take curves (SecondsFormatter interval
+-- bands, AbbreviatedNumberFormatter) turn magnitude into length on the way in.
+--
+-- READ THIS BEFORE TRUSTING AN ANNOTATION. `SecretWhen<X>` is a NECESSARY condition for
+-- secrecy, NOT a complete specification: "secret when X" does not imply "plain when not X".
+-- Proof, from our own shipped code: all five DurationObject Evaluate* methods carry ONLY
+-- `SecretWhenCurveSecret`, and we always pass our own plain curve - yet the result is still
+-- secret, which is exactly why BlizzardAPI.DurationBelow has to run it through the
+-- IsSecretZero text gate to get a boolean out. An earlier draft of this probe predicted
+-- those cells PLAIN on the strength of the annotation alone and would have shipped a green
+-- row that meant nothing. The documentation says where to LOOK; only the client says what is.
+--
+-- So each cell carries what we currently BELIEVE from shipped code and past measurement -
+-- never from an annotation alone - and contested cells are marked unknown and claim nothing.
+-- Disagreements are the entire point, in both directions:
+--   * believed secret, reads PLAIN -> a capability we are not using
+--   * believed plain, reads SECRET or throws -> a latent crash, exactly the shape of the
+--     two that bit us on 2026-08-12 (GetActionDisplayCount and GetAuraSpellInstanceID, both
+--     believed plain because a hand-written comment said so).
+-- The Cooldown row is a CONTROL: it is shipped and proven, so the day it stops reading
+-- plain, this probe has caught a closure before the error reports do.
+--
+-- Scratch widgets are built fresh on every run and never reused. Aspects are permanent once
+-- stamped, so a reused widget would report the previous run's contamination as this run's
+-- result. The discarded frames are not reclaimed - acceptable for a debug command, and the
+-- alternative silently poisons the measurement.
+local CHANNEL_PREDICT_PLAIN  = "plain"
+local CHANNEL_PREDICT_SECRET = "secret"
+-- Genuinely contested: shipped code/measurement says one thing and the documentation says
+-- another, and neither has been settled in game. These cells report and colour nothing -
+-- guessing a side here is how a probe starts asserting the thing it was built to find out.
+local CHANNEL_PREDICT_UNKNOWN = "unknown"
+
+function DebugCommands.ChannelMatrix(addon)
+    -- This file has NO file-local BlizzardAPI (see the other two notes saying so). A bare
+    -- reference is a nil global, and indexing it throws INSIDE a probe cell - which then
+    -- reports as "err" and reads exactly like a finding about the client. It did, on the
+    -- first run: the zero-gate cell came back err and the cause was this line missing.
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    addon:Print("=== laundering matrix ===")
+
+    -- A cell only means something if what we fed in was ACTUALLY secret. Establish that
+    -- first and refuse to draw conclusions otherwise: out of combat every source reads
+    -- plain, every readback reads plain, and the grid would look like a clean sweep of
+    -- open channels while proving nothing at all.
+    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player") and true or false
+    local sources = {
+        { label = "UnitHealth('player')", get = function() return UnitHealth("player") end },
+        { label = "UnitPower('player')",  get = function() return UnitPower("player") end },
+    }
+    local secretNum, secretFrom
+    for i = 1, #sources do
+        local st, txt, val = ProbeRead(sources[i].get)
+        addon:Print(string.format("source %-22s -> %s", sources[i].label,
+            st == "secret" and "|cff2ecc71<secret>|r (usable)" or (txt or st)))
+        if st == "secret" and not secretNum then secretNum, secretFrom = val, sources[i].label end
+    end
+    if not secretNum then
+        addon:Print("|cffff6600No secret source available|r - nothing here would mean anything."
+            .. (inCombat and "  Secrecy may be off for this character/context."
+                          or "  Run it IN COMBAT."))
+        return
+    end
+    addon:Print("|cff888888feeding: " .. secretFrom .. "|r")
+
+    -- Fresh, never reused - see the note above.
+    local host = CreateFrame("Frame", nil, UIParent)
+    host:Hide()
+
+    local rows, cells = 0, 0
+    --- One matrix row: apply the secret through `sink`, then read every getter back.
+    --- @param name string
+    --- @param build function -> object (fresh), or nil when the sink itself refused
+    --- @param readbacks table array of { label, fn(obj), predict }
+    local function Row(name, build, readbacks)
+        rows = rows + 1
+        local okB, obj = pcall(build)
+        if not okB or not obj then
+            addon:Print(string.format("%-26s |cffff6600sink refused|r %s", name,
+                okB and "" or tostring(obj):gsub("^.-:%d+: ", ""):sub(1, 40)))
+            return
+        end
+        local parts, errs = {}, {}
+        for i = 1, #readbacks do
+            local rb = readbacks[i]
+            local st, txt = ProbeRead(function() return rb.fn(obj) end)
+            cells = cells + 1
+            -- Carry the message for anything that threw. "err" alone is ambiguous between a
+            -- sealed call and a broken probe, and on the first run TWO cells were the latter
+            -- - a nil global and an unset bar texture - both indistinguishable from a finding
+            -- until the text was in front of us.
+            if st == "err" then errs[#errs + 1] = rb.label .. ": " .. tostring(txt) end
+            -- A "nil" read is not evidence either way - the getter answered without a
+            -- value, which tells us nothing about whether it would have laundered one.
+            local colour = "|cff888888"
+            if st == "plain" and rb.predict == CHANNEL_PREDICT_SECRET then
+                colour = "|cff2ecc71"      -- unexploited capability
+            elseif (st == "secret" or st == "err") and rb.predict == CHANNEL_PREDICT_PLAIN then
+                colour = "|cffff0000"      -- latent crash / closed since documented
+            elseif st == rb.predict then
+                colour = "|cffffffff"      -- contract held
+            end
+            -- Plain cells print their VALUE, not just "plain". On the three-state rows the
+            -- value IS the finding: "did we get our own literal back, or the engine's
+            -- formatted text" is invisible if the cell only reports its classification.
+            parts[#parts + 1] = string.format("%s%s=%s|r", colour, rb.label,
+                (st == "plain" and txt and txt ~= "") and ("plain(" .. txt .. ")") or st)
+        end
+        addon:Print(string.format("%-26s %s", name, table.concat(parts, "  ")))
+        for i = 1, #errs do addon:Print("   |cff888888" .. errs[i] .. "|r") end
+    end
+
+    -- 1. TEXT SHAPE. The strong lead: only GetText is guarded by the Text aspect.
+    Row("FontString:SetText", function()
+        local fs = host:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        fs:SetWidth(12)              -- deliberately narrow, so IsTruncated has something to say
+        fs:SetText(secretNum)
+        return fs
+    end, {
+        -- GetText is settled: SecretReturnsForAspect{Text}, and the IsSecretZero gate relies
+        -- on exactly that. The four shape readbacks are CONTESTED - the documentation guards
+        -- them on anchoring rather than Text, while our own note says GetStringWidth goes
+        -- secret permanently once a font string has held secret text. One of those is stale
+        -- and this is the cell that says which; claiming a side in advance would be the
+        -- mistake this whole probe exists to stop making.
+        { label = "GetText",       predict = CHANNEL_PREDICT_SECRET,  fn = function(o) return o:GetText() end },
+        { label = "width",         predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o:GetStringWidth() end },
+        { label = "trunc",         predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o:IsTruncated() end },
+        { label = "lines",         predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o:GetNumLines() end },
+        { label = "unbounded",     predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o:GetUnboundedStringWidth() end },
+    })
+
+    -- A duration object that ACTUALLY carries a secret. Found by asking each candidate
+    -- `HasSecretValues()`, which on LuaDurationObject is documented ReturnsNeverSecret -
+    -- unconditionally plain - so the search validates itself using the very classifier the
+    -- duration row below is here to test. Candidates are whatever the player has that might
+    -- be running: an undriven cooldown would make the control row pass while proving nothing.
+    local secretDur, durRunning, expiredDur
+    do
+        local get = C_Spell and C_Spell.GetSpellCooldownDuration
+        -- Candidate choice was the reason three runs in a row found only expired durations:
+        -- the QUEUE icons hold whatever is ready to press, so sampling them is sampling the
+        -- spells least likely to be running. Defensives and the interrupt are usually on
+        -- cooldown mid-fight, so they go FIRST, and every list is walked rather than [1].
+        local cands = {}
+        local function addAll(list, field)
+            for i = 1, (list and #list or 0) do
+                local e = list[i]
+                local id = e and (field and e[field] or e.spellID)
+                if id then cands[#cands + 1] = id end
+            end
+        end
+        addAll(addon.defensiveIcons)
+        addAll(addon.resolvedInterrupts, "spellID")
+        cands[#cands + 1] = addon.interruptIcon and addon.interruptIcon.spellID
+        cands[#cands + 1] = addon.maintenanceIcon and addon.maintenanceIcon.spellID
+        addAll(addon.spellIcons)
+        -- PREFER A RUNNING DURATION. Every earlier run happened to pick an expired one, and
+        -- that quietly made the duration rows worthless: a gate answering "zero" against a
+        -- zero duration is indistinguishable from a gate that returns a constant. Only a
+        -- RUNNING duration shows the channel DISCRIMINATING, which is the property we
+        -- actually depend on. Running-ness is itself read through the channel under test -
+        -- circular in appearance, not in substance: it only means "the cooldown widget shows".
+        -- BOTH excludeGCD values. `true` skips the global, which is what production wants -
+        -- but mid-combat the GCD is the one duration that is reliably RUNNING, so `false`
+        -- is what actually finds a live one to measure the discriminating branch with.
+        local anySecret
+        for i = 1, #cands do
+            for _, excludeGCD in ipairs({ true, false }) do
+                if get and cands[i] and not durRunning then
+                    local okD, d = pcall(get, cands[i], excludeGCD)
+                    local okH, isSecret = false, false
+                    if okD and d and d.HasSecretValues then okH, isSecret = pcall(d.HasSecretValues, d) end
+                    if okH and isSecret == true then
+                        anySecret = anySecret or d
+                        local probe = CreateFrame("Cooldown", nil, host, "CooldownFrameTemplate")
+                        local okS = pcall(probe.SetCooldownFromDurationObject, probe, d)
+                        local okV, shown = pcall(probe.IsShown, probe)
+                        if okS and okV and shown == true then secretDur, durRunning = d, true end
+                    end
+                end
+            end
+        end
+        -- Keep BOTH when both exist. Every wrong conclusion in this probe's short history came
+        -- from observing a gate in one state only, so where a second state is available for
+        -- free the probe should take it rather than ask the player to re-run and remember.
+        expiredDur = (anySecret ~= secretDur) and anySecret or nil
+        secretDur = secretDur or anySecret
+        addon:Print("secret DurationObject: " .. (secretDur and "|cff2ecc71found|r" or "|cffff6600none|r")
+            .. (secretDur and (durRunning and " |cff2ecc71(RUNNING - rows discriminate)|r"
+                or " |cffff6600(expired/zero - rows only show the zero branch; press a cooldown"
+                   .. " and re-run to test the other one)|r")
+                or " - the duration rows below are inconclusive"))
+    end
+
+    -- 2. CONTROL. Shipped and proven; a red cell here is a closure, not a discovery.
+    -- Returns nil rather than an undriven widget when no secret duration exists, so the row
+    -- reports "sink refused" instead of passing on a cooldown nothing was ever fed into.
+    Row("Cooldown:SetCooldownFromDur", function()
+        if not secretDur then return nil end
+        local cd = CreateFrame("Cooldown", nil, host, "CooldownFrameTemplate")
+        cd:SetCooldownFromDurationObject(secretDur)
+        return cd
+    end, {
+        { label = "IsShown",       predict = CHANNEL_PREDICT_PLAIN,  fn = function(o) return o:IsShown() end },
+        { label = "GetCooldownTimes", predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o:GetCooldownTimes() end },
+    })
+
+    -- 2b. THE CURVE FAMILY. Believed SECRET despite carrying only `SecretWhenCurveSecret`
+    -- and being handed a plain curve - because BlizzardAPI.DurationBelow, which ships and
+    -- works, has to push the result through the IsSecretZero text gate to get a boolean.
+    -- Included anyway, and this is the point of a matrix rather than a hypothesis: it costs
+    -- one cell to keep measuring a thing we think we know, and the day Blizzard makes these
+    -- plain we get a numeric read of every cooldown and aura for free. `zeroGate` is the
+    -- extraction we actually use, carried alongside so the row shows the working chain next
+    -- to the raw call it is built on.
+    Row("DurationObject (curve)", function()
+        if not secretDur then return nil end
+        local cu = C_CurveUtil
+        if not (cu and cu.CreateCurve) then return nil end
+        local c = cu.CreateCurve()
+        c:AddPoint(0, 0)
+        c:AddPoint(1, 100)
+        return { d = secretDur, c = c }
+    end, {
+        { label = "HasSecretValues", predict = CHANNEL_PREDICT_PLAIN,  fn = function(o) return o.d:HasSecretValues() end },
+        { label = "remPct",          predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o.d:EvaluateRemainingPercent(o.c) end },
+        { label = "remDur",          predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o.d:EvaluateRemainingDuration(o.c) end },
+        { label = "totalDur",        predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o.d:EvaluateTotalDuration(o.c) end },
+        -- The working chain, called through the SHIPPED entry point rather than rebuilt
+        -- here: secret result -> TruncateWhenZero -> scratch FontString emptiness -> plain
+        -- boolean. Testing production's own function is the point - a reconstruction with a
+        -- hand-rolled curve would measure my copy of the technique, not the one that ships.
+        { label = "zeroGate",        predict = CHANNEL_PREDICT_PLAIN,  fn = function(o)
+            return BlizzardAPI.IsDurationBelowPercent(o.d, 30) end },
+    })
+
+    -- 3. BAR VALUE vs BAR GEOMETRY. GetValue/GetMinMaxValues are guarded by BarValue, but
+    -- GetStatusBarTexture carries no aspect guard at all and the texture's own geometry is
+    -- guarded by Hierarchy/Anchoring - a different aspect than the one SetValue stamps.
+    Row("StatusBar:SetValue", function()
+        local sb = CreateFrame("StatusBar", nil, host)
+        sb:SetSize(100, 10)
+        -- REQUIRED, and its absence cost a run: a StatusBar with no texture returns nil from
+        -- GetStatusBarTexture, so both geometry cells threw and reported "err" - which reads
+        -- as "the channel is closed" when nothing had been tested at all.
+        sb:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+        sb:SetMinMaxValues(0, 100)
+        sb:SetValue(secretNum)
+        return sb
+    end, {
+        { label = "GetValue",      predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o:GetValue() end },
+        { label = "texW",          predict = CHANNEL_PREDICT_PLAIN,  fn = function(o) return o:GetStatusBarTexture():GetWidth() end },
+        { label = "texCoord",      predict = CHANNEL_PREDICT_PLAIN,  fn = function(o) return select(2, o:GetStatusBarTexture():GetTexCoord()) end },
+    })
+
+    -- 4. ALPHA. SetAlpha takes a secret (it is the sink the whole cue system rides on), and
+    -- GetAlpha is guarded by the Alpha aspect - so this row should be sealed. It is here as
+    -- a NEGATIVE control: if this ever reads plain, the aspect model itself has changed.
+    Row("Frame:SetAlpha", function()
+        local f = CreateFrame("Frame", nil, host)
+        local ok = pcall(f.SetAlpha, f, secretNum)
+        if not ok then return nil end
+        return f
+    end, {
+        { label = "GetAlpha",      predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o:GetAlpha() end },
+    })
+
+    -- 4b. THE TEXTURE LAUNDERER - the one candidate tools/audit_secret_channels.py turned up
+    -- after the noise was filtered out, and the only sink in the entire API with our working
+    -- channel's exact shape: it accepts a RAW secret (SecretArguments = AllowedWhenTainted)
+    -- and declares NO SecretArgumentsAddAspect, so nothing is sealed on the way in. Its
+    -- readbacks GetTexture/GetAtlas declare no aspect guard either, while every OTHER getter
+    -- on a Texture does (Desaturation, Rotation, TexCoords, RadialProgress).
+    --
+    -- If that is literal, SetTexture(secretNumber) -> GetTexture() converts a secret number
+    -- into a plain one, which would be a universal launderer and is almost certainly too
+    -- good to be true - the measured rule all day has been that taint follows derivation
+    -- whatever the annotations claim. Believed SECRET for exactly that reason. It costs one
+    -- row to find out, and "too good to be true" is a prediction, not a measurement.
+    Row("Texture:SetTexture(secret)", function()
+        local t = host:CreateTexture(nil, "ARTWORK")
+        if not pcall(t.SetTexture, t, secretNum) then return nil end
+        return t
+    end, {
+        { label = "GetTexture",  predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o:GetTexture() end },
+        { label = "GetAtlas",    predict = CHANNEL_PREDICT_SECRET, fn = function(o) return o:GetAtlas() end },
+    })
+
+    -- 4c. DURATION TEXT BINDING - the other collapse-to-absence candidate, from the
+    -- --absence pass of tools/audit_secret_channels.py.
+    --
+    -- A binding drives OUR font string from a secret duration and writes one of THREE
+    -- things: the formatted remaining time (engine-derived, so secret), or one of two
+    -- literals we supplied ourselves - zeroDurationText for an unconfigured/zero span,
+    -- expiredText for one that has run out. Those literals never came from the secret, so
+    -- if the engine writes one back verbatim the font string may hold PLAIN text.
+    --
+    -- Two reasons this earns a row despite the zero-gate already answering is-zero:
+    --   * REDUNDANCY. It reaches the same predicate by a completely different route, so if
+    --     TruncateWhenZero is ever sealed this says whether a fallback exists - and the
+    --     readiness probe is load-bearing enough to want a spare.
+    --   * A THREE-state discriminator is more than the gate gives. nil / our expired literal
+    --     / secret would separate "expired" from "still running" from "no duration at all",
+    --     where the gate only says zero or not.
+    -- Deliberately marked unknown, not predicted: which state the binding lands in depends on
+    -- whether the duration we found happens to be running, and we do not control that.
+    -- GetFormattedText is a readback nothing has ever tested - it returns what WOULD be
+    -- written, bypassing the font string entirely.
+    -- Built once and run for EVERY duration state we managed to find, because a binding
+    -- observed only while running proves as little as one observed only while expired: the
+    -- channel is the DIFFERENCE between the two, never either reading on its own.
+    local function BindingRow(label, dur)
+    Row(label, function()
+        local secretDur = dur
+        if not secretDur then return nil end
+        local du = C_DurationUtil
+        if not (du and du.CreateDurationTextBinding) then return nil end
+        local okB, b = pcall(du.CreateDurationTextBinding)
+        if not okB or not b then return nil end
+        local fs = host:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        -- SetToDefaults first where it exists: Blizzard's own aura button configures a
+        -- binding that way, and guessing a formatter's arguments is how this row would end
+        -- up measuring my misconfiguration instead of the client.
+        pcall(b.SetToDefaults, b)
+        -- A FORMATTER, which SetToDefaults does not appear to install: Blizzard's own aura
+        -- button does SetToDefaults() AND THEN SetFormatter(), and skipping the second call
+        -- is the remaining explanation for a binding that formats (GetFormattedText returns
+        -- secret) yet writes nothing - a secret EMPTY string would look exactly like this.
+        -- Safe here where it would not be on a count: duration text goes through the C-side
+        -- binding, which handles secrets. See the SetApplicationCount trap in UIMaintenanceAura.
+        if C_StringUtil and C_StringUtil.CreateSecondsFormatter then
+            local okF, f = pcall(C_StringUtil.CreateSecondsFormatter)
+            if okF and f then pcall(b.SetFormatter, b, f) end
+        end
+        if not pcall(b.SetFontString, b, fs) then return nil end
+        pcall(b.SetZeroDurationText, b, "")        -- collapse to absence on zero
+        pcall(b.SetExpiredText, b, "EXP")          -- a literal that is ours, never derived
+        pcall(b.SetDuration, b, secretDur)
+        -- ENABLE, and this was missing: without it the binding never writes to the font
+        -- string at all, so fsText came back nil against a RUNNING duration too. That nil
+        -- looked exactly like the collapse-to-absence result we were hoping for and briefly
+        -- got recorded as one - a false positive that only the discriminating run exposed.
+        pcall(b.SetEnabled, b, true)
+        pcall(b.UpdateFontString, b)
+        return { b = b, fs = fs }
+    end, {
+        { label = "fsText",     predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o.fs:GetText() end },
+        { label = "fmtText",    predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o.b:GetFormattedText() end },
+        { label = "hasSecret",  predict = CHANNEL_PREDICT_PLAIN,   fn = function(o) return o.b:HasSecretValues() end },
+        -- Measured SECRET, and it was predicted plain. `CanFormatText` is documented as
+        -- answering a pure configuration question - "does this binding have enough config to
+        -- produce text" - and it still inherits the bound duration's secrecy. Even
+        -- CONFIGURATION-STATE booleans are tainted once a secret is attached, which is the
+        -- taint-follows-derivation rule reaching further than a value readback.
+        { label = "canFormat",  predict = CHANNEL_PREDICT_SECRET,  fn = function(o) return o.b:CanFormatText() end },
+        -- The predicate that separates the two failure modes: "can format" and "can update
+        -- the font string" are documented as DIFFERENT questions, and only this one answers
+        -- why a binding that demonstrably produces text writes none of it.
+        { label = "canUpdate",  predict = CHANNEL_PREDICT_UNKNOWN, fn = function(o) return o.b:CanUpdateFontString() end },
+    })
+    end
+    BindingRow(durRunning and "DurTextBind(running)" or "DurTextBind(expired)", secretDur)
+    -- The other state, when the search happened to turn one up. `fsText` must differ between
+    -- the two rows - secret while running, nil at zero - or the binding is not a gate at all.
+    if expiredDur then BindingRow("DurTextBind(expired)", expiredDur) end
+
+    -- 5. The same classifier on a WIDGET - and the answer is a TRAP, measured 2026-08-12.
+    -- It reads plain, but it reads plain FALSE on a font string we just fed a secret to,
+    -- while GetText on that same object is secret (row 1). So HasSecretValues on a widget
+    -- does NOT mean "a secret was written into me", and it is NOT the provenance oracle it
+    -- looks like - an earlier note here suggested it could replace our PlainText probe, and
+    -- that would have been a silent, confident wrong answer everywhere it was used.
+    -- On a DATA object it is trustworthy: row 2b's LuaDurationObject correctly says true.
+    -- Kept as a row precisely to keep that distinction measured rather than remembered.
+    Row("ScriptObject (secret text)", function()
+        local fs = host:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        fs:SetText(secretNum)
+        return fs
+    end, {
+        { label = "HasSecretValues", predict = CHANNEL_PREDICT_PLAIN, fn = function(o) return o:HasSecretValues() end },
+    })
+
+    addon:Print(string.format("%d rows / %d cells.  |cff2ecc71green|r = believed secret, read PLAIN"
+        .. " (new channel).  |cffff0000red|r = believed plain, read secret/err (closed, or a"
+        .. " crash waiting).  |cff888888grey|r = contested, claiming nothing.", rows, cells))
+    addon:Print("=========================")
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect aurapanels - Blizzard's OWN aura panels, and whether they are live
+--------------------------------------------------------------------------------
+-- The one aura-identity technique that still works in 12.1.0 does not read an aura at all:
+-- it reads what BLIZZARD'S UNTAINTED CODE already computed and left on a frame. That is how
+-- MaintenanceTracker gets an instance id off the Cooldown Manager - the viewer does the
+-- secret spellId match for us and materializes the answer as a plain field.
+--
+-- Several other Blizzard panels are built on the SAME 12.1 aura containers and have never
+-- been probed. TargetFrame.Auras is the interesting one: it is the real `AuraContainer`
+-- intrinsic (not the same-named plain Frame + Lua mixin in the buff-frame templates - that
+-- is a name collision), Blizzard creates it, and Blizzard's own code calls
+-- `element:GetAuraInstance()` on its buttons. If that call is reachable from tainted code it
+-- is a route to ENEMY aura identity, which every direct route lost.
+--
+-- TWO RULES THIS PROBE EXISTS TO ENFORCE, both learned the hard way:
+--   * A PANEL MUST BE LIVE BEFORE ANY READ MEANS ANYTHING. A hidden Cooldown Manager viewer
+--     serves a FROZEN instance id forever (OnHide drops its UNIT_AURA registration), so a
+--     read off a hidden panel is not "no data", it is WRONG data that looks fine. Every row
+--     here reports shown/alpha/populated FIRST and refuses to interpret reads without it.
+--   * RESOLVE PANELS AS PATHS, never by name. `nameplate.UnitFrame.castBar` moved into
+--     `CastBarsContainer` in 12.x with no alias and silently killed CC substitution; a
+--     name-level grep could not see it. Each row below states the path it walked and where
+--     it stopped, so a move shows up as a short path rather than as a mystery.
+local AURA_PANEL_PATHS = {
+    { "TargetFrame.Auras",       "target aura container - the real intrinsic; the prize" },
+    { "FocusFrame.Auras",        "same shape on focus" },
+    { "BuffFrame.AuraContainer", "player buffs (plain Frame + mixin, NOT the intrinsic)" },
+    { "DebuffFrame.AuraContainer", "player debuffs" },
+    { "BuffIconCooldownViewer",  "Cooldown Manager - the one we already read" },
+}
+
+function DebugCommands.AuraPanelProbe(addon)
+    addon:Print("=== Blizzard aura panels ===")
+    local hasTarget = UnitExists and UnitExists("target")
+    addon:Print("target: " .. tostring(hasTarget)
+        .. (hasTarget and "" or "  |cffff6600no target - the target/focus rows cannot populate|r"))
+
+    for i = 1, #AURA_PANEL_PATHS do
+        local path, note = AURA_PANEL_PATHS[i][1], AURA_PANEL_PATHS[i][2]
+        -- Walk the path a SEGMENT at a time and report where it stopped. A frame that moved
+        -- reads as "stopped at X" instead of a bare nil, which is the difference between
+        -- "Blizzard renamed something" and "this panel does not exist".
+        local obj, walked = nil, {}
+        for seg in path:gmatch("[^.]+") do
+            obj = (obj == nil) and _G[seg] or (type(obj) == "table" and obj[seg] or nil)
+            walked[#walked + 1] = seg
+            if obj == nil then break end
+        end
+        if obj == nil then
+            -- "missing" overstates it. Measured 2026-08-12 in combat with a target:
+            -- TargetFrame resolves and TargetFrame.Auras does not, and the reason is not a
+            -- moved path - Blizzard's aura containers carry `useForbiddenObjectTable="true"`,
+            -- so a tainted reader cannot obtain a reference to one at all. Unreachable, not
+            -- relocated, and no amount of path-hunting will fix it.
+            addon:Print(string.format("%-28s |cffff6600unreachable|r - stops after %s"
+                .. " (moved, or a forbidden object)  |cff888888(%s)|r",
+                path, table.concat(walked, "."), note))
+        else
+            local okS, shown = pcall(function() return obj:IsShown() end)
+            local okA, alpha = pcall(function() return obj:GetAlpha() end)
+            local live = okS and shown == true
+            addon:Print(string.format("%-28s %s  alpha=%s  |cff888888(%s)|r",
+                path, live and "|cff2ecc71SHOWN|r" or "|cffff6600hidden/unknown|r",
+                okA and tostring(alpha) or "err", note))
+            if not live then
+                addon:Print("   |cff888888not live - anything read here is stale or absent, not evidence|r")
+            else
+                DebugCommands._ProbeAuraPanelButtons(addon, obj)
+            end
+        end
+    end
+
+    -- DISCOVERY, because guessing paths is what the "frame paths move silently" lesson says
+    -- not to do and the list above did anyway (TargetFrame resolves, TargetFrame.Auras does
+    -- not). Every intrinsic container answers GetObjectType() == "AuraContainer", so walk the
+    -- whole frame list and let the CLIENT say where they are. This finds them wherever
+    -- Blizzard moved them, which a hardcoded path can never do.
+    if EnumerateFrames then
+        addon:Print("-- discovery: every live AuraContainer intrinsic --")
+        local f, n, shownN = EnumerateFrames(), 0, 0
+        while f and n < 40 do
+            local okT, t = pcall(function() return f:GetObjectType() end)
+            if okT and t == "AuraContainer" then
+                n = n + 1
+                local okS, shown = pcall(function() return f:IsShown() end)
+                if okS and shown then shownN = shownN + 1 end
+                local okN, nm = pcall(function() return f:GetDebugName() end)
+                addon:Print(string.format("   %s  shown=%s",
+                    (okN and nm and nm ~= "") and nm or "<unnamed>",
+                    okS and tostring(shown) or "err"))
+            end
+            f = EnumerateFrames(f)
+        end
+        -- ANSWERED, 2026-08-12: this returns ZERO even with a target up and even while our
+        -- own soothe cue holds live containers. They are not missing - every container XML
+        -- carries `useForbiddenObjectTable="true"`, and a tainted caller's frame enumeration
+        -- does not include forbidden objects. So the count being zero IS the finding, and
+        -- the row is kept as a tripwire: a non-zero result means the rule changed.
+        addon:Print(string.format("   %d AuraContainer intrinsic(s), %d shown%s", n, shownN,
+            n == 0 and "  |cff888888- expected: containers are forbidden objects and are"
+                   .. " invisible to tainted enumeration, even ours|r" or
+                   "  |cffff6600- UNEXPECTED: enumeration used to return none|r"))
+    end
+    addon:Print("============================")
+end
+
+--- Walk a live panel's children and ask each what it will tell a TAINTED caller about its
+--- aura. `GetAuraInstance` is the interesting one - it is what Blizzard's own target-frame
+--- code calls, and a plain auraInstanceID out of it would be enemy aura identity.
+--- Children rather than the frame pool: the pool is provider-private, and enumerating what
+--- is actually parented is the honest question anyway.
+function DebugCommands._ProbeAuraPanelButtons(addon, panel)
+    -- RECURSIVE, and it has to be. Aura buttons are pooled onto an inner container frame, so
+    -- they are GRANDchildren - MaintenanceTracker already carries this exact warning about
+    -- the Cooldown Manager ("a one-level GetChildren() walk never reaches them, which is why
+    -- an earlier attempt silently did nothing") and the first version of this probe walked
+    -- one level anyway and reported a confident 0 for every panel.
+    -- Depth 4 covers viewer -> itemContainer -> item and container -> button -> region.
+    local seen, reported, scanned = 0, 0, 0
+    local function walk(frame, depth)
+        if depth > 4 or reported >= 2 then return end
+        local okK, kids = pcall(function() return { frame:GetChildren() } end)
+        if not okK or not kids then return end
+        for i = 1, #kids do
+            local b = kids[i]
+            scanned = scanned + 1
+            if b.GetAuraInstance then
+                local okV, vis = pcall(function() return b:IsShown() end)
+                if okV and vis then
+                    seen = seen + 1
+                    if reported < 2 then   -- two characterises it; the rest repeat
+                        reported = reported + 1
+                        local st, txt = ProbeRead(function()
+                            local d = select(2, b:GetAuraInstance())
+                            return d and d.auraInstanceID
+                        end)
+                        local st2 = ProbeRead(function()
+                            local d = select(2, b:GetAuraInstance())
+                            return d and d.spellId
+                        end)
+                        addon:Print(string.format("   button(d%d) auraInstanceID=%s(%s)  spellId=%s",
+                            depth, st, tostring(txt), st2))
+                    end
+                end
+            end
+            walk(b, depth + 1)
+        end
+    end
+    walk(panel, 1)
+    addon:Print(string.format("   %d descendant(s) scanned, %d shown with GetAuraInstance",
+        scanned, seen))
+    if scanned == 0 then
+        addon:Print("   |cff888888no descendants at all - panel is an empty shell right now|r")
+    elseif seen == 0 then
+        -- NOT "the target has no auras": on the player panels there is no target involved,
+        -- and the buff-frame templates are the plain Frame + mixin, whose buttons never had
+        -- GetAuraInstance to begin with. Absence here means the wrong KIND of panel, not
+        -- absence of auras.
+        addon:Print("   |cff888888descendants exist but none expose GetAuraInstance - not an"
+            .. " intrinsic-container panel|r")
+    end
+end
+
+--------------------------------------------------------------------------------
+-- /jac inspect audioalerts - the combat audio alert manager as a SIGNAL SOURCE
+--------------------------------------------------------------------------------
+-- Blizzard's combat audio alert system announces player/target health, player/target casts,
+-- party health and player debuffs. To do that it must COMPUTE those things - and it is
+-- ordinary untainted Lua on an ordinary Frame (`CombatAudioAlertManager`, toplevel, plain
+-- mixin), NOT one of the forbidden aura containers. It caches what it computed:
+--
+--   lastUnitHealthPercent[unit]      lastPlayerPowerPercent[...]     partyHealthInfo
+--   lastUnitHealthAnnouncePercent    lastPlayerPowerAnnouncePercent  lastInterruptedCast
+--   unitCastStartUnitsLookup         unitCastEndUnitsLookup          unitHealthUnitsLookup
+--
+-- Why this is worth measuring rather than assuming: untainted control flow CAN launder a
+-- secret into a plain value, and we already ship a technique that depends on it -
+-- `item.isActive` on the Cooldown Manager is "an ordinary boolean assigned by untainted
+-- control flow" and reads PLAIN in combat (MaintenanceTracker.ViewerBuffActive). If health
+-- and power percents survive the same way, they are branchable numbers - the exact thing
+-- every note we have says does not exist.
+--
+-- Same conditionality as the Cooldown Manager, and the same trap: this only computes while
+-- the FEATURE IS ON. A category the player left off caches nothing, and a stale cache from a
+-- category switched off mid-session would be worse than nothing - so report the settings
+-- FIRST and never interpret a value without them.
+function DebugCommands.AudioAlertProbe(addon)
+    addon:Print("=== combat audio alerts as a signal source ===")
+    local mgr = CombatAudioAlertManager
+    if not mgr then
+        addon:Print("|cffff6600CombatAudioAlertManager missing|r - addon not loaded this session")
+        return
+    end
+    addon:Print("manager: present  initDone=" .. tostring(rawget(mgr, "initDone")))
+
+    -- WHICH CATEGORIES ARE ON. Everything below is meaningless without this: an off category
+    -- never populates its cache, so a nil read means "disabled", not "unreadable".
+    local CA = C_CombatAudioAlert
+    local cats = Enum and Enum.CombatAudioAlertCategory
+    if CA and CA.GetSpecSetting and type(cats) == "table" then
+        local parts = {}
+        for name, value in pairs(cats) do
+            local st, txt = ProbeRead(function() return CA.GetSpecSetting(value) end)
+            parts[#parts + 1] = string.format("%s=%s", name, st == "plain" and txt or st)
+        end
+        table.sort(parts)
+        addon:Print("settings: " .. table.concat(parts, "  "))
+    else
+        addon:Print("|cff888888category settings unavailable - cannot say which caches are live|r")
+    end
+
+    -- THE CACHES. Percent-per-unit tables are the prize; the rest are cheap to read while
+    -- we are here and each one is a signal in its own right if it comes back plain.
+    local function report(label, fn)
+        local st, txt = ProbeRead(fn)
+        local colour = (st == "plain") and "|cff2ecc71" or "|cff888888"
+        addon:Print(string.format("  %-38s %s%s|r%s", label, colour, st,
+            (st == "plain" and txt and txt ~= "nil") and (" = " .. txt) or ""))
+    end
+    report("lastUnitHealthPercent[player]", function() return mgr.lastUnitHealthPercent and mgr.lastUnitHealthPercent["player"] end)
+    report("lastUnitHealthPercent[target]", function() return mgr.lastUnitHealthPercent and mgr.lastUnitHealthPercent["target"] end)
+    report("lastPlayerPowerPercent (count)", function()
+        local t = mgr.lastPlayerPowerPercent
+        if type(t) ~= "table" then return nil end
+        local n = 0
+        for _ in pairs(t) do n = n + 1 end
+        return n
+    end)
+    report("lastPlayerPowerPercent (first value)", function()
+        local t = mgr.lastPlayerPowerPercent
+        if type(t) ~= "table" then return nil end
+        -- next(), not a one-iteration pairs loop: the table is keyed by power token and any
+        -- entry characterises it, so say "give me one" rather than writing a loop that lies
+        -- about iterating.
+        return select(2, next(t))
+    end)
+    report("partyHealthInfo.unitCount", function()
+        return mgr.partyHealthInfo and mgr.partyHealthInfo.unitCount
+    end)
+    report("lastInterruptedCast", function() return mgr.lastInterruptedCast end)
+    report("unitCastStartUnitsLookup[target]", function()
+        return mgr.unitCastStartUnitsLookup and mgr.unitCastStartUnitsLookup["target"]
+    end)
+
+    addon:Print("|cff888888green = PLAIN, i.e. branchable. A percent reading plain here is a"
+        .. " number every other route says cannot exist - re-read the settings line before"
+        .. " believing it, and check it TRACKS (take damage, re-run).|r")
+    addon:Print("==============================================")
 end
 
 function DebugCommands.EnrageLog(addon, arg)

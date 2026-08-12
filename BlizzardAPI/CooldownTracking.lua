@@ -990,8 +990,6 @@ function BlizzardAPI.SeedLocalCooldownIfActive(spellID)
 end
 
 --- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.
---- When a slot becomes usable (or only resource-blocked), and the mapped spell
---- Detect CD completion via ACTION_USABLE_CHANGED slot transitions.
 --- NOTE: IsUsableAction returns true even when a spell is on cooldown, so a
 --- usable=true transition does NOT mean the real CD expired - it fires on energy
 --- ticks, target changes, and other unrelated transitions. Any CD clearing here

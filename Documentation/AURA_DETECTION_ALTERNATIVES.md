@@ -2,6 +2,14 @@
 
 When `C_UnitAuras.GetAuraDataByIndex()` returns secret values, these alternatives may bypass restrictions.
 
+> **12.1.0 scope note (2026-08-11).** This whole document assumes the by-index scan still
+> *answers*. On 12.1.0 it throws for a tainted caller, as does `GetUnitAuras` for every
+> filter, so the methods below apply only where an aura is exempt (`RequiresNonSecretAura`
+> routes like `GetPlayerAuraBySpellID`) - which in practice means the player's own
+> unrestricted buffs. For a **hostile** unit's auras there is no read route left at all;
+> the only thing still possible is a display driven engine-side, documented in
+> [AURA_CONTAINER_12.1.md](AURA_CONTAINER_12.1.md).
+
 ## IMPLEMENTED SOLUTION: auraInstanceID Mapping (RedundancyFilter)
 
 **Status:** ✅ Implemented and tested - handles multi-cycle removal/reapply in combat.
@@ -292,47 +300,6 @@ end
 
 ⚠️ **NOT AVAILABLE IN 12.0** - Combat log access is also restricted by secrets
 
-## Recommended Strategy - SUPERSEDED
-
-> **Note:** The auraInstanceID mapping approach (documented at the top of this file) is the implemented solution.
-> The layered approach below was the original pre-implementation plan. It is preserved for reference
-> but is NOT the current code path.
-
-**Original layered approach** - try methods in order until one works:
-
-```lua
-local function HasBuffBySpellID_Smart(spellID, spellName)
-    -- Try 1: Direct lookup by spell ID (best if not secret)
-    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local auraData = C_UnitAuras.GetPlayerAuraBySpellID(spellID)
-        if auraData then
-            if not (issecretvalue and issecretvalue(auraData.spellId)) then
-                return true  -- Has buff, not secret
-            end
-            -- Fall through if secret
-        else
-            return false  -- Definitely doesn't have it
-        end
-    end
-    
-    -- Try 2: Lookup by spell name (if provided and different API path)
-    if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
-        local auraData = C_UnitAuras.GetAuraDataBySpellName("player", spellName, "HELPFUL")
-        if auraData then
-            if not (issecretvalue and (issecretvalue(auraData.spellId) or issecretvalue(auraData.name))) then
-                return true  -- Has buff, not secret
-            end
-        else
-            return false  -- Doesn't have it
-        end
-    end
-    
-    -- Try 3: Fallback to index iteration (current method)
-    -- This will set hasSecrets flag if blocked
-    return HasBuffBySpellID_Index(spellID)
-end
-```
-
 ## Testing Priority - RESOLVED
 
 The auraInstanceID mapping approach was implemented and tested successfully.
@@ -343,14 +310,6 @@ The methods below were the candidates evaluated before implementation:
 3. **GetAuraDataBySpellName** - Not used (still returns secrets)
 4. **Slot-based access** - Not used (same underlying data, same secrets)
 5. **Hardcoded filtering** - Superseded by the instance-map approach
-
-## Implementation Notes
-
-- auraInstanceID mapping proved to be the winning approach (NeverSecret, stable handles)
-- GetPlayerAuraBySpellID still returns secrets for spellId field in combat
-- Slot-based access uses the same underlying data (same secrets)
-- Combat log is NOT available (also restricted by secrets)
-- Hardcoded whitelist filtering superseded by instance map approach
 
 ---
 

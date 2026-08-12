@@ -34,12 +34,8 @@ from the addon's actual API usage**: a new undefined global (a typo, or a `local
 you forgot to declare) will not be in the list and so gets flagged. Don't add a
 name there to silence a warning unless you've confirmed the WoW API really exists.
 
-**Baseline:** a clean tree currently reports **~47 warnings / 0 errors**. Those
-are pre-existing unused-locals and two known items worth a look but out of scope
-for routine changes:
-- `UI/UIRenderer.lua` references `C_Spell_GetSpellCooldown` as a bare global
-  (never declared `local` in that file) - that branch is dead. Intentionally left
-  un-whitelisted so it stays visible.
+**Baseline:** see AGENTS.md - it carries the current warning count so there is one
+number to keep correct.
 
 "Did my change break something" = run the gate on your files and confirm no
 **errors** and no **new** warnings versus that baseline.
@@ -88,33 +84,10 @@ It checks `CLASS_DEFENSIVE_DEFAULTS` and `DEFENSE_TIER` for the failure mode wit
 in-game symptom: an entry the player can never press. `IsSpellAvailable` hides it
 forever, so it quietly consumes a queue slot and nothing says why.
 
-**Two distinct ways to land there, and they need different tests.**
-
-*Unreachable* — a live `SpellName` row with no acquisition route at all. Legacy ids
-left behind by a rework look exactly like current ones.
-
-*Passive* — reachable but not castable, and this is the one that bites. For a
-talent-granted active, the **talent node** carries the acquisition row and is
-passive; the **button** it grants is castable and usually has no row of its own,
-reachable only through `TraitDefinition.VisibleSpellID`:
-
-```
-node 388917 (PASSIVE)  --VisibleSpellID-->  115203 (castable)
-                Fortifying Brew
-```
-
-So "has an acquisition row" is **not** the test on its own. Applying it alone during
-the 12.1 pass replaced the correct castable Fortifying Brew with the passive node in
-all four Monk lists — trading one dead entry for another while looking like a fix.
-The rule is `castable = reachable AND NOT SPELL_ATTR0_PASSIVE (0x40)`.
-
-The same trap caught Soul Barrier, Renewing Blaze, Fortitude of the Bear, Flourish,
-Essence Font and Dark Transformation — several of which had shipped that way for a
-while, since a passive entry looks identical to a correct one in the source.
-
-`--strict` exits non-zero for pre-release use. The fourth check (untagged spells
-whose effects look like survival buttons) is advisory only and never fails the run —
-the tier table's exclusions are deliberate and documented beside it.
+There are two distinct ways to land there and they need different tests; the trap is
+that a **passive talent node** looks identical to the castable button it grants. The
+rule is `castable = reachable AND NOT SPELL_ATTR0_PASSIVE (0x40)`. Both are explained
+with worked examples in the script's own header — `python tools/audit_defensives.py --help`.
 
 Note this check does **not** transfer to `Data/SimcRotations.lua`. Unobtainable ids
 are correct there: SimC names the button you actually press, so override forms

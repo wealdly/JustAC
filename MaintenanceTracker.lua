@@ -1273,14 +1273,3 @@ function MaintenanceTracker.IsSlotActive(profile)
     return true, entry
 end
 
---- The aura's remaining time as a DurationObject for a Cooldown widget. NEVER read the
---- value - hand it straight to SetCooldownFromDurationObject and let the engine draw it.
---- @param instanceID number|nil - from GetState's 3rd return
---- @return any|nil durationObject
-function MaintenanceTracker.GetDurationObject(instanceID)
-    local fn = C_UnitAuras and C_UnitAuras.GetAuraDuration
-    if not (fn and instanceID) then return nil end
-    local ok, dur = pcall(fn, "player", instanceID)
-    if not ok then return nil end
-    return dur
-end

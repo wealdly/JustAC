@@ -302,6 +302,17 @@ function CastInterruptTracker.DebugInterruptState()
     return isCasting, interruptible, src
 end
 
+--- Why the slot may be deliberately silent right now, for /jac inspect interrupts.
+--- These two suppressors and the already-CC'd test are all CORRECT behaviour, and from
+--- outside they are indistinguishable from detection having failed - which is exactly how
+--- "it works but it is inconsistent" gets reported. The probe has to be able to see them.
+--- @return number sinceInterrupt, number interruptWindow, number sinceCC, number ccWindow
+function CastInterruptTracker.DebugSuppression()
+    local now = GetTime()
+    return now - lastInterruptUsedTime, INTERRUPT_DEBOUNCE,
+           now - lastCCAppliedTime, CC_APPLIED_SUPPRESS
+end
+
 --- Can the suggested ability actually hit the current target right now?
 --- Ranged CCs/kicks: exact via IsSpellInRange, fail-OPEN on unknown - pressing a
 --- targeted spell out of range is a harmless "Out of range" error, nothing is spent.

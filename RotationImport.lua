@@ -16,12 +16,14 @@ if not RotationImport then return end
 
 -- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
 -- entry = { id = <spellID>, gates = { {t="cd"}, {t="dot",id=..}, {t="proc"},
---           {t="buff",id=..,neg=bool}, {t="execute"}, {t="targets",..} }, delegated = bool }
+--           {t="buff",id=..,neg=bool}, {t="execute"}, {t="targets",..} }, delegated = bool,
+--           empower = <release stage for an empowered cast, absent for everything else> }
 -- burst = plain spell ids: the APL's sync anchors (what SimC pots/trinkets
 -- into), consumed by SpellQueue's burst-ready cue.
 local rotations = RotationImport._rotations or {}
 RotationImport._rotations = rotations
 local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
+local empowerCache = {} -- specKey -> (id|baseID) -> tier | false (contexts disagree)
 local cachedSpellDB     -- lazy module ref (see GetEntry)
 
 --- Register GATED rotation tables (the generated format above).
@@ -30,6 +32,7 @@ function RotationImport.RegisterGated(data)
     for specKey, entry in pairs(data) do
         rotations[specKey] = entry
         lookupCache[specKey] = nil
+        empowerCache[specKey] = nil
     end
 end
 
@@ -130,6 +133,83 @@ end
 --- within the same spec must invalidate it - specKey alone doesn't move.
 function RotationImport.InvalidateLookup()
     wipe(lookupCache)
+    wipe(empowerCache)
+end
+
+--------------------------------------------------------------------------------
+-- Empower release tier
+--------------------------------------------------------------------------------
+-- An empowered cast (Evoker's Fire Breath / Eternity Surge, Blood's Consumption) is held
+-- and released at a stage. `empower` on an entry is SimC's chosen stage for that line.
+-- It is data, never a gate: it does not decide whether to press, only how long to hold.
+--
+-- Answered WITHOUT a context argument on purpose. The tier IS context-sensitive in
+-- principle - Eternity Surge picks its stage by target count - so instead of plumbing the
+-- queue's context down to the icon for one spell, a tier is reported only when every
+-- context list naming the spell agrees on it. That is the same fail direction the
+-- generator already takes when SimC's own lines disagree, and it means the number on the
+-- icon is right or absent, never wrong. Today exactly one entry in the whole dataset is
+-- ambiguous this way (Devastation's Eternity Surge: tier 1 at single target, undecidable
+-- in AoE because SimC's thresholds there are talent-dependent), so the cost is one hint.
+local function BuildEmpower(specKey)
+    local rot = rotations[specKey]
+    if not rot then return nil end
+    local m, seenAt = {}, {}
+    for ctx, list in pairs(rot) do
+        if ctx ~= "burst" and type(list) == "table" then
+            for i = 1, #list do
+                local e = list[i]
+                if e and e.id then
+                    -- A spell PRESENT in a list with no tier is a disagreement, not a
+                    -- missing data point: SimC named it there and declined to say. Record
+                    -- the sighting separately from the value so `nil` still counts.
+                    if seenAt[e.id] and m[e.id] ~= e.empower then
+                        m[e.id] = false
+                    elseif not seenAt[e.id] then
+                        m[e.id] = e.empower
+                    end
+                    seenAt[e.id] = true
+                end
+            end
+        end
+    end
+    -- Mirror onto talent-base ids, exactly as the rank lookup does, so AC's ids line up
+    -- across override chains. Collected first and written after: inserting keys into a
+    -- table while pairs() is walking it is undefined in Lua.
+    local mirrored
+    for id, tier in pairs(m) do
+        local b = baseID(id)
+        if b ~= id and m[b] == nil then
+            mirrored = mirrored or {}
+            mirrored[b] = tier
+        end
+    end
+    if mirrored then
+        for b, tier in pairs(mirrored) do
+            if m[b] == nil then m[b] = tier end
+        end
+    end
+    empowerCache[specKey] = m
+    return m
+end
+
+--- SimC's release stage for an empowered cast, or nil when there is none or the lists
+--- disagree. Plain static data - reads no combat state.
+function RotationImport.GetEmpowerTier(spellID)
+    if not spellID then return nil end
+    local SpellDB = cachedSpellDB
+    if not SpellDB then
+        SpellDB = LibStub("JustAC-SpellDB", true)
+        cachedSpellDB = SpellDB
+    end
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    if not specKey then return nil end
+    local m = empowerCache[specKey] or BuildEmpower(specKey)
+    if not m then return nil end
+    local tier = m[spellID]
+    if tier == nil then tier = m[baseID(spellID)] end
+    if tier == false then return nil end   -- contexts disagreed: say nothing
+    return tier
 end
 
 -- A missing context tier falls back to a broader/base one.
