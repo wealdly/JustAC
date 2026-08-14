@@ -3,6 +3,22 @@
 
 ## [Unreleased]
 
+## [5.1.6] - 2026-08-14
+
+### Fixed
+- The low-health colour on your health readout no longer flickers between orange and red
+  about once a second while your health sits still. It was reading the brightness of the
+  game's low-health screen flash, which pulses on its own, as though that were a severity
+  level. There is only one level, so there is now only one colour
+- Defensive suggestions no longer read that same pulse as a sudden emergency and jump a
+  tier while your health is unchanged
+- The tank upkeep button keeps its live timer and stack count when the buff it tracks
+  changes, such as on a spec change. It used to go blank and leave a stray frame behind
+- The queue no longer concludes you have no buffs at all when the game declines to report
+  them, which could make it suggest buffs you are already carrying
+- The queue no longer produces a stream of errors out of combat when the game hides which
+  buff you are carrying
+
 ## [5.1.5] - 2026-08-12
 
 ### Added

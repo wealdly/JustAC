@@ -227,14 +227,32 @@ function UIMaintenanceAura.Attach(icon, entry)
 
     local ov = icon._maintAura
     if ov and ov.aura ~= entry.aura then
-        -- A different buff needs a new container: the slot's filter is fixed at AddAuraSlot and
-        -- there is no way to retire one, so orphan the old container. Runs on spec change, not
-        -- per frame. Guarded on `container` because a remembered REFUSAL stores false here.
+        -- RETARGET the existing slot rather than orphaning the container. A slot's filter is
+        -- NOT fixed at AddAuraSlot - SetAuraSlotCandidateFilters re-points it by slot key (its
+        -- siblings SetAuraSlotFilterString / SetAuraSlotSortMethod do the same). The old note
+        -- here said there was no way to retire one; that is true of aura GROUPS, not slots, and
+        -- believing it leaked a parentless container on every spec or spell change.
+        -- The widgets are already built and already registered, so only the filter moves.
+        local retargeted = false
         if ov.container then
-            pcall(ov.container.Hide, ov.container)
-            pcall(ov.container.SetParent, ov.container, nil)
+            retargeted = pcall(ov.container.SetAuraSlotCandidateFilters, ov.container, "jacMaint",
+                { includeSpellIDs = { [entry.aura] = true } })
         end
-        icon._maintAura, ov = nil, nil
+        if retargeted then
+            ov.aura = entry.aura
+            -- The new buff may want a different pair of displays (`sweep`/`count`, already
+            -- resolved for this entry above). Only ever NARROWS what is built - a widget the
+            -- engine drives stays driven, we simply stop claiming it, and the renderer
+            -- re-reads these every pass.
+            ov.sweep = ov.sweep and sweep
+            ov.count = ov.count and count
+        else
+            if ov.container then
+                pcall(ov.container.Hide, ov.container)
+                pcall(ov.container.SetParent, ov.container, nil)
+            end
+            icon._maintAura, ov = nil, nil
+        end
     end
     if not ov then
         -- Built through the table so Init can hand a display back when the engine refuses it;

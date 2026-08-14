@@ -265,15 +265,14 @@ ResolveHealthState = function()
             isLow = healthBand <= BAND_MAJOR
         end
     end
-    -- 3) The vignette. Two levels only - see the header.
+    -- 3) The vignette. ONE level: Blizzard's frame has a single 35% threshold and no
+    -- critical tier, so this rung can reach BAND_MAJOR and never BAND_PANIC. It used to
+    -- claim a second level by reading the frame's pulse alpha, which was the animation's
+    -- phase rather than a severity - see GetLowHealthState.
     if isLow == nil then
-        local low, isCritical
-        if BlizzardAPI and BlizzardAPI.GetLowHealthState then
-            low, isCritical = BlizzardAPI.GetLowHealthState()
-        end
-        healthBand = (isCritical == true and BAND_PANIC)
-            or (low == true and BAND_MAJOR)
-            or BAND_HEALTHY
+        local low = BlizzardAPI and BlizzardAPI.GetLowHealthState
+            and BlizzardAPI.GetLowHealthState()
+        healthBand = (low == true and BAND_MAJOR) or BAND_HEALTHY
         healthBandSource = "vignette"
         isLow = healthBand <= BAND_MAJOR
     end

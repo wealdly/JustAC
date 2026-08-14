@@ -1618,14 +1618,11 @@ function UINameplateOverlay.UpdateHealthBar()
     local healthPercent, isEstimated = BlizzardAPI.GetPlayerHealthPercentSafe()
 
     if isEstimated then
-        -- In 12.0 combat UnitHealth() is secret; use binary low-health states for colour only.
-        local lowState, critState = false, false
-        if BlizzardAPI.GetLowHealthState then
-            lowState, critState = BlizzardAPI.GetLowHealthState()
-        end
-        if critState then
-            r, g, b = 0.8, 0.1, 0.1
-        elseif lowState then
+        -- In 12.0 combat UnitHealth() is secret, so this is the ONE binary the vignette
+        -- gives us: under Blizzard's 35% line, or not. There is no red tier here - the
+        -- second colour used to come from the vignette's pulse alpha, which flipped this
+        -- bar between orange and red about once a second at a steady health value.
+        if BlizzardAPI.GetLowHealthState and BlizzardAPI.GetLowHealthState() then
             r, g, b = 0.9, 0.5, 0.1
         end
     elseif healthPercent then

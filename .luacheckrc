@@ -181,7 +181,6 @@ read_globals = {
   "UnitHealthPercent",
   "UnitInRange",
   "UnitIsConnected",
-  "UnitIsCrowdControlled",
   "UnitIsDead",
   "UnitIsDeadOrGhost",
   "UnitIsMinion",

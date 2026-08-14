@@ -16,7 +16,6 @@ local pcall   = pcall
 local pairs   = pairs
 
 local C_NamePlate           = C_NamePlate
-local UnitIsCrowdControlled = UnitIsCrowdControlled
 local UnitCastingInfo       = UnitCastingInfo
 local UnitChannelInfo       = UnitChannelInfo
 local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
@@ -378,11 +377,18 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
 
         if isCasting then
             local targetCCImmune  = BlizzardAPI.IsTargetCCImmune()
-            -- Engine-classified CC check (plain instance-ID count, validated 2026-07-24)
-            -- backs the speculative global, which has never been confirmed to exist.
-            local targetAlreadyCC = (UnitIsCrowdControlled and UnitIsCrowdControlled("target"))
-                or (BlizzardAPI.IsUnitCrowdControlled and BlizzardAPI.IsUnitCrowdControlled("target"))
-                or false
+            -- Is the target ALREADY crowd-controlled? In combat: unanswerable, and this
+            -- reads false there. GetUnitAuraInstanceIDs carries RequiresUnitAuraAccess as
+            -- of 12.1.0, so IsUnitCrowdControlled's pcall fails and it fails open by
+            -- design. A speculative `UnitIsCrowdControlled` global used to be OR'd in
+            -- ahead of it; it does not exist in any client build and never has, so it
+            -- only made a dead check look like two.
+            -- Fail-open is still the right direction - suppressing every CC suggestion in
+            -- combat is worse than occasionally offering one onto a CC'd target - but it
+            -- IS a live cost: we can burn a diminishing-returns window. Out of combat the
+            -- check works normally.
+            local targetAlreadyCC = (BlizzardAPI.IsUnitCrowdControlled
+                and BlizzardAPI.IsUnitCrowdControlled("target")) or false
             local canCC = not targetCCImmune and not targetAlreadyCC
             -- kickPrefer / ccPrefer: when cast is shielded, only CC spells can stop it.
             local ccOnly = not interruptible and canCC

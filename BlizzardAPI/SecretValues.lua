@@ -113,8 +113,14 @@ end
 -- Branchable "is this (possibly secret) amount zero or absent?" - the
 -- scratch-FontString emptiness gate, in-game validated 2026-08-10
 -- (`/jac inspect textlaunder`). The legal mechanics it composes:
---   * C_StringUtil.TruncateWhenZero accepts secrets and yields nil for zero,
---     a (secret) string otherwise - the engine makes the only decision.
+--   * C_StringUtil.TruncateWhenZero accepts secrets and yields an EMPTY STRING for
+--     zero, a (secret) string otherwise - the engine makes the only decision. It is
+--     documented Nilable = false, so it never returns nil; keep the `or ""` anyway,
+--     it costs nothing and the contract could widen.
+--   * The nil this gate actually branches on comes one step later, from GetText's
+--     empty-collapse - and THAT is measured, not contracted (GetText is likewise
+--     documented Nilable = false). In-game 2026-08-10. Treat it as a field fact with
+--     a self-test behind it, never as a guarantee.
 --   * SetText("") reads back as PLAIN nil even on a widget whose Text aspect
 --     is already poisoned, so ONE pooled widget is safe here: the sticky-aspect
 --     trap only bites PLAIN-content readback, which this never does.
@@ -138,8 +144,7 @@ local function ZeroProbe()
     return zeroScratch:GetText()
 end
 
-local function GetZeroScratch()
-    if zeroScratch then return zeroScratch end
+local function NewScratchFontString()
     local ok, holder = pcall(CreateFrame, "Frame")
     if not ok or not holder then return nil end
     holder:Hide()
@@ -150,11 +155,53 @@ local function GetZeroScratch()
     if not fs:GetFontObject() and not fs:GetFont() then
         pcall(fs.SetFontObject, fs, GameFontNormal)
     end
+    return fs
+end
+
+local function GetZeroScratch()
+    if zeroScratch then return zeroScratch end
+    local fs = NewScratchFontString()
+    if not fs then return nil end
     -- Probed ONCE here, not per call: a per-probe pcall would double the cost of
     -- the hot path to guard a method that either exists and works or does not.
     zeroCanClear = fs.ClearText ~= nil and pcall(fs.ClearText, fs) or false
     zeroScratch = fs
     return fs
+end
+
+-- Does GetText still hand text back AT ALL? A dead readback and a genuine zero arrive as
+-- the same nil, so without this the gate would answer "zero" for every secret in the game.
+--
+-- KNOW WHAT THIS DOES AND DOES NOT CATCH - it is a partial guard, deliberately kept.
+--   CATCHES a CALLER-level denial: GetText stops answering this addon regardless of widget.
+--     That is the shape 12.1.0 used on the aura family (RequiresUnitAuraAccess), so it is a
+--     real thing that happens, and a clean widget detects it.
+--   MISSES an OBJECT-conditional denial. RequiresFontStringTextAccess - the predicate the
+--     two getters either side of GetText already carry - is a property of the OBJECT, so a
+--     widget that never held a secret would keep answering while the poisoned one returned
+--     nothing. This check would say "fine" and the gate would still lie.
+-- Catching that second shape means probing with a widget that HAS held a secret, i.e.
+-- secretwrap'd input, and it would need a THIRD scratch string: the plain == compare below
+-- must never run against a readback from a widget that has carried a secret.
+-- Not built, because there is no present-day defect - GetText carries only
+-- SecretReturnsForAspect{Text} today, no Requires* predicate at all - and the fix would rest
+-- on a schema flag that appears nowhere in the generated docs. Revisit if GetText's
+-- annotations change; that is the trigger, not a hunch.
+--
+-- Its OWN widget, never given a secret. The note above explains that the sticky Text aspect
+-- only bites PLAIN-content readback - which is exactly what this is - so this test must
+-- never run on the poisoned one. Same shape as BuildStepCurve's self-test: plain inputs,
+-- proving the technique before it is trusted.
+local checkScratch
+local CHECK_TEXT = "1"
+local function TextReadbackWorks()
+    if checkScratch == nil then checkScratch = NewScratchFontString() or false end
+    if not checkScratch then return false end
+    local ok, back = pcall(function()
+        checkScratch:SetText(CHECK_TEXT)
+        return checkScratch:GetText()
+    end)
+    return ok and back == CHECK_TEXT
 end
 
 function BlizzardAPI.IsSecretZero(v)
@@ -170,9 +217,26 @@ function BlizzardAPI.IsSecretZero(v)
     local ok, text = pcall(ZeroProbe)
     zeroProbeArg = nil          -- never hold a secret alive in an upvalue
     if not ok then return nil end
-    -- Truthiness on a (secret) string is legal - the non-boolean rule. Empty text
-    -- comes back as plain nil, which is the zero answer.
-    return not text
+    -- Truthiness on a (secret) string is legal - the non-boolean rule.
+    --
+    -- Text CAME BACK: the readback demonstrably works, so this is a real non-zero and
+    -- no verification is needed. The common branch stays exactly as cheap as before.
+    if text then return false end
+    -- Text did NOT come back, and that is AMBIGUOUS - a genuine zero and a GetText that
+    -- has stopped answering are the same nil. Only here is the extra round-trip worth
+    -- paying for. Deliberately live rather than cached: the access predicates flip at
+    -- combat edges, so a once-per-session check would pass out of combat and then let
+    -- this lie for the whole fight, which is the exact failure it exists to catch.
+    if not TextReadbackWorks() then return nil end
+    return true
+end
+
+--- Is the zero-gate's readback still answering? Exported so the failure it guards against
+--- is REPORTABLE: without this, a dead readback and a gate that was never available both
+--- present as "no answer", and the difference decides whether a patch broke the layer or
+--- the client simply never had it. Plain inputs, no secret - safe to call anywhere.
+function BlizzardAPI.IsTextReadbackWorking()
+    return TextReadbackWorks()
 end
 
 --- 12.1.0: GetAuraDataByIndex is ACCESS-DENIED to a tainted caller while auras are secret -
@@ -215,7 +279,17 @@ function BlizzardAPI.GetAuras(unit, filter)
     local list = {}
     for i = 1, 40 do
         local ok, data = pcall(byIndex, unit, i, filter)
-        if not ok or not data then break end
+        if not ok then
+            -- DENIED, not empty. 12.1.0 made these calls throw for a tainted caller
+            -- (RequiresUnitAuraAccess), and a denial refuses index 1 exactly like it
+            -- refuses index 40. Returning the empty `list` here hands back a TRUTHY
+            -- table of length 0, which every `if not list then` guard waves through
+            -- and every counter reads as a confident "no such auras" - turning this
+            -- function's whole fail-open contract into its opposite. Nil means
+            -- "could not tell", which is what the callers are written against.
+            return i > 1 and list or nil
+        end
+        if not data then break end
         list[i] = data
     end
     return list
