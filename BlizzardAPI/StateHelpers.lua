@@ -353,22 +353,26 @@ end
 -- Low Health Detection via LowHealthFrame (works when UnitHealth() is secret)
 --------------------------------------------------------------------------------
 
+--- Is the player under Blizzard's low-health threshold? ONE boolean, because that is all
+--- the vignette encodes: LowHealthFrameMixin has a single `lowHealthPercentStart = .35`
+--- and no critical tier at all.
+---
+--- This used to also report severity from the frame's ALPHA, which was noise. The frame
+--- runs `pulseAnim` as a looping BOUNCE from .75 to .2 over 0.524s, so its alpha sweeps
+--- its whole range about twice a second and both display states straddle any cut you pick
+--- (LOW_HEALTH animates .15-1.0, FULLSCREEN .2-.75). An `alpha > 0.5` test therefore
+--- sampled the animation's PHASE, not the player's health, and flipped roughly once a
+--- second at a fixed health value.
+---
+--- Caveat kept deliberately, because it is not fixable from here: DetermineFlashState
+--- returns FULLSCREEN from `inCombat` + the screenEdgeFlash CVar + GetUIPanel("fullscreen")
+--- with NO health condition, so a true reading is "the vignette is up", which is USUALLY
+--- but not always low health. It is still the only binary that survives combat secrecy,
+--- and it is consumed as the last rung of a ladder that has already tried better sources.
 function BlizzardAPI.GetLowHealthState()
     local frame = LowHealthFrame ---@diagnostic disable-line: undefined-global
-    if not frame then
-        return false, false, 0
-    end
-
-    local isShown = frame:IsShown()
-    if not isShown then
-        return false, false, 0
-    end
-
-    -- Alpha indicates severity (~0.3-0.5 at 35%, ~0.8-1.0 at critical)
-    local alpha = frame:GetAlpha() or 0
-    local isCritical = alpha > 0.5
-
-    return true, isCritical, alpha
+    if not frame then return false end
+    return frame:IsShown() and true or false
 end
 
 --------------------------------------------------------------------------------
@@ -1687,16 +1691,15 @@ function BlizzardAPI.GetPlayerHealthPercentSafe()
         return exactPct, false
     end
 
-    local isLow, isCritical, alpha = BlizzardAPI.GetLowHealthState()
-    if isCritical then
-        local pct = 20 - (alpha - 0.5) * 30
-        return math_max(5, math_min(20, pct)), true
-    elseif isLow then
-        local pct = 35 - alpha * 30
-        return math_max(20, math_min(35, pct)), true
-    else
-        return 100, true
-    end
+    -- A flat value per side of the one threshold we actually have. The previous version
+    -- interpolated a percentage out of the vignette's ALPHA, which is an animation phase
+    -- (see GetLowHealthState) - it returned a number that swung across a 15-point range
+    -- about twice a second while the player's health sat still. 30 is not a measurement,
+    -- it is "somewhere under the 35% line", which is the entire content of the signal;
+    -- callers that need better must use the threshold gate or an exact percent, and the
+    -- `estimated` flag is how they tell. DefensiveEngine already refuses this branch
+    -- outright (it gates on `estimated == false`).
+    return BlizzardAPI.GetLowHealthState() and 30 or 100, true
 end
 
 --------------------------------------------------------------------------------

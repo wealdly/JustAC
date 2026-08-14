@@ -985,8 +985,62 @@ function ActionBarScanner.GetMacroHotkey(macroName)
     return ""
 end
 
+--- Walk the hotkey chain for one spell and report where it breaks, for
+--- /jac inspect hotkeys. Five links each return nil independently and every one of them
+--- surfaces on screen as the same thing - a missing keybind - so a report of "no hotkey"
+--- cannot be acted on without knowing WHICH link failed.
+--- Runs the real functions rather than a re-implementation: a diagnostic that reasons about
+--- a copy of the logic ends up describing a code path production does not take.
+--- @return table { name, slot, isMacro, macroName, modifiers, baseKey, final }
+function ActionBarScanner.DebugResolveHotkey(spellID)
+    local out = { }
+    if not spellID then return out end
+    local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+    out.name = info and info.name or nil
+    if not out.name then return out end          -- link 1: no spell info
+
+    local slot = FindSpellInActions(spellID, out.name)   -- links 2-3: mapping + scan
+    out.slot = slot
+    if not slot then return out end
+
+    -- link 4: is this a MACRO slot, and does the parse still resolve our spell? A modifier
+    -- branch lives or dies here, and this is the link the channel report points at.
+    local aType = BlizzardAPI and BlizzardAPI.GetActionInfo and BlizzardAPI.GetActionInfo(slot)
+    out.isMacro = (aType == "macro")
+    if out.isMacro then
+        local MP = LibStub("JustAC-MacroParser", true)
+        out.macroName = GetActionText and GetActionText(slot) or nil
+        local entry = MP and MP.GetMacroSpellInfo and MP.GetMacroSpellInfo(slot, spellID, out.name)
+        out.macroFound = entry ~= nil
+        out.modifiers = entry and entry.modifiers or nil
+    end
+
+    out.baseKey = GetOptimizedKeybind(slot)       -- link 5: the slot's binding
+    out.final = ActionBarScanner.GetSpellHotkey(spellID)
+    return out
+end
+
+--- Hotkey-cache health, for /jac inspect hotkeys. Counters only, no gameplay effect.
+--- The wipe COUNT is the interesting one: ACTIONBAR_SLOT_CHANGED fires constantly in some
+--- situations, every one of those full-wipes spellSlotCache, and the forward-override scan
+--- in GetSpellHotkey can only resolve an aura-driven transform by iterating that table. A
+--- cache wiped faster than it warms therefore resolves nothing, and from outside that is
+--- indistinguishable from "this spell has no keybind".
+local hotkeyWipeCount, lastHotkeyWipeAt = 0, 0
+function ActionBarScanner.GetHotkeyCacheStats()
+    local hk, sl = 0, 0
+    for _ in pairs(spellHotkeyCache) do hk = hk + 1 end
+    for _ in pairs(spellSlotCache) do sl = sl + 1 end
+    return {
+        hotkeyEntries = hk, slotEntries = sl, valid = spellHotkeyCacheValid,
+        wipes = hotkeyWipeCount, sinceWipe = GetTime() - lastHotkeyWipeAt,
+        sinceRefresh = GetTime() - lastHotkeyRefreshTime,
+    }
+end
+
 -- Soft invalidation: mark invalid but keep values to prevent flicker
 function ActionBarScanner.InvalidateHotkeyCache()
+    hotkeyWipeCount, lastHotkeyWipeAt = hotkeyWipeCount + 1, GetTime()
     -- Full wipe so stale slot→hotkey entries don't get returned via the
     -- "return previous value while throttled" fast path in GetSpellHotkey.
     -- Partial invalidation (spellHotkeyCacheValid=false only) left stale

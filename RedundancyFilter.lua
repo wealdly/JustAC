@@ -348,7 +348,10 @@ function RedundancyFilter.OnUnitAuraUpdate(updateInfo)
         end
 
         for _, auraData in ipairs(added) do
-            local instanceID = auraData.auraInstanceID
+            -- 12.1.0: auraInstanceID is no longer NeverSecret. It is used as a key into
+            -- plain Lua tables below, and indexing with a secret key throws - so an
+            -- unreadable id means "can't map this aura", not "index it anyway".
+            local instanceID = BlizzardAPI.Unsecret(auraData.auraInstanceID)
             if instanceID then
                 local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
                 local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
@@ -680,8 +683,9 @@ RefreshAuraCache = function()
         for i = 1, #playerAuras do
             local auraData = playerAuras[i]
 
-            -- auraInstanceID is NeverSecret in 12.0 - always readable
-            local instanceID = auraData.auraInstanceID
+            -- Secret since 12.1.0 - see OnUnitAuraUpdate. nil here just drops the
+            -- instance-map path; the whitelist and trusted-cache paths still run.
+            local instanceID = BlizzardAPI.Unsecret(auraData.auraInstanceID)
             local spellIdIsSecret = BlizzardAPI.IsSecretValue(auraData.spellId)
             local nameIsSecret = BlizzardAPI.IsSecretValue(auraData.name)
             
@@ -790,19 +794,27 @@ RefreshAuraCache = function()
         
         -- Out of combat, we have authoritative data - prune stale entries.
         -- Only prune against a list we actually got: treating a failed enumeration
-        -- as "nothing is active" would wipe every instance map wholesale.
+        -- as "nothing is active" would wipe every instance map wholesale. A secret
+        -- instance id is exactly that kind of partial read, so it blocks the prune too.
         local liveAuras = BlizzardAPI.GetAuras and BlizzardAPI.GetAuras("player", "HELPFUL")
         if liveAuras then
             local activeInstances = {}
+            local partialRead = false
             for i = 1, #liveAuras do
-                local instanceID = liveAuras[i].auraInstanceID
-                if instanceID then activeInstances[instanceID] = true end
+                local instanceID = BlizzardAPI.Unsecret(liveAuras[i].auraInstanceID)
+                if instanceID then
+                    activeInstances[instanceID] = true
+                else
+                    partialRead = true
+                end
             end
-            for instanceID in pairs(instanceToSpellMap) do
-                if not activeInstances[instanceID] then
-                    instanceToSpellMap[instanceID] = nil
-                    instanceToNameMap[instanceID] = nil
-                    instanceToTimingMap[instanceID] = nil
+            if not partialRead then
+                for instanceID in pairs(instanceToSpellMap) do
+                    if not activeInstances[instanceID] then
+                        instanceToSpellMap[instanceID] = nil
+                        instanceToNameMap[instanceID] = nil
+                        instanceToTimingMap[instanceID] = nil
+                    end
                 end
             end
         end

@@ -204,6 +204,7 @@ local INSPECT_TOPICS = {
     { "channels",    "ChannelMatrix",            nil,  "Laundering matrix: feed a secret to every sink, read back every getter (in combat)" },
     { "aurapanels",  "AuraPanelProbe",           nil,  "Blizzard's own aura panels: is each one live, and what do its buttons expose?" },
     { "audioalerts", "AudioAlertProbe",          nil,  "Combat audio alerts: is it on, and are its stored health/power percents readable?" },
+    { "hotkeys",     "HotkeyProbe",              nil,  "Why a queue icon has no keybind (run it WHILE channeling)" },
     { "enragelog",   "EnrageLog",                "[off|clear]", "Log enrage detections to SavedVariables" },
     { "castdiag",    "CastDiagnostics",          nil,  "Arm a one-shot cast-interruptibility probe" },
     { "chargediag",  "ChargeDiagnostics",        "[spell]", "Arm a 60s charge-event/secrecy probe" },
@@ -1424,11 +1425,16 @@ function DebugCommands.InterruptDiagnostics(addon)
     -- Already crowd-controlled: this alone suppresses every CC suggestion, and on a
     -- practice mob you CC repeatedly it is the most likely reason a working substitution
     -- looks intermittent - the second cast genuinely should not be offered a CC.
-    local alreadyCC = (UnitIsCrowdControlled and UnitIsCrowdControlled("target"))
-        or (BlizzardAPI and BlizzardAPI.IsUnitCrowdControlled and BlizzardAPI.IsUnitCrowdControlled("target"))
-        or false
-    addon:Print("Target already CC'd: " .. tostring(alreadyCC)
-        .. (alreadyCC and "  |cffff6600<- CC suggestions suppressed while true|r" or ""))
+    -- IN COMBAT THIS CANNOT ANSWER: GetUnitAuraInstanceIDs is RequiresUnitAuraAccess as of
+    -- 12.1.0, so it fails open to false and a CC is offered onto an already-CC'd target.
+    -- Reported as "unavailable" rather than "false" so the probe does not present a
+    -- fail-open default as a measurement.
+    local ccKnown = not (BlizzardAPI and BlizzardAPI.AreAurasSecret and BlizzardAPI.AreAurasSecret())
+    local alreadyCC = (BlizzardAPI and BlizzardAPI.IsUnitCrowdControlled
+        and BlizzardAPI.IsUnitCrowdControlled("target")) or false
+    addon:Print("Target already CC'd: "
+        .. (ccKnown and tostring(alreadyCC) or "|cffff6600unavailable in combat|r (reads false)")
+        .. (ccKnown and alreadyCC and "  |cffff6600<- CC suggestions suppressed while true|r" or ""))
 
     -- The two debounce windows. Both are deliberate, both silence the slot, and neither
     -- was visible here before - so a report of "inconsistent" could not be told apart from
@@ -6853,6 +6859,91 @@ function DebugCommands.AudioAlertProbe(addon)
     addon:Print("==============================================")
 end
 
+--------------------------------------------------------------------------------
+-- /jac inspect hotkeys - why a queue icon has no keybind
+--------------------------------------------------------------------------------
+-- Reported 2026-08-12: while CHANNELING, the next recommendation shows no hotkey, and it
+-- comes back the moment the channel ends. Three causes look identical on screen and this
+-- probe exists to tell them apart, because guessing between them is how the wrong one gets
+-- "fixed":
+--
+--   1. THE SPELL GENUINELY HAS NO BINDING. Nothing is broken; the recommendation is an
+--      ability the player has not placed on a bar. `slot` below is nil every pass.
+--   2. CACHE STARVATION. ACTIONBAR_SLOT_CHANGED fires constantly in some situations, and
+--      every one of those FULL-WIPES spellSlotCache. The forward-override scan in
+--      GetSpellHotkey - the only route that resolves an aura-driven transform - can only
+--      work by iterating that table, so a cache wiped faster than it warms resolves
+--      nothing. Watch `wipes` climbing and `slotEntries` staying near zero.
+--   3. REFRESH THROTTLE. `lastHotkeyRefreshTime` is ONE module-level timestamp shared by
+--      every spell, so the first lookup each interval consumes the refresh and every other
+--      spell is served its stale value - which for a spell cached as "" is "" again.
+--      Watch `sinceRefresh` staying pinned below the interval.
+--
+-- Run it WHILE the symptom is on screen. Run it again after the channel ends and diff the
+-- two: what CHANGES between them is the cause, and any single reading is just a snapshot.
+function DebugCommands.HotkeyProbe(addon)
+    addon:Print("=== hotkey resolution ===")
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    if not ABS then addon:Print("|cffff6600ActionBarScanner unavailable|r") return end
+
+    local channeling = PlayerCastingBarFrame and PlayerCastingBarFrame.channeling == true
+    local casting    = PlayerCastingBarFrame and PlayerCastingBarFrame.casting == true
+    addon:Print(string.format("state: channeling=%s casting=%s combat=%s",
+        tostring(channeling), tostring(casting),
+        tostring(UnitAffectingCombat and UnitAffectingCombat("player") or false)))
+
+    local st = ABS.GetHotkeyCacheStats and ABS.GetHotkeyCacheStats()
+    if st then
+        -- slotEntries near zero with a climbing wipe count IS cause 2; a healthy cache with
+        -- sinceRefresh pinned low is cause 3; a healthy cache and a stable count leaves 1.
+        addon:Print(string.format("cache: hotkeys=%d slots=%d valid=%s  wipes=%d"
+            .. "  sinceWipe=%.1fs  sinceRefresh=%.2fs",
+            st.hotkeyEntries, st.slotEntries, tostring(st.valid), st.wipes,
+            st.sinceWipe, st.sinceRefresh))
+        if st.slotEntries == 0 then
+            addon:Print("   |cffff6600slot cache EMPTY|r - the override scan has nothing to"
+                .. " search, so any aura-driven transform resolves to no keybind")
+        end
+    end
+
+    -- Per icon: what it is showing, what it cached, and what a FRESH lookup says right now.
+    -- The cached-vs-fresh split matters: equal-and-empty means the lookup genuinely fails,
+    -- while cached-empty but fresh-good means we are serving a stale blank.
+    local icons = addon.spellIcons
+    for i = 1, math.min(icons and #icons or 0, 4) do
+        local icon = icons[i]
+        local sid = icon and icon.spellID
+        if sid then
+            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
+            local fresh = ABS.GetSpellHotkey and ABS.GetSpellHotkey(sid) or "?"
+            local slot  = ABS.GetSlotForSpell and ABS.GetSlotForSpell(sid)
+            local shownText = icon.hotkeyText and icon.hotkeyText:GetText() or ""
+            addon:Print(string.format("  [%d] %-22s cached=%-8s fresh=%-8s slot=%-5s onScreen=%s",
+                i, (info and info.name) or ("id " .. sid),
+                (icon.cachedHotkey ~= nil and icon.cachedHotkey ~= "") and icon.cachedHotkey or "<empty>",
+                (fresh ~= "") and fresh or "<empty>",
+                tostring(slot or "none"),
+                (shownText ~= "") and shownText or "<blank>"))
+            -- WHICH LINK BROKE. Five of them fail independently and all five look the same
+            -- on screen, so the chain is printed whenever the answer came back empty.
+            if fresh == "" and ABS.DebugResolveHotkey then
+                local r = ABS.DebugResolveHotkey(sid)
+                addon:Print(string.format("       chain: name=%s slot=%s macro=%s%s parse=%s"
+                    .. " mods=%s baseKey=%s",
+                    r.name and "ok" or "|cffff0000NIL|r",
+                    r.slot and tostring(r.slot) or "|cffff0000NIL|r",
+                    tostring(r.isMacro or false),
+                    r.macroName and ("(" .. r.macroName .. ")") or "",
+                    r.isMacro and (r.macroFound and "ok" or "|cffff0000NIL|r") or "-",
+                    r.modifiers and tostring(r.modifiers) or "-",
+                    r.baseKey and tostring(r.baseKey) or "|cffff0000NIL|r"))
+            end
+        end
+    end
+    addon:Print("Run again AFTER the channel ends and compare - the field that changes is the cause.")
+    addon:Print("=========================")
+end
+
 function DebugCommands.EnrageLog(addon, arg)
     arg = arg and arg:lower() or nil
     if arg == "clear" then
@@ -7573,6 +7664,17 @@ function DebugCommands.TextLaunderProbe(addon)
     -- This file has NO file-local BlizzardAPI - resolve it here (a bare reference
     -- is a nil global and silently skipped this whole block once already).
     local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    -- The gate's own self-check, as the LIVE gate sees it right now. The legs above test
+    -- the mechanism on a throwaway widget; this is whether IsSecretZero currently trusts
+    -- its readback enough to answer at all. They can disagree: if this says NO, every
+    -- zero-gate answer in the addon is nil and ~29 threshold sites are on their fallbacks
+    -- - which is the correct behaviour, but silent without this line.
+    if BAPI and BAPI.IsTextReadbackWorking then
+        local live = BAPI.IsTextReadbackWorking()
+        addon:Print("live gate self-check: GetText readback "
+            .. (live and "|cff2ecc71answers|r - zero-gate trusted"
+                     or "|cffff0000DEAD|r - zero-gate returns nil, everything is on fallbacks"))
+    end
     if not UnitHealthMissing then
         addon:Print("applied: SKIPPED - UnitHealthMissing API not present on this client")
     elseif not (BAPI and BAPI.IsSecretZero) then
@@ -7686,11 +7788,16 @@ end
 -- maxEventDuration filter, which makes "how many events land within N seconds" a
 -- plain count - branchable with no curve at all.
 --
--- The open question this probe exists to answer: can the severity/icon class be
--- recovered anyway? GetEventColor(eventID, colorCurve, trigger) is shaped exactly
--- like GetAuraDispelTypeColor, which this addon already uses to isolate Enrage via
--- a selector curve. If the same trick lands here, "a DEADLY / TANK-ROLE event is
--- due in N seconds" becomes available - which is the cue a tank actually wants.
+-- CLASSIFICATION IS A CLOSED QUESTION - do not spend a raid night on it. This
+-- comment used to say GetEventColor was "shaped exactly like GetAuraDispelTypeColor"
+-- and that the Enrage selector-curve trick should transfer. It is not and it does
+-- not: the real signature is GetEventColor(eventID, overrideTrigger) - there is NO
+-- curve parameter to pass - and it carries SecretArguments = "NotAllowed" plus
+-- SecretWhenEncounterEvent, so the return is secret on exactly the events we care
+-- about and we cannot hand it a selector either. The dispel-type route needed BOTH
+-- halves; neither is here.
+--
+-- So this probe measures the TIMING signal, which is the half that works.
 --------------------------------------------------------------------------------
 function DebugCommands.EncounterTimelineProbe(addon)
     local ET = C_EncounterTimeline ---@diagnostic disable-line: undefined-global
@@ -7716,15 +7823,46 @@ function DebugCommands.EncounterTimelineProbe(addon)
 
     -- THE BRANCHABLE TIMING SIGNAL. A count of events inside a window, with no
     -- curve and no secret: this alone is enough to raise defensive priority.
+    --
+    -- Arg 4 is excludeHiddenEvents and it is FALSE on purpose. It defaults to true,
+    -- which drops events the user's own display settings hide (long countdowns, say).
+    -- That is right for drawing a timeline and wrong for asking "is something about
+    -- to hit me" - a mechanic does not stop landing because it was scrolled off a
+    -- bar. Passing true here under-reported the danger and the count silently
+    -- depended on a display preference.
+    -- Arg 3 is excludeTerminalStates, left TRUE: Canceled/Finished events are not
+    -- coming, and dropping them is what makes a paused mechanic fall out of the
+    -- window on its own with no state for us to hold.
+    --
+    -- source == Encounter (0) filters to mechanics the INSTANCE scripted. Script (1)
+    -- and EditMode (2) are entries any addon can add - counting those would let one
+    -- addon's decorative timeline drive our defensive priority. `source` is
+    -- NeverSecret, so the compare is safe.
+    -- IsEventBlocked drops mechanics whose cast conditions are not met.
+    local function DangerCount(window)
+        local list = call("GetSortedEventList", nil, window, true, false)
+        if type(list) ~= "table" then return nil, nil end
+        local real, blocked = 0, 0
+        for i = 1, #list do
+            local id = list[i]
+            local info = call("GetEventInfo", id)
+            if info and info.source == 0 then
+                if call("IsEventBlocked", id) == true then blocked = blocked + 1
+                else real = real + 1 end
+            end
+        end
+        return real, blocked, #list
+    end
     for _, window in ipairs({ 3, 5, 10 }) do
-        local list = call("GetSortedEventList", nil, window, true, true)
-        local n = (type(list) == "table") and #list or nil
-        addon:Print(string.format("  events within %2ds: %s%s", window,
-            tostring(n),
-            (n and n > 0) and "  |cffff8800<- something is coming|r" or ""))
+        local real, blocked, raw = DangerCount(window)
+        addon:Print(string.format("  events within %2ds: %s encounter%s%s%s", window,
+            tostring(real),
+            (blocked and blocked > 0) and string.format(" (+%d blocked)", blocked) or "",
+            (raw and real and raw ~= real) and string.format("  |cff888888[%d total incl. script/editmode]|r", raw) or "",
+            (real and real > 0) and "  |cffff8800<- something is coming|r" or ""))
     end
 
-    local list = call("GetSortedEventList", 4, 30, true, true)
+    local list = call("GetSortedEventList", 4, 30, true, false)
     if type(list) ~= "table" or #list == 0 then
         addon:Print("|cff888888No events on the timeline right now - run this during a boss fight.|r")
         return
@@ -7743,8 +7881,9 @@ function DebugCommands.EncounterTimelineProbe(addon)
             if BAPI and BAPI.IsSecretValue and BAPI.IsSecretValue(v) then return "|cffff6600secret|r" end
             return "|cff2ecc71" .. tostring(v) .. "|r"
         end
-        addon:Print(string.format("  #%d track=%s  dur=%s  severity=%s  icons=%s  spellID=%s",
+        addon:Print(string.format("  #%d track=%s src=%s blocked=%s  dur=%s  severity=%s  icons=%s  spellID=%s",
             i, tostring(track),
+            field(info and info.source), tostring(call("IsEventBlocked", id)),
             field(info and info.duration), field(info and info.severity),
             field(info and info.icons), field(info and info.spellID)))
         -- Does the event's own timer threshold-gate like every other duration?
@@ -7755,9 +7894,12 @@ function DebugCommands.EncounterTimelineProbe(addon)
                 tostring(BAPI.IsDurationBelowSeconds(timer, 8))))
         end
     end
-    addon:Print("|cff00ccffWhat to look for:|r if severity/icons print |cffff6600secret|r, the class"
-        .. " filter needs the GetEventColor selector-curve route (same shape as the Enrage probe)."
-        .. " If they print green, a big-hit filter is a plain table read and we are done.")
+    addon:Print("|cff00ccffWhat to look for:|r dur/src/blocked print |cff2ecc71green|r - that is the"
+        .. " whole usable signal, and the encounter count above is what a defensive would key off."
+        .. " severity/icons/spellID printing |cffff6600secret|r is EXPECTED and has no workaround"
+        .. " (see the header); it means we can know WHEN, never WHAT.")
+    addon:Print("|cff888888Scope: instance bosses only - no trash, no open world, no dummy. A zero"
+        .. " count outside an encounter means 'unsupported here', never 'safe'.|r")
 end
 
 --------------------------------------------------------------------------------
@@ -8127,7 +8269,11 @@ function DebugCommands.SimcGateProbe(addon, arg)
                 if g.t == "power" then
                     -- Ask the RUNTIME for the threshold rather than recomputing it -
                     -- a probe that mirrors the logic drifts from it.
-                    local pctVal, pt = SQ.PowerGateThreshold and SQ.PowerGateThreshold(g)
+                    -- Guard THEN call: `local a, b = X and X.fn()` truncates to a single
+                    -- value, so `pt` came back nil and UnitPowerMax below was asked for the
+                    -- player's PRIMARY power rather than this gate's resource.
+                    local pctVal, pt
+                    if SQ.PowerGateThreshold then pctVal, pt = SQ.PowerGateThreshold(g) end
                     local below = pctVal and BAPI.IsUnitPowerBelow
                         and BAPI.IsUnitPowerBelow("player", pctVal, pt)
                     parts[#parts + 1] = string.format("%s%s%s%d [max=%s -> %s%%] below=%s",
@@ -8220,7 +8366,10 @@ function DebugCommands.TopoffWatch(addon, arg)
         local inList = false
         for i = 1, #list do if list[i] == offered then inList = true break end end
 
-        local pct, estimated = BAPI.GetPlayerHealthPercentSafe and BAPI.GetPlayerHealthPercentSafe()
+        -- Guard THEN call - an `and` chain yields one value and dropped `estimated`, so this
+        -- reported an estimate as though it were a measured percent.
+        local pct, estimated
+        if BAPI.GetPlayerHealthPercentSafe then pct, estimated = BAPI.GetPlayerHealthPercentSafe() end
         local state = table.concat({
             "offer=" .. tostring(offered),
             "inList=" .. tostring(inList),
