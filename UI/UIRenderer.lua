@@ -28,7 +28,6 @@ local WAIT_LABEL = ((L and L["WAIT"]) or "WAIT"):lower()
 
 -- Hot path cache
 local GetTime = GetTime
-local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 -- Modern-first item APIs (same signatures); the bare legacy globals may not exist.
@@ -489,15 +488,13 @@ local function CheckSpellRange(icon, spellID, directSlot)
     local inRange
     if directSlot and C_ActionBar_IsActionInRange then
         inRange = C_ActionBar_IsActionInRange(directSlot, "target")
-    elseif C_Spell_IsSpellInRange then
-        inRange = C_Spell_IsSpellInRange(spellID)
+        if inRange ~= nil and BlizzardAPI.IsSecretValue(inRange) then inRange = nil end
+    elseif BlizzardAPI.SpellInRange then
+        inRange = BlizzardAPI.SpellInRange(spellID)   -- tri-state; owns the unit-arg finding
     end
-    if inRange ~= nil and not BlizzardAPI.IsSecretValue(inRange) then
-        icon.cachedOutOfRange = (inRange == false)
-    else
-        icon.cachedOutOfRange = false
-    end
-    return icon.cachedOutOfRange or false
+    -- Fail open: only a confirmed false shows the red state.
+    icon.cachedOutOfRange = (inRange == false)
+    return icon.cachedOutOfRange
 end
 
 --- Update hotkey text color based on out-of-range state.

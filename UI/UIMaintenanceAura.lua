@@ -28,6 +28,7 @@ local UIMaintenanceAura = LibStub:NewLibrary("JustAC-UIMaintenanceAura", 1)
 if not UIMaintenanceAura then return end
 
 local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+local BlizzardAPI    = LibStub("JustAC-BlizzardAPI", true)
 
 local CreateFrame = CreateFrame
 local pcall = pcall
@@ -219,6 +220,14 @@ end
 --- @return boolean ownsSweep, boolean ownsCount
 function UIMaintenanceAura.Attach(icon, entry)
     if not (icon and entry and entry.aura) then return false, false end
+    -- Sample auras (Edit Mode, or any addon previewing aura frames): stand the engine
+    -- display down and let the renderer draw the slot itself, rather than show a timer
+    -- for a buff the player does not have. Polled, not subscribed - this runs every
+    -- pass, so coming back needs no notification.
+    if BlizzardAPI and BlizzardAPI.AreAurasSampled and BlizzardAPI.AreAurasSampled() then
+        UIMaintenanceAura.Detach(icon)
+        return false, false
+    end
     local sweep, count = Wants(entry)
     if not (sweep or count) then
         UIMaintenanceAura.Detach(icon)

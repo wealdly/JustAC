@@ -14,8 +14,6 @@ local UnitIsDead = UnitIsDead
 local UnitCanAttack = UnitCanAttack
 local IsStealthed = IsStealthed
 local IsSpellKnown = IsSpellKnown
-local C_Spell = C_Spell
-local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local ipairs = ipairs
 
 -- Module references (resolved at load time)
@@ -114,14 +112,12 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
     -- Range check: reject only if the spell is confirmed OUT of its OWN range (e.g. target
-    -- beyond Wild Charge's max range). Spellbook IsSpellInRange (non-secret in combat,
-    -- reliable in any form) - the action-slot check proved unreliable. Self-targeted spells
-    -- (Sprint) return nil → not == false → pass. Secret → unknown → pass (fail-safe).
-    if checkRange and C_Spell_IsSpellInRange then
-        local r = C_Spell_IsSpellInRange(spellID, "target")
-        if not (BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(r)) and r == false then
-            return nil
-        end
+    -- beyond Wild Charge's max range). Spellbook range read (non-secret in combat, reliable
+    -- in any form) - the action-slot check proved unreliable. Self-targeted spells (Sprint)
+    -- and unknowns read nil from the tri-state → pass (fail-safe); only a confirmed false rejects.
+    if checkRange and BlizzardAPI.SpellInRange
+       and BlizzardAPI.SpellInRange(spellID) == false then
+        return nil
     end
 
     return resolvedID, spellID

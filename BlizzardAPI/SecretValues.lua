@@ -295,6 +295,38 @@ function BlizzardAPI.GetAuras(unit, filter)
     return list
 end
 
+--------------------------------------------------------------------------------
+-- Aura data provider (12.1+)
+--------------------------------------------------------------------------------
+
+-- AURA_DATA_PROVIDER_SWITCH flips EVERY aura container in the client - ours and
+-- Blizzard's - between the player's real auras and Edit Mode's SAMPLE set. It is global:
+-- one caller of C_UnitAuras.SwitchAuraDataProvider drags everybody along, and Blizzard's
+-- own Edit Mode is one of those callers, so this is a routine state rather than an exotic
+-- one. Any addon that previews aura frames can put us in it too.
+--
+-- It matters here precisely BECAUSE our container displays are the ones we do not paint:
+-- a registered slot is driven by the engine, we never read the aura, so nothing in the
+-- draw path could notice the data went fake. Sampled, they would show a confident timer
+-- on the upkeep button and a cleanse cue on a target that is not enraged.
+--
+-- The payload is a plain bool (SynchronousEvent, Nilable = false), so it is safe to
+-- branch on - unlike the aura data it describes.
+local aurasSampled = false
+local providerFrame = CreateFrame("Frame")
+providerFrame:RegisterEvent("AURA_DATA_PROVIDER_SWITCH")
+providerFrame:SetScript("OnEvent", function(_, _, useRealDataProvider)
+    aurasSampled = (useRealDataProvider == false)
+end)
+
+--- True while aura containers are being fed sample auras instead of the player's own.
+--- Display-only consumers should stand DOWN rather than paint: hiding a container drops
+--- its aura registration and re-reads everything on the way back up, so the next render
+--- pass after the switch flips back restores itself with no bookkeeping here.
+function BlizzardAPI.AreAurasSampled()
+    return aurasSampled
+end
+
 -- Unknown category tokens FAIL OPEN: the engine silently IGNORES a token it does
 -- not recognise and returns the unfiltered set rather than erroring (measured -
 -- a bogus token returned all 31 helpful auras while BIG_DEFENSIVE returned 1).

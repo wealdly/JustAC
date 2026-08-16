@@ -18,7 +18,6 @@ local pairs   = pairs
 local C_NamePlate           = C_NamePlate
 local UnitCastingInfo       = UnitCastingInfo
 local UnitChannelInfo       = UnitChannelInfo
-local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 
 -- Cast bar lingers after interrupt lands; suppress to avoid re-suggesting.
 local INTERRUPT_DEBOUNCE    = 1.0
@@ -328,11 +327,9 @@ local function IsReachable(entry)
         -- give Druid/Monk their mid-range beyond-proof).
         return (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius or 8)) == true
     end
-    -- The "target" unit argument is REQUIRED (same finding as the range probes in
-    -- SpellDB.IsTargetWithin): without it the call answers nil, the fail-open below
-    -- turned nil into "reachable", and a melee kick was recommended from 40 yards.
-    local r = C_Spell_IsSpellInRange and C_Spell_IsSpellInRange(entry.spellID, "target")
-    if r == nil or BlizzardAPI.IsSecretValue(r) then return true end  -- unknown → assume reachable
+    -- Tri-state read (BlizzardAPI.SpellInRange owns the required-unit-arg finding that
+    -- was first measured here). Fail OPEN: nil (unknown) → assume reachable.
+    local r = BlizzardAPI.SpellInRange and BlizzardAPI.SpellInRange(entry.spellID)
     return r ~= false
 end
 
