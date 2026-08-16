@@ -3,6 +3,24 @@
 
 ## [Unreleased]
 
+## [5.1.7] - 2026-08-16
+
+### Fixed
+- Opening the options from the game's Settings window now shows the same fully populated
+  panel you get from `/jac` or by right-clicking the queue. The lists built from your
+  spellbook (abilities, defensives, gap closers, burst triggers, custom priority) were
+  gathered once at login, before the game knew your spells, and the Settings window never
+  rebuilt them, so it could show those sections empty
+- The tank upkeep timer and the enrage cleanse reminder no longer report on made-up buffs
+  while the game is showing sample ones, which happens whenever Edit Mode is open or an
+  addon is previewing its buff frames. Both are drawn by the game rather than by JustAC,
+  so neither could tell the difference; they now stand down until real buffs are back
+- Spell blacklists carried over from much older versions now take effect on the first
+  login after upgrading, instead of staying inactive until a reload
+- The red out-of-range colouring works again on the interrupt reminder's hotkey and on
+  queue abilities that are not on your action bars. It only ever worked for abilities
+  with a bar slot; everything else silently read as in range
+
 ## [5.1.6] - 2026-08-14
 
 ### Fixed

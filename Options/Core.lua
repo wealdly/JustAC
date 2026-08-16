@@ -339,10 +339,28 @@ function Options.Initialize(addon)
     -- tab widget's 75%-of-width fill threshold - past it, AceGUI stretches every
     -- tab in the row to fill the panel instead of fitting them to their text.
     AceConfigDialog:SetDefaultSize("JustAssistedCombat", 800, 550)
-    AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
+    local blizFrame = AceConfigDialog:AddToBlizOptions("JustAssistedCombat", "JustAssistedCombat")
 
-    -- Populate dynamic lists at startup so Blizzard Settings has full content
-    -- even before the slash command path calls RefreshAllDynamic.
+    -- Blizzard's Settings panel is the THIRD way in, and the only one that opens the
+    -- options table directly: the slash command and the right-click both rebuild the
+    -- dynamic lists (abilities, defensives, gap closers, burst triggers, custom queue)
+    -- immediately before showing anything, and Settings did neither. It got whatever the
+    -- one startup rebuild below produced - and that runs inside OnInitialize, on
+    -- ADDON_LOADED, before the player's spellbook and spec are known. The lists that are
+    -- built FROM those came up empty, and stayed empty for anyone who only ever opened the
+    -- options through Settings. Rebuild on show, then notify so the panel re-feeds: this
+    -- hook runs after the widget has already fed itself once.
+    if blizFrame then
+        local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
+        blizFrame:HookScript("OnShow", function()
+            if addon.InitializeDefensiveSpells then addon:InitializeDefensiveSpells() end
+            Options.RefreshAllDynamic(addon)
+            if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
+        end)
+    end
+
+    -- Still populated once here: the panel is reachable from Blizzard's own
+    -- addon-list shortcuts, and a first paint with content beats one that fills in.
     Options.RefreshAllDynamic(addon)
 
     addon:RegisterChatCommand("justac", function(input) HandleSlashCommand(addon, input) end)

@@ -166,6 +166,7 @@ local defaults = {
         defensives = {
             enabled = true,
             showProcs = true,         -- Show procced defensives (Victory Rush, free heals) at any health
+            emergencyPotionChoice = 0, -- Emergency healing potion pick (0 = automatic/highest)
             position = "SIDE1",       -- SIDE1 (health bar side) or SIDE2 (legacy saved "LEADING" reads as SIDE1)
             showHealthBar = true,    -- Display compact health bar above main queue
             showPetHealthBar = true, -- Display compact pet health bar (pet classes only)
@@ -206,6 +207,7 @@ local defaults = {
         -- Gap-closer feature (suggest movement spells when target is out of melee range)
         gapClosers = {
             enabled = true,
+            farOnly = true,           -- Only suggest when the gap is real (not merely out of melee)
             showGlow = true,          -- Glow on gap-closer icons (when enabled)
             classSpells = {},         -- Per-spec spell lists: classSpells["WARRIOR_1"] = {100, 6544}
         },
@@ -1465,6 +1467,13 @@ function JustAC:OnSpecChange(event, unit)
     if unit and unit ~= "player" then return end
     local newSpec = GetSpecialization()
     if not newSpec then return end
+
+    -- Re-run migrations now that the spec is KNOWN. The blacklist migrations key old data
+    -- under the current spec, so at OnInitialize (ADDON_LOADED, spec often still nil on a
+    -- fresh login) they can only skip - leaving a pre-4.x flat blacklist unconsulted for
+    -- the whole session. Every helper is a no-op once migrated, so this is a few table
+    -- scans on a spec change, not repeated work.
+    self:NormalizeSavedData()
 
     -- The tracked aura instance belongs to the OLD spec's maintenance buff; keeping it would
     -- point the new spec's slot at a buff it does not use.

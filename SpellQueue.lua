@@ -12,7 +12,6 @@ local DotTracker = LibStub("JustAC-DotTracker", true)
 
 -- Hot path cache
 local GetTime = GetTime
-local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
 local UnitAffectingCombat = UnitAffectingCombat
 local IsMounted = IsMounted
 local GetShapeshiftFormID = GetShapeshiftFormID
@@ -614,12 +613,9 @@ SpellQueue.IsUnusableNonResource = IsUnusableNonResource  -- shared with /jac wh
 --- No debounce: the flip only happens on genuine positional change, and the queue is
 --- context-live by design (melee sink, execute float) - the red tint explains the move.
 local function IsConfirmedOutOfRange(spellID)
-    if not C_Spell_IsSpellInRange then return false end
-    local r = C_Spell_IsSpellInRange(spellID, "target")
-    if r == nil or (BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(r)) then
-        return false
-    end
-    return r == false
+    -- Fail open: nil (unknown) leaves the order alone; only a confirmed false sinks.
+    return (BlizzardAPI and BlizzardAPI.SpellInRange
+            and BlizzardAPI.SpellInRange(spellID)) == false
 end
 SpellQueue.IsConfirmedOutOfRange = IsConfirmedOutOfRange  -- shared with /jac why
 

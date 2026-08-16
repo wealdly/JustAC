@@ -27,6 +27,7 @@ local UIFrameFactory   = LibStub("JustAC-UIFrameFactory", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 -- SpellDB is back for one thing only: the cleanse's own cooldown. See Show().
 local SpellDB          = LibStub("JustAC-SpellDB", true)
+local BlizzardAPI      = LibStub("JustAC-BlizzardAPI", true)
 if not (UIAnimations and UIFrameFactory) then return end
 
 local CreateFrame   = CreateFrame
@@ -304,6 +305,12 @@ end
 --- swipe that used to say "wait" cannot be drawn on these slots.
 function UISootheCue.Show(cue)
     if not cue then return end
+    -- Sample auras (Edit Mode, or any addon previewing aura frames): the container's
+    -- dispel filter is matching fabricated auras, so a slot existing no longer means the
+    -- target is enraged. Hide rather than cue a cleanse that would do nothing.
+    if BlizzardAPI and BlizzardAPI.AreAurasSampled and BlizzardAPI.AreAurasSampled() then
+        return UISootheCue.Hide(cue)
+    end
     local onCD = cue.spellID and SpellDB and SpellDB.IsInterruptOnCooldown
                  and SpellDB.IsInterruptOnCooldown(cue.spellID)
     if onCD or not (UnitExists("target") and UnitCanAttack("player", "target")) then

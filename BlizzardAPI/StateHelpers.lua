@@ -350,6 +350,30 @@ function BlizzardAPI.IsAuraActive(unit, auraSpellID)
 end
 
 --------------------------------------------------------------------------------
+-- Spell range (tri-state)
+--------------------------------------------------------------------------------
+
+local C_Spell_IsSpellInRange = C_Spell and C_Spell.IsSpellInRange
+
+--- Tri-state range read: true (in range), false (confirmed out of range), nil (unknown -
+--- no range requirement, no valid target, API absent, or an unreadable return). The ONE
+--- owner for two facts every caller used to hand-roll, four copies strong:
+---   * The unit argument is REQUIRED despite the docs calling it optional. The no-unit
+---     form answers nil - measured twice (Data/RangeReferences.lua probe notes,
+---     CastInterruptTracker.IsReachable), and the copy that omitted it read nil as
+---     "in range" and silently lost the red range state. That drift is why this exists.
+---   * The return is guarded against being secret. The docs say plain bool; the guard is
+---     belt-and-braces each copy carried anyway, now paid for once.
+--- Callers keep their own fail direction - that part differs deliberately per site
+--- (a wasted press is cheap for a kick, expensive for a placed cooldown).
+function BlizzardAPI.SpellInRange(spellID, unit)
+    if not C_Spell_IsSpellInRange or not spellID then return nil end
+    local r = C_Spell_IsSpellInRange(spellID, unit or "target")
+    if r == nil or (IsSecretValue and IsSecretValue(r)) then return nil end
+    return r
+end
+
+--------------------------------------------------------------------------------
 -- Low Health Detection via LowHealthFrame (works when UnitHealth() is secret)
 --------------------------------------------------------------------------------
 
