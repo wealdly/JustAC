@@ -3,6 +3,23 @@
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-08-17
+
+### Added
+- Situational Sets: three named groups of abilities you can switch in and out of the
+  rotation queue together from a keybind, so big-pull cooldowns can be off for trash and
+  back on for a boss with one press. Put abilities into a set from their card on the
+  Abilities tab, name the sets on the General tab, and bind the toggle keys under Key
+  Bindings > AddOns > JustAssistedCombat. A set that is off hides its abilities from the
+  rotation queue and gap-closer suggestions only; the defensive queue is untouched, and
+  the game's own live pick is never blocked, so the rotation cannot stall. An on-screen
+  tag names any set that is currently off, and every set switches back on when you log
+  in, change spec, or switch profile
+
+### Fixed
+- A just-applied weapon imbue no longer blinks into the rotation queue for a moment as it
+  lands. Poisons and shields were already covered; imbues had the same gap
+
 ## [5.1.10] - 2026-08-16
 
 ### Added

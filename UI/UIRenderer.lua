@@ -2647,6 +2647,33 @@ local function UpdateContextIndicator(addon, profile)
     mf.jacContextTag:Show()
 end
 
+--- On-screen cue for situational sets: a small tag above the panel naming every set
+--- currently switched OFF, so hidden cooldowns are never silently hidden. Event-driven
+--- (toggle, spec change) rather than per-frame - the state changes a few times a
+--- session, not per tick. Hidden when every set is active.
+function UIRenderer.RefreshSetIndicator(addon)
+    local mf = addon and addon.mainFrame
+    if not mf or not SpellQueue or not SpellQueue.IsSetActive then return end
+    local off = {}
+    for slot = 1, (SpellQueue.SET_SLOTS or 3) do
+        if not SpellQueue.IsSetActive(slot) then
+            off[#off + 1] = addon.GetSituationalSetName and addon:GetSituationalSetName(slot) or tostring(slot)
+        end
+    end
+    if #off == 0 then
+        if mf.jacSetTag then mf.jacSetTag:Hide() end
+        return
+    end
+    if not mf.jacSetTag then
+        local fs = mf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint("BOTTOMRIGHT", mf, "TOPRIGHT", 0, 2)
+        fs:SetJustifyH("RIGHT")
+        mf.jacSetTag = fs
+    end
+    mf.jacSetTag:SetText("|cffff8844" .. string.format(L["Set Off Tag"], table.concat(off, ", ")) .. "|r")
+    mf.jacSetTag:Show()
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons

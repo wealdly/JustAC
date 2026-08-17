@@ -296,6 +296,18 @@ local function ClearAbility(addon, profile, id)
         profile.hotkeyOverrides[id] = nil
         addon:InvalidateCaches({hotkeys = true})
     end
+    -- Situational-set membership for this spec.
+    do
+        local specKey = GetSpecKey()
+        local sets = specKey and profile.situationalSets and profile.situationalSets[specKey]
+        if sets then
+            for _, s in pairs(sets) do
+                if type(s) == "table" and type(s.spells) == "table" then s.spells[id] = nil end
+            end
+            local UIR = LibStub("JustAC-UIRenderer", true)
+            if UIR and UIR.RefreshSetIndicator then UIR.RefreshSetIndicator(addon) end
+        end
+    end
     -- Pins live in the rotation setup cache (see pinToggle) - clearing them needs the
     -- same invalidation or the old pin keeps applying until the next list change.
     local SQ = LibStub("JustAC-SpellQueue", true)
@@ -365,6 +377,18 @@ local function CollectCustomizations(profile)
         for id, v in pairs(profile.hotkeyOverrides) do
             if type(id) == "number" and id ~= 0 and type(v) == "string" then
                 badge(id, string.format(L["Hotkey Badge"], v))
+            end
+        end
+    end
+    -- Situational-set membership (current spec) is a customization too.
+    local specKey = GetSpecKey()
+    local sets = specKey and profile.situationalSets and profile.situationalSets[specKey]
+    if sets then
+        for slot, s in pairs(sets) do
+            if type(s) == "table" and type(s.spells) == "table" then
+                for id in pairs(s.spells) do
+                    if type(id) == "number" then badge(id, L["Set Badge"]) end
+                end
             end
         end
     end
@@ -612,6 +636,50 @@ local function BuildCard(addon, args, profile)
                 Abilities.UpdateAbilitiesOptions(addon)   -- the index badge tracks this
             end,
         }
+    end
+
+    -- ── Situational sets (spells only; per-spec; toggled by keybind) ─────────
+    -- Membership lives here beside the ability; the sets are named on the General
+    -- tab and flipped from Key Bindings. Storage: profile.situationalSets[specKey][slot]
+    -- = { name = "...", spells = { [id] = true } }.
+    if not isItem and specKey then
+        args.setsHeader = { type = "header", name = SpellSearch.SpecHeader(L["Situational Sets"]), order = 18 }
+        args.setsNote = {
+            type = "description",
+            name = "|cff888888" .. L["Situational Sets Note"] .. "|r",
+            order = 18.1,
+            fontSize = "small",
+        }
+        local SQ = LibStub("JustAC-SpellQueue", true)
+        for slot = 1, (SQ and SQ.SET_SLOTS or 3) do
+            args["set" .. slot] = {
+                type = "toggle",
+                name = function() return addon:GetSituationalSetName(slot) end,
+                desc = L["Situational Set Member desc"],
+                order = 18.1 + slot * 0.1,
+                width = "normal",
+                get = function()
+                    local sets = profile.situationalSets and profile.situationalSets[specKey]
+                    local s = sets and sets[slot]
+                    return s and s.spells and s.spells[id] == true or false
+                end,
+                set = function(_, val)
+                    profile.situationalSets = profile.situationalSets or {}
+                    profile.situationalSets[specKey] = profile.situationalSets[specKey] or {}
+                    local sets = profile.situationalSets[specKey]
+                    sets[slot] = sets[slot] or { spells = {} }
+                    sets[slot].spells = sets[slot].spells or {}
+                    if val then sets[slot].spells[id] = true else sets[slot].spells[id] = nil end
+                    if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
+                    -- Membership can change what the OFF tag should say (removing the last
+                    -- member of an OFF set makes it active again - see IsSetActive).
+                    local UIR = LibStub("JustAC-UIRenderer", true)
+                    if UIR and UIR.RefreshSetIndicator then UIR.RefreshSetIndicator(addon) end
+                    addon:ForceUpdate()
+                    Abilities.UpdateAbilitiesOptions(addon)
+                end,
+            }
+        end
     end
 
     -- ── List membership ─────────────────────────────────────────────────────

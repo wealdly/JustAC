@@ -1,0 +1,19 @@
+<Bindings>
+  <!-- Situational sets: toggle a named group of abilities in/out of the queue as one
+       unit (e.g. big-pull cooldowns off for trash, on for a boss). The key is the
+       player's choice in Blizzard's Key Bindings UI; the header/name globals are set
+       in JustAC.lua before load. Insecure Lua on purpose: toggling a Lua table is
+       never protected, so these work in combat. -->
+  <Binding name="JUSTAC_TOGGLE_SET1" header="JUSTAC" category="ADDONS">
+    local a = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    if a and a.ToggleSituationalSet then a:ToggleSituationalSet(1) end
+  </Binding>
+  <Binding name="JUSTAC_TOGGLE_SET2" category="ADDONS">
+    local a = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    if a and a.ToggleSituationalSet then a:ToggleSituationalSet(2) end
+  </Binding>
+  <Binding name="JUSTAC_TOGGLE_SET3" category="ADDONS">
+    local a = LibStub("AceAddon-3.0"):GetAddon("JustAssistedCombat", true)
+    if a and a.ToggleSituationalSet then a:ToggleSituationalSet(3) end
+  </Binding>
+</Bindings>

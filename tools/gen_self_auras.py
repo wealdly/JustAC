@@ -17,6 +17,7 @@
 # Run: python tools/gen_self_auras.py [csv_dir] [build]
 
 import csv
+import re
 import sys
 from pathlib import Path
 
@@ -32,7 +33,9 @@ def read_csv(path):
 
 def main():
     csv_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSV_DIR
-    build = sys.argv[2] if len(sys.argv) > 2 else "12.1.0.68301"
+    build = sys.argv[2] if len(sys.argv) > 2 else max(
+        (m.group(1) for p in csv_dir.glob("*.csv") for m in [re.search(r"\.(\d+\.\d+\.\d+\.\d+)\.csv$", p.name)] if m),
+        key=lambda b: [int(x) for x in b.split(".")], default="unknown")  # header stamp follows the folder
 
     def find(table):
         hits = sorted(csv_dir.glob(f"{table}.*.csv"))
