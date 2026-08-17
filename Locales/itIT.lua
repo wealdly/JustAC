@@ -429,3 +429,13 @@ L["Only Suggest For Real Gaps desc"] = "Suggerisce un avvicinamento solo quando 
 L["Reset Defensives desc"] = "Ripristina le impostazioni della Coda difensiva in tutte le sotto-schede ai valori predefiniti. Le tue liste di priorità non vengono toccate."
 L["Priority Lists"] = "Liste di priorità"
 L["Overlay Labels Shared desc"] = "Visibilità, colore e posizione delle etichette sono condivisi con le impostazioni della Coda principale. Le icone sulla targhetta sono più piccole, quindi qui si impostano separatamente solo le scale del carattere."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "Fissaggi"
+L["Done"] = "Fatto"
+L["Done desc"] = "Chiude la scheda di questa abilità e torna all'elenco delle tue personalizzazioni."
+L["Item Settings"] = "Impostazioni oggetto"
+L["Not In List"] = "non in elenco"
+L["Open Ability desc"] = "Apre la scheda di questa abilità per modificarne le impostazioni."
+L["Remove Customizations confirm"] = "Rimuovere tutte le personalizzazioni di %s?"
+L["Reset Ability"] = "Ripristina"

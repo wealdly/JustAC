@@ -3,6 +3,53 @@
 
 ## [Unreleased]
 
+## [5.1.10] - 2026-08-16
+
+### Added
+- The Abilities tab's "Your Customizations" list now has a Remove button beside each entry,
+  clearing every customization for that ability in one click, and the entries themselves
+  are no longer full-width bars
+- The ability card has a Done button that closes it and returns to the customizations
+  list; a tall card with no way to dismiss it read as a page you could not leave
+
+### Fixed
+- The queue panel no longer takes a few seconds to appear after a reload. Its brief
+  fade-in could stall on the first frame after loading and hold the whole panel
+  invisible until the game caught up; a stalled fade is now detected and skipped
+- The Proc Priority pin now works for spells a talent has changed into another form
+  (Victory Rush into Impending Victory, and the like). The setting was saved under the
+  spell you picked, but the defensive queue looked it up under the talent's version
+- Adding an ability to a priority list on the Abilities tab now works on a spec that has
+  never stored that list. The Add button was greyed out precisely when a list was empty,
+  with nothing to say why, so a fresh spec could not add its first entry
+- Adding a Burst Trigger from the Abilities tab no longer silently discards the built-in
+  trigger set. It used to start a new list containing only what you added; it now starts
+  from the triggers already in effect and lets you refine them
+- The Always Show and Hold Until Charged pins on the Abilities tab now take effect the
+  moment they are toggled. They saved correctly but did nothing until a talent change or
+  reload; the twin controls on the queue tab already behaved
+- A custom hotkey typed on the Abilities tab now shows on the icon immediately instead of
+  waiting for a keybinding change
+- The Abilities tab no longer offers Visibility and Pin controls for items, which had no
+  effect on items and still earned a "pinned" badge in the customizations list. Items are
+  shown exactly when they are in a list, so their list membership is their visibility
+- Clearing an item's linked buff also undoes the "hide in combat" it switched on, unless
+  you had set that yourself
+- The Clear All button on the ability card sits under its own Reset heading instead of on
+  the same row as the custom hotkey field, where it read as that field's control
+- Hunters no longer see a pet-heal suggestion pop up when mounting. Dismissing the pet
+  leaves it briefly registered with no health, which read as "needs healing"; the cue and
+  the pet health bar now both ignore a pet that is gone, mounted, or in a vehicle
+- Removing an ability from all lists on the Abilities tab no longer throws an error on a
+  spec that has not yet been given one of the defensive-family lists (pet lists on a
+  fresh Hunter, for example)
+
+### Changed
+- The Abilities tab's ability card is organised into headed sections (Visibility, Pins,
+  Item Settings, Priority Lists, Custom Hotkey, Reset), and its wording now says which
+  pins apply where: Proc Priority everywhere, Always Show and Hold Until Charged in the
+  rotation queue
+
 ## [5.1.9] - 2026-08-16
 
 ### Fixed

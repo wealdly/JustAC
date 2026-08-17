@@ -429,3 +429,13 @@ L["Only Suggest For Real Gaps desc"] = "仅当目标确实够不着时（大约�
 L["Reset Defensives desc"] = "将所有子标签页中的防御队列设置重置为默认值。你的优先级列表不会被改动。"
 L["Priority Lists"] = "优先级列表"
 L["Overlay Labels Shared desc"] = "标签的显示、颜色与位置与主队列设置共享。姓名板图标绘制得更小，因此这里只单独设置字体缩放。"
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "固定"
+L["Done"] = "完成"
+L["Done desc"] = "关闭此技能的卡片并返回你的自定义列表。"
+L["Item Settings"] = "物品设置"
+L["Not In List"] = "不在列表中"
+L["Open Ability desc"] = "打开此技能的卡片以更改其设置。"
+L["Remove Customizations confirm"] = "移除 %s 的所有自定义？"
+L["Reset Ability"] = "重置"

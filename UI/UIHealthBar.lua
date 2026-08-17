@@ -651,7 +651,10 @@ end
 function UIHealthBar.UpdatePetVisibility(addon)
     if not petHealthBarFrame then return end
 
-    local exists = UnitExists("pet")
+    -- Same liveness the pet-heal cue uses: a dismissed-but-lingering pet (mounting)
+    -- would otherwise show an empty bar for a beat.
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local exists = (BAPI and BAPI.HasActionablePet) and BAPI.HasActionablePet() or UnitExists("pet")
     if exists then
         petHealthBarFrame:Show()
         lastPetUpdate = 0  -- force fresh values now (pet just (re)summoned / shown)

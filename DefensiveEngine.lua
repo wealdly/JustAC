@@ -30,6 +30,7 @@ local UINameplateOverlay = LibStub("JustAC-UINameplateOverlay", true)
 local lastHealthUpdate = 0
 local HEALTH_UPDATE_THROTTLE = 0.1  -- 100ms minimum between defensive queue updates
 
+
 local dpsQueueExclusions = {}
 local defensiveAlreadyAdded = {}
 -- Pooled tables for GetUsableDefensiveSpells (avoids per-call allocations)
@@ -97,6 +98,28 @@ local SPELL_LIST_CONFIG = {
     -- the list is never created and the heal pass below finds nothing.
     { listKey = "groupHealSpells", restoreKey = "groupheal", defaultsKey = "CLASS_GROUPHEAL_DEFAULTS" },
 }
+
+--- Per-spell proc-priority pin (profile.defensives.spellSettings[id].procPriority,
+--- default true). Both Options writers key it on the STORED id (the base spell the
+--- player picked); this engine used to read it on the talent-RESOLVED id only, so a
+--- pin on Victory Rush was invisible once talents morphed it into Impending Victory -
+--- the checkbox "did nothing at all" (user-reported). Read the stored id first, then
+--- the resolved form, so either write is honoured. SpellQueue already reads stored.
+local function ProcPriorityEnabled(profile, storedID, resolvedID)
+    local ss = profile and profile.defensives and profile.defensives.spellSettings
+    if not ss then return true end
+    local s = ss[storedID] or (resolvedID and ss[resolvedID])
+    return not s or s.procPriority ~= false
+end
+
+--- The SpellDB defaults-table name for a profile listKey, so the Options tab can seed a
+--- list on demand from the SAME config the login seed uses (no second copy to drift).
+function DefensiveEngine.DefaultsKeyForList(listKey)
+    for _, cfg in ipairs(SPELL_LIST_CONFIG) do
+        if cfg.listKey == listKey then return cfg.defaultsKey end
+    end
+    return nil
+end
 
 -- Copy a source spell list into dest[listKey], used by init/restore.
 local function CopySpellList(dest, listKey, source)
@@ -746,8 +769,8 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
                 if m.unusable then
                     unusableBuffer[#unusableBuffer + 1] = m
                 elseif m.realProc then
-                    -- Check per-spell proc-priority setting (default true)
-                    local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
+                    -- Per-spell proc-priority pin (stored id first, then resolved - see helper)
+                    local procPriority = ProcPriorityEnabled(profile, entry, resolvedID)
                     -- A free heal with nothing to heal (player provably full, nobody
                     -- low) does not get to reorder the cluster around itself - the
                     -- same gate that suppresses its glow, so the two can't disagree.
@@ -758,7 +781,7 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
                         and BlizzardAPI.IsHealingUnneeded and BlizzardAPI.IsHealingUnneeded()
                     if healNotNeeded then
                         nonProccedBuffer[#nonProccedBuffer + 1] = m
-                    elseif not spellSettings or spellSettings.procPriority ~= false then
+                    elseif procPriority then
                         proccedBuffer[#proccedBuffer + 1] = m
                     else
                         -- Procced but priority disabled: keep in list order, still marked procced for glow
@@ -1113,9 +1136,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
                         local isUsable, _, isProcced = BlizzardAPI.CheckDefensiveSpellState(resolvedID, profile)
                         if isUsable and isProcced then
                             -- Skip proc injection for spells with proc-priority disabled
-                            local spellSettings = profile.defensives.spellSettings and profile.defensives.spellSettings[resolvedID]
-                            local procPriority = not spellSettings or spellSettings.procPriority ~= false
-                            if procPriority then
+                            -- (stored id first, then resolved - see ProcPriorityEnabled)
+                            if ProcPriorityEnabled(profile, spellID, resolvedID) then
                                 PushEntry(results, resolvedID, false, true)
                                 alreadyAdded[resolvedID] = true
                                 alreadyAdded[spellID] = true  -- also mark original ID
