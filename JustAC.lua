@@ -800,7 +800,12 @@ function JustAC:OnEnable()
             if BlizzardAPI and BlizzardAPI.PreCacheRotationCooldowns then
                 BlizzardAPI.PreCacheRotationCooldowns()
             end
-            self:ForceUpdate()
+            -- BOTH queues. This fires when Blizzard's spell data becomes real after a
+            -- reload, and the availability cache just cleared above is what the DEFENSIVE
+            -- build gates on too - but only the offensive queue was marked dirty here, so
+            -- the defensive cluster's first correct build waited on the 1s idle timer
+            -- and showed up seconds after the rotation (user-reported).
+            self:ForceUpdateAll()
         end, self)
         EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
             self:ForceUpdate()
@@ -1214,7 +1219,11 @@ function JustAC:SetHotkeyOverride(spellID, hotkeyText)
     if Options and Options.UpdateHotkeyOverrideOptions then
         Options.UpdateHotkeyOverrideOptions(self)
     end
-    
+
+    -- Icons cache their hotkey string and re-read only when told to; an override typed
+    -- for a spell already showing a key never appeared until a binding change or icon
+    -- reuse (audit-found). The hotkeys group clears every surface's cache.
+    self:InvalidateCaches({hotkeys = true})
     self:ForceUpdate()
 end
 

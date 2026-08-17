@@ -429,3 +429,13 @@ L["Only Suggest For Real Gaps desc"] = "Sugere um encurtador de distância apena
 L["Reset Defensives desc"] = "Redefine as configurações da Fila defensiva em todas as sub-abas para os valores padrão. Suas listas de prioridade não são alteradas."
 L["Priority Lists"] = "Listas de prioridade"
 L["Overlay Labels Shared desc"] = "Visibilidade, cor e posição dos rótulos são compartilhadas com as configurações da Fila principal. Os ícones da placa de nome são menores, então aqui apenas as escalas de fonte são definidas separadamente."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "Fixações"
+L["Done"] = "Concluído"
+L["Done desc"] = "Fecha a ficha desta habilidade e volta para a lista das suas personalizações."
+L["Item Settings"] = "Configurações do item"
+L["Not In List"] = "não está na lista"
+L["Open Ability desc"] = "Abre a ficha desta habilidade para alterar suas configurações."
+L["Remove Customizations confirm"] = "Remover todas as personalizações de %s?"
+L["Reset Ability"] = "Redefinir"

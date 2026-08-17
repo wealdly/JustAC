@@ -430,3 +430,13 @@ L["Only Suggest For Real Gaps desc"] = "Sugiere un acortador de distancia solo c
 L["Reset Defensives desc"] = "Restablece los ajustes de la Cola defensiva en todas las subpestañas a sus valores por defecto. Tus listas de prioridad no se tocan."
 L["Priority Lists"] = "Listas de prioridad"
 L["Overlay Labels Shared desc"] = "La visibilidad, el color y la posición de las etiquetas se comparten con los ajustes de la Cola principal. Los iconos de la placa de nombre se dibujan más pequeños, así que aquí solo se ajustan las escalas de fuente por separado."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "Fijaciones"
+L["Done"] = "Listo"
+L["Done desc"] = "Cierra la ficha de esta habilidad y vuelve a la lista de tus personalizaciones."
+L["Item Settings"] = "Ajustes del objeto"
+L["Not In List"] = "no está en la lista"
+L["Open Ability desc"] = "Abre la ficha de esta habilidad para cambiar sus ajustes."
+L["Remove Customizations confirm"] = "¿Eliminar todas las personalizaciones de %s?"
+L["Reset Ability"] = "Restablecer"

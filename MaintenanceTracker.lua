@@ -863,7 +863,11 @@ MaintenanceTracker.MatchesCooldownInfo = Matches
 --- chargeGated entries never pre-warn (pressing early throws away buff time); lead in
 --- SECONDS if the entry specifies one, else the proportional fallback.
 local function LiveVerdict(entry, s, instanceID)
-    local effDur = entry.chargeGated and nil or EffectiveDuration(entry)
+    -- Explicit branch, NOT `chargeGated and nil or EffectiveDuration(entry)`: with the
+    -- middle operand nil that idiom ALWAYS evaluates the right side, so a chargeGated
+    -- entry got a duration - and therefore the pre-warn the comment below forbids.
+    local effDur
+    if not entry.chargeGated then effDur = EffectiveDuration(entry) end
     -- No clock at all (Bone Shield, chargeGated) - never pre-warn. Checked FIRST so
     -- the engine path below inherits exactly the same eligibility: the aura does
     -- carry a real 30s duration the engine would happily threshold, and asking it

@@ -468,6 +468,27 @@ function BlizzardAPI.IsPartyLowAvailable()
 end
 
 --------------------------------------------------------------------------------
+-- Pet liveness
+--------------------------------------------------------------------------------
+
+--- Is there a pet worth acting on? UnitExists("pet") is NOT that question: when a
+--- hunter mounts, the pet is dismissed but the unit lingers for a beat, still
+--- "existing" and reading as unhealthy - a max health of 0 is below every threshold
+--- - so the pet-heal cue lit up for a pet that was gone (user-reported, mounted
+--- hunter, pre-combat offers switched off and rightly suspected). Mounted / in a
+--- vehicle there is no pet to heal regardless of what the unit says. All plain
+--- reads, safe in and out of combat; UnitHealthMax is guarded in case that ever
+--- changes - an unreadable max falls through to the plain existence answer.
+function BlizzardAPI.HasActionablePet()
+    if not UnitExists("pet") then return false end
+    if IsMounted and IsMounted() then return false end
+    if UnitHasVehicleUI and UnitHasVehicleUI("player") then return false end
+    local maxHP = UnitHealthMax("pet")
+    if maxHP ~= nil and not IsSecretValue(maxHP) and maxHP <= 0 then return false end
+    return true
+end
+
+--------------------------------------------------------------------------------
 -- Zero-gate consumers (BlizzardAPI.IsSecretZero - see SecretValues.lua).
 -- Each returns true / false / NIL, where nil means "no answer": callers must
 -- treat it as unknown and keep their fallback, never as a verdict.

@@ -429,3 +429,13 @@ L["Only Suggest For Real Gaps desc"] = "Schlägt einen Sprint-/Sturmangriff nur 
 L["Reset Defensives desc"] = "Setzt die Einstellungen der Verteidigungs-Warteschlange auf allen Unter-Tabs auf die Standardwerte zurück. Deine Prioritätslisten bleiben unangetastet."
 L["Priority Lists"] = "Prioritätslisten"
 L["Overlay Labels Shared desc"] = "Sichtbarkeit, Farbe und Position der Beschriftungen werden mit den Einstellungen der Hauptwarteschlange geteilt. Namensplaketten-Symbole werden kleiner dargestellt, daher werden hier nur die Schriftgrößen separat festgelegt."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "Anheftungen"
+L["Done"] = "Fertig"
+L["Done desc"] = "Schließt die Karte dieser Fähigkeit und kehrt zur Liste deiner Anpassungen zurück."
+L["Item Settings"] = "Gegenstandseinstellungen"
+L["Not In List"] = "nicht in der Liste"
+L["Open Ability desc"] = "Öffnet die Karte dieser Fähigkeit, um ihre Einstellungen zu ändern."
+L["Remove Customizations confirm"] = "Alle Anpassungen für %s entfernen?"
+L["Reset Ability"] = "Zurücksetzen"

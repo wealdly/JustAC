@@ -429,3 +429,13 @@ L["Only Suggest For Real Gaps desc"] = "Ne suggère un rapprochement que lorsque
 L["Reset Defensives desc"] = "Réinitialise les réglages de la file défensive de tous les sous-onglets à leurs valeurs par défaut. Vos listes de priorité ne sont pas touchées."
 L["Priority Lists"] = "Listes de priorité"
 L["Overlay Labels Shared desc"] = "La visibilité, la couleur et la position des libellés sont partagées avec les réglages de la file principale. Les icônes sur la barre de nom sont plus petites : seules les échelles de police se règlent séparément ici."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "Épinglages"
+L["Done"] = "Terminé"
+L["Done desc"] = "Ferme la fiche de cette capacité et revient à la liste de vos personnalisations."
+L["Item Settings"] = "Réglages de l'objet"
+L["Not In List"] = "pas dans la liste"
+L["Open Ability desc"] = "Ouvre la fiche de cette capacité pour modifier ses réglages."
+L["Remove Customizations confirm"] = "Supprimer toutes les personnalisations de %s ?"
+L["Reset Ability"] = "Réinitialiser"

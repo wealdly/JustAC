@@ -1295,9 +1295,13 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- the bottom of the claimant order, squatting invisibly on a slot another
     -- claimant could have used. nil (no answer) keeps the old behaviour.
     local petSpellID
+    -- HasActionablePet, not UnitExists: a mounting hunter's dismissed pet lingers as an
+    -- existing unit with 0 max health, which read as "needs healing" and lit this cue
+    -- for a pet that was gone.
     if not ccSpellID and not emergencyHealID and profile and profile.showPetHealCue ~= false
        and profile.defensives and profile.defensives.enabled
-       and UnitExists("pet") and not UnitIsDeadOrGhost("pet")
+       and BlizzardAPI.HasActionablePet and BlizzardAPI.HasActionablePet()
+       and not UnitIsDeadOrGhost("pet")
        and PetNeedsHeal(profile) then
         local DE = DefensiveEngineRef
         if not DE then
@@ -1679,12 +1683,24 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         if not iconTexture then
             iconTexture = GetItemIcon and GetItemIcon(id)
         end
-        if not iconTexture then return end
+        if not iconTexture then
+            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+            return
+        end
     else
         -- Cached read: the raw C_Spell.GetSpellInfo allocates a fresh info table per
         -- call, and this runs per defensive icon per render pass on both surfaces.
         defSpellInfo = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
-        if not defSpellInfo then return end
+        if not defSpellInfo then
+            -- Not-yet-resolvable spell info (right after a reload, talent-override ids in
+            -- particular) - the bail-out used to eat this render silently, leaving the
+            -- slot at alpha 0 until the NEXT build, and out of combat that is the 1s
+            -- idle timer, which on a fresh load did not tick until ~2.3s: the defensive
+            -- cluster appeared seconds after the rotation. Mark dirty so the retry is
+            -- next tick; nil is not cached, so the retry can succeed.
+            if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
+            return
+        end
         iconTexture = defSpellInfo.iconID
     end
     
@@ -1884,7 +1900,10 @@ function UIRenderer.ShowDefensiveIcons(addon, queue)
             if not addon.defensiveFrame:IsShown() then
                 if addon.defensiveFrame.fadeOut then addon.defensiveFrame.fadeOut:Stop() end
                 addon.defensiveFrame:Show()
-                if addon.defensiveFrame.fadeIn then addon.defensiveFrame.fadeIn:Play() end
+                if addon.defensiveFrame.fadeIn then
+                    addon.defensiveFrame.fadeIn:Play()
+                    addon.defensiveFrame.fadeInStartedAt = GetTime()
+                end
             end
         elseif addon.defensiveFrame:IsShown() then
             FadeOutOrHide(addon.defensiveFrame)
@@ -2828,6 +2847,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                     addon.mainFrame:SetAlpha(0)
                     if addon.mainFrame.fadeIn then
                         addon.mainFrame.fadeIn:Play()
+                        addon.mainFrame.fadeInStartedAt = currentTime
                     else
                         addon.mainFrame:SetAlpha(profile.frameOpacity or 1.0)
                     end
@@ -2911,18 +2931,37 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Skip if fade animation is playing to avoid interrupting it.
     local frameOpacity = profile.frameOpacity or 1.0
     if addon.mainFrame then
-        local isFading = (addon.mainFrame.fadeIn and addon.mainFrame.fadeIn:IsPlaying()) or
-                         (addon.mainFrame.fadeOut and addon.mainFrame.fadeOut:IsPlaying())
+        local mf = addon.mainFrame
+        local fadingIn = mf.fadeIn and mf.fadeIn:IsPlaying()
+        -- A STALLED fade-in is not a fade-in. The animation is 0.1s, yet on a fresh
+        -- reload the client leaves it "playing" at alpha 0 for ~3s (animation groups
+        -- do not advance until the frame has been laid out once, and that first paint
+        -- is deferred at load) - and this sweep politely deferred to it the whole time,
+        -- so BOTH queues sat painted and invisible until the engine got round to it
+        -- (traced live: parent alpha 0.00, fadeIn=true, from 0.07s to ~3.5s). Past a
+        -- generous multiple of its own duration, stop the stalled group and set the
+        -- alpha directly. Never touches a fade that is genuinely running.
+        if fadingIn and mf.fadeInStartedAt and (currentTime - mf.fadeInStartedAt) > 0.5 then
+            mf.fadeIn:Stop()
+            fadingIn = false
+        end
+        local isFading = fadingIn or (mf.fadeOut and mf.fadeOut:IsPlaying())
         if not isFading then
-            addon.mainFrame:SetAlpha(frameOpacity)
+            mf:SetAlpha(frameOpacity)
         end
     end
     -- Apply frameOpacity to the detached container (icons inherit) or all individual icons.
     if addon.defensiveFrame then
-        local isFading = (addon.defensiveFrame.fadeIn and addon.defensiveFrame.fadeIn:IsPlaying()) or
-                         (addon.defensiveFrame.fadeOut and addon.defensiveFrame.fadeOut:IsPlaying())
+        local df = addon.defensiveFrame
+        local fadingIn = df.fadeIn and df.fadeIn:IsPlaying()
+        -- Same stalled-fade rescue as the main frame above.
+        if fadingIn and df.fadeInStartedAt and (currentTime - df.fadeInStartedAt) > 0.5 then
+            df.fadeIn:Stop()
+            fadingIn = false
+        end
+        local isFading = fadingIn or (df.fadeOut and df.fadeOut:IsPlaying())
         if not isFading then
-            addon.defensiveFrame:SetAlpha(frameOpacity)
+            df:SetAlpha(frameOpacity)
         end
     elseif addon.defensiveIcons then
         -- Blanket alpha write, on the MAIN queue's cadence rather than the defensive

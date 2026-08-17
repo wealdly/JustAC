@@ -438,3 +438,13 @@ L["Only Suggest For Real Gaps desc"] = "대상이 실제로 멀리 있을 때만
 L["Reset Defensives desc"] = "모든 하위 탭의 방어 대기열 설정을 기본값으로 되돌립니다. 우선순위 목록은 변경되지 않습니다."
 L["Priority Lists"] = "우선순위 목록"
 L["Overlay Labels Shared desc"] = "라벨의 표시 여부, 색상, 위치는 기본 대기열 설정과 공유합니다. 이름표 아이콘은 더 작게 표시되므로 여기서는 글꼴 크기만 따로 설정합니다."
+
+-- Abilities tab: card sections, index rows, Done/Reset
+L["Ability Pins"] = "고정"
+L["Done"] = "완료"
+L["Done desc"] = "이 기술의 카드를 닫고 사용자 지정 목록으로 돌아갑니다."
+L["Item Settings"] = "아이템 설정"
+L["Not In List"] = "목록에 없음"
+L["Open Ability desc"] = "이 기술의 카드를 열어 설정을 변경합니다."
+L["Remove Customizations confirm"] = "%s의 모든 사용자 지정을 제거하시겠습니까?"
+L["Reset Ability"] = "초기화"

@@ -103,10 +103,17 @@ local function pbOnOffSelect(addon, cat, name, order, defaultOff, desc)
             return v == false and "off" or "auto"
         end,
         set = function(_, val)
+            -- Explicit if/else for the default-on branch: `(val == "off") and false or nil`
+            -- can never yield false (`x and false` is false, `false or nil` is nil), so
+            -- choosing Off on a default-on category wrote nil and read straight back as
+            -- Auto - the category could not be turned off. Same trap as the Abilities pins.
+            local cats = pbCategories(addon)
             if defaultOff then
-                pbCategories(addon)[cat] = (val == "auto") or false
+                cats[cat] = (val == "auto") or false
+            elseif val == "off" then
+                cats[cat] = false
             else
-                pbCategories(addon)[cat] = (val == "off") and false or nil
+                cats[cat] = nil
             end
             pbApply(addon)
         end,
