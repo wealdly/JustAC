@@ -39,7 +39,7 @@ TIERS = [("st", 1), ("cleave", 2), ("aoe", 3)]
 # which is also Protection Paladin's core rotational builder and must keep ranking.
 SKIP = set("""
 variable snapshot_stats sequence strict_sequence wait wait_until_ready pool_resource
-cycling_variable retarget_auto_attack auto_attack auto_shot start_moving stop_moving
+cycling_variable retarget retarget_auto_attack auto_attack auto_shot start_moving stop_moving
 move_to_max_range pick_up_fragment use_item use_items potion healthstone health_potion
 cancel_buff cancel_action invoke_external_buff do_treacherous_transmitter_task
 any_dnd any_blink call_action_list run_action_list
@@ -101,8 +101,18 @@ CURATED = {
     "HUNTER_1": {"bloodshed": 321530, "call_of_the_wild": 359844, "multishot": 2643},
     "HUNTER_3": {"butchery": 212436, "coordinated_assault": 360952, "flanking_strike": 269751,
                  "mongoose_bite": 259387, "raptor_bite": 186270, "spearhead": 360966},
+    # Hero-subtree abilities the 69214 trait-tree export can't reach (same export-join
+    # gap as DEMONHUNTER_3): CSV name+castability grounded, passives excluded, each id
+    # cross-confirmed against Data/SpellArchetypes.lua (independent generator) - 2026-08-16.
+    "EVOKER_1": {"azure_sweep": 1265872, "unbound_flame": 1292321},
+    "MAGE_1": {"prismatic_bolt": 1295924},
     "MAGE_2": {"phoenix_flames": 257541},
     "MAGE_3": {"glacial_spike": 199786},
+    # empty_the_cellar: TWO Monk-family candidates (1262765 / 1263438), one per hero tree.
+    # 1262765 is the cross-validated damage cast (SpellArchetypes hit); 1263438 never
+    # surfaces there (non-damage aura twin). Same hero-tree ambiguity as SHAMAN_2
+    # ascendance; revisit if the Shado-Pan build misbehaves in game.
+    "MONK_1": {"empty_the_cellar": 1262765},
     "MONK_2": {"invoke_chiji": 325197},
     # zenith 1249625 (Midnight WW cooldown, 2 charges @ 90s; single-entry node in
     # the parallel Monk tree the universe walk misses) - CSV-grounded 2026-08-02.
@@ -114,12 +124,22 @@ CURATED = {
     "PALADIN_3": {"divine_hammer": 198034, "final_reckoning": 343721,
                   "justicars_vengeance": 215661, "templar_strike": 407480},
     # devouring_plague 369128 (a valid DP record), void_bolt 205448 confirmed; void_eruption
-    # left as residue (228260 resolves to the Voidform buff, not the cast - unconfirmed).
-    "PRIEST_3": {"devouring_plague": 369128, "mindbender": 123040, "void_bolt": 205448},
+    # left as residue (228360/228361 byte-identical in every CSV column - no signal to pick;
+    # the voidform burst anchor resolves through dark_ascension instead, one is enough).
+    # mind_flay_insanity: override target of aura 391401 (EffectAura=332), whose owner sits
+    # in an export-gapped hero node so the automatic override hop never fires.
+    "PRIEST_3": {"devouring_plague": 369128, "mindbender": 123040, "void_bolt": 205448,
+                 "mind_flay_insanity": 391403, "void_blast": 450983,
+                 "void_volley": 1242173, "dark_ascension": 391109},
     "ROGUE_2": {"coup_de_grace": 441776},
     "ROGUE_3": {"coup_de_grace": 441776, "rupture": 1943, "shuriken_tornado": 277925, "symbols_of_death": 212283},
+    "WARLOCK_1": {"malefic_grasp": 1261153},
     "WARLOCK_2": {"infernal_bolt": 434506, "ruination": 434635},
     "WARLOCK_3": {"infernal_bolt": 434506, "ruination": 434635},
+    # champions_leap: core Colossus rotational damage (unconditional APL slot beside
+    # champions_spear), NOT the movement gap-closer - that is Charge/Heroic Leap in
+    # CLASS_GAPCLOSER_DEFAULTS. Sole SpellName match, family 4, not passive.
+    "WARRIOR_3": {"champions_leap": 1271985},
     # crusade left as residue: the only confident candidate (231895) is the Avenging Wrath
     # record, not a distinct Crusade cast - avoid emitting a wrong id.
 }
