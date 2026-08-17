@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [5.1.9] - 2026-08-16
+
+### Fixed
+- Rogues no longer get a gap-closer suggestion one step outside melee range. The "only
+  suggest for real gaps" buffer needs to measure the distance using abilities you know,
+  and rogues have none at the exact distance it checks, so a small gap could not be told
+  apart from a real one; it now falls back to the nearest measurable distance
+
+### Changed
+- Rotation priorities refreshed to the current theorycraft for all 35 specs. Several
+  abilities that previously kept the game's default ordering are now ranked properly,
+  including new hero-talent abilities for Devastation Evoker, Arcane Mage, Brewmaster
+  Monk, Shadow Priest, Affliction Warlock, and Protection Warrior
+
 ## [5.1.8] - 2026-08-16
 
 ### Added

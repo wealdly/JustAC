@@ -48,8 +48,16 @@ local lastFiredTime = -1e9
 -- Near-band gate: barely out of melee is walking distance, not a cooldown's job -
 -- only offer when the target is PROVEN beyond this (or unprovable: probe coverage
 -- varies by spec, and unknown fails OPEN so thin toolboxes keep their gap closers).
--- ponytail: one flat threshold; per-spell max-range bands if a spec ever needs them.
 local GAP_CLOSER_NEAR_YARDS = 10
+-- Probe-hole fallback for the near band. Only ONE 10yd probe exists in all of
+-- Data/RangeReferences.lua, so for most melee the 5-10yd question is UNANSWERABLE:
+-- a rogue's ladder is 5yd melee probes then Blind at 15, which proves "within 15"
+-- but never "within 10" - so one step outside melee read as unknown, failed open,
+-- and offered Shadowstep (user-reported). When 10 is unanswerable, a proven
+-- "within 15" is accepted as near instead. Specs that CAN answer 10 keep the
+-- tighter band; specs with no mid probe at all still fail open (both nil).
+-- ponytail: one flat pair; per-spell max-range bands if a spec ever needs them.
+local GAP_CLOSER_NEAR_FALLBACK_YARDS = 15
 
 --------------------------------------------------------------------------------
 -- Cached state
@@ -315,9 +323,13 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
     -- like melee range (same hide-debounce smoothing). Only a positive proof
     -- suppresses; nil (out of probe coverage) falls through and the offer stands,
     -- so this can only ever REMOVE wasted offers, never valid ones.
-    if outOfRange and gc.farOnly ~= false
-        and SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(GAP_CLOSER_NEAR_YARDS) == true then
-        outOfRange = false
+    if outOfRange and gc.farOnly ~= false and SpellDB.IsTargetWithin then
+        local near = SpellDB.IsTargetWithin(GAP_CLOSER_NEAR_YARDS)
+        if near == nil then
+            -- 10 unanswerable (probe hole - see GAP_CLOSER_NEAR_FALLBACK_YARDS).
+            near = SpellDB.IsTargetWithin(GAP_CLOSER_NEAR_FALLBACK_YARDS)
+        end
+        if near == true then outOfRange = false end
     end
 
     if outOfRange then
