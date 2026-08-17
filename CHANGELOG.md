@@ -3,6 +3,32 @@
 
 ## [Unreleased]
 
+## [5.1.8] - 2026-08-16
+
+### Added
+- Enhancement Shamans now get a reminder for the off-hand weapon imbue too, clickable like
+  the main-hand one. Only the main hand was watched before, so a missing Flametongue on
+  the off-hand went unmentioned
+
+### Fixed
+- While a poison, shield, or aura is mid-application, the queue no longer flashes a
+  different member of the same family for the duration of the cast. The game re-requests
+  the family the moment the cast starts, because the buff has not landed yet; suggestions
+  from that family now hold until the application lands and the game's request catches
+  up with it, which takes a few seconds more
+- A just-applied poison, shield, or imbue no longer stays on the clickable buff bar for a
+  moment after its cast finishes. The buff takes a beat to register, and during that beat
+  the offer still read as clickable, so a second click could apply it again for nothing
+- The pre-combat buff reminders no longer offer things that are not pre-combat buffs. The
+  game's own list of group buffs also carries big healing cooldowns and even passives, and
+  on some classes all of it was offered at full health before a pull - a Holy Priest saw
+  Divine Hymn, Guardian Spirit, and the passive Light's Resurgence. Only real maintainable
+  buffs are offered now
+- Passive abilities can no longer appear as suggestions anywhere. Beyond the case above,
+  the game can name a passive as the next thing to cast, flash a proc glow under a
+  passive's name, or swap a real spell's identity to a passive; all of those doors are
+  now closed
+
 ## [5.1.7] - 2026-08-16
 
 ### Fixed

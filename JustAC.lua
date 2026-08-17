@@ -1929,6 +1929,13 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
         RedundancyFilter.RecordSpellActivation(spellID)
     end
 
+    -- Applied-latch for the pre-combat buff offers (poisons, shields, imbues): clears
+    -- the clickable offer at cast COMPLETION instead of a server beat later when the
+    -- aura registers - the beat where a second click re-applies for nothing. The
+    -- callee filters to maintained ids, so this is a table lookup for everything else.
+    local PE = LibStub("JustAC-PrecombatEngine", true)
+    if PE and PE.NoteClassBuffApplied then PE.NoteClassBuffApplied(spellID) end
+
     -- Record maintained-DoT applications so the queue can sink them while the
     -- debuff is live on the target (identity from our own NeverSecret cast).
     if UnitAffectingCombat("player") and DotTracker and DotTracker.OnCastSucceeded then

@@ -90,6 +90,13 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     -- Wild Charge). Cooldown is handled separately below; range by the checkRange gate.
     if IsSpellKnown and not (IsSpellKnown(spellID) or IsSpellKnown(resolvedID)) then return nil end
 
+    -- Passive backstop. This gate deliberately uses IsSpellKnown rather than
+    -- IsSpellAvailable (see above) - but that also skips IsSpellAvailable's built-in
+    -- passive refusal, and IsSpellKnown answers true for a known passive. Every other
+    -- suggestion path has that refusal somewhere; this was the one that did not, so a
+    -- passive id added to the gap-closer list would have rendered an unpressable icon.
+    if BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(resolvedID) then return nil end
+
     -- Blacklist: suppress entries the user has hidden from all positions.
     -- Check both the curated base ID and the talent-resolved ID - the user may
     -- have blacklisted either form (IsSpellBlacklisted expands each via display override).
