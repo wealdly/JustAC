@@ -98,11 +98,35 @@ function BlizzardAPI.ClearSpellCache()
     wipe(spellInfoCache)
 end
 
+-- Passive filter for ids arriving from Blizzard's assist APIs. Their data can hand
+-- back a passive (observed live: a passive talent's id as the "next cast" on a
+-- Priest) - the id is real, just not castable, so showing it draws a suggestion
+-- nothing can press. IsSpellAvailable already refuses passives for OUR lists; these
+-- two ingest points returned Blizzard's ids verbatim, bypassing it. Memoized:
+-- passive-ness is static spell data, and the demand probe runs per queue build.
+local passiveMemo = {}
+local function IsPassiveID(spellID)
+    if not C_Spell_IsSpellPassive then return false end
+    local v = passiveMemo[spellID]
+    if v == nil then
+        local ok, isPassive = pcall(C_Spell_IsSpellPassive, spellID)
+        v = (ok and isPassive) and true or false
+        passiveMemo[spellID] = v
+    end
+    return v
+end
+-- Exported for gates that deliberately can't use IsSpellAvailable (its castability
+-- half wrongly rejects form-gated spells) but still need its passive refusal.
+BlizzardAPI.IsPassiveSpell = IsPassiveID
+
 -- checkForVisibleButton: true=visible only, false=include hidden (macro conditionals)
 local function QueryNextCastSpell(checkForVisibleButton)
     if not C_AssistedCombat or not C_AssistedCombat.GetNextCastSpell then return nil end
     local success, result = pcall(C_AssistedCombat.GetNextCastSpell, checkForVisibleButton)
     if success and result and type(result) == "number" and result > 0 then
+        -- nil, not the passive: "no demand" lets every caller's fallback chain run,
+        -- where a passive id would freeze slot 1 / the demand hold on a dead entry.
+        if IsPassiveID(result) then return nil end
         return result
     end
     return nil
@@ -135,10 +159,22 @@ function BlizzardAPI.GetRotationSpells()
 
     local success, result = pcall(C_AssistedCombat.GetRotationSpells)
     if success and result and type(result) == "table" and #result > 0 then
+        local hasPassive = false
         for i = 1, #result do
             if type(result[i]) ~= "number" or result[i] <= 0 then
                 return nil
             end
+            if IsPassiveID(result[i]) then hasPassive = true end
+        end
+        -- Same filter as the demand probe. Copy only on a hit: the common case
+        -- (no passives) returns Blizzard's table untouched.
+        if hasPassive then
+            local filtered = {}
+            for i = 1, #result do
+                if not IsPassiveID(result[i]) then filtered[#filtered + 1] = result[i] end
+            end
+            if #filtered == 0 then return nil end
+            return filtered
         end
         return result
     end
@@ -352,7 +388,11 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
     end
 
     local override = C_Spell_GetOverrideSpell(spellID)
-    if override and override ~= 0 and override ~= spellID then
+    -- Never resolve INTO a passive: the client's override data can map a castable onto
+    -- a passive talent's id (the id is real; it is just not a button). Every consumer
+    -- of this function wants "the id to DISPLAY/cast", so a passive override is always
+    -- wrong - keep the castable input id instead.
+    if override and override ~= 0 and override ~= spellID and not IsPassiveID(override) then
         overrideSpellCache[spellID] = override
         return override
     end
@@ -368,7 +408,11 @@ end
 function BlizzardAPI.ResolveSpellID(spellID)
     if FindSpellOverrideByID then
         local overrideID = FindSpellOverrideByID(spellID)
-        if overrideID and overrideID ~= 0 and overrideID ~= spellID then
+        -- Same passive refusal as GetDisplaySpellID above; this is the hop every
+        -- defensive/precombat entry takes on its way to an icon (user-confirmed live:
+        -- the topoff heal's Renew resolved to a passive Priest talent and rendered it).
+        if overrideID and overrideID ~= 0 and overrideID ~= spellID
+           and not IsPassiveID(overrideID) then
             return overrideID
         end
     end

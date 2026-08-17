@@ -93,6 +93,33 @@ local function MainHandEnchantHolds()
     return (expiryMs / 1000) > RefreshWindow()
 end
 
+-- Off-hand twin of MainHandEnchantHolds - select() past the main-hand triplet+id.
+-- Only consulted when an off-hand imbue is actually offerable (see OffHandImbue).
+local function OffHandEnchantHolds()
+    if not GetWeaponEnchantInfo then return false end
+    local _, _, _, _, has, expiryMs = GetWeaponEnchantInfo()
+    if not has then return false end
+    if issecretvalue and issecretvalue(expiryMs) then return true end
+    if type(expiryMs) ~= "number" then return true end
+    return (expiryMs / 1000) > RefreshWindow()
+end
+
+-- The off-hand imbue to offer, or nil. Blizzard routes the hands in SPELL DATA:
+-- Windfury's tooltip reads "main-hand", and Flametongue's is conditional on KNOWING
+-- Windfury ($?s33757[off-hand][]) - so when both are known (Enhancement), Flametongue
+-- IS the off-hand cast and a plain spell click applies to the right slot; no
+-- slot-targeted macro needed. Offerable only when the off-hand holds a WEAPON
+-- (classID 2): shields and frills can't take an imbue. GetItemInfoInstant is
+-- cache-free, so this never waits on an item query.
+local function OffHandImbue()
+    if not (IsPlayerSpell(33757) and IsPlayerSpell(318038)) then return nil end
+    local itemID = GetInventoryItemID and GetInventoryItemID("player", 17)
+    if not itemID then return nil end
+    local classID = select(6, GetItemInfoInstant(itemID))
+    if classID ~= 2 then return nil end
+    return 318038
+end
+
 -- True if the player currently has any aura whose spellId is in the set AND it is not
 -- already inside the refresh window. Iterates the player's helpful auras (usually < 40),
 -- so cost is independent of how big the set is - which matters because the food set can
@@ -420,9 +447,69 @@ end
 --- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
 ---   than read here for the same reason as offerTopoff: this module never touches the
 ---   profile. nil falls back to "below full".
+-- Applied-latch for class-buff and imbue SPELL casts - the spell twin of
+-- NoteWeaponEnchantApplied above, fed from UNIT_SPELLCAST_SUCCEEDED. The cast has
+-- landed but the aura (or weapon enchant) takes a server beat to register; without
+-- this the offer stays on screen with a live "click" hint for those seconds, and a
+-- second click re-applies for nothing. Purely a display latch: if the application
+-- somehow never lands, the grace lapses and the offer returns.
+local CLASSBUFF_APPLY_GRACE = 3
+local classBuffAppliedAt = {}
+local function IsFreshlyApplied(spellID)
+    local t = classBuffAppliedAt[spellID]
+    return t ~= nil and (GetTime() - t) < CLASSBUFF_APPLY_GRACE
+end
+-- Exported for RedundancyFilter's sibling rule: a group with a freshly-applied member
+-- keeps its siblings out of the queue for the same settle window.
+PrecombatEngine.IsClassBuffFresh = IsFreshlyApplied
+
+--- Called from the addon's UNIT_SPELLCAST_SUCCEEDED handler for player casts.
+--- Latches only maintained members and imbues, so the table stays a handful of keys.
+function PrecombatEngine.NoteClassBuffApplied(spellID)
+    if not spellID then return end
+    local members = SpellDB and SpellDB.MAINTAINED_BUFF_MEMBERS
+    local enchants = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS
+    if (members and members[spellID]) or (enchants and enchants[spellID]) then
+        classBuffAppliedAt[spellID] = GetTime()
+        PrecombatEngine.ClearCache()
+    end
+end
+
+-- Is the player currently CASTING a maintained application (a poison's several-second
+-- apply, a weapon imbue)? Read for the mid-cast hold below. OOC cast info is plain.
+local function CastingMaintainedBuff()
+    if not UnitCastingInfo then return false end
+    local castID = select(9, UnitCastingInfo("player"))
+    if not castID or (issecretvalue and issecretvalue(castID)) then return false end
+    if SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS and SpellDB.WEAPON_ENCHANT_SPELLS[castID] then
+        return true
+    end
+    local class = select(2, UnitClass("player"))
+    local groups = class and SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS
+        and SpellDB.CLASS_MAINTAINED_BUFFS[class]
+    if not groups then return false end
+    for _, grp in ipairs(groups) do
+        for _, id in ipairs(grp.group) do
+            if castID == id then return true end
+        end
+    end
+    return false
+end
+
 function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
+        return cachedClassBuffs
+    end
+    -- Mid-application hold: the moment a poison/imbue CAST starts, AC's demand pointer
+    -- moves on to its next reveal, but the state it left won't settle until the cast
+    -- lands and the aura updates. Recomputing during the cast surfaces that transient -
+    -- a third poison flashing while the second is still applying - so serve the answer
+    -- from before the cast began and recompute when it resolves (lands OR is cancelled;
+    -- either way UnitCastingInfo goes quiet and the next call falls through). Bounded by
+    -- the cast itself, so a hold can never outlive the confusion it hides.
+    if cachedClassBuffs and CastingMaintainedBuff() then
+        cachedClassBuffsAt = now   -- keep the cache warm for the cast's duration
         return cachedClassBuffs
     end
     local out = {}
@@ -471,9 +558,19 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
                 end
                 if pendingDemand then break end
             end
+            -- A demanded weapon IMBUE must hold the group fallbacks exactly like a
+            -- demanded group member. Imbues live outside the aura groups (weapon
+            -- enchants), so without this the shield default could fire while AC's
+            -- shield pick is still hidden behind the imbue demand - the same
+            -- displacement trap the hold exists for. The imbue itself is offered
+            -- by the enchant tail below, so holding here hides nothing.
+            if not pendingDemand and SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS
+               and SpellDB.WEAPON_ENCHANT_SPELLS[nextCast] then
+                pendingDemand = true
+            end
         end
         for _, grp in ipairs(groups) do
-            local active, aura
+            local active, aura, latchedActive
             for _, spellID in ipairs(grp.group) do
                 if IsPlayerSpell(spellID) then
                     local a = get(spellID)
@@ -488,10 +585,28 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
                         end
                     end
                     if a then active, aura = spellID, a; break end
+                    -- Applied-latch: the cast landed a moment ago but the aura hasn't
+                    -- registered yet. Treat as active with UNKNOWN timing (aura nil -
+                    -- IsLapsing answers false), so the group goes quiet the instant the
+                    -- cast completes instead of a clickable beat later.
+                    if IsFreshlyApplied(spellID) then
+                        active, latchedActive = spellID, true
+                        break
+                    end
                 end
             end
             local acPick = ACPickInGroup(nextCast, rotation, grp.group)
-            if active and acPick and acPick ~= active then
+            -- While the active member is FRESHLY APPLIED, a differing AC demand is stale
+            -- by definition - the demand API settles a few seconds behind the cast we
+            -- just watched land (and behind Blizzard's own visible slot), and offering
+            -- its member in that window is the sibling flash again, from the other side.
+            -- Ask the latch DIRECTLY, not just latchedActive: when the aura registers
+            -- faster than the demand settles (the common order right after a reload),
+            -- `active` comes from the aura probe and latchedActive stays unset - the
+            -- gate must hold in both orders. If AC still demands a different member
+            -- once the grace lapses, that is a genuine wrong-member and it fires.
+            if active and acPick and acPick ~= active
+               and not (latchedActive or IsFreshlyApplied(active)) then
                 -- The WRONG member is up: the assisted rotation runs a different one, and
                 -- the active buff doesn't satisfy it, so AC's queue slot stays frozen on
                 -- its pick no matter how fresh the current buff is. Offer AC's member -
@@ -504,7 +619,9 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
                 -- (joined late, released, or was out of range when it went out). One
                 -- re-cast covers everyone, so offer it even though the player's own
                 -- copy is nowhere near lapsing.
-                if not offered and grp.raidWide
+                -- latchedActive also blocks the party recast: the cast that just landed
+                -- covered the party too, and THEIR auras lag the same server beat.
+                if not offered and grp.raidWide and not latchedActive
                    and PartyMemberMissingBuff(active, grp.auraIDs or grp.group) then
                     out[#out + 1] = active
                 end
@@ -544,11 +661,24 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
             for _, id in ipairs(grp.group) do covered[id] = true end
             for _, id in ipairs(grp.auraIDs or {}) do covered[id] = true end
         end
+        -- Blizzard's registry is broader than "maintainable buff" (user-confirmed live on
+        -- a Holy Priest, which got its whole registry offered at full health): it also
+        -- carries group SAVE cooldowns (a raid heal channel, an external) and even known
+        -- PASSIVES - isKnown answers true for those, and so does IsPlayerSpell. Neither
+        -- is a precombat offer. The registry item carries no discriminating field, so:
+        --   * passives are refused outright;
+        --   * anything with a real cooldown is refused - a buff you keep up between
+        --     pulls has none, a group save has minutes. GetSpellBaseCooldown is plain
+        --     out of combat, which is the only place this block runs.
         for i = 1, #engineBuffs do
             local it = engineBuffs[i]
             if it.isKnown and not it.hideByDefault and not covered[it.spellID]
-               and IsPlayerSpell(it.spellID) and not get(it.spellID) then
-                out[#out + 1] = it.spellID
+               and IsPlayerSpell(it.spellID) and not get(it.spellID)
+               and not (BlizzardAPI and BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(it.spellID)) then
+                local cdMs = GetSpellBaseCooldown and GetSpellBaseCooldown(it.spellID)
+                if not (cdMs and not (issecretvalue and issecretvalue(cdMs)) and cdMs > 60000) then
+                    out[#out + 1] = it.spellID
+                end
             end
         end
     end
@@ -557,7 +687,16 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
     -- enchant is inside the refresh window - the same read IsCategorySatisfied uses for oils.
     if not InCombatLockdown() then
         local imbue = KnownWeaponImbue()
-        if imbue and not MainHandEnchantHolds() then out[#out + 1] = imbue end
+        if imbue and not MainHandEnchantHolds() and not IsFreshlyApplied(imbue) then
+            out[#out + 1] = imbue
+        end
+        -- Off-hand imbue (dual-imbue specs, i.e. Enhancement). Never collides with the
+        -- main-hand offer: that one is Windfury whenever Windfury is known, which is
+        -- exactly the condition that makes Flametongue an off-hand cast (see OffHandImbue).
+        local ohImbue = OffHandImbue()
+        if ohImbue and not OffHandEnchantHolds() and not IsFreshlyApplied(ohImbue) then
+            out[#out + 1] = ohImbue
+        end
     end
     -- Recuperate (cross-class OOC self-heal): a maintained buff whose "missing"
     -- condition is health-based instead of aura-expiry - offer it while the player

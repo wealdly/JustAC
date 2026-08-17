@@ -466,6 +466,15 @@ for _, grp in ipairs(SpellDB.CLASS_MAINTAINED_BUFFS.ROGUE) do
     for _, id in ipairs(grp.group) do SpellDB.ROGUE_POISON_CAST_IDS[id] = true end
 end
 
+-- Every maintained-buff member across all classes, flat - derived like the poison set
+-- above so it can never drift. PrecombatEngine's applied-latch keys off it.
+SpellDB.MAINTAINED_BUFF_MEMBERS = {}
+for _, classGroups in pairs(SpellDB.CLASS_MAINTAINED_BUFFS) do
+    for _, grp in ipairs(classGroups) do
+        for _, id in ipairs(grp.group) do SpellDB.MAINTAINED_BUFF_MEMBERS[id] = true end
+    end
+end
+
 -- Weapon imbues (shaman): these apply a temp weapon ENCHANT, not a player aura, so they can't
 -- live in CLASS_MAINTAINED_BUFFS (that path detects via auras). PrecombatEngine suggests them
 -- by reading the weapon directly (GetWeaponEnchantInfo).
@@ -477,8 +486,9 @@ end
 SpellDB.WEAPON_ENCHANT_SPELLS = {
     [33757] = true,   -- Windfury Weapon
     [318038] = true,  -- Flametongue Weapon
-    [196834] = true,  -- Frostbrand Weapon (situational; never a maintained default)
     [382021] = true,  -- Earthliving Weapon
+    -- Frostbrand (196834) removed: retired at 12.1 (no SpellName row, no acquisition
+    -- route, no live replacement) - a detection entry that could never match.
 }
 SpellDB.WEAPON_IMBUE_SPELLS = { 33757, 318038, 382021 }  -- Windfury, Flametongue, Earthliving
 

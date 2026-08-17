@@ -38,6 +38,33 @@ local PET_SUMMON_SPELLS  = SpellDB and SpellDB.PET_SUMMON_SPELLS  or {}
 local PET_SUMMON_EXCLUSIVE = SpellDB and SpellDB.PET_SUMMON_EXCLUSIVE or {}
 local UNIQUE_AURA_SPELLS = SpellDB and SpellDB.UNIQUE_AURA_SPELLS or {}
 local ROGUE_POISON_CAST_IDS = SpellDB and SpellDB.ROGUE_POISON_CAST_IDS or {}
+
+-- [memberID] = that group's member-set, for every CLASS_MAINTAINED_BUFFS group across
+-- all classes (ids are globally unique, so one flat map). Weapon imbues deliberately
+-- NOT included: they go to different HANDS, so siblings are not mutually redundant.
+local MAINTAINED_GROUP_OF = {}
+do
+    local cmb = SpellDB and SpellDB.CLASS_MAINTAINED_BUFFS
+    if cmb then
+        for _, classGroups in pairs(cmb) do
+            for _, grp in ipairs(classGroups) do
+                local set = {}
+                for _, id in ipairs(grp.group) do set[id] = true end
+                for _, id in ipairs(grp.group) do MAINTAINED_GROUP_OF[id] = set end
+            end
+        end
+    end
+end
+
+local UnitCastingInfo = UnitCastingInfo
+
+-- The maintained group whose member the player is CASTING right now, or nil.
+local function MaintainedGroupOfCast()
+    if not UnitCastingInfo then return nil end
+    local castID = select(9, UnitCastingInfo("player"))
+    if not castID or (issecretvalue and issecretvalue(castID)) then return nil end
+    return MAINTAINED_GROUP_OF[castID]
+end
 local WEAPON_ENCHANT_SPELLS = SpellDB and SpellDB.WEAPON_ENCHANT_SPELLS or {}
 
 --------------------------------------------------------------------------------
@@ -1162,6 +1189,34 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         local PE = GetPrecombatEngine()
         if PE and PE.IsOfferedNow and PE.IsOfferedNow(spellID, profile) then
             return true, "already offered as a pre-combat buff on the defensive bar"
+        end
+    end
+
+    -- SIBLING OF AN IN-FLIGHT APPLICATION. While a maintained-group member (a poison,
+    -- shield, paladin aura) is CASTING, AC re-demands the group through its own preferred
+    -- member - the in-flight aura hasn't landed, so the group still reads missing - and
+    -- the queue flashes a sibling for exactly the cast's duration (observed live:
+    -- Crippling recommended while Atrophic was mid-cast). Every member of the casting
+    -- spell's group is redundant until that cast resolves; the hold is bounded by the
+    -- cast itself. With a dual-slot talent (two lethals) this delays a LEGITIMATE next
+    -- demand by those same few seconds - the cheap direction; it reappears at cast end.
+    local castGroup = MaintainedGroupOfCast()
+    if castGroup and castGroup[spellID] then
+        return true, "same buff group as the application in flight"
+    end
+    -- Same rule for the settle window AFTER the cast: a group with a freshly-applied
+    -- member (PrecombatEngine's applied-latch) keeps its siblings out of the queue while
+    -- the demand API catches up to the cast - it lags a few seconds behind even
+    -- Blizzard's own visible slot, and those seconds were the queue's sibling flash.
+    local grp = MAINTAINED_GROUP_OF[spellID]
+    if grp then
+        local PE = GetPrecombatEngine()
+        if PE and PE.IsClassBuffFresh then
+            for id in pairs(grp) do
+                if PE.IsClassBuffFresh(id) then
+                    return true, "a member of this buff group was just applied"
+                end
+            end
         end
     end
 

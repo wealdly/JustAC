@@ -1104,6 +1104,14 @@ local procListDirty = true
 
 function ActionBarScanner.OnProcShow(spellID)
     if spellID and spellID > 0 and not activeProcs[spellID] then
+        -- Blizzard can key an overlay glow to a PASSIVE's own id (observed live: a
+        -- passive Priest talent whose proc fires off Prayer of Mending). Admitted here,
+        -- it reaches BOTH proc consumers - the defensive proc injection classifies it
+        -- as healing through the base-spell hop, and the offensive spellbook-proc path
+        -- takes anything glowing - so the one shared gate is this ingest.
+        if BlizzardAPI and BlizzardAPI.IsPassiveSpell and BlizzardAPI.IsPassiveSpell(spellID) then
+            return
+        end
         activeProcs[spellID] = true
         procListDirty = true
 
