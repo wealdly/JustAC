@@ -271,10 +271,78 @@ local function IsBlacklistedEntry(value, isPrimary)
     return false
 end
 
+--------------------------------------------------------------------------------
+-- Situational sets: named groups of abilities toggled as ONE unit from a keybind
+-- (the "big-pull cooldowns" case - hide them for trash, flip them back for a boss).
+-- Membership persists on the profile per spec; the ACTIVE flag is session-only and
+-- resets to active on login/spec change, so nobody inherits yesterday's hidden
+-- raid cooldowns. An INACTIVE set's members read as `{ fixedQueue = true }` - hidden
+-- from positions 2+, still allowed as Blizzard's live pick so the AC slot never
+-- stalls - which is why this is a gate on the blacklist reader and not a new path.
+--------------------------------------------------------------------------------
+local SET_SLOTS = 3
+SpellQueue.SET_SLOTS = SET_SLOTS
+local setInactive = {}   -- [slot] = true while that set is switched OFF (session-only)
+
+local function SetMembers(slot)
+    local profile = BlizzardAPI and BlizzardAPI.GetProfile()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local sets = profile and specKey and profile.situationalSets
+        and profile.situationalSets[specKey]
+    return sets and sets[slot]
+end
+
+-- Is this spell (or its display form) a member of any INACTIVE set?
+local function InInactiveSet(spellID)
+    for slot = 1, SET_SLOTS do
+        if setInactive[slot] then
+            local m = SetMembers(slot)
+            if m and m.spells then
+                if m.spells[spellID] then return true end
+                local displayID = BlizzardAPI.GetDisplaySpellID(spellID)
+                if displayID ~= spellID and m.spells[displayID] then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function SetHasMembers(slot)
+    local m = SetMembers(slot)
+    return (m and m.spells and next(m.spells)) and true or false
+end
+
+--- An EMPTY set always reads active. Without this a set switched off and then emptied
+--- from the card was stuck: ToggleSet refuses empty sets, so the flag could never be
+--- flipped back, and the on-screen tag kept naming a set that hid nothing.
+function SpellQueue.IsSetActive(slot)
+    if setInactive[slot] and not SetHasMembers(slot) then setInactive[slot] = nil end
+    return not setInactive[slot]
+end
+
+--- Flip a set. Returns the NEW active state, or nil when the slot has no members
+--- (nothing to toggle - the caller can tell the player so).
+function SpellQueue.ToggleSet(slot)
+    if not SetHasMembers(slot) then
+        setInactive[slot] = nil   -- see IsSetActive: empty is never "off"
+        return nil
+    end
+    setInactive[slot] = not setInactive[slot] or nil
+    SpellQueue.InvalidateRotationCache()
+    return not setInactive[slot]
+end
+
+--- Login / spec change: every set comes back ACTIVE (decision: never persist "off").
+function SpellQueue.ResetSets()
+    wipe(setInactive)
+end
+
 -- Checks both base ID and its display/override ID against the blacklist.
 -- isPrimary: true when testing Blizzard's position-1 pick (exempts 2+-only entries).
 function SpellQueue.IsSpellBlacklisted(spellID, blacklist, isPrimary)
     if not spellID then return false end
+    -- Situational sets: an inactive set's member is queue-only hidden (never the AC slot).
+    if not isPrimary and InInactiveSet(spellID) then return true end
     if not blacklist then blacklist = GetBlacklistTable() end
     if not blacklist then return false end
     if IsBlacklistedEntry(blacklist[spellID], isPrimary) then return true end

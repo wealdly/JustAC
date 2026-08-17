@@ -6,6 +6,8 @@ if not General then return end
 
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 local W = LibStub("JustAC-OptionsWidgets")
+local SpellSearch = LibStub("JustAC-OptionsSpellSearch", true)
+local SpellDB = LibStub("JustAC-SpellDB", true)
 
 local fullyDisabled = W.fullyDisabled
 
@@ -227,6 +229,57 @@ function General.CreateTabArgs(addon)
                     }),
         },
     }
+
+    -- ── Situational sets: name the three keybind-toggled groups ─────────────
+    -- Membership is set per ability on the Abilities tab; the keys are bound in
+    -- Blizzard's Key Bindings UI (Addons > JustAssistedCombat). This is per-spec.
+    tab.args.setsHeader = {
+        type = "header",
+        name = SpellSearch.SpecHeader(L["Situational Sets"]),
+        order = 30,
+    }
+    tab.args.setsDesc = {
+        type = "description",
+        name = L["Situational Sets desc"],
+        order = 30.1,
+        fontSize = "medium",
+    }
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    for slot = 1, (SQ and SQ.SET_SLOTS or 3) do
+        tab.args["setName" .. slot] = {
+            type = "input",
+            name = string.format(L["Set Name"], slot),
+            desc = L["Set Name desc"],
+            order = 30.1 + slot * 0.1,
+            width = "normal",
+            get = function()
+                local sk = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+                local sets = sk and addon.db.profile.situationalSets and addon.db.profile.situationalSets[sk]
+                local s = sets and sets[slot]
+                return s and s.name or ""
+            end,
+            set = function(_, val)
+                local sk = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+                if not sk then return end
+                local p = addon.db.profile
+                p.situationalSets = p.situationalSets or {}
+                p.situationalSets[sk] = p.situationalSets[sk] or {}
+                p.situationalSets[sk][slot] = p.situationalSets[sk][slot] or { spells = {} }
+                val = val and val:trim() or ""
+                p.situationalSets[sk][slot].name = val ~= "" and val or nil
+                local UIR = LibStub("JustAC-UIRenderer", true)
+                if UIR and UIR.RefreshSetIndicator then UIR.RefreshSetIndicator(addon) end
+                W.NotifyChange()
+            end,
+        }
+    end
+    tab.args.setsBindHint = {
+        type = "description",
+        name = "|cff888888" .. L["Situational Sets Bind Hint"] .. "|r",
+        order = 30.9,
+        fontSize = "small",
+    }
+
     tab.args.resetHeader, tab.args.resetDefaults =
         W.resetButton(990, L["Reset General desc"], function()
             local p = addon.db.profile

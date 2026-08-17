@@ -3,6 +3,7 @@
 -- JustAC: Main Addon Module
 local JustAC = LibStub("AceAddon-3.0"):NewAddon("JustAssistedCombat", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 local AceDB = LibStub("AceDB-3.0")
+local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 local UIRenderer, UIFrameFactory, UIAnimations, UIHealthBar, SpellQueue, ActionBarScanner, BlizzardAPI, FormCache, Options, MacroParser, RedundancyFilter, UINameplateOverlay, DefensiveEngine, GapCloserEngine, TargetFrameAnchor, KeyPressDetector, SpellDB, CustomQueueOpts, SpellSearch, DotTracker, MaintenanceTracker, CastInterruptTracker
 
@@ -583,6 +584,11 @@ function JustAC:OnInitialize()
         _G.BINDING_NAME_JUSTAC_CAST_FIRST = "JustAC: Cast First Spell"
         _G.BINDING_HEADER_JUSTAC = "JustAssistedCombat"
     end
+    -- Situational-set toggles (Bindings.xml). Names read from the locale so the Key
+    -- Bindings UI is translated; the set's own label is shown next to it once named.
+    for slot = 1, 3 do
+        _G["BINDING_NAME_JUSTAC_TOGGLE_SET" .. slot] = string.format(L["Toggle Situational Set"], slot)
+    end
     
     self:NormalizeSavedData()
 
@@ -987,6 +993,11 @@ end
 function JustAC:RefreshConfig()
     -- Migrate old profile-level data (blacklist/hotkeys/panelLocked) if switching to an un-migrated profile
     self:NormalizeSavedData()
+    -- Situational sets: the OFF flags are session state, but membership lives on the
+    -- PROFILE - a profile switch with a set off would silently hide the NEW profile's
+    -- members under the old flag. Every set comes back on, same as login/spec change.
+    if SpellQueue and SpellQueue.ResetSets then SpellQueue.ResetSets() end
+    if UIRenderer and UIRenderer.RefreshSetIndicator then UIRenderer.RefreshSetIndicator(self) end
     -- Blacklist/spec profiles are character-specific; hotkey overrides travel with the profile
     self:InitializeDefensiveSpells()
     -- Burst-trigger overrides live on the profile; the spec key alone doesn't
@@ -1523,6 +1534,11 @@ function JustAC:OnSpecChange(event, unit)
     end
 
     if SpellQueue and SpellQueue.OnSpecChange then SpellQueue.OnSpecChange() end
+    -- Situational sets come back ACTIVE on login and spec change (this handler runs on
+    -- world entry too): a set switched off for last night's trash must not silently hide
+    -- the same cooldowns from today's boss.
+    if SpellQueue and SpellQueue.ResetSets then SpellQueue.ResetSets() end
+    if UIRenderer and UIRenderer.RefreshSetIndicator then UIRenderer.RefreshSetIndicator(self) end
     -- Re-initialize all per-spec engines: defensive lists + cooldown-tracking
     -- registration, gap closers, custom queue defaults.
     -- The defensive re-init is required: without it the old spec's spells stay
@@ -2057,6 +2073,31 @@ end
 
 function JustAC:ForceUpdateAll()
     self:ForceUpdate(true)
+end
+
+--- Keybind entry for a situational set (Bindings.xml). Flips the set, tells the player
+--- which way it went, and prods the queue. Insecure and combat-safe by construction.
+function JustAC:ToggleSituationalSet(slot)
+    if not SpellQueue or not SpellQueue.ToggleSet then return end
+    local active = SpellQueue.ToggleSet(slot)
+    local name = self:GetSituationalSetName(slot)
+    if active == nil then
+        self:Print(string.format(L["Set Empty"], name))
+        return
+    end
+    self:Print(string.format(active and L["Set Enabled"] or L["Set Disabled"], name))
+    if UIRenderer and UIRenderer.RefreshSetIndicator then UIRenderer.RefreshSetIndicator(self) end
+    self:ForceUpdate()
+end
+
+--- The player's label for a set slot, or a numbered default.
+function JustAC:GetSituationalSetName(slot)
+    local profile = self:GetProfile()
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local sets = profile and specKey and profile.situationalSets and profile.situationalSets[specKey]
+    local s = sets and sets[slot]
+    if s and s.name and s.name ~= "" then return s.name end
+    return string.format(L["Set Default Name"], slot)
 end
 
 function JustAC:OpenOptionsPanel()

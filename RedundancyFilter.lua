@@ -1208,14 +1208,22 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
     -- member (PrecombatEngine's applied-latch) keeps its siblings out of the queue while
     -- the demand API catches up to the cast - it lags a few seconds behind even
     -- Blizzard's own visible slot, and those seconds were the queue's sibling flash.
+    -- The applied spell ITSELF is checked first and for every maintained kind, imbues
+    -- included: at completion the clickable offer drops at once (the latch), which
+    -- releases the "already offered" suppression above - and the steady-state check
+    -- that should take over (aura up / weapon enchant present) cannot yet see the
+    -- application, because that is the very lag the latch exists for. Without this the
+    -- just-applied imbue was briefly unsuppressed on BOTH surfaces, exactly when AC's
+    -- lagging demand could still put it in the queue with the assist glow.
+    local PE = GetPrecombatEngine()
+    if PE and PE.IsClassBuffFresh and PE.IsClassBuffFresh(spellID) then
+        return true, "just applied - waiting for the buff to register"
+    end
     local grp = MAINTAINED_GROUP_OF[spellID]
-    if grp then
-        local PE = GetPrecombatEngine()
-        if PE and PE.IsClassBuffFresh then
-            for id in pairs(grp) do
-                if PE.IsClassBuffFresh(id) then
-                    return true, "a member of this buff group was just applied"
-                end
+    if grp and PE and PE.IsClassBuffFresh then
+        for id in pairs(grp) do
+            if PE.IsClassBuffFresh(id) then
+                return true, "a member of this buff group was just applied"
             end
         end
     end
