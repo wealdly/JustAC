@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Spell archetype data (GENERATED -- do not edit by hand).
--- Source: wago.tools DB2 build 12.1.0.69214. Regenerate with tools/gen_archetypes.sh.
+-- Source: wago.tools DB2 build 12.1.0.69382. Regenerate with tools/gen_archetypes.sh.
 -- Player class damage spells grouped by archetype; value = range; comment = name.
 -- Indirect-damage spells (triggered/cloned) are intentionally absent (neutral).
 -- Plus builder/spender roles: spender = costs an accumulator resource, builder =
