@@ -2674,6 +2674,77 @@ function UIRenderer.RefreshSetIndicator(addon)
     mf.jacSetTag:Show()
 end
 
+--- Apply the panel interaction mode (unlocked / locked / clickthrough) to every mouse
+--- surface: icon click registration, grab tabs, detached frame. Runs on mode CHANGE
+--- from the render loop, and DIRECTLY from JustAC:TogglePanelLock - the render loop
+--- early-returns while the display is paused (isManualMode), so a lock toggle from the
+--- minimap button while paused would otherwise not hide/show the handles until unpause.
+function UIRenderer.ApplyInteractionMode(addon, profile)
+    if not (addon and profile) then return end
+    local interactionMode = profile.panelInteraction or "unlocked"
+    if lastPanelLocked == interactionMode then return end
+    lastPanelLocked = interactionMode
+    local isClickThrough = interactionMode == "clickthrough"
+    local isLocked = interactionMode == "locked" or isClickThrough
+    local spellIconsRef = addon.spellIcons or {}
+    local maxIcons = profile.maxIcons or #spellIconsRef
+
+    if addon.mainFrame then
+        addon.mainFrame:EnableMouse(not isLocked)
+    end
+
+    for i = 1, maxIcons do
+        local icon = spellIconsRef[i]
+        if icon then
+            icon:EnableMouse(not isClickThrough)
+            if isLocked then
+                icon:RegisterForClicks()
+            else
+                icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+            end
+        end
+    end
+    if addon.defensiveIcons then
+        for _, defIcon in ipairs(addon.defensiveIcons) do
+            if defIcon then
+                defIcon:EnableMouse(not isClickThrough)
+                if isLocked then
+                    defIcon:RegisterForClicks()
+                else
+                    defIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+                end
+            end
+        end
+    end
+    -- Grab tabs exist to drag the panel and to open the menu on right-click. Both are
+    -- things a LOCKED panel must not offer, so the tabs are hidden whenever the panel
+    -- is not plainly unlocked - locked as well as click-through. Locked used to keep
+    -- them shown and mouse-enabled, so they still popped on hover and right-click
+    -- still opened the options (user-reported). Shift+right-click on the panel body
+    -- remains the way back out of a lock; nothing here removes it.
+    if addon.grabTab then
+        if isLocked then
+            addon.grabTab:Hide()
+            addon.grabTab:EnableMouse(false)
+        else
+            addon.grabTab:Show()
+            addon.grabTab:EnableMouse(true)
+        end
+    end
+    if addon.defensiveFrame then
+        addon.defensiveFrame:EnableMouse(not isLocked)
+    end
+    if addon.defensiveGrabTab then
+        if isLocked then
+            addon.defensiveGrabTab:Hide()
+            addon.defensiveGrabTab:EnableMouse(false)
+        else
+            addon.defensiveGrabTab:Show()
+            addon.defensiveGrabTab:EnableMouse(true)
+        end
+    end
+end
+
 function UIRenderer.RenderSpellQueue(addon, spellIDs)
     if not addon then return end
     local spellIconsRef = addon.spellIcons
@@ -2897,63 +2968,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         end
     end
     
-    local interactionMode = profile.panelInteraction or "unlocked"
-
-    if lastPanelLocked ~= interactionMode then
-        lastPanelLocked = interactionMode
-        local isClickThrough = interactionMode == "clickthrough"
-        local isLocked = interactionMode == "locked" or isClickThrough
-
-        if addon.mainFrame then
-            addon.mainFrame:EnableMouse(not isLocked)
-        end
-
-        for i = 1, maxIcons do
-            local icon = spellIconsRef[i]
-            if icon then
-                icon:EnableMouse(not isClickThrough)
-                if isLocked then
-                    icon:RegisterForClicks()
-                else
-                    icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-                end
-            end
-        end
-        if addon.defensiveIcons then
-            for _, defIcon in ipairs(addon.defensiveIcons) do
-                if defIcon then
-                    defIcon:EnableMouse(not isClickThrough)
-                    if isLocked then
-                        defIcon:RegisterForClicks()
-                    else
-                        defIcon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-                    end
-                end
-            end
-        end
-        -- In click-through mode, grab tabs are fully hidden; icons become drag handles on Alt hold.
-        if addon.grabTab then
-            if isClickThrough then
-                addon.grabTab:Hide()
-                addon.grabTab:EnableMouse(false)
-            else
-                addon.grabTab:Show()
-                addon.grabTab:EnableMouse(true)
-            end
-        end
-        if addon.defensiveFrame then
-            addon.defensiveFrame:EnableMouse(not isLocked)
-        end
-        if addon.defensiveGrabTab then
-            if isClickThrough then
-                addon.defensiveGrabTab:Hide()
-                addon.defensiveGrabTab:EnableMouse(false)
-            else
-                addon.defensiveGrabTab:Show()
-                addon.defensiveGrabTab:EnableMouse(true)
-            end
-        end
-    end
+    UIRenderer.ApplyInteractionMode(addon, profile)
     
     -- Skip if fade animation is playing to avoid interrupting it.
     local frameOpacity = profile.frameOpacity or 1.0
