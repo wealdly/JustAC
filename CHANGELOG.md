@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [5.3.1] - 2026-08-18
+
+### Changed
+- Spell data refreshed to the current client build (12.1.0.69382). Adds the Tidesworn
+  Augment Rune to the pre-combat reminders and two new self-buffs; nothing else changed
+- Rotation priorities re-synced with the current theorycraft. Marksmanship Hunter's
+  Explosive Shot is now held while its damage-over-time effect is already running
+
 ## [5.3.0] - 2026-08-18
 
 ### Added

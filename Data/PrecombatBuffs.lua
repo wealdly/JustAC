@@ -544,6 +544,8 @@ SpellDB.RegisterPrecombatBuffs({
         { id = 118632, buff = 175457, stat = "intellect" },  -- Focus Augment Rune
         { id = 118630, buff = 175456, stat = "agility" },  -- Hyper Augment Rune
         { id = 118631, buff = 175439, stat = "strength" },  -- Stout Augment Rune
+        -- exp -3
+        { id = 274797, buff = 1295329, stat = "primary" },  -- Tidesworn Augment Rune
     },
     weaponEnchant = {
         -- Midnight / current

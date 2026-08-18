@@ -393,7 +393,7 @@ RotationImport.RegisterGated({
     burst = {288613},  -- trueshot
     st = {
       {id=466930,gates={},delegated=true},  -- black_arrow
-      {id=212431,gates={},delegated=true},  -- explosive_shot
+      {id=212431,gates={{t="dot",id=212431}},delegated=true},  -- explosive_shot
       {id=260243,gates={}},  -- volley
       {id=19434,gates={{t="buff",id=288613}},delegated=true},  -- aimed_shot
       {id=288613,gates={},delegated=true},  -- trueshot
