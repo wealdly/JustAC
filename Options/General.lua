@@ -40,6 +40,29 @@ function General.CreateTabArgs(addon)
                         order = 1,
                         fontSize = "medium"
                     },
+                    -- The one setting that must stay reachable when everything else is
+                    -- hidden: the panel menu goes away under lock, so the minimap button is
+                    -- the fallback way in, and hiding it is a deliberate choice, not a default.
+                    showMinimap = {
+                        type = "toggle",
+                        name = L["Show Minimap Button"],
+                        desc = L["Show Minimap Button desc"],
+                        order = 1.5,
+                        width = "normal",
+                        get = function()
+                            local m = addon.db.profile.minimap
+                            return not (m and m.hide)
+                        end,
+                        set = function(_, val)
+                            local p = addon.db.profile
+                            p.minimap = p.minimap or {}
+                            p.minimap.hide = not val
+                            local DBIcon = LibStub("LibDBIcon-1.0", true)
+                            if DBIcon then
+                                if val then DBIcon:Show("JustAssistedCombat") else DBIcon:Hide("JustAssistedCombat") end
+                            end
+                        end,
+                    },
                     -- (Display Mode retired: each surface is enabled at the top of its own
                     -- tab - Standard Queue / Overlay Queue - via W.SetSurfaceEnabled, which
                     -- still writes the displayMode enum every gate reads.)
@@ -102,7 +125,24 @@ function General.CreateTabArgs(addon)
                     interruptAlertSound = W.select(addon, "interruptAlertSound", {
                         name = L["Interrupt Alert"], desc = L["Interrupt Alert Sound desc"],
                         order = 8, width = "double", default = "None",
-                        dialogControl = "LSM30_Sound",
+                        -- The LSM sound picker (speaker-icon previews) ONLY when its widget
+                        -- type actually registered. AceGUI-3.0-SharedMediaWidgets does
+                        -- LibStub("LibSharedMedia-3.0") with no silent flag, so on a
+                        -- partial install (Libs folder from an older version, or a hand
+                        -- copy without Libs) that file errors, LSM30_Sound never registers,
+                        -- and AceConfigDialog then threw on THIS control while rendering -
+                        -- which took EVERY tab down with it: "no customization appears in
+                        -- the panel", cured for those users only by installing Ace3+LSM
+                        -- standalone (field-reported, several users). Naming a widget type
+                        -- that does not exist must degrade to a plain dropdown, not kill
+                        -- the panel. Same value list either way; only the previews are lost.
+                        dialogControl = (function()
+                            local AceGUI = LibStub("AceGUI-3.0", true)
+                            if AceGUI and AceGUI.GetWidgetVersion and AceGUI:GetWidgetVersion("LSM30_Sound") then
+                                return "LSM30_Sound"
+                            end
+                            return nil
+                        end)(),
                         values = function()
                             local LSM = LibStub("LibSharedMedia-3.0", true)
                             return LSM and LSM:HashTable(LSM.MediaType.SOUND) or {}
@@ -292,6 +332,10 @@ function General.CreateTabArgs(addon)
             p.gamepadIconStyle    = "xbox"
             p.inputPreference     = "auto"
             p.interruptAlertSound = "None"
+            p.minimap = p.minimap or {}
+            p.minimap.hide = false
+            local DBIcon = LibStub("LibDBIcon-1.0", true)
+            if DBIcon then DBIcon:Show("JustAssistedCombat") end
             addon:UpdateFrameSize()
             rebuildNPO(addon)  -- interruptMode decides whether the overlay's kick icon exists
             addon:ForceUpdateAll()

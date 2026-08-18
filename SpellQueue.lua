@@ -276,9 +276,11 @@ end
 -- (the "big-pull cooldowns" case - hide them for trash, flip them back for a boss).
 -- Membership persists on the profile per spec; the ACTIVE flag is session-only and
 -- resets to active on login/spec change, so nobody inherits yesterday's hidden
--- raid cooldowns. An INACTIVE set's members read as `{ fixedQueue = true }` - hidden
--- from positions 2+, still allowed as Blizzard's live pick so the AC slot never
--- stalls - which is why this is a gate on the blacklist reader and not a new path.
+-- raid cooldowns. An INACTIVE set's members read as a full `true` blacklist entry -
+-- hidden at EVERY position, the AC slot included (the substitute logic there takes
+-- over). Big cooldowns are exactly what AC picks at position 1 the moment they are
+-- ready, so a 2+-only hide left the feature a no-op for its own use case. This is a
+-- gate on the blacklist reader, not a new path, so every caller inherits it.
 --------------------------------------------------------------------------------
 local SET_SLOTS = 3
 SpellQueue.SET_SLOTS = SET_SLOTS
@@ -341,8 +343,8 @@ end
 -- isPrimary: true when testing Blizzard's position-1 pick (exempts 2+-only entries).
 function SpellQueue.IsSpellBlacklisted(spellID, blacklist, isPrimary)
     if not spellID then return false end
-    -- Situational sets: an inactive set's member is queue-only hidden (never the AC slot).
-    if not isPrimary and InInactiveSet(spellID) then return true end
+    -- Situational sets: an inactive set's member is hidden everywhere, AC slot included.
+    if InInactiveSet(spellID) then return true end
     if not blacklist then blacklist = GetBlacklistTable() end
     if not blacklist then return false end
     if IsBlacklistedEntry(blacklist[spellID], isPrimary) then return true end
@@ -1421,11 +1423,11 @@ function SpellQueue._StageBurstCue(b)
             for i = 1, #triggerList do
                 local tid = triggerList[i]
                 local display = BlizzardAPI.GetDisplaySpellID(tid) or tid
-                -- blacklist is nil for a spec with no hidden abilities (the common
-                -- case) - indexing it raw crashed every combat build the moment the
-                -- cue was enabled, freezing the whole queue. Any entry vetoes, full
-                -- or 2+-only: the cue surfaces at position 2, which both cover.
-                if not (blacklist and (blacklist[tid] or blacklist[display]))
+                -- Shared reader: any blacklist entry (full or 2+-only) AND an OFF
+                -- situational set veto - the cue surfaces at position 2, which all
+                -- cover. Reading the table raw here bypassed the set gate, so a
+                -- switched-off cooldown was re-inserted the moment it came ready.
+                if not SpellQueue.IsSpellBlacklisted(tid, blacklist)
                    and BlizzardAPI.IsSpellAvailable(display)
                    and not BlizzardAPI.IsSpellOnCooldown(display) then
                     local rec = RotationImport and RotationImport.GetEntry

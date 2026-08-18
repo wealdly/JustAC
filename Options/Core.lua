@@ -4,7 +4,7 @@
 local Options = LibStub:NewLibrary("JustAC-Options", 32)
 if not Options then return end
 
-local AceConfigDialog = LibStub("AceConfigDialog-3.0")
+local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)   -- silent: Initialize degrades without it
 local L = LibStub("AceLocale-3.0"):GetLocale("JustAssistedCombat")
 
 -- Sub-module references (resolved lazily)
@@ -149,7 +149,11 @@ local function HandleSlashCommand(addon, input)
             addon:InitializeDefensiveSpells()
         end
         Options.RefreshAllDynamic(addon)
-        AceConfigDialog:Open("JustAssistedCombat")
+        if AceConfigDialog then
+            AceConfigDialog:Open("JustAssistedCombat")
+        else
+            addon:Print("|cffff6666Options panel unavailable:|r the AceConfig library did not load. Reinstall JustAC (its Libs folder is incomplete), or install Ace3 from CurseForge.")
+        end
         return
     end
 
@@ -204,6 +208,12 @@ local function HandleSlashCommand(addon, input)
         p.panelInteraction  = "unlocked"
         p.panelLocked       = nil            -- legacy key: left set, it re-locks on next load
         p.targetFrameAnchor = "DISABLED"
+        -- The minimap button is the last way in when the panel is unreachable; a reset
+        -- must bring it back too, or "I hid the button and locked the panel" has no exit.
+        p.minimap = p.minimap or {}
+        p.minimap.hide = false
+        local DBIcon = LibStub("LibDBIcon-1.0", true)
+        if DBIcon then DBIcon:Show("JustAssistedCombat") end
         p.framePosition = { point = "CENTER", relativePoint = "CENTER", x = 0, y = -150 }
         if p.defensives then
             p.defensives.detachedPosition = { point = "CENTER", relativePoint = "CENTER", x = 0, y = 100 }
@@ -220,6 +230,10 @@ local function HandleSlashCommand(addon, input)
             addon.defensiveFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
         end
         if addon.UpdateFrameSize then addon:UpdateFrameSize() end
+        -- Interaction mode applied directly: the render loop that normally does this
+        -- sits out while the display is paused, and reset must work from any state.
+        local UIR = LibStub("JustAC-UIRenderer", true)
+        if UIR and UIR.ApplyInteractionMode then UIR.ApplyInteractionMode(addon, p) end
         if addon.ForceUpdateAll then addon:ForceUpdateAll() end
         -- The options panel may be open on the very settings just changed underneath it.
         local AceConfigRegistry = LibStub("AceConfigRegistry-3.0", true)
@@ -292,8 +306,17 @@ end
 -- Initialization - called from JustAC:OnInitialize
 -------------------------------------------------------------------------------
 function Options.Initialize(addon)
-    local AceConfig = LibStub("AceConfig-3.0")
-    local AceDBOptions = LibStub("AceDBOptions-3.0")
+    -- FIRST, before anything that can fail: the minimap button drives `/jac` commands
+    -- (lock, pause, reset) through this, and those are the rescue actions - they must
+    -- work precisely when the options table below did NOT build. HandleSlashCommand
+    -- has no dependency on that table.
+    Options.RunSlashCommand = function(input) HandleSlashCommand(addon, input) end
+
+    -- SILENT lookups: the branch below is the graceful "no options panel" path, but a
+    -- non-silent LibStub errors before it can run, so a missing AceConfig took the
+    -- addon down instead of degrading to slash commands as intended.
+    local AceConfig = LibStub("AceConfig-3.0", true)
+    local AceDBOptions = LibStub("AceDBOptions-3.0", true)
 
     if not AceConfig or not AceConfigDialog then
         if addon.Print then

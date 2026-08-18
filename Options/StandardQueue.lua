@@ -318,6 +318,13 @@ function StandardQueue.CreateTabArgs(addon)
                         },
                         sorting = { "unlocked", "locked", "clickthrough" },
                         disabled = panelDisabled,
+                        -- Applied directly, not via the render loop, which sits out
+                        -- while the display is paused (see JustAC:TogglePanelLock).
+                        onSet = function(a)
+                            local UIR = LibStub("JustAC-UIRenderer", true)
+                            if UIR and UIR.ApplyInteractionMode then UIR.ApplyInteractionMode(a, a.db.profile) end
+                            a:ForceUpdate()
+                        end,
                     }),
                     clickToCastOOC = W.toggle(addon, "clickToCastOOC", {
                         name = L["Click to Cast"], desc = L["Click to Cast desc"],

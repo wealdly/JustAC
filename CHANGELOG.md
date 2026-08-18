@@ -3,6 +3,33 @@
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-08-18
+
+### Added
+- A minimap button. Left-click opens the options and right-click locks or unlocks the
+  panel, so there is always a way in even with the panel locked, and its tooltip shows
+  whether the panel is currently locked, unlocked, or click-through. Shift+right-click
+  pauses or resumes the display; ctrl+right-click resets the panel's position. It also
+  appears in the game's addon compartment and works with minimap-button collectors. It
+  can be hidden on the General tab; /jac reset brings it back
+
+### Fixed
+- Situational Sets now actually hide their abilities. A set that is switched off used to
+  hide its abilities from positions 2+ only, so a big cooldown still showed up the moment
+  the game picked it for the first slot, and the burst-ready cue could put it straight
+  back at position 2. A switched-off set now hides its abilities everywhere, exactly like
+  marking each one "Never suggested", with a substitute shown in the first slot
+- A locked or click-through panel no longer shows its drag handle on hover or opens the
+  options on right-click. The handle exists to drag the panel and open the menu, and a
+  locked panel offers neither. Shift+right-click on the panel still unlocks it, and the
+  handle no longer reappears after a settings change while locked
+- The options panel no longer comes up empty on an incomplete install. On some installs
+  the shared-media sound picker's library failed to load, and that took every options tab
+  down with it; the panel now falls back to a plain sound dropdown and the rest is
+  unaffected. Users who had worked around this by installing Ace3 separately no longer
+  need to. Should any other part of start-up fail, the panel still builds and the failure
+  is named in chat so it can be reported
+
 ## [5.2.0] - 2026-08-17
 
 ### Added

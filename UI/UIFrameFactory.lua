@@ -233,6 +233,7 @@ local function TogglePanelLock(profile)
     end
     return profile.panelInteraction ~= "unlocked"
 end
+UIFrameFactory.TogglePanelLock = TogglePanelLock   -- shared with the minimap button
 
 -- Shared hotkey tooltip body for icon OnEnter handlers (queue, defensive, interrupt).
 -- Respects tooltipMode; shows spell/item tooltip plus hotkey and right-click hints.
@@ -1013,6 +1014,8 @@ local function CreateDetachedDefensiveFrame(addon)
 
     frame:SetScript("OnMouseDown", function(_, mouseButton)
         if mouseButton == "RightButton" then
+            -- Locked panels offer no menu (the standard-queue body has the same rule).
+            if IsPanelLocked(addon:GetProfile()) then return end
             OpenOptions(addon)
         end
     end)
@@ -1136,6 +1139,9 @@ local function BuildGrabTab(addon, opts)
         if opts.onShiftRightClick and IsShiftKeyDown() then
             opts.onShiftRightClick()
         else
+            -- Belt-and-braces: a locked panel hides its tabs (UIRenderer), but a tab that
+            -- is somehow shown must still not open the menu while locked.
+            if IsPanelLocked(addon:GetProfile()) then return end
             OpenOptions(addon)
         end
     end)
@@ -1165,6 +1171,14 @@ local function BuildGrabTab(addon, opts)
     -- Start invisible but shown so mouse detection works immediately
     tab:SetAlpha(0)
     tab:Show()
+    -- ...unless the panel is locked or click-through: a tab exists to drag and to open
+    -- the menu, and a locked panel offers neither. Applied HERE, at birth, because tabs
+    -- are rebuilt on every UpdateFrameSize and the renderer's mode block only re-runs
+    -- on a mode CHANGE - so a settings tweak on a locked panel resurrected the tab.
+    if IsPanelLocked(addon:GetProfile()) then
+        tab:Hide()
+        tab:EnableMouse(false)
+    end
 
     return tab
 end
@@ -1526,16 +1540,12 @@ function UIFrameFactory.CreateMainFrame(addon)
             if not profile then return end
             
             if IsShiftKeyDown() then
-                local nowLocked = TogglePanelLock(profile)
                 -- Announced out loud, not to the debug channel. Locking removes the only way
                 -- to move the panel, and shift+right-click on an icon means "blacklist this
                 -- spell" - so a near-miss on an icon lands here instead and silently takes
-                -- dragging away, leaving nothing on screen to explain why.
-                if nowLocked then
-                    addon:Print("Panel |cffff6666LOCKED|r - it can't be dragged. Shift+right-click it again to unlock, or type /jac reset.")
-                else
-                    addon:Print("Panel |cff00ff00UNLOCKED|r - drag it by the handle at its end.")
-                end
+                -- dragging away, leaving nothing on screen to explain why. One owner for
+                -- toggle+announce (JustAC:TogglePanelLock) - the minimap button uses it too.
+                if addon.TogglePanelLock then addon:TogglePanelLock() end
             else
                 OpenOptions(addon)
             end

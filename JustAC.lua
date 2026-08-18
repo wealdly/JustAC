@@ -109,6 +109,8 @@ local defaults = {
         showPetHealCue = true,             -- Pet-heal reminder in the Sustain slot (pet classes)
         petHealThreshold = 50,             -- Pet health % that arms the pet-heal cue (10-90)
         -- Blizzard Cooldown Manager integration (opt-in)
+        -- Minimap button (LibDBIcon owns the shape: hide + minimapPos + lock, per profile)
+        minimap = { hide = false },
         cooldownManagerEnable = false,     -- Let JustAC manage Cooldown Manager viewer visibility
         hideCdmEssential = false,          -- Hide the Essential Cooldowns viewer
         hideCdmUtility = false,            -- Hide the Utility Cooldowns viewer
@@ -590,24 +592,42 @@ function JustAC:OnInitialize()
         _G["BINDING_NAME_JUSTAC_TOGGLE_SET" .. slot] = string.format(L["Toggle Situational Set"], slot)
     end
     
-    self:NormalizeSavedData()
+    -- Each pre-options step is protected on its own. A throw anywhere in here used to
+    -- abort OnInitialize before Options.Initialize ran - and AceAddon still runs
+    -- OnEnable, so the queue drew normally while `/jac` and the Settings panel came
+    -- up EMPTY with no error the player could see (reported live: "no customization
+    -- appears in the panel", not fixed by wiping WTF). Now a broken step is reported
+    -- in chat with the real error, and the options panel still builds.
+    local function guarded(label, fn, ...)
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            self:Print("|cffff6666Startup step failed:|r " .. label .. " - " .. tostring(err))
+            self:Print("|cffff6666The options panel is still available; please report the line above.|r")
+        end
+        return ok
+    end
+    guarded("saved-data migration", self.NormalizeSavedData, self)
+    guarded("module load", self.LoadModules, self)
+    guarded("defensive lists", self.InitializeDefensiveSpells, self)
 
-    self:LoadModules()
-    self:InitializeDefensiveSpells()
-    
     self.db.RegisterCallback(self, "OnProfileChanged", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileCopied", "RefreshConfig")
     -- Reset: AceDB restores profile defaults itself; character data (blacklist,
     -- spec profiles) is intentionally preserved - a refresh is all that's needed.
     self.db.RegisterCallback(self, "OnProfileReset", "RefreshConfig")
     self.db.RegisterCallback(self, "OnProfileDeleted", "OnProfileDeleted")
-    
+
     if Options and Options.Initialize then
-        Options.Initialize(self)
+        guarded("options panel", Options.Initialize, self)
     end
 end
 
 function JustAC:OnEnable()
+    -- The minimap button FIRST, before anything below can early-return. It needs only
+    -- the two libraries and the profile, and it is the way in when the panel itself
+    -- fails to build - so it must not be behind the panel's own success.
+    self:SetupMinimapButton()
+
     if not UIFrameFactory or not UIFrameFactory.CreateMainFrame then
         self:Print("Error: UIFrameFactory module not loaded properly")
         return
@@ -998,6 +1018,8 @@ function JustAC:RefreshConfig()
     -- members under the old flag. Every set comes back on, same as login/spec change.
     if SpellQueue and SpellQueue.ResetSets then SpellQueue.ResetSets() end
     if UIRenderer and UIRenderer.RefreshSetIndicator then UIRenderer.RefreshSetIndicator(self) end
+    -- Minimap icon holds a reference to the profile's minimap table; re-point it.
+    self:SetupMinimapButton()
     -- Blacklist/spec profiles are character-specific; hotkey overrides travel with the profile
     self:InitializeDefensiveSpells()
     -- Burst-trigger overrides live on the profile; the spec key alone doesn't
@@ -2073,6 +2095,108 @@ end
 
 function JustAC:ForceUpdateAll()
     self:ForceUpdate(true)
+end
+
+--------------------------------------------------------------------------------
+-- Minimap button (LibDataBroker launcher + LibDBIcon)
+--
+-- The always-available way in. The panel's own menu is deliberately gone while it is
+-- locked or click-through, and the slash command is not something every player will
+-- discover, so this is the affordance that can never be hidden by the panel's own
+-- state. Built on the two standard libraries so minimap-button collectors and the
+-- game's addon compartment pick it up for free; the LDB object is registered ONCE
+-- (LDB refuses a duplicate name), the icon is registered against the PROFILE's
+-- minimap table so hide/position/lock travel with the profile, and a profile switch
+-- re-points the icon at the new table via Refresh.
+--------------------------------------------------------------------------------
+local MINIMAP_LDB_NAME = "JustAssistedCombat"
+
+function JustAC:SetupMinimapButton()
+    local LDB = LibStub("LibDataBroker-1.1", true)
+    local DBIcon = LibStub("LibDBIcon-1.0", true)
+    if not (LDB and DBIcon) then return end
+
+    if not self.ldbObject then
+        self.ldbObject = LDB:NewDataObject(MINIMAP_LDB_NAME, {
+            type = "launcher",
+            text = "JustAssistedCombat",
+            icon = "Interface/Icons/Ability_DualWield",
+            OnClick = function(_, button)
+                if button == "RightButton" then
+                    -- Right-click is the LOCK toggle: a locked panel hides its own handle
+                    -- and menu, so this button is the one place lock state is still
+                    -- reachable - and the one place that can show which state you're in.
+                    -- Modifiers reach the rarer commands. Resolved LIVE, not through the
+                    -- file-scope Options upvalue: that is set by LoadModules, one of the
+                    -- steps a broken start-up can skip - and this button is for exactly
+                    -- that situation.
+                    local Opt = Options or LibStub("JustAC-Options", true)
+                    local run = Opt and Opt.RunSlashCommand
+                    if IsControlKeyDown() then
+                        if run then run("reset") end
+                    elseif IsShiftKeyDown() then
+                        if run then run("toggle") end
+                    else
+                        JustAC:TogglePanelLock()
+                    end
+                else
+                    JustAC:OpenOptionsPanel()
+                end
+            end,
+            OnTooltipShow = function(tt)
+                tt:AddLine("JustAssistedCombat")
+                local p = JustAC:GetProfile()
+                local mode = p and p.panelInteraction or "unlocked"
+                if mode == "unlocked" then
+                    tt:AddLine(L["Minimap State Unlocked"], 0.2, 0.9, 0.3)
+                elseif mode == "clickthrough" then
+                    tt:AddLine(L["Minimap State ClickThrough"], 1, 0.6, 0.2)
+                else
+                    tt:AddLine(L["Minimap State Locked"], 1, 0.4, 0.4)
+                end
+                if p and p.isManualMode then
+                    tt:AddLine(L["Minimap Paused"], 1, 0.6, 0.2)
+                end
+                tt:AddLine(" ")
+                tt:AddLine(L["Minimap Tip Left"], 1, 1, 1)
+                tt:AddLine(L["Minimap Tip Right"], 1, 1, 1)
+                tt:AddLine(L["Minimap Tip Shift Right"], 1, 1, 1)
+                tt:AddLine(L["Minimap Tip Ctrl Right"], 1, 1, 1)
+            end,
+        })
+    end
+    if not self.ldbObject then return end
+
+    local profile = self:GetProfile()
+    if not profile then return end
+    profile.minimap = profile.minimap or { hide = false }
+    if not DBIcon:IsRegistered(MINIMAP_LDB_NAME) then
+        DBIcon:Register(MINIMAP_LDB_NAME, self.ldbObject, profile.minimap)
+    else
+        -- Profile changed: point the existing icon at the new profile's table.
+        DBIcon:Refresh(MINIMAP_LDB_NAME, profile.minimap)
+    end
+end
+
+--- Lock/unlock the panel and say so. ONE owner: the minimap button and the panel's own
+--- shift+right-click both come here, so the announcement cannot drift between them.
+--- Locking removes the only way to move the panel, so it is always announced out loud.
+function JustAC:TogglePanelLock()
+    local profile = self:GetProfile()
+    local UIFF = UIFrameFactory or LibStub("JustAC-UIFrameFactory", true)   -- live: see the minimap OnClick note
+    if not (profile and UIFF and UIFF.TogglePanelLock) then return end
+    local nowLocked = UIFF.TogglePanelLock(profile)
+    if nowLocked then
+        self:Print(L["Panel Locked Msg"])
+    else
+        self:Print(L["Panel Unlocked Msg"])
+    end
+    -- Apply the mode NOW rather than waiting for the render loop: that loop
+    -- early-returns while the display is paused, and the minimap button can lock a
+    -- paused panel - the handles would otherwise stay wrong until unpause.
+    local UIR = UIRenderer or LibStub("JustAC-UIRenderer", true)
+    if UIR and UIR.ApplyInteractionMode then UIR.ApplyInteractionMode(self, profile) end
+    self:ForceUpdate()
 end
 
 --- Keybind entry for a situational set (Bindings.xml). Flips the set, tells the player
