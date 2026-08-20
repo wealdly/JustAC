@@ -1326,7 +1326,16 @@ function JustAC:UpdateSpellQueue()
     -- Suppress queue while controlling a vehicle or possessing an NPC.
     -- Our rotation spells are meaningless in these states; render an empty queue
     -- so all icons hide cleanly through the normal renderer path.
-    if self.playerInAlternateControl then
+    -- Suppress while in alternate control - but RE-POLL first, because the flag can be
+    -- STALE: the exit event can fire while the vehicle APIs still answer "in vehicle"
+    -- for a beat (observed: released from Mchimba's coffin in King's Rest -
+    -- UNIT_EXITED_VEHICLE re-read the state too early, the flag stuck true, and the
+    -- addon stayed hidden until /reload). Events remain the fast path; the poll is the
+    -- self-healing floor: three C reads per tick, only while suppressed, and a false
+    -- answer falls straight through to a normal build THIS tick. In combat this loop
+    -- always runs; out of combat any player aura change marks the queue dirty, so
+    -- recovery still happens promptly.
+    if self.playerInAlternateControl and self:RecheckAlternateControl() then
         if SpellQueue.NoteQueueBlank then
             SpellQueue.NoteQueueBlank("alternate control (vehicle / possess)")
         end
@@ -1764,6 +1773,21 @@ local function HandleAlternateControlChange(self)
         if ActionBarScanner.InvalidateAssistedSlot then ActionBarScanner.InvalidateAssistedSlot() end
     end
     self:ForceUpdate()
+end
+
+--- Re-poll the alternate-control state; returns true while still suppressed. The
+--- self-healing floor under the event path (see the suppression branch in
+--- UpdateSpellQueue): when the poll discovers the state cleared, run the SAME full
+--- refresh the exit event would have (cache invalidation, scanner rebuild), so the
+--- two recovery paths cannot diverge. A method, not a local, so the earlier-defined
+--- UpdateSpellQueue can reach it at call time.
+function JustAC:RecheckAlternateControl()
+    local was = self.playerInAlternateControl
+    self:UpdateAlternateControlState()
+    if was and not self.playerInAlternateControl then
+        HandleAlternateControlChange(self)
+    end
+    return self.playerInAlternateControl
 end
 
 function JustAC:OnVehicleChanged(event, unit)

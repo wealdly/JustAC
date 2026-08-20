@@ -21,7 +21,27 @@ ignore:
     - release.ps1
     - tools
 
-# Externals: fetch libraries from their official sources (optional - remove if bundling manually)
+# Library provenance. We VENDOR (commit) every library rather than fetch at build time,
+# so a git clone is self-contained and a release is reproducible; the failures that
+# "installing Ace3 separately" used to cure were partial installs, and a build-time
+# fetch would reintroduce that shape. These are the canonical sources each embedded
+# copy was pulled from (last full refresh 2026-08-18). To refresh: pull each source,
+# replace the Libs/<name> tree wholesale (never patch single files), keep only .lua/.xml,
+# then run tools/check.ps1 and the Lib checks in tools/ before committing.
+#
+#   Ace3 (AceAddon, AceConfig, AceConsole, AceDB, AceDBOptions, AceEvent, AceGUI,
+#   AceLocale, AceTimer) + its embedded CallbackHandler-1.0 and LibStub:
+#       https://github.com/WoWUIDev/Ace3            (also repos.wowace.com/wow/ace3/trunk)
+#   LibSharedMedia-3.0:
+#       https://repos.wowace.com/wow/libsharedmedia-3-0/trunk
+#   AceGUI-3.0-SharedMediaWidgets:
+#       https://repos.curseforge.com/wow/ace-gui-3-0-shared-media-widgets/trunk
+#   LibDBIcon-1.0:
+#       https://repos.wowace.com/wow/libdbicon-1-0/trunk
+#   LibDataBroker-1.1 (frozen since 2008):
+#       https://github.com/tekkub/libdatabroker-1-1
+#
+# The externals form of the same list, should build-time fetching ever be preferred:
 # externals:
 #     Libs/LibStub:
 #         url: https://repos.wowace.com/wow/libstub/trunk
@@ -43,3 +63,13 @@ ignore:
 #         url: https://repos.wowace.com/wow/ace3/trunk/AceGUI-3.0
 #     Libs/AceDBOptions-3.0:
 #         url: https://repos.wowace.com/wow/ace3/trunk/AceDBOptions-3.0
+#     Libs/AceLocale-3.0:
+#         url: https://repos.wowace.com/wow/ace3/trunk/AceLocale-3.0
+#     Libs/LibSharedMedia-3.0:
+#         url: https://repos.wowace.com/wow/libsharedmedia-3-0/trunk/LibSharedMedia-3.0
+#     Libs/AceGUI-3.0-SharedMediaWidgets:
+#         url: https://repos.curseforge.com/wow/ace-gui-3-0-shared-media-widgets/trunk
+#     Libs/LibDBIcon-1.0:
+#         url: https://repos.wowace.com/wow/libdbicon-1-0/trunk/LibDBIcon-1.0
+#     Libs/LibDataBroker-1.1:
+#         url: https://github.com/tekkub/libdatabroker-1-1

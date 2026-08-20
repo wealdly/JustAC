@@ -3,6 +3,20 @@
 
 ## [Unreleased]
 
+## [5.3.2] - 2026-08-19
+
+### Changed
+- Every bundled library has been re-pulled fresh from its official source. Two picked up
+  upstream fixes along the way: option sliders no longer show a blank value box until the
+  number is changed, and LibSharedMedia ignores registered fonts that do not exist instead
+  of carrying them. Everything else was already current and is unchanged
+
+### Fixed
+- The addon no longer stays hidden after you are released from a vehicle-style encounter
+  mechanic, such as Mchimba's coffin in King's Rest. The game's release notice could
+  arrive a moment before its own vehicle state cleared, so the addon kept believing you
+  were still inside; it now keeps checking while hidden and comes back on its own
+
 ## [5.3.1] - 2026-08-18
 
 ### Changed
