@@ -3,6 +3,36 @@
 
 ## [Unreleased]
 
+## [5.3.3] - 2026-08-22
+
+### Added
+- A true disable for abilities: every spell's card on the Abilities tab now has an
+  "I keep this off my action bars" toggle. Hiding an ability in JustAC only changes what
+  JustAC shows - the game's assist keeps planning its rotation around the ability as long
+  as it has a visible button. The assist only truly skips an ability, and re-plans the
+  rotation without it, once the ability has no visible action-bar button at all: not on a
+  bar directly, and not reachable through a macro button. Removing it there is the real
+  blacklist, enforced by the game itself. The toggle records that this is what you intend
+  and the card then reports plainly whether it is working: an amber notice while the
+  ability still has a bar button, green once the assist is genuinely skipping it. Nothing
+  nags you about abilities you deliberately keep on your bars for manual use
+
+### Fixed
+- The wait indicator is back. When the game's assist decides the right move is to wait
+  (the watch icon on its own button), the first slot shows that same timer icon with a
+  "wait" label again, instead of promoting one of our own suggestions into the top spot -
+  on a Feral Druid that promoted spell could even be one unusable in cat form, such as
+  Moonfire without its talent. This broke in 5.1.8: the game marks its wait placeholder
+  as a passive spell internally, and the passive filter added there swallowed it
+- Should the assist ever report nothing at all mid-combat, the first slot now shows the
+  same wait display rather than letting the rest of the queue shift up into it. The first
+  slot belongs to the game's own pick, never to a substitute
+- Three setting descriptions now say when they move things, not just when they glow. The
+  Burst-Ready Cue moves the cued cooldown up to the slot right after Blizzard's pick (or
+  adds it there), Include Spellbook Procs seats a glowing proc in that same slot, and both
+  happen under every ordering preset - Fixed source order included. Their descriptions,
+  and the Fixed preset's own, now spell that out
+
 ## [5.3.2] - 2026-08-19
 
 ### Changed
