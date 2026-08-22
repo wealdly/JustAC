@@ -4,6 +4,11 @@
 local SpellQueue = LibStub:NewLibrary("JustAC-SpellQueue", 43)
 if not SpellQueue then return end
 
+-- Slot-1 wait sentinel: a number in item-id space that matches no real spell or item,
+-- so every queue consumer treats it like an unknown item and skips it gracefully; the
+-- shared icon renderer alone special-cases it into the wait display. See _StagePrimary.
+SpellQueue.WAIT_SENTINEL = -999999999
+
 local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
 local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
 local RedundancyFilter = LibStub("JustAC-RedundancyFilter", true)
@@ -1677,6 +1682,9 @@ function SpellQueue._StageGapCloser(b)
         local gcSpell, gcBase = cachedGapCloserEngine.GetGapCloserSpell(cachedAddon, addedSpellIDs)
         if gcSpell then
             local gcDisplay = BlizzardAPI.GetDisplaySpellID(gcSpell)
+            -- The wait sentinel rides this shift to position 2 ON PURPOSE: the gap
+            -- closer takes slot 1 (it is the actionable move), while the wait icon
+            -- stays visible so the player still sees the assist wants to wait.
             if spellCount >= 1 then
                 if pos1Display then displacedPrimary[pos1Display] = true end
                 if primarySpellID and primarySpellID ~= pos1Display then
@@ -1783,6 +1791,19 @@ function SpellQueue._StagePrimary(b)
                     end
                 end
             end
+        end
+    else
+        -- WAIT: the assist is running but deliberately recommends nothing - the engine
+        -- shows the watch icon on its own button and GetNextCastSpell answers nil.
+        -- Slot 1 is BLIZZARD'S SLOT: without this reservation the ranked tail shifted
+        -- up one and our own pick wore the primary glow (user-reported: base Moonfire
+        -- surfacing on a Feral during wait - known to every druid, uncastable in form).
+        -- Combat-gated: out of combat a nil pick legitimately means "no demand", and
+        -- the precombat/tail content owns the queue as it always has.
+        if b.inCombat and BlizzardAPI.IsAssistedCombatAvailable
+           and BlizzardAPI.IsAssistedCombatAvailable() then
+            b.spellCount = 1
+            b.recommendedSpells[1] = SpellQueue.WAIT_SENTINEL
         end
     end
 end

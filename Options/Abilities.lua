@@ -56,6 +56,26 @@ local function SpellSettings(profile, id, create)
     return d.spellSettings[id]
 end
 
+-- Overt per-spec declaration: "I want the game's assist itself to skip this ability"
+-- (which the engine only does for spells with no visible action-bar button). A separate
+-- store from the blacklist VALUE deliberately: the blacklist says "don't show it to me",
+-- this says "and I intend it off my bars" - a player may hide an ability from the queue
+-- while keeping it on bars for manual presses, and the two intents must not be conflated
+-- (that conflation is exactly what made the earlier bar hint a false-positive nag).
+local function EngineHideIntent(profile, create)
+    local specKey = GetSpecKey()
+    if not specKey then return nil end
+    if not profile.engineHideIntent then
+        if not create then return nil end
+        profile.engineHideIntent = {}
+    end
+    if not profile.engineHideIntent[specKey] then
+        if not create then return nil end
+        profile.engineHideIntent[specKey] = {}
+    end
+    return profile.engineHideIntent[specKey]
+end
+
 local function ItemSettings(profile, itemID, create)
     local d = profile.defensives
     if not d then return nil end
@@ -296,6 +316,10 @@ local function ClearAbility(addon, profile, id)
         profile.hotkeyOverrides[id] = nil
         addon:InvalidateCaches({hotkeys = true})
     end
+    do
+        local intent = EngineHideIntent(profile, false)
+        if intent then intent[id] = nil end
+    end
     -- Situational-set membership for this spec.
     do
         local specKey = GetSpecKey()
@@ -377,6 +401,16 @@ local function CollectCustomizations(profile)
         for id, v in pairs(profile.hotkeyOverrides) do
             if type(id) == "number" and id ~= 0 and type(v) == "string" then
                 badge(id, string.format(L["Hotkey Badge"], v))
+            end
+        end
+    end
+    -- The off-bars declaration is a customization too - without this badge an
+    -- ability whose ONLY setting is that toggle would vanish from this list.
+    local intent = EngineHideIntent(profile, false)
+    if intent then
+        for id in pairs(intent) do
+            if type(id) == "number" and id > 0 then
+                badge(id, L["Keep Off Action Bars"])
             end
         end
     end
@@ -484,6 +518,52 @@ local function BuildCard(addon, args, profile)
         -- exactly when it is in a list, so its "visibility" IS its list membership below.
         -- Hidden rather than left as a dead control that appears to save.
         hidden = isItem,
+    }
+    -- The engine-honored half of hiding an ability: the game's assist SKIPS spells
+    -- with no visible action-bar button and re-plans around them server-side -
+    -- strictly stronger than our display-side hide. Gated on DECLARED intent, not
+    -- inferred from bar state: a bare "it's blacklisted and on a bar" hint nagged
+    -- players who keep a hidden ability on bars for manual presses, or manage it
+    -- behind a macro (user-identified false positives). The toggle appears once the
+    -- ability is "Never suggested"; with it set, the card reports honestly in both
+    -- directions - still-on-bars (amber) or off-bars-and-skipped (green).
+    local function hasEngineIntent()
+        local intent = EngineHideIntent(profile, false)
+        return intent and intent[id] == true or false
+    end
+    local function onBars()
+        local ABS = LibStub("JustAC-ActionBarScanner", true)
+        return (ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(id)) and true or false
+    end
+    args.engineHide = {
+        type = "toggle",
+        name = L["Keep Off Action Bars"],
+        desc = L["Keep Off Action Bars desc"],
+        order = 11.05,
+        width = "double",
+        -- A standalone declaration, deliberately NOT chained behind "Never suggested":
+        -- the engine-skip is real whatever the display setting says, and the coupling
+        -- was invisible logic (nothing in the UI explained why the toggle came and went).
+        hidden = isItem,
+        get = hasEngineIntent,
+        set = function(_, val)
+            local intent = EngineHideIntent(profile, true)
+            if intent then intent[id] = val or nil end
+        end,
+    }
+    args.visibilityBarHint = {
+        type = "description",
+        name = function()
+            if onBars() then
+                return "|cffffcc66" .. L["Visibility Bar Hint"] .. "|r"
+            end
+            return "|cff2ecc71" .. L["Visibility Bar Hint OK"] .. "|r"
+        end,
+        order = 11.1,
+        fontSize = "small",
+        hidden = function()
+            return isItem or not hasEngineIntent()
+        end,
     }
 
     -- ── Pins (global across specs; effective while the ability is in a list) ─

@@ -2224,7 +2224,51 @@ local function ItemIconInfo(itemID)
     return cached
 end
 
+--- Render slot 1 as the assist's WAIT state (sentinel path - GetNextCastSpell answered
+--- nil in combat while the assist was available; see SpellQueue._StagePrimary). Same
+--- presentation as the placeholder-spell wait the engine hands us directly (timer icon
+--- 134377 + the WAIT label), so the two shapes are indistinguishable on screen.
+local function RenderWaitSlot(icon, i, ctx)
+    if icon.spellID or icon.currentID then
+        UIAnimations.StopAllGlows(icon)
+    end
+    ClearExecuteCue(icon)
+    if icon._hasChannelFill then UIAnimations.StopChannelFill(icon) end
+    icon.spellID, icon.currentID, icon.isItem, icon.itemID = nil, nil, nil, nil
+    icon.itemCastSpellID = nil
+    icon.cachedHotkey = nil
+    icon.isWaitingSpell = true
+    local tex = icon.iconTexture
+    if tex then
+        tex:SetTexture(134377)
+        if not tex:IsShown() then tex:Show() end
+        tex:SetDesaturated(false)
+        tex:SetVertexColor(1, 1, 1)
+    end
+    if icon.hotkeyText then icon.hotkeyText:SetText("") end
+    if icon.centerText then
+        icon.centerText:SetText(WAIT_LABEL)
+        icon.centerText:Show()
+    end
+    if icon.cooldown then icon.cooldown:Clear() end
+    if icon.chargeCooldown then icon.chargeCooldown:Clear() end
+    -- Same surface plumbing as the normal path: without it an overlay slot hidden
+    -- by hideEmptySlots last tick would keep the wait invisible, at stale scale/alpha.
+    if ctx.firstIconScale then
+        local targetScale = (i == 1) and ctx.firstIconScale or 1.0
+        if icon:GetScale() ~= targetScale then icon:SetScale(targetScale) end
+    end
+    if not icon:IsShown() then icon:Show() end
+    if ctx.opacity then icon:SetAlpha(ctx.opacity) end
+end
+
 local function RenderQueueIcon(icon, i, ctx)
+    -- WAIT sentinel first: it is a number in item-id space, and everything below
+    -- treats numeric ids as spells/items - this is the one consumer that knows it.
+    if SpellQueue and ctx.spellIDs and ctx.spellIDs[i] == SpellQueue.WAIT_SENTINEL then
+        RenderWaitSlot(icon, i, ctx)
+        return
+    end
     local currentTime = ctx.now
     local spellIDs = ctx.spellIDs
     local spellCount = ctx.hasSpells and #spellIDs or 0

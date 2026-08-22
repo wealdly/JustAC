@@ -126,7 +126,18 @@ local function QueryNextCastSpell(checkForVisibleButton)
     if success and result and type(result) == "number" and result > 0 then
         -- nil, not the passive: "no demand" lets every caller's fallback chain run,
         -- where a passive id would freeze slot 1 / the demand hold on a dead entry.
-        if IsPassiveID(result) then return nil end
+        -- EXCEPT the assist's own wait placeholders ("Waiting for Energy" and kin):
+        -- they are passive-flagged in DB2 but are the engine's DELIBERATE display
+        -- state, and the renderer has first-class handling for them (isWaitingSpell,
+        -- WAIT label). Filtering them silently killed the wait icon and let the
+        -- ranked tail shift up into the AC slot (regression, user-reported on Feral:
+        -- base Moonfire wearing the primary glow while Blizzard's button showed the
+        -- watch). Detected by the shared timer icon 134377 - the same locale-safe
+        -- check the renderer uses; file ids are identical across locales.
+        if IsPassiveID(result) then
+            local info = BlizzardAPI.GetCachedSpellInfo(result)
+            if not (info and info.iconID == 134377) then return nil end
+        end
         return result
     end
     return nil
@@ -378,7 +389,10 @@ end
 -- Resolves override spells (e.g., Metamorphosis transformations)
 -- PERFORMANCE: Cache results per update cycle (overrides change infrequently)
 function BlizzardAPI.GetDisplaySpellID(spellID)
-    if not spellID or spellID == 0 then return spellID end
+    -- <= 0 covers items (negative by our convention) and the queue's wait sentinel:
+    -- neither has an override, and the C call's behavior on such ids is not something
+    -- we guess at (project rule). Identity is the correct answer for both.
+    if not spellID or spellID <= 0 then return spellID end
     if not C_Spell_GetOverrideSpell then return spellID end
 
     -- Check cache first (cleared each update cycle by ClearProcCache)
