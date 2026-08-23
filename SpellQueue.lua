@@ -391,7 +391,8 @@ end
 
 
 -- Position 1 / spellbook proc filter: availability + usability + redundancy.
--- Usability (C_Spell.IsSpellUsable) is NeverSecret; includes resource + CD check.
+-- Usability (C_Spell.IsSpellUsable) is NeverSecret; it covers resources and cast
+-- conditions but NOT cooldowns - callers that care pair it with IsSpellReady.
 -- Under a player-wide ability lockout it is not consulted at all: a stun or a bar-swapping
 -- debuff makes EVERY spell uncastable, so filtering on it empties the queue outright - the
 -- one moment the player most wants to see what to press next. The entries stay and the
@@ -564,7 +565,13 @@ local function AddSpellbookProcs(b)
                and (ActionBarScanner.GetSpellHotkey(procSpellID) or "") ~= ""
                and not SpellQueue.IsSpellBlacklisted(procSpellID, blacklist)
                and not (hideItems and BlizzardAPI.IsItemSpell(procSpellID))
-               and PassesSpellFilters(procSpellID, profile) then
+               and PassesSpellFilters(procSpellID, profile)
+               -- A proc glow that outlives its cast (execute-type spells inside a
+               -- window) kept seating the spell here ON COOLDOWN, swipe and all, ahead
+               -- of the whole tail - usability never looks at cooldowns. Not ready ->
+               -- leave it unclaimed: a rotation spell then reaches the tail and sinks
+               -- (still glowing); a spellbook-only proc simply waits its cooldown out.
+               and BlizzardAPI.IsSpellReady(procSpellID) then
                 spellCount = spellCount + 1
                 recommendedSpells[spellCount] = procSpellID
             else
@@ -1066,7 +1073,12 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     -- Primary resource capped (engine full-power pulse, plain - validated in combat
     -- 2026-07-24): promote ready, affordable spenders so regen stops going to waste.
     -- Read once per build; false for power types without a full-power animation.
-    local powerCapped = BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
+    -- Ranked modes only: with Context ordering OFF the list is the user's, and only
+    -- Blizzard's own proc overlay may jump it. The charge-cap and power-cap promotions
+    -- are ranking heuristics, not procs - a full-charge Death and Decay seated ahead
+    -- of a fixed custom list read as "the order is broken".
+    local heuristicPromos = contextOrder ~= "off"
+    local powerCapped = heuristicPromos and BlizzardAPI.IsPrimaryPowerCapped and BlizzardAPI.IsPrimaryPowerCapped()
     -- Arm the hoisted rankOf for this build (see its definition above).
     rankSimcMode, rankContextOrder = simcMode, contextOrder
     rankCtxArch, rankCtxRange, rankCtxRole, rankCtxExecute, rankCtxOutOfMelee, rankCtxDying =
@@ -1120,12 +1132,16 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     local held = sinkCooldowns and HeldUntilCharged(spellID, displayID, ready)
                     local simcRec = (simcMode and RotationImport and RotationImport.GetEntry)
                         and RotationImport.GetEntry(spellID, simcCtx) or nil
-                    -- Resource-gated (delegated) SimC entries are spenders: sink them when
-                    -- you can't afford them right now (IsSpellUsable's insufficientPower is
-                    -- NeverSecret), so builders surface while you're starved and the spender
-                    -- rises once you can pay for it. Fail-safe - only sink on a definite "no".
+                    -- Spenders sink while you can't afford them (IsSpellUsable's
+                    -- insufficientPower is NeverSecret), so builders surface while you're
+                    -- starved and the spender rises once you can pay. Every mode, every
+                    -- spell with a power cost: only delegated SimC entries were checked
+                    -- before, so a custom Frost list could not tell Obliterate from Frost
+                    -- Strike by runes vs runic power. Fail-safe - only sink on a definite "no".
+                    -- ponytail: churns on energy/rage classes as the pool refills each GCD;
+                    -- scope to discrete-resource classes if that shows in play.
                     local starved = false
-                    if simcRec and simcRec.delegated then
+                    if (simcRec and simcRec.delegated) or IsSpenderSpell(displayID) then
                         local _, notEnough = BlizzardAPI.IsSpellUsable(displayID, true)
                         starved = notEnough and true or false
                     end
@@ -1138,8 +1154,8 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- Capped charges idle the recharge timer - surfacing the spell gets a
                     -- charge spent. Promotes through the proc bucket under the same
                     -- ProcPriorityEnabled gate, so users who disable proc jumps keep
-                    -- their ordering.
-                    local chargeCapped = not locLocked and BlizzardAPI.IsSpellChargeCapped
+                    -- their ordering. Ranked modes only (heuristicPromos).
+                    local chargeCapped = heuristicPromos and not locLocked and BlizzardAPI.IsSpellChargeCapped
                         and BlizzardAPI.IsSpellChargeCapped(displayID) or false
                     -- A ranked ability whose SimC buff-window is up promotes like a proc, so
                     -- it surfaces inside its window (e.g. Rip during Tiger's Fury) - but never

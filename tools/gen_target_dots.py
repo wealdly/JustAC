@@ -75,6 +75,13 @@ CURATED = {
     1259790: 1259790, # Unstable Affliction
     445468:  445474,  # Wither cast -> its stacking DoT aura
     348:     157736,  # Immolate - script-applies its DoT (no trigger link)
+    49184:   55095,   # Howling Blast (base button) - script-applies Frost Fever, no trigger
+                      # link. 55095 alone is the disease aura (AcquireMethod 0 skill-line row),
+                      # never a cast id. The other "Howling Blast" ids (53536/79896/107116/
+                      # 165740/237680/315937) are unlearnable scaling copies, not in universe.
+    50842:   55078,   # Blood Boil (base button) - script-applies Blood Plague, no trigger
+                      # link; Death's Caress (195292) triggers 55078 directly and needs nothing.
+    122470:  124280,  # Touch of Karma - script-applies its reflect-damage DoT, no trigger link.
 }
 CURATED_NAMES = {
     285381: "Primal Wrath (applies Rip via script)",
@@ -84,6 +91,9 @@ CURATED_NAMES = {
     1259790: "Unstable Affliction (stacking false positive)",
     445468: "Wither (stacking false positive)",
     348:    "Immolate (script-applies its DoT)",
+    49184:  "Howling Blast (script-applies Frost Fever)",
+    50842:  "Blood Boil (script-applies Blood Plague)",
+    122470: "Touch of Karma (script-applies its reflect DoT)",
 }
 
 # Spells the periodic-damage filter catches but that are owned by another
@@ -118,9 +128,17 @@ def main():
         return hits[-1]
 
     # Player-learnable spell universe (spells the player can actually cast).
+    # AcquireMethod 0 rows are legacy linkage, not buttons: disease auras parked
+    # on the class skill line (Frost Fever, Blood Plague), removed covenant-era
+    # ability ids, profession/toy triggers. Admitting them emitted 16 dead keys
+    # that UNIT_SPELLCAST_SUCCEEDED never delivers - the DoT sink silently never
+    # fired for those (Howling Blast sat at the front of a custom list all fight).
+    # Every genuinely castable key in the table is backed by AcquireMethod 2/3/4,
+    # TraitDefinition, or SpecializationSpells, so this loses nothing real.
     universe = set()
     for row in read_csv(find("SkillLineAbility")):
-        universe.add(int(row["Spell"]))
+        if int(row["AcquireMethod"] or 0) != 0:
+            universe.add(int(row["Spell"]))
     for row in read_csv(find("TraitDefinition")):
         for col in ("SpellID", "VisibleSpellID", "OverridesSpellID"):
             v = int(row[col] or 0)
