@@ -815,7 +815,7 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     local _, noRes = BlizzardAPI.IsSpellUsable(displayID, true)
     line("Usable", not unusableHard,
         unusableHard and "form/stance/conditions block it right now - sinks behind usable abilities"
-        or (noRes and "only lacking resources (does not sink)" or nil))
+        or (noRes and "lacking resources - sinks behind affordable abilities" or nil))
     local outOfRange = SpellQueue.IsConfirmedOutOfRange and SpellQueue.IsConfirmedOutOfRange(displayID) or false
     if outOfRange then
         line("In range of target", false, "sinks behind in-range abilities")

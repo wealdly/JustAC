@@ -3,6 +3,33 @@
 
 ## [Unreleased]
 
+## [5.3.4] - 2026-08-22
+
+### Fixed
+- Howling Blast and Blood Boil now move to the back of the queue while their disease is
+  running on your target, like every other maintained damage-over-time ability, and the
+  same applies to Touch of Karma's damage effect. Those effects were listed under the
+  debuff's own id rather than the ability that applies it, so the queue never noticed
+  the disease was up and kept Howling Blast at the front of a custom list for the whole
+  fight. The same review retired a dozen long-removed ability ids from that list. The
+  rebuilt matching between abilities and their effects has only been spot-checked in
+  play, so if an ability stops moving to the back while its effect is running - or
+  starts doing so when it should not - please report it with the ability name
+- A glowing proc that is still on cooldown no longer takes the slot right after
+  Blizzard's pick. The spellbook-proc insert never checked cooldowns, so an execute-type
+  ability whose glow outlives its cast sat there with its timer showing instead of
+  sinking with the other cooldowns
+
+### Changed
+- With Context ordering set to Off, your list is your list: only a genuine proc (the
+  game's own glow) can jump ahead of it. Full-charge and capped-resource abilities are no
+  longer promoted in that mode - those nudges now belong to the Smart and Match Blizzard's
+  pick orderings, where they always made sense
+- Abilities you cannot afford right now move to the back in every ordering mode, as long
+  as "Unavailable last" is on. A Frost Death Knight's list now shows Obliterate when the
+  runes are there and Frost Strike once the runic power is, where before this only
+  happened under the SimC ordering
+
 ## [5.3.3] - 2026-08-22
 
 ### Added
