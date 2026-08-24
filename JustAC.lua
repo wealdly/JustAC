@@ -2326,6 +2326,7 @@ local function OnUpdateTick(_, elapsed)
     end
 
     local inCombat = UnitAffectingCombat("player")
+    local hostileTarget = false   -- set in the OOC branch below; polls range-driven state
 
     -- Cache CVar lookup (expensive string operation + registry lookup)
     local now = GetTime()
@@ -2346,8 +2347,15 @@ local function OnUpdateTick(_, elapsed)
         if updateRate < 0.03 then updateRate = 0.03
         elseif updateRate > 0.05 then updateRate = 0.05 end
     else
-        -- Out of combat: idle when clean, near-combat rate when dirty
-        if not spellQueueDirty and not defensiveQueueDirty then
+        -- Out of combat: idle when clean, near-combat rate when dirty. A live
+        -- hostile target keeps the modest poll running even when clean: distance
+        -- to the target fires NO event (player and mob movement produce nothing),
+        -- and the gap-closer offer plus the range coloring ride it - event-driven-
+        -- only left them frozen until an unrelated event happened by (user-
+        -- reported: the gap closer only tracked range again on retarget, because
+        -- PLAYER_TARGET_CHANGED was the event that finally dirtied the queue).
+        hostileTarget = UnitExists("target") and UnitCanAttack("player", "target") or false
+        if not spellQueueDirty and not defensiveQueueDirty and not hostileTarget then
             updateRate = IDLE_CHECK_INTERVAL
         else
             updateRate = math_max(cachedUpdateRate, OOC_DIRTY_UPDATE_INTERVAL)
@@ -2365,7 +2373,7 @@ local function OnUpdateTick(_, elapsed)
     -- first post-channel tick rebuilds immediately even out of combat.
     local channeling = BlizzardAPI and BlizzardAPI.IsPlayerChanneling
         and BlizzardAPI.IsPlayerChanneling()
-    local shouldUpdateSpellQueue = inCombat or spellQueueDirty
+    local shouldUpdateSpellQueue = inCombat or spellQueueDirty or hostileTarget
     if shouldUpdateSpellQueue then
         -- When dirty OUT of combat, bypass SpellQueue's internal throttle so rare
         -- event-driven updates render immediately. In combat, let the internal

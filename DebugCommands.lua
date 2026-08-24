@@ -191,6 +191,7 @@ local INSPECT_TOPICS = {
     { "resource",    "ResourceDiagnostics",      nil,  "Probe secret-safe resource inference from usability" },
     { "resourcepoints", "ResourcePointProbe",    nil,  "Do class resource points (combo/holy power/chi) read plain?" },
     { "aoe",         "AoeDiagnostics",           nil,  "Probe secret-safe enemy counting (AC-independent AoE detection)" },
+    { "range",       "RangeProbe",               nil,  "Both range APIs vs the current target: spell path, slot path, gap-closer verdict" },
     { "rotation",    "RotationOrderProbe",       nil,  "Is GetRotationSpells' tail live-ordered? (A/B across state)" },
     { "stacks",      "StacksProbe",              nil,  "OOC: is a stacking buff N aura instances or one secret counter?" },
     { "auraids",     "AuraInstanceIdsProbe",     nil,  "One-shot: are aura instance-ID lists plain/countable in combat?" },
@@ -2340,6 +2341,93 @@ end
 --------------------------------------------------------------------------------
 -- AoE-context probe
 --------------------------------------------------------------------------------
+--- /jac inspect range - settle which range API answers against the CURRENT target.
+--- The SPELL path (C_Spell.IsSpellInRange) feeds IsTargetWithin - so the gap closer,
+--- the melee sink, and off-bar hotkey reds. The SLOT path (C_ActionBar.IsActionInRange)
+--- feeds on-bar hotkey reds. Run it three times: on a fresh target while the gap
+--- closer shows, after it wedges, and right after retargeting - whichever column
+--- changes between runs is the culprit.
+function DebugCommands.RangeProbe(addon)
+    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local SpellQueue = LibStub("JustAC-SpellQueue", true)
+    local ActionBarScanner = LibStub("JustAC-ActionBarScanner", true)
+    local GapCloser = LibStub("JustAC-GapCloserEngine", true)
+    addon:Print("=== Range probe ===")
+    if not UnitExists("target") then
+        addon:Print("No target - target the mob first, then run this again.")
+        return
+    end
+    local isSecret = BlizzardAPI and BlizzardAPI.IsSecretValue
+    local function fmt(v)
+        if v == nil then return "|cff888888nil|r" end
+        if isSecret and isSecret(v) then return "|cffff00ffSECRET|r" end
+        if v == true or v == 1 then return "|cff2ecc71in|r" end
+        return "|cffff6666OUT|r"
+    end
+    local function nameOf(id)
+        local info = BlizzardAPI and BlizzardAPI.GetCachedSpellInfo and BlizzardAPI.GetCachedSpellInfo(id)
+        return (info and info.name) or ("spell " .. tostring(id))
+    end
+
+    -- 1. The melee/near verdicts the gap closer consumes.
+    if SpellDB and SpellDB.IsTargetWithin then
+        local parts = {}
+        for _, y in ipairs({ 5, 8, 10, 25, 40 }) do
+            local v = SpellDB.IsTargetWithin(y)
+            parts[#parts + 1] = y .. "yd=" .. (v == nil and "|cff888888nil|r" or tostring(v))
+        end
+        addon:Print("  IsTargetWithin: " .. table.concat(parts, "  "))
+    end
+
+    -- 2. Every known range reference, raw spell-path answer.
+    if SpellDB and SpellDB.DebugRangeProbes then
+        local probes = SpellDB.DebugRangeProbes()
+        addon:Print("  References (" .. #probes .. " known):")
+        for i = 1, #probes do
+            local p = probes[i]
+            addon:Print(string.format("    %s (%d, %dyd): %s", nameOf(p.id), p.id, p.ref, fmt(p.r)))
+        end
+    end
+
+    -- 3. Current queue spells: spell path vs slot path side by side.
+    local queue = SpellQueue and SpellQueue.GetCurrentSpellQueue and SpellQueue.GetCurrentSpellQueue() or {}
+    addon:Print("  Queue (spell path / slot path):")
+    for i = 1, math.min(#queue, 6) do
+        local sid = queue[i]
+        if sid and sid > 0 then
+            local spellR = C_Spell and C_Spell.IsSpellInRange and C_Spell.IsSpellInRange(sid, "target")
+            local slot = ActionBarScanner and ActionBarScanner.GetDirectSlotForSpell
+                and ActionBarScanner.GetDirectSlotForSpell(sid)
+            local slotR
+            if slot and C_ActionBar and C_ActionBar.IsActionInRange then
+                slotR = C_ActionBar.IsActionInRange(slot, "target")
+            end
+            addon:Print(string.format("    %d. %s: spell=%s  slot=%s%s", i, nameOf(sid), fmt(spellR),
+                slot and fmt(slotR) or "|cff888888no direct slot|r",
+                slot and (" (#" .. slot .. ")") or ""))
+        end
+    end
+
+    -- 4. The gap-closer verdict, plus each candidate's OWN gates - the verdict can
+    -- flip on the candidate's own cast range (e.g. Wild Charge's ~25yd cap) while
+    -- every melee-band reading above stays constant, so print the discriminators.
+    if GapCloser and GapCloser.GetGapCloserSpell then
+        local gid = GapCloser.GetGapCloserSpell(addon, {})
+        addon:Print("  Gap closer verdict: " .. (gid and (nameOf(gid) .. " (" .. gid .. ")") or "|cff888888none|r"))
+        if GapCloser.MarkGapCloserSpellIDs then
+            local set = {}
+            GapCloser.MarkGapCloserSpellIDs(addon, set)
+            for id in pairs(set) do
+                local ownR = BlizzardAPI and BlizzardAPI.SpellInRange and BlizzardAPI.SpellInRange(id)
+                local ready = BlizzardAPI and BlizzardAPI.IsSpellReady and BlizzardAPI.IsSpellReady(id)
+                addon:Print(string.format("    candidate %s (%d): own-range=%s  ready=%s",
+                    nameOf(id), id, ownR == nil and "|cff888888nil|r" or fmt(ownR), tostring(ready)))
+            end
+        end
+    end
+end
+
 --- /jac inspect aoe - Test whether we can count nearby enemies DIRECTLY (nameplate
 --- enumeration + per-unit checks) without tripping 12.0 secret values, i.e. an
 --- AC-independent AoE signal. Every value is tested with issecretvalue BEFORE it is
