@@ -3,6 +3,15 @@
 
 ## [Unreleased]
 
+## [5.3.6] - 2026-08-24
+
+### Fixed
+- Out of combat, the queue now keeps up with movement. Distance to your target changes
+  without the game firing any event, and the queue only rebuilt on events - so the
+  gap-closer suggestion and the out-of-range coloring could sit stale until something
+  unrelated (like retargeting) woke them. With a hostile target selected, the queue now
+  refreshes on a steady pulse and tracks you and the mob moving in and out of range
+
 ## [5.3.5] - 2026-08-24
 
 ### Added

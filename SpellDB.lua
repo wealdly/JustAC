@@ -712,6 +712,20 @@ function SpellDB.IsTargetWithin(yards)
     return verdict
 end
 
+--- Diagnostic only (/jac inspect range): every KNOWN range reference with its
+--- raw spell-path answer against the current target, so a wedged verdict can be
+--- traced to the probes that produced it.
+function SpellDB.DebugRangeProbes()
+    local out = {}
+    if not C_Spell_IsSpellInRange then return out end
+    for id, ref in pairs(RANGE_REFERENCES) do
+        if not IsSpellKnown or IsSpellKnown(id) then
+            out[#out + 1] = { id = id, ref = ref, r = C_Spell_IsSpellInRange(id, "target") }
+        end
+    end
+    return out
+end
+
 --------------------------------------------------------------------------------
 -- API Functions
 --------------------------------------------------------------------------------
