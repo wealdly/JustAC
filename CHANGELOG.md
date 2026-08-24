@@ -3,6 +3,37 @@
 
 ## [Unreleased]
 
+## [5.3.5] - 2026-08-24
+
+### Added
+- A "Hold Until" dial on every Custom Priority entry, replacing the Hold Until Charged
+  checkbox (existing settings carry over). Pick when an ability is allowed back into its
+  listed spot: fully charged (what the old checkbox did), at least N of its resource -
+  exact counts for combo points, runes, holy power and the like - or a percentage of a
+  flowing resource such as energy or runic power. Until then it is treated exactly like
+  an ability on cooldown: parked at the back, never dropped, promoted by nothing. Your
+  list order says where an ability belongs; the hold says when. It needs "Unavailable
+  last" on, and under SimC ordering it replaces the imported resource conditions for
+  that ability. One caution: the resource conditions lean on parts of the game that
+  major patches like to rearrange, so this half of the dial may stop working after a
+  big update. If it does, a held ability simply returns to its listed spot - nothing
+  is ever hidden - until a JustAC update restores it
+
+### Changed
+- Removing an ability from a priority list no longer discards its settings - the Hold
+  Until dial, Always Show, Proc Priority, and an item's linked aura or combat-hide.
+  Those belong to the ability itself and are shared by every list and spec that shows
+  it, so deleting a row in one place used to silently erase them everywhere. They now
+  persist, take effect again the moment the ability is back on a list, and can be
+  viewed or reset any time on the Abilities tab
+- Refreshed the SimC rotation profiles to the latest upstream (2026-08-24). Thirteen
+  specs picked up ordering or condition changes, including Frost Death Knight, Guardian
+  Druid, both ranged Hunters, Windwalker Monk and Shadow Priest
+- Out-of-range now looks like the standard action bar: the icon keeps its normal colour
+  and only the keybind text turns red. An icon with no keybind shown gets the action
+  bar's small red dot instead while the target is out of range. State Tint still covers
+  the blue (no resources) and gray (unavailable) icon tints
+
 ## [5.3.4] - 2026-08-22
 
 ### Fixed

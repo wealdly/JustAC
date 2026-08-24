@@ -318,7 +318,10 @@ function CustomQueue.CreateTabArgs(addon)
                 type = "toggle",
                 name = L["Enable Custom Queue"],
                 desc = L["Enable Custom Queue desc"],
-                order = 2,
+                -- The tab's master switch reads first, right under the position
+                -- note; the ordering group below applies to both queue sources,
+                -- so it keeps working with the switch off.
+                order = 0.4,
                 width = "full",
                 get = function()
                     local profile = addon:GetProfile()

@@ -2260,7 +2260,7 @@ end
 --- would otherwise report 0 resource and permanently sink every `>=`-gated spender. Callers treat
 --- nil as unknown and fail open.
 --- @return number|nil count, number|nil max, string|nil resource (SimC resource token)
-function BlizzardAPI.GetClassResourcePoints()
+local function GetClassResourcePointsRaw()
     local _, playerClass = UnitClass("player")
     local cur, max, res = DirectPowerRead(playerClass)
     if cur ~= nil then return cur, max, res end
@@ -2288,6 +2288,17 @@ function BlizzardAPI.GetClassResourcePoints()
         end
     end
     return nil
+end
+
+-- pcall shell: the raw read walks Blizzard frame internals, and a patch that
+-- reshapes them mid-combat must degrade to "unknown" (nil - every caller fails
+-- open), never throw through the 30Hz queue build. This is the same contract
+-- the doc comment above already promises; the shell makes it hold under a
+-- hostile shape change, not just a clean rename.
+function BlizzardAPI.GetClassResourcePoints()
+    local ok, cur, max, res = pcall(GetClassResourcePointsRaw)
+    if not ok then return nil end
+    return cur, max, res
 end
 
 --- Reset target cast tracking. Called from JustAC:OnTargetChanged and

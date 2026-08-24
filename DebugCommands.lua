@@ -828,12 +828,12 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
         line("DoT not already on target", false,
             "active on target - parked at the back; returns for the pandemic refresh window")
     end
-    local heldUntilCharged = SpellQueue.IsHeldUntilCharged
-        and SpellQueue.IsHeldUntilCharged(spellID) or false
-    if heldUntilCharged then
-        line("Charges banked", false,
-            "Hold Until Charged is on for this ability - parked at the back until every "
-            .. "charge is back")
+    local heldByDial = SpellQueue.IsHeldByHold
+        and SpellQueue.IsHeldByHold(spellID) or false
+    if heldByDial then
+        line("Hold released", false,
+            "a Hold Until dial is set for this ability and its condition is not met - "
+            .. "parked at the back until it is")
     end
 
     -- SimC ordering context (blended: context fit first, SimC theorycraft rank refines)

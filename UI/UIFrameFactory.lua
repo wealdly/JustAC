@@ -121,6 +121,9 @@ function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
         button.hotkeyText:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
         local c = cfg and cfg.color
         button.hotkeyText:SetTextColor((c and c.r) or 1, (c and c.g) or 1, (c and c.b) or 1, (c and c.a) or 1)
+        -- This repaint clobbers the out-of-range red; the range updater early-returns while
+        -- its cached state matches, so force it to repaint on the next pass.
+        button.lastOutOfRange = nil
         local anchor = (cfg and cfg.anchor) or "TOPRIGHT"
         local preset = HOTKEY_ANCHOR_PRESETS[anchor] or HOTKEY_ANCHOR_PRESETS.TOPRIGHT
         button.hotkeyText:ClearAllPoints()

@@ -148,6 +148,7 @@ read_globals = {
   "PlayerFrame",
   "PlayerHasToy",
   "RAID_CLASS_COLORS",
+  "RANGE_INDICATOR",
   "RegisterStateDriver",
   "STANDARD_TEXT_FONT",
   "SetCVar",
