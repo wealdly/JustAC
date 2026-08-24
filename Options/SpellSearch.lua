@@ -411,6 +411,109 @@ end
 -- Other lists must neither show the toggle nor wipe the setting on removal.
 local PROC_PRIORITY_LISTS = { defensive = true, petheal = true, petrez = true, customqueue = true }
 
+-- ── "Hold Until" dial (shared by the Custom Queue rows and the ability card) ──
+-- One dropdown, values shaped by what the spell actually has: "Fully charged"
+-- always (a chargeless spell holds until off cooldown), point steps for a
+-- discrete cost row, percent steps for a continuous one. Stored sparse as
+-- spellSettings[id].holdMode = "charged" | "pts:N" | "pct:N"; the legacy
+-- holdUntilCharged boolean reads as "charged" until the dial is next touched.
+local HOLD_PCT_STEPS = { 20, 40, 60, 80 }
+-- Static per-type point caps for the dropdown; the queue clamps a stored value
+-- to the LIVE max at evaluation time, so over-offering here can never strand a
+-- hold on a lower-max build.
+local HOLD_PTS_CAP = {}
+do
+    local PT = Enum and Enum.PowerType
+    if PT then
+        local caps = { ComboPoints = 7, Runes = 6, SoulShards = 5, HolyPower = 5,
+                       Chi = 6, ArcaneCharges = 4, Essence = 6 }
+        for k, cap in pairs(caps) do
+            if PT[k] then HOLD_PTS_CAP[PT[k]] = cap end
+        end
+    end
+end
+
+local function HoldModeOptions(spellID)
+    local values = { off = L["Hold Off Label"], charged = L["Hold Charged Label"] }
+    local sorting = { "off", "charged" }
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local kind, ptype, resName
+    if SQ and SQ.GetHoldResource then kind, ptype, resName = SQ.GetHoldResource(spellID) end
+    if kind == "pts" then
+        for n = 2, HOLD_PTS_CAP[ptype] or 5 do
+            local key = "pts:" .. n
+            values[key] = n .. "+ " .. (resName or "")
+            sorting[#sorting + 1] = key
+        end
+    elseif kind == "pct" then
+        for i = 1, #HOLD_PCT_STEPS do
+            local n = HOLD_PCT_STEPS[i]
+            local key = "pct:" .. n
+            values[key] = n .. "% " .. (resName or "")
+            sorting[#sorting + 1] = key
+        end
+    end
+    return values, sorting
+end
+
+--- The full AceConfig select for one spell's Hold Until dial. `extraDisabled`
+--- (optional) ORs onto the shared "Unavailable last is off" greying.
+function SpellSearch.HoldModeControl(addon, spellID, order, width, extraDisabled)
+    return {
+        type = "select",
+        order = order,
+        width = width or 1.0,
+        name = L["Hold Until"],
+        desc = L["Hold Until desc"],
+        disabled = function()
+            local profile = addon:GetProfile()
+            if profile and profile.orderSinkCooldowns == false then return true end
+            -- A hidden ability never reaches positions 2+, so its dial is inert:
+            -- grey it while this spec's visibility override (or an inactive
+            -- situational set) hides the spell from the queue.
+            local SQ = LibStub("JustAC-SpellQueue", true)
+            if SQ and SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(spellID) then return true end
+            return extraDisabled and extraDisabled() or false
+        end,
+        values = function()
+            local v = HoldModeOptions(spellID)
+            -- A stored value the spell no longer offers (a respec changed its
+            -- cost shape) must still render on the closed dropdown, not a blank.
+            local profile = addon:GetProfile()
+            local ss = profile and profile.defensives and profile.defensives.spellSettings
+                and profile.defensives.spellSettings[spellID]
+            local cur = ss and ss.holdMode
+            if cur and not v[cur] then v[cur] = cur end
+            return v
+        end,
+        sorting = function() local _, s = HoldModeOptions(spellID); return s end,
+        get = function()
+            local profile = addon:GetProfile()
+            local s = profile and profile.defensives and profile.defensives.spellSettings
+                and profile.defensives.spellSettings[spellID]
+            local m = s and s.holdMode
+            if m == nil and s and s.holdUntilCharged == true then m = "charged" end
+            return m or "off"
+        end,
+        set = function(_, val)
+            local profile = addon:GetProfile()
+            if not profile or not profile.defensives then return end
+            if not profile.defensives.spellSettings then profile.defensives.spellSettings = {} end
+            local store = profile.defensives.spellSettings
+            if not store[spellID] then store[spellID] = {} end
+            local s = store[spellID]
+            s.holdMode = (val ~= "off") and val or nil
+            s.holdUntilCharged = nil   -- superseded by holdMode
+            if not next(s) then store[spellID] = nil end
+            -- Dials are read into the rotation SETUP cache, which only rebuilds
+            -- on a list change - invalidate so the pick applies on the next build.
+            local SQ = LibStub("JustAC-SpellQueue", true)
+            if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
+            addon:ForceUpdate()
+        end,
+    }
+end
+
 -- Every row button below closes over the index it was BUILT with. If the list changed
 -- since - another row acted, defaults were restored, the spec swapped - that index now
 -- points at a different entry, or past the end. Re-checking that the captured entry is
@@ -514,11 +617,12 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                 remove = {
                     type = "execute",
                     name = L["Remove"],
-                    order = 3,
+                    -- Far right, after the per-ability settings: the destructive
+                    -- control sits away from the reorder pair it used to neighbor.
+                    order = 9,
                     width = 0.5,
                     func = function()
                         if not StillAt(spellList, i, entry) then return end
-                        local profile = _addon:GetProfile()
                         if isEmergency then
                             -- Record the intent, so the tile stays gone. Everything else
                             -- that can drop it is treated as accidental and re-seeded.
@@ -527,21 +631,14 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                                 DE.MarkEmergencyPotionRemoved(_addon)
                             end
                         end
-                        -- Clean up item settings when removing an item entry
-                        if isItemEntry then
-                            local itemID = -entry
-                            if profile and profile.defensives and profile.defensives.itemSettings then
-                                profile.defensives.itemSettings[itemID] = nil
-                            end
-                        elseif PROC_PRIORITY_LISTS[listType] then
-                            -- Clean up spell settings when removing a spell entry.
-                            -- Only for lists that own the setting: removing the same
-                            -- spell from e.g. a gap-closer list must not discard the
-                            -- proc priority it has in the defensive/custom lists.
-                            if profile and profile.defensives and profile.defensives.spellSettings then
-                                profile.defensives.spellSettings[entry] = nil
-                            end
-                        end
+                        -- Deliberately NOT wiping the entry's spell/item settings: both
+                        -- stores are shared across lists AND specs, so no removal event
+                        -- can soundly decide ownership - clearing here discarded a Hold
+                        -- Until dial or pin another list/spec still used. Settings are
+                        -- ability-level properties, effective while the ability is in a
+                        -- list; orphans are inert (the queue and defensive engine only
+                        -- consult them for listed entries) and stay visible on the
+                        -- Abilities tab, which owns editing and resetting them.
                         table.remove(spellList, i)
                         updateFunc()
                     end
@@ -699,7 +796,9 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
 
             entryArgs.procPriority = {
                 type = "toggle",
-                order = 4,
+                -- Custom-queue rows read position -> hold -> pin -> proc exception;
+                -- the rarest decision goes last. Other lists keep the old slot.
+                order = listType == "customqueue" and 6 or 4,
                 width = 0.7,
                 name = L["Proc Priority"],
                 desc = L["Proc Priority desc"],
@@ -734,6 +833,12 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     width = 0.7,
                     name = L["Always Show"],
                     desc = L["Always Show desc"],
+                    -- Same rule as the dial: inert while a visibility override
+                    -- hides this spell from the queue, so grey it.
+                    disabled = function()
+                        local SQ = LibStub("JustAC-SpellQueue", true)
+                        return (SQ and SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(spellID)) or false
+                    end,
                     get = function()
                         local profile = _addon:GetProfile()
                         local settings = profile and profile.defensives and profile.defensives.spellSettings
@@ -755,36 +860,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     end,
                 }
 
-                entryArgs.holdUntilCharged = {
-                    type = "toggle",
-                    order = 6,
-                    width = 0.7,
-                    name = L["Hold Until Charged"],
-                    desc = L["Hold Until Charged desc"],
-                    -- Inert while "Unavailable last" is off (SpellQueue gates the whole
-                    -- feature on sinkCooldowns), so grey it out the way the sibling
-                    -- Proc Priority toggle greys against its own master switch.
-                    disabled = function()
-                        local profile = _addon:GetProfile()
-                        return profile and profile.orderSinkCooldowns == false or false
-                    end,
-                    get = function()
-                        local profile = _addon:GetProfile()
-                        local settings = profile and profile.defensives and profile.defensives.spellSettings
-                            and profile.defensives.spellSettings[spellID]
-                        return settings and settings.holdUntilCharged == true
-                    end,
-                    set = function(_, val)
-                        local profile = _addon:GetProfile()
-                        if not profile or not profile.defensives then return end
-                        if not profile.defensives.spellSettings then profile.defensives.spellSettings = {} end
-                        if not profile.defensives.spellSettings[spellID] then profile.defensives.spellSettings[spellID] = {} end
-                        profile.defensives.spellSettings[spellID].holdUntilCharged = val or nil
-                        local SQ = LibStub("JustAC-SpellQueue", true)
-                        if SQ and SQ.InvalidateRotationCache then SQ.InvalidateRotationCache() end
-                        _addon:ForceUpdate()
-                    end,
-                }
+                entryArgs.holdMode = SpellSearch.HoldModeControl(_addon, spellID, 4)
             end
         end
     end

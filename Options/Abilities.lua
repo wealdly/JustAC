@@ -383,7 +383,8 @@ local function CollectCustomizations(profile)
     if ss then
         for id, s in pairs(ss) do
             if type(id) == "number" and type(s) == "table"
-               and (s.procPriority == false or s.alwaysShow == true or s.holdUntilCharged == true) then
+               and (s.procPriority == false or s.alwaysShow == true
+                    or s.holdUntilCharged == true or s.holdMode ~= nil) then
                 badge(id, L["Pinned Badge"])
             end
         end
@@ -609,19 +610,28 @@ local function BuildCard(addon, args, profile)
     -- did nothing - and still earned a "Pinned" badge in the index. Hidden as a block.
     if not isItem then
         args.pinHeader = { type = "header", name = L["Ability Pins"], order = 11.5 }
-        args.pinProc   = pinToggle("procPriority", "Proc Priority", "Proc Priority desc", 12, true)
+        -- Same family order as the custom-queue rows: Hold -> Always Show -> Proc
+        -- Priority. Proc Priority reads last (and never greys on visibility): it
+        -- is the one pin that also acts in the defensive and pet lists.
+        args.pinProc   = pinToggle("procPriority", "Proc Priority", "Proc Priority desc", 14, true)
         args.pinAlways = pinToggle("alwaysShow", "Always Show", "Always Show desc", 13, false)
-        args.pinHold   = pinToggle("holdUntilCharged", "Hold Until Charged", "Hold Until Charged desc", 14, false)
-        -- SpellQueue honours holdUntilCharged only while the custom queue is the rotation
-        -- source AND "Unavailable last" sinking is on - grey the pin out exactly like the
-        -- custom-queue row twin, plus the custom-queue half the rows get for free by hiding.
-        args.pinHold.disabled = function()
-            local p = addon.db.profile
-            if p.orderSinkCooldowns == false then return true end
-            local sk = GetSpecKey()
-            local cq = sk and p.customQueue and p.customQueue[sk]
-            return not (cq and cq.enabled)
+        -- Inert while this spec's visibility override (or an inactive situational
+        -- set) hides the spell: the blacklist branch runs before the pin could
+        -- bypass any filtering, so grey it rather than let it look live.
+        args.pinAlways.disabled = function()
+            local SQ = LibStub("JustAC-SpellQueue", true)
+            return (SQ and SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(id)) or false
         end
+        -- The Hold Until dial acts only while the custom queue is the rotation
+        -- source AND "Unavailable last" sinking is on; the shared control greys
+        -- the sink half itself and takes the custom-queue half as extraDisabled.
+        args.pinHold = SpellSearch and SpellSearch.HoldModeControl
+            and SpellSearch.HoldModeControl(addon, id, 12, "normal", function()
+                local p = addon.db.profile
+                local sk = GetSpecKey()
+                local cq = sk and p.customQueue and p.customQueue[sk]
+                return not (cq and cq.enabled)
+            end) or nil
         args.pinNote = {
             type = "description",
             name = "|cff888888" .. L["Ability Pins Note"] .. "|r",

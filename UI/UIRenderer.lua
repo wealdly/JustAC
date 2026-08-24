@@ -118,9 +118,14 @@ local function NormalizeHotkey(hotkey)
     return n
 end
 
+-- Stock action-bar range glyph: an unbound button shows this dot, red, only while out of range.
+local RANGE_INDICATOR = RANGE_INDICATOR or "\226\151\143"  -- "●"
+
 local function SetIconHotkeyText(icon, hotkey, showHotkeys)
     if not icon or not icon.hotkeyText then return end
     local displayHotkey = showHotkeys and hotkey or ""
+    -- An empty hotkey may be showing the out-of-range dot; UpdateRangeHotkeyColor owns that.
+    if displayHotkey == "" and icon.hotkeyText:GetText() == RANGE_INDICATOR then return end
     if (icon.hotkeyText:GetText() or "") ~= displayHotkey then
         icon.hotkeyText:SetText(displayHotkey)
     end
@@ -467,8 +472,8 @@ local VS_NO_RESOURCES  = 2  -- usable but not enough resources (blue tint)
 local VS_NORMAL        = 3  -- ready and usable
 local VS_ACTIVE_CAST   = 4  -- this spell is currently being cast/channeled
 local VS_UNAVAILABLE   = 5  -- on cooldown or wrong form (gray desat)
-local VS_OUT_OF_RANGE  = 6  -- out of range, no hotkey visible (red tint)
-local VS_RANGE_HOTKEY  = 7  -- out of range, hotkey visible (muted warm; hotkey text carries the red)
+-- Out of range is NOT an icon state: like the stock action bar, only the hotkey text
+-- carries it (red), so the icon colour keeps meaning usability alone.
 
 -- Defensive icons reuse the VS_* states/ApplyVisualState; WAITING is the one
 -- defensive-only state (held-back emergency heal), painted by hand and kept
@@ -497,11 +502,17 @@ local function CheckSpellRange(icon, spellID, directSlot)
     return icon.cachedOutOfRange
 end
 
---- Update hotkey text color based on out-of-range state.
+--- Update hotkey text color based on out-of-range state (stock action-bar style: the text
+--- goes red; an empty hotkey becomes the RANGE_INDICATOR dot while out of range).
 --- @param icon table  Icon button with .hotkeyText and .lastOutOfRange
 --- @param isOutOfRange boolean
 --- @param hotkeyColor table|nil  {r,g,b,a} from profile hotkey color
 local function UpdateRangeHotkeyColor(icon, isOutOfRange, hotkeyColor)
+    local text = icon.hotkeyText:GetText() or ""
+    if text == "" or text == RANGE_INDICATOR then
+        local want = isOutOfRange and RANGE_INDICATOR or ""
+        if text ~= want then icon.hotkeyText:SetText(want) end
+    end
     if icon.lastOutOfRange == isOutOfRange then return end
     if isOutOfRange then
         icon.hotkeyText:SetTextColor(1, 0, 0, 1)
@@ -576,29 +587,24 @@ end
 --- Resolve the visual state for a DPS icon.
 --- States: VS_GREYED=1 (channeling other), VS_NO_RESOURCES=2 (blue), VS_NORMAL=3,
 --- VS_ACTIVE_CAST=4 (current cast/channel), VS_UNAVAILABLE=5 (gray desat),
---- VS_OUT_OF_RANGE=6 (red tint), VS_RANGE_HOTKEY=7 (muted warm; hotkey shows red).
+--- Out of range never reaches the icon - the hotkey text carries it (UpdateRangeHotkeyColor).
 --- @param icon table  Icon button (caches cachedIsUsable/cachedNotEnoughResources)
 --- @param spellID number
 --- @param isChanneledSpell boolean
 --- @param isCastedSpell boolean
 --- @param isChanneling boolean
 --- @param isCasting boolean
---- @param isOutOfRange boolean
---- @param showStateTint boolean  One setting ("State Tint") covers both the range and usability tints
+--- @param showStateTint boolean  "State Tint" setting (gray desat for unavailable)
 --- @param inCombat boolean
 --- @param directSlot number|nil  Action bar slot for slot-based usability
---- @param hasVisibleHotkey boolean|nil  When true, hotkey text handles range feedback; icon red tint is skipped
 --- @return number visualState
 local function ResolveVisualState(icon, spellID, isChanneledSpell, isCastedSpell,
-                                  isChanneling, isCasting, isOutOfRange,
-                                  showStateTint, inCombat, directSlot,
-                                  hasVisibleHotkey, currentTime)
+                                  isChanneling, isCasting,
+                                  showStateTint, inCombat, directSlot, currentTime)
     if isChanneledSpell or isCastedSpell then
         return VS_ACTIVE_CAST
     elseif isChanneling or isCasting then
         return VS_GREYED
-    elseif showStateTint and isOutOfRange then
-        return hasVisibleHotkey and VS_RANGE_HOTKEY or VS_OUT_OF_RANGE
     elseif inCombat then
         local now = currentTime or GetTime()
         local shouldRefreshUsability = icon.cachedIsUsable == nil
@@ -629,7 +635,7 @@ end
 
 --- Apply visual state colors/desaturation to an icon.
 --- @param icon table  Icon button
---- @param visualState number  1-7
+--- @param visualState number  1-5
 --- @param baseDesaturation number  Position-based desaturation
 local function ApplyVisualState(icon, visualState, baseDesaturation)
     local iconTexture = icon.iconTexture
@@ -650,13 +656,6 @@ local function ApplyVisualState(icon, visualState, baseDesaturation)
     elseif visualState == VS_UNAVAILABLE then
         if prevState ~= VS_UNAVAILABLE then iconTexture:SetDesaturation(0.8) end
         iconTexture:SetVertexColor(0.4, 0.4, 0.4)
-    elseif visualState == VS_OUT_OF_RANGE then
-        if changed then iconTexture:SetDesaturation(baseDesaturation) end
-        iconTexture:SetVertexColor(1.0, 0.2, 0.2)
-    elseif visualState == VS_RANGE_HOTKEY then
-        -- Muted warm tint - hotkey text provides the red range feedback
-        if prevState ~= VS_RANGE_HOTKEY then iconTexture:SetDesaturation(0) end
-        iconTexture:SetVertexColor(0.55, 0.35, 0.35)
     else  -- VS_NORMAL
         if changed then
             iconTexture:SetDesaturation(baseDesaturation)
@@ -1571,11 +1570,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
             and ActionBarScanner.GetSpellHotkey(displayID)) or ""
     end
     SetIconHotkeyText(icon, icon.cachedHotkey, showHotkeys)
-    if showHotkeys and icon.cachedHotkey ~= "" then
-        local outOfRange = CheckSpellRange(icon, displayID, nil)
-        UpdateRangeHotkeyColor(icon, outOfRange,
-            profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
-    end
+    UpdateRangeHotkeyColor(icon, CheckSpellRange(icon, displayID, nil),
+        profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
 
     -- TWO stages, same blue, escalating: marching ants at the refresh threshold (~3s before
     -- decay), proc burst once the buff has actually lapsed.
@@ -2037,10 +2033,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             end
 
             -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
-            if ctx.showHotkeys and intIcon.cachedHotkey and intIcon.cachedHotkey ~= "" then
-                local isOutOfRange = CheckSpellRange(intIcon, intSpellID, nil)
-                UpdateRangeHotkeyColor(intIcon, isOutOfRange, ctx.hotkeyColor)
-            end
+            UpdateRangeHotkeyColor(intIcon, CheckSpellRange(intIcon, intSpellID, nil), ctx.hotkeyColor)
 
             -- No channeling grey-out for interrupts: they are urgent actions the
             -- player may want to cancel a channel to use.
@@ -2510,27 +2503,16 @@ local function RenderQueueIcon(icon, i, ctx)
             SetIconNormalizedHotkey(icon, hotkey, true)
         end
 
-        local hasVisibleHotkey = ctx.showHotkeys and hotkey ~= ""
-        local needRangeCheck = ctx.showUsabilityTint or hasVisibleHotkey
-        local needsDirectSlot = needRangeCheck or ctx.inCombat
-
         -- Range/usability support: slot-based with spell fallback.
         local directSlot
-        if needsDirectSlot then
-            if isItemEntry then
-                directSlot = ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
-            else
-                directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
-            end
+        if isItemEntry then
+            directSlot = ActionBarScanner.GetDirectSlotForItem and ActionBarScanner.GetDirectSlotForItem(itemID)
+        else
+            directSlot = ActionBarScanner.GetDirectSlotForSpell(spellID)
         end
 
-        local isOutOfRange = false
-        if needRangeCheck then
-            isOutOfRange = CheckSpellRange(icon, spellID, directSlot)
-            if hasVisibleHotkey then
-                UpdateRangeHotkeyColor(icon, isOutOfRange, ctx.hotkeyColor)
-            end
-        end
+        -- Range is hotkey-text only, stock action-bar style; always evaluated (cheap).
+        UpdateRangeHotkeyColor(icon, CheckSpellRange(icon, spellID, directSlot), ctx.hotkeyColor)
 
         local baseDesaturation = (i > 1) and ctx.queueDesaturation or 0
         local isChanneledSpell, isCastedSpell
@@ -2543,8 +2525,7 @@ local function RenderQueueIcon(icon, i, ctx)
 
         local visualState = ResolveVisualState(icon, spellID,
             isChanneledSpell, isCastedSpell, ctx.isChanneling, ctx.isCasting,
-            isOutOfRange, ctx.showUsabilityTint, ctx.inCombat, directSlot,
-            hasVisibleHotkey, currentTime)
+            ctx.showUsabilityTint, ctx.inCombat, directSlot, currentTime)
 
         ApplyVisualState(icon, visualState, baseDesaturation)
 

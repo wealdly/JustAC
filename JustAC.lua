@@ -58,7 +58,7 @@ local defaults = {
         glowMode = "all",                 -- Shared highlight mode: "all", "primaryOnly", "procOnly", "none".
                                           -- Per-surface glow keys default "shared" = follow this one.
         showFlash = true,                 -- Flash icon on matching key press
-        showUsabilityTint = true,         -- Tint icons by state (blue=no resources, gray=unavailable, red=out of range)
+        showUsabilityTint = true,         -- Tint icons by state (blue=no resources, gray=unavailable)
         showImportantCastCue = false,     -- Warn when a nearby mob casts an engine-flagged "important" spell
         showCastingHighlight = true,      -- White border on icon while its spell is actively being cast
         greyOutWhileCasting = true,       -- Grey out icons while the player is casting or channeling a spell

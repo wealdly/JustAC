@@ -211,6 +211,12 @@ local pinnedAlwaysShow = {}
 --- "Hold until charged" spells resolved to every ID form, rebuilt with the
 --- rotation-list cache alongside pinnedAlwaysShow.
 local maxChargeGated = {}
+--- "Hold until" resource dials, same form-resolution and rebuild cadence.
+--- holdPoints[id] = N (discrete class-resource count); holdPctVal[id] = percent
+--- of holdPctType[id] (Enum.PowerType) for the engine-side threshold gate.
+local holdPoints = {}
+local holdPctVal = {}
+local holdPctType = {}
 -- Parallel context-rank buffers for the fixed-queue archetype/range bias.
 local proccedRank = {}
 local normalRank = {}
@@ -442,27 +448,65 @@ function SpellQueue.IsPinnedAlwaysShow(spellID)
     return pinnedAlwaysShow[spellID] == true
 end
 
--- Per-spell "Hold Until Charged" opt-in (Custom Queue row toggle). True while the
--- ability is short of full charges - the caller sinks it to the back of the queue
--- (never drops it), so a charge ability isn't pushed at 1/2 and spent into an
--- overcap, but stays visible while it banks. For a spell without charges this
--- degrades to "sink while on cooldown", which is the same intent and matches what
--- the cooldown sink already does. Both reads are non-secret local tracking, so
--- this is safe to branch on in combat.
+-- Per-spell "Hold Until" dial (Custom Queue row / ability card). One family, one
+-- behavior: while its condition is unmet the ability sinks to the back of the
+-- queue exactly like one on cooldown - never dropped, promoted by nothing.
+--   charged - short of full charges; a chargeless spell holds until off cooldown.
+--   points  - the class resource (combo points, runes, ...) is below N. Exact
+--             plain read; the stored N clamps to the live max so a 7 saved on a
+--             5-point build releases at 5 instead of holding forever.
+--   percent - the spell's own continuous cost resource is below N% (engine-side
+--             threshold curve; only the boolean crosses into Lua).
+-- Every read is plain or fail-open: unreadable -> released, listed order stands.
+-- FRAGILE by design: the points path rides point-widget frame state and the
+-- percent path rides the curve zero-gate - both unintended surfaces a major
+-- patch can close (Documentation/SECRET_VALUE_THRESHOLD_GATES.md). Fail-open
+-- makes that breakage invisible-but-harmless; the release notes say so out loud.
 -- `ready` is passed in because the caller has already computed it for this spell in the
 -- same iteration; re-querying would double the readiness work on every build.
-local function HeldUntilCharged(spellID, displayID, ready)
-    if not (maxChargeGated[spellID] or maxChargeGated[displayID]) then return false end
-    return not (ready and BlizzardAPI.IsSpellAtMaxCharges(displayID))
+local holdPtsCur, holdPtsMax, holdPtsFresh = nil, nil, false
+local function HeldByUserHold(spellID, displayID, ready)
+    if maxChargeGated[spellID] or maxChargeGated[displayID] then
+        return not (ready and BlizzardAPI.IsSpellAtMaxCharges(displayID))
+    end
+    local n = holdPoints[spellID] or holdPoints[displayID]
+    if n then
+        if not holdPtsFresh then
+            -- One class-resource read serves every points-hold this build.
+            holdPtsFresh = true
+            holdPtsCur, holdPtsMax = nil, nil
+            if BlizzardAPI.GetClassResourcePoints then
+                holdPtsCur, holdPtsMax = BlizzardAPI.GetClassResourcePoints()
+            end
+        end
+        if holdPtsCur == nil then return false end
+        if holdPtsMax and n > holdPtsMax then n = holdPtsMax end
+        return holdPtsCur < n
+    end
+    local pct = holdPctVal[spellID] or holdPctVal[displayID]
+    if pct then
+        return BlizzardAPI.IsUnitPowerBelow and BlizzardAPI.IsUnitPowerBelow(
+            "player", pct, holdPctType[spellID] or holdPctType[displayID]) == true
+    end
+    return false
+end
+
+-- Any dial at all on this spell? The imported SimC resource/power gates yield
+-- to an explicit dial - the narrow override the Hold Until tooltip promises.
+local function HasUserHold(spellID, displayID)
+    return (maxChargeGated[spellID] or maxChargeGated[displayID]
+        or holdPoints[spellID] or holdPoints[displayID]
+        or holdPctVal[spellID] or holdPctVal[displayID]) ~= nil
 end
 
 -- shared with /jac why: report the same sink verdict the build used. Resolves readiness
 -- itself (the diagnostic has no per-iteration value to hand in) and answers false for any
 -- spell that isn't gated, so callers can print a reason only when it fires.
-function SpellQueue.IsHeldUntilCharged(spellID)
+function SpellQueue.IsHeldByHold(spellID)
     if not spellID then return false end
+    holdPtsFresh = false
     local displayID = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(spellID) or spellID
-    return HeldUntilCharged(spellID, displayID, BlizzardAPI.IsSpellReady(displayID))
+    return HeldByUserHold(spellID, displayID, BlizzardAPI.IsSpellReady(displayID))
 end
 
 -- Resolve display ID, check dedup, mark both IDs as claimed.
@@ -829,6 +873,45 @@ local function IsSpenderSpell(spellID)
     return verdict
 end
 
+-- Discrete point-style power types: exact plain count via GetClassResourcePoints;
+-- everything else is continuous and gates through the engine threshold curve.
+local DISCRETE_POWER = {}
+do
+    local PT = Enum and Enum.PowerType
+    if PT then
+        for _, k in ipairs({ "ComboPoints", "Runes", "SoulShards", "HolyPower",
+                             "Chi", "ArcaneCharges", "Essence" }) do
+            if PT[k] then DISCRETE_POWER[PT[k]] = true end
+        end
+    end
+end
+
+--- The resource a "Hold Until" dial gates on: the spell's OWN cost rows, discrete
+--- row preferred - points are the strategic resource, while a continuous cost is
+--- usually a tax the starved sink already covers. Returns kind ("pts"|"pct"),
+--- Enum.PowerType, localized power name; nil when the spell has no cost row.
+--- Shared with the options dial builder so both shape from the same rule.
+function SpellQueue.GetHoldResource(spellID)
+    if not (spellID and C_Spell and C_Spell.GetSpellPowerCost) then return nil end
+    local ok, costs = pcall(C_Spell.GetSpellPowerCost, spellID)
+    if not ok or type(costs) ~= "table" then return nil end
+    local cont
+    for i = 1, #costs do
+        local c = costs[i]
+        local t = c and c.type
+        if type(t) == "number" and not (issecretvalue and issecretvalue(t)) then
+            if DISCRETE_POWER[t] then
+                return "pts", t, c.name and _G[c.name] or nil
+            elseif not cont and type(c.cost) == "number"
+                   and not (issecretvalue and issecretvalue(c.cost)) and c.cost > 0 then
+                cont = c
+            end
+        end
+    end
+    if cont then return "pct", cont.type, cont.name and _G[cont.name] or nil end
+    return nil
+end
+
 local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
     if not gates or not resCount then return false end
     for i = 1, #gates do
@@ -998,10 +1081,12 @@ SpellQueue._StackHolds = StackHolds            -- diagnostics (/jac inspect simc
 --- Every evaluable SimC gate in ONE call. Any single unsatisfied gate blocks.
 --- Both call sites use this rather than the individual blockers, so a new gate
 --- type cannot be wired into one and forgotten at the other.
-local function SimcGateBlocks(gates, resCount, resName, resMax)
+local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
     if not gates then return false end
-    return SimcResourceGateBlocks(gates, resCount, resName, resMax)
-        or SimcPowerGateBlocks(gates)
+    -- skipResource: an explicit Hold Until dial replaces the imported resource
+    -- and power conditions for that spell; window/health/stack gates still apply.
+    return (not skipResource and (SimcResourceGateBlocks(gates, resCount, resName, resMax)
+                or SimcPowerGateBlocks(gates)))
         or SimcHealthGateBlocks(gates)
         or SimcStackGateBlocks(gates)
 end
@@ -1051,6 +1136,7 @@ local function CategorizeAndAssembleRotation(rotationList, b)
     wipe(normalSpells)
     wipe(proccedRank)
     wipe(normalRank)
+    holdPtsFresh = false   -- fresh class-resource read for this build's holds
     local proccedCount, normalCount, cooldownCount = 0, 0, 0
     -- rankOf: "off" = neutral (source order); "ac" = ContextRank alone (profile-distance to
     -- the AC pick); "simc" = that SAME context distance REFINED by SimC's theorycraft priority.
@@ -1122,16 +1208,18 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                     -- so IsSpellReady falls back to stale local charge counts and such a proc
                     -- could sink early. Rare; exempt charge spells here if one ever regresses.
                     local ready = BlizzardAPI.IsSpellReady(displayID)
-                    -- "Hold Until Charged": treat a part-charged ability exactly like one
-                    -- that isn't ready - sink it, never drop it. It keeps its place in the
-                    -- queue rather than being filtered out, though like anything in the
-                    -- cooldown tail it can fall past maxIcons and off screen on a full queue.
+                    -- "Hold Until" dial (charged / points / percent): treat a held ability
+                    -- exactly like one that isn't ready - sink it, never drop it. It keeps
+                    -- its place in the queue rather than being filtered out, though like
+                    -- anything in the cooldown tail it can fall past maxIcons and off screen.
                     -- Gated on sinkCooldowns so the whole feature is genuinely inert when
                     -- "Unavailable last" is off, which is what the option's tooltip promises -
                     -- otherwise it would still strip proc promotion below and quietly reorder.
-                    local held = sinkCooldowns and HeldUntilCharged(spellID, displayID, ready)
+                    local held = sinkCooldowns and HeldByUserHold(spellID, displayID, ready)
                     local simcRec = (simcMode and RotationImport and RotationImport.GetEntry)
                         and RotationImport.GetEntry(spellID, simcCtx) or nil
+                    -- Explicit dial -> the imported resource gates yield for this spell.
+                    local dialSet = simcRec and HasUserHold(spellID, displayID) or false
                     -- Spenders sink while you can't afford them (IsSpellUsable's
                     -- insufficientPower is NeverSecret), so builders surface while you're
                     -- starved and the spender rises once you can pay. Every mode, every
@@ -1172,13 +1260,13 @@ local function CategorizeAndAssembleRotation(rotationList, b)
                                 and (SimcBuffWindowActive(simcRec.gates)
                                      or GateInPickWindows(simcRec.gates, pickWindows))
                                 and not SimcNegativeBuffBlocks(simcRec.gates)
-                                and not SimcGateBlocks(simcRec.gates, resCount, resName, resMax)))
+                                and not SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet)))
                        and ProcPriorityEnabled(spellID, profile) then
                         proccedCount = proccedCount + 1
                         proccedSpells[proccedCount] = displayID
                         proccedRank[proccedCount] = rankOf(spellID, simcRec)
                     elseif sinkCooldowns and (not ready or starved or held or locLocked
-                           or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax))
+                           or (simcRec and SimcGateBlocks(simcRec.gates, resCount, resName, resMax, dialSet))
                            or IsUnusableNonResource(displayID)
                            or IsConfirmedOutOfRange(displayID)
                            or (not alwaysShow and DotTracker
@@ -1615,32 +1703,57 @@ function SpellQueue._StageResolveSource(b)
         -- (0.03-0.05s) sees the previous pin state.
         wipe(pinnedAlwaysShow)
         wipe(maxChargeGated)
+        wipe(holdPoints)
+        wipe(holdPctVal)
+        wipe(holdPctType)
         local pinStore = cachedAddon and cachedAddon.db and cachedAddon.db.profile
             and cachedAddon.db.profile.defensives
             and cachedAddon.db.profile.defensives.spellSettings
         if pinStore then
             -- One pass, two sets: both settings live on the user's STORED id and both
             -- are read per-entry on the hot path, so each resolves to every ID form here.
-            local function markForms(set, id)
-                set[id] = true
+            local function markForms(set, id, v)
+                if v == nil then v = true end
+                set[id] = v
                 local disp = BlizzardAPI.GetDisplaySpellID and BlizzardAPI.GetDisplaySpellID(id)
-                if disp then set[disp] = true end
+                if disp then set[disp] = v end
                 local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(id)
-                if base then set[base] = true end
+                if base then set[base] = v end
                 local known = BlizzardAPI.ResolveKnownSpellID and BlizzardAPI.ResolveKnownSpellID(id)
-                if known then set[known] = true end
+                if known then set[known] = v end
             end
             for id, ss in pairs(pinStore) do
                 if ss and type(id) == "number" and id > 0 then
                     if ss.alwaysShow == true then markForms(pinnedAlwaysShow, id) end
-                    -- Hold Until Charged applies ONLY while the custom queue is the rotation
+                    -- Hold Until dials apply ONLY while the custom queue is the rotation
                     -- source; a stale key must never demote a spell with no live control
-                    -- behind it. Both places that set it - the custom-queue rows and the
+                    -- behind it. Both places that set them - the custom-queue rows and the
                     -- Ability Overrides card - grey out under the same condition.
                     -- (alwaysShow needs no such guard: it only ever adds visibility, so a
                     -- stale one is harmless.)
-                    if useCustom and ss.holdUntilCharged == true then
-                        markForms(maxChargeGated, id)
+                    if useCustom then
+                        -- holdMode: "charged" | "pts:N" | "pct:N". The legacy
+                        -- holdUntilCharged boolean still reads as "charged" so old
+                        -- profiles keep working; the dial rewrites it on next touch.
+                        local mode = ss.holdMode
+                        if mode == nil and ss.holdUntilCharged == true then mode = "charged" end
+                        if mode == "charged" then
+                            markForms(maxChargeGated, id)
+                        elseif type(mode) == "string" then
+                            local kind, n = mode:match("^(%a+):(%d+)$")
+                            n = tonumber(n)
+                            if kind == "pts" and n and n > 0 then
+                                markForms(holdPoints, id, n)
+                            elseif kind == "pct" and n and n > 0 and n < 100 then
+                                -- Gate power type from the spell's own cost row; no
+                                -- continuous cost -> dial inert (fail-open).
+                                local hk, pt = SpellQueue.GetHoldResource(id)
+                                if hk == "pct" and pt then
+                                    markForms(holdPctVal, id, n)
+                                    markForms(holdPctType, id, pt)
+                                end
+                            end
+                        end
                     end
                 end
             end
