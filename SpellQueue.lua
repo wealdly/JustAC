@@ -1803,7 +1803,11 @@ function SpellQueue._StageGapCloser(b)
     local pos1Display = recommendedSpells[1]
     local pos1IsGapCloser = false
     if cachedGapCloserEngine.IsGapCloserSpell then
-        pos1IsGapCloser = (primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
+        -- My List Leads: the AC pick is adviser-only and NOT at slot 1, so it must
+        -- not suppress our injection - AC picks the gap closer exactly when the
+        -- target is out of range, which is exactly when the slot needs filling.
+        pos1IsGapCloser = (not b.myListLeads and primarySpellID
+                and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, primarySpellID))
             or (pos1Display and pos1Display ~= primarySpellID and cachedGapCloserEngine.IsGapCloserSpell(cachedAddon, pos1Display))
     end
 
@@ -1862,12 +1866,28 @@ function SpellQueue._StagePrimary(b)
     local blacklist, addedSpellIDs = b.blacklist, b.addedSpellIDs
     local recommendedSpells = b.recommendedSpells
 
+    -- "My List Leads" (experimental): the custom list owns slot 1 as well. The AC
+    -- pick is still FETCHED and threaded through the build - context inference,
+    -- burst-cue signals, and the stale-CD oracle keep consuming it - it just stops
+    -- being displayed or claiming a slot, so the first eligible list entry
+    -- surfaces at position 1. The wait sentinel is skipped with it: with the list
+    -- leading there is always a next-best suggestion to show. The dot-spread
+    -- arrow is a slot-1-is-AC concept, so it sleeps in this mode too.
+    local myListLeads
+    do
+        local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+        local cq = specKey and profile.customQueue and profile.customQueue[specKey]
+        myListLeads = (cq and cq.enabled and cq.myListLeads == true
+            and cq.spells and #cq.spells > 0) and true or false
+    end
+    b.myListLeads = myListLeads
+
     -- Spread-DoT signal: AC re-recommends a maintained DoT that's already live on
     -- the current target (outside its refresh window), which means it wants the DoT
     -- on OTHER targets. IsDotActiveOnCurrentTarget returns false during the pandemic
     -- window, so a genuine refresh-this-target pick does not trigger the arrow.
     dotSpreadActive = false
-    if profile.showDotSpreadArrow == true and primarySpellID and primarySpellID > 0
+    if not myListLeads and profile.showDotSpreadArrow == true and primarySpellID and primarySpellID > 0
        and DotTracker and DotTracker.IsDotActiveOnCurrentTarget
        and SpellDB and SpellDB.IsTargetDot then
         local pd = BlizzardAPI.GetDisplaySpellID(primarySpellID)
@@ -1888,7 +1908,11 @@ function SpellQueue._StagePrimary(b)
         end
     end
 
-    if primarySpellID and primarySpellID > 0 then
+    if myListLeads then
+        -- Slot 1 belongs to the list (or the gap-closer injection); the AC pick
+        -- was consumed above as adviser and is deliberately not inserted.
+        local _ = nil
+    elseif primarySpellID and primarySpellID > 0 then
         -- Caster filler treats a melee/form pick like a blacklisted one: the
         -- highlight lookahead below supplies AC's next-best suggestion.
         local casterSuppressed = SpellQueue.IsCasterSuppressedPick(primarySpellID, profile)

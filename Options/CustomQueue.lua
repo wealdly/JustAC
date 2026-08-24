@@ -351,6 +351,34 @@ function CustomQueue.CreateTabArgs(addon)
                     addon:ForceUpdateAll()
                 end,
             },
+            myListLeads = {
+                type = "toggle",
+                name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
+                desc = L["My List Leads desc"],
+                order = 0.45,
+                width = "full",
+                disabled = function()
+                    local profile = addon:GetProfile()
+                    local specKey = GetSpecKey()
+                    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+                    return not (cq and cq.enabled)
+                end,
+                get = function()
+                    local profile = addon:GetProfile()
+                    local specKey = GetSpecKey()
+                    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+                    return (cq and cq.myListLeads == true) or false
+                end,
+                set = function(_, val)
+                    local profile = addon:GetProfile()
+                    local specKey = GetSpecKey()
+                    if not profile or not specKey then return end
+                    local cq = profile.customQueue and profile.customQueue[specKey]
+                    if not cq then return end
+                    cq.myListLeads = val or nil
+                    addon:ForceUpdateAll()
+                end,
+            },
             ordering = {
                 type = "group",
                 inline = true,

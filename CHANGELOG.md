@@ -3,6 +3,25 @@
 
 ## [Unreleased]
 
+## [5.3.7] - 2026-08-24
+
+### Added
+- My List Leads (experimental), on the Custom Priority tab: your list takes the first
+  slot too, so the queue leads with the first ability from your list that passes every
+  gate instead of Blizzard's pick. Full control, with the trade-offs stated up front:
+  Blizzard's assist reads combat state the game hides from addons, so its pick can be
+  smarter than any fixed order, and this mode never suggests waiting. Blizzard's
+  recommendation is still consulted quietly for ordering context and the burst cue,
+  and gap closers still take the first slot when the target is out of reach
+
+### Fixed
+- A visible queue no longer waits for a game event to refresh out of combat. An
+  ability coming off cooldown, a charge finishing recovery, or resources regenerating
+  past a hold all happen without the game announcing anything, so their icons could
+  sit stale in the old order until something unrelated woke the queue. On screen, the
+  queue now also refreshes on a steady half-second cadence with nothing targeted, and
+  the with-a-target pulse from the previous fix is now ten times a second
+
 ## [5.3.6] - 2026-08-24
 
 ### Fixed

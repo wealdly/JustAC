@@ -22,7 +22,7 @@ local defensiveQueueDirty = true
 local EMPTY_QUEUE = {}
 local lastFullUpdate = 0
 local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
-local OOC_DIRTY_UPDATE_INTERVAL = 0.15   -- OOC dirty queue cadence (~6.7Hz)
+local OOC_DIRTY_UPDATE_INTERVAL = 0.1    -- OOC dirty/hostile-target cadence (10Hz; headroom is ample)
 local OOC_DEFENSIVE_IDLE_INTERVAL = 1.0  -- OOC defensive full rebuild cadence (1Hz)
 local OOC_EVENT_DIRTY_THROTTLE = 0.2     -- Coalesce OOC cooldown/usability event bursts
 local lastOOCDirtyEvent = 0
@@ -2373,7 +2373,14 @@ local function OnUpdateTick(_, elapsed)
     -- first post-channel tick rebuilds immediately even out of combat.
     local channeling = BlizzardAPI and BlizzardAPI.IsPlayerChanneling
         and BlizzardAPI.IsPlayerChanneling()
-    local shouldUpdateSpellQueue = inCombat or spellQueueDirty or hostileTarget
+    -- Visible-queue idle refresh (the range-lag fix, generalized): cooldown expiry,
+    -- charge recovery, resource regen (starved sinks and Hold dials), and DoT
+    -- pandemic thresholds are all TIME-driven - no event fires when they cross -
+    -- so a visible queue rebuilds on every idle wake (0.5s) even when clean.
+    -- Dirty events and a hostile target keep the fast cadence above; a build is
+    -- sub-millisecond, so the visible-idle cost is noise.
+    local queueSurfaceShown = not mainHidden or not npHidden
+    local shouldUpdateSpellQueue = inCombat or spellQueueDirty or hostileTarget or queueSurfaceShown
     if shouldUpdateSpellQueue then
         -- When dirty OUT of combat, bypass SpellQueue's internal throttle so rare
         -- event-driven updates render immediately. In combat, let the internal
