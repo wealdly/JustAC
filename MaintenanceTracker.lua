@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: Maintenance Tracker - follows the ONE mitigation buff a tank spec keeps rolling,
+-- JustAC: Maintenance Tracker - follows the mitigation buff(s) a tank spec keeps rolling,
 -- for the defensive maintenance slot.
 --
 -- Two things are wanted, and they have very different reachability in 12.0:
@@ -67,8 +67,8 @@ local PROJECTION_SAFETY = 0.25
 -- That estimate DRIFTS if a talent extends the buff (e.g. a +2s Ironfur talent): the cue then
 -- fires early. The engine-exact swipe beside it is the ground truth if the two disagree.
 
--- PER-ENTRY state, keyed by aura id. A spec can maintain more than one buff (Prot rolls both
--- Shield Block and Ignore Pain), and each needs its own instance binding, cast clock and drop
+-- PER-ENTRY state, keyed by aura id. A spec can list more than one buff (the shape allows it;
+-- today every spec lists one), and each needs its own instance binding, cast clock and drop
 -- evidence - a single set of module-level variables silently blended them together.
 local states = {}
 
@@ -152,12 +152,6 @@ local function FindInstanceBySpellID(auraID)
     end
     return nil
 end
-
---- EVERY cooldownID mapping to our spell, as a set. Resolved once per spec; Reset() clears it.
---- A set, not a single id, because the SAME spell carries a DIFFERENT cooldownID in each
---- category it belongs to. Taking the first match (categories scan 0..3) found the Utility id
---- and never looked at TrackedBar - where these maintenance buffs sit BY DEFAULT. That made the
---- join look like it required manual setup when it did not: we were hunting the wrong number.
 
 -- The buff's REAL duration, learned by observation rather than hardcoded. `entry.dur` is a
 -- static book value, but talents extend these buffs (a +2s Ironfur talent exists), and the
@@ -815,8 +809,7 @@ function MaintenanceTracker.GetEstimatedCooldown(entry)
     --            about the stack actually about to fall off.
     --   refresh - anchor on the NEWEST, because a recast replaces the timer rather than adding
     --            to it. Using the oldest there would expire the sweep while the buff is fresh.
-    -- No projecting entry of the refresh kind exists yet; the branch is here because getting it
-    -- wrong is silent, and the difference is two lines.
+    -- Prot Paladin's Shield of the Righteous is the refresh kind (project, no stacks).
     if entry.project then
         -- Take LiveCasts' duration, not the outer one: it carries PROJECTION_SAFETY, and the
         -- sweep is the main thing that margin exists for. Returning the full duration here
@@ -1115,8 +1108,7 @@ function MaintenanceTracker.GetState()
     for i = 1, #list do
         local st, en, inst = EntryState(list[i])
         local rank = Urgency(list[i], st)
-        -- Strictly less-than, so ties keep LIST ORDER - the spec's own priority (Shield Block
-        -- before Ignore Pain for Prot), which matches the defensive ordering already curated.
+        -- Strictly less-than, so ties keep LIST ORDER - the spec's own curated priority.
         if bestRank == nil or rank < bestRank then
             bestState, bestEntry, bestInst, bestRank = st, en or list[i], inst, rank
         end
@@ -1217,8 +1209,8 @@ end
 -- and only roots can be offered. Do not re-add 8/11 without a detection path that exists.
 local FORM_ESCAPABLE = { [7] = true }  -- rooted (the only form-escapable CC C_LossOfControl reports)
 
---- A druid-only escape via the player's selected /cancelform macro, for the root/snare/slow
---- cases the breaker table misses. Returns the macro's name + duration when the player is held
+--- A druid-only escape via the player's selected /cancelform macro, for the root cases
+--- the breaker table misses (FORM_ESCAPABLE). Returns the macro's name + duration when the player is held
 --- by a form-escapable mechanic AND has designated a macro. Kept separate from GetCCBreak: that
 --- returns a spell to render, this returns a MACRO, which the renderer draws differently.
 --- @param profile table

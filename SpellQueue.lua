@@ -120,7 +120,7 @@ local spellQueueBuildCount = 0
 local spellQueueResetTime = GetTime()
 
 -- Spells injected by JustAC systems (gap-closers, etc.) that should always show proc glow.
--- Populated per queue build, consumed by UIRenderer.IsSpellProcced.
+-- Populated per queue build, read by UIRenderer's glow resolution via IsSyntheticProc.
 local syntheticProcs = {}
 
 -- Spells displaced from position 1 to position 2 by a gap-closer injection.
@@ -364,7 +364,8 @@ function SpellQueue.IsSpellBlacklisted(spellID, blacklist, isPrimary)
 end
 
 function SpellQueue.ToggleSpellBlacklist(spellID)
-    if not spellID or spellID == 0 then return end
+    -- Items (negative ids) have no blacklist reader on any path; refuse the write.
+    if not spellID or spellID <= 0 then return end
     local profile = BlizzardAPI and BlizzardAPI.GetProfile()
     if not profile then return end
     if not profile.blacklistedSpells then profile.blacklistedSpells = {} end
@@ -835,17 +836,6 @@ local function TriggerWindowOpenerIsPick(gates, pickID, pickDisplay)
     return false
 end
 
--- True if a NEGATIVE buff gate (!buff[Y], "must NOT have Y") is CONFIRMED active - the window
--- condition is currently violated, so the entry must not promote (e.g. Rip's `!buff.berserk`
--- during Berserk). Uses the same aura probe; a secret/unreadable Y reads as not-active and fails
--- OPEN (no block), mirroring how the positive side already treats secrets - so this never sinks a
--- promotion on an unreadable negative, it only blocks one we can actually see is violated.
--- True when a resource gate is present, EVALUABLE, and NOT satisfied - the entry is not worth
--- surfacing yet (Shred once you are already at 5 combo points, Hand of Gul'dan under 3 shards).
--- The count is plain frame state from BlizzardAPI.GetClassResourcePoints, never a secret read.
--- Unknown - bar hidden (and therefore frozen), secret, or a different resource than this gate
--- names - FAILS OPEN (false), so the entry keeps its previous delegated behaviour rather than
--- being buried on a guess.
 --- Does this spell spend power? Plain metadata (GetSpellPowerCost is unannotated),
 --- used only while the primary resource is capped, so the extra call is rare.
 -- Verdict cached per spellID (cost tables are static per talent build; the API
@@ -912,6 +902,12 @@ function SpellQueue.GetHoldResource(spellID)
     return nil
 end
 
+-- True when a resource gate is present, EVALUABLE, and NOT satisfied - the entry is not worth
+-- surfacing yet (Shred once you are already at 5 combo points, Hand of Gul'dan under 3 shards).
+-- The count is plain frame state from BlizzardAPI.GetClassResourcePoints, never a secret read.
+-- Unknown - bar hidden (and therefore frozen), secret, or a different resource than this gate
+-- names - FAILS OPEN (false), so the entry keeps its previous delegated behaviour rather than
+-- being buried on a guess.
 local function SimcResourceGateBlocks(gates, resCount, resName, resMax)
     if not gates or not resCount then return false end
     for i = 1, #gates do
@@ -1092,6 +1088,11 @@ local function SimcGateBlocks(gates, resCount, resName, resMax, skipResource)
 end
 SpellQueue._SimcGateBlocks = SimcGateBlocks   -- diagnostics (/jac inspect simcgates)
 
+-- True if a NEGATIVE buff gate (!buff[Y], "must NOT have Y") is CONFIRMED active - the window
+-- condition is currently violated, so the entry must not promote (e.g. Rip's `!buff.berserk`
+-- during Berserk). Uses the same aura probe; a secret/unreadable Y reads as not-active and fails
+-- OPEN (no block), mirroring how the positive side already treats secrets - so this never sinks a
+-- promotion on an unreadable negative, it only blocks one we can actually see is violated.
 local function SimcNegativeBuffBlocks(gates)
     if not gates then return false end
     for i = 1, #gates do
@@ -1911,7 +1912,6 @@ function SpellQueue._StagePrimary(b)
     if myListLeads then
         -- Slot 1 belongs to the list (or the gap-closer injection); the AC pick
         -- was consumed above as adviser and is deliberately not inserted.
-        local _ = nil
     elseif primarySpellID and primarySpellID > 0 then
         -- Caster filler treats a melee/form pick like a blacklisted one: the
         -- highlight lookahead below supplies AC's next-best suggestion.

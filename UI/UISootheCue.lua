@@ -80,7 +80,7 @@ end
 
 -- WHAT A SLOT INSIDE A CONTAINER BUTTON CAN AND CANNOT DO - measured 2026-08-11, in this
 -- order, each one a separate in-game error:
---   works:  icon texture, hotkey text, border/mask chrome, the cleansed-aura sub-icon
+--   works:  icon texture, hotkey text, border/mask chrome, the proc glow
 --   blocked: SetScript of any kind      ("cannot replace a forbidden script handler" on the
 --                                        container; "blocked by secret aspects" on a descendant)
 --   blocked: SetCooldownFromDurationObject ("Attempt to access forbidden object")
@@ -112,7 +112,7 @@ end
 -- harmless; only writing to it throws, so simply never driving it is enough. The proc glow
 -- is the same story: drop the OnHide it only needs in order to STOP, and the animation
 -- itself is engine-side and perfectly welcome here.
-local function BuildSlot(parent, sz, profile)
+local function BuildSlot(parent, sz)
     -- Size the button FIRST: pooled buttons have no intrinsic size and the group's layout
     -- options are spacing-only, so anything anchored to it renders at zero pixels - invisible,
     -- with every other gate reporting healthy.
@@ -123,6 +123,10 @@ local function BuildSlot(parent, sz, profile)
     -- ever happens on a future client.
     local ok, slot = pcall(UIFrameFactory.CreateBaseIcon, parent, sz, false, true)
     if ok and slot then
+        -- NOT a registered icon: it lives inside an engine-driven container button, so its
+        -- IsShown() is a secret the flash matcher cannot test (it threw in game). The cue
+        -- CONTAINER is the registered, flashable object - see Create.
+        if UIFrameFactory.icons then UIFrameFactory.icons[slot] = nil end
         slot:SetAllPoints(parent)
         slot:EnableMouse(false)
         -- CreateBaseIcon ends with Hide(); visibility is the CONTAINER's to decide here, and
@@ -177,6 +181,10 @@ function UISootheCue.SetSpell(cue, sootheSpellID)
     cue.spellID = sootheSpellID
     cue._hotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
                    and ActionBarScanner.GetSpellHotkey(sootheSpellID)) or ""
+    -- Match key for the key-press flash (stamped once, like the slot's hotkey label).
+    local UIRenderer = LibStub("JustAC-UIRenderer", true)
+    cue.normalizedHotkey = (cue._hotkey ~= "" and UIRenderer and UIRenderer.NormalizeHotkey)
+        and UIRenderer.NormalizeHotkey(cue._hotkey) or nil
 end
 
 --- Create (once) the cue pinned over `anchorIcon` (the interrupt icon = position 0).
@@ -187,8 +195,7 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
     -- they cannot be re-stamped, and the container has no RemoveAuraGroup. Orphan the old one -
     -- this runs per spec change, not per frame.
     if cue and cue.spellID and cue.spellID ~= sootheSpellID then
-        pcall(cue.Hide, cue)
-        pcall(cue.SetParent, cue, nil)
+        UIFrameFactory.ReleaseIcon(cue)   -- the one teardown: container, flash host, registry
         anchorIcon.sootheCue, cue = nil, nil
     end
     if not cue then
@@ -208,10 +215,20 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
         local ok, lvl = pcall(function() return anchorIcon:GetFrameLevel() end)
         cue:SetFrameLevel((ok and lvl or 0) + 16)    -- above the kick's hotkeyFrame (+15) -> full replace
         cue.slots = {}
-        local addon = LibStub("AceAddon-3.0", true)
-        addon = addon and addon:GetAddon("JustAssistedCombat", true)
-        local profile = addon and addon.db and addon.db.profile
-
+        -- Key-press / cast flash. The texture cannot live in a slot (engine-owned once its
+        -- textures are registered, and our writes there are denied in combat), and not under
+        -- the container either: the cast puts the cleanse on cooldown, the next render pass
+        -- hides the container, and a child flash would be cut off mid-way. So it is a SIBLING,
+        -- anchored over the slot one level above the container, and the container itself is
+        -- what the flash matcher tests for visibility (shown = cleanse ready, hostile target).
+        -- Whether the target was really enraged stays the engine's secret; a soothe pressed
+        -- without one flashes an empty position 0, which is harmless.
+        local host = UIFrameFactory.CreateFlashFrame(anchorIcon:GetParent(), anchorIcon, sz)
+        host:SetFrameStrata(anchorIcon:GetFrameStrata())
+        host:SetFrameLevel((ok and lvl or 0) + 17)
+        cue.flashHost = host
+        cue.Flash = host.Flash
+        if UIFrameFactory.icons then UIFrameFactory.icons[cue] = true end
         -- One slot per container button, built by initializeFrame during AddAuraGroup. The
         -- filter narrows to auras the player can dispel - which per Blizzard's own comment
         -- includes helpful enrages on enemies - so a button, and therefore a slot, exists ONLY
@@ -228,7 +245,7 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
         local firstIcon = firstInfo and firstInfo.iconID
 
         local function Init(button)
-            local slot = BuildSlot(button, sz, profile)
+            local slot = BuildSlot(button, sz)
             if not slot then return end
             cue.slots[#cue.slots + 1] = slot
             if firstIcon then slot.iconTexture:SetTexture(firstIcon) end
@@ -283,7 +300,7 @@ function UISootheCue.Create(anchorIcon, sootheSpellID, iconSize)
         -- No driver of any kind. The container refreshes itself from UNIT_AURA (its own
         -- OnUpdate is forbidden to us, which is how it does that), and the cooldown swipe -
         -- the only thing our old driver still had to do - cannot be drawn on these slots at
-        -- all. See the note above DriveCooldowns' former home.
+        -- all (see the note above BuildSlot).
         cue:Hide()
         anchorIcon.sootheCue = cue
     end

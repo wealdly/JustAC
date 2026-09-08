@@ -128,5 +128,3 @@ local MECHANIC_BREAKERS = {
 function lib.GetBreakers(mechanic)
     return mechanic and MECHANIC_BREAKERS[mechanic] or nil
 end
-
-lib.MECHANIC_BREAKERS = MECHANIC_BREAKERS

@@ -164,8 +164,6 @@ local LISTS = {
             return gc and gc[specKey]
         end,
         after = function(addon)
-            local GCE = LibStub("JustAC-GapCloserEngine", true)
-            if GCE and GCE.InvalidateGapCloserCache then GCE.InvalidateGapCloserCache() end
             local GC = LibStub("JustAC-OptionsGapClosers", true)
             if GC and GC.UpdateGapCloserOptions then GC.UpdateGapCloserOptions(addon) end
             addon:ForceUpdate()

@@ -291,7 +291,7 @@ function BlizzardAPI.CheckDefensiveItemState(itemID, profile)
     -- Lazily map this item's use-spell for combat use detection (plain values)
     if not itemUseSpellMapped[itemID] then
         itemUseSpellMapped[itemID] = true
-        local getItemSpell = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+        local getItemSpell = C_Item and C_Item.GetItemSpell
         if getItemSpell then
             local ok, _, useSpellID = pcall(getItemSpell, itemID)
             if ok and type(useSpellID) == "number" then
@@ -711,12 +711,6 @@ function BlizzardAPI.GetPartyBelowCount(pct)
     return n
 end
 
---- Is one specific ally below `pct`? nil = cannot answer.
-function BlizzardAPI.IsPartyUnitBelow(unit, pct)
-    if not IsHealableParty(unit) then return false end
-    return CachedBelow(unit, pct, false, nil)
-end
-
 --- Is the whole threshold-gate mechanism usable on this client right now? One
 --- probe against the player, so callers and diagnostics can distinguish "the
 --- answer is no" from "we cannot answer". Cheap: it rides the same memo.
@@ -779,7 +773,9 @@ function BlizzardAPI.IsHealingUnneeded()
     if now - healUnneededAt < 0.25 then return healUnneededCache end
     healUnneededAt = now
     healUnneededCache = false
-    if BlizzardAPI.IsUnitFullHealth("player") == true then
+    -- A count of 0 with the ally-low signal OFF means "cannot see", not "nobody
+    -- hurt" - that is the doubt this must answer false on.
+    if BlizzardAPI.IsUnitFullHealth("player") == true and BlizzardAPI.IsPartyLowAvailable() then
         healUnneededCache = (BlizzardAPI.GetPartyLowCount() == 0)
     end
     return healUnneededCache
@@ -844,60 +840,6 @@ end
 --- Are fewer than `seconds` seconds left?
 function BlizzardAPI.IsDurationBelowSeconds(durObj, seconds)
     return DurationBelow(durObj, "EvaluateRemainingDuration", GetSecondsCurve(seconds))
-end
-
---- Is this duration's TOTAL length under `seconds`? Distinct from the question
---- above in the way that matters for interrupts: "how long is this cast" is a
---- property of the spell, "how much is left" is a property of the moment, and a
---- kick wants both (see BlizzardAPI.ShouldInterruptNow).
-function BlizzardAPI.IsDurationTotalBelowSeconds(durObj, seconds)
-    return DurationBelow(durObj, "EvaluateTotalDuration", GetSecondsCurve(seconds))
-end
-
---------------------------------------------------------------------------------
--- INTERRUPT TIMING - kick LATE in a long cast, immediately in a short one.
---
--- Kicking the instant a cast starts is the common mistake: against anything with a
--- real cast time the target can simply start again, and against a player it invites
--- a deliberate fake-cast. Waiting is only correct when there IS time to wait -
--- holding a kick through a 1.5s cast risks missing it outright.
---
--- So the rule needs BOTH facts, and 12.0 hid both behind the cast bar's secret
--- duration. Two threshold reads answer it without reading either number:
---   short cast  (total < LONG_CAST)      -> kick NOW, there is no room to wait
---   long cast   + remaining < LATE_KICK  -> kick NOW, we are late enough
---   long cast   + plenty left            -> HOLD
--- Any unreadable answer returns nil, and callers must treat that as "no opinion"
--- and keep suggesting the kick - never as HOLD, which would silently withhold an
--- interrupt. Fail-open is the only safe direction here.
---------------------------------------------------------------------------------
--- Tuned off the failure asymmetry, not the midpoint. Kicking too EARLY costs one
--- interrupt cooldown (they simply cast again). Kicking too LATE lets the cast land,
--- which is the expensive half - and the player still has to see the cue and press,
--- so a threshold with no reaction margin is effectively "too late" by default.
--- Both numbers therefore bias toward pressing: hold only when the cast is long
--- enough that waiting genuinely buys something, and stop holding with a full second
--- still on the clock.
-local LONG_CAST_SECONDS = 2.5   -- below this, waiting buys less than it risks
-local LATE_KICK_SECONDS = 1.0   -- "late" = inside this much of the finish
-
---- @return boolean|nil true = press it now, false = hold, nil = cannot tell
-function BlizzardAPI.ShouldInterruptNow(unit)
-    if not (unit and UnitCastingInfo and UnitChannelInfo) then return nil end
-    local durObj
-    if UnitCastingDuration then                     ---@diagnostic disable-line: undefined-global
-        local ok, d = pcall(UnitCastingDuration, unit)  ---@diagnostic disable-line: undefined-global
-        if ok then durObj = d end
-    end
-    -- A channel is already "in progress" from the first tick, so there is no early
-    -- window to avoid - it is only ever worth kicking now.
-    if not durObj then return nil end
-    local shortCast = BlizzardAPI.IsDurationTotalBelowSeconds(durObj, LONG_CAST_SECONDS)
-    if shortCast == nil then return nil end
-    if shortCast then return true end               -- no room to wait
-    local late = BlizzardAPI.IsDurationBelowSeconds(durObj, LATE_KICK_SECONDS)
-    if late == nil then return nil end
-    return late
 end
 
 --- The duration object for a live aura instance, or nil. Verified in combat
@@ -1067,41 +1009,6 @@ function BlizzardAPI.IsUnitCrowdControlled(unit)
     return n > 0
 end
 
---- How long is this unit's crowd control good for? Returns true when EVERY engine
---- classified CC aura on the unit expires within `seconds` - i.e. "the CC is about
---- to break". false when at least one is comfortably long, nil when it cannot be
---- answered (no CC, technique unavailable, or a duration that will not resolve).
----
---- Why this one is cheap where target DoTs were not: the aura filter hands back
---- PLAIN instance ids directly, so it skips the spellID -> auraInstanceID hop that
---- IS blocked for secret target auras (measured in combat 2026-08-10). The engine
---- both classifies the aura and supplies the handle; nothing is read or compared.
----
---- ADDON-INDEPENDENT, which is the point. Every other CC signal this file carries
---- is either inferred (a cast that kept going) or scraped from text the client
---- prints, and both are sensitive to what else is loaded and to locale. This asks
---- the aura system, so a UI replacement cannot affect the answer.
---- @return boolean|nil
-function BlizzardAPI.IsCrowdControlExpiring(unit, seconds)
-    if not (unit and seconds and C_UnitAuras and C_UnitAuras.GetUnitAuraInstanceIDs
-            and BlizzardAPI.IsDurationBelowSeconds) then return nil end
-    local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, "HARMFUL|CROWD_CONTROL")
-    if not ok or type(ids) ~= "table" then return nil end
-    local answered, allExpiring = false, true
-    for i = 1, #ids do
-        local durObj = BlizzardAPI.GetAuraDurationObject(unit, ids[i])
-        local below = durObj and BlizzardAPI.IsDurationBelowSeconds(durObj, seconds)
-        if below ~= nil then
-            answered = true
-            -- One CC with real time left means the unit stays locked, whatever the
-            -- others are doing - so a single `false` settles it.
-            if not below then allExpiring = false break end
-        end
-    end
-    if not answered then return nil end
-    return allExpiring
-end
-
 --- Channeling right now? Own-unit channel info is fully plain in combat -
 --- SecretWhenUnitSpellCastRestricted fires only for OTHER units (validated in
 --- combat 2026-07-24, every field plain).
@@ -1129,33 +1036,20 @@ end
 -- Target CC Immunity Detection
 -- Shared by UIRenderer and UINameplateOverlay so both panels always agree.
 -- Refreshed on PLAYER_TARGET_CHANGED and PLAYER_REGEN_ENABLED.
--- UnitCreatureType is SECRET in combat; cached out of combat only.
+-- Live read first (readable for resolved targets since 12.0.7); the name cache is a hedge.
 --------------------------------------------------------------------------------
 
 -- Creature type cache for CC immunity detection (Mechanical / Totem).
 --
--- HARD LIMITATION (verified via in-game /script testing, 2026-02-23):
---   In WoW 12.0+, BOTH UnitCreatureType() AND UnitGUID() return secret values
---   while in combat. There is no in-combat API that can identify mob type on a
---   *fresh* target. All known alternative approaches have been evaluated:
+-- HISTORY: a Feb-2026 measurement found UnitCreatureType() AND UnitGUID() secret in
+-- combat and built an OOC-only cache; the re-check below superseded it for the target.
+-- Still true: UnitGUID() is secret in combat (a GUID-keyed cache is not viable), and
+-- UnitIsUnit(boss1-5) is SecretWhenUnitComparisonRestricted - boolean-testing it THROWS
+-- on an addon-restricted map, so route it via SafeUnitIsUnit. Fail-open throughout: an
+-- unknowable type means IsTargetCCImmune() answers false (assume CC-able).
 --
---   UnitCreatureType()  - SECRETED in combat. Primary data source, unusable.
---   UnitGUID()          - SECRETED in combat. GUID-keyed cache is not viable.
---   UnitCreatureFamily()- NOT secreted, but only distinguishes Beast from
---                         everything else (nil for Mechanical/Undead/etc.).
---   UnitClassification()- NOT secreted. Used for worldboss/boss slot detection.
---   UnitIsUnit(boss1-5) - SECRET-CAPABLE (SecretWhenUnitComparisonRestricted); returns a bool,
---     so boolean-testing it THROWS on an addon-restricted map. Route via SafeUnitIsUnit.
---
--- DESIGN CONSEQUENCE:
---   The cache is populated out of combat (TARGET_CHANGED, PLAYER_REGEN_ENABLED).
---   If the player tabs to a NEW target mid-combat (not yet cached), the creature
---   type is unknowable and IsTargetCCImmune() returns false (fail-open: assume
---   CC-able). This is intentional - showing a CC suggestion on a Mechanical mob
---   is a minor UX annoyance; suppressing CC on a valid target would be harmful.
---
--- UPDATE (in-game verified 2026-06-28, build 12.0.7): UnitCreatureType("target") is
--- in fact READABLE in combat for resolved targets - targeting resolves the unit, so
+-- In-game verified 2026-06-28, build 12.0.7: UnitCreatureType("target") is
+-- READABLE in combat for resolved targets - targeting resolves the unit, so
 -- the type reads back mid-combat (the Feb-2026 finding no longer holds for the target).
 -- UnitName is likewise readable in combat. The secret system is volatile (it loosened
 -- since Feb 2026), so as a hedge we cache the type keyed by the readable UnitName
@@ -1229,8 +1123,8 @@ local function LookupNameNPCID(name)
 end
 
 -- Instance-level CC immunity cache (keyed by NPC ID from GUID).
--- UnitGUID() is SECRET in combat, so NPC ID is only populated when a target is
--- acquired out of combat (pre-pull) or on PLAYER_REGEN_ENABLED.  When a CC
+-- UnitGUID() is SECRET in combat, so the NPC ID comes from a target acquired out of
+-- combat, the readable-name inference mid-combat, or the combat-exit backfill.  When a CC
 -- failure is detected and the NPC ID is known, that mob TYPE is remembered for
 -- the rest of the instance - all future mobs with the same NPC ID are suppressed
 -- without needing to re-learn.
@@ -1329,8 +1223,8 @@ end
 local CC_ENGINE_ANNOUNCED = { ["unit-combat"] = true, ["ui-error"] = true }
 
 --- Single sink for "this target shrugged off crowd control", whatever noticed it.
---- Remembers the immunity per mob TYPE when the NPC ID is known (only readable when the
---- target was acquired out of combat, or backfilled on combat exit - UnitGUID is secret in
+--- Remembers the immunity per mob TYPE when the NPC ID is known (acquired out of combat,
+--- inferred from the readable name, or backfilled on combat exit - UnitGUID is secret in
 --- combat) so later pulls of the same mob skip re-learning entirely.
 local function MarkTargetCCImmune(source)
     ccFailureObserved = true
@@ -1462,7 +1356,7 @@ end
 function BlizzardAPI.BackfillCCImmunity()
     if not ccFailureObserved then return end
     if currentTargetNPCID then
-        -- NPC ID was known during combat - already persisted in IsTargetCCImmune
+        -- NPC ID was known during combat - MarkTargetCCImmune already persisted it
         return
     end
     -- Combat just ended; GUID is readable again. If the player is still
@@ -1592,7 +1486,7 @@ function BlizzardAPI.IsTargetInterruptWorthy()
 end
 
 --------------------------------------------------------------------------------
--- Player & Pet Health (moved from SpellQuery - consolidated with health helpers)
+-- Player & Pet Health
 --------------------------------------------------------------------------------
 
 -- UnitHealth/UnitHealthMax are SECRET in 12.0 combat - returns nil when secret.
@@ -1727,9 +1621,9 @@ function BlizzardAPI.IsInPostCombatDowntime()
     return (GetTime() - combatEndedAt) <= POSTCOMBAT_WINDOW_SECS
 end
 
--- Returns LowHealthFrame binary state: isLow (bool), isEstimate always true in combat.
--- In combat UnitHealth() is secret - only the LowHealthFrame binary (~35% threshold)
--- is reliable. Health percentages above 35% are indistinguishable in combat.
+-- Returns (percent, isEstimate). Out of combat: the exact percent, false. In combat
+-- UnitHealth() is secret, so the LowHealthFrame binary (~35% line) stands in: 30 when
+-- low, 100 otherwise, with isEstimate = true.
 function BlizzardAPI.GetPlayerHealthPercentSafe()
     local exactPct = BlizzardAPI.GetPlayerHealthPercent()
     if exactPct then
@@ -1780,10 +1674,9 @@ end
 --  2. UnitCastingInfo() / UnitChannelInfo() notInterruptible field, read
 --     immediately in the UNIT_SPELLCAST_START handler. This catches casts
 --     that START as non-interruptible (grey bar), which do NOT fire the
---     transition events. In 11.x this is a plain boolean; in 12.0 combat
---     it may be secret (fail-open in that case).
+--     transition events. In combat the field may be secret (fail-open then).
 --
---  3. Cast bar visual inspection in UIRenderer (BorderShield / .Shield) as
+--  3. Cast bar visual inspection in CastInterruptTracker (BorderShield / .Shield) as
 --     a final fallback when the above are inconclusive.
 --
 -- Reset on: PLAYER_TARGET_CHANGED, UNIT_SPELLCAST_STOP, CHANNEL_STOP,
@@ -1934,8 +1827,8 @@ local function InitTargetCastTracking()
             or event == "UNIT_SPELLCAST_EMPOWER_START" then
             -- New cast started. INTERRUPTIBLE/NOT_INTERRUPTIBLE events only
             -- fire for mid-cast transitions, NOT for initially non-interruptible
-            -- casts. Read notInterruptible from the API immediately and resolve
-            -- it through C++ if secret (addon-agnostic: no cast bar frame needed).
+            -- casts. Read notInterruptible from the API immediately; a secret reads as
+            -- unknown (fail-open; addon-agnostic: no cast bar frame needed).
             targetCastActive = true
             -- Only cast STARTS bump the serial. An end sets targetCastActive false, which
             -- the delayed check already treats as "not still casting"; the serial exists
@@ -2074,7 +1967,7 @@ end
 -- One def per class, expanded below into one RESOURCE_BARS entry per frame name.
 -- `frames` are probed in order:
 --   1. The 12.x Personal Resource Display builds its OWN class frame from the standard class
---      template and names it globally `prdClassFrame` (Blizzard_PersonalResourceDisplay.lua
+--      template, unnamed - FrameUtil.CreateFrame(nil, ...) (Blizzard_PersonalResourceDisplay.lua
 --      SetupClassBar). It is a THIRD source, independent of both the player-frame bars and the
 --      older nameplate bars, and it stays live whenever the PRD is enabled - including when an
 --      addon replaces the player unit frame and hides Blizzard's own bars. Listed first for that
@@ -2145,8 +2038,9 @@ end
 --     (MonkLightEnergyMixin:SetActive), Rogue `isFull` (RogueComboPointMixin:Update).
 --   NUMERIC 0..1 fill     - Warlock `fillAmount` (WarlockShardMixin:Update). Destruction shards
 --     fill fractionally, so summing these reproduces SimC's fractional `soul_shard` exactly.
--- Paladin is a THIRD shape (rune1..runeN with a visualState enum, not classResourceButtonTable)
--- and DK/Evoker/Mage are unmapped - all of those simply read as unknown and fail open.
+-- Paladin and DK are a THIRD shape (rune1..runeN with a visualState enum, not
+-- classResourceButtonTable); Mage/Evoker read through DIRECT_POWER. Anything unmapped
+-- reads as unknown and fails open.
 local POINT_ACTIVE_FIELDS = { "isActive", "active", "isFull" }   -- boolean: filled or not
 local POINT_FILL_FIELDS   = { "fillAmount" }                     -- number 0..1: fractional fill
 
@@ -2309,5 +2203,5 @@ function BlizzardAPI.ResetTargetCastState()
     targetCastInterruptible = true
 end
 
--- Auto-initialize at load time (cheap: one hidden frame, 9 event registrations).
+-- Auto-initialize at load time (cheap: one hidden frame and its event registrations).
 InitTargetCastTracking()

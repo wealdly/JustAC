@@ -70,7 +70,6 @@ local cachedIntResult = { shouldShow = false, spellID = nil, castBar = nil, inte
 -- Cast bar discovery. Source-verified frame paths (2026-03-01) covering the Blizzard
 -- default and the common third-party cast-bar / nameplate addons:
 --   "blizzard"     : nameplate.UnitFrame.CastBarsContainer.castBar  (12.x nesting)
---   "blizzardFlat" : nameplate.UnitFrame.castBar  (pre-container clients)
 --   "lowercaseUF"  : nameplate.unitFrame.castBar  (lowercase u)
 --   "childCastbar" : a nameplate child's .Castbar  (unit-frame-library element)
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -91,17 +90,11 @@ local function FindVisibleCastBar(nameplate)
         -- more (every Blizzard reference goes through the container). Missing it costs the ONE
         -- readable interruptibility signal there is, so CC substitution silently stops and the
         -- kick is offered on shielded casts instead - reported in game as a ding with no icon,
-        -- because the secret alpha sink then correctly hides that kick. Checked first; the flat
-        -- path below stays for older clients and is simply nil on current ones.
+        -- because the secret alpha sink then correctly hides that kick.
         local container = uf.CastBarsContainer
         local bar = container and container.castBar
         if bar and bar.IsVisible and bar:IsVisible() then
             return bar, "blizzard"
-        end
-
-        bar = uf.castBar
-        if bar and bar.IsVisible and bar:IsVisible() then
-            return bar, "blizzardFlat"
         end
     end
 
@@ -180,7 +173,7 @@ end
 -- (layer 2) degrades when a cast-bar addon replaces/reskins the bar - there you get no
 -- suggestion instead of a CC, never a wrongly-shown kick.
 --
--- Returns (isCasting, isInterruptible, castBar). Cascade: event tracker (no-op for these
+-- Returns (isCasting, isInterruptible, castBar, known). Cascade: event tracker (no-op for these
 -- casts) → cast bar fields (icon-hidden is the one that works, on an untainted Blizzard bar)
 -- → API fallback → fail-open.
 -- ═════════════════════════════════════════════════════════════════════════════

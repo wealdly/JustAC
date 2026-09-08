@@ -441,12 +441,6 @@ local function PartyMemberMissingBuff(castID, auraIDs)
     return false
 end
 
---- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
----   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
----   and imbues are unaffected - only the health top-off reminder honors this flag.
---- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
----   than read here for the same reason as offerTopoff: this module never touches the
----   profile. nil falls back to "below full".
 -- Applied-latch for class-buff and imbue SPELL casts - the spell twin of
 -- NoteWeaponEnchantApplied above, fed from UNIT_SPELLCAST_SUCCEEDED. The cast has
 -- landed but the aura (or weapon enchant) takes a server beat to register; without
@@ -496,6 +490,12 @@ local function CastingMaintainedBuff()
     return false
 end
 
+--- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
+---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
+---   and imbues are unaffected - only the health top-off reminder honors this flag.
+--- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
+---   than read here for the same reason as offerTopoff: this module never touches the
+---   profile. nil falls back to "below full".
 function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
@@ -745,9 +745,11 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
             local pct, estimated = BlizzardAPI.GetPlayerHealthPercentSafe()
             if pct and pct <= LOW_HEALTH_PCT then
                 hurt = true                                  -- emergency floor: always on
+                notFullSince = 0                             -- onset timer is the gate path's alone
             elseif offerTopoff then
                 if pct and not estimated then
                     hurt = pct < RECUPERATE_HEALTH_PCT       -- exact 35-90%
+                    notFullSince = 0
                 else
                     -- ONE QUESTION: are you below your top-off threshold? The
                     -- ENGINE answers it - IsUnitHealthBelow encodes the threshold

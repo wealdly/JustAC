@@ -30,7 +30,7 @@ local featureAvailability = {
 }
 local FEATURE_CHECK_INTERVAL = 30.0  -- Safety net only; events (PLAYER_REGEN_*) are the primary trigger
 
--- UnitHealth("player") confirmed NOT secret as of 12.0 Alpha 6
+-- Health readability probe: diagnostic only (feeds GetFeatureAvailability and the debug print).
 local function TestHealthAccess()
     local health = UnitHealth("player")
     local maxHealth = UnitHealthMax("player")
@@ -102,9 +102,6 @@ function BlizzardAPI.GetFeatureAvailability()
         procAccess = featureAvailability.procAccess,
     }
 end
-
--- IsSecretValue() and Unsecret() are defined in BlizzardAPI.lua (root)
--- so all submodules can upvalue them. No additional definitions needed here.
 
 --------------------------------------------------------------------------------
 -- API-Specific Secret-Aware Helpers
@@ -265,7 +262,7 @@ end
 local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
 
 --- Array of AuraData for unit/filter, or nil if auras can't be enumerated at all.
---- Falls back to the index loop on clients without the batch call.
+--- Falls back to the index loop when the batch call throws.
 function BlizzardAPI.GetAuras(unit, filter)
     if not unit then return nil end
     if GetUnitAuras then

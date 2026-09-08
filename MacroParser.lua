@@ -150,9 +150,9 @@ function MacroParser.InvalidateMacroSlot(slot)
     end
 end
 
--- Event-only invalidation: spellOverrideCache is cleared by InvalidateMacroCache()
--- which fires on UPDATE_SHAPESHIFT_FORM, SPELLS_CHANGED, PLAYER_SPECIALIZATION_CHANGED,
--- ACTIONBAR_SLOT_CHANGED, and vehicle/possess events. No timer needed.
+-- Event-only invalidation: spellOverrideCache is cleared by InvalidateMacroCache(),
+-- which fires on form, spell, spec, bar-page and vehicle/possess changes. (A single
+-- ACTIONBAR_SLOT_CHANGED only drops that slot's parses - overrides are slot-independent.)
 local function GetSpellAndOverride(spellID, spellName)
     if spellOverrideCache[spellID] then
         return spellOverrideCache[spellID]

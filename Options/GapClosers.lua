@@ -118,10 +118,6 @@ function GapClosers.CreateTabArgs(addon)
         profile.gapClosers.enabled = true
         profile.gapClosers.showGlow = true  -- default: true (glow on by default)
         profile.gapClosers.farOnly = true   -- default: true (skip walking-distance gaps)
-        local GCE = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-        if GCE and GCE.InvalidateGapCloserCache then
-            GCE.InvalidateGapCloserCache()
-        end
         addon:ForceUpdate()
         if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
     end)
@@ -175,11 +171,6 @@ function GapClosers.UpdateGapCloserOptions(addon)
     local spellList = profile.gapClosers.classSpells[specKey]
 
     local updateFunc = function()
-        -- Invalidate engine cache so ResolveGapCloserSpells picks up changes
-        local engine = GapCloserEngine or LibStub("JustAC-GapCloserEngine", true)
-        if engine and engine.InvalidateGapCloserCache then
-            engine.InvalidateGapCloserCache()
-        end
         GapClosers.UpdateGapCloserOptions(addon)
         addon:ForceUpdate()
     end

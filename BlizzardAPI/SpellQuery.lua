@@ -15,17 +15,14 @@ local wipe       = wipe
 local ipairs     = ipairs
 local IsSpellKnown  = IsSpellKnown
 local IsPlayerSpell = IsPlayerSpell
-local C_SpellBook_IsSpellInSpellBook    = C_SpellBook and C_SpellBook.IsSpellInSpellBook
 local C_Spell_IsSpellPassive            = C_Spell and C_Spell.IsSpellPassive
 local C_Spell_GetSpellInfo              = C_Spell and C_Spell.GetSpellInfo
 local C_Spell_GetSpellCooldown          = C_Spell and C_Spell.GetSpellCooldown
 local C_Spell_IsSpellUsable             = C_Spell and C_Spell.IsSpellUsable
 local C_Spell_GetOverrideSpell          = C_Spell and C_Spell.GetOverrideSpell
 local C_SpellActivationOverlay_IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
-local Enum_SpellBookSpellBank_Player    = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
 local FindSpellOverrideByID             = FindSpellOverrideByID
 local GetInventoryItemID                = GetInventoryItemID ---@diagnostic disable-line: undefined-global
-local GetItemSpell                      = GetItemSpell
 local IsSecretValue = BlizzardAPI.IsSecretValue
 
 --------------------------------------------------------------------------------
@@ -344,17 +341,16 @@ end
 function BlizzardAPI.IsSpellProcced(spellID)
     if not spellID or spellID == 0 then return false end
 
-    -- Check cache first (valid for this update cycle)
-    local cached = procResultCache[spellID]
-    if cached ~= nil then
-        return cached
-    end
-
-    -- Auto-expire cache if not cleared by caller
+    -- Auto-expire BEFORE the cache read, or a hit never expires on its own and
+    -- render-path callers (no per-build ClearProcCache) read frozen verdicts.
     local now = GetTime()
     if now - procCacheTime > PROC_CACHE_DURATION then
         wipe(procResultCache)
         procCacheTime = now
+    end
+    local cached = procResultCache[spellID]
+    if cached ~= nil then
+        return cached
     end
 
     local result = C_SpellActivationOverlay_IsSpellOverlayed and C_SpellActivationOverlay_IsSpellOverlayed(spellID)
@@ -415,7 +411,7 @@ function BlizzardAPI.GetDisplaySpellID(spellID)
 end
 
 --- Resolves a talent override for a spell using FindSpellOverrideByID.
---- Used by DefensiveEngine and GapCloserEngine for proc/rotation dedup.
+--- Used across the queue, engines and options for proc/rotation dedup.
 --- Distinct from GetDisplaySpellID (which uses C_Spell.GetOverrideSpell for
 --- action-bar display transforms like Metamorphosis).
 --- Returns the override ID when a talent replaces the spell, or spellID otherwise.
@@ -490,13 +486,8 @@ local function RebuildItemSpellCache()
     for _, slot in ipairs(ITEM_USE_SLOTS) do
         local itemID = GetInventoryItemID("player", slot)
         if itemID then
-            -- Try modern API first, fallback to legacy
             local _, spellID
-            if C_Item_GetItemSpell then
-                _, spellID = C_Item_GetItemSpell(itemID)
-            elseif GetItemSpell then
-                _, spellID = GetItemSpell(itemID)
-            end
+            if C_Item_GetItemSpell then _, spellID = C_Item_GetItemSpell(itemID) end
             if spellID and spellID > 0 then
                 itemSpellCache[spellID] = itemID
             end
@@ -565,22 +556,9 @@ function BlizzardAPI.IsSpellAvailable(spellID)
         return true
     end
 
-    -- Spellbook fallback: catches edge cases (e.g. racial abilities) but includes
-    -- unselected choice-node talents. Cross-check with IsSpellKnown to filter those.
-    if C_SpellBook_IsSpellInSpellBook then
-        if C_SpellBook_IsSpellInSpellBook(spellID, Enum_SpellBookSpellBank_Player) then
-            -- Choice-node guard: spellbook returns true for all options in a
-            -- talent choice row, even unselected ones. If IsSpellKnown explicitly
-            -- returned false above, this is an unselected talent - reject it.
-            if IsSpellKnown and not IsSpellKnown(spellID) and not IsPlayerSpell(spellID) then
-                spellAvailabilityCache[spellID] = false
-                return false
-            end
-            spellAvailabilityCache[spellID] = true
-            return true
-        end
-    end
-
+    -- (No spellbook fallback: IsSpellInSpellBook also answers true for unselected
+    -- choice-node talents, and the two authoritative checks above have already
+    -- said no, so its only possible verdict here was "false".)
     spellAvailabilityCache[spellID] = false
     return false
 end

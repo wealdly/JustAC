@@ -67,7 +67,6 @@ function General.CreateTabArgs(addon)
                     -- tab - Standard Queue / Overlay Queue - via W.SetSurfaceEnabled, which
                     -- still writes the displayMode enum every gate reads.)
                     -- INTERRUPT (6-9) - own section; not a shared-behavior setting.
-                    -- Order 7.5 is reserved for the future "Context Aware" CC toggle.
                     interruptHeader = {
                         type = "header",
                         name = L["Disruption"],

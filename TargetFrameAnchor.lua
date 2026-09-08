@@ -40,6 +40,10 @@ end
 -- frame anchoring (that runs immediately after).
 function TFA.ClampFrameToScreen(addon)
     if not addon.mainFrame then return end
+    -- Docked: the frame sits wherever the TargetFrame is, which says nothing about
+    -- the SAVED position - measuring it here reset a good saved position to centre
+    -- whenever the dock hung past a screen edge (target frame near the border).
+    if addon.targetframe_anchored then return end
     local profile = addon:GetProfile()
     if not profile or not profile.framePosition then return end
 

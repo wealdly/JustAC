@@ -1,0 +1,11 @@
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
+# plain damage filler - core abilities, DoT refresh and target-count conditions only, no
+# hero-talent branches. Anything the character does not know is dropped at runtime, and
+# healing spells never reach the damage queue.
+
+actions=holy_word_chastise
+actions+=/shadow_word_pain,if=refreshable
+actions+=/holy_fire
+actions+=/shadow_word_death,if=target.health.pct<20
+actions+=/holy_nova,if=active_enemies>=3
+actions+=/smite

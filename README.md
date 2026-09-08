@@ -78,7 +78,7 @@ The defensive queue's "position 0", holding what keeps you *contributing* rather
 
 JustAC is not a healing addon and doesn't try to be one - keep yours. What it adds is the *other* half of a healer's job, plus a nudge when the group is in trouble.
 
-- **Damage priority with your heals filtered out** - the assist queue reads as a damage rotation rather than a mixed bag, so filler time between casts still contributes. Fails open: if removing heals would empty the list, the unfiltered one comes back rather than leaving you with nothing
+- **Damage priority with your heals filtered out** - the assist queue reads as a damage rotation rather than a mixed bag, so filler time between casts still contributes. Every healer spec has its own single- and multi-target damage priority behind it. Fails open: if removing heals would empty the list, the unfiltered one comes back rather than leaving you with nothing
 - **Caster mode** *(per spec, opt-in)* - suppresses melee-weave suggestions and form-shift buttons for healers who stay at range. Blizzard's own pick still adapts to where you're standing
 - **Group heal suggestions** - an ally who has taken meaningful damage counts toward an area heal, and a group in serious trouble raises your biggest save (Tranquility, Aura Mastery, Healing Tide, Divine Hymn, Restoral, Rewind). Multi-target only by design - aiming a heal at one specific person is a job for your group frames
 - **No accessibility CVar required** - the party health alert is used automatically where it's the only signal available, but group heals no longer depend on it and no longer stop at the first four party members. **"Set Up The Alert For Me"** configures it in one click if you'd rather have it, states exactly what it changes, and puts your settings back when switched off
@@ -114,7 +114,7 @@ JustAC is not a healing addon and doesn't try to be one - keep yours. What it ad
 - Handles dynamic spell transforms (e.g. Templar Strike → Templar Slash) via override scanning
 - Gamepad support with Xbox/PlayStation/Generic button icon styles
 - Custom hotkey overrides via right-click menu
-- Key press flash feedback when you press the suggested keybind
+- Flash feedback on every icon when you press its keybind or use the ability (macros, click-casting and mouse buttons included)
 
 ### Intelligent Filtering
 

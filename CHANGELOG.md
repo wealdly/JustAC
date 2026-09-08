@@ -3,6 +3,47 @@
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-09-08
+
+### Added
+- Icons flash when the ability they show is used, not only on a matching key press, so
+  macros, click-casting and mouse buttons get the same feedback. The flash now reaches
+  every icon: the Sustain slot, the enrage-cleanse cue and the nameplate overlay's
+  interrupt and Sustain icons
+- Discipline and Holy Priests, Holy Paladins, Restoration Shamans and Preservation Evokers
+  now have a damage-filler priority of their own (single-target and multi-target), with DoT
+  refresh and execute cues. Until now those five specs followed Blizzard's list order only
+
+### Changed
+- Suggestion order refreshed from the latest theorycraft priorities (game build 69587).
+  Eighteen specs pick up updated rotations; Havoc Demon Hunter, Guardian Druid, Frost
+  Mage, Marksmanship Hunter, Retribution Paladin, Affliction Warlock, Arms Warrior and
+  Assassination Rogue move the most
+
+### Fixed
+- Suggestion order across most specs: some abilities carried a buff, cooldown or
+  target-count condition the rotation data never stated, which could lift them, sink
+  them or drop them at the wrong moment. Most visibly, Havoc's Annihilation was ranked
+  behind Essence Break in single target, and Guardian's Swipe, Wild Guardian and Heart of
+  the Wild were missing from every list
+- Abilities with charges could read as unavailable after your first fight of the session
+  and sink to the back while a charge was still in hand
+- Editing a defensive list or opening the options panel mid-combat made the queue lose
+  track of every cooldown for the rest of that fight
+- A damage-over-time effect re-applied to the same target now sinks again while it is
+  live; only its first application used to
+- Pet summons and Revive Pet are offered in combat again when you have no pet out
+- Switching profiles updates your gap closers immediately instead of on the next form
+  change
+- Heal reminders are no longer suppressed just because the party health alert is off
+- Docked to the target frame, a loading screen could reset your saved undocked position
+  to the centre of the screen
+- Display: empty defensive slots no longer draw their outline; defensive and interrupt
+  icons no longer render dimmer than the queue at reduced frame opacity; the nameplate
+  overlay pauses and resumes glows with combat and greys out while eating, like the
+  standard queue; the wait icon no longer inherits markers from the spell it replaced;
+  an item held in the first slot after a key press no longer flickers
+
 ## [5.3.7] - 2026-08-24
 
 ### Added

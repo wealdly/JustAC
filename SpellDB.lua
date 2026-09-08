@@ -198,6 +198,7 @@ local function StaticLookup(t, spellID)
     if base and base ~= spellID then return t[base] end
     return nil
 end
+SpellDB.StaticLookup = StaticLookup   -- shared with RedundancyFilter's own tables
 
 -- Distinct base spell of a talent-override variant, or nil when there is none
 -- (self is its own base, or C_Spell.GetBaseSpell is unavailable). Shares
@@ -270,7 +271,7 @@ end
 -- hero talents, stealth, and cast-condition auras), so SpellQueue and the
 -- defensive engine gate on that directly. The generated FormRequirements/
 -- AuraRequirements data files and their generators were deleted with it.
--- Kept accessors below (GetAuraMaxStacks, IsPureSelfAura) are REDUNDANCY data,
+-- Kept accessors above (GetAuraMaxStacks, IsPureSelfAura) are REDUNDANCY data,
 -- not usability, and have no live equivalent.
 
 --- Health items the player currently owns, best-first: { {id=, name=}, ... }. Feeds the
@@ -352,11 +353,17 @@ end
 --- so those auras are skipped - their identity is unknowable here. Memoized briefly -
 --- called per render frame while a food suggestion is displayed.
 local eatCache, eatCacheAt = nil, 0
+-- SpellDB loads BEFORE BlizzardAPI in the TOC, so the reference is resolved lazily at
+-- call time (once) rather than as a file-scope upvalue, which would always be nil.
+local cachedBlizzardAPI
+local function GetBlizzardAPI()
+    if not cachedBlizzardAPI then cachedBlizzardAPI = LibStub("JustAC-BlizzardAPI", true) end
+    return cachedBlizzardAPI
+end
+
 function SpellDB.GetActiveEatingAura()
     if UnitAffectingCombat("player") then return nil end
-    -- Lazy resolve: SpellDB loads BEFORE BlizzardAPI in the TOC, so this cannot
-    -- be an upvalue (same reason as IsInterruptOnCooldown below).
-    local api = LibStub("JustAC-BlizzardAPI", true)
+    local api = GetBlizzardAPI()
     if not (api and api.GetAuras) then return nil end
     local now = GetTime()
     if now - eatCacheAt < 0.2 then return eatCache end
@@ -653,7 +660,6 @@ local KNOWN_PROBE_REFRESH = 5    -- seconds
 local withinVerdicts = {}
 local lastWithinTime = -1
 local WITHIN_UNKNOWN = {}
-local cachedBlizzAPIRef
 function SpellDB.IsTargetWithin(yards)
     if not C_Spell_IsSpellInRange then return nil end
     local now = GetTime()
@@ -668,11 +674,7 @@ function SpellDB.IsTargetWithin(yards)
         lastWithinTime = now
     end
 
-    local api = cachedBlizzAPIRef
-    if not api then
-        api = LibStub("JustAC-BlizzardAPI", true)
-        cachedBlizzAPIRef = api
-    end
+    local api = GetBlizzardAPI()
     local isSecret = api and api.IsSecretValue
 
     if (now - knownRangeProbesTime) >= KNOWN_PROBE_REFRESH then
@@ -1249,8 +1251,8 @@ local DEFENSE_TIER_SPEC = {
 
 --- Emergency tier for the low-health defensive reorder: 1 = immunity bubble, 2 = big instant
 --- heal, 4 = pre-emptive wall (major DR / cheat-death), 3 = everything else (the default for
---- anything untagged). The numbers are LABELS, not ranks - DefensiveEngine's TIER_ORDER_LOW /
---- TIER_ORDER_CRITICAL permute them - which is why 4 sits above 3 in urgency.
+--- anything untagged). The numbers are LABELS, not ranks - DefensiveEngine's TIER_ORDER_BY_BAND
+--- permutes them per health band - which is why 4 sits above 3 in urgency.
 --- Only tiers 1 and 2 are held back when healthy; 4 stays live because a wall pressed after
 --- you are already low is a wall pressed too late.
 --- Looks up the base list ID (talent overrides resolve to the same tool); spec overrides win.
@@ -1610,7 +1612,7 @@ SpellDB.CLASS_GAPCLOSER_DEFAULTS = {
 -- GAP-CLOSERS THAT ONLY WORK IN STEALTH
 -- Spells whose gap-closer (teleport/charge) component requires stealth or
 -- Shadow Dance.  The spell itself is usable out of stealth (e.g. Shadowstrike
--- functions as a regular melee attack), but DefensiveEngine should only
+-- functions as a regular melee attack), but GapCloserEngine should only
 -- suggest it as a gap-closer when the player is actually stealthed.
 -- Keyed by spell ID → true.
 --------------------------------------------------------------------------------
@@ -1702,16 +1704,6 @@ end
 
 -- Hot-path locals for ResolveInterruptSpells / IsInterruptOnCooldown
 local FindSpellOverrideByID = FindSpellOverrideByID
--- NOTE: cachedBlizzardAPI intentionally resolved lazily inside IsInterruptOnCooldown.
--- SpellDB.lua loads BEFORE BlizzardAPI.lua in JustAC.toc, so a file-scope
--- LibStub("JustAC-BlizzardAPI", true) here would always return nil.
-local _cachedBlizzardAPIRef = nil
-local function GetBlizzardAPI()
-    if not _cachedBlizzardAPIRef then
-        _cachedBlizzardAPIRef = LibStub("JustAC-BlizzardAPI", true)
-    end
-    return _cachedBlizzardAPIRef
-end
 
 --- Check whether an interrupt/CC spell is on a real cooldown (not just GCD).
 --- Delegates to BlizzardAPI.IsSpellReady() which handles the full 12.0 fallback
@@ -1755,11 +1747,11 @@ end
 --- class spells, racials, and multi-class variants), then sorted best-first by reliability
 --- tier then intra-tier priority. Returns an ordered array, or nil if none.
 --- Each entry: { spellID, type = "interrupt"|"cc", mech, reach, radius }.
---- Called once during frame/overlay creation; result is cached.
+--- Rebuilt on every call (spec change, SPELLS_CHANGED, surface creation); callers cache.
 -- Shared resolver: build sorted {spellID, type, ...} entries for the abilities of the
 -- given kinds that THIS character knows, each registered for local CD tracking.
 local function ResolveAbilitiesByKind(kindSet)
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local BlizzardAPI = GetBlizzardAPI()
     if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
     local result = {}
     for spellID, meta in pairs(INTERRUPT_ABILITIES) do
@@ -1798,7 +1790,7 @@ end
 --- least one enabling talent is known - so a Monk without Pressure Points isn't offered
 --- Paralysis as a soothe. Enrage-triggered (dispel type 9), not cast-triggered.
 function SpellDB.ResolveSootheSpells()
-    local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
+    local BlizzardAPI = GetBlizzardAPI()
     if not BlizzardAPI or not BlizzardAPI.IsSpellAvailable then return nil end
     local result = {}
     for spellID, meta in pairs(SOOTHE_ABILITIES) do

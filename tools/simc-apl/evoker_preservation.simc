@@ -1,0 +1,10 @@
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
+# plain damage filler - core abilities and target-count conditions only, no hero-talent
+# branches. Anything the character does not know is dropped at runtime, and healing
+# spells never reach the damage queue.
+
+actions=fire_breath
+actions+=/disintegrate
+actions+=/deep_breath,if=active_enemies>=3
+actions+=/azure_strike,if=active_enemies>=2
+actions+=/living_flame

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
 -- JustAC: Options/Display - the one tab for everything visual: the two surface
--- panels (Main Queue / Nameplate Queue) plus the Shared Behavior panel that both
+-- panels (Standard Queue / Nameplate Overlay) plus the Shared Behavior panel that both
 -- follow (glow policy, icon behavior toggles, ability markers, icon labels).
 local Display = LibStub:NewLibrary("JustAC-OptionsDisplay", 1)
 if not Display then return end

@@ -202,6 +202,7 @@ local INSPECT_TOPICS = {
     { "enrage",      "EnrageProbe",              "[off]", "Probe secret-safe enrage detection (DispelType 9 color curve)" },
     { "auradump",    "AuraDumpProbe",            nil,  "EVERY aura on the target: every filter's count, every field, plain vs secret" },
     { "auracontainer", "AuraContainerProbe",     nil,  "Can we create a 12.1 AuraContainer, and what methods does it expose?" },
+    { "windowsig",   "WindowSignalProbe",        "[spellID|off]", "Continuous sampler: arm on a self-buff, play in/out of combat, then run bare for per-channel verdicts (secret-window signal hunt)" },
     { "channels",    "ChannelMatrix",            nil,  "Laundering matrix: feed a secret to every sink, read back every getter (in combat)" },
     { "aurapanels",  "AuraPanelProbe",           nil,  "Blizzard's own aura panels: is each one live, and what do its buttons expose?" },
     { "audioalerts", "AudioAlertProbe",          nil,  "Combat audio alerts: is it on, and are its stored health/power percents readable?" },
@@ -574,10 +575,6 @@ function DebugCommands.ModuleDiagnostics(addon)
 
     local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
     if BlizzardAPI then
-        if BlizzardAPI.IS_MIDNIGHT_OR_LATER then
-            addon:Print("  WoW Version: |cffffff0012.0+ (Midnight)|r")
-        end
-        
         if BlizzardAPI.GetFeatureAvailability then
             local features = BlizzardAPI.GetFeatureAvailability()
             local secretCount = 0
@@ -799,7 +796,7 @@ function DebugCommands.WhyDiagnostics(addon, spellArg)
     -- 3. Item-ability filter (full drop when off)
     if BlizzardAPI.IsItemSpell and BlizzardAPI.IsItemSpell(displayID) then
         line("Item abilities allowed", not profile.hideItemAbilities,
-            profile.hideItemAbilities and "General tab: Allow Item Abilities is OFF" or "equipped-item ability")
+            profile.hideItemAbilities and "Offensive tab: Allow Item Abilities is OFF" or "equipped-item ability")
     end
 
     -- 4. Redundancy (full drop)
@@ -6286,6 +6283,213 @@ function DebugCommands.AuraContainerProbe(addon)
         end
     end
     pcall(function() cont:Hide() end)
+end
+
+--------------------------------------------------------------------------------
+--- /jac inspect windowsig [spellID|off] - hunt THE missing gate input: a BRANCHABLE
+--- "is this self-buff up" for a SECRET aura, via a registered AuraContainer.
+---
+--- v3, continuous sampler: arm once on a spell, then just play - in and out of
+--- combat, buff up and down. Every candidate channel is sampled 4x/s; only
+--- TRANSITIONS are recorded (capped log), each tagged with combat state, and
+--- correlated against two ground truths: your own successful cast of the spell
+--- (plain even in combat) and the OOC aura lookup. Run bare for the report.
+---
+--- Channels, and why each might launder (see the matrix comment below):
+---   groupCount / button1  - group membership is decided in Blizzard's UNTAINTED
+---       Lua (ShouldIncludeAuraInGroup branches on the secret spellId) and a
+---       non-member never gets a frame: the secret comparison expressed as plain
+---       frame lifecycle. Filter shape source-verified:
+---       candidateFilters.includeSpellIDs is a MAP keyed by spell id.
+---   btn1IsShown           - the suspect: driven via SetShown(secretwrap(...)),
+---       which is the one Show-family path known NOT to launder.
+---   ourTexVisible         - our own texture's EFFECTIVE visibility walks the
+---       parent chain; if the wrap does not propagate, this launders.
+---   OnShow/OnHide edges   - post-hooks; "handler fired" is plain regardless of
+---       what IsShown reads back.
+--- Read-only against Blizzard state; container, textures, and hooks are ours.
+local windowSigCont, windowSigSpell, windowSigTicker, windowSigCastFrame
+local windowSigStart = 0
+-- Side tables keyed by button, weak so released frames can collect. Deliberately
+-- NOT fields on the buttons: they are Blizzard-owned pooled frames iterated by
+-- untainted container code (the CooldownViewer taint-storm pattern).
+local windowSigTex = setmetatable({}, { __mode = "k" })
+-- Direct references to every button initializeFrame ever saw. The public
+-- GetAuraGroupFrame getter returned nil all through the first live run - the
+-- outbound access restrictions likely strip pooled buttons from tainted
+-- callers - but initializeFrame is handed the real object table, so we keep
+-- our own handle and sample it directly, bypassing the getter entirely.
+local windowSigBtns = {}
+local windowSigLast, windowSigStats, windowSigLog = {}, {}, {}
+
+local function WSLog(text, inCombat)
+    windowSigLog[#windowSigLog + 1] = { t = GetTime(), c = inCombat, s = text }
+    if #windowSigLog > 240 then table.remove(windowSigLog, 1) end
+end
+
+local function WSSample()
+    if not windowSigCont then return end
+    local inCombat = UnitAffectingCombat("player")
+    local function channel(key, fn)
+        local st, tx = ProbeRead(fn)
+        local stats = windowSigStats[key]
+        if not stats then
+            stats = { plain = 0, secret = 0, err = 0, ["nil"] = 0, trans = 0, transCombat = 0 }
+            windowSigStats[key] = stats
+        end
+        stats[st] = (stats[st] or 0) + 1
+        local obs = (st == "plain") and tx or ("<" .. st .. ">")
+        local last = windowSigLast[key]
+        if last ~= nil and last ~= obs then
+            stats.trans = stats.trans + 1
+            if inCombat then stats.transCombat = stats.transCombat + 1 end
+            WSLog(key .. "  " .. tostring(last) .. " -> " .. obs, inCombat)
+        end
+        windowSigLast[key] = obs
+    end
+    channel("groupCount", function() return windowSigCont:GetAuraGroupFrameCount("jacWindowSig") end)
+    local okG, gf = pcall(windowSigCont.GetAuraGroupFrame, windowSigCont, "jacWindowSig", 1)
+    gf = (okG and gf) or nil
+    channel("getterFrame", function() return gf ~= nil end)
+    channel("btnCreated", function() return #windowSigBtns end)
+    local btn = windowSigBtns[1]
+    if btn then
+        channel("btn1IsShown", function() return btn:IsShown() end)
+        channel("btn1Bottom", function()
+            -- Layout runs only over ACTIVE (aura-assigned) frames; a released
+            -- frame may keep a stale or cleared rect. Quantized so pixel jitter
+            -- is not a transition.
+            local b = btn:GetBottom()
+            return b and math.floor(b + 0.5) or false
+        end)
+        local tex = windowSigTex[btn]
+        if tex then
+            channel("ourTexVisible", function() return tex:IsVisible() end)
+        end
+    end
+    channel("oocAuraTruth", function()
+        local a = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+            and C_UnitAuras.GetPlayerAuraBySpellID(windowSigSpell)
+        return a ~= nil
+    end)
+    channel("combat", function() return inCombat end)
+end
+
+local function WSTeardown()
+    if windowSigTicker then windowSigTicker:Cancel(); windowSigTicker = nil end
+    if windowSigCastFrame then windowSigCastFrame:UnregisterAllEvents() end
+    if windowSigCont then pcall(windowSigCont.Hide, windowSigCont) end
+    windowSigCont, windowSigSpell = nil, nil
+    wipe(windowSigBtns)
+    wipe(windowSigLast); wipe(windowSigStats); wipe(windowSigLog)
+end
+
+function DebugCommands.WindowSignalProbe(addon, arg)
+    if arg == "off" then
+        WSTeardown()
+        addon:Print("windowsig: stopped and cleared (frame hidden; /reload frees it fully).")
+        return
+    end
+    local spellID = tonumber(arg)
+    if spellID and spellID > 0 then
+        if spellID == windowSigSpell then
+            addon:Print("windowsig: already armed for " .. spellID .. " - run bare for the report.")
+            return
+        end
+        WSTeardown()
+        local okC, cont = pcall(CreateFrame, "AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+        if not okC or not cont then
+            addon:Print("windowsig: |cffff0000CreateFrame failed|r: " .. tostring(cont))
+            return
+        end
+        cont:SetSize(40, 40)
+        cont:ClearAllPoints()
+        cont:SetPoint("TOP", UIParent, "TOP", 0, -80)
+        cont:SetFrameStrata("TOOLTIP")
+        pcall(cont.EnableMouse, cont, false)
+        local okU, uerr = pcall(cont.SetUnit, cont, "player")
+        local okA, aerr = pcall(function()
+            cont:AddAuraGroup("jacWindowSig", "HELPFUL", {
+                maxFrameCount = 2,
+                candidateFilters = { includeSpellIDs = { [spellID] = true } },
+                initializeFrame = function(button)
+                    pcall(button.SetSize, button, 32, 32)
+                    local tex = button:CreateTexture(nil, "OVERLAY")
+                    tex:SetSize(32, 32)
+                    tex:SetPoint("CENTER", button, "CENTER", 0, 0)
+                    tex:SetColorTexture(0, 1, 0, 0.8)
+                    windowSigTex[button] = tex
+                    windowSigBtns[#windowSigBtns + 1] = button
+                    WSLog("|cff2ecc71initializeFrame|r (button created, #" .. #windowSigBtns .. ")",
+                        UnitAffectingCombat("player"))
+                    button:HookScript("OnShow", function()
+                        WSLog("button |cff2ecc71OnShow|r edge", UnitAffectingCombat("player"))
+                    end)
+                    button:HookScript("OnHide", function()
+                        WSLog("button |cffff6600OnHide|r edge", UnitAffectingCombat("player"))
+                    end)
+                end,
+            })
+        end)
+        cont:Show()
+        windowSigCont, windowSigSpell, windowSigStart = cont, spellID, GetTime()
+        if not windowSigCastFrame then
+            windowSigCastFrame = CreateFrame("Frame")
+            windowSigCastFrame:SetScript("OnEvent", function(_, _, _, _, sid)
+                if not windowSigSpell then return end
+                if sid == windowSigSpell or (BlizzardAPI and BlizzardAPI.GetDisplaySpellID
+                        and BlizzardAPI.GetDisplaySpellID(sid) == windowSigSpell) then
+                    WSLog("|cffffd100CAST " .. tostring(sid) .. "|r (buff should be up now)",
+                        UnitAffectingCombat("player"))
+                end
+            end)
+        end
+        windowSigCastFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        windowSigTicker = C_Timer.NewTicker(0.25, WSSample)
+        addon:Print(string.format("windowsig: |cff2ecc71sampling|r spell %d at 4x/s.  SetUnit=%s  AddAuraGroup=%s",
+            spellID,
+            okU and "ok" or ("|cffff6600" .. tostring(uerr):sub(1, 50) .. "|r"),
+            okA and "ok" or ("|cffff6600" .. tostring(aerr):sub(1, 50) .. "|r")))
+        addon:Print("  Just play: buff up/down, in and out of combat, a few cycles of each.")
+        addon:Print("  Then run |cffffd100/jac inspect windowsig|r bare for the verdicts. 'off' stops.")
+        return
+    end
+    if not windowSigCont then
+        addon:Print("Usage: /jac inspect windowsig <spellID> to arm (e.g. 5217 Tiger's Fury);")
+        addon:Print("  bare for the report while armed; 'off' stops and clears.")
+        return
+    end
+
+    addon:Print(string.format("== windowsig report (spell %d, %.0fs armed, %s) ==",
+        windowSigSpell, GetTime() - windowSigStart,
+        UnitAffectingCombat("player") and "|cffff6666IN COMBAT|r" or "out of combat"))
+    local order = { "groupCount", "getterFrame", "btnCreated", "btn1IsShown", "btn1Bottom",
+                    "ourTexVisible", "oocAuraTruth", "combat" }
+    for _, key in ipairs(order) do
+        local st = windowSigStats[key]
+        if st then
+            local verdict
+            if (st.secret or 0) > 0 then
+                verdict = "|cffff00ffreads secret|r"
+            elseif st.trans == 0 then
+                verdict = "|cff888888static so far|r"
+            elseif (st.transCombat or 0) > 0 then
+                verdict = "|cff2ecc71LIVE IN COMBAT|r"
+            else
+                verdict = "|cffffff00moves OOC only (so far)|r"
+            end
+            addon:Print(string.format("  %-14s now=%-9s plain=%d secret=%d err=%d  trans=%d (%d in combat)  %s",
+                key, tostring(windowSigLast[key]), st.plain or 0, st.secret or 0, st.err or 0,
+                st.trans, st.transCombat or 0, verdict))
+        end
+    end
+    local n = #windowSigLog
+    addon:Print(string.format("  log (%d entries, last %d):", n, math.min(n, 24)))
+    local now = GetTime()
+    for k = math.max(1, n - 23), n do
+        local e = windowSigLog[k]
+        addon:Print(string.format("    T-%4.0fs %s %s", now - e.t, e.c and "|cffff6666[C]|r" or "   ", e.s))
+    end
 end
 
 --------------------------------------------------------------------------------

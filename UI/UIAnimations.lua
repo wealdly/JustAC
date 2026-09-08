@@ -244,8 +244,9 @@ local function TintMarchingAnts(highlightFrame, r, g, b, desaturate)
 end
 
 -- ── Consolidated Marching Ants Glow Engine ─────────────────────────────────
--- All glow types (assisted, defensive, gap-closer, interrupt) share the same
--- marching-ants flipbook animation with different parameters:
+-- Every marching-ants glow (assisted, defensive, gap-closer, burst, maintenance, precombat)
+-- shares one flipbook animation with different parameters (GLOW_CONFIG below is the
+-- source of truth; the table shows the first three):
 --
 -- | Type        | Frame Key                  | Color (R,G,B) | Desat | Scale  | Pause OOC | Flag Field        | Clears Proc |
 -- |-------------|----------------------------|---------------|-------|--------|-----------|-------------------|-------------|
@@ -374,7 +375,7 @@ local function StartMarchingAntsGlow(icon, config, isInCombat)
             end)
         end
     else
-        -- Gap-closer/Interrupt: always animate
+        -- pauseOOC=false types (gap-closer, burst, maintenance, precombat): always animate
         if not highlightFrame.Flipbook.Anim:IsPlaying() then
             highlightFrame.Flipbook.Anim:Play()
         end
@@ -499,21 +500,30 @@ local function PauseIconGlows(icon)
     -- they always animate (even OOC) for emphasis.
 end
 
+-- Both surfaces: the overlay's arrays used to be skipped, so an overlay glow armed
+-- OOC stayed frozen through the fight and one armed in combat looped on after it.
+-- Field NAMES, not the arrays: a nil array inside a table literal is a hole ipairs
+-- stops at, and the overlay's arrays are nil whenever it is off.
+local QUEUE_ICON_LISTS = { "spellIcons", "nameplateIcons" }
+local DEF_ICON_LISTS   = { "defensiveIcons", "nameplateDefIcons" }
+
 local function PauseAllGlows(addon)
     if not addon then return end
 
-    if addon.spellIcons then
-        for i = 1, #addon.spellIcons do
-            PauseIconGlows(addon.spellIcons[i])
+    for _, key in ipairs(QUEUE_ICON_LISTS) do
+        local list = addon[key]
+        for i = 1, list and #list or 0 do
+            PauseIconGlows(list[i])
         end
     end
     -- Defensive icons: RESET the proc glow instead of freezing it mid-frame -
     -- a paused flipbook reads as stuck. The combat-exit rebuild re-renders
     -- immediately and re-establishes the correct glow (green pre-combat buff,
     -- static proc glow, or marching ants).
-    if addon.defensiveIcons then
-        for i = 1, #addon.defensiveIcons do
-            local icon = addon.defensiveIcons[i]
+    for _, key in ipairs(DEF_ICON_LISTS) do
+        local list = addon[key]
+        for i = 1, list and #list or 0 do
+            local icon = list[i]
             PauseIconGlows(icon)
             HideProcGlow(icon)
             -- Reset the renderer's glow arbiter so the combat-exit rebuild
@@ -555,14 +565,12 @@ end
 local function ResumeAllGlows(addon)
     if not addon then return end
 
-    if addon.spellIcons then
-        for i = 1, #addon.spellIcons do
-            ResumeIconGlows(addon.spellIcons[i])
-        end
-    end
-    if addon.defensiveIcons then
-        for i = 1, #addon.defensiveIcons do
-            ResumeIconGlows(addon.defensiveIcons[i])
+    for _, lists in ipairs({ QUEUE_ICON_LISTS, DEF_ICON_LISTS }) do
+        for _, key in ipairs(lists) do
+            local list = addon[key]
+            for i = 1, list and #list or 0 do
+                ResumeIconGlows(list[i])
+            end
         end
     end
 end

@@ -2,27 +2,12 @@
 
 WoW addon displaying Blizzard's Assisted Combat suggestions with keybinds. Lua + WoW API + Ace3.
 
-## Version Detection & Compatibility
+## Client version
 
-**WoW 12.0 (Midnight) compatibility layer ready** - Use version conditionals for breaking API changes:
-
-```lua
-local BlizzardAPI = LibStub("JustAC-BlizzardAPI", true)
-
--- Check version
-if BlizzardAPI.IsMidnightOrLater() then
-    -- 12.0+ code path (new/fixed API)
-else
-    -- Pre-12.0 code path (original API)
-end
-```
-
-**When to add version conditionals:**
-- 12.0 error reported → Add conditional fix
-- API behavior changes between versions → Wrap in version check
-- New API replaces old → Keep both paths with version guard
-
-**See:** `Documentation/VERSION_CONDITIONALS.md` for detailed patterns and examples
+12.x only: `JustAC.toc` pins `## Interface: 120100` and there are NO version
+conditionals in the code. A client API that is missing on the pinned version is a bug
+to fix, not a branch to keep; `C_Secrets` predicates, duration-object cooldowns and
+the aura container are all assumed present.
 
 ## Critical Workflow
 
@@ -265,7 +250,7 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 | `HealingItems.lua` | `gen_healing_items.py` | Usable heal/potion items |
 | `PrecombatBuffs.lua` | `gen_precombat_buffs.py` | Flask/food/rune/imbue + Well Fed families |
 | `SpellCooldowns.lua` | `gen_spell_cooldowns.py` | Per-spec cooldown-set reference |
-| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (35 specs) + per-spec `burst` anchor lists (mined from potion/trinket/PI sync conditions; feed the burst-ready cue). Pinned source APLs in `tools/simc-apl/`; refresh via `tools/update_simc_apl.py` (syncs from the `00-SOURCE/simc` sparse mirror, branch `midnight`, then regenerates) - standard pre-release step |
+| `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (40 specs: 34 upstream lists + 6 local-only pins in `tools/simc-apl/` for the healer specs upstream ships no list for - Mistweaver plus five plain damage-filler pins) + per-spec `burst` anchor lists (mined from potion/trinket/PI sync conditions; feed the burst-ready cue). Pinned source APLs in `tools/simc-apl/`; refresh via `tools/update_simc_apl.py` (syncs from the `00-SOURCE/simc` sparse mirror, branch `midnight`, then regenerates) - standard pre-release step |
 | *(not shipped)* | `gen_aura_durations.py` | Retained only - durations are secret in combat, superseded by the readiness probe |
 
 ## 12.0 Compatibility & Secret Values
@@ -312,7 +297,6 @@ NOT repeated here - they live in `Documentation/12.0_COMPATIBILITY.md`. Update t
   (is it below N% / under N seconds) via the zero-gate + threshold curves. Covers health, power,
   aura and cooldown durations, and aura stacks. **Read before adding any new threshold, and read
   its SCOPE RULE before proposing anything that reconstructs a hidden number**
-- `Documentation/VERSION_CONDITIONALS.md` - Version-conditional patterns for 12.0 compatibility
 - `README.md` - User-facing docs, installation, credits
 - `CHANGELOG.md` - Release history (GPL-3.0-or-later since v2.95)
 

@@ -19,16 +19,8 @@ local table_remove = table.remove
 local C_Secrets = C_Secrets
 
 -- Talent-override variants resolve to a base spell ID the static classification
--- tables key on. Try the ID, then its base spell (SpellDB.GetBaseSpell, cached).
--- Keeps this module's own tables variant-aware like the SpellDB accessors.
-local function StaticLookup(t, spellID)
-    if not t or not spellID then return nil end
-    local v = t[spellID]
-    if v ~= nil then return v end
-    local base = SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID)
-    if base then return t[base] end
-    return nil
-end
+-- tables key on: SpellDB's lookup (ID, then cached base spell), shared, not re-implemented.
+local StaticLookup = SpellDB and SpellDB.StaticLookup or function(t, id) return t and id and t[id] or nil end
 
 
 -- Spell classification tables (static data maintained in SpellDB.lua)
@@ -208,7 +200,6 @@ local AURA_CACHE_DURATION = 0.5
 -- Invalidated by UNIT_AURA events, so safe to keep for extended duration
 local trustedOutOfCombatCache = {}
 local lastTrustedCacheTime = 0
-local TRUSTED_CACHE_DURATION = 600  -- Trust out-of-combat checks for 10 minutes (invalidated by events)
 local TRUSTED_CACHE_RECENT_THRESHOLD = 300  -- Cache younger than 5 min uses exact expiration; older uses 80% threshold
 local nextExpirationCheck = 0  -- Throttle expiration checking to once per 5 seconds
 local EXPIRATION_CHECK_INTERVAL = 5
@@ -228,12 +219,8 @@ local instanceToTimingMap = {}  -- auraInstanceID → {duration, expirationTime,
 --- ABSOLUTE timestamp. The subtraction has to happen here, at capture time, because in
 --- combat duration/expirationTime are secret and cannot be read or subtracted - only the
 --- already-computed threshold can be compared against `now` later.
---- Uses PANDEMIC_THRESHOLD, the same 0.30 the live path above uses. It previously had its
---- own PANDEMIC_REMAINING = 0.2, so the SAME buff was called refreshable at 30% remaining
---- through one path and 20% through the other - and which path answered depended on cache
---- age, not on anything about the buff. 0.30 is the correct figure: WoW's pandemic carries
---- leftover time over when a periodic effect is refreshed at or below 30% remaining, so
---- refreshing there is the earliest point that wastes nothing. 0.2 gave up that window.
+--- Uses PANDEMIC_THRESHOLD (0.30 - WoW carries leftover time over when a periodic effect
+--- is refreshed at or below 30% remaining), the same figure IsInPandemicWindow uses.
 local function BuildAuraTiming(dur, exp, count)
     dur, exp = dur or 0, exp or 0
     local halfwayThreshold
@@ -280,7 +267,7 @@ end
 -- Required because PruneExpiredActivations uses it before the full definition
 local RefreshAuraCache
 
--- Debug mode (BlizzardAPI caches this, only checked once per second)
+-- Debug mode (BlizzardAPI caches this; refreshed on toggle / profile change)
 local function GetDebugMode()
     return BlizzardAPI and BlizzardAPI.GetDebugMode() or false
 end
@@ -633,7 +620,7 @@ local function MergeTrustedCacheFallback(now)
             end
         end
     end
-    for name, v in pairs(trustedOutOfCombatCache.byName or {}) do
+    for name, v in pairs(trustedOutOfCombatCache.byName) do
         if not cachedAuras.byName[name] then
             local nameSpellID = (type(v) == "number") and v
             if not nameSpellID or not combatRemovedSpellIDs[nameSpellID] then
@@ -641,7 +628,7 @@ local function MergeTrustedCacheFallback(now)
             end
         end
     end
-    for spellID, info in pairs(trustedOutOfCombatCache.auraInfo or {}) do
+    for spellID, info in pairs(trustedOutOfCombatCache.auraInfo) do
         if not cachedAuras.auraInfo[spellID] and not combatRemovedSpellIDs[spellID] then
             cachedAuras.auraInfo[spellID] = info
         end
@@ -655,11 +642,12 @@ RefreshAuraCache = function()
     local now = GetTime()
     local inCombat = UnitAffectingCombat("player")
     
-    -- If in combat and we have a recent trusted out-of-combat cache, use it as FALLBACK
-    -- The instance map resolution below may produce better results, but if it can't
-    -- resolve everything, we still have trustedOutOfCombatCache as a safety net.
-    -- CRITICAL: Only compare timestamps in combat - no arithmetic with cached values (may be secrets)
-    if inCombat and trustedOutOfCombatCache.byID and (now - lastTrustedCacheTime) < TRUSTED_CACHE_DURATION then
+    -- In combat the trusted out-of-combat cache is the FALLBACK for what the instance
+    -- maps can't resolve (merged at the end). Prune its expired entries on every pass,
+    -- with no age cap: the cap used to stop the PRUNE at 10 minutes while the merge
+    -- kept running, so a long fight surfaced expired short buffs as "present".
+    -- Expiry times are plain numbers cached OOC - safe arithmetic in combat.
+    if inCombat and trustedOutOfCombatCache.byID then
         PruneTrustedCacheExpiration(now)
     end
     
@@ -700,7 +688,7 @@ RefreshAuraCache = function()
         end
         -- Flag for trusted cache merge (covers auras not in instance maps)
         cachedAuras.hasSecrets = true
-    -- Modern API (11.0+)
+    -- Auras readable: full scan (also refreshes the instance maps for the next combat)
     elseif BlizzardAPI.GetAuras then
         -- One batch call instead of up to 40 index reads. The table and its length
         -- are plain even in combat; only the fields below are secret, so the
@@ -919,8 +907,9 @@ end
 -- while the ID index is known INCOMPLETE (hasSecrets: aura fields came back secret and some
 -- auras resolved to a name but not to an id - the one case where the name is the only
 -- evidence there is). When the ID index is complete, its "no" is the answer and this must not
--- second-guess it. Nothing is lost on the live paths: both write byName alongside byID, so a
--- name-only entry can arise only in the legacy UnitAura branch, which 12.0 never reaches.
+-- second-guess it. In combat the ID index is incomplete by construction (new auras are
+-- invisible to the instance maps), and the trusted-cache merge can leave a name-only entry
+-- (its byName half does not apply the expiring-buff skip its byID half does).
 local function HasBuffByName(buffName)
     if not buffName then return false end
     local auras = RefreshAuraCache()
@@ -932,7 +921,7 @@ end
 -- Native Spell Classification Functions (12.0 Compliant)
 --------------------------------------------------------------------------------
 
--- Check if spell applies an aura (using native tables + name pattern fallback)
+-- Check if spell applies an aura (native classification tables)
 -- Returns: isAura, isUniqueAura
 local function IsAuraSpell(spellID)
     if not spellID then return false, false end
@@ -1002,9 +991,9 @@ function RedundancyFilter.IsPetSummonSpell(spellID)
     return StaticLookup(PET_SUMMON_EXCLUSIVE, spellID) ~= nil
 end
 
--- Check if spell is DPS-relevant for rotation queue
--- When aura detection is blocked, only show spells that are clearly offensive/rotational
--- Uses name-based heuristics since we don't have LibPlayerSpells flags
+-- Check if spell is DPS-relevant for rotation queue.
+-- When aura detection is blocked, only show spells that are clearly offensive/rotational:
+-- static classification (raid buffs, forms/stances) - no name heuristics.
 local function IsDPSRelevant(spellID)
     if not spellID then return false end
     
@@ -1013,11 +1002,10 @@ local function IsDPSRelevant(spellID)
         return false
     end
     
-    -- Known pet summons: Hide when can't check if pet exists
-    if StaticLookup(PET_SUMMON_SPELLS, spellID) then
-        return false
-    end
-    
+    -- (Pet summons / Revive Pet are NOT here: pet existence is readable in combat
+    -- - step 4 of IsSpellRedundant answers them exactly, and parking them behind
+    -- this aura gate hid the summon from a petless class mid-fight.)
+
     -- Known unique auras (forms/stances): Hide when can't check if active
     if StaticLookup(UNIQUE_AURA_SPELLS, spellID) then
         return false
@@ -1026,11 +1014,6 @@ local function IsDPSRelevant(spellID)
     -- Form/stance spells not already in UNIQUE_AURA_SPELLS: check FormCache
     if FormCache and FormCache.GetFormIDBySpellID
             and FormCache.GetFormIDBySpellID(spellID) ~= nil then
-        return false
-    end
-
-    -- Pet revive (ID-based)
-    if IsPetReviveSpell(spellID) then
         return false
     end
 
@@ -1059,19 +1042,16 @@ local function IsPetAlive()
 end
 
 --------------------------------------------------------------------------------
--- Rogue Poison Detection (cast-based inference)
--- Poisons are hour-long buffs; once observed via cast tracking assume active until combat ends
+-- Rogue Poison Detection (out of combat; in combat step 2 suppresses poisons outright)
 -- This avoids querying aura state which may return secret values
 --------------------------------------------------------------------------------
 
 -- Poison CAST spell IDs (what C_AssistedCombat recommends) are single-sourced from
 -- SpellDB.ROGUE_POISON_CAST_IDS (captured at the top of this file; derived there
--- from CLASS_MAINTAINED_BUFFS.ROGUE). Tracked via UNIT_SPELLCAST_SUCCEEDED ->
--- inCombatActivations; hour-long buffs, safe to assume active once cast observed.
+-- from CLASS_MAINTAINED_BUFFS.ROGUE). Hour-long buffs, read from the aura cache.
 
 -- Poison AURA spell IDs (what appears in the player's buff list)
 -- Source: 12.0 Midnight Exclusion Whitelist
--- Primary detection uses cast tracking (inCombatActivations) for reliability
 local ROGUE_POISON_BUFF_IDS = {
     -- Lethal Poisons (aura IDs from whitelist)
     [2823] = true,   -- Deadly Poison
@@ -1088,33 +1068,20 @@ local function IsRoguePoisonSpell(spellID)
     return spellID and ROGUE_POISON_CAST_IDS[spellID]
 end
 
--- Count how many poison buffs are currently active on the player
--- Count active poison buffs using cast-based inference (12.0 compatible)
--- Priority: Cast tracking > Aura cache by ID > Aura cache by name
--- Poisons are 1-hour buffs, safe to assume active once cast is observed
+-- Count how many poison buffs are currently active on the player.
+-- Out-of-combat only by construction: step 2 of IsSpellRedundant returns for every
+-- poison while in combat, so this never runs with cast tracking populated (that
+-- table is combat-only and wiped on exit) - the aura cache by buff spell ID.
 local function CountActivePoisonBuffs()
     local auras = RefreshAuraCache()
     local count = 0
     local foundNames = {}  -- Track poison names to avoid double-counting
 
-    -- PRIMARY: Cast-based inference via UNIT_SPELLCAST_SUCCEEDED
-    -- Most reliable in combat - doesn't depend on aura API (may return secrets)
-    -- Poisons are hour-long buffs, safe to assume active until combat ends
-    for spellID in pairs(ROGUE_POISON_CAST_IDS) do
-        if inCombatActivations[spellID] then
-            count = count + 1
-            local spellInfo = GetCachedSpellInfo(spellID)
-            if spellInfo and spellInfo.name then
-                foundNames[spellInfo.name] = true
-            end
-        end
-    end
-
-    -- FALLBACK 1: Aura cache by buff spell ID (works out of combat, pre-combat buffs)
+    -- Aura cache by buff spell ID (out of combat, pre-combat buffs).
     -- Also checks cached expirationTime: if less than the refresh window remains,
     -- don't count the poison as "active" - the player should reapply before or at combat start.
     -- expirationTime is a plain Lua number from the out-of-combat snapshot (or instanceToTimingMap),
-    -- so the arithmetic is valid even when the aura API returns secret values in combat.
+    -- so the arithmetic is plain.
     if auras.byID then
         local now_poison = GetTime()
         for spellID in pairs(ROGUE_POISON_BUFF_IDS) do
@@ -1144,7 +1111,6 @@ end
 
 -- Minimum time remaining to consider weapon enchant "active" (in milliseconds)
 -- 10 seconds = 10000 ms - if less than this, allow refresh
-local WEAPON_ENCHANT_REFRESH_THRESHOLD = 10000
 
 -- Shaman weapon imbue cast IDs (1 hour duration) are single-sourced from
 -- SpellDB.WEAPON_ENCHANT_SPELLS (captured at the top of this file).
@@ -1161,10 +1127,11 @@ local function HasActiveWeaponEnchant()
     
     local hasMainHand, mainHandExpiration = GetWeaponEnchantInfo()
     
-    -- Main-hand enchant required
-    -- If missing or expiring soon, allow refresh
+    -- Main-hand enchant required. "Expiring soon" is the checklist's own refresh window
+    -- (milliseconds remaining vs seconds): one number, so the queue stops hiding the
+    -- recast at the same moment the checklist starts offering it.
     if not hasMainHand then return false end
-    if mainHandExpiration and mainHandExpiration < WEAPON_ENCHANT_REFRESH_THRESHOLD then return false end
+    if mainHandExpiration and (mainHandExpiration / 1000) < RefreshWindow() then return false end
     
     return true
 end
@@ -1273,13 +1240,12 @@ function RedundancyFilter.IsSpellRedundant(spellID, profile, isDefensiveCheck)
         end
     end
 
-    -- NOTE: Cooldown filtering moved to SpellQueue.IsSpellUsable() which uses a 2s threshold
+    -- Cooldown/usability filtering is SpellQueue's (BlizzardAPI.IsSpellUsable / IsSpellReady):
     -- Position 1 doesn't get usability filtering (shows what Blizzard recommends)
     -- Positions 2+ get filtered by SpellQueue before reaching RedundancyFilter
     
-    -- Check if we have incomplete aura data (unresolved secrets after instance map resolution)
-    -- Instance maps make the raw auraAPIBlocked check redundant - hasSecrets is the
-    -- authoritative indicator of whether our aura cache is complete
+    -- Incomplete aura data: hasSecrets is the authoritative indicator (set whenever the
+    -- cache was built from the instance maps rather than a full readable scan).
     local auras = RefreshAuraCache()
     local auraDataIncomplete = auras and auras.hasSecrets
     
