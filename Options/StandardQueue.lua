@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: Options/StandardQueue - Standard Queue panel settings (sub-tabbed: Layout, Offensive Display, Defensive Display, Appearance)
+-- JustAC: Options/StandardQueue - Standard Queue panel settings (layout, offensive/defensive display, appearance sections)
 local StandardQueue = LibStub:NewLibrary("JustAC-OptionsStandardQueue", 4)
 if not StandardQueue then return end
 
@@ -12,7 +12,7 @@ local function panelDisabled(addon)
     return LibStub("JustAC-Options", true).IsStandardQueueDisabled(addon)
 end
 
--- Defensive Display subtab is always accessible when defensives are detached
+-- The Defensive Display section is always accessible when defensives are detached
 -- (detached defensives are independent of displayMode).
 local function defensiveDisabled(addon)
     local profile = addon.db.profile
@@ -354,7 +354,7 @@ function StandardQueue.CreateTabArgs(addon)
                         onSet = function() addon:UpdateFrameSize() end,
                         disabled = panelDisabled,
                     }),
-                    -- (Highlight Mode lives on General -> Shared Behavior now; the main
+                    -- (Highlight Mode lives on Display -> Shared Behavior; the main
                     -- queue's glow IS the shared setting.)
                     queueDesaturation = W.range(addon, "queueIconDesaturation", {
                         name = L["Queue Icon Fade"], desc = L["Queue Icon Fade desc"],

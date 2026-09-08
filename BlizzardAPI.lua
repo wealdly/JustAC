@@ -7,38 +7,26 @@
 -- Key functions added by each submodule:
 --   SpellQuery.lua        → GetAddon, GetProfile, GetDebugMode, GetSpellInfo, IsSpellUsable
 --   CooldownTracking.lua  → IsSpellReady, RegisterSpellForTracking, SeedLocalCooldownIfActive
---   SecretValues.lua      → IsSecretValue, AreAurasSecret, GetAuras
+--   SecretValues.lua      → GetAuras, RefreshFeatureAvailability, IsProcFeatureAvailable
+-- (IsSecretValue, Unsecret, AreCooldownsSecret, AreAurasSecret are defined here in the root.)
 --   StateHelpers.lua      → GetPlayerHealthPercent, CheckDefensiveItemState, IsTargetCCImmune
 local BlizzardAPI = LibStub:NewLibrary("JustAC-BlizzardAPI", 36)
 if not BlizzardAPI then return end
 
---------------------------------------------------------------------------------
--- Version Detection
---------------------------------------------------------------------------------
-local CURRENT_VERSION = select(4, GetBuildInfo()) or 0
-local _, CURRENT_BUILD = GetBuildInfo()
-CURRENT_BUILD = tonumber(CURRENT_BUILD) or 0
-BlizzardAPI.IS_MIDNIGHT_OR_LATER   = CURRENT_VERSION >= 120000
-
--- Build 66562 (2026-03-24): ActionButton_ApplyCooldown no longer accepts secret
--- values from addon (tainted) execution. New DurationObject-based cooldown APIs
--- replace the old start/duration passthrough for swipe rendering.
-BlizzardAPI.IS_DURATION_COOLDOWNS  = CURRENT_VERSION >= 120000
-    and CURRENT_BUILD >= 66562
-    and C_ActionBar and C_ActionBar.GetActionCooldownDuration ~= nil
+-- 12.x only (JustAC.toc pins Interface 120100): no version conditionals anywhere in
+-- the addon. A client API that is missing is a bug to fix, not a branch to keep.
 
 --------------------------------------------------------------------------------
 -- Secret Value Primitives
 --------------------------------------------------------------------------------
 -- Defined here (root) so every submodule can upvalue them at load time.
--- Blizzard's `issecretvalue` global may not exist on pre-12.0 clients.
 
 --- Returns true if the value is a secret (cannot be compared or used in arithmetic).
 --- Try the direct API call first; guard the result with this before any comparison.
 --- @param value any
 --- @return boolean
 function BlizzardAPI.IsSecretValue(value)
-    return issecretvalue ~= nil and issecretvalue(value) or false
+    return issecretvalue(value)
 end
 
 --- Extract a readable value - returns fallback when secret or nil.
@@ -53,7 +41,7 @@ end
 --- @return any                  value if readable, fallback otherwise
 function BlizzardAPI.Unsecret(value, fallback)
     if value == nil then return fallback end
-    if issecretvalue ~= nil and issecretvalue(value) then return fallback end
+    if issecretvalue(value) then return fallback end
     return value
 end
 
@@ -71,21 +59,18 @@ local C_Secrets_ShouldAurasBeSecret     = C_Secrets and C_Secrets.ShouldAurasBeS
 --- Are spell/action cooldown values secret right now?
 --- @return boolean
 function BlizzardAPI.AreCooldownsSecret()
-    if C_Secrets_ShouldCooldownsBeSecret then return C_Secrets_ShouldCooldownsBeSecret() end
-    -- Pre-predicate clients: combat is the only secrecy context
-    return BlizzardAPI.IS_MIDNIGHT_OR_LATER and InCombatLockdown() or false
+    return C_Secrets_ShouldCooldownsBeSecret()
 end
 
 --- Are unit aura contents secret right now? (Per-spell NeverSecret exemptions
 --- override this - see RedundancyFilter's exemption handling.)
 --- @return boolean
 function BlizzardAPI.AreAurasSecret()
-    if C_Secrets_ShouldAurasBeSecret then return C_Secrets_ShouldAurasBeSecret() end
-    return BlizzardAPI.IS_MIDNIGHT_OR_LATER and InCombatLockdown() or false
+    return C_Secrets_ShouldAurasBeSecret()
 end
 
 --------------------------------------------------------------------------------
--- Action Bar Usability Helper (shared by IsSpellReady + IsSpellUsable)
+-- Action Bar Usability Helper (IsSpellUsable's fallback when the spell read is secret)
 --------------------------------------------------------------------------------
 -- Event-driven usability cache, populated by ACTION_USABLE_CHANGED.
 -- Keyed by absolute action slot number → {usable, noMana}.
@@ -113,7 +98,7 @@ end
 --- switch, ACTIONBAR_SLOT_CHANGED, vehicle enter/exit).
 function BlizzardAPI.InvalidateSlotUsabilityCache()
     wipe(slotUsabilityCache)
-    -- Also invalidate the reverse slot→spell map for CDR flip detection
+    -- Also invalidate the reverse slot→spell map behind the usable-flip charge hints
     if BlizzardAPI.InvalidateReverseSlotMap then
         BlizzardAPI.InvalidateReverseSlotMap()
     end

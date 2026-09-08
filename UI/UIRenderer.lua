@@ -30,9 +30,8 @@ local WAIT_LABEL = ((L and L["WAIT"]) or "WAIT"):lower()
 local GetTime = GetTime
 local C_Spell_GetSpellCharges = C_Spell and C_Spell.GetSpellCharges
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
--- Modern-first item APIs (same signatures); the bare legacy globals may not exist.
-local GetItemCooldown = (C_Item and C_Item.GetItemCooldown) or GetItemCooldown
-local GetItemSpell    = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+local GetItemCooldown = C_Item.GetItemCooldown
+local GetItemSpell    = C_Item.GetItemSpell
 local C_ActionBar_GetActionCooldown = C_ActionBar and C_ActionBar.GetActionCooldown
 local C_ActionBar_GetActionCharges = C_ActionBar and C_ActionBar.GetActionCharges
 local C_ActionBar_GetActionCooldownDuration = C_ActionBar and C_ActionBar.GetActionCooldownDuration
@@ -42,7 +41,6 @@ local C_AssistedCombat_GetNextCastSpell = C_AssistedCombat and C_AssistedCombat.
 local C_Spell_GetSpellCooldownDuration = C_Spell and C_Spell.GetSpellCooldownDuration
 local C_Spell_GetSpellChargeDuration = C_Spell and C_Spell.GetSpellChargeDuration
 local C_DurationUtil_CreateDuration = C_DurationUtil and C_DurationUtil.CreateDuration
-local IS_DURATION_COOLDOWNS = BlizzardAPI.IS_DURATION_COOLDOWNS
 
 local C_ActionBar_IsUsableAction = C_ActionBar and C_ActionBar.IsUsableAction
 local C_ActionBar_IsActionInRange = C_ActionBar and C_ActionBar.IsActionInRange
@@ -62,7 +60,7 @@ local POSITION_HOLD_TIME = 0.05
 -- state toggles transiently (e.g. during GCD processing).
 local GLOW_HOLD_TIME = 0.05
 
--- Normalize a raw WoW hotkey string to the MODIFIER-KEY format used by CreateKeyPressDetector.
+-- Normalize a raw WoW hotkey string to the MODIFIER-KEY format KeyPressDetector matches on.
 -- Multi-modifier combos are checked first to prevent partial prefix matches.
 -- Mouse abbreviations are reversed so matching uses WoW's raw binding names (BUTTON1-N).
 -- Results are cached by raw input string (hotkeys rarely change; new bindings produce new keys).
@@ -121,8 +119,41 @@ end
 -- Stock action-bar range glyph: an unbound button shows this dot, red, only while out of range.
 local RANGE_INDICATOR = RANGE_INDICATOR or "\226\151\143"  -- "●"
 
-local function SetIconHotkeyText(icon, hotkey, showHotkeys)
+--- Central hotkey-label visibility (profile.textOverlays.hotkey.show, default on).
+local function ShowHotkeys(overlays)
+    return not overlays or not overlays.hotkey or overlays.hotkey.show ~= false
+end
+
+--- Bar lookup for a spell or an item (items key on their id + use spell).
+local function LookupHotkey(id, isItem, itemCastSpellID)
+    if not (ActionBarScanner and id) then return "" end
+    if isItem then
+        return ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(id, itemCastSpellID) or ""
+    end
+    return ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
+end
+
+--- The ONE writer for an icon's hotkey: the label and the key-press match key together,
+--- so any icon that shows a key can flash (the Sustain slot used to write the label alone
+--- and could never match a press). cachedHotkey is the change detector: normalisation
+--- runs only when the key actually moved, and the previous key is kept for the flash
+--- grace window. Clearing an icon must nil cachedHotkey too, or a reused slot with the
+--- same key string would skip the normalise and stay unmatchable.
+local function SetIconHotkey(icon, hotkey, showHotkeys)
     if not icon or not icon.hotkeyText then return end
+    hotkey = hotkey or ""
+    if icon.cachedHotkey ~= hotkey then
+        icon.cachedHotkey = hotkey
+        if hotkey ~= "" then
+            local normalized = NormalizeHotkey(hotkey)
+            if icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
+                icon.previousNormalizedHotkey = icon.normalizedHotkey
+            end
+            icon.normalizedHotkey = normalized
+        else
+            icon.normalizedHotkey = nil
+        end
+    end
     local displayHotkey = showHotkeys and hotkey or ""
     -- An empty hotkey may be showing the out-of-range dot; UpdateRangeHotkeyColor owns that.
     if displayHotkey == "" and icon.hotkeyText:GetText() == RANGE_INDICATOR then return end
@@ -131,20 +162,7 @@ local function SetIconHotkeyText(icon, hotkey, showHotkeys)
     end
 end
 
-local function SetIconNormalizedHotkey(icon, hotkey, trackPrevious)
-    if not icon then return end
-    if hotkey and hotkey ~= "" then
-        local normalized = NormalizeHotkey(hotkey)
-        if trackPrevious and icon.normalizedHotkey and icon.normalizedHotkey ~= normalized then
-            icon.previousNormalizedHotkey = icon.normalizedHotkey
-        end
-        icon.normalizedHotkey = normalized
-    else
-        icon.normalizedHotkey = nil
-    end
-end
-
--- Cooldown/charge display via Blizzard's ActionButton_ApplyCooldown (secret-safe passthrough).
+-- Cooldown/charge display via engine duration objects (secret-safe passthrough).
 -- Display layer: pipe secret values straight to UI widgets (Blizzard renders them).
 -- Logic layer: all readiness decisions use cached OOC data (CooldownTracking).
 local defaultCooldownInfo = { startTime = 0, duration = 0, isEnabled = 1, modRate = 1, isActive = false }
@@ -224,7 +242,7 @@ local function UpdateButtonCooldowns(button)
 
     -- Fetch cooldown + charge data for the swipe animation.
     -- Slot-based APIs handle secrets via passthrough; spell APIs return secret
-    -- structs that ActionButton_ApplyCooldown also renders correctly.
+    -- structs whose isActive/duration objects the engine renders for us.
     local cooldownInfo, chargeInfo
     -- True when cooldownInfo carries our own non-secret start/duration numbers
     -- (item or local-cache source) rather than a secret/slot struct - drives the
@@ -318,8 +336,8 @@ local function UpdateButtonCooldowns(button)
     -- Apply cooldown swipe animation.
     local ci = cooldownInfo or defaultCooldownInfo
     local chi = chargeInfo or defaultChargeInfo
-    if IS_DURATION_COOLDOWNS and button.cooldown then
-        -- Build 66562+: DurationObject path (secret-safe in tainted execution).
+    if button.cooldown then
+        -- DurationObject path (secret-safe in tainted execution).
         local showNormal = ci.isActive
         local showCharge = chi.isActive
 
@@ -420,13 +438,6 @@ local function UpdateButtonCooldowns(button)
         elseif button.chargeCooldown then
             button.chargeCooldown:Clear()
         end
-    elseif ActionButton_ApplyCooldown and button.cooldown and button.chargeCooldown then
-        -- Pre-66562 fallback: ActionButton_ApplyCooldown handles secrets internally.
-        ActionButton_ApplyCooldown(
-            button.cooldown, ci,
-            button.chargeCooldown, chi,
-            nil, nil
-        )
     end
 
     -- Apply charge / item count / empower-stage text.
@@ -484,7 +495,7 @@ local VS_WAITING = 8
 -- Shared DPS icon helpers (used by both UIRenderer and UINameplateOverlay)
 -- ─────────────────────────────────────────────────────────────────────────────
 
---- Check whether a spell is out of range. Updates icon.cachedOutOfRange.
+--- Check whether a spell is confirmed out of range (fail-open: only a definite false).
 --- @param icon table  Icon button table
 --- @param spellID number
 --- @param directSlot number|nil  Action bar slot (preferred, NeverSecret)
@@ -498,8 +509,7 @@ local function CheckSpellRange(icon, spellID, directSlot)
         inRange = BlizzardAPI.SpellInRange(spellID)   -- tri-state; owns the unit-arg finding
     end
     -- Fail open: only a confirmed false shows the red state.
-    icon.cachedOutOfRange = (inRange == false)
-    return icon.cachedOutOfRange
+    return inRange == false
 end
 
 --- Update hotkey text color based on out-of-range state (stock action-bar style: the text
@@ -552,7 +562,8 @@ end
 
 --- Resolve player cast/channel state for grey-out logic.
 --- Returns: isChanneling, channelSpellID, isCasting, castSpellID
-local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID)
+--- @param defIcons table|nil  the surface's defensive icons, for the eating case below
+local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID, defIcons)
     local isChanneling = false
     local channelSpellID = nil
     local isCasting = false
@@ -578,6 +589,27 @@ local function ResolvePlayerCastState(profile, cachedChannelID, cachedCastID)
         local remaining = PlayerCastingBarFrame.value
         if remaining and not BlizzardAPI.IsSecretValue(remaining) and remaining < CHANNEL_EARLY_UNGREY then
             isCasting = false
+        end
+    end
+
+    -- Eating is aura-based, NOT a spell channel (no cast bar, no UnitChannelInfo), and uses a
+    -- generic "Food" aura distinct from the food's on-use spell. While it's granting the buff,
+    -- treat the shown food buff icon as the channel target so the queue greys out and it shows
+    -- the fill. Ends when Well Fed lands (~10s), not when the meal does - same window the fill
+    -- sweep runs to, so the grey-out lifts exactly as the sweep completes. Lives here so both
+    -- surfaces get it (the overlay used to call the plain resolver and never greyed for food).
+    if not isChanneling and not isCasting and defIcons and profile.greyOutWhileCasting ~= false then
+        local SDB = LibStub("JustAC-SpellDB", true)
+        if SDB and SDB.IsEatingForBuff and SDB.IsEatingForBuff() then
+            for _, dicon in ipairs(defIcons) do
+                if dicon:IsShown() and dicon.isItem and dicon.itemCastSpellID
+                        and SDB.GetPrecombatBuffCategory
+                        and SDB.GetPrecombatBuffCategory(dicon.itemID) == "food" then
+                    isChanneling = true
+                    channelSpellID = dicon.itemCastSpellID
+                    break
+                end
+            end
         end
     end
 
@@ -697,12 +729,13 @@ local function ClearIconState(icon)
     icon.itemID = nil
     icon.itemCastSpellID = nil
     icon.iconTexture:Hide()
+    -- A fill left running over an emptied slot animated on, and its flag then made the
+    -- next channeling occupant skip StartChannelFill.
+    if icon._hasChannelFill and UIAnimations then UIAnimations.StopChannelFill(icon) end
     if icon.cooldown then icon.cooldown:Clear(); icon.cooldown:Hide() end
     if icon.chargeCooldown then icon.chargeCooldown:Clear(); icon.chargeCooldown:Hide() end
     if icon.centerText then icon.centerText:Hide() end
     if icon.chargeText then icon.chargeText:Hide() end
-    icon._cooldownShown        = false
-    icon._chargeCooldownShown  = false
     icon._lastCooldownID       = nil
     icon.castingHighlightShown = false
     icon.cachedHotkey          = nil
@@ -713,7 +746,6 @@ local function ClearIconState(icon)
     icon.lastOutOfRange        = nil
     icon.lastVisualState       = nil
     icon.lastBaseDesaturation  = nil
-    icon.cachedOutOfRange      = nil
     icon.normalizedHotkey      = nil
     icon.lastSpellSetTime      = nil
     icon.lastRenderedGlow      = nil
@@ -930,6 +962,9 @@ local function SetDefensiveIconVisible(defensiveIcon, visible)
         defensiveIcon:Show()
     end
     defensiveIcon:SetAlpha(visible and 1 or 0)
+    -- Plain mirror of the alpha: IsShown() stays true for an alpha-hidden slot, so it
+    -- cannot tell HideDefensiveIcon whether there is anything left to clear.
+    defensiveIcon._defVisible = visible and true or false
 end
 
 --- True if casting this spell starts no global cooldown, so the next ability can be
@@ -963,7 +998,7 @@ end
 -- The static class is cached per spell; the proc state is read live per render.
 -- castTime is static spell metadata (not a live/secret value), but the compare is
 -- guarded just in case, failing safe to "hardcast" (proc-gated, never a false yes).
-local issecretvalue = issecretvalue  -- 12.0 global; nil on older clients
+local issecretvalue = issecretvalue
 local C_SpellActivationOverlay_IsSpellOverlayed =
     C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
 local moveCastClassCache = {}
@@ -1149,11 +1184,6 @@ local function ClearMaintenanceSlot(icon)
 end
 UIRenderer.ClearMaintenanceSlot = ClearMaintenanceSlot
 
---- Render the defensive maintenance slot ("position 0" of the defensive queue).
---- The split that makes this work: the SWIPE shows the aura's real remaining time, drawn
---- by the engine from a DurationObject we never read, while our own logic only ever sees
---- the up/down/unknown boolean. So the player gets an exact timer for a value that is
---- secret to the addon.
 --- Resolve a per-surface glow-mode value against the shared master. "shared" is a
 --- storage sentinel that matches no mode string, so a site that forgets this resolve
 --- silently disables every glow - one owner, consumed by both renderers and the
@@ -1168,6 +1198,11 @@ end
 -- Lazy module refs (these load after this file): resolved once, not per render pass.
 local MaintenanceTrackerRef, DefensiveEngineRef, UIHealthBarRef
 
+--- Render the defensive maintenance slot ("position 0" of the defensive queue).
+--- The split that makes this work: the SWIPE shows the aura's real remaining time, drawn
+--- by the engine from a DurationObject we never read, while our own logic only ever sees
+--- the up/down/unknown boolean. So the player gets an exact timer for a value that is
+--- secret to the addon.
 function UIRenderer.RenderMaintenanceSlot(addon, icon)
     if not icon then return end
     local MT = MaintenanceTrackerRef
@@ -1235,6 +1270,11 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         icon.iconTexture:SetTexture(mIcon)
         icon.iconTexture:Show()
         icon.iconTexture:SetDesaturation(0)
+        -- Full reset, not desaturation alone: the slot may carry the grey/blue tint of an
+        -- unusable spell it showed a moment ago, and the state memo must not let the
+        -- spell path skip its repaint on the way back.
+        icon.iconTexture:SetVertexColor(1, 1, 1, 1)
+        icon.lastVisualState = nil
         if icon.cooldown then
             if ccDurObj and icon.cooldown.SetCooldownFromDurationObject then
                 pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, ccDurObj)
@@ -1244,9 +1284,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
         end
         if icon.chargeText then icon.chargeText:Hide() end
         local to = profile.textOverlays
-        local showHotkeys = not to or not to.hotkey or to.hotkey.show ~= false
-        icon.cachedHotkey = key
-        SetIconHotkeyText(icon, key, showHotkeys)
+        local showHotkeys = ShowHotkeys(to)
+        SetIconHotkey(icon, key, showHotkeys)
         -- Always the burst, never the ants: being held is not an early warning. Stop the ants
         -- first in case the escape claimed a slot that was mid-warning - same escalation rule
         -- as the maintenance path below, and the states share one field.
@@ -1564,12 +1603,8 @@ function UIRenderer.RenderMaintenanceSlot(addon, icon)
     -- lost its keybind here alone. AceDB supplies a default today, which is the only reason that
     -- never surfaced - do not "simplify" this back.
     local to = profile.textOverlays
-    local showHotkeys = not to or not to.hotkey or to.hotkey.show ~= false
-    if not icon.cachedHotkey then
-        icon.cachedHotkey = (ActionBarScanner and ActionBarScanner.GetSpellHotkey
-            and ActionBarScanner.GetSpellHotkey(displayID)) or ""
-    end
-    SetIconHotkeyText(icon, icon.cachedHotkey, showHotkeys)
+    local showHotkeys = ShowHotkeys(to)
+    SetIconHotkey(icon, icon.cachedHotkey or LookupHotkey(displayID), showHotkeys)
     UpdateRangeHotkeyColor(icon, CheckSpellRange(icon, displayID, nil),
         profile.textOverlays and profile.textOverlays.hotkey and profile.textOverlays.hotkey.color)
 
@@ -1669,15 +1704,10 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
         -- Into a temp, not straight onto iconTexture: GetItemInfo returns nil for an item
         -- the client hasn't cached yet, which would erase the icon GetItemIconByID already
         -- resolved from the ID alone and send us down the bail-out path for nothing.
-        local cachedIcon
-        if C_Item and C_Item.GetItemInfo then
-            _, _, _, _, _, _, _, _, _, cachedIcon = C_Item.GetItemInfo(id)
-        elseif GetItemInfo then
-            _, _, _, _, _, _, _, _, _, cachedIcon = GetItemInfo(id)
-        end
+        local cachedIcon = select(10, C_Item.GetItemInfo(id))
         iconTexture = cachedIcon or iconTexture
         if not iconTexture then
-            iconTexture = GetItemIcon and GetItemIcon(id)
+            iconTexture = C_Item.GetItemIconByID(id)
         end
         if not iconTexture then
             if addon.MarkDefensiveDirty then addon:MarkDefensiveDirty() end
@@ -1751,20 +1781,15 @@ function UIRenderer.ShowDefensiveIcon(addon, id, isItem, defensiveIcon, showGlow
 
     -- Hotkey visibility and key-press flash are central settings (both surfaces).
     local defOverlays = addon.db and addon.db.profile and addon.db.profile.textOverlays
-    local showHotkeys = not defOverlays or not defOverlays.hotkey or defOverlays.hotkey.show ~= false
+    local showHotkeys = ShowHotkeys(defOverlays)
     local showFlash = addon.db and addon.db.profile and addon.db.profile.showFlash ~= false
     local hotkey = ""
     if showHotkeys or showFlash then
-        if isItem then
-            hotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(id, defensiveIcon.itemCastSpellID) or ""
-        else
-            hotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
-        end
+        hotkey = LookupHotkey(id, isItem, defensiveIcon.itemCastSpellID)
     end
     
-    -- When showHotkeys is off, keep normalized hotkey for flash matching.
-    SetIconHotkeyText(defensiveIcon, hotkey, showHotkeys)
-    SetIconNormalizedHotkey(defensiveIcon, hotkey, true)
+    -- When showHotkeys is off, the match key is still kept for the flash.
+    SetIconHotkey(defensiveIcon, hotkey, showHotkeys)
 
     defensiveIcon.isWaiting = waiting or nil
     if defensiveIcon.centerText then
@@ -1812,49 +1837,22 @@ end
 function UIRenderer.HideDefensiveIcon(defensiveIcon, keepSlot)
     if not defensiveIcon then return end
 
-    if defensiveIcon:IsShown() or defensiveIcon.currentID then
-        UIAnimations.StopDefensiveGlow(defensiveIcon)
-        UIAnimations.StopPrecombatGlow(defensiveIcon)
-        UIAnimations.HideProcGlow(defensiveIcon)
-        defensiveIcon.appliedDefGlowState = nil
-        defensiveIcon.pendingDefGlowState = nil
-        defensiveIcon.spellID = nil
-        defensiveIcon.itemID = nil
-        defensiveIcon.itemCastSpellID = nil
+    -- Something to clear: the slot is visible (alpha) or still holds an entry. Every
+    -- defensive rebuild calls this for each empty slot, so an already-cleared one must
+    -- cost a field read, not a full clear.
+    if defensiveIcon._defVisible or defensiveIcon.currentID then
+        -- The shared clear (ids, textures, cooldowns, hotkey + match key, cue dot, glows via
+        -- StopAllGlows, channel fill) plus the defensive-only state on top of it.
+        ClearIconState(defensiveIcon)
         defensiveIcon.currentID = nil
-        defensiveIcon.isItem = nil
         defensiveIcon.isPrecombatBuff = nil
         defensiveIcon.isWaiting = nil
-        -- Clear both markers with the rest of the slot state, or a pooled icon reused for
-        -- an on-GCD / non-move-castable spell keeps a stale cue.
-        ApplyCueDot(defensiveIcon, false, false)
-        if defensiveIcon.centerText then defensiveIcon.centerText:Hide() end
-        defensiveIcon.iconTexture:Hide()
-        -- Ensure clean state on reuse.
-        if defensiveIcon.cooldown then
-            defensiveIcon.cooldown:Hide()
-            defensiveIcon.cooldown:Clear()
-        end
-        if defensiveIcon.chargeCooldown then
-            defensiveIcon.chargeCooldown:Hide()
-            defensiveIcon.chargeCooldown:Clear()
-        end
-        -- Flags must be reset so UpdateButtonCooldowns re-shows widgets on reuse.
-        defensiveIcon._cooldownShown = nil
-        defensiveIcon._chargeCooldownShown = nil
-        defensiveIcon.normalizedHotkey = nil
         defensiveIcon.previousNormalizedHotkey = nil
-        defensiveIcon.hotkeyText:SetText("")
-        -- Reset usability visual state
         defensiveIcon.cachedDefUsable = nil
         defensiveIcon.cachedDefNoResource = nil
-        defensiveIcon.lastVisualState = nil
         defensiveIcon.lastDefUsableCheck = nil
         defensiveIcon.iconTexture:SetDesaturation(0)
         defensiveIcon.iconTexture:SetVertexColor(1, 1, 1, 1)
-        if defensiveIcon.chargeText then
-            defensiveIcon.chargeText:Hide()
-        end
 
         -- Per-icon fades are disabled everywhere; show/hide instantly. Never call the
         -- protected frame Hide()/Show() here (see SetDefensiveIconVisible): alpha 0 hides.
@@ -1940,22 +1938,11 @@ end
 -- Full interrupt-slot teardown for RenderInterruptSlot (the overlay keeps its
 -- own lighter detach path that preserves slot state for re-attach).
 function UIRenderer.HideInterruptIcon(intIcon)
-    intIcon.spellID = nil
-    intIcon.iconTexture:Hide()
-    if intIcon.cooldown then intIcon.cooldown:Clear(); intIcon.cooldown:Hide() end
-    intIcon._cooldownShown       = false
-    intIcon._chargeCooldownShown = false
-    intIcon.normalizedHotkey     = nil
-    intIcon.cachedHotkey         = nil
-    intIcon.cachedOutOfRange     = nil
-    intIcon.lastOutOfRange       = nil
-    intIcon.lastVisualState      = nil
-    intIcon.hotkeyText:SetText("")
+    ClearIconState(intIcon)   -- ids, textures, cooldowns, hotkey + match key, proc glow
     intIcon.iconTexture:SetDesaturation(0)
     if UIAnimations then
         UIAnimations.HideInterruptProcGlow(intIcon)
         UIAnimations.HideInterruptCastBar(intIcon)
-        if intIcon.hasProcGlow then UIAnimations.HideProcGlow(intIcon); intIcon.hasProcGlow = false end
         intIcon.hasInterruptGlow = false
     end
     if intIcon.castAura then
@@ -1994,9 +1981,7 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
 
     if ctx.resolvedInterrupts and ctx.active and interruptMode ~= "disabled" then
         -- Shared evaluation: both renderers see identical state and share one debounce timer.
-        local intResult           = CastInterruptTracker
-            and CastInterruptTracker.EvaluateInterrupt(ctx.resolvedInterrupts, interruptMode, ctx.now)
-            or { shouldShow = false, spellID = nil, castBar = nil, interruptMode = interruptMode }
+        local intResult           = CastInterruptTracker.EvaluateInterrupt(ctx.resolvedInterrupts, interruptMode, ctx.now)
         local shouldShowInterrupt = intResult.shouldShow
         local intSpellID          = intResult.spellID
         local castBar             = intResult.castBar
@@ -2016,8 +2001,6 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
                     intIcon.iconTexture:SetTexture(info.iconID)
                     intIcon.iconTexture:Show()
                 end
-                intIcon._cooldownShown       = false
-                intIcon._chargeCooldownShown = false
                 intIcon.cachedHotkey         = nil
             end
 
@@ -2026,10 +2009,8 @@ function UIRenderer.RenderInterruptSlot(intIcon, ctx)
             end
 
             if spellChanged or ctx.updateCooldowns or not intIcon.cachedHotkey then
-                local hotkey = ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(intSpellID) or ""
-                intIcon.cachedHotkey = hotkey
-                SetIconHotkeyText(intIcon, hotkey, ctx.showHotkeys)
-                SetIconNormalizedHotkey(intIcon, hotkey, false)
+                local hotkey = LookupHotkey(intSpellID)
+                SetIconHotkey(intIcon, hotkey, ctx.showHotkeys)
             end
 
             -- Red text = out of interrupt range (per-frame; IsSpellInRange is cheap).
@@ -2181,6 +2162,53 @@ local function ResolveGlowState(position, spellID, showPrimaryGlow, showProcGlow
     return GLOW_NONE
 end
 
+local itemIconInfoCache = {}
+local function ItemIconInfo(itemID)
+    local cached = itemIconInfoCache[itemID]
+    if cached then return cached end
+    local itemIcon = C_Item.GetItemIconByID(itemID)
+    if not itemIcon then return nil end
+    cached = { iconID = itemIcon }
+    itemIconInfoCache[itemID] = cached
+    return cached
+end
+
+--- Render slot 1 as the assist's WAIT state (sentinel path - GetNextCastSpell answered
+--- nil in combat while the assist was available; see SpellQueue._StagePrimary). Same
+--- presentation as the placeholder-spell wait the engine hands us directly (timer icon
+--- 134377 + the WAIT label), so the two shapes are indistinguishable on screen.
+local function RenderWaitSlot(icon, i, ctx)
+    -- On the TRANSITION into the wait only (the wait persists across ticks at 20-33Hz):
+    -- the full clear, not a hand-picked subset - a partial one left the displaced
+    -- spell's cue dot / casting highlight / spread arrow drawing over the timer and
+    -- its match key answering key presses.
+    if not icon.isWaitingSpell then
+        ClearIconState(icon)
+        ClearExecuteCue(icon)
+        icon.currentID = nil
+        icon.isWaitingSpell = true
+        local tex = icon.iconTexture
+        if tex then
+            tex:SetTexture(134377)
+            tex:Show()
+            tex:SetDesaturated(false)
+            tex:SetVertexColor(1, 1, 1)
+        end
+        if icon.centerText then
+            icon.centerText:SetText(WAIT_LABEL)
+            icon.centerText:Show()
+        end
+    end
+    -- Same surface plumbing as the normal path: without it an overlay slot hidden
+    -- by hideEmptySlots last tick would keep the wait invisible, at stale scale/alpha.
+    if ctx.firstIconScale then
+        local targetScale = (i == 1) and ctx.firstIconScale or 1.0
+        if icon:GetScale() ~= targetScale then icon:SetScale(targetScale) end
+    end
+    if not icon:IsShown() then icon:Show() end
+    if ctx.opacity then icon:SetAlpha(ctx.opacity) end
+end
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Shared per-icon DPS queue render (standard queue + nameplate overlay).
 -- ctx is built once per render pass by the caller and carries every per-surface
@@ -2206,55 +2234,6 @@ end
 -- Cached per itemID: item icons never change, and the uncached version allocated
 -- a fresh table per item icon per render pass. A miss (icon not loaded yet) is
 -- deliberately NOT negative-cached so it retries until the item data streams in.
-local itemIconInfoCache = {}
-local function ItemIconInfo(itemID)
-    local cached = itemIconInfoCache[itemID]
-    if cached then return cached end
-    local itemIcon = GetItemIcon and GetItemIcon(itemID) or (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(itemID))
-    if not itemIcon then return nil end
-    cached = { iconID = itemIcon }
-    itemIconInfoCache[itemID] = cached
-    return cached
-end
-
---- Render slot 1 as the assist's WAIT state (sentinel path - GetNextCastSpell answered
---- nil in combat while the assist was available; see SpellQueue._StagePrimary). Same
---- presentation as the placeholder-spell wait the engine hands us directly (timer icon
---- 134377 + the WAIT label), so the two shapes are indistinguishable on screen.
-local function RenderWaitSlot(icon, i, ctx)
-    if icon.spellID or icon.currentID then
-        UIAnimations.StopAllGlows(icon)
-    end
-    ClearExecuteCue(icon)
-    if icon._hasChannelFill then UIAnimations.StopChannelFill(icon) end
-    icon.spellID, icon.currentID, icon.isItem, icon.itemID = nil, nil, nil, nil
-    icon.itemCastSpellID = nil
-    icon.cachedHotkey = nil
-    icon.isWaitingSpell = true
-    local tex = icon.iconTexture
-    if tex then
-        tex:SetTexture(134377)
-        if not tex:IsShown() then tex:Show() end
-        tex:SetDesaturated(false)
-        tex:SetVertexColor(1, 1, 1)
-    end
-    if icon.hotkeyText then icon.hotkeyText:SetText("") end
-    if icon.centerText then
-        icon.centerText:SetText(WAIT_LABEL)
-        icon.centerText:Show()
-    end
-    if icon.cooldown then icon.cooldown:Clear() end
-    if icon.chargeCooldown then icon.chargeCooldown:Clear() end
-    -- Same surface plumbing as the normal path: without it an overlay slot hidden
-    -- by hideEmptySlots last tick would keep the wait invisible, at stale scale/alpha.
-    if ctx.firstIconScale then
-        local targetScale = (i == 1) and ctx.firstIconScale or 1.0
-        if icon:GetScale() ~= targetScale then icon:SetScale(targetScale) end
-    end
-    if not icon:IsShown() then icon:Show() end
-    if ctx.opacity then icon:SetAlpha(ctx.opacity) end
-end
-
 local function RenderQueueIcon(icon, i, ctx)
     -- WAIT sentinel first: it is a number in item-id space, and everything below
     -- treats numeric ids as spells/items - this is the one consumer that knows it.
@@ -2285,9 +2264,17 @@ local function RenderQueueIcon(icon, i, ctx)
     -- icon doesn't change right as the player commits to it.
     if i == 1 and spellID and icon.spellID and icon.spellID ~= spellID then
         if icon.lastPressTime and (currentTime - icon.lastPressTime) < POSITION_HOLD_TIME then
-            spellID = icon.spellID
-            spellInfo = GetCachedSpellInfo(icon.spellID)
-            if not spellInfo then spellID = nil end
+            -- Items too (negative ids), like the positions-2+ hold below: looking an
+            -- item up as a spell found nothing, cleared the slot for a tick and
+            -- restarted the glow - the very flicker the hold exists to prevent.
+            local heldInfo = (icon.spellID < 0) and ItemIconInfo(-icon.spellID)
+                or GetCachedSpellInfo(icon.spellID)
+            if heldInfo then
+                spellID = icon.spellID
+                spellInfo = heldInfo
+                isItemEntry = spellID < 0
+                itemID = isItemEntry and -spellID or nil
+            end
         end
     elseif i > 1 and spellID and icon.spellID and icon.spellID ~= spellID then
         local holdElapsed = currentTime - (icon.lastSpellSetTime or 0)
@@ -2330,8 +2317,6 @@ local function RenderQueueIcon(icon, i, ctx)
                 end
             end
             icon.lastSpellSetTime = currentTime
-            icon._cooldownShown       = false
-            icon._chargeCooldownShown = false
             icon.cachedIsUsable = nil
             icon.cachedNotEnoughResources = nil
             icon.lastUsabilityCheck = nil
@@ -2481,27 +2466,16 @@ local function RenderQueueIcon(icon, i, ctx)
         -- Empty results ("") are retried so the scanner's 0.25s refresh
         -- can resolve proc overrides (Infernal Bolt, Ruination, etc.)
         -- that miss on the first frame before GetOverrideSpell propagates.
-        local hotkey
-        local hotkeyChanged = false
-        if ctx.refreshHotkeys or spellChanged or not icon.cachedHotkey or icon.cachedHotkey == "" then
+        local hotkey = icon.cachedHotkey
+        if ctx.refreshHotkeys or spellChanged or not hotkey or hotkey == "" then
             if isItemEntry then
-                hotkey = ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(itemID, icon.itemCastSpellID) or ""
+                hotkey = LookupHotkey(itemID, true, icon.itemCastSpellID)
             else
-                hotkey = (ctx.lookupHotkeys and ActionBarScanner.GetSpellHotkey) and ActionBarScanner.GetSpellHotkey(spellID) or ""
+                hotkey = ctx.lookupHotkeys and LookupHotkey(spellID) or ""
             end
-            if icon.cachedHotkey ~= hotkey then
-                hotkeyChanged = true
-            end
-            icon.cachedHotkey = hotkey
-        else
-            hotkey = icon.cachedHotkey
         end
-
-        -- When showHotkeys is off, keep normalized hotkey for flash matching.
-        SetIconHotkeyText(icon, hotkey, ctx.showHotkeys)
-        if hotkeyChanged then
-            SetIconNormalizedHotkey(icon, hotkey, true)
-        end
+        -- When showHotkeys is off, the match key is still kept for the flash.
+        SetIconHotkey(icon, hotkey, ctx.showHotkeys)
 
         -- Range/usability support: slot-based with spell fallback.
         local directSlot
@@ -2588,8 +2562,6 @@ end
 local renderCtx = {}
 local interruptCtx = {}
 
--- Small ST / CLEAVE / AOE readout above the queue (debug mode only) so the active
--- context is a glance, not guesswork. Lazily created; hidden when debug is off.
 -- Danger cue: "a mob near you is casting something lethal". One texture per nearby caster,
 -- all stacked in the same spot - each one's alpha is driven from that caster's (possibly
 -- secret) important-cast verdict, so ANY of them lighting up lights the cue. Stacking is what
@@ -2646,6 +2618,8 @@ local function UpdateImportantCastCue(addon, profile)
     end
 end
 
+-- Small ST / CLEAVE / AOE readout above the queue (debug mode only) so the active
+-- context is a glance, not guesswork. Lazily created; hidden when debug is off.
 local function UpdateContextIndicator(addon, profile)
     local mf = addon.mainFrame
     if not mf then return end
@@ -2806,27 +2780,8 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     local showCastingHighlight = profile.showCastingHighlight ~= false
     
     -- Shared cast/channel state (used by both standard queue and nameplate overlay).
-    isChanneling, channelSpellID, isCasting, castSpellID = ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
-
-    -- Eating is aura-based, NOT a spell channel (no cast bar, no UnitChannelInfo), and uses a
-    -- generic "Food" aura distinct from the food's on-use spell. While it's granting the buff,
-    -- treat the shown food buff icon as the channel target so the queue greys out and it shows
-    -- the fill. Ends when Well Fed lands (~10s), not when the meal does - same window the fill
-    -- sweep runs to, so the grey-out lifts exactly as the sweep completes.
-    local SDB = LibStub("JustAC-SpellDB", true)
-    if not isChanneling and not isCasting and addon.defensiveIcons
-            and profile.greyOutWhileCasting ~= false
-            and SDB and SDB.IsEatingForBuff and SDB.IsEatingForBuff() then
-        for _, dicon in ipairs(addon.defensiveIcons) do
-            if dicon:IsShown() and dicon.isItem and dicon.itemCastSpellID
-                    and SDB.GetPrecombatBuffCategory
-                    and SDB.GetPrecombatBuffCategory(dicon.itemID) == "food" then
-                isChanneling = true
-                channelSpellID = dicon.itemCastSpellID
-                break
-            end
-        end
-    end
+    isChanneling, channelSpellID, isCasting, castSpellID =
+        ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID, addon.defensiveIcons)
 
     -- Cooldown throttle: shared by defensive and offensive icon updates below.
     local shouldUpdateCooldowns = (currentTime - lastCooldownUpdate) >= COOLDOWN_UPDATE_INTERVAL
@@ -2847,18 +2802,9 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
                 if hotkeysDirty or not defIcon.cachedHotkey or defIcon.cachedHotkey == "" then
                     local defID = defIcon.currentID
                     if defID then
-                        local defHotkey
-                        if defIcon.isItem then
-                            defHotkey = ActionBarScanner and ActionBarScanner.GetItemHotkey and ActionBarScanner.GetItemHotkey(defID, defIcon.itemCastSpellID) or ""
-                        else
-                            defHotkey = ActionBarScanner and ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(defID) or ""
-                        end
-                        local defShowHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
-                        if defIcon.cachedHotkey ~= defHotkey then
-                            defIcon.cachedHotkey = defHotkey
-                            SetIconNormalizedHotkey(defIcon, defHotkey, true)
-                        end
-                        SetIconHotkeyText(defIcon, defHotkey, defShowHotkeys)
+                        local defHotkey = LookupHotkey(defID, defIcon.isItem, defIcon.itemCastSpellID)
+                        local defShowHotkeys = ShowHotkeys(textOverlays)
+                        SetIconHotkey(defIcon, defHotkey, defShowHotkeys)
                     end
                 end
                 -- Throttled cooldown widget refresh.
@@ -2872,7 +2818,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
     -- Offensive icon rendering requires spellIcons; defensive loop above runs regardless.
     if not spellIconsRef then return end
 
-    local showHotkeys = not textOverlays or not textOverlays.hotkey or textOverlays.hotkey.show ~= false
+    local showHotkeys = ShowHotkeys(textOverlays)
     local showFlash = profile.showFlash ~= false
 
     -- Glow frames at incorrect scale appear when hidden with active glows.
@@ -2903,7 +2849,7 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         ictx.profile            = profile
         ictx.showHotkeys        = showHotkeys
         ictx.hotkeyColor        = textOverlays and textOverlays.hotkey and textOverlays.hotkey.color
-        ictx.opacity            = profile.frameOpacity
+        ictx.opacity            = nil   -- a mainFrame child: inherits frameOpacity, must not apply it twice
         ictx.sootheSpellID      = soothe and soothe[1] and soothe[1].spellID
         UIRenderer.RenderInterruptSlot(intIcon, ictx)
     end
@@ -3030,18 +2976,11 @@ function UIRenderer.RenderSpellQueue(addon, spellIDs)
         if not isFading then
             df:SetAlpha(frameOpacity)
         end
-    elseif addon.defensiveIcons then
-        -- Blanket alpha write, on the MAIN queue's cadence rather than the defensive
-        -- rebuild's. Nothing here may have an engine-driven alpha: this sweep would
-        -- overwrite it on a different beat and the icon would flicker (that is exactly
-        -- what the health top-off's old health curve did). Anything needing engine-owned
-        -- alpha belongs outside this array, like the maintenance slot.
-        for _, defIcon in ipairs(addon.defensiveIcons) do
-            if defIcon then
-                defIcon:SetAlpha(frameOpacity)
-            end
-        end
     end
+    -- Attached defensive icons are mainFrame children and inherit its alpha above.
+    -- No per-icon sweep: their own alpha is their VISIBILITY (0 = hidden, see
+    -- SetDefensiveIconVisible), and a sweep here re-showed every emptied slot's
+    -- chrome and squared the opacity of the shown ones.
     
     lastFrameState.shouldShow = shouldShowFrame
     lastFrameState.spellCount = spellCount
@@ -3098,13 +3037,6 @@ function UIRenderer.OpenHotkeyOverrideDialog(addon, id)
     StaticPopup_Show("JUSTAC_HOTKEY_OVERRIDE", nil, nil, {id = id})
 end
 
---- Cached per-frame (≤0.015 s); both renderers share the same answer and debounce timer.
---- Delegates to CastInterruptTracker which owns all interrupt state.
----
---- @param resolvedInts  table?   ordered {spellID, type} array from SpellDB.ResolveInterruptSpells
---- @param interruptMode string   "kickOnly" | "ccPrefer"
---- @param currentTime   number   GetTime() value from the caller
---- @return table  { shouldShow, spellID, castBar } - reused each call; do NOT hold across frames
 function UIRenderer.SetCombatState(inCombat)
     isInCombat = inCombat
 end
@@ -3117,10 +3049,11 @@ function UIRenderer.SetChannelSpellID(spellID)
     cachedChannelSpellID = spellID
 end
 
-function UIRenderer.ResolvePlayerCastState(profile)
-    return ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID)
+function UIRenderer.ResolvePlayerCastState(profile, defIcons)
+    return ResolvePlayerCastState(profile, cachedChannelSpellID, cachedCastSpellID, defIcons)
 end
 
-UIRenderer.UpdateButtonCooldowns = UpdateButtonCooldowns
 UIRenderer.MoveCastDotEnabled    = MoveCastDotEnabled
 UIRenderer.RenderQueueIcon       = RenderQueueIcon
+UIRenderer.NormalizeHotkey       = NormalizeHotkey   -- the soothe cue stamps its own match key
+UIRenderer.ShowHotkeys           = ShowHotkeys

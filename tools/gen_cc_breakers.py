@@ -145,8 +145,6 @@ def main():
         "    return mechanic and MECHANIC_BREAKERS[mechanic] or nil",
         "end",
         "",
-        "lib.MECHANIC_BREAKERS = MECHANIC_BREAKERS",
-        "",
     ]
     OUT.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {OUT} - {total} breaker entries across "

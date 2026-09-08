@@ -4,8 +4,9 @@
 --
 -- Consumes imported action priority lists (flattened, per context) and hands the
 -- queue a spell list for positions 2+. Each entry may carry secret-safe GATES
--- (cooldown / dot / proc / buff-window / execute / targets) classified offline by
--- tools/gen_simc_rotations.py; the runtime evaluator (SpellQueue) applies them.
+-- (buff-window / cooldown / dot / execute / health / power / resource / stack) classified
+-- offline by tools/gen_simc_rotations.py; SpellQueue evaluates the buff, resource, power,
+-- health, stack and execute kinds (cd/dot are informational, read by the diagnostics).
 -- This module reads no combat state, so it is safe under 12.0 secret values.
 --
 -- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
@@ -15,8 +16,9 @@ local RotationImport = LibStub:NewLibrary("JustAC-RotationImport", 1)
 if not RotationImport then return end
 
 -- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
--- entry = { id = <spellID>, gates = { {t="cd"}, {t="dot",id=..}, {t="proc"},
---           {t="buff",id=..,neg=bool}, {t="execute"}, {t="targets",..} }, delegated = bool,
+-- entry = { id = <spellID>, gates = { {t="buff",id=..,neg=bool}, {t="cd"}, {t="dot",id=..},
+--           {t="execute",pct=..}, {t="health",pct=..}, {t="power",..}, {t="resource",..},
+--           {t="stack",id=..,op=..,n=..} }, delegated = bool,
 --           empower = <release stage for an empowered cast, absent for everything else> }
 -- burst = plain spell ids: the APL's sync anchors (what SimC pots/trinkets
 -- into), consumed by SpellQueue's burst-ready cue.

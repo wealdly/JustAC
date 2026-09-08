@@ -1,0 +1,10 @@
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
+# plain damage filler - core abilities, execute and target-count conditions only, no
+# hero-talent branches. Anything the character does not know is dropped at runtime, and
+# healing spells never reach the damage queue.
+
+actions=judgment
+actions+=/hammer_of_wrath,if=target.health.pct<20
+actions+=/divine_toll,if=active_enemies>=3
+actions+=/consecration,if=active_enemies>=2
+actions+=/crusader_strike

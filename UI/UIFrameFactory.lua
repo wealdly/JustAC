@@ -27,10 +27,9 @@ local GRAB_TAB_LENGTH = (UIHealthBar and UIHealthBar.GRAB_TAB_LENGTH) or 12
 -- rather than baked in at construction, since which colour a half takes depends on how
 -- many cues are active.
 
---- Where a sub-icon attached to the interrupt slot should sit: the interrupt's cast aura and
---- the soothe cue's cleansed-aura clone BOTH hang off that slot and must agree, or one of them
---- lands on top of the maintenance button. Returning the anchor from one place is the point -
---- they were duplicated and immediately drifted.
+--- Where a sub-icon attached to the interrupt slot should sit (the interrupt's cast aura):
+--- returned from one place so both surfaces agree and neither lands on the maintenance
+--- button.
 --- The aura always extends AWAY from the queue. The tank maintenance slot (defensive
 --- "position 0") occupies the first row out on the defensive cluster's side, so when a tank
 --- has it the aura clears that row and sits one slot further out again. Non-tanks, and
@@ -346,8 +345,8 @@ end
 --     its alpha, which is exactly the bug that silently killed the enrage cue.
 -- Resolved at CALL time, never captured at load: these APIs are not populated that early.
 --------------------------------------------------------------------------------
--- Shared so the target health bar's colour shift and the queue icon's cue agree about when
--- "execute range" starts. Two copies of this number would drift and read as a bug.
+-- The queue icon's execute cue threshold. (UIHealthBar keeps its own copy of the same 20%
+-- for the target bar's colour shift - it loads before this file.)
 -- ponytail: single 20% threshold, not the exact per-spec window; make it per-spec if one feels
 -- off (Kill Shot and Hammer of Wrath are 20%, Touch of Death differs).
 UIFrameFactory.EXECUTE_FRACTION = 0.20
@@ -478,15 +477,6 @@ local function RegisterMasque(button, actualIconSize, profile)
     UIFrameFactory.ApplyTextOverlaySettings(button, actualIconSize, profile and profile.textOverlays)
 end
 
--- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
--- Returns a button with all visual layers, cooldown frames, hotkey text and fade
--- animations pre-built.  Positioning is left to the caller.
---
--- Parameters:
---   parent       - parent Frame
---   size         - icon size in pixels
---   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
---   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
 local function CreateRoundedActionIconMask(parent, size, ...)
     local maskSize = math_floor((size * 1.5) + 0.5)
     local iconMask = parent:CreateMaskTexture(nil, "ARTWORK")
@@ -507,8 +497,26 @@ local function ApplyActionButtonBorderGeometry(texture, parent, size)
     texture:SetSize(size + 1, size)
 end
 
-UIFrameFactory.CreateRoundedActionIconMask = CreateRoundedActionIconMask
-UIFrameFactory.ApplyActionButtonBorderGeometry = ApplyActionButtonBorderGeometry
+--- Every icon this factory builds, for the callers that must reach ALL of them by
+--- construction rather than by a hand-kept list of addon fields (the key-press flash
+--- lost the Sustain slot and both overlay position-0 icons that way). Weak-keyed;
+--- ReleaseIcon drops the entry on teardown.
+UIFrameFactory.icons = setmetatable({}, { __mode = "k" })
+
+--- The one teardown for a registered icon (the soothe cue included, with the flash host
+--- it keeps beside itself): glows off, hidden, orphaned, unregistered. pcall'd because the
+--- cue is an engine-driven container whose methods are not all ours to call.
+function UIFrameFactory.ReleaseIcon(icon)
+    if not icon then return end
+    if UIAnimations and UIAnimations.StopAllGlows then UIAnimations.StopAllGlows(icon) end
+    pcall(icon.Hide, icon)
+    pcall(icon.SetParent, icon, nil)
+    if icon.flashHost then
+        icon.flashHost:Hide()
+        icon.flashHost:SetParent(nil)
+    end
+    UIFrameFactory.icons[icon] = nil
+end
 
 --- A small icon pinned to a parent slot, showing an aura related to that slot (what the enemy
 --- is casting, what is about to be soothed). Shared so every surface anchors it the same way.
@@ -537,6 +545,33 @@ function UIFrameFactory.CreateAuraSubIcon(parent, iconSize, profile, orientation
     return aura
 end
 
+--- The key-press flash overlay: a frame just outside `anchorTo`'s border carrying the
+--- flash texture (returned as `.Flash`, the field UIAnimations.StartFlash reads). Shared
+--- by every icon and by the soothe cue, whose flash must live OUTSIDE the engine-owned
+--- slot it marks. Caller sets the frame level.
+function UIFrameFactory.CreateFlashFrame(parent, anchorTo, size)
+    local flashFrame = CreateFrame("Frame", nil, parent)
+    flashFrame:SetPoint("CENTER", anchorTo, "CENTER", 0.5, -0.5)
+    flashFrame:SetSize(size + 2, size + 2)
+    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
+    flashTexture:SetAllPoints(flashFrame)
+    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
+    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
+    flashTexture:SetBlendMode("ADD")
+    flashTexture:Hide()
+    flashFrame.Flash = flashTexture
+    return flashFrame
+end
+
+-- Helper: Build the shared icon skeleton used by both DPS and Defensive buttons.
+-- Returns a button with all visual layers, cooldown frames, hotkey text and fade
+-- animations pre-built.  Positioning is left to the caller.
+--
+-- Parameters:
+--   parent       - parent Frame
+--   size         - icon size in pixels
+--   isClickable  - add Pushed/Highlight textures (false for nameplate icons)
+--   isFirstIcon  - use HOTKEY_OFFSET_FIRST instead of HOTKEY_OFFSET_QUEUE
 local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     local button = CreateFrame("Button", nil, parent)
     if not button then return nil end
@@ -566,19 +601,9 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     button.IconMask = iconMask
 
     -- Flash overlay (slightly outside the border, hidden until proc triggers it)
-    local flashFrame = CreateFrame("Frame", nil, button)
-    flashFrame:SetPoint("CENTER", button, "CENTER", 0.5, -0.5)
-    flashFrame:SetSize(size + 2, size + 2)
+    local flashFrame = UIFrameFactory.CreateFlashFrame(button, button, size)
     flashFrame:SetFrameLevel(button:GetFrameLevel() + 6)
-
-    local flashTexture = flashFrame:CreateTexture(nil, "OVERLAY", nil, 0)
-    flashTexture:SetAllPoints(flashFrame)
-    flashTexture:SetAtlas("UI-HUD-ActionBar-IconFrame-Mouseover")
-    flashTexture:SetVertexColor(1.5, 1.2, 0.3, 1.0)
-    flashTexture:SetBlendMode("ADD")
-    flashTexture:Hide()
-
-    button.Flash = flashTexture
+    button.Flash = flashFrame.Flash
     button.FlashFrame = flashFrame
 
     -- Cooldown container: SetClipsChildren clips swipe to icon bounds
@@ -602,7 +627,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     cooldown:SetReverse(false)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
 
-    -- Cooldown countdown text - stored for per-frame show/hide and ApplyTextOverlaySettings
+    -- Cooldown countdown text - stored for ApplyTextOverlaySettings and the maintenance aura's style copy
     local cooldownText = cooldown:GetRegions()
     button.cooldownText = (cooldownText and cooldownText.SetFont) and cooldownText or nil
 
@@ -811,8 +836,6 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     button.currentID = nil
     button.isItem = nil
 
-    button._cooldownShown = false
-    button._chargeCooldownShown = false
     button.castingHighlightShown = false
 
     button.normalizedHotkey = nil
@@ -834,6 +857,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     -- It must be called by each caller AFTER Masque:AddButton(), so our anchor
     -- overrides whatever position Masque's skin applies to the HotKey element.
 
+    UIFrameFactory.icons[button] = true
     return button
 end
 -- Export for UINameplateOverlay (builds the shared skeleton; callers handle strata + Masque)
@@ -959,8 +983,6 @@ local function CreateSingleDefensiveButton(addon, profile, index, actualIconSize
     return button
 end
 
--- Creates the detached defensive frame (UIParent child) with fade animations.
--- Mirrors CreateMainFrame pattern. Called by CreateDefensiveIcons when detached=true.
 -- Attaches frame.fadeIn / frame.fadeOut Alpha animation groups (0↔1, SetToFinalAlpha).
 -- onInFinished / onOutFinished: optional OnFinished callbacks.
 local function AddFadeAnims(frame, duration, onInFinished, onOutFinished)
@@ -986,6 +1008,8 @@ local function AddFadeAnims(frame, duration, onInFinished, onOutFinished)
 end
 
 -- Sole caller (CreateDefensiveIcons) destroys any existing detached frame/grab tab first.
+-- Creates the detached defensive frame (UIParent child) with fade animations.
+-- Mirrors CreateMainFrame pattern. Called by CreateDefensiveIcons when detached=true.
 local function CreateDetachedDefensiveFrame(addon)
     local profile = addon:GetProfile()
     if not profile then return end
@@ -1407,8 +1431,7 @@ local function CreateDefensiveIcons(addon, profile)
         if icon then
             if StopDefensiveGlow then StopDefensiveGlow(icon) end
             if MasqueGroup then MasqueGroup:RemoveButton(icon) end
-            icon:Hide()
-            icon:SetParent(nil)
+            UIFrameFactory.ReleaseIcon(icon)
         end
     end
     wipe(defensiveIcons)
@@ -1420,8 +1443,7 @@ local function CreateDefensiveIcons(addon, profile)
     if addon.maintenanceIcon then
         if UIAnimations then UIAnimations.HideColoredProcGlow(addon.maintenanceIcon, "maintenanceGlow") end
         if MasqueGroup then MasqueGroup:RemoveButton(addon.maintenanceIcon) end
-        addon.maintenanceIcon:Hide()
-        addon.maintenanceIcon:SetParent(nil)
+        UIFrameFactory.ReleaseIcon(addon.maintenanceIcon)
         addon.maintenanceIcon = nil
     end
 
@@ -1643,12 +1665,9 @@ local function CreateInterruptIcon(addon, profile)
         if MasqueGroup then
             MasqueGroup:RemoveButton(stdInterruptIcon)
         end
-        if stdInterruptIcon.sootheCue then
-            stdInterruptIcon.sootheCue:Hide()
-            stdInterruptIcon.sootheCue:SetParent(nil)
-        end
-        stdInterruptIcon:Hide()
-        stdInterruptIcon:SetParent(nil)
+        UIFrameFactory.ReleaseIcon(stdInterruptIcon.sootheCue)
+        stdInterruptIcon.sootheCue = nil
+        UIFrameFactory.ReleaseIcon(stdInterruptIcon)
         stdInterruptIcon = nil
     end
     addon.interruptIcon = nil
@@ -1731,7 +1750,6 @@ local function CreateInterruptIcon(addon, profile)
     -- the interrupt button.  Always placed on the side away from the queue
     -- so it doesn't overlap icon 1.
     local castAura = UIFrameFactory.CreateAuraSubIcon(button, actualIconSize, profile, orientation)
-    castAura.spellID = nil
     castAura:Hide()  -- shown only while an interruptible cast is up (driven by UIRenderer)
     button.castAura = castAura
 
@@ -1757,8 +1775,7 @@ function UIFrameFactory.CreateSpellIcons(addon)
             if spellIcons[i].cooldown then
                 spellIcons[i].cooldown:Hide()
             end
-            spellIcons[i]:Hide()
-            spellIcons[i]:SetParent(nil)
+            UIFrameFactory.ReleaseIcon(spellIcons[i])
         end
     end
     wipe(spellIcons)

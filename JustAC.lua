@@ -404,7 +404,7 @@ local function MigrateLegacySettings(profile)
                 npoOv[key].show = nil
                 npoOv[key].color = nil
                 npoOv[key].anchor = nil
-                -- Keep fontScale if it exists; remove entry entirely if only fontScale remains at default
+                -- fontScale stays: the overlay keeps its own label sizing.
             end
         end
     end
@@ -905,7 +905,8 @@ function JustAC:OnDisable()
     -- AceEvent unregisters its own events on disable; mirror for our unit frames
     if self.unitEventFrame then self.unitEventFrame:UnregisterAllEvents() end
     if self.targetHealthFrame then self.targetHealthFrame:UnregisterAllEvents() end
-    
+    for _, f in ipairs(self.partyHealthFrames or {}) do f:UnregisterAllEvents() end
+
     if EventRegistry then
         EventRegistry:UnregisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", self)
         EventRegistry:UnregisterCallback("AssistedCombatManager.RotationSpellsUpdated", self)
@@ -1485,10 +1486,12 @@ function JustAC:OnCombatEvent(event)
         if UIAnimations and UIAnimations.PauseAllGlows then
             UIAnimations.PauseAllGlows(self)
         end
-        self:InvalidateCaches({auras = true})
+        -- Activations first: the aura invalidation prunes them (a full aura
+        -- rebuild per entry), which is wasted work on a table wiped right after.
         if RedundancyFilter and RedundancyFilter.ClearActivationTracking then
             RedundancyFilter.ClearActivationTracking()
         end
+        self:InvalidateCaches({auras = true})
         -- Drop DoT tracking so no stale suppression carries into the next pull.
         if DotTracker and DotTracker.Reset then
             DotTracker.Reset()
@@ -1627,14 +1630,10 @@ function JustAC:OnShapeshiftFormChanged()
     local form = GetShapeshiftForm and GetShapeshiftForm() or 0
     if form == self.lastShapeshiftForm then return end
     self.lastShapeshiftForm = form
-    -- Form changes (Druid Cat/Bear/etc.) can change which abilities are usable; clear the
-    -- cached gap-closer list and reset the range debounce so the next GetGapCloserSpell
-    -- re-evaluates fresh. (Melee detection is now form-independent via IsSpellInRange, so
-    -- there's no action-slot to re-query.)
-    if GapCloserEngine then
-        GapCloserEngine.InvalidateGapCloserCache()
-        GapCloserEngine.ClearRangeState()
-    end
+    -- Form changes (Druid Cat/Bear/etc.) can change which abilities are usable; reset
+    -- the range debounce so the next GetGapCloserSpell re-evaluates fresh. (Melee
+    -- detection is form-independent via IsSpellInRange, so there's no slot to re-query.)
+    if GapCloserEngine then GapCloserEngine.ClearRangeState() end
     if FormCache and FormCache.InvalidateCache then FormCache.InvalidateCache() end
     -- Defensive: bar-paging forms co-fire UPDATE_BONUS_ACTIONBAR which refreshes
     -- the scanner's form/bonus state hash, but don't depend on that ordering -
@@ -1898,17 +1897,16 @@ end
 -- cast in combat via the GCD cascade, and again OOC as things come off cooldown). In
 -- combat, dirty flags only - the 20-33Hz poll picks them up within one tick, and
 -- zeroing the timer per event woke the loop on every frame of a burst. OOC, coalesce
--- the burst and let the 0.5s idle cycle pick it up rather than waking the loop
--- dozens of times.
-local function MarkQueuesDirtyThrottled()
+-- the burst: a flag set here lifts the loop from its 0.5s idle to 10Hz for a tick,
+-- with a full offensive AND defensive rebuild each, so continuous OOC cooldown churn
+-- must not turn into 10 rebuilds/s. An event the throttle drops is not lost: a
+-- visible queue rebuilds on every 0.5s idle wake and the defensives every 1s.
+local function MarkQueuesDirty()
     if not UnitAffectingCombat("player") then
         local now = GetTime()
-        if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then
-            return
-        end
+        if (now - lastOOCDirtyEvent) < OOC_EVENT_DIRTY_THROTTLE then return end
         lastOOCDirtyEvent = now
     end
-
     spellQueueDirty = true
     defensiveQueueDirty = true
 end
@@ -1918,7 +1916,7 @@ function JustAC:OnActionUsableChanged(_, changes)
     if BlizzardAPI and BlizzardAPI.OnActionUsableChanged then
         BlizzardAPI.OnActionUsableChanged(changes)
     end
-    MarkQueuesDirtyThrottled()
+    MarkQueuesDirty()
 end
 
 -- Both handlers compare FRAMES, not unit tokens: the old UnitIsUnit(nameplateUnit, "target")
@@ -1973,7 +1971,9 @@ function JustAC:OnPetChanged(event, unit)
         UINameplateOverlay.InvalidateBarLayout()
     end
     self:OnHealthChanged(nil, "pet")
-    self:ForceUpdate()
+    -- Both queues: the direct call above can be swallowed by the engine's 0.1s
+    -- throttle, and only the dirty flag makes the loop retry.
+    self:ForceUpdateAll()
 end
 
 function JustAC:OnEquipmentChanged(event, slot, hasCurrent)
@@ -1995,6 +1995,12 @@ end
 
 function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     if unit ~= "player" then return end
+
+    -- Flash whichever visible icon shows what was just cast - the signal that covers
+    -- every input route the key hook can't see (macros, click-casting, mouse 1-2).
+    if KeyPressDetector and KeyPressDetector.FlashSpell then
+        KeyPressDetector.FlashSpell(self, spellID)
+    end
 
     if UnitAffectingCombat("player") and RedundancyFilter and RedundancyFilter.RecordSpellActivation then
         RedundancyFilter.RecordSpellActivation(spellID)
@@ -2041,9 +2047,8 @@ function JustAC:OnSpellcastSucceeded(event, unit, castGUID, spellID)
     -- SecretWhenUnitSpellCastRestricted, which exempts us) - not NeverSecret; a per-spell
     -- AlwaysSecret override can still apply, so the IsSecretValue guard stays.
     if SpellDB and SpellDB.IsCrowdControlSpell(spellID) then
-        -- One call covers both renderers: the CC debounce state lives in UIRenderer and the
-        -- overlay reads it from there. (The overlay used to carry a forwarder for this; it had
-        -- no callers and is gone - do not re-add one, call UIRenderer directly.)
+        -- One call covers both renderers: the CC debounce state lives in CastInterruptTracker
+        -- and both surfaces read it from there.
         if CastInterruptTracker and CastInterruptTracker.NotifyCCApplied then CastInterruptTracker.NotifyCCApplied() end
         -- Notify CC-failure learning: if the target was mid-cast, check shortly after
         -- whether that cast actually stopped.
@@ -2104,7 +2109,7 @@ function JustAC:OnPlayerChannelStop(event, unit)
 end
 
 function JustAC:OnCooldownUpdate()
-    MarkQueuesDirtyThrottled()
+    MarkQueuesDirty()
 end
 
 --- Marks queues dirty and ensures the next OnUpdate tick processes immediately.
@@ -2256,15 +2261,9 @@ function JustAC:OpenOptionsPanel()
         if Options.RefreshAllDynamic then Options.RefreshAllDynamic(self) end
     end
 
-    if BlizzardAPI and BlizzardAPI.IS_MIDNIGHT_OR_LATER then
-        local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)
-        if AceConfigDialog then
-            AceConfigDialog:Open("JustAssistedCombat")
-        end
-    else
-        if Settings and Settings.OpenToCategory then
-            Settings.OpenToCategory("JustAssistedCombat")
-        end
+    local AceConfigDialog = LibStub("AceConfigDialog-3.0", true)
+    if AceConfigDialog then
+        AceConfigDialog:Open("JustAssistedCombat")
     end
 end
 
@@ -2275,7 +2274,7 @@ end
 -- occurs in event handlers - they only set dirty flags and reset the timer.
 --
 -- Tier 1 (spell queue):     combat: CVar rate clamped to 0.03-0.05s (20-33Hz);
---                           OOC: event-dirty at max(CVar, 0.15s), else idle
+--                           OOC: event-dirty at max(CVar, 0.1s), else idle
 -- Tier 2 (widget refresh):  UIFrameFactory.COOLDOWN_UPDATE_INTERVAL (0.08s, ~12Hz)
 --                           inside the render pass - CD swipes, charges, hotkey re-lookup
 -- Tier 3 (defensive rebuild): event-dirty (health/aura/cooldown/usability/cast events),

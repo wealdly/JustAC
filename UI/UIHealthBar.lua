@@ -25,7 +25,7 @@ local POWER_BAR_HEIGHT = 3   -- Resource bars are half height, distinct from hea
 local BAR_TEXTURE = "Interface\\Buttons\\WHITE8X8"
 local BAR_SPACING = 3         -- Spacing between health bar and queue icons
 
--- Export constants for UIFrameFactory to calculate defensive icon offset
+-- Exported: TargetFrameAnchor reserves sidebar space from these.
 UIHealthBar.BAR_HEIGHT = BAR_HEIGHT
 UIHealthBar.BAR_SPACING = BAR_SPACING
 UIHealthBar.POWER_BAR_HEIGHT = POWER_BAR_HEIGHT  -- shared with the nameplate overlay's resource bars
@@ -99,10 +99,6 @@ local lastPetUpdate = 0
 local lastVisibleCount = -1     -- cached visible icon count (defensive mode only)
 local lastPetVisibleCount = -1  -- cached visible icon count for pet bar
 
--- Create the health bar frame.
--- Two modes:
---   Defensives enabled  + defensives.showHealthBar → spans defensive cluster, floats ABOVE it
---   Defensives disabled + defensives.showHealthBar → spans offensive queue, sits at BAR_SPACING above mainFrame
 -- 1px black tube bevel on statusBar's OVERLAY layer (engine can't clobber it).
 -- Horizontal bars bevel top+bottom; vertical bars bevel left+right. Alphas: 0.35 outer / 0.16 inner.
 -- Returns the four strips. Pass startHidden when the caller builds BOTH orientations up
@@ -205,6 +201,10 @@ local ResizeBarToCount
 -- key, fill color, stacking offset, low-health pulse, dead overlay, pet-class gate)
 -- come from the BAR_KINDS entry; placement is delegated to ResizeBarToCount so the
 -- builder and the dynamic resizer cannot drift.
+-- Create the health bar frame.
+-- Two modes:
+--   Defensives enabled  + defensives.showHealthBar → spans defensive cluster, floats ABOVE it
+--   Defensives disabled + defensives.showHealthBar → spans offensive queue, sits at BAR_SPACING above mainFrame
 local function BuildHealthBar(addon, kind)
     if not addon or not addon.db or not addon.db.profile then return nil end
     local profile = addon.db.profile
@@ -357,7 +357,6 @@ function UIHealthBar.Update(addon)
     end
 end
 
--- Show the health bar
 -- Diagnostics accessor (the glow-inventory probe centers its search box here).
 function UIHealthBar.GetFrame()
     return healthBarFrame
@@ -377,12 +376,12 @@ function UIHealthBar.Hide()
 end
 
 -- Update health bar size to match current queue dimensions
--- Recreate on orientation change to ensure layout and tick correctness
+-- Recreate on orientation change to ensure layout correctness
 function UIHealthBar.UpdateSize(addon)
     if not addon or not addon.db or not addon.db.profile then return end
     
     -- If orientation might have changed, safer to recreate
-    -- Simple resize won't update StatusBar orientation or tick marks
+    -- Simple resize won't update the StatusBar orientation
     if healthBarFrame then
         UIHealthBar.Destroy()
     end
@@ -390,13 +389,6 @@ function UIHealthBar.UpdateSize(addon)
     UIHealthBar.CreateHealthBar(addon)
 end
 
---- Dynamically resize the health bar to match the number of visible defensive icons.
---- Only operates when the bar is in defensive-dims mode (useDefensiveDims = true).
---- When visibleCount is 0, the bar falls back to offensive-queue positioning so it
---- remains visible even when defensive icons are hidden (e.g. "When Health Low" mode
---- at high health).
---- @param addon table  The main addon object
---- @param visibleCount number  Number of currently visible defensive icons (0 = fallback to offensive)
 -- Shared resizer for the player and pet health bars. The public wrappers handle
 -- the frame / defensive-dims / count-cache guards; this resizes and repositions
 -- `frame` for `visibleCount` visible defensive icons, with the pet's stacking
@@ -549,6 +541,13 @@ ResizeBarToCount = function(addon, frame, kind, visibleCount)
     frame:Show()
 end
 
+--- Dynamically resize the health bar to match the number of visible defensive icons.
+--- Only operates when the bar is in defensive-dims mode (useDefensiveDims = true).
+--- When visibleCount is 0, the bar falls back to offensive-queue positioning so it
+--- remains visible even when defensive icons are hidden (e.g. "When Health Low" mode
+--- at high health).
+--- @param addon table  The main addon object
+--- @param visibleCount number  Number of currently visible defensive icons (0 = fallback to offensive)
 function UIHealthBar.ResizeToCount(addon, visibleCount)
     if not healthBarFrame then return end
     if not healthBarFrame.useDefensiveDims then return end  -- offensive-mode bar: skip
@@ -1189,7 +1188,6 @@ end
 -- hiding a valid target).
 local function ShouldShowTargetBar()
     if not UnitExists("target") then return false end
-    if not UnitCanAttack then return true end
     local ok, canAttack = pcall(UnitCanAttack, "player", "target")
     if ok and canAttack ~= nil and not (BlizzardAPI and BlizzardAPI.IsSecretValue(canAttack)) then
         return canAttack == true

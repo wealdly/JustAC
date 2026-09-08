@@ -45,7 +45,7 @@ cancel_buff cancel_action invoke_external_buff do_treacherous_transmitter_task
 any_dnd any_blink call_action_list run_action_list
 berserking blood_fury arcane_torrent ancestral_call fireblood bag_of_tricks
 lights_judgment gift_of_the_naaru stoneform will_of_the_forsaken haymaker
-rocket_barrage arcane_pulse bag trinket1 trinket2 counterstrike_totem
+rocket_barrage arcane_pulse thorn_bloom bag trinket1 trinket2 counterstrike_totem
 cat_form bear_form moonkin_form travel_form prowl shadowmeld summon_pet apply_poison
 counterspell kick pummel mind_freeze wind_shear skull_bash rebuke disrupt muzzle quell
 silence solar_beam spear_hand_strike counter_shot spell_lock
@@ -63,6 +63,7 @@ SKIP |= set("""
 ardent_defender barkskin celestial_brew charge chi_torpedo demon_spikes desperate_prayer
 earth_elemental heroic_leap ignore_pain ironfur last_stand purifying_brew regrowth roll
 rune_tap shield_block shield_wall sprint tombstone vampiric_blood verdant_embrace word_of_glory
+antimagic_shell
 stealth bloodlust heroism spiritwalkers_grace lightning_shield natures_swiftness
 hover black_ox_brew
 """.split())
@@ -97,7 +98,12 @@ CURATED = {
         "pierce_the_veil": 1245483, "predators_wake": 1259431, "reapers_toll": 1245470,
     },
     "DRUID_1": {"full_moon": 274283, "half_moon": 274282, "stellar_flare": 202347, "warrior_of_elune": 202425},
-    "DRUID_3": {"pulverize": 80313, "thrash_bear": 77758, "swipe_bear": 213771},
+    # wild_guardian: the Guardian tree exposes only PASSIVE "Wild Guardian" nodes; the castable
+    # button is the actionbar-override target (SpellEffect EffectAura=332) 1269658 - CSV-grounded 2026-09-08.
+    "DRUID_3": {"pulverize": 80313, "thrash_bear": 77758, "swipe_bear": 213771, "wild_guardian": 1269658},
+    # Circle of the Wild (474530) gives Restoration a cat-form filler list; the FORMS guard
+    # makes every _cat token curated-only and this key was missing.
+    "DRUID_4": {"swipe_cat": 106785},
     "HUNTER_1": {"bloodshed": 321530, "call_of_the_wild": 359844, "multishot": 2643},
     "HUNTER_3": {"butchery": 212436, "coordinated_assault": 360952, "flanking_strike": 269751,
                  "mongoose_bite": 259387, "raptor_bite": 186270, "spearhead": 360966},
@@ -182,6 +188,19 @@ def split_and(expr):
     return [a.strip() for a in atoms if a.strip()]
 
 
+def has_top_level_or(expr):
+    """True when `expr` has a `|` outside any parentheses."""
+    depth = 0
+    for ch in expr:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "|" and depth == 0:
+            return True
+    return False
+
+
 # Discrete (countable) class resources only - see classify_atom for why continuous ones stay
 # delegated. `soul_shards`/`runes` plural forms normalize to the singular token the runtime uses.
 # `.deficit` (max - current) is how APLs express pooling - "don't spend while
@@ -207,12 +226,21 @@ def classify_atom(atom, resolve):
     a = atom.lstrip("!")
     if "|" in a or "(" in a:
         return None, True  # compound / OR -> conservatively delegate
-    if re.match(r'cooldown\.\w+\.(ready|up|remains)', a):
+    # fullmatch, not match: a PREFIX match swallows the atom's comparison tail, so
+    # `cooldown.x.remains>10` would emit a bare readiness gate (the opposite of what the
+    # line asks) and `buff.x.react<2` ("not capped") an is-up gate. Anchored, any atom
+    # carrying a tail falls through to delegation - the fail-safe direction. The newer
+    # handlers below already do this (stack anchors with $, the resource pair uses
+    # fullmatch); these three predate that and were missed.
+    if re.fullmatch(r'cooldown\.\w+\.(ready|up|remains)', a):
         return {"t": "cd"}, False
-    m = re.match(r'dot\.(\w+)\.(refreshable|ticking|remains)', a)
+    m = re.fullmatch(r'dot\.(\w+)\.(refreshable|ticking|remains)', a)
     if m:
-        return {"t": "dot", "id": resolve(m.group(1))}, False
-    m = re.match(r'buff\.(\w+)\.(up|react|down)', a)
+        did = resolve(m.group(1))
+        if did:
+            return {"t": "dot", "id": did}, False
+        return None, True  # unknown dot -> can't evaluate -> delegate
+    m = re.fullmatch(r'buff\.(\w+)\.(up|react|down)', a)
     if m:
         buff, suf = m.group(1), m.group(2)
         bid = resolve(buff)
@@ -282,6 +310,14 @@ def classify_atom(atom, resolve):
 
 
 def classify_if(expr, resolve):
+    # SimC binds `&` tighter than `|`, so a depth-0 `|` makes the WHOLE expression a
+    # disjunction and the atoms either side of it are ALTERNATIVES. split_and would hand
+    # back atoms from opposite branches and we would emit them as jointly required - a
+    # condition the source never states. Delegate the line instead. A `|` inside parens
+    # is a different shape: `(a|b)&c` really does require c, and classify_atom already
+    # delegates the parenthesized atom on its own.
+    if has_top_level_or(expr):
+        return [], True
     gates, delegated = [], False
     for atom in split_and(expr):
         g, d = classify_atom(atom, resolve)
@@ -316,6 +352,12 @@ def tier_excludes(expr, k):
     this tier and must be dropped (an AoE-only spender must not leak into the ST list).
     A count inside an OR (`active_enemies>3|buff.x.up`) is left in place: it is not a
     necessary condition, so classify handles it as a normal/delegated gate."""
+    # `|` binds looser than `&`: in `A&B|C&active_enemies>=2` the count belongs to the
+    # second alternative only, and split_and would still surface it as a top-level atom.
+    # Same guard classify_if uses; without it Havoc's ST list misordered Annihilation
+    # and Guardian lost swipe_bear / heart_of_the_wild at every tier.
+    if has_top_level_or(expr):
+        return False
     for atom in split_and(expr):
         a = atom.strip().lstrip("!")
         if "|" in a or "(" in a:
@@ -716,6 +758,29 @@ def _selftest():
     assert g == {"t": "execute", "neg": False} and not d
     g, d = classify_atom("health.pct<35", lambda t: None)
     assert g == {"t": "health", "op": "<", "pct": 35} and not d
+
+    # ANCHORING GUARD. A prefix match swallows an atom's comparison tail and emits a gate
+    # that states the opposite of the line: `cooldown.x.remains>10` means 10s still to go,
+    # not ready, and `buff.x.react<2` ("not capped") became a plain is-up gate - which the
+    # runtime treats as a live window and promotes the ability like a proc. Anchored, an
+    # atom with a tail delegates instead.
+    assert classify_atom("cooldown.x.remains>10", lambda t: 1) == (None, True)
+    assert classify_atom("buff.x.react<2", lambda t: 1) == (None, True)
+    assert classify_atom("dot.x.remains<5", lambda t: 1) == (None, True)
+    # ...while the bare boolean forms still gate.
+    assert classify_atom("cooldown.x.ready", lambda t: 1)[0] == {"t": "cd"}
+    assert classify_atom("buff.x.up", lambda t: 7)[0] == {"t": "buff", "id": 7, "neg": False}
+    assert classify_atom("dot.x.ticking", lambda t: 7)[0] == {"t": "dot", "id": 7}
+    # An unresolved dot delegates rather than emitting an id-less gate the runtime can't use.
+    assert classify_atom("dot.x.ticking", lambda t: None) == (None, True)
+    # PRECEDENCE GUARD. `&` binds tighter than `|`, so a depth-0 `|` makes the whole line a
+    # disjunction: split_and hands back atoms from BOTH branches and emitting them together
+    # invents a requirement the source never states.
+    ids = {"a": 1, "b": 2, "c": 3}.get
+    assert classify_if("buff.a.up&buff.b.up|buff.c.up", ids) == ([], True)
+    # A parenthesized OR is not top level - `c` really is required alongside it.
+    g, d = classify_if("(buff.a.up|buff.b.up)&buff.c.up", ids)
+    assert g == [{"t": "buff", "id": 3, "neg": False}] and d
 
     # Empower tier: parsed off the mod, serialized, and part of the dedup signature. The
     # last two are what a dropped key looks like - the data still generates, just without

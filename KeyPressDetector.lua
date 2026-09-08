@@ -1,10 +1,24 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: KeyPressDetector - Flash feedback when key/mouse press matches queued spell hotkey
-local KPD = LibStub:NewLibrary("JustAC-KeyPressDetector", 2)
+-- JustAC: KeyPressDetector - Flash feedback when a key/mouse press, or a completed cast,
+-- matches a visible icon.
+--
+-- Two signals, one rule: an icon that is SHOWN and shows the pressed key (or the spell
+-- just cast) flashes. Both walk the factory's icon registry, so every icon on every
+-- surface - queue, defensives, interrupt, Sustain slot, overlay - is covered by
+-- construction; nothing here names a surface.
+--   * key press  - immediate, catches presses that don't cast (wrong target, on cooldown)
+--   * cast done  - covers what no key hook sees: macros, click-casting, mouse buttons 1-2
+-- An icon hidden by alpha (defensives at 0, an engine-hidden kick) still counts as shown:
+-- its Flash inherits the alpha and draws nothing, and that alpha may be a secret the
+-- addon must never compare, so IsShown() is the only visibility read here.
+local KPD = LibStub:NewLibrary("JustAC-KeyPressDetector", 3)
 if not KPD then return end
 
-local UIAnimations = LibStub("JustAC-UIAnimations", true)
+local UIAnimations   = LibStub("JustAC-UIAnimations", true)
+local UIFrameFactory = LibStub("JustAC-UIFrameFactory", true)
+local BlizzardAPI    = LibStub("JustAC-BlizzardAPI", true)
+local StartFlash     = UIAnimations and UIAnimations.StartFlash
 
 -- Hot path cache
 local IsShiftKeyDown = IsShiftKeyDown
@@ -14,8 +28,10 @@ local IsMouseButtonDown = IsMouseButtonDown
 local wipe = wipe
 local GetTime = GetTime
 local ipairs = ipairs
+local pairs = pairs
 local string_sub = string.sub
 local string_match = string.match
+local issecretvalue = issecretvalue
 
 -- Pooled table for key press flash matching (avoids GC pressure on every key press)
 local iconsToFlash = {}
@@ -55,11 +71,67 @@ local function HotkeyMatches(boundHotkey, pressedHotkey, hasAnyModifier)
     return false
 end
 
-local function AddMatchedIcons(out, iconList, normalizedKey, hasAnyModifier)
-    if not iconList then return end
-    for _, icon in ipairs(iconList) do
-        if icon and icon:IsShown() and HotkeyMatches(icon.normalizedHotkey, normalizedKey, hasAnyModifier) then
-            out[#out + 1] = icon
+local function FlashEnabled(addon)
+    local profile = addon and addon.db and addon.db.profile
+    return StartFlash and UIFrameFactory and UIFrameFactory.icons
+        and not (profile and profile.showFlash == false)
+end
+
+--- Flash one icon and stamp the press time slot-1 renderers hold their display on.
+local function Flash(icon, now)
+    StartFlash(icon)
+    icon.lastPressTime = now
+end
+
+--- Flash every shown icon whose key matches the press.
+local function MatchAndFlash(addon, normalizedKey, hasAnyModifier)
+    if not FlashEnabled(addon) then return end
+    wipe(iconsToFlash)
+    local now = GetTime()
+    -- A spell that just left a slot: the player pressed for the slot they were looking
+    -- at, so that slot flashes on its PREVIOUS key (grace window) and the slot the spell
+    -- moved into stays quiet.
+    local gracedSpellID
+    for icon in pairs(UIFrameFactory.icons) do
+        if icon:IsShown() then
+            local matched = HotkeyMatches(icon.normalizedHotkey, normalizedKey, hasAnyModifier)
+            if not matched and icon.previousSpellID and icon.spellChangeTime
+               and (now - icon.spellChangeTime) < HOTKEY_GRACE_PERIOD
+               and HotkeyMatches(icon.previousNormalizedHotkey, normalizedKey, hasAnyModifier) then
+                matched = true
+                gracedSpellID = icon.previousSpellID
+                icon._flashGraced = true
+            end
+            if matched then iconsToFlash[#iconsToFlash + 1] = icon end
+        end
+    end
+    for _, icon in ipairs(iconsToFlash) do
+        if not (gracedSpellID and icon.spellID == gracedSpellID and not icon._flashGraced) then
+            Flash(icon, now)
+        end
+        icon._flashGraced = nil
+    end
+end
+
+--- Flash every shown icon that displays the spell the player just cast (any input
+--- route). Called from the player's UNIT_SPELLCAST_SUCCEEDED.
+function KPD.FlashSpell(addon, spellID)
+    if not spellID or (issecretvalue and issecretvalue(spellID)) then return end
+    if not FlashEnabled(addon) then return end
+    local display = BlizzardAPI and BlizzardAPI.GetDisplaySpellID
+        and BlizzardAPI.GetDisplaySpellID(spellID) or spellID
+    local now = GetTime()
+    for icon in pairs(UIFrameFactory.icons) do
+        if icon:IsShown() then
+            -- Items: the cast event carries the item's use spell. Spells: either form.
+            local id = icon.spellID or (not icon.isItem and icon.currentID) or nil
+            local hit = icon.itemCastSpellID == spellID
+            if not hit and id and id > 0 then
+                hit = id == spellID or id == display
+                    or (BlizzardAPI and BlizzardAPI.GetDisplaySpellID
+                        and BlizzardAPI.GetDisplaySpellID(id) == spellID)
+            end
+            if hit then Flash(icon, now) end
         end
     end
 end
@@ -99,99 +171,6 @@ function KPD.Create(addon)
     -- SetPropagateKeyboardInput is PROTECTED in combat (9.1.5+); the keyboard hook
     -- arms together with it further down - see ArmKeyboardHook.
 
-    -- Cache function reference at creation time (avoid table lookup in hot path)
-    local StartFlash = UIAnimations and UIAnimations.StartFlash
-
-    ---------------------------------------------------------------------------
-    -- Shared: match normalizedKey against all icon groups and flash matches
-    ---------------------------------------------------------------------------
-    local function MatchAndFlash(normalizedKey, hasAnyModifier)
-        if not addon or not StartFlash then return end
-
-        -- Reuse pooled table to avoid GC pressure
-        wipe(iconsToFlash)
-        local now = GetTime()
-        local slot1PrevSpellID = nil
-
-        local profile = addon.db and addon.db.profile
-
-        -- Check offensive icons (if flash enabled)
-        local spellIcons = addon.spellIcons
-        if spellIcons and (not profile or profile.showFlash ~= false) then
-            -- Check slot 1 first (special handling for spell change timing)
-            local icon1 = spellIcons[1]
-            if icon1 and icon1:IsShown() and icon1.spellID then
-                -- Grace period uses spellChangeTime (not hotkeyChangeTime) because
-                -- the hotkey often stays the same when spell changes (same action bar slot)
-                local inGracePeriod = icon1.spellChangeTime and (now - icon1.spellChangeTime) < HOTKEY_GRACE_PERIOD
-                if icon1.previousSpellID and inGracePeriod then
-                    slot1PrevSpellID = icon1.previousSpellID
-                end
-
-                -- Match: current hotkey, previous hotkey, OR any match during grace period
-                local matched = HotkeyMatches(icon1.normalizedHotkey, normalizedKey, hasAnyModifier)
-                if not matched and inGracePeriod then
-                    -- During grace period, also accept previous hotkey
-                    -- (user pressed key for the spell that just got cast)
-                    matched = HotkeyMatches(icon1.previousNormalizedHotkey, normalizedKey, hasAnyModifier)
-                end
-                if matched then
-                    iconsToFlash[#iconsToFlash + 1] = icon1
-                end
-            end
-
-            -- Check remaining slots
-            for i = 2, #spellIcons do
-                local icon = spellIcons[i]
-                if icon and icon:IsShown() and icon.spellID then
-                    -- Inline match check
-                    local matched = HotkeyMatches(icon.normalizedHotkey, normalizedKey, hasAnyModifier)
-
-                    -- Skip if same spell that was in slot 1 (just moved)
-                    if matched and slot1PrevSpellID and icon.spellID == slot1PrevSpellID then
-                        matched = false
-                    end
-
-                    if matched then
-                        iconsToFlash[#iconsToFlash + 1] = icon
-                    end
-                end
-            end
-        end
-
-        local showFlash = not profile or profile.showFlash ~= false
-
-        -- Check defensive icons (flash uses central profile.showFlash)
-        if showFlash then
-            AddMatchedIcons(iconsToFlash, addon.defensiveIcons, normalizedKey, hasAnyModifier)
-
-            -- Nameplate overlay icons
-            AddMatchedIcons(iconsToFlash, addon.nameplateIcons, normalizedKey, hasAnyModifier)
-            AddMatchedIcons(iconsToFlash, addon.nameplateDefIcons, normalizedKey, hasAnyModifier)
-        end
-
-        -- Standard queue interrupt icon is always eligible
-        local intIcon = addon.interruptIcon
-        if intIcon and intIcon:IsShown() and HotkeyMatches(intIcon.normalizedHotkey, normalizedKey, hasAnyModifier) then
-            iconsToFlash[#iconsToFlash + 1] = intIcon
-        end
-
-        -- Flash all matched icons; stamp lastPressTime on pos1 so UIRenderer
-        -- can hold its display briefly after a confirmed keypress (prevents the
-        -- icon from visually changing right as the player commits to it).
-        local now2 = GetTime()
-        local overlayIcons = addon.nameplateIcons
-        for _, icon in ipairs(iconsToFlash) do
-            StartFlash(icon)
-            -- Stamp lastPressTime on whichever surface's slot-1 icon matched so the
-            -- renderer can hold its display briefly after a confirmed keypress.
-            if icon == (spellIcons and spellIcons[1])
-               or icon == (overlayIcons and overlayIcons[1]) then
-                icon.lastPressTime = now2
-            end
-        end
-    end
-
     ---------------------------------------------------------------------------
     -- Keyboard detection (global via SetPropagateKeyboardInput)
     ---------------------------------------------------------------------------
@@ -203,14 +182,12 @@ function KPD.Create(addon)
     local function ArmKeyboardHook()
         frame:SetPropagateKeyboardInput(true)
         frame:SetScript("OnKeyDown", function(_, key)
-            if not addon or not StartFlash then return end
-
             -- Skip pure modifier keys early
             if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL" or key == "LALT" or key == "RALT" then
                 return
             end
 
-            MatchAndFlash(BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
+            MatchAndFlash(addon, BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
         end)
     end
     if InCombatLockdown() then
@@ -237,12 +214,10 @@ function KPD.Create(addon)
         if mouseUpdateAccum < MOUSE_POLL_INTERVAL then return end
         mouseUpdateAccum = 0
 
-        if not addon or not StartFlash then return end
-
         for i, btn in ipairs(MOUSE_BUTTONS) do
             local down = IsMouseButtonDown(btn.api)
             if down and not prevMouseDown[i] then
-                MatchAndFlash(BuildModifierPrefix() .. btn.binding, IsAnyModifierDown())
+                MatchAndFlash(addon, BuildModifierPrefix() .. btn.binding, IsAnyModifierDown())
             end
             prevMouseDown[i] = down
         end

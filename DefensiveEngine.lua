@@ -80,8 +80,10 @@ end
 local defensiveBuildCount = 0
 local defensiveResetTime = GetTime()
 
--- Lazy module refs (these load after this file): resolved once, not per rebuild.
-local MaintenanceTrackerRef, PrecombatEngineRef
+-- MaintenanceTracker loads before this file (TOC); PrecombatEngine after, so it is
+-- resolved lazily once, not per rebuild.
+local MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
+local PrecombatEngineRef
 
 
 -- Forward declarations for functions referenced before definition
@@ -328,7 +330,7 @@ end
 -- Spell list access
 --------------------------------------------------------------------------------
 
--- Returns the spell list for a given type ("defensiveSpells", "petHealSpells", "petRezSpells")
+-- Returns the spell list for a given type ("defensiveSpells", "petHealSpells", "petRezSpells", "groupHealSpells")
 -- for the current player class+spec from the per-spec nested structure.
 -- Resolution order: specKey ("CLASS_N") → class fallback ("CLASS").
 function DefensiveEngine.GetClassSpellList(addon, listKey)
@@ -571,11 +573,6 @@ function DefensiveEngine.OnHealthChanged(addon, event, unit)
     -- there must not also be listed in the queue beside it - that is the same icon twice in
     -- one row. (Contrast the DPS queue, which is a separate cluster: Blood's Marrowrend is
     -- allowed to appear both there and in the slot, because those carry different meanings.)
-    local MaintenanceTracker = MaintenanceTrackerRef
-    if not MaintenanceTracker then
-        MaintenanceTracker = LibStub("JustAC-MaintenanceTracker", true)
-        MaintenanceTrackerRef = MaintenanceTracker
-    end
     if MaintenanceTracker and MaintenanceTracker.IsSlotActive then
         local slotActive, mEntry = MaintenanceTracker.IsSlotActive(profile)
         -- Exclude ONLY the buff currently ON SCREEN in the slot. Excluding every maintained
@@ -750,9 +747,10 @@ local function GetUsableDefensiveSpells(addon, spellList, maxCount, alreadyAdded
     wipe(unusableBuffer)
 
     local now = GetTime()
-    -- Resolved once per build: stun/fear/silence is a state of the PLAYER, not of any
-    -- one spell, so it must not feed the per-spell ordering decisions below.
-    local locActive = BlizzardAPI.IsLossOfControlActive and BlizzardAPI.IsLossOfControlActive()
+    -- Resolved once per build: stun/fear/silence or an override bar is a state of the
+    -- PLAYER, not of any one spell, so it must not feed the per-spell ordering decisions
+    -- below. The same wide predicate the offensive queue and the item check use.
+    local locActive = BlizzardAPI.IsPlayerAbilityLockout and BlizzardAPI.IsPlayerAbilityLockout()
 
     -- Single pass: categorize spells into three priority tiers:
     --   1. Procced (instant/free cast - highest priority)
@@ -850,8 +848,7 @@ end
 --   MITIGATE - chip damage. Cheap walls lead, panic buttons sit at the bottom.
 --   MAJOR    - a real hit taken. Big heals lead, walls behind them.
 --   PANIC    - about to die. Immunity bubbles jump everything.
--- Returns a fresh table. ponytail: one small table per rebuild - rebuilds are
--- cached/throttled, so this is not worth pooling harder than it already is.
+-- Returns the pooled emergencyOrderBuf (wiped per call) - consume before the next rebuild.
 local emergencyOrderBuf = {}
 local TIER_ORDER_BY_BAND = {
     [BAND_PANIC]    = { 1, 2, 4, 3 },  -- bubble -> big heal -> wall -> rest
@@ -965,9 +962,6 @@ local function OrderEmergencyLast(list)
     return emergencyLastBuf
 end
 
--- Display order: instant procs first, then unified defensive list in user priority order.
--- overrides (optional table): displayMode, maxIcons, showProcs - override profile defaults for
--- alternate display contexts (e.g. nameplate overlay uses its own mode and icon count).
 -- Replace the Emergency Potion sentinel (a user-positioned tile in the defensive list)
 -- with the chosen or best owned healing item, as an item entry. Returns the list as-is
 -- when no sentinel is present; otherwise a resolved copy (never mutates the saved list).
@@ -1016,6 +1010,8 @@ local function ResolveEmergencyDefensives(list, profile)
     return result
 end
 
+-- Display order: instant procs first, then the unified defensive list in user priority
+-- order. overrides (optional): displayMode, maxIcons - the nameplate overlay's own values.
 function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInCombat, passedExclusions, overrides)
     local profile = addon:GetProfile()
     if not profile or not profile.defensives then return {} end
@@ -1028,12 +1024,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     end
 
     local maxIcons = (overrides and overrides.maxIcons) or profile.defensives.maxIcons or 4
-    local showProcs
-    if overrides and overrides.showProcs ~= nil then
-        showProcs = overrides.showProcs
-    else
-        showProcs = profile.defensives.showProcs ~= false
-    end
+    local showProcs = profile.defensives.showProcs ~= false
     -- Per-surface persistent results array (overrides present = overlay build).
     -- Previous entries recycle through the entry pool; the returned array identity is
     -- stable per surface, so the overlay's cachedDefensiveQueue always sees the
@@ -1050,15 +1041,9 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         end
     end
 
-    local isLow, inCombat
-    if passedIsLow ~= nil then
-        isLow = passedIsLow
-        inCombat = passedInCombat or UnitAffectingCombat("player")
-    else
-        -- Safety net: resolve health state from scratch if caller didn't pass it
-        isLow = ResolveHealthState()
-        inCombat = UnitAffectingCombat("player")
-    end
+    -- Both callers (OnHealthChanged's two surface builds) pass the resolved health
+    -- state and the combat flag; there is no other entry point.
+    local isLow, inCombat = passedIsLow, passedInCombat
 
     local displayMode = (overrides and overrides.displayMode) or profile.defensives.displayMode
 
@@ -1186,7 +1171,7 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
     -- Past the gate above (which returned early out of combat), combatOnly implies in-combat
     local showAllAvailable = displayMode == "always" or displayMode == "combatOnly"
     if showAllAvailable or isLow then
-        -- Order the unified list by health state: below ~35% survival floats up; above it,
+        -- Order the unified list by health state: below the healthy band (80%) survival floats up; above it,
         -- emergency panic buttons sink to the end. Procs were already placed on top by the
         -- proc pass; on-CD spells still sink within GetUsableDefensiveSpells.
         local listToShow = defensiveSpells

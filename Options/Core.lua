@@ -358,7 +358,7 @@ function Options.Initialize(addon)
     end
 
     AceConfig:RegisterOptionsTable("JustAssistedCombat", addon.optionsTable)
-    -- Wide enough that a three-tab row (Display, Defensive Queue) stays under the
+    -- Wide enough that a three-tab row (Display, Defensives) stays under the
     -- tab widget's 75%-of-width fill threshold - past it, AceGUI stretches every
     -- tab in the row to fill the panel instead of fitting them to their text.
     AceConfigDialog:SetDefaultSize("JustAssistedCombat", 800, 550)

@@ -14,7 +14,6 @@ local type                  = type
 local wipe                  = wipe
 local C_Spell_GetSpellCooldown = C_Spell and C_Spell.GetSpellCooldown
 local C_Spell_GetSpellCharges  = C_Spell and C_Spell.GetSpellCharges
-local C_Spell_GetBaseSpell     = C_Spell and C_Spell.GetBaseSpell
 local GetSpellBaseCooldown     = GetSpellBaseCooldown ---@diagnostic disable-line: undefined-global
 local _G                       = _G                   ---@diagnostic disable-line: undefined-global
 local IsSecretValue = BlizzardAPI.IsSecretValue
@@ -44,18 +43,12 @@ local localCharges = {}
 -- Minimum base cooldown to track - ignore GCD-only spells
 local MIN_TRACKABLE_CD_SECS = 3
 
---- Resolve a display/override spellID to its castable base (override -> base),
---- trying both APIs and returning the first that actually differs. nil if none.
+--- Resolve a display/override spellID to its castable base (override -> base), nil if
+--- none. ONE resolver for the addon: SpellDB's (cached; it loads before this file).
+--- The deprecated FindBaseSpellByID second tier was a wrapper for the same lookup.
+local SpellDB = LibStub("JustAC-SpellDB", true)
 function BlizzardAPI.ResolveBaseSpellID(spellID)
-    if C_Spell_GetBaseSpell then
-        local ok, b = pcall(C_Spell_GetBaseSpell, spellID)
-        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
-    end
-    if FindBaseSpellByID then
-        local ok, b = pcall(FindBaseSpellByID, spellID)
-        if ok and type(b) == "number" and b > 0 and b ~= spellID then return b end
-    end
-    return nil
+    return SpellDB and SpellDB.GetBaseSpell and SpellDB.GetBaseSpell(spellID) or nil
 end
 
 -- Base cooldown (seconds) for a spell, cached. MUST be populated OUT of combat -
@@ -273,6 +266,10 @@ end
 --- Read the API cooldown for spellID and store it in localCooldowns if a real
 --- (>1.5s, non-GCD) CD is running. OOC only - caller checks AreCooldownsSecret.
 local function SeedCooldownFromAPI(spellID, now)
+    -- Charge spells live in localCharges (CacheChargesForSpell): GetSpellCooldown
+    -- reflects the recharge, and a flat entry here would show a full swipe while
+    -- charges remain (GetLocalCooldown reads the flat entry first).
+    if (cachedMaxCharges[spellID] or 0) > 1 then return end
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
     if not ok or not cd then return end
     local duration = Unsecret(cd.duration)
@@ -299,7 +296,8 @@ local function ResyncLocalCooldowns()
     for spellID in pairs(trackedSpells) do
         SeedCooldownFromAPI(spellID, now)
     end
-    -- Charge state is resynced by ScanCooldownDurations → CacheChargesForSpell
+    -- Charge state is resynced by the ScanCooldownDurations that follows every
+    -- call of this (its scan re-reads live charges before any early return).
     wipe(localCharges)
 end
 
@@ -313,19 +311,24 @@ local function ClearCachedDurations()
     wipe(rotationGateRejected)
 end
 
---- At maximum charges right now (charge regen idle, so holding it wastes recharge
---- time)? maxCharges and isActive are NeverSecret - validated in combat 2026-07-24:
---- isActive false == not recharging, which with maxCharges > 1 means capped.
---- Fail-open: any doubt reads as "not capped".
-function BlizzardAPI.IsSpellChargeCapped(spellID)
-    if not spellID or not C_Spell_GetSpellCharges then return false end
+--- The ONE engine charge read behind both "at max charges" verdicts below: maxCharges
+--- and isActive are NeverSecret (validated in combat 2026-07-24), and isActive false
+--- means no charge is recharging, i.e. with maxCharges > 1 the spell is capped.
+--- Returns maxCharges (nil unknown), isActive (nil unknown/secret).
+local function LiveChargeState(spellID)
+    if not spellID or not C_Spell_GetSpellCharges then return nil, nil end
     local ok, ci = pcall(C_Spell_GetSpellCharges, spellID)
-    if not ok or not ci then return false end
-    local maxC = Unsecret(ci.maxCharges)
-    if not maxC or maxC < 2 then return false end
+    if not ok or not ci then return nil, nil end
     local active = ci.isActive
-    if BlizzardAPI.IsSecretValue and BlizzardAPI.IsSecretValue(active) then return false end
-    return active == false
+    if IsSecretValue(active) then active = nil end
+    return Unsecret(ci.maxCharges), active
+end
+
+--- At maximum charges right now (charge regen idle, so holding it wastes recharge
+--- time)? Promotion heuristic: any doubt reads as "not capped".
+function BlizzardAPI.IsSpellChargeCapped(spellID)
+    local maxC, active = LiveChargeState(spellID)
+    return (maxC or 0) >= 2 and active == false
 end
 
 --- Cache maxCharges and current charge state for a spell.
@@ -400,6 +403,10 @@ end
 local function ScanCooldownDurations()
     if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end
     local function scanSpell(spellID)
+        -- Charges FIRST: every caller has just wiped localCharges, and the duration
+        -- early-return below must not skip the refill (it did - charge spells with a
+        -- cached recharge lost their charge state on every combat exit for good).
+        CacheChargesForSpell(spellID)
         -- Skip if already cached with a real value
         if cachedDurations[spellID] and cachedDurations[spellID] > 0 then return end
         local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
@@ -423,28 +430,18 @@ local function ScanCooldownDurations()
                 end
             end
         end
-        -- Also cache maxCharges while we're at it
-        CacheChargesForSpell(spellID)
     end
     for spellID in pairs(trackedSpells) do
         scanSpell(spellID)
     end
 end
 
---- Check tracked spells with active local cooldowns for early CD completion.
---- Called on SPELL_UPDATE_COOLDOWN. Detection method:
----   isOnGCD == true → GCD only, real CD has ended (flagged rotation spells).
----   isOnGCD == false → real CD definitely running (no action needed).
----   isOnGCD == nil → unflagged spell; cannot determine CD state from API alone.
----     IsUsableAction returns true even on cooldown, so action bar cross-checks
----     produce false positives. Trust the local CD timer instead - it expires
----     naturally, and CDR edge cases self-correct at combat exit via ResyncLocalCooldowns.
----
---- @param eventSpellID number|nil  spellID from SPELL_UPDATE_COOLDOWN payload.
----   NeverSecret in combat (verified 2026-02-25). When non-nil, only that spell
----   is checked (O(1) instead of O(n)). When nil (batch "refresh all" signal),
----   falls back to iterating all tracked cooldowns.
--- Clear-decision for one tracked cooldown, shared by the targeted and batch paths.
+--- Early-completion check for one tracked local cooldown, shared by the targeted and
+--- batch paths of CheckCooldownCompletions (SPELL_UPDATE_COOLDOWN):
+---   isOnGCD == true  → GCD only, the real CD has ended (flagged rotation spells).
+---   isOnGCD == false → real CD definitely running (no action).
+---   isOnGCD == nil + isActive == false → no timer running at all: the local entry is
+---     stale (an unobserved CDR/reset) and is cleared, for every category.
 local function CheckOne(spellID, data)
     if GetTime() >= data.endTime then return end
     local ok, cd = pcall(C_Spell_GetSpellCooldown, spellID)
@@ -472,6 +469,9 @@ local function CheckOne(spellID, data)
     -- isOnGCD == false: real CD running - no action needed.
 end
 
+--- @param eventSpellID number|nil  spellID from the SPELL_UPDATE_COOLDOWN payload
+---   (NeverSecret in combat, verified 2026-02-25). Non-nil: only that spell is checked;
+---   nil (the batch "refresh all" signal): every tracked cooldown is.
 local function CheckCooldownCompletions(eventSpellID)
     if not C_Spell_GetSpellCooldown then return end
 
@@ -754,7 +754,10 @@ function BlizzardAPI.ClearTrackedDefensives()
             trackedSpells[spellID] = nil
         end
     end
-    wipe(localCooldowns)
+    -- Same rule as ClearTrackedRotationSpells: never wipe localCooldowns here.
+    -- This runs from the options list editor, mid-combat too, and the wipe took
+    -- every category's live readiness state with it (no OOC resync can repair
+    -- that until the fight ends). Stale entries expire via endTime.
 end
 
 function BlizzardAPI.ClearTrackedRotationSpells()
@@ -773,8 +776,9 @@ end
 
 --- The AC pick is a readiness oracle: Blizzard's engine never recommends an
 --- uncastable spell. A proc-driven CD reset or charge refund fires no
---- UNIT_SPELLCAST_SUCCEEDED, so the local tracker can hold a stale entry that
---- keeps sinking the spell in the queue - the pick corrects it. Called from
+--- UNIT_SPELLCAST_SUCCEEDED, so the local tracker can hold a stale entry (a wrong
+--- swipe, or a charge count one too low that keeps the spell sinking) - the pick
+--- corrects it. Called from
 --- SpellQueue on every build with the current recommendation.
 --- Freshness guard: the pick lags a just-completed cast (Blizzard refreshes it
 --- on its own cadence), so an entry recorded within the last RECOMMEND_GRACE_SECS
@@ -838,16 +842,15 @@ function BlizzardAPI.IsChargeSpellOnCooldown(spellID)
     return data.current <= 0
 end
 
---- Returns true when a charge-based spell has ALL of its charges banked.
---- Uses the same non-secret local tracking as IsChargeSpellOnCooldown, so it is
---- readable in combat. A spell with no charge data (single-charge, or not yet
---- scanned) returns true - callers pair this with IsSpellReady, which supplies
---- the plain off-cooldown answer for those.
+--- Returns true when a charge-based spell has ALL of its charges banked - the same
+--- engine read as IsSpellChargeCapped, so the "hold until charged" dial and the
+--- charge-cap promotion can never disagree. Its doubt goes the OTHER way: a
+--- chargeless spell or an unreadable state reads as "at max", so the hold releases
+--- and IsSpellReady (which callers pair this with) carries the answer.
 function BlizzardAPI.IsSpellAtMaxCharges(spellID)
-    local data = localCharges[spellID]
-    if not data then return true end
-    ProcessChargeRecovery(data)
-    return data.current >= data.maxCharges
+    local maxC, active = LiveChargeState(spellID)
+    if not maxC or maxC < 2 then return true end
+    return active ~= true
 end
 
 -- Debug: report a spell's presence in the tracking caches. Diagnoses the sink/readiness
@@ -860,7 +863,7 @@ function BlizzardAPI.DebugTrackingState(spellID)
 end
 
 --------------------------------------------------------------------------------
--- Spell Readiness (moved from SecretValues - depends on local CD tracking state)
+-- Spell Readiness
 --------------------------------------------------------------------------------
 
 --- Check if a spell is ready (not on a real cooldown).
@@ -872,7 +875,7 @@ end
 ---   nil   → absent (spell off CD OR unflagged spell on CD - ambiguous)
 --- When isOnGCD is nil in combat, SpellCooldownInfo.isActive (NeverSecret) is
 --- used as ground truth: true → real unflagged CD running; false → spell ready.
---- Returns true if the spell is known to NOT trigger the global cooldown.
+--- Returns true when the spell is ready (no real cooldown running).
 --- Second return (diagnostics only, e.g. /jac why): a short string naming which
 --- signal decided the verdict. Callers on hot paths ignore it (no allocation).
 function BlizzardAPI.IsSpellReady(spellID)
@@ -902,14 +905,8 @@ function BlizzardAPI.IsSpellReady(spellID)
     if cd.isOnGCD == true then
         -- Is a REAL cooldown ticking under the GCD? The ignore-GCD duration object
         -- answers this as engine truth - immune to the CDR / proc-reset / refund drift
-        -- the local timer suffers. Fall back to local tracking only if that API is absent.
-        local realCD
-        if C_Spell and C_Spell.GetSpellCooldownDuration then
-            realCD = BlizzardAPI.IsSpellOnCooldown(spellID)
-        else
-            realCD = IsLocalCooldownActive(spellID)
-        end
-        if not realCD then
+        -- the local timer suffers.
+        if not BlizzardAPI.IsSpellOnCooldown(spellID) then
             return true, "isOnGCD (GCD only)"
         end
         -- Real CD ticking under the GCD - fall through (not ready).
@@ -929,7 +926,7 @@ function BlizzardAPI.IsSpellReady(spellID)
 
     -- In combat with secreted values and isOnGCD == nil:
     -- Spell is either off cooldown OR on CD but unflagged (major CDs like
-    -- Divine Toll, Execution Sentence, Shadow Blades) - use fallback chain
+    -- Divine Toll, Execution Sentence, Shadow Blades) - isActive decides below
 
     -- SpellCooldownInfo.isActive is NeverSecret (source-verified).
     -- At this point isOnGCD is nil and duration is secret (combat) - both the
@@ -948,7 +945,7 @@ function BlizzardAPI.IsSpellReady(spellID)
 end
 
 --------------------------------------------------------------------------------
--- ACTION_USABLE_CHANGED CD Flip Detection (Phase 2)
+-- ACTION_USABLE_CHANGED usable-flip hints (charge recovery)
 --------------------------------------------------------------------------------
 -- Reverse map: action slot → tracked spellID.
 -- Populated lazily on first CheckUsabilityFlips call, invalidated alongside
@@ -980,7 +977,7 @@ end
 --- Seed a local cooldown entry for a spell if it's currently on CD (OOC only).
 --- Call after RegisterSpellForTracking to catch pre-existing CDs at login/spec-change.
 --- Without this, spells already on CD have no UNIT_SPELLCAST_SUCCEEDED event to
---- start local tracking, so IsSpellReady fails-open for unflagged spells.
+--- start local tracking, so the swipe (GetLocalCooldown) and the AC-pick oracle see no entry.
 function BlizzardAPI.SeedLocalCooldownIfActive(spellID)
     if not spellID or spellID == 0 then return end
     if BlizzardAPI.AreCooldownsSecret() or not C_Spell_GetSpellCooldown then return end

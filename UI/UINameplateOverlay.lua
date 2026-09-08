@@ -117,8 +117,6 @@ else
     GetMasqueOverlayGroup = function() return nil end
 end
 
--- Cached anchor params (set in AnchorToNameplate, used in Render for dynamic re-anchor)
-
 -- Health bar layout cache: skip re-anchor when nothing changed
 local lastDefVisibleCount = 0
 
@@ -130,10 +128,10 @@ local cachedDefensiveQueue = nil
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Icon button factory
 -- Produces a button compatible with:
---   • UIRenderer.UpdateButtonCooldowns  (cooldowns)
+--   • UIRenderer.RenderQueueIcon        (shared per-icon render, cooldowns included)
 --   • UIRenderer.ShowDefensiveIcon      (defensive display)
 --   • UIAnimations glow/flash functions (proc / assisted / defensive glows)
---   • JustAC:CreateKeyPressDetector     (key-press flash via normalizedHotkey)
+--   • KeyPressDetector                  (key-press / cast flash via the icon registry)
 -- ─────────────────────────────────────────────────────────────────────────────
 local function CreateOverlayIcon(iconSize, profile)
     -- Build the shared icon skeleton (textures, cooldowns, hotkey, animations).
@@ -1007,10 +1005,8 @@ end
 --- Called before rebuilding (settings change) or on addon disable.
 function UINameplateOverlay.Destroy(addon)
     local function CleanIcon(icon)
-        if UIAnimations then UIAnimations.StopAllGlows(icon) end
         icon:ClearAllPoints()
-        icon:Hide()
-        icon:SetParent(nil)
+        UIFrameFactory.ReleaseIcon(icon)
     end
 
     -- Remove all overlay icons from Masque before cleanup.
@@ -1036,10 +1032,8 @@ function UINameplateOverlay.Destroy(addon)
     end
 
     if interruptIcon then
-        if interruptIcon.sootheCue then
-            interruptIcon.sootheCue:Hide()
-            interruptIcon.sootheCue:SetParent(nil)
-        end
+        UIFrameFactory.ReleaseIcon(interruptIcon.sootheCue)
+        interruptIcon.sootheCue = nil
         if MasqueGroup then
             if inCombat then pendingMasqueRemoval[interruptIcon] = true else MasqueGroup:RemoveButton(interruptIcon) end
         end
@@ -1129,9 +1123,6 @@ function UINameplateOverlay.Destroy(addon)
     end
 end
 
---- Re-anchor the entire cluster to the current target's nameplate.
---- Called on PLAYER_TARGET_CHANGED, NAME_PLATE_UNIT_ADDED, NAME_PLATE_UNIT_REMOVED.
---- No InCombatLockdown() guard: nameplates are non-secure frames.
 --- Shared interrupt-slot teardown (glows, cast bar, soothe cue).
 --- clearPoints detaches it from the nameplate as well (UpdateAnchor path).
 local function HideInterruptSlot(clearPoints)
@@ -1149,6 +1140,9 @@ local function HideInterruptSlot(clearPoints)
     if interruptIcon.sootheCue then UISootheCue.Hide(interruptIcon.sootheCue) end
 end
 
+--- Re-anchor the entire cluster to the current target's nameplate.
+--- Called on PLAYER_TARGET_CHANGED, NAME_PLATE_UNIT_ADDED, NAME_PLATE_UNIT_REMOVED.
+--- No InCombatLockdown() guard: nameplates are non-secure frames.
 function UINameplateOverlay.UpdateAnchor(addon)
     if not addon then return end
     local profile = addon:GetProfile()
@@ -1286,7 +1280,7 @@ function UINameplateOverlay.Render(addon, spellIDs)
     local npoDesaturation = npo.queueIconDesaturation or 0
     local npoFirstIconScale = npo.firstIconScale or 1.0
     local centralOverlays = profile.textOverlays
-    local showHotkey   = not centralOverlays or not centralOverlays.hotkey or centralOverlays.hotkey.show ~= false
+    local showHotkey   = UIRenderer.ShowHotkeys(centralOverlays)
     local showUsabilityTint = profile.showUsabilityTint ~= false
     local showCastingHighlight = profile.showCastingHighlight ~= false
     local opacity      = npo.opacity or 1.0
@@ -1295,12 +1289,8 @@ function UINameplateOverlay.Render(addon, spellIDs)
     if shouldUpdateCooldowns then lastCooldownUpdate = now end
     local inCombat = UnitAffectingCombat("player")
 
-    local isChanneling, channelSpellID, isCasting, castSpellID
-    if UIRenderer and UIRenderer.ResolvePlayerCastState then
-        isChanneling, channelSpellID, isCasting, castSpellID = UIRenderer.ResolvePlayerCastState(profile)
-    else
-        isChanneling, channelSpellID, isCasting, castSpellID = false, nil, false, nil
-    end
+    local isChanneling, channelSpellID, isCasting, castSpellID =
+        UIRenderer.ResolvePlayerCastState(profile, addon.nameplateDefIcons)
 
     -- (Defensive icon visual states are handled by RefreshDefensives, which the
     -- update loop runs right after this render on the same tick - a second loop
@@ -1715,7 +1705,7 @@ function UINameplateOverlay.RefreshInterruptSpells()
 end
 
 --- Returns true when the overlay is currently anchored to a nameplate.
---- Used by UIRenderer/DefensiveEngine to decide whether to fall back to the main panel.
+--- Read by JustAC's nameplate-removed handler to decide whether to detach.
 function UINameplateOverlay.IsAnchored()
     return currentNameplate ~= nil
 end

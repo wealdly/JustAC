@@ -122,7 +122,7 @@ end
 -- Get filtered results: spells from spellbook + items from equipped slots,
 -- action bars, and bags. Returns combined table:
 --   positive key = spellID, negative key = -itemID
--- Used by panels that accept both spells and items (defensive lists, blacklist).
+-- Used by panels that accept both spells and items (defensive lists).
 -------------------------------------------------------------------------------
 function SpellSearch.GetFilteredResults(filterText, excludeList)
     local results = {}
@@ -194,7 +194,7 @@ end
 
 -------------------------------------------------------------------------------
 -- Spells-only search - for panels where items are not applicable
--- (gap-closers, hotkeys, melee range override).
+-- (gap-closers, burst triggers).
 -------------------------------------------------------------------------------
 function SpellSearch.GetFilteredSpellbookSpells(filterText, excludeList)
     local results = {}
@@ -538,19 +538,19 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             local choice = (p and p.defensives and p.defensives.emergencyPotionChoice) or 0
             local label
             if choice == -1 then
-                label = "|cff888888" .. (L["Emergency Potion Off"] or "Off") .. "|r"
+                label = "|cff888888" .. L["Emergency Potion Off"] .. "|r"
             elseif choice > 0 then
                 label = (GetItemInfo(choice)) or ("Item " .. choice)
             else
                 local bestID = SpellDB.GetBestHealingItem and SpellDB.GetBestHealingItem()
                 local bestName = bestID and (GetItemInfo(bestID))
                 if bestName then
-                    label = (L["Auto"] or "Auto") .. ": " .. bestName
+                    label = L["Auto"] .. ": " .. bestName
                 else
-                    label = (L["Auto best owned"] or "Auto (best owned)")
+                    label = L["Auto best owned"]
                 end
             end
-            displayName = (L["Emergency Potion"] or "Emergency Potion") .. " |cff00ccff(" .. label .. ")|r"
+            displayName = L["Emergency Potion"] .. " |cff00ccff(" .. label .. ")|r"
             displayIcon = 134832
             cooldownInfo = ""
         elseif isItemEntry then
@@ -651,7 +651,7 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             local entryArgs = defensivesArgs[listType .. "_" .. i].args
             entryArgs.potion = {
                 type = "select",
-                name = L["Emergency Potion Use"] or "Use",
+                name = L["Emergency Potion Use"],
                 desc = function()
                     local rule = L["Emergency Potion Auto Desc"]
                         or ("Auto fires the health item that restores the most at your "
@@ -672,19 +672,19 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
                     end
                     local best = "|cff00ff00" .. info.name .. "|r"
                     if restores then
-                        best = best .. " - " .. restores .. " " .. (L["health"] or "health")
+                        best = best .. " - " .. restores .. " " .. L["health"]
                     end
                     if info.owned > 1 then
-                        best = best .. " (" .. (L["best of"] or "best of") .. " " .. info.owned .. ")"
+                        best = best .. " (" .. L["best of"] .. " " .. info.owned .. ")"
                     end
-                    return rule .. "\n\n" .. (L["Best in bags"] or "Best in bags") .. ": " .. best
+                    return rule .. "\n\n" .. L["Best in bags"] .. ": " .. best
                 end,
                 order = 0.5,
                 width = "double",
                 values = function()
                     local vals = {
-                        [-1] = (L["Emergency Potion Off"] or "Off"),
-                        [0]  = (L["Auto best owned"] or "Auto (best owned)"),
+                        [-1] = L["Emergency Potion Off"],
+                        [0]  = L["Auto best owned"],
                     }
                     if SpellDB and SpellDB.GetOwnedHealingItems then
                         for _, it in ipairs(SpellDB.GetOwnedHealingItems()) do vals[it.id] = it.name end
@@ -825,7 +825,8 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             }
 
             -- Custom Queue only: pin the entry so filtering never hides it (active
-            -- buff / running DoT). SpellQueue.AlwaysShowEnabled reads this key.
+            -- buff / running DoT). SpellQueue's rotation-cache rebuild resolves this key
+            -- into pinnedAlwaysShow (read via IsPinnedAlwaysShow).
             if listType == "customqueue" then
                 entryArgs.alwaysShow = {
                     type = "toggle",
@@ -868,8 +869,8 @@ end
 
 -------------------------------------------------------------------------------
 -- Helper to create a single "Add..." button that opens the live-search popup.
--- spellsOnly = true  → spellbook only (gap-closers, hotkeys, melee range override)
--- spellsOnly = false → spellbook + inventory items (defensives, blacklist)
+-- spellsOnly = true  → spellbook only (gap-closers, burst triggers)
+-- spellsOnly = false → spellbook + inventory items (defensive lists)
 -------------------------------------------------------------------------------
 function SpellSearch.CreateAddSpellButton(addon, argsTable, spellList, listType, order, listName, updateFunc, spellsOnly)
     SpellSearch.BuildSpellbookCache()

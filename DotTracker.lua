@@ -10,7 +10,8 @@
 -- us reconstruct DoT state without any of that:
 --   1. Our own casts. UNIT_SPELLCAST_SUCCEEDED spellID is readable. Casting a
 --      tracked DoT arms a suppression window - this alone guarantees the sink.
---   2. The aura-instance bridge (accuracy layer). auraInstanceID is NeverSecret;
+--   2. The aura-instance bridge (accuracy layer). auraInstanceID reads plain when
+--      the UNIT_AURA payload does (12.1.0 can secret the whole list - unwrap first);
 --      IsAuraFilteredOutByInstanceID(unit, id, "HARMFUL|PLAYER") is a readable
 --      bool that tells us an instance is a harmful aura WE cast. On the target's
 --      addedAuras we map the new debuff instance to the cast that produced it;
@@ -81,6 +82,13 @@ local function GetEntry(spellID)
     return e
 end
 
+--- Drop pending casts the bridge window has passed (no addedAura will match them now).
+local function PrunePending(now)
+    for i = #pendingCasts, 1, -1 do
+        if now - pendingCasts[i].time > BRIDGE_WINDOW then tremove(pendingCasts, i) end
+    end
+end
+
 --- Record a tracked-DoT cast on the current target. Arms the suppression window
 --- (guaranteed sink) and queues the cast for the aura-instance bridge.
 --- Called from UNIT_SPELLCAST_SUCCEEDED (player), in combat only.
@@ -109,12 +117,14 @@ function DotTracker.OnCastSucceeded(spellID)
         local e = GetEntry(id)
         e.expiry = now + FALLBACK_WINDOW
         e.pandemicPoint = pandemicPoint
+        -- A fresh application after a confirmed drop must trust the window again:
+        -- hadInstance means "confirmed since the last cast that found no instance",
+        -- not "ever confirmed" (which sank the first application only).
+        if not next(e.instances) then e.hadInstance = false end
     end
 
     pendingCasts[#pendingCasts + 1] = { ids = ids, time = now }
-    for i = #pendingCasts, 1, -1 do
-        if now - pendingCasts[i].time > BRIDGE_WINDOW then tremove(pendingCasts, i) end
-    end
+    PrunePending(now)
 end
 
 --- Map a confirmed player-debuff instance on the target to the cast that made it.
@@ -161,17 +171,15 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
 
     local added = BlizzardAPI and BlizzardAPI.Unsecret(updateInfo.addedAuras)
     if added and #pendingCasts > 0 then
-        local now = GetTime()
-        for i = #pendingCasts, 1, -1 do
-            if now - pendingCasts[i].time > BRIDGE_WINDOW then tremove(pendingCasts, i) end
-        end
+        PrunePending(GetTime())
         -- Pair each confirmed added aura with one pending cast, oldest first
         -- (aura batch order follows cast order), consuming the pending entry so
         -- two DoTs confirming in the same UNIT_AURA batch don't both map to the
         -- most recent cast.
         for _, auraData in ipairs(added) do
             if #pendingCasts == 0 then break end
-            local instanceID = auraData.auraInstanceID
+            -- Unwrapped like the sibling trackers: a secret id as a table key throws.
+            local instanceID = BlizzardAPI and BlizzardAPI.Unsecret(auraData.auraInstanceID)
             if instanceID then
                 -- Keep only harmful auras WE cast (engine-side, NeverSecret bool).
                 -- If the API is unavailable, fall through and match by timing alone.
@@ -192,8 +200,6 @@ function DotTracker.OnTargetAuraUpdate(unit, updateInfo)
     return changed
 end
 
---- True when the current target already has this DoT live (so the queue should
---- sink it). Confirmed instance > early-drop > post-cast window fallback.
 --- Is this entry's DoT inside its pandemic window, according to the ENGINE?
 --- true / false / nil (no confirmed instance, or the technique is unavailable).
 --- Shared by the live query and the /jac inspect dots probe so the probe can never
@@ -222,6 +228,8 @@ local function EnginePandemicVerdict(e)
     return answered or nil
 end
 
+--- True when the current target already has this DoT live (so the queue should
+--- sink it). Confirmed instance > early-drop > post-cast window fallback.
 function DotTracker.IsDotActiveOnCurrentTarget(spellID)
     -- Idle fast-path: nothing tracked -> skip the base-spell resolve entirely.
     -- This query runs per rotation spell per build, so keeping it free when no DoT
@@ -244,7 +252,7 @@ function DotTracker.IsDotActiveOnCurrentTarget(spellID)
     -- own remaining time removes all of it, and needs no duration data at all -
     -- talent and haste scaling come for free.
     -- A stale instance id (a DoT that expired between target updates) simply yields
-    -- no answer here - GetAuraDuration requires a VALID instance - so the loop falls
+    -- no answer here - GetAuraDurationObject requires a VALID instance - so the loop falls
     -- through to the estimate instead of trusting a dead binding.
     -- Inside the window -> report NOT active, which un-sinks the DoT so the player
     -- reapplies. Outside it -> live, keep it sunk.

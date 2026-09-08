@@ -293,13 +293,13 @@ end
 local function BuildStaleWarning(added, removed)
     local parts = {}
     if added and #added > 0 then
-        parts[#parts + 1] = #added .. " " .. (L["spells added"] or "spell(s) added")
+        parts[#parts + 1] = #added .. " " .. L["spells added"]
     end
     if removed and #removed > 0 then
-        parts[#parts + 1] = #removed .. " " .. (L["spells removed"] or "spell(s) removed")
+        parts[#parts + 1] = #removed .. " " .. L["spells removed"]
     end
     if #parts == 0 then return nil end
-    return "|cFFFFAA00" .. (L["Custom Queue Stale Warning"] or "Blizzard's rotation has changed") .. ": " .. table_concat(parts, ", ") .. ".|r"
+    return "|cFFFFAA00" .. L["Custom Queue Stale Warning"] .. ": " .. table_concat(parts, ", ") .. ".|r"
 end
 
 function CustomQueue.CreateTabArgs(addon)
@@ -630,7 +630,7 @@ end
 
 --- Ensure custom queue data exists for the current spec.
 --- Default state is disabled; snapshot only when explicitly enabled.
---- Called on spec change alongside gap-closer/burst injection init.
+--- Called on spec change alongside the gap-closer init.
 function CustomQueue.EnsureInitialized(addon)
     local specKey = GetSpecKey()
     if not specKey then return end

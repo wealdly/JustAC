@@ -60,19 +60,11 @@ local GAP_CLOSER_NEAR_YARDS = 10
 local GAP_CLOSER_NEAR_FALLBACK_YARDS = 15
 
 --------------------------------------------------------------------------------
--- Cached state
---------------------------------------------------------------------------------
-
--- Cached gap-closer spell list for the current class+spec (wipe on spec change)
-local cachedGapCloserSpells = nil
-local cachedGapCloserSpecKey = nil
-
---------------------------------------------------------------------------------
 -- Internal helpers
 --------------------------------------------------------------------------------
 
---- Evaluate a single gap-closer candidate: resolve → dedup → available →
---- known → ready → (optional range).  Returns resolvedID, baseID on success,
+--- Evaluate a single gap-closer candidate: resolve → dedup → known → not passive →
+--- not blacklisted → ready → in range.  Returns resolvedID, baseID on success,
 --- or nil if the spell doesn't pass all gates.
 --- The gap-closer list is curated (user-configured or SpellDB defaults), so
 --- the only availability gate is "does the player know this spell" - filtering
@@ -82,8 +74,7 @@ local cachedGapCloserSpecKey = nil
 --- suggesting spells that are on CD.
 --- @param spellID      number       Base spell ID from the gap-closer list
 --- @param addedSpellIDs table|nil   Set of already-queued spell IDs to skip
---- @param checkRange    boolean|nil  If true, also verify the spell's own slot is in range
-local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
+local function TryGapCloserCandidate(spellID, addedSpellIDs)
     if not spellID or spellID <= 0 then return nil end
     local resolvedID = BlizzardAPI.ResolveSpellID(spellID)
 
@@ -130,7 +121,7 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs, checkRange)
     -- beyond Wild Charge's max range). Spellbook range read (non-secret in combat, reliable
     -- in any form) - the action-slot check proved unreliable. Self-targeted spells (Sprint)
     -- and unknowns read nil from the tri-state → pass (fail-safe); only a confirmed false rejects.
-    if checkRange and BlizzardAPI.SpellInRange
+    if BlizzardAPI.SpellInRange
        and BlizzardAPI.SpellInRange(spellID) == false then
         return nil
     end
@@ -143,36 +134,16 @@ end
 --- Reads from profile (user-configured) with SpellDB defaults as fallback.
 --- Returns an array of spell IDs, or nil if no gap-closers for this spec.
 local function ResolveGapCloserSpells(addon)
+    -- Direct read, no cache: it returned a reference to the profile's own table, so
+    -- caching saved nothing and went stale across a profile switch (the old profile's
+    -- list served until a form change happened by).
     local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
     if not specKey then return nil end
-
-    -- Return cache if still valid
-    if cachedGapCloserSpells and cachedGapCloserSpecKey == specKey then
-        return cachedGapCloserSpells
-    end
-
-    -- Check profile for user-configured list
     local profile = addon:GetProfile()
     local gc = profile and profile.gapClosers
-    if gc and gc.classSpells and gc.classSpells[specKey] and #gc.classSpells[specKey] > 0 then
-        cachedGapCloserSpells = gc.classSpells[specKey]
-        cachedGapCloserSpecKey = specKey
-        return cachedGapCloserSpells
-    end
-
-    -- Fall back to SpellDB defaults
-    if SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS then
-        local defaults = SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey]
-        if defaults then
-            cachedGapCloserSpells = defaults
-            cachedGapCloserSpecKey = specKey
-            return cachedGapCloserSpells
-        end
-    end
-
-    cachedGapCloserSpecKey = specKey
-    cachedGapCloserSpells = nil
-    return nil
+    local list = gc and gc.classSpells and gc.classSpells[specKey]
+    if list and #list > 0 then return list end
+    return SpellDB and SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey] or nil
 end
 
 --------------------------------------------------------------------------------
@@ -213,9 +184,7 @@ function GapCloserEngine.InitializeGapClosers(addon)
 
     local existing = profile.gapClosers.classSpells[specKey]
     if not existing or #existing == 0 then
-        if SeedDefaults(profile, specKey, false) then
-            GapCloserEngine.InvalidateGapCloserCache()
-        end
+        SeedDefaults(profile, specKey, false)
     end
 
     -- Register gap-closer spells for local CD tracking and seed pre-existing CDs.
@@ -234,7 +203,7 @@ function GapCloserEngine.InitializeGapClosers(addon)
     end
 end
 
---- Reset range state on target change / combat end: clears the hide-debounce timestamp so
+--- Reset range state on target change and form change: clears the hide-debounce timestamp so
 --- a new target doesn't inherit the previous target's "recently out of range" hold.
 --- The post-fire debounce is deliberately NOT cleared here: switching targets mid-flight
 --- is exactly when offering a second gap closer wastes it, and 3s self-expires anyway.
@@ -250,12 +219,6 @@ function GapCloserEngine.NoteSpellcastSucceeded(addon, spellID)
     if GapCloserEngine.IsGapCloserSpell(addon, spellID) then
         lastFiredTime = GetTime()
     end
-end
-
---- Invalidate cached gap-closer spell list (spec change, profile change)
-function GapCloserEngine.InvalidateGapCloserCache()
-    cachedGapCloserSpells = nil
-    cachedGapCloserSpecKey = nil
 end
 
 --- Returns the first usable gap-closer spell ID for the current spec, or nil.
@@ -277,39 +240,34 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
         return nil
     end
 
-    -- (No target-switch cooldown needed: that delay existed to wait out IsActionInRange's
-    -- stale-frame lag on target swap. IsSpellInRange reads the CURRENT target fresh every
-    -- call, so there's no stale frame - the gap closer can evaluate immediately on acquire.)
-
     -- IsStealthed() is NeverSecret and covers Stealth, Vanish, Shadow Dance, etc.
     local stealthed = IsStealthed and IsStealthed() or false
     local spellList = ResolveGapCloserSpells(addon)
+    if not spellList then return nil end
+
+    -- Post-fire debounce: a gap closer just landed a cast; while it travels, offer
+    -- nothing from the whole category (the fired spell itself is on CD, but the
+    -- NEXT list entry would otherwise fill the slot mid-flight). Ahead of the
+    -- stealth loop too: Shadowstrike has no cooldown and was offered mid-Shadowstep.
+    local now = GetTime()
+    if (now - lastFiredTime) < GAP_CLOSER_FIRED_DEBOUNCE then return nil end
 
     ----------------------------------------------------------------------------
-    -- STEALTH GAP CLOSERS - evaluate before the melee range gate.
-    -- When stealthed, the melee reference spell may transform on the action bar
-    -- (e.g. Backstab → Shadowstrike with 25yd range), causing IsActionInRange
-    -- on its slot to report the override's range instead of true melee range.
-    -- Stealth gap closers like Shadowstrike teleport TO the target, so their
-    -- own castable range IS the gap-closer range.  We check their own slot
-    -- directly.  Dedup via addedSpellIDs prevents showing them when Blizzard's
+    -- STEALTH GAP CLOSERS - evaluate before the melee range gate. Stealth gap
+    -- closers like Shadowstrike teleport TO the target, so their own castable
+    -- range (SpellInRange on the spell itself) IS the gap-closer range - no melee
+    -- probe needed. Dedup via addedSpellIDs prevents showing them when Blizzard's
     -- assisted combat already suggests them at position 1.
     ----------------------------------------------------------------------------
-    if stealthed and spellList then
+    if stealthed then
         for _, spellID in ipairs(spellList) do
             if spellID and spellID > 0 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
                 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] then
-                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs, true)
+                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs)
                 if resolved then return resolved, base end
             end
         end
     end
-
-    -- Post-fire debounce: a gap closer just landed a cast; while it travels, offer
-    -- nothing from the whole category (the fired spell itself is on CD, but the
-    -- NEXT list entry would otherwise fill the slot mid-flight).
-    local now = GetTime()
-    if (now - lastFiredTime) < GAP_CLOSER_FIRED_DEBOUNCE then return nil end
 
     -- Melee detection via the shared range-reference system (SpellDB.IsTargetWithin), so the
     -- gap closer and ContextRank use ONE melee check - all melee specs covered bar-free
@@ -333,8 +291,7 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
     end
 
     if outOfRange then
-        -- Maintain the hide-debounce timestamp from the poll itself, so the bar-free
-        -- (spellbook) path gets the same smoothing as the action-range event path.
+        -- Hide-debounce timestamp (this poll and ClearRangeState are its only writers).
         lastOutOfRangeTime = now
         -- No show debounce: display gap closer immediately when out of range.
         -- A show debounce would cause slot 2 to blink (rotation spell fills it
@@ -346,8 +303,6 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
         end
     end
 
-    if not spellList then return nil end
-
     for _, spellID in ipairs(spellList) do
         if spellID and spellID > 0 then
             -- Skip stealth-only gap closers in the normal loop.
@@ -357,7 +312,7 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
             local isStealth = SpellDB.GAP_CLOSER_REQUIRES_STEALTH
                 and (SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] or SpellDB.GAP_CLOSER_REQUIRES_STEALTH[resolvedID])
             if not isStealth then
-                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs, true)
+                local resolved, base = TryGapCloserCandidate(spellID, addedSpellIDs)
                 if resolved then return resolved, base end
             end
         end
@@ -424,5 +379,4 @@ function GapCloserEngine.RestoreGapCloserDefaults(addon)
     end
 
     SeedDefaults(profile, specKey, true)
-    GapCloserEngine.InvalidateGapCloserCache()
 end

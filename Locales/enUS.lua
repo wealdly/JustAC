@@ -51,11 +51,11 @@ L["Show Important Cast Warning desc"] = "Show a warning above the queue when any
 L["Show Casting Highlight"] = "Casting Highlight"
 L["Show Casting Highlight desc"] = "Show a white border highlight on an icon while its spell is actively being cast or channeled."
 
--- Blacklist
+-- Ability card (Abilities tab)
 L["Remove"] = "Remove"
 L["Add"] = "Add"
 
--- Hotkey Overrides
+-- Custom hotkey prompt (Abilities tab)
 L["Custom Hotkey"] = "Custom Hotkey"
 L["Enter the hotkey text to display (e.g. 1, F1, S-2)"] = "Enter the hotkey text to display (e.g., 1, F1, S-2, Ctrl+Q)"
 
@@ -140,7 +140,7 @@ L["Primary Spell Scale desc"] = "Scale multiplier for the AC slot icon (Blizzard
 L["Queue Orientation desc"] = "Queue growth direction and sidebar placement (defensives + health bars)"
 L["Queue Orientation detached desc"] = "Growth direction for the offensive icon queue (defensive queue has its own independent position)"
 L["Shared Highlight Mode desc"] = "Which glow effects to show on spell icons. Every display follows this unless its own panel overrides it."
-L["Highlight Mode Shared desc"] = "Which glow effects to show here. Use Shared Setting follows the Highlight Mode on the General tab."
+L["Highlight Mode Shared desc"] = "Which glow effects to show here. Use Shared Setting follows the Highlight Mode on the Display tab's Shared Behavior panel."
 L["Use Shared Setting"] = "Use Shared Setting"
 L["Ordering Preset"] = "Ordering"
 L["Ordering Preset desc"] = "How the abilities after the first are ordered (the first slot is always Blizzard's live pick).\n\n|cffffd100Smart|r - procced abilities first, SimulationCraft's priority for your spec and target count (matching Blizzard's pick where no data exists), unavailable abilities last.\n|cffffd100Match Blizzard's pick|r - like Smart, but ordered by what Assisted Combat is recommending now instead of SimC priority. Better below max level.\n|cffffd100Fixed source order|r - exact saved order, no reordering. Include Spellbook Procs and the Burst-Ready Cue can still seat an ability right after Blizzard's pick; turn those off too for a strictly fixed queue.\n\n(Orderings from SimulationCraft, GPL-3.0.)"

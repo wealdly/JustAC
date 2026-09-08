@@ -317,25 +317,29 @@ local function ValidateAndBuildKeybindCache()
     keybindCacheValid = true
 end
 
--- Cache invalidation hierarchy:
---   InvalidateKeybindCache()  → wipes keybind/spell→slot/hotkey caches
---                               Called by InvalidateBindingCache and InvalidateStateCache.
---   InvalidateBindingCache()  → wipes raw binding key cache, then calls InvalidateKeybindCache.
---                               Use when keybind strings change (UPDATE_BINDINGS).
---   InvalidateStateCache()    → wipes slot mapping + spell/hotkey caches on bar/form changes.
---                               Use for UPDATE_BONUS_ACTIONBAR, UPDATE_SHAPESHIFT_FORM, etc.
--- Public façades:
---   ActionBarScanner.InvalidateHotkeyCache()   - partial wipe (spell/slot/hotkey only)
---   ActionBarScanner.InvalidateKeybindCache()  - delegates to local InvalidateKeybindCache
-local function InvalidateKeybindCache()
-    keybindCacheValid = false
-    lastValidatedStateHash = 0
-    wipe(keybindCache)
+-- Cache invalidation hierarchy (every rung ends in WipeSpellCaches):
+--   InvalidateKeybindCache()  → keybind cache + spell caches (RebuildKeybindCache, bindings).
+--   InvalidateBindingCache()  → raw binding-key cache, then InvalidateKeybindCache
+--                               (UPDATE_BINDINGS / gamepad change).
+--   InvalidateStateCache()    → slot mapping + spell caches on bar/form changes
+--                               (UPDATE_BONUS_ACTIONBAR, UPDATE_SHAPESHIFT_FORM).
+--   ActionBarScanner.InvalidateHotkeyCache()  → spell caches only (ACTIONBAR_SLOT_CHANGED).
+--- The spell/item -> slot/hotkey caches, wiped together: every invalidation path
+--- (bindings, bar state, slot change, options) needs all four or a stale slot index
+--- re-caches a wrong hotkey through the transform fast path.
+local function WipeSpellCaches()
     spellHotkeyCacheValid = false
     wipe(spellHotkeyCache)
     wipe(spellSlotCache)
     wipe(slotDirectCache)
     wipe(itemSlotCache)
+end
+
+local function InvalidateKeybindCache()
+    keybindCacheValid = false
+    lastValidatedStateHash = 0
+    wipe(keybindCache)
+    WipeSpellCaches()
 end
 
 local function InvalidateBindingCache()
@@ -351,15 +355,9 @@ local function InvalidateStateCache()
     cachedStateData.valid = false
     slotMappingCacheKey = 0
     wipe(slotMappingCache)
-    spellHotkeyCacheValid = false
-    wipe(spellHotkeyCache)
-    -- Also wipe spell→slot caches: bonus bar changes (UPDATE_BONUS_ACTIONBAR) move
-    -- spells to different slot numbers. Leaving spellSlotCache populated causes
-    -- GetSlotForSpell and the transform fast-path in GetSpellHotkey to use stale
-    -- slot indices and re-cache wrong hotkeys before the full bar scan runs.
-    wipe(spellSlotCache)
-    wipe(slotDirectCache)
-    wipe(itemSlotCache)
+    -- Spell->slot caches too: bonus bar changes (UPDATE_BONUS_ACTIONBAR) move spells
+    -- to different slot numbers, and stale slot indices re-cache wrong hotkeys.
+    WipeSpellCaches()
 end
 
 local function GetOptimizedKeybind(slot)
@@ -1038,7 +1036,7 @@ function ActionBarScanner.GetHotkeyCacheStats()
     }
 end
 
--- Soft invalidation: mark invalid but keep values to prevent flicker
+-- Spell/slot/hotkey caches only; the binding and bar-state caches stay.
 function ActionBarScanner.InvalidateHotkeyCache()
     hotkeyWipeCount, lastHotkeyWipeAt = hotkeyWipeCount + 1, GetTime()
     -- Full wipe so stale slot→hotkey entries don't get returned via the
@@ -1046,11 +1044,7 @@ function ActionBarScanner.InvalidateHotkeyCache()
     -- Partial invalidation (spellHotkeyCacheValid=false only) left stale
     -- spellHotkeyCache and spellSlotCache entries that ACTIONBAR_SLOT_CHANGED
     -- would not clear, causing wrong keybinds after moving abilities on bars.
-    spellHotkeyCacheValid = false
-    wipe(spellHotkeyCache)
-    wipe(spellSlotCache)
-    wipe(slotDirectCache)
-    wipe(itemSlotCache)
+    WipeSpellCaches()
 end
 
 function ActionBarScanner.RebuildKeybindCache()
@@ -1084,8 +1078,7 @@ function ActionBarScanner.OnKeybindsChanged()
     -- Full hard invalidation deferred to here so GetSpellHotkey fast-path
     -- continues returning cached glyphs during the settling window.
     C_Timer.After(0.3, function()
-        InvalidateBindingCache()
-        InvalidateKeybindCache()
+        InvalidateBindingCache()   -- also wipes the keybind/spell caches
         -- Also invalidate UIRenderer's per-icon caches
         local UIRenderer = LibStub("JustAC-UIRenderer", true)
         if UIRenderer and UIRenderer.InvalidateHotkeyCache then
@@ -1154,12 +1147,8 @@ function ActionBarScanner.GetSpellbookProccedSpells()
 end
 
 function ActionBarScanner.ClearAllCaches()
-    wipe(spellHotkeyCache)
-    wipe(spellSlotCache)
-    wipe(slotDirectCache)
-    wipe(itemSlotCache)
+    WipeSpellCaches()
     wipe(abbreviatedKeyCache)
-    spellHotkeyCacheValid = false
     -- Binding cache bakes in profile.inputPreference at rebuild; without this,
     -- toggling that option shows stale hotkeys until the next UPDATE_BINDINGS.
     InvalidateBindingCache()

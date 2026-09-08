@@ -1,0 +1,9 @@
+# JustAC local pin: upstream ships no SimulationCraft list for this spec. A deliberately
+# plain damage filler - core abilities, DoT refresh and target-count conditions only, no
+# hero-talent branches. Anything the character does not know is dropped at runtime, and
+# healing spells never reach the damage queue.
+
+actions=flame_shock,if=refreshable
+actions+=/lava_burst
+actions+=/chain_lightning,if=active_enemies>=2
+actions+=/lightning_bolt

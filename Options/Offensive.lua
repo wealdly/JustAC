@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Copyright (C) 2024-2026 wealdly
--- JustAC: Options/Offensive - Offensive queue settings tab + blacklist management
+-- JustAC: Options/Offensive - Offensive tab (queue content, custom priority, burst triggers, gap closers)
 local Offensive = LibStub:NewLibrary("JustAC-OptionsOffensive", 3)
 if not Offensive then return end
 
@@ -172,8 +172,8 @@ function Offensive.CreateTabArgs(addon)
     local GapClosers = LibStub("JustAC-OptionsGapClosers", true)
 
     -- "General" sub-tab = the queue-content toggles + the custom-priority (Custom Queue)
-    -- controls, merged into one panel (matching the General sub-tab every other top tab
-    -- leads with). We reuse the Custom Queue tab as the base and inject the content group
+    -- controls, merged into one panel (the Defensives tab leads with a General sub-tab
+    -- the same way). We reuse the Custom Queue tab as the base and inject the content group
     -- at the top; the arg KEY stays "customQueue" so UpdateCustomQueueOptions still resolves it.
     local generalTab = (CustomQueue and CustomQueue.CreateTabArgs) and CustomQueue.CreateTabArgs(addon)
     if generalTab then
@@ -204,7 +204,7 @@ function Offensive.CreateTabArgs(addon)
 end
 
 -------------------------------------------------------------------------------
--- Dynamic burst-trigger override rebuild (mirrors the blacklist pattern)
+-- Dynamic burst-trigger override rebuild (mirrors the gap-closer list pattern)
 -------------------------------------------------------------------------------
 function Offensive.UpdateBurstTriggerOptions(addon)
     local optionsTable = addon and addon.optionsTable
