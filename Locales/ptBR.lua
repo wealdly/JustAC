@@ -40,6 +40,8 @@ L["Proc Only"] = "Apenas proc"
 L["No Glows"] = "Sem brilhos"
 L["Show Key Press Flash"] = "Flash de tecla"
 L["Show Key Press Flash desc"] = "Piscar o ícone ao pressionar o atalho correspondente."
+L["Modifier Emphasis"] = "Destaque de modificador"
+L["Modifier Emphasis desc"] = "Enquanto você segura Shift, Ctrl ou Alt, os atalhos acionados por esse modificador ganham um brilho suave atrás dele e os demais ficam esmaecidos. O atalho inteiro brilha enquanto sua tecla estiver pressionada."
 L["Grey Out While Casting"] = "Esmaecer ao conjurar"
 L["Grey Out While Casting desc"] = "Dessaturar os ícones da fila enquanto conjura. A magia sendo conjurada mantém a cor."
 L["Mark Move-Castable Spells"] = "Marcar magias conjuráveis em movimento"
@@ -380,6 +382,8 @@ L["Cooldown Manager combat warning"] = "O Gerenciador de recarga não pode ser a
 
 L["Health Top-off Threshold"] = "Completar abaixo de"
 L["Health Top-off Threshold desc"] = "Quanto abaixo da vida cheia o lembrete de cura entre pulls aparece. O aviso de emergência com vida crítica é separado e está sempre ativo."
+L["Stealth Reminder"] = "Lembrete de furtividade"
+L["Stealth Reminder desc"] = "Fora de combate, mostra Furtividade ou Espreitar na fila defensiva enquanto você não estiver furtivo. Permanece no lugar com a recarga visível e brilha quando estiver pronto. Não aparece montado nem em áreas de descanso."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "Avisar sobre conjurações perigosas"

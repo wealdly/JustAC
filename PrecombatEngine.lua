@@ -115,7 +115,7 @@ local function OffHandImbue()
     if not (IsPlayerSpell(33757) and IsPlayerSpell(318038)) then return nil end
     local itemID = GetInventoryItemID and GetInventoryItemID("player", 17)
     if not itemID then return nil end
-    local classID = select(6, GetItemInfoInstant(itemID))
+    local classID = select(6, C_Item.GetItemInfoInstant(itemID))
     if classID ~= 2 then return nil end
     return 318038
 end
@@ -490,13 +490,44 @@ local function CastingMaintainedBuff()
     return false
 end
 
+-- Cooldown-free stealths worth entering before a pull, per class. Vanish and Shadowmeld are
+-- left out: they are escapes with real cooldowns, not an opener stance. Prowl is Feral
+-- only - every druid knows it, and on by default it would nag the other three specs.
+local STEALTH_REMINDER = {
+    ROGUE = { spell = 1784 },            -- Stealth
+    DRUID = { spell = 5215, spec = 2 },  -- Prowl (Feral)
+}
+PrecombatEngine.STEALTH_REMINDER = STEALTH_REMINDER
+
+--- The player's stealth, when it is worth reminding about: known, not already stealthed, and
+--- not in a state where stealthing makes no sense (mounted, flying, on a taxi, resting, in a
+--- vehicle, dead). Deliberately NOT gated on the cooldown: the offer keeps its slot with the
+--- cooldown swipe, and the renderer holds its glow until the spell is ready.
+local function StealthReminderSpell()
+    if (IsStealthed and IsStealthed()) or (IsMounted and IsMounted())
+        or (IsFlying and IsFlying()) or (UnitOnTaxi and UnitOnTaxi("player"))
+        or (IsResting and IsResting())
+        or ReadableBool(UnitInVehicle and UnitInVehicle("player")) == true
+        or ReadableBool(UnitIsDeadOrGhost("player")) ~= false then
+        return nil
+    end
+    local entry = STEALTH_REMINDER[select(2, UnitClass("player"))]
+    if not entry or (entry.spec and GetSpecialization() ~= entry.spec) then return nil end
+    -- OverridesKnown: Subterfuge replaces Stealth (1784 -> 115191), and a replaced base
+    -- spell can read as unknown to IsPlayerSpell. Casting the base id still casts the override.
+    local known = IsPlayerSpell(entry.spell)
+        or (IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(entry.spell))
+    return known and entry.spell or nil
+end
+
 --- @param offerTopoff boolean|nil  include the OOC top-off self-heal (gated by the
 ---   precombatBuffs.topoffHeal option; passed by the caller which owns the profile). Poisons
 ---   and imbues are unaffected - only the health top-off reminder honors this flag.
 --- @param topoffPct number|nil  the player's top-off threshold percent. Passed in rather
 ---   than read here for the same reason as offerTopoff: this module never touches the
 ---   profile. nil falls back to "below full".
-function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
+--- @param offerStealth boolean|nil  include the stealth reminder (precombatBuffs.stealth).
+function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerStealth)
     local now = GetTime()
     if cachedClassBuffs and (now - cachedClassBuffsAt) < 0.5 then
         return cachedClassBuffs
@@ -821,6 +852,9 @@ function PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)
             end
         end
     end
+    -- Stealth reminder, last: entering stealth is the final step before a pull.
+    local stealth = offerStealth and not InCombatLockdown() and StealthReminderSpell()
+    if stealth then out[#out + 1] = stealth end
     cachedClassBuffs, cachedClassBuffsAt = out, now
     return out
 end

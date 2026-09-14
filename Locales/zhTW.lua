@@ -40,6 +40,8 @@ L["Proc Only"] = "僅觸發"
 L["No Glows"] = "無發光"
 L["Show Key Press Flash"] = "按鍵閃光"
 L["Show Key Press Flash desc"] = "按下對應快捷鍵時閃爍圖示。"
+L["Modifier Emphasis"] = "修飾鍵強調"
+L["Modifier Emphasis desc"] = "按住 Shift、Ctrl 或 Alt 時，使用該修飾鍵的快捷鍵會在修飾鍵後方顯示柔和光暈，其餘快捷鍵變暗。按住某個快捷鍵時，其標籤會整體發光。"
 L["Grey Out While Casting"] = "施法時灰化"
 L["Grey Out While Casting desc"] = "在施放法術時灰化佇列圖示。正在施放的法術保持彩色。"
 L["Mark Move-Castable Spells"] = "標記可位移施放的法術"
@@ -380,6 +382,8 @@ L["Cooldown Manager combat warning"] = "戰鬥中無法變更冷卻管理器—�
 
 L["Health Top-off Threshold"] = "生命值低於此值時補血"
 L["Health Top-off Threshold desc"] = "戰鬥間隙的補血提醒在生命值低於多少時出現。危急生命值時的緊急提示是獨立的，始終開啟。"
+L["Stealth Reminder"] = "潛行提醒"
+L["Stealth Reminder desc"] = "脫戰且未潛行時，在防禦佇列中顯示潛行或潛伏。冷卻中也會保留並顯示冷卻，就緒後發光。騎乘或在休息區時不顯示。"
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "危險施法警告"

@@ -40,6 +40,8 @@ L["Proc Only"] = "Proc uniquement"
 L["No Glows"] = "Aucune lueur"
 L["Show Key Press Flash"] = "Flash touche pressée"
 L["Show Key Press Flash desc"] = "Faire clignoter l'icône lorsque vous appuyez sur le raccourci correspondant."
+L["Modifier Emphasis"] = "Mise en évidence du modificateur"
+L["Modifier Emphasis desc"] = "Tant que vous maintenez Maj, Ctrl ou Alt, les raccourcis qui se déclenchent avec ce modificateur reçoivent une lueur douce derrière celui-ci et les autres s'estompent. Tout le raccourci brille tant que sa touche est enfoncée."
 L["Grey Out While Casting"] = "Griser : incantation"
 L["Grey Out While Casting desc"] = "Désaturer les icônes de file pendant l'incantation. Le sort en cours reste en couleur."
 L["Mark Move-Castable Spells"] = "Marquer les sorts lançables en mouvement"
@@ -380,6 +382,8 @@ L["Cooldown Manager combat warning"] = "Le Gestionnaire de temps de recharge ne 
 
 L["Health Top-off Threshold"] = "Recharger en dessous de"
 L["Health Top-off Threshold desc"] = "À quel point sous la santé maximale le rappel de soin entre les pulls apparaît. Le rappel d'urgence à santé critique est séparé et toujours actif."
+L["Stealth Reminder"] = "Rappel de camouflage"
+L["Stealth Reminder desc"] = "Hors combat, affiche Camouflage ou Rôder dans la file défensive tant que vous n'êtes pas camouflé. L'icône reste en place avec son temps de recharge et brille dès qu'elle est prête. Masqué en monture ou en zone de repos."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "Alerter sur les incantations dangereuses"

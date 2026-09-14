@@ -21,7 +21,8 @@ local defensiveQueueDirty = true
 -- only iterate their input, so one constant replaces two fresh tables per tick.
 local EMPTY_QUEUE = {}
 local lastFullUpdate = 0
-local IDLE_CHECK_INTERVAL = 0.5  -- Check every 0.5s when idle (no recent events)
+local IDLE_CHECK_INTERVAL = 0.25  -- Check every 0.25s when idle (no recent events)
+local COMBAT_DEFENSIVE_INTERVAL = 0.5  -- In-combat defensive rebuild fallback (2Hz)
 local OOC_DIRTY_UPDATE_INTERVAL = 0.1    -- OOC dirty/hostile-target cadence (10Hz; headroom is ample)
 local OOC_DEFENSIVE_IDLE_INTERVAL = 1.0  -- OOC defensive full rebuild cadence (1Hz)
 local OOC_EVENT_DIRTY_THROTTLE = 0.2     -- Coalesce OOC cooldown/usability event bursts
@@ -123,6 +124,7 @@ local defaults = {
                 fontScale = 1.0,
                 color     = {r = 1, g = 1, b = 1, a = 1},
                 anchor    = "TOPRIGHT",    -- TOPRIGHT, TOPLEFT, TOP, CENTER, BOTTOMRIGHT, BOTTOMLEFT
+                modifierEmphasis = true,   -- Held Shift/Ctrl/Alt: glow the modifier on binds it fires, dim the rest
             },
             cooldown = {
                 show      = true,
@@ -201,6 +203,7 @@ local defaults = {
             -- PrecombatEngine hurt detection).
             topoffHeal = false,
             topoffThreshold = 90,   -- Health % below which the top-off nudge shows (emergency band below 35% is fixed)
+            stealth = true,         -- Offer Stealth/Prowl while not stealthed (glows once off cooldown)
             -- per-category override: [cat]=false off, [cat]="haste"/… stat pref, nil=auto/on.
             -- Speed is a food preference (stat="speed"), not its own category. XP is a utility
             -- category - default OFF (explicit false, so "on" must be a truthy value to
@@ -1684,7 +1687,7 @@ function JustAC:OnUnitAura(event, unit, updateInfo)
 
     -- OOC the pre-combat suggestions and their click layers are AURA-driven (the eating aura,
     -- Well Fed, flask, poison...), so a player aura change has to rebuild the defensive queue
-    -- too. Without this the mid-eat click disarm waits for the 0.5s idle cycle, leaving exactly
+    -- too. Without this the mid-eat click disarm waits for the idle cycle, leaving exactly
     -- the spam-click window that restarts the eat. OOC-gated: aura churn in combat is heavy and
     -- the pre-combat system is inactive there anyway.
     if not UnitAffectingCombat("player") then defensiveQueueDirty = true end
@@ -1897,10 +1900,10 @@ end
 -- cast in combat via the GCD cascade, and again OOC as things come off cooldown). In
 -- combat, dirty flags only - the 20-33Hz poll picks them up within one tick, and
 -- zeroing the timer per event woke the loop on every frame of a burst. OOC, coalesce
--- the burst: a flag set here lifts the loop from its 0.5s idle to 10Hz for a tick,
+-- the burst: a flag set here lifts the loop from its 0.25s idle to 10Hz for a tick,
 -- with a full offensive AND defensive rebuild each, so continuous OOC cooldown churn
 -- must not turn into 10 rebuilds/s. An event the throttle drops is not lost: a
--- visible queue rebuilds on every 0.5s idle wake and the defensives every 1s.
+-- visible queue rebuilds on every 0.25s idle wake and the defensives every 1s.
 local function MarkQueuesDirty()
     if not UnitAffectingCombat("player") then
         local now = GetTime()
@@ -2069,7 +2072,7 @@ end
 
 -- OOC only: PrecombatEngine hides its suggestions while a cast/channel is running, so an extra
 -- click can't cancel the channel (wasting the food) or burn a second consumable. That guard is
--- only as fast as the next queue rebuild - and out of combat that is the 0.5s idle cycle, which
+-- only as fast as the next queue rebuild - and out of combat that is the 0.25s idle cycle, which
 -- would leave the icon clickable for up to half a second after the cast begins, exactly the
 -- double-click window the guard exists to close. Rebuild on the transition instead (and on stop,
 -- so an interrupted channel brings the suggestion straight back). In combat the pre-combat
@@ -2279,7 +2282,7 @@ end
 --                           inside the render pass - CD swipes, charges, hotkey re-lookup
 -- Tier 3 (defensive rebuild): event-dirty (health/aura/cooldown/usability/cast events),
 --                           with a periodic fallback: 0.5s in combat, 1.0s OOC
--- Tier 4 (idle/OOC):        0.5s - nothing happening
+-- Tier 4 (idle/OOC):        0.25s - nothing happening
 --
 -- ForceUpdate() / ForceUpdateAll() set dirty flags + updateTimeLeft = 0
 -- so the next frame processes. Multiple calls per frame are idempotent.
@@ -2375,7 +2378,7 @@ local function OnUpdateTick(_, elapsed)
     -- Visible-queue idle refresh (the range-lag fix, generalized): cooldown expiry,
     -- charge recovery, resource regen (starved sinks and Hold dials), and DoT
     -- pandemic thresholds are all TIME-driven - no event fires when they cross -
-    -- so a visible queue rebuilds on every idle wake (0.5s) even when clean.
+    -- so a visible queue rebuilds on every idle wake (0.25s) even when clean.
     -- Dirty events and a hostile target keep the fast cadence above; a build is
     -- sub-millisecond, so the visible-idle cost is noise.
     local queueSurfaceShown = not mainHidden or not npHidden
@@ -2394,7 +2397,7 @@ local function OnUpdateTick(_, elapsed)
     end
 
     -- Only update defensive cooldowns if dirty or periodic check
-    local defensiveInterval = inCombat and IDLE_CHECK_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
+    local defensiveInterval = inCombat and COMBAT_DEFENSIVE_INTERVAL or OOC_DEFENSIVE_IDLE_INTERVAL
     if defensiveQueueDirty or (now - lastFullUpdate) > defensiveInterval then
         -- Full queue rebuild (not just cooldown swipes) so "always" and "combatOnly"
         -- modes surface new icons promptly when cooldowns expire. Clear the dirty

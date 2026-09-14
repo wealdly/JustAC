@@ -102,6 +102,22 @@ local function BuildLabelInlineGroup(addon, key, groupName, order, defaultAlpha,
                     onSet()
                 end,
             } or nil,
+            modifierEmphasis = key == "hotkey" and {
+                type = "toggle",
+                name = L["Modifier Emphasis"],
+                desc = L["Modifier Emphasis desc"],
+                order = 5,
+                width = "full",
+                get = function()
+                    local b = getBlock()
+                    return not b or b.modifierEmphasis ~= false
+                end,
+                set = function(_, val)
+                    addon.db.profile.textOverlays.hotkey.modifierEmphasis = val
+                    local R = LibStub("JustAC-UIRenderer", true)
+                    if R and R.SetHotkeyEmphasisEnabled then R.SetHotkeyEmphasisEnabled(val) end
+                end,
+            } or nil,
         },
     }
 end
@@ -179,7 +195,7 @@ end
 --- Reset every label setting to defaults; called from the Shared panel's reset.
 function Labels.ResetToDefaults(addon)
     addon.db.profile.textOverlays = {
-        hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT" },
+        hotkey   = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="TOPRIGHT", modifierEmphasis=true },
         cooldown = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=0.5} },
         charges  = { show=true, fontScale=1.0, color={r=1,g=1,b=1,a=1}, anchor="BOTTOMRIGHT" },
     }

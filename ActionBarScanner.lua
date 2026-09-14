@@ -15,7 +15,7 @@ local GetTime = GetTime
 local HasAction = HasAction
 local GetBindingKey = GetBindingKey
 local GetActionCooldown = GetActionCooldown
-local GetItemSpell = GetItemSpell
+local GetItemSpell = C_Item.GetItemSpell
 local C_Spell_GetOverrideSpell = C_Spell and C_Spell.GetOverrideSpell
 local C_Spell_GetSpellInfo = C_Spell and C_Spell.GetSpellInfo
 local C_ActionBar_FindSpellActionButtons = C_ActionBar and C_ActionBar.FindSpellActionButtons
@@ -755,6 +755,40 @@ local function AbbreviateKeybind(key)
     return result
 end
 
+-- Exact bind behind each label, keyed by the label text. The abbreviated label alone is
+-- ambiguous ("Spc" reads as Shift+PC, "SL" is Scroll Lock or Shift+L), so the key-press
+-- matcher and the modifier emphasis resolve labels here first and only parse the text for
+-- a label we did not write (a user's custom hotkey). Canonical spelling matches
+-- KeyPressDetector's modifier prefix; three-modifier binds have none and stay unmapped.
+local normalizedForLabel = {}
+local function NormalizeBinding(rawKey, macroModifiers)
+    local alt, ctrl, shift = rawKey:find("ALT%-") ~= nil, rawKey:find("CTRL%-") ~= nil, rawKey:find("SHIFT%-") ~= nil
+    local key = rawKey:gsub("ALT%-", ""):gsub("CTRL%-", ""):gsub("SHIFT%-", "")
+    local mod = macroModifiers and macroModifiers.mod
+    local any = false
+    if mod then
+        if mod:match("shift") then shift = true
+        elseif mod:match("ctrl") then ctrl = true
+        elseif mod:match("alt") then alt = true
+        else any = true end
+    end
+    if any and not (alt or ctrl or shift) then return "MOD-" .. key end
+    if alt and ctrl and shift then return nil end
+    local prefix = (ctrl and shift and "CTRL-SHIFT-") or (ctrl and alt and "CTRL-ALT-")
+        or (shift and alt and "SHIFT-ALT-") or (shift and "SHIFT-") or (ctrl and "CTRL-")
+        or (alt and "ALT-") or ""
+    return prefix .. key
+end
+local function Label(rawKey, macroModifiers, label)
+    normalizedForLabel[label] = NormalizeBinding(rawKey, macroModifiers)
+    return label
+end
+
+--- The exact normalized bind behind a label this scanner produced, or nil.
+function ActionBarScanner.GetNormalizedHotkey(label)
+    return label and normalizedForLabel[label]
+end
+
 local function FormatHotkeyWithModifiers(baseKey, macroModifiers)
     if not baseKey or baseKey == "" then
         return ""
@@ -830,7 +864,7 @@ function ActionBarScanner.GetSpellHotkey(spellID)
     local function CacheHotkey(slot, modifiers, cacheID, extraCacheID)
         local baseKey = GetOptimizedKeybind(slot)
         if not baseKey then return nil end
-        local finalHotkey = FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers)
+        local finalHotkey = Label(baseKey, modifiers, FormatHotkeyWithModifiers(AbbreviateKeybind(baseKey), modifiers))
         spellHotkeyCache[cacheID] = finalHotkey
         spellSlotCache[cacheID] = slot
         -- "Direct" means the slot's action IS this spell/item, so slot-based cooldown
@@ -917,7 +951,7 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
     if cachedSlot then
         local baseKey = GetOptimizedKeybind(cachedSlot)
         if baseKey and baseKey ~= "" then
-            return AbbreviateKeybind(baseKey)
+            return Label(baseKey, nil, AbbreviateKeybind(baseKey))
         end
     elseif cachedSlot == nil
         or (GetTime() - lastItemMissScanTime) >= HOTKEY_REFRESH_INTERVAL then
@@ -938,7 +972,7 @@ function ActionBarScanner.GetItemHotkey(itemID, castSpellID)
                     end
                     local baseKey = GetOptimizedKeybind(slot)
                     if baseKey and baseKey ~= "" then
-                        return AbbreviateKeybind(baseKey)
+                        return Label(baseKey, nil, AbbreviateKeybind(baseKey))
                     end
                     break
                 end
@@ -974,7 +1008,7 @@ function ActionBarScanner.GetMacroHotkey(macroName)
             if ok and text == macroName then
                 local baseKey = GetOptimizedKeybind(slot)
                 if baseKey and baseKey ~= "" then
-                    return AbbreviateKeybind(baseKey)
+                    return Label(baseKey, nil, AbbreviateKeybind(baseKey))
                 end
                 return ""   -- on a slot, but that slot has no key bound
             end
@@ -1149,6 +1183,7 @@ end
 function ActionBarScanner.ClearAllCaches()
     WipeSpellCaches()
     wipe(abbreviatedKeyCache)
+    wipe(normalizedForLabel)
     -- Binding cache bakes in profile.inputPreference at rebuild; without this,
     -- toggling that option shows stale hotkeys until the next UPDATE_BINDINGS.
     InvalidateBindingCache()

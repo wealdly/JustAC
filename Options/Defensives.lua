@@ -43,7 +43,7 @@ end
 local function pbOptLabel(cat, statPref, base)
     local SDB = LibStub("JustAC-SpellDB", true)
     local entry = SDB and SDB.GetBestOwnedBuff and SDB.GetBestOwnedBuff(cat, statPref)
-    local nm = entry and entry.id and (GetItemInfo(entry.id))
+    local nm = entry and entry.id and (C_Item.GetItemInfo(entry.id))
     return nm and (base .. "  |cff2ecc71" .. nm .. "|r") or base
 end
 
@@ -534,6 +534,24 @@ function Defensives.CreateTabArgs(addon)
                             pbApply(addon)
                         end,
                     },
+                    stealthReminder = {
+                        type = "toggle",
+                        name = L["Stealth Reminder"],
+                        desc = L["Stealth Reminder desc"],
+                        order = 3,
+                        width = "full",
+                        hidden = function()
+                            local PE = LibStub("JustAC-PrecombatEngine", true)
+                            local entry = PE and PE.STEALTH_REMINDER[select(2, UnitClass("player"))]
+                            return not entry or (entry.spec and GetSpecialization() ~= entry.spec)
+                        end,
+                        disabled = function() return pbDisabled(addon) end,
+                        get = function() return addon.db.profile.precombatBuffs.stealth ~= false end,
+                        set = function(_, v)
+                            addon.db.profile.precombatBuffs.stealth = v
+                            pbApply(addon)
+                        end,
+                    },
                     flask = pbStatSelect(addon, "flask", L["Flask"], 10, true),
                     food = pbStatSelect(addon, "food", L["Food"], 11, true),
                     augmentRune = pbOnOffSelect(addon, "augmentRune", L["Augment Rune"], 12, false),
@@ -654,6 +672,7 @@ function Defensives.CreateTabArgs(addon)
             pb.enabled         = true
             pb.topoffHeal      = false
             pb.topoffThreshold = 90
+            pb.stealth         = true
             -- Fresh table: assigning the defaults one would alias it into the profile.
             pb.categories      = { xp = false }
             pbApply(addon)

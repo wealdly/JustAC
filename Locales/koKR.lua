@@ -40,6 +40,8 @@ L["Proc Only"] = "무료 발동(프록) 스킬만 반짝임"
 L["No Glows"] = "반짝임 끄기"
 L["Show Key Press Flash"] = "키 입력 시 반짝임 효과"
 L["Show Key Press Flash desc"] = "지정된 단축키를 키보드로 누를 때 해당 아이콘이 순간적으로 반짝이게 합니다."
+L["Modifier Emphasis"] = "보조키 강조"
+L["Modifier Emphasis desc"] = "Shift, Ctrl 또는 Alt를 누르고 있는 동안 해당 보조키로 발동하는 단축키는 보조키 뒤에 은은한 빛이 표시되고 나머지는 흐려집니다. 키를 누르고 있는 동안 해당 단축키 전체가 빛납니다."
 L["Grey Out While Casting"] = "시전 중인 스킬 외 회색 처리"
 L["Grey Out While Casting desc"] = "스킬을 캐스팅(캐스팅 바가 올라가는 중)하는 동안, 다음 대기열 아이콘들을 흑백으로 만들어 시선을 분산시키지 않습니다. 현재 시전 중인 스킬만 컬러로 유지됩니다."
 L["Mark Move-Castable Spells"] = "이동 시전 가능 스킬 표시"
@@ -389,6 +391,8 @@ L["Cooldown Manager combat warning"] = "전투 중에는 블리자드 매니저 
 
 L["Health Top-off Threshold"] = "비전투 만피 치유 기준 체력"
 L["Health Top-off Threshold desc"] = "전투가 끝난 후 내 체력이 몇 % 이하로 떨어져 있을 때 자가 치유 기술을 대기열 맨 앞에 띄워 상기시킬지 설정합니다. (체력이 위험 수위인 빈사 상태일 때의 초비상 생존기 알림은 이 설정과 무관하게 상시 작동합니다.)"
+L["Stealth Reminder"] = "은신 알림"
+L["Stealth Reminder desc"] = "비전투 중 은신 상태가 아닐 때 생존기 대기열에 은신 또는 숨기를 표시합니다. 재사용 대기시간 표시와 함께 자리를 유지하고, 사용 가능해지면 빛납니다. 탈것 탑승 중이나 휴식 지역에서는 표시되지 않습니다."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "위험한 시전 경고"
