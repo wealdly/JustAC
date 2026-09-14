@@ -128,6 +128,8 @@ function UIFrameFactory.ApplyTextOverlaySettings(button, size, overlaysBlock)
         button.hotkeyText:ClearAllPoints()
         -- Anchor to hotkeyFrame (direct parent of hotkeyText) for reliable FontString positioning
         button.hotkeyText:SetPoint(anchor, button.hotkeyFrame, anchor, preset.ox, preset.oy)
+        -- Recorded for the modifier-emphasis glow, which places itself from these numbers.
+        button.hotkeyAnchor, button.hotkeyAnchorX, button.hotkeyAnchorY = anchor, preset.ox, preset.oy
         button.hotkeyText:SetJustifyH(preset.jh)
     end
 
@@ -705,6 +707,7 @@ local function CreateBaseIcon(parent, size, isClickable, isFirstIcon)
     hotkeyText:SetJustifyH("RIGHT")
     local hotkeyOffset = isFirstIcon and HOTKEY_OFFSET_FIRST or HOTKEY_OFFSET_QUEUE
     hotkeyText:SetPoint("TOPRIGHT", button, "TOPRIGHT", hotkeyOffset, hotkeyOffset)
+    button.hotkeyAnchor, button.hotkeyAnchorX, button.hotkeyAnchorY = "TOPRIGHT", hotkeyOffset, hotkeyOffset
     button.hotkeyText = hotkeyText
     button.hotkeyFrame = hotkeyFrame
 

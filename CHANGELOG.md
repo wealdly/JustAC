@@ -3,6 +3,14 @@
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-09-14
+
+- New Stealth Reminder (Pre-combat Buffs, Rogues and Feral Druids, on by default): out of combat, your Stealth or Prowl sits on the defensive queue while you are not stealthed, with its cooldown shown, and glows once it is ready.
+- New Modifier Emphasis for hotkey text (on by default): hold Shift, Ctrl or Alt and the hotkeys that fire with it get a soft glow behind the modifier while the rest dim; a hotkey's whole label glows while its key is held.
+- Key-press flash now works on Space, Caps Lock, Scroll Lock and Alt-combination binds, which it could miss before.
+- Icons out of combat update a little faster when a cooldown finishes.
+- Updated rotation priorities: Havoc Demon Hunter now uses Throw Glaive to spread Burning Wound on packs, and Protection Paladin uses Holy Armaments ahead of Avenging Wrath.
+
 ## [5.4.0] - 2026-09-08
 
 ### Added

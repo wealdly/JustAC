@@ -9,6 +9,7 @@
 -- construction; nothing here names a surface.
 --   * key press  - immediate, catches presses that don't cast (wrong target, on cooldown)
 --   * cast done  - covers what no key hook sees: macros, click-casting, mouse buttons 1-2
+-- A matched key also marks its icons HELD until release, which UIRenderer draws as a glow.
 -- An icon hidden by alpha (defensives at 0, an engine-hidden kick) still counts as shown:
 -- its Flash inherits the alpha and draws nothing, and that alpha may be a secret the
 -- addon must never compare, so IsShown() is the only visibility read here.
@@ -83,9 +84,43 @@ local function Flash(icon, now)
     icon.lastPressTime = now
 end
 
+-- Held-key label emphasis: icons whose key is DOWN light their whole hotkey label until
+-- the key comes back up (UIRenderer draws it). Tracked by the raw key so a release clears
+-- it whatever modifiers changed in between. Release is polled (IsKeyDown, below) as well
+-- as heard, so a release we never saw cannot leave a label stuck - and a second key going
+-- down (strafing while holding a bind) leaves the first one lit.
+local heldIcons = {}   -- [icon] = raw key
+
+local function SetHeld(icon, key)
+    heldIcons[icon] = key
+    icon.hotkeyHeld = key and true or nil
+end
+
+local function RepaintLabels()
+    local R = LibStub("JustAC-UIRenderer", true)
+    if R and R.RefreshHotkeyEmphasis then R.RefreshHotkeyEmphasis() end
+end
+
+local function ReleaseKey(key)
+    local any = false
+    for icon, k in pairs(heldIcons) do
+        if k == key then SetHeld(icon, nil); any = true end
+    end
+    if any then RepaintLabels() end
+end
+
+local function MarkHeld(key)
+    if #iconsToFlash == 0 then return end   -- movement and other unbound keys: no repaint
+    for _, icon in ipairs(iconsToFlash) do SetHeld(icon, key) end
+    RepaintLabels()
+end
+
 --- Flash every shown icon whose key matches the press.
-local function MatchAndFlash(addon, normalizedKey, hasAnyModifier)
-    if not FlashEnabled(addon) then return end
+local function MatchAndFlash(addon, normalizedKey, hasAnyModifier, rawKey)
+    -- Matching also feeds the held-key label, which has its own toggle; only the
+    -- flash itself is gated on the flash option.
+    local flash = FlashEnabled(addon)
+    if not (UIFrameFactory and UIFrameFactory.icons) then return end
     wipe(iconsToFlash)
     local now = GetTime()
     -- A spell that just left a slot: the player pressed for the slot they were looking
@@ -105,12 +140,20 @@ local function MatchAndFlash(addon, normalizedKey, hasAnyModifier)
             if matched then iconsToFlash[#iconsToFlash + 1] = icon end
         end
     end
-    for _, icon in ipairs(iconsToFlash) do
+    -- Compact to the icons that actually answer this press (the slot a graced spell moved
+    -- INTO stays quiet), so the flash and the held label agree on which icons those are.
+    local kept = 0
+    for i = 1, #iconsToFlash do
+        local icon = iconsToFlash[i]
         if not (gracedSpellID and icon.spellID == gracedSpellID and not icon._flashGraced) then
-            Flash(icon, now)
+            kept = kept + 1
+            iconsToFlash[kept] = icon
+            if flash then Flash(icon, now) end
         end
         icon._flashGraced = nil
     end
+    for i = #iconsToFlash, kept + 1, -1 do iconsToFlash[i] = nil end
+    if rawKey then MarkHeld(rawKey) end
 end
 
 --- Flash every shown icon that displays the spell the player just cast (any input
@@ -187,7 +230,10 @@ function KPD.Create(addon)
                 return
             end
 
-            MatchAndFlash(addon, BuildModifierPrefix() .. key:upper(), IsAnyModifierDown())
+            MatchAndFlash(addon, BuildModifierPrefix() .. key:upper(), IsAnyModifierDown(), key:upper())
+        end)
+        frame:SetScript("OnKeyUp", function(_, key)
+            if next(heldIcons) then ReleaseKey(key:upper()) end
         end)
     end
     if InCombatLockdown() then
@@ -214,10 +260,21 @@ function KPD.Create(addon)
         if mouseUpdateAccum < MOUSE_POLL_INTERVAL then return end
         mouseUpdateAccum = 0
 
+        -- Held-key release by polling, not only OnKeyUp: a key-up is not reliably delivered
+        -- to us once the key's binding has fired (field report: the label kept pulsing after
+        -- casting). Runs only while some label is held.
+        if next(heldIcons) and IsKeyDown then
+            for _, key in pairs(heldIcons) do
+                if not IsKeyDown(key) then ReleaseKey(key) break end
+            end
+        end
+
         for i, btn in ipairs(MOUSE_BUTTONS) do
             local down = IsMouseButtonDown(btn.api)
             if down and not prevMouseDown[i] then
-                MatchAndFlash(addon, BuildModifierPrefix() .. btn.binding, IsAnyModifierDown())
+                MatchAndFlash(addon, BuildModifierPrefix() .. btn.binding, IsAnyModifierDown(), btn.binding)
+            elseif not down and prevMouseDown[i] and next(heldIcons) then
+                ReleaseKey(btn.binding)
             end
             prevMouseDown[i] = down
         end

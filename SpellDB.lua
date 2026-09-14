@@ -120,7 +120,7 @@ function SpellDB.GetBestHealingItem()
         local allReadable = true
         for i = 1, #HEALING_ITEMS do
             local id = HEALING_ITEMS[i]
-            if (GetItemCount(id) or 0) > 0 then
+            if (C_Item.GetItemCount(id) or 0) > 0 then
                 local heal = HealInfo(id)
                 if heal <= 0 then allReadable = false end
                 if heal > bestHeal then
@@ -150,9 +150,9 @@ function SpellDB.GetBestHealingItemInfo()
     local heal, isPct, value = HealInfo(id)
     local owned = 0
     for i = 1, #HEALING_ITEMS do
-        if (GetItemCount(HEALING_ITEMS[i]) or 0) > 0 then owned = owned + 1 end
+        if (C_Item.GetItemCount(HEALING_ITEMS[i]) or 0) > 0 then owned = owned + 1 end
     end
-    return { id = id, name = (GetItemInfo(id)) or ("item " .. id),
+    return { id = id, name = (C_Item.GetItemInfo(id)) or ("item " .. id),
              isPct = isPct, value = value, heal = heal, owned = owned }
 end
 
@@ -280,8 +280,8 @@ function SpellDB.GetOwnedHealingItems()
     local owned = {}
     for i = 1, #HEALING_ITEMS do
         local id = HEALING_ITEMS[i]
-        if (GetItemCount(id) or 0) > 0 then
-            owned[#owned + 1] = { id = id, name = (GetItemInfo(id)) or ("Item " .. id) }
+        if (C_Item.GetItemCount(id) or 0) > 0 then
+            owned[#owned + 1] = { id = id, name = (C_Item.GetItemInfo(id)) or ("Item " .. id) }
         end
     end
     return owned
@@ -563,7 +563,7 @@ local function OwnsBuffEntry(e)
     elseif e.source == "spell" then
         return IsPlayerSpell and IsPlayerSpell(e.id)
     end
-    return (GetItemCount(e.id) or 0) > 0
+    return (C_Item.GetItemCount(e.id) or 0) > 0
 end
 
 -- Caster specs (intellect primary) want weapon oils; physical specs want stones/whetstones.
@@ -594,8 +594,8 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
     local weaponExp, weaponTypeBit
     if cat == "weaponEnchant" and GetInventoryItemID then
         local mh = GetInventoryItemID("player", 16)
-        weaponExp = mh and select(15, GetItemInfo(mh))
-        local getInstant = GetItemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
+        weaponExp = mh and select(15, C_Item.GetItemInfo(mh))
+        local getInstant = C_Item.GetItemInfoInstant
         if mh and getInstant then
             local classID, subClassID = select(6, getInstant(mh))
             if classID == 2 and subClassID then weaponTypeBit = 2 ^ subClassID end
@@ -615,7 +615,7 @@ function SpellDB.GetBestOwnedBuff(cat, statPref)
         if OwnsBuffEntry(e) and (e.stat == "speed") == (statPref == "speed") then
             local applies = true
             if weaponExp then
-                local oilExp = select(15, GetItemInfo(e.id))
+                local oilExp = select(15, C_Item.GetItemInfo(e.id))
                 applies = oilExp ~= nil and oilExp >= weaponExp
             end
             if applies and e.wmask and weaponTypeBit then

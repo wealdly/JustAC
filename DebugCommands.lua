@@ -1618,7 +1618,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         local items = SpellDB.GetPrecombatBuffItems(cat) or {}
         local satisfied = Engine.IsCategorySatisfied(cat)
         local best = SpellDB.GetBestOwnedBuff(cat)
-        local bestName = best and ((GetItemInfo(best.id)) or ("item " .. best.id))
+        local bestName = best and ((C_Item.GetItemInfo(best.id)) or ("item " .. best.id))
         local statTag = best and best.stat and (" |cff888888[" .. best.stat .. "]|r") or ""
         local state = satisfied and "|cff00ff00active|r"
             or (best and "|cffff6666MISSING|r" or "|cff888888missing, none owned|r")
@@ -1632,7 +1632,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         addon:Print("|cff00ff00Nothing missing (or nothing owned to fix it).|r")
     else
         for _, m in ipairs(missing) do
-            local nm = (GetItemInfo(m.entry.id)) or ("item " .. m.entry.id)
+            local nm = (C_Item.GetItemInfo(m.entry.id)) or ("item " .. m.entry.id)
             addon:Print("  " .. m.category .. " -> " .. nm)
         end
     end
@@ -1671,7 +1671,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
                 #inRot > 0 and table.concat(inRot, ", ") or "|cff888888none|r"))
         end
         for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
-                addon.db.profile.precombatBuffs.topoffThreshold) or {}) do
+                addon.db.profile.precombatBuffs.topoffThreshold, addon.db.profile.precombatBuffs.stealth) or {}) do
             addon:Print("  offering: " .. SpellName(s))
         end
     end
@@ -1760,7 +1760,7 @@ function DebugCommands.PrecombatBuffDiagnostics(addon)
         addon:Print("  health-bar fill-width probe: " .. FillRatio())
         local surfaced = false
         for _, s in ipairs(Engine.GetMissingClassBuffs(addon.db.profile.precombatBuffs.topoffHeal,
-                addon.db.profile.precombatBuffs.topoffThreshold) or {}) do
+                addon.db.profile.precombatBuffs.topoffThreshold, addon.db.profile.precombatBuffs.stealth) or {}) do
             if s == sid then surfaced = true break end
         end
         addon:Print("  would surface: " .. (surfaced and "|cff00ff00YES|r" or "|cffff6666NO|r"))
@@ -1784,7 +1784,7 @@ function DebugCommands.ContextRankDiagnostics(addon)
 
     local function spellName(id)
         if id < 0 then
-            local name = GetItemInfo and GetItemInfo(-id)
+            local name = C_Item.GetItemInfo(-id)
             return name or ("item " .. -id)
         end
         local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
@@ -8653,7 +8653,8 @@ function DebugCommands.TopoffWatch(addon, arg)
         local offerTopoff = profile and profile.precombatBuffs and profile.precombatBuffs.topoffHeal == true
         local topoffPct = profile and profile.precombatBuffs and profile.precombatBuffs.topoffThreshold
         -- Ask the engine for the live list, exactly as the defensive queue does.
-        local list = Engine.GetMissingClassBuffs and Engine.GetMissingClassBuffs(offerTopoff, topoffPct) or {}
+        local list = Engine.GetMissingClassBuffs and Engine.GetMissingClassBuffs(offerTopoff, topoffPct,
+            profile and profile.precombatBuffs and profile.precombatBuffs.stealth) or {}
         local offered = Engine.offeredTopoffHeal
         local inList = false
         for i = 1, #list do if list[i] == offered then inList = true break end end

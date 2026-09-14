@@ -989,7 +989,7 @@ local function ResolveEmergencyDefensives(list, profile)
         local potID
         if choice == -1 then
             potID = nil  -- disabled via the tile dropdown
-        elseif choice and choice > 0 and (GetItemCount(choice) or 0) > 0 then
+        elseif choice and choice > 0 and (C_Item.GetItemCount(choice) or 0) > 0 then
             potID = choice
         elseif SpellDB.GetBestHealingItem then
             potID = SpellDB.GetBestHealingItem()
@@ -1085,7 +1085,8 @@ function DefensiveEngine.GetDefensiveSpellQueue(addon, passedIsLow, passedInComb
         if PrecombatEngine.GetMissingClassBuffs then
             local offerTopoff = profile.precombatBuffs.topoffHeal == true
             local topoffPct = profile.precombatBuffs.topoffThreshold
-            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct)) do
+            local offerStealth = profile.precombatBuffs.stealth ~= false
+            for _, spellID in ipairs(PrecombatEngine.GetMissingClassBuffs(offerTopoff, topoffPct, offerStealth)) do
                 if #results >= maxIcons then break end
                 -- topoff: the health top-off heal specifically, not the poisons/imbues beside
                 -- it. Flagged because the renderer drives ITS alpha from a health curve - out

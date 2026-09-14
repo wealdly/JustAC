@@ -92,6 +92,10 @@ local HOTKEY_NORMALIZE_PATTERNS = {
 }
 
 local function NormalizeHotkey(hotkey)
+    -- A label the scanner wrote: its exact bind, never a guess from the abbreviation.
+    local exact = ActionBarScanner and ActionBarScanner.GetNormalizedHotkey
+        and ActionBarScanner.GetNormalizedHotkey(hotkey)
+    if exact then return exact end
     local cached = normalizeHotkeyCache[hotkey]
     if cached then return cached end
     local n = hotkey:upper()
@@ -133,6 +137,207 @@ local function LookupHotkey(id, isItem, itemCastSpellID)
     return ActionBarScanner.GetSpellHotkey and ActionBarScanner.GetSpellHotkey(id) or ""
 end
 
+--------------------------------------------------------------------------------
+-- Modifier emphasis. While Shift/Ctrl/Alt is held, a label whose bind needs exactly
+-- those modifiers (or any modifier, "+X") gets a soft glow behind its modifier letters;
+-- every other label dims - so the keys that fire right now are the ones that read. While
+-- a label's key is down the glow covers the whole label and breathes. Driven by
+-- MODIFIER_STATE_CHANGED (plain, fires in combat) and KeyPressDetector's held keys: a walk
+-- of the icon registry per change, nothing per frame. The text colour is never touched.
+--------------------------------------------------------------------------------
+local EMPHASIS_DIM_ALPHA = 0.6   -- non-matching labels: readable, but clearly secondary
+-- Blizzard's own glow for a text label (the collections "NEW" tag).
+local EMPHASIS_GLOW_ATLAS = "collections-newglow"
+local EMPHASIS_GLOW_ALPHA = 0.75   -- resting glow opacity; the held-key pulse dips below it
+-- Normalized modifier prefixes, longest first, with how many letters each shows as.
+local MOD_PREFIXES = {
+    { "CTRL-SHIFT-", 2 }, { "CTRL-ALT-", 2 }, { "SHIFT-ALT-", 2 },
+    { "SHIFT-", 1 }, { "CTRL-", 1 }, { "ALT-", 1 }, { "MOD-", 1 },
+}
+local heldModifiers = ""   -- same spelling as the normalized prefixes; "" = none held
+
+local function EmphasisEnabled()
+    local addon = BlizzardAPI and BlizzardAPI.GetAddon and BlizzardAPI.GetAddon()
+    local ov = addon and addon.db and addon.db.profile and addon.db.profile.textOverlays
+    return not (ov and ov.hotkey and ov.hotkey.modifierEmphasis == false)
+end
+
+local function BindModifiers(normalized)
+    for _, p in ipairs(MOD_PREFIXES) do
+        if normalized:sub(1, #p[1]) == p[1] then return p[1], p[2] end
+    end
+    return "", 0
+end
+
+-- Hidden twin of a label, used to measure the text. EVERY readback happens on this twin,
+-- never on the label: a label inside an icon whose alpha the engine drives from a secret
+-- (the interrupt icon) returns secrets from its own getters, and arithmetic on one throws.
+local measureString
+local function Plain(v, fallback)
+    if v == nil or (issecretvalue and issecretvalue(v)) then return fallback end
+    return v
+end
+--- Width of `text` in the label's font, and that font's height. Both plain numbers.
+local function MeasureLabel(fs, text)
+    if not measureString then
+        measureString = UIParent:CreateFontString(nil, "BACKGROUND")
+        measureString:Hide()
+    end
+    local font, height, flags = fs:GetFont()
+    font, height, flags = Plain(font, STANDARD_TEXT_FONT), Plain(height, 12), Plain(flags, "OUTLINE")
+    measureString:SetFont(font, height, flags)
+    measureString:SetText(text)
+    return Plain(measureString:GetStringWidth(), height), height
+end
+
+local function GetEmphasisGlow(icon)
+    local glow = icon.hotkeyGlow
+    if glow then return glow end
+    glow = (icon.hotkeyFrame or icon.hotkeyText:GetParent()):CreateTexture(nil, "OVERLAY", nil, 4)   -- just under the text (5)
+    glow:SetAtlas(EMPHASIS_GLOW_ATLAS)
+    -- The atlas is blue-green and a tint only multiplies, so strip its colour first, then
+    -- tint toward warm white-gold.
+    glow:SetDesaturated(true)
+    glow:SetVertexColor(1, 0.85, 0.5)
+    glow:SetBlendMode("ADD")   -- additive: lightens what is under it, where BLEND muddied it dark
+    glow:SetAlpha(EMPHASIS_GLOW_ALPHA)
+    glow:Hide()
+    local pulse = glow:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local fade = pulse:CreateAnimation("Alpha")
+    fade:SetFromAlpha(EMPHASIS_GLOW_ALPHA)
+    fade:SetToAlpha(0.3)
+    fade:SetDuration(0.45)
+    fade:SetSmoothing("IN_OUT")
+    glow.pulse = pulse
+    icon.hotkeyGlow = glow
+    return glow
+end
+
+--- Place and size the glow over the label text, or over its first `prefixText` characters.
+local function LayoutEmphasisGlow(icon, fs, glow, prefixText)
+    local fullWidth, height = MeasureLabel(fs, icon.cachedHotkey or "")
+    local width = prefixText and (MeasureLabel(fs, prefixText)) or fullWidth
+    -- Placed from the label's anchor setting, not the font string's region (which does not
+    -- track the glyphs). The label hangs off its anchor point: its text starts fullWidth left
+    -- of a RIGHT anchor, at a LEFT one, or half-way for a centred one, and sits one line below
+    -- a TOP anchor or above a BOTTOM one.
+    local anchor = icon.hotkeyAnchor or "TOPRIGHT"
+    local textLeft = (anchor:find("RIGHT") and -fullWidth) or (anchor:find("LEFT") and 0) or -fullWidth / 2
+    local centreY = (anchor:find("TOP") and -height / 2) or (anchor:find("BOTTOM") and height / 2) or 0
+    glow:ClearAllPoints()
+    glow:SetPoint("CENTER", icon.hotkeyFrame or icon, anchor,
+        (icon.hotkeyAnchorX or 0) + textLeft + width / 2, (icon.hotkeyAnchorY or 0) + centreY)
+    glow:SetSize(width * 0.75 + height * 1.2, height * 1.5)
+end
+
+--- `prefixText` nil = glow the whole label.
+local function ShowEmphasisGlow(icon, prefixText, pulsing)
+    local fs, glow = icon.hotkeyText, GetEmphasisGlow(icon)
+    -- Called from every render pass while a modifier is held: lay out only when the text,
+    -- the glowed part, the font or the anchor changed since the last layout.
+    local _, fontHeight = fs:GetFont()
+    local layoutKey = (icon.cachedHotkey or "") .. "|" .. (prefixText or "") .. "|"
+        .. tostring(Plain(fontHeight, 0)) .. "|" .. tostring(icon.hotkeyAnchor)
+        .. tostring(icon.hotkeyAnchorX) .. tostring(icon.hotkeyAnchorY)
+    if icon.hotkeyGlowLayout ~= layoutKey then
+        icon.hotkeyGlowLayout = layoutKey
+        LayoutEmphasisGlow(icon, fs, glow, prefixText)
+    end
+    if not icon.hotkeyGlowShown then
+        glow:Show()
+        icon.hotkeyGlowShown = true
+    end
+    -- Own flags, not IsShown/IsPlaying: same rule as the label's getters above.
+    if pulsing then
+        if not icon.hotkeyGlowPulsing then glow.pulse:Play(); icon.hotkeyGlowPulsing = true end
+    elseif icon.hotkeyGlowPulsing then
+        glow.pulse:Stop()
+        glow:SetAlpha(EMPHASIS_GLOW_ALPHA)
+        icon.hotkeyGlowPulsing = nil
+    end
+end
+
+local function HideEmphasisGlow(icon)
+    if not icon.hotkeyGlowShown then return end
+    icon.hotkeyGlow.pulse:Stop()
+    icon.hotkeyGlow:Hide()
+    icon.hotkeyGlowShown, icon.hotkeyGlowPulsing = nil, nil
+end
+
+--- Write the icon's label for the current modifier state. Owns SetText, the label alpha
+--- and the glow; the range colour (SetTextColor) stays with UpdateRangeHotkeyColor.
+local function ApplyHotkeyEmphasis(icon)
+    local text = icon.hotkeyShown and icon.cachedHotkey or ""
+    local fs = icon.hotkeyText
+    local alpha = 1
+    -- An empty hotkey may be showing the out-of-range dot; UpdateRangeHotkeyColor owns that.
+    if not (text == "" and fs:GetText() == RANGE_INDICATOR) and (fs:GetText() or "") ~= text then
+        fs:SetText(text)
+    end
+    if text ~= "" and icon.hotkeyHeld and EmphasisEnabled() then
+        -- Its key is down (KeyPressDetector sets hotkeyHeld): the whole label glows.
+        ShowEmphasisGlow(icon, nil, true)
+    elseif text ~= "" and heldModifiers ~= "" and icon.normalizedHotkey then
+        local mods, letters = BindModifiers(icon.normalizedHotkey)
+        if mods == heldModifiers or mods == "MOD-" then
+            local prefix
+            if text:sub(1, 2) == "|A" then
+                prefix = text:match("^(|A.-|a)")          -- a gamepad trigger drawn as an atlas
+            else
+                if text:sub(letters + 1, letters + 1) == "-" then letters = letters + 1 end
+                prefix = text:sub(1, letters)
+            end
+            ShowEmphasisGlow(icon, prefix, false)
+        else
+            alpha = EMPHASIS_DIM_ALPHA
+            HideEmphasisGlow(icon)
+        end
+    else
+        HideEmphasisGlow(icon)
+    end
+    -- Compare against what WE last wrote, never GetAlpha(): an icon whose own alpha the
+    -- engine drives from a secret (the interrupt icon) reads back a secret on its children.
+    if icon.hotkeyEmphasisAlpha ~= alpha then
+        fs:SetAlpha(alpha)
+        icon.hotkeyEmphasisAlpha = alpha
+    end
+end
+
+do
+    local function ModifierPrefix()
+        local shift, ctrl, alt = IsShiftKeyDown(), IsControlKeyDown(), IsAltKeyDown()
+        if ctrl and shift then return "CTRL-SHIFT-"
+        elseif shift and alt then return "SHIFT-ALT-"
+        elseif ctrl and alt then return "CTRL-ALT-"
+        elseif shift then return "SHIFT-"
+        elseif ctrl then return "CTRL-"
+        elseif alt then return "ALT-" end
+        return ""
+    end
+    local listener = CreateFrame("Frame")
+    listener:RegisterEvent("MODIFIER_STATE_CHANGED")
+    listener:SetScript("OnEvent", function()
+        local held = EmphasisEnabled() and ModifierPrefix() or ""
+        if held == heldModifiers then return end
+        heldModifiers = held
+        UIRenderer.RefreshHotkeyEmphasis()
+    end)
+end
+
+--- Re-apply every label (modifier change, a key going down/up, the option toggled).
+function UIRenderer.RefreshHotkeyEmphasis()
+    for icon in pairs(UIFrameFactory.icons) do
+        if icon.hotkeyText and icon.cachedHotkey then ApplyHotkeyEmphasis(icon) end
+    end
+end
+
+--- The option setter: re-read the toggle and repaint.
+function UIRenderer.SetHotkeyEmphasisEnabled(enabled)
+    if not enabled then heldModifiers = "" end
+    UIRenderer.RefreshHotkeyEmphasis()
+end
+
 --- The ONE writer for an icon's hotkey: the label and the key-press match key together,
 --- so any icon that shows a key can flash (the Sustain slot used to write the label alone
 --- and could never match a press). cachedHotkey is the change detector: normalisation
@@ -154,12 +359,8 @@ local function SetIconHotkey(icon, hotkey, showHotkeys)
             icon.normalizedHotkey = nil
         end
     end
-    local displayHotkey = showHotkeys and hotkey or ""
-    -- An empty hotkey may be showing the out-of-range dot; UpdateRangeHotkeyColor owns that.
-    if displayHotkey == "" and icon.hotkeyText:GetText() == RANGE_INDICATOR then return end
-    if (icon.hotkeyText:GetText() or "") ~= displayHotkey then
-        icon.hotkeyText:SetText(displayHotkey)
-    end
+    icon.hotkeyShown = showHotkeys and true or false
+    ApplyHotkeyEmphasis(icon)
 end
 
 -- Cooldown/charge display via engine duration objects (secret-safe passthrough).
@@ -445,7 +646,7 @@ local function UpdateButtonCooldowns(button)
         if empowerText then
             button.chargeText:SetText(empowerText)
         elseif isItem then
-            local count = GetItemCount(id)
+            local count = C_Item.GetItemCount(id)
             button.chargeText:SetText(count and count > 1 and count or "")
         else
             -- Pass-through only: chargeText is a secret string in combat (see above).
@@ -763,6 +964,10 @@ local function ClearIconState(icon)
     end
     if UIAnimations then UIAnimations.StopAllGlows(icon) end
     icon.hotkeyText:SetText("")
+    icon.hotkeyText:SetAlpha(1)
+    icon.hotkeyEmphasisAlpha = 1
+    icon.hotkeyHeld = nil
+    HideEmphasisGlow(icon)
 end
 
 -- Stale atlas markup can appear if cached hotkeys survive a binding change.
@@ -798,7 +1003,9 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
         icon.pendingDefGlowState = nil
         return
     end
-    if not immediate and have ~= nil and want ~= "proc" then
+    -- From "none" is turning a glow ON: immediate, per the rule above. Debouncing it
+    -- cost a second render tick (an idle tick out of combat) on every glow onset.
+    if not immediate and have ~= nil and have ~= "none" and want ~= "proc" then
         local now = GetTime()
         if icon.pendingDefGlowState ~= want then
             icon.pendingDefGlowState = want
@@ -832,6 +1039,22 @@ local function ApplyDefensiveGlow(icon, want, isInCombat, immediate)
     icon.appliedDefGlowState = want
 end
 
+-- The out-of-combat loop idles at 0.25s ticks, so a glow waiting on a cooldown would light
+-- up to a tick late. Wake the loop at the moment the cooldown ends instead - once
+-- per cooldown (keyed on its end time). Out of combat the timer reads plain.
+local function WakeWhenReady(icon, spellID)
+    local ok, cd = pcall(C_Spell.GetSpellCooldown, spellID)
+    local s, d = ok and cd and cd.startTime, ok and cd and cd.duration
+    if not s or not d or (issecretvalue and (issecretvalue(s) or issecretvalue(d))) or d <= 0 then return end
+    local endsAt = s + d
+    if icon.readyWakeAt == endsAt then return end
+    icon.readyWakeAt = endsAt
+    C_Timer.After(math.max(0, endsAt - GetTime()) + 0.02, function()
+        local addon = BlizzardAPI.GetAddon()
+        if addon and addon.ForceUpdate then addon:ForceUpdate() end
+    end)
+end
+
 -- The one glow-priority rule, computed from icon state both paths maintain.
 local function ComputeDefensiveGlowState(icon, isProc)
     if icon.isWaiting then return "none" end
@@ -852,7 +1075,16 @@ local function ComputeDefensiveGlowState(icon, isProc)
             return "proc"
         end
     end
-    if icon.isPrecombatBuff then return "precombat" end
+    if icon.isPrecombatBuff then
+        -- A "use me" glow on a spell still cooling down is wrong: the swipe says
+        -- wait, the glow lights when it is ready (the stealth reminder rides this).
+        -- Out of combat only, where cooldowns read plain.
+        if icon.spellID and BlizzardAPI.IsSpellReady and not BlizzardAPI.IsSpellReady(icon.spellID) then
+            WakeWhenReady(icon, icon.spellID)
+            return "none"
+        end
+        return "precombat"
+    end
     if icon.defShowGlow and (mode == "all" or mode == "primaryOnly") then return "marching" end
     return "none"
 end

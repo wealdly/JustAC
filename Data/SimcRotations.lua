@@ -101,6 +101,21 @@ RotationImport.RegisterGated({
       {id=188499,gates={}},  -- blade_dance
       {id=162794,gates={}},  -- chaos_strike
     },
+    aoe = {
+      {id=258920,gates={},delegated=true},  -- immolation_aura
+      {id=191427,gates={},delegated=true},  -- metamorphosis
+      {id=370965,gates={{t="buff",id=442294,neg=true}},delegated=true},  -- the_hunt
+      {id=198793,gates={},delegated=true},  -- vengeful_retreat
+      {id=442294,gates={},delegated=true},  -- reavers_glaive
+      {id=201427,gates={},delegated=true},  -- annihilation
+      {id=258860,gates={},delegated=true},  -- essence_break
+      {id=210152,gates={},delegated=true},  -- death_sweep
+      {id=185123,gates={},delegated=true},  -- throw_glaive
+      {id=198013,gates={}},  -- eye_beam
+      {id=232893,gates={},delegated=true},  -- felblade
+      {id=188499,gates={}},  -- blade_dance
+      {id=162794,gates={}},  -- chaos_strike
+    },
   },
   ["DEMONHUNTER_2"] = {
     st = {
@@ -614,11 +629,11 @@ RotationImport.RegisterGated({
   ["PALADIN_2"] = {
     burst = {31884},  -- avenging_wrath
     st = {
+      {id=432459,gates={},delegated=true},  -- holy_armaments
       {id=31884,gates={},delegated=true},  -- avenging_wrath
       {id=375576,gates={},delegated=true},  -- divine_toll
       {id=427453,gates={},delegated=true},  -- hammer_of_light
       {id=53600,gates={},delegated=true},  -- shield_of_the_righteous
-      {id=432459,gates={},delegated=true},  -- holy_armaments
       {id=24275,gates={},delegated=true},  -- hammer_of_wrath
       {id=275779,gates={},delegated=true},  -- judgment
       {id=31935,gates={},delegated=true},  -- avengers_shield

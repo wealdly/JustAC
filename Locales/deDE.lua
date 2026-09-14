@@ -40,6 +40,8 @@ L["Proc Only"] = "Nur Proc"
 L["No Glows"] = "Keine Leuchteffekte"
 L["Show Key Press Flash"] = "Tastendruck-Blitz"
 L["Show Key Press Flash desc"] = "Symbol beim Drücken der zugehörigen Taste aufblitzen lassen."
+L["Modifier Emphasis"] = "Modifikator-Hervorhebung"
+L["Modifier Emphasis desc"] = "Solange du Umschalt, Strg oder Alt hältst, erhalten Tastenbelegungen mit diesem Modifikator ein sanftes Leuchten dahinter, die anderen werden abgedunkelt. Eine Belegung leuchtet vollständig, solange ihre Taste gedrückt ist."
 L["Grey Out While Casting"] = "Ausgrauen: Wirken"
 L["Grey Out While Casting desc"] = "Warteschlangen-Symbole beim Wirken entsättigen. Der gewirkte Zauber bleibt farbig."
 L["Mark Move-Castable Spells"] = "Beim Laufen wirkbare Zauber markieren"
@@ -380,6 +382,8 @@ L["Cooldown Manager combat warning"] = "Der Abklingzeit-Manager kann im Kampf ni
 
 L["Health Top-off Threshold"] = "Auffüllen unter"
 L["Health Top-off Threshold desc"] = "Wie weit unter voller Gesundheit die Erinnerung zwischen den Pulls erscheint. Der Notfall-Hinweis bei kritischer Gesundheit ist davon getrennt und immer aktiv."
+L["Stealth Reminder"] = "Verstohlenheits-Erinnerung"
+L["Stealth Reminder desc"] = "Außerhalb des Kampfes wird Verstohlenheit oder Schleichen in der Defensiv-Warteschlange angezeigt, solange du nicht getarnt bist. Das Symbol bleibt mit seiner Abklingzeit sichtbar und leuchtet auf, sobald es bereit ist. Nicht beim Reiten oder in Erholungsgebieten."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "Vor gefährlichen Zaubern warnen"

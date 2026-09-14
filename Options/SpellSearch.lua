@@ -147,7 +147,7 @@ function SpellSearch.GetFilteredResults(filterText, excludeList)
 
     local function TryAddItem(itemID)
         if itemCount >= MAX_ITEMS or seen[itemID] or excluded[-itemID] then return end
-        local itemName = GetItemInfo(itemID)
+        local itemName = C_Item.GetItemInfo(itemID)
         if not itemName then return end
         local matched
         if itemPrefixID then
@@ -320,7 +320,7 @@ function SpellSearch.AddSpellToList(addon, spellList, id)
     if id < 0 then
         -- Item entry: validate item exists
         local itemID = -id
-        local itemName = GetItemInfo(itemID)
+        local itemName = C_Item.GetItemInfo(itemID)
         if not itemName then
             addon:Print("Invalid item ID: " .. itemID .. " (item not found or not cached)")
             return false
@@ -392,7 +392,7 @@ end
 function SpellSearch.DisplayInfo(id)
     if id < 0 then
         local itemID = -id
-        local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemID)
+        local itemName, _, _, _, _, _, _, _, _, itemTexture = C_Item.GetItemInfo(itemID)
         if not itemTexture and C_Item and C_Item.GetItemIconByID then
             itemTexture = C_Item.GetItemIconByID(itemID)
         end
@@ -540,10 +540,10 @@ function SpellSearch.CreateSpellListEntries(_addon, defensivesArgs, spellList, l
             if choice == -1 then
                 label = "|cff888888" .. L["Emergency Potion Off"] .. "|r"
             elseif choice > 0 then
-                label = (GetItemInfo(choice)) or ("Item " .. choice)
+                label = (C_Item.GetItemInfo(choice)) or ("Item " .. choice)
             else
                 local bestID = SpellDB.GetBestHealingItem and SpellDB.GetBestHealingItem()
-                local bestName = bestID and (GetItemInfo(bestID))
+                local bestName = bestID and (C_Item.GetItemInfo(bestID))
                 if bestName then
                     label = L["Auto"] .. ": " .. bestName
                 else

@@ -41,6 +41,8 @@ L["Proc Only"] = "Solo proc"
 L["No Glows"] = "Sin brillos"
 L["Show Key Press Flash"] = "Flash de tecla"
 L["Show Key Press Flash desc"] = "Hacer parpadear el icono al pulsar su atajo correspondiente."
+L["Modifier Emphasis"] = "Resaltar modificador"
+L["Modifier Emphasis desc"] = "Mientras mantienes Mayús, Ctrl o Alt, los atajos que se activan con ese modificador muestran un brillo suave detrás de él y los demás se atenúan. Todo el atajo brilla mientras su tecla está presionada."
 L["Grey Out While Casting"] = "Oscurecer al lanzar"
 L["Grey Out While Casting desc"] = "Desaturar los iconos de la cola mientras lanzas un hechizo. El hechizo lanzado conserva su color."
 L["Mark Move-Castable Spells"] = "Marcar hechizos lanzables en movimiento"
@@ -381,6 +383,8 @@ L["Cooldown Manager combat warning"] = "El Gestor de reutilización no se puede 
 
 L["Health Top-off Threshold"] = "Rellenar por debajo de"
 L["Health Top-off Threshold desc"] = "Cuánto por debajo de la salud máxima aparece el recordatorio de curación entre combates. El aviso de emergencia con salud crítica es aparte y siempre está activo."
+L["Stealth Reminder"] = "Recordatorio de sigilo"
+L["Stealth Reminder desc"] = "Fuera de combate, muestra Sigilo o Acechar en la cola defensiva mientras no estés en sigilo. Permanece con su barrido de reutilización y brilla cuando está listo. No aparece montado ni en zonas de descanso."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "Avisar de lanzamientos peligrosos"

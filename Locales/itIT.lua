@@ -40,6 +40,8 @@ L["Proc Only"] = "Solo proc"
 L["No Glows"] = "Nessun bagliore"
 L["Show Key Press Flash"] = "Lampeggio alla pressione"
 L["Show Key Press Flash desc"] = "Fai lampeggiare l'icona quando premi il tasto corrispondente."
+L["Modifier Emphasis"] = "Evidenzia modificatore"
+L["Modifier Emphasis desc"] = "Mentre tieni premuto Maiusc, Ctrl o Alt, le scorciatoie attivate da quel modificatore mostrano un bagliore tenue dietro di esso e le altre si attenuano. L'intera scorciatoia si illumina finché il suo tasto resta premuto."
 L["Grey Out While Casting"] = "Sbiadisci: lancio"
 L["Grey Out While Casting desc"] = "Desatura le icone della coda mentre lanci un incantesimo. L'incantesimo in lancio resta a colori."
 L["Mark Move-Castable Spells"] = "Segna gli incantesimi lanciabili in movimento"
@@ -380,6 +382,8 @@ L["Cooldown Manager combat warning"] = "Il Gestore dei Recuperi non può essere 
 
 L["Health Top-off Threshold"] = "Rabbocca sotto"
 L["Health Top-off Threshold desc"] = "Quanto sotto la salute massima compare il promemoria di cura tra un pull e l'altro. L'avviso di emergenza a salute critica è separato ed è sempre attivo."
+L["Stealth Reminder"] = "Promemoria furtività"
+L["Stealth Reminder desc"] = "Fuori dal combattimento, mostra Furtività o Aggirarsi nella coda difensiva finché non sei in furtività. Resta al suo posto con il tempo di recupero e si illumina quando è pronta. Non compare in cavalcatura o nelle aree di riposo."
 
 -- Options rework (5.1.0): ability overrides, display tab, ordering presets
 L["Show Important Cast Warning"] = "Avvisa sulle magie pericolose"
