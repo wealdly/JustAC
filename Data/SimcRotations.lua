@@ -349,9 +349,9 @@ RotationImport.RegisterGated({
       {id=357210,gates={},delegated=true},  -- deep_breath
       {id=375087,gates={},delegated=true},  -- dragonrage
       {id=1265872,gates={},delegated=true},  -- azure_sweep
-      {id=359073,gates={}},  -- eternity_surge
+      {id=359073,gates={},delegated=true},  -- eternity_surge
       {id=370553,gates={},delegated=true},  -- tip_the_scales
-      {id=357208,gates={}},  -- fire_breath
+      {id=357208,gates={},delegated=true},  -- fire_breath
       {id=356995,gates={},delegated=true},  -- disintegrate
       {id=357211,gates={},delegated=true},  -- pyre
       {id=361469,gates={},delegated=true},  -- living_flame
