@@ -3,6 +3,10 @@
 
 ## [Unreleased]
 
+## [5.4.2] - 2026-09-15
+
+- Updated rotation priorities: Devastation Evoker's Eternity Surge and Fire Breath are no longer pushed forward the moment they are ready; they now follow Blizzard's suggestion, since the latest priorities pick them by target count.
+
 ## [5.4.1] - 2026-09-14
 
 - New Stealth Reminder (Pre-combat Buffs, Rogues and Feral Druids, on by default): out of combat, your Stealth or Prowl sits on the defensive queue while you are not stealthed, with its cooldown shown, and glows once it is ready.
