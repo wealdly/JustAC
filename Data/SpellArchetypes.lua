@@ -10,7 +10,7 @@ local SpellDB = LibStub("JustAC-SpellDB", true)
 if not SpellDB or not SpellDB.RegisterArchetypes then return end
 
 SpellDB.RegisterArchetypes({
-    aoe = {  -- 781 spells (value = range)
+    aoe = {  -- 809 spells (value = range)
         [122] = "melee",  -- Frost Nova
         [1122] = "ranged",  -- Summon Infernal (via 22703)
         [1449] = "melee",  -- Arcane Explosion
@@ -129,11 +129,13 @@ SpellDB.RegisterArchetypes({
         [102263] = "ranged",  -- Firebomb
         [102359] = "ranged",  -- Mass Entanglement
         [102482] = "ranged",  -- Firebomb
+        [105174] = "ranged",  -- Hand of Gul'dan (via 86040)
         [106785] = "melee",  -- Swipe
         [106830] = "melee",  -- Thrash
         [107116] = "ranged",  -- Howling Blast
         [107270] = "melee",  -- Spinning Crane Kick
         [112921] = "ranged",  -- Summon Abyssal (via 22703)
+        [114050] = "ranged",  -- Ascendance (via 344548)
         [114051] = "melee",  -- Ascendance (via 344548)
         [114919] = "ranged",  -- Light's Hammer
         [114954] = "ranged",  -- Nether Tempest
@@ -148,9 +150,14 @@ SpellDB.RegisterArchetypes({
         [121167] = "melee",  -- Hellfire
         [121253] = "ranged",  -- Keg Smash
         [121414] = "melee",  -- Glaive Toss
+        [124081] = "ranged",  -- Zen Pulse (via 388609)
         [124991] = "ranged",  -- Nature's Vigil
         [125662] = "ranged",  -- Curse of Agony
         [127111] = "ranged",  -- Freeze
+        [131637] = "ranged",  -- A Murder of Crows (via 1232993)
+        [131894] = "ranged",  -- A Murder of Crows (via 1232993)
+        [131951] = "ranged",  -- A Murder of Crows (via 1232993)
+        [131952] = "ranged",  -- A Murder of Crows (via 1232993)
         [132157] = "melee",  -- Holy Nova
         [134224] = "melee",  -- Hellfire
         [135240] = "ranged",  -- Rocket Launch
@@ -167,6 +174,8 @@ SpellDB.RegisterArchetypes({
         [148187] = "melee",  -- Rushing Jade Wind
         [152108] = "ranged",  -- Cataclysm
         [152150] = "ranged",  -- Death from Above
+        [153561] = "ranged",  -- Meteor (via 351140)
+        [153595] = "ranged",  -- Comet Storm (via 153596)
         [153596] = "ranged",  -- Comet Storm
         [156287] = "ranged",  -- Ravager
         [157563] = "melee",  -- Frost Nova
@@ -210,6 +219,7 @@ SpellDB.RegisterArchetypes({
         [189222] = "ranged",  -- Spike Trap
         [190357] = "ranged",  -- Blizzard
         [190411] = "melee",  -- Whirlwind (via 199667)
+        [191241] = "ranged",  -- Sticky Bomb (via 1262390)
         [191685] = "ranged",  -- Virulent Eruption
         [191758] = "melee",  -- Necrobomb
         [192231] = "ranged",  -- Liquid Magma
@@ -225,6 +235,7 @@ SpellDB.RegisterArchetypes({
         [195750] = "melee",  -- Frozen Pulse
         [195975] = "ranged",  -- Glacial Advance
         [196278] = "ranged",  -- Implosion
+        [196447] = "ranged",  -- Channel Demonfire (via 196448)
         [196448] = "ranged",  -- Channel Demonfire
         [196528] = "melee",  -- Bonestorm
         [196733] = "ranged",  -- Special Delivery
@@ -234,6 +245,7 @@ SpellDB.RegisterArchetypes({
         [197028] = "melee",  -- Lil' Stinker
         [197465] = "ranged",  -- Surge of the Stormgod
         [197628] = "ranged",  -- Starfire
+        [197630] = "ranged",  -- Sunfire (via 164815)
         [197800] = "melee",  -- Shadow Nova
         [197835] = "melee",  -- Shuriken Storm
         [198137] = "ranged",  -- Divine Hammer
@@ -266,6 +278,7 @@ SpellDB.RegisterArchetypes({
         [203166] = "ranged",  -- Death and Decay
         [203171] = "ranged",  -- Death and Decay
         [204395] = "ranged",  -- Control of Lava
+        [204406] = "ranged",  -- Thunderstorm (via 204408)
         [204408] = "ranged",  -- Thunderstorm
         [204598] = "ranged",  -- Sigil of Flame
         [204959] = "melee",  -- Frozen Soul
@@ -304,6 +317,7 @@ SpellDB.RegisterArchetypes({
         [213688] = "melee",  -- Fel Cleave
         [213709] = "ranged",  -- Brambles
         [213771] = "melee",  -- Swipe
+        [213835] = "ranged",  -- A Murder of Crows (via 1232993)
         [213843] = "melee",  -- Divine Storm
         [214326] = "ranged",  -- Exploding Keg
         [217070] = "ranged",  -- Rage of the Illidari
@@ -322,6 +336,7 @@ SpellDB.RegisterArchetypes({
         [223732] = "melee",  -- Stomp
         [223829] = "melee",  -- Necrotic Strike
         [224637] = "ranged",  -- Phoenix's Flames
+        [224968] = "ranged",  -- Mark of Aluneth (via 211076)
         [226376] = "ranged",  -- Spirit Bomb
         [226377] = "ranged",  -- Spirit Bomb
         [227291] = "melee",  -- Stomp
@@ -352,6 +367,7 @@ SpellDB.RegisterArchetypes({
         [258922] = "melee",  -- Immolation Aura
         [258926] = "ranged",  -- Fel Barrage
         [259587] = "ranged",  -- Scorching Wildfire
+        [260243] = "ranged",  -- Volley (via 260247)
         [260247] = "ranged",  -- Volley
         [260876] = "ranged",  -- Volcanic Rage
         [262161] = "melee",  -- Warbreaker
@@ -359,6 +375,7 @@ SpellDB.RegisterArchetypes({
         [267213] = "ranged",  -- Bilescourge Bombers
         [269005] = "ranged",  -- Stormfury
         [269777] = "ranged",  -- Infernal Awakening
+        [271877] = "ranged",  -- Blade Rush (via 271881)
         [271881] = "ranged",  -- Blade Rush
         [272745] = "ranged",  -- Wildfire Cluster
         [273089] = "ranged",  -- Bone Spike Graveyard
@@ -376,6 +393,7 @@ SpellDB.RegisterArchetypes({
         [279729] = "ranged",  -- Wrath
         [279856] = "ranged",  -- Glacial Assault
         [280561] = "ranged",  -- Surge
+        [280719] = "melee",  -- Secret Technique (via 280720)
         [280720] = "ranged",  -- Secret Technique
         [282449] = "ranged",  -- Secret Technique
         [284762] = "ranged",  -- Nanocombustion
@@ -484,6 +502,7 @@ SpellDB.RegisterArchetypes({
         [365640] = "ranged",  -- Fury of Elune
         [366971] = "ranged",  -- Torment Mind
         [367819] = "ranged",  -- Blasphemous Existence
+        [367918] = "ranged",  -- Ashen Hallow (via 317221)
         [369374] = "ranged",  -- Firestorm
         [372515] = "melee",  -- Holy Tome
         [373236] = "melee",  -- Holy Dragon Punch
@@ -523,6 +542,7 @@ SpellDB.RegisterArchetypes({
         [390137] = "ranged",  -- Inner Demon
         [390197] = "melee",  -- Ragefire
         [390220] = "ranged",  -- Putrefy
+        [390612] = "ranged",  -- Frost Bomb (via 390614)
         [390614] = "ranged",  -- Frost Bomb
         [391400] = "melee",  -- Resonant Fists
         [391946] = "melee",  -- Remorseless Winter
@@ -561,6 +581,7 @@ SpellDB.RegisterArchetypes({
         [401309] = "melee",  -- Mortal Combo
         [404358] = "ranged",  -- Blade of Justice
         [405426] = "ranged",  -- Zen Pulse
+        [405430] = "ranged",  -- Zen Pulse (via 388609)
         [405681] = "ranged",  -- Immutable Hatred
         [406983] = "ranged",  -- Divine Arbiter
         [407478] = "ranged",  -- Searing Light
@@ -632,6 +653,7 @@ SpellDB.RegisterArchetypes({
         [447258] = "ranged",  -- Forge's Reckoning
         [448405] = "ranged",  -- Collapsing Void
         [449569] = "ranged",  -- Meteorite
+        [449700] = "ranged",  -- Gravity Lapse (via 449715)
         [449715] = "ranged",  -- Gravity Lapse
         [449801] = "ranged",  -- Demonic Soul
         [450462] = "ranged",  -- Flamestrike
@@ -681,6 +703,7 @@ SpellDB.RegisterArchetypes({
         [1218118] = "melee",  -- Primordial Lightning
         [1219078] = "ranged",  -- Abyssal Breach
         [1220758] = "melee",  -- Overpowered Barrier
+        [1221150] = "ranged",  -- Collapsing Star (via 1221162)
         [1221162] = "ranged",  -- Collapsing Star
         [1221831] = "ranged",  -- Shadow and Flame
         [1221973] = "ranged",  -- And Condemn
@@ -697,6 +720,7 @@ SpellDB.RegisterArchetypes({
         [1236970] = "ranged",  -- Pyre
         [1237211] = "ranged",  -- Azure Strike
         [1238696] = "melee",  -- Demonsurge (via 452416)
+        [1239123] = "ranged",  -- Hungering Slash (via 1239127)
         [1239127] = "ranged",  -- Hungering Slash
         [1239442] = "melee",  -- Harmonic Surge
         [1239510] = "ranged",  -- Eye Blast
@@ -708,6 +732,7 @@ SpellDB.RegisterArchetypes({
         [1242373] = "ranged",  -- Stomp
         [1242564] = "ranged",  -- Dread Plague
         [1243460] = "ranged",  -- Arcane Pulse
+        [1243807] = "melee",  -- Frantic Frenzy (via 1244079)
         [1244079] = "ranged",  -- Frantic Frenzy
         [1244347] = "ranged",  -- Disease Cloud
         [1245624] = "melee",  -- Backlash (via 198813)
@@ -718,6 +743,7 @@ SpellDB.RegisterArchetypes({
         [1247227] = "melee",  -- Crimson Tempest
         [1247379] = "ranged",  -- Ruptured Viscera
         [1247554] = "ranged",  -- Freezing Winds
+        [1250188] = "ranged",  -- Hand of Gul'dan (via 86040)
         [1250216] = "melee",  -- Secondary Poisoning
         [1250999] = "melee",  -- Spinning Crane Kick
         [1251592] = "ranged",  -- Flamefang Pitch (via 1251595)
@@ -742,6 +768,7 @@ SpellDB.RegisterArchetypes({
         [1260251] = "ranged",  -- Execution Sentence
         [1262252] = "melee",  -- Felstorm
         [1262390] = "ranged",  -- Sticky Bomb
+        [1262391] = "ranged",  -- Sticky Bomb (via 1262390)
         [1263137] = "ranged",  -- Lunar Bolt
         [1263568] = "ranged",  -- Abomination Limb
         [1263752] = "melee",  -- Blood Mist
@@ -750,6 +777,7 @@ SpellDB.RegisterArchetypes({
         [1264129] = "ranged",  -- Meteor Shower
         [1264130] = "ranged",  -- Meteor Shower
         [1264355] = "ranged",  -- Wild Thrash
+        [1264359] = "ranged",  -- Wild Thrash (via 1264355)
         [1264367] = "ranged",  -- Willbreaker
         [1265872] = "ranged",  -- Azure Sweep
         [1265884] = "ranged",  -- Echo of Sargeras
@@ -793,7 +821,7 @@ SpellDB.RegisterArchetypes({
         [1309309] = "melee",  -- Goremaw's Bite
         [1310571] = "ranged",  -- Bloody Demise
     },
-    cleave = {  -- 181 spells (value = range)
+    cleave = {  -- 186 spells (value = range)
         [120] = "melee",  -- Cone of Cold
         [845] = "melee",  -- Cleave
         [6572] = "melee",  -- Revenge
@@ -823,6 +851,7 @@ SpellDB.RegisterArchetypes({
         [120361] = "ranged",  -- Barrage
         [121166] = "melee",  -- Dragon's Breath
         [123996] = "ranged",  -- Crackling Tiger Lightning
+        [125930] = "ranged",  -- Crackling Tiger Lightning (via 123996)
         [155166] = "melee",  -- Breath of Sindragosa
         [161792] = "melee",  -- Dragon's Breath
         [186387] = "melee",  -- Bursting Shot
@@ -838,6 +867,7 @@ SpellDB.RegisterArchetypes({
         [205273] = "melee",  -- Wake of Ashes
         [207230] = "melee",  -- Frostscythe
         [207267] = "ranged",  -- Bursting Sores
+        [207317] = "ranged",  -- Epidemic (via 212739)
         [211946] = "melee",  -- Breath of Fire
         [212105] = "ranged",  -- Fel Devastation
         [212739] = "ranged",  -- Epidemic
@@ -886,6 +916,7 @@ SpellDB.RegisterArchetypes({
         [375698] = "melee",  -- Spitfire
         [375963] = "ranged",  -- Vesper Totem
         [378286] = "ranged",  -- Tyr's Enforcer
+        [383269] = "ranged",  -- Graveyard (via 383313)
         [383313] = "ranged",  -- Graveyard
         [383469] = "melee",  -- Radiant Decree
         [384318] = "melee",  -- Thunderous Roar
@@ -945,6 +976,7 @@ SpellDB.RegisterArchetypes({
         [458128] = "melee",  -- Festering Scythe
         [458147] = "ranged",  -- Searing Volley
         [458459] = "melee",  -- Cleave
+        [459796] = "ranged",  -- Barrage (via 120361)
         [464884] = "ranged",  -- Living Bomb
         [467307] = "melee",  -- Rushing Wind Kick (via 468179)
         [468179] = "melee",  -- Rushing Wind Kick
@@ -956,6 +988,7 @@ SpellDB.RegisterArchetypes({
         [1221013] = "ranged",  -- Essence Feast
         [1222468] = "ranged",  -- Reave
         [1223269] = "ranged",  -- Neltharion's Fury
+        [1223538] = "ranged",  -- Nether Beam (via 1223539)
         [1223539] = "ranged",  -- Nether Beam
         [1231316] = "melee",  -- Breath of Sindragosa
         [1237172] = "ranged",  -- Epidemic
@@ -976,7 +1009,7 @@ SpellDB.RegisterArchetypes({
         [1269224] = "ranged",  -- Blaze of Glory
         [1270116] = "melee",  -- Phalanx
     },
-    st = {  -- 1831 spells (value = range)
+    st = {  -- 1877 spells (value = range)
         [53] = "melee",  -- Backstab
         [116] = "ranged",  -- Frostbolt (via 228597)
         [133] = "ranged",  -- Fireball
@@ -1136,6 +1169,7 @@ SpellDB.RegisterArchetypes({
         [29582] = "ranged",  -- Throw
         [29815] = "ranged",  -- Return Fire
         [29956] = "ranged",  -- Arcane Missiles
+        [30108] = "ranged",  -- Unstable Affliction (via 233490)
         [30151] = "ranged",  -- Pursuit (via 30153)
         [30358] = "ranged",  -- Searing Pain
         [30451] = "ranged",  -- Arcane Blast
@@ -1189,6 +1223,7 @@ SpellDB.RegisterArchetypes({
         [33917] = "melee",  -- Mangle
         [33925] = "ranged",  -- Phantom Strike
         [33989] = "ranged",  -- Arcane Missiles
+        [34026] = "ranged",  -- Kill Command (via 83381)
         [34428] = "melee",  -- Victory Rush
         [34438] = "ranged",  -- Unstable Affliction
         [34439] = "ranged",  -- Unstable Affliction
@@ -1341,6 +1376,8 @@ SpellDB.RegisterArchetypes({
         [46315] = "ranged",  -- Mammoth Charge
         [47001] = "ranged",  -- Shoot
         [47081] = "melee",  -- Pummel
+        [47540] = "ranged",  -- Penance (via 186724)
+        [47541] = "ranged",  -- Death Coil (via 47632)
         [47632] = "ranged",  -- Death Coil
         [47723] = "ranged",  -- Scorch
         [47782] = "ranged",  -- Corruption
@@ -1361,10 +1398,12 @@ SpellDB.RegisterArchetypes({
         [51963] = "ranged",  -- Gargoyle Strike
         [52372] = "ranged",  -- Icy Touch
         [52373] = "melee",  -- Plague Strike
+        [52375] = "ranged",  -- Death Coil (via 47632)
         [52566] = "ranged",  -- Shoot
         [52758] = "ranged",  -- Piercing Arrow
         [52764] = "ranged",  -- Serrated Arrow
         [52818] = "ranged",  -- Shoot
+        [53209] = "ranged",  -- Chimaera Shot (via 171454)
         [53327] = "ranged",  -- Shoot
         [53332] = "ranged",  -- Shoot
         [53351] = "ranged",  -- Kill Shot
@@ -1403,6 +1442,7 @@ SpellDB.RegisterArchetypes({
         [58971] = "ranged",  -- Flame Shock
         [59131] = "ranged",  -- Icy Touch
         [59133] = "melee",  -- Plague Strike
+        [59134] = "ranged",  -- Death Coil (via 47632)
         [59138] = "ranged",  -- Throw Weapon (via 58976)
         [59166] = "ranged",  -- Welding Beam
         [59241] = "ranged",  -- Shoot
@@ -1443,6 +1483,8 @@ SpellDB.RegisterArchetypes({
         [68884] = "melee",  -- Silence Fool
         [69404] = "ranged",  -- Curse of Agony
         [69591] = "ranged",  -- Shoot
+        [69626] = "ranged",  -- Lightning Bolt (via 197745)
+        [69630] = "ranged",  -- Lightning Bolt (via 197745)
         [69729] = "ranged",  -- Searing Flames
         [69730] = "ranged",  -- Searing Flames
         [70074] = "ranged",  -- Spray Chemical
@@ -1490,6 +1532,7 @@ SpellDB.RegisterArchetypes({
         [83657] = "ranged",  -- Hellgaze
         [83778] = "ranged",  -- Fire Blast
         [85232] = "ranged",  -- Shoot
+        [85256] = "melee",  -- Templar's Verdict (via 224266)
         [85288] = "melee",  -- Raging Blow (via 96103)
         [85384] = "ranged",  -- Raging Blow
         [85687] = "ranged",  -- Shoot
@@ -1574,6 +1617,7 @@ SpellDB.RegisterArchetypes({
         [124280] = "ranged",  -- Touch of Karma
         [124472] = "ranged",  -- Fel Incinerate
         [125099] = "melee",  -- Rake
+        [125150] = "melee",  -- Rising Sun Kick (via 138713)
         [126256] = "ranged",  -- Shoot
         [126664] = "ranged",  -- Charge
         [127870] = "ranged",  -- Shoot
@@ -1758,6 +1802,7 @@ SpellDB.RegisterArchetypes({
         [199054] = "ranged",  -- Unleash Lightning
         [199512] = "ranged",  -- Avenger's Shield
         [199547] = "ranged",  -- Chaos Strike
+        [199786] = "ranged",  -- Glacial Spike (via 228600)
         [199969] = "ranged",  -- Wandering Plague
         [200163] = "ranged",  -- Throw Axe (via 200167)
         [200167] = "ranged",  -- Throw Axe
@@ -1796,6 +1841,7 @@ SpellDB.RegisterArchetypes({
         [204066] = "ranged",  -- Lunar Beam (via 1270292)
         [204081] = "ranged",  -- On the Trail
         [204157] = "ranged",  -- Throw Glaive (via 346665)
+        [204160] = "ranged",  -- Chill Streak (via 204167)
         [204167] = "ranged",  -- Chill Streak
         [204213] = "ranged",  -- Purge the Wicked
         [204301] = "ranged",  -- Blessed Hammer
@@ -1822,6 +1868,7 @@ SpellDB.RegisterArchetypes({
         [206444] = "ranged",  -- Flame Shock
         [206647] = "ranged",  -- Electrocute
         [206685] = "ranged",  -- Cobra Spit
+        [206817] = "ranged",  -- Sentinel (via 450387)
         [206930] = "melee",  -- Heart Strike
         [206931] = "ranged",  -- Blooddrinker
         [207097] = "ranged",  -- Titan's Thunder
@@ -1939,6 +1986,7 @@ SpellDB.RegisterArchetypes({
         [231489] = "ranged",  -- Compounding Horror
         [232056] = "ranged",  -- Windfury Attack
         [232670] = "ranged",  -- Shadow Bolt
+        [232893] = "ranged",  -- Felblade (via 213243)
         [233408] = "melee",  -- Necrotic Strike
         [233433] = "ranged",  -- Counterstrike
         [233490] = "ranged",  -- Unstable Affliction
@@ -1951,6 +1999,7 @@ SpellDB.RegisterArchetypes({
         [234582] = "ranged",  -- Earth Shock (Test: Medium)
         [234583] = "ranged",  -- Earth Shock (Test: Large)
         [234584] = "ranged",  -- Earth Shock (Test: Finisher)
+        [234877] = "ranged",  -- Bane of Shadows (via 236615)
         [235314] = "ranged",  -- Blazing Barrier
         [235904] = "ranged",  -- Mana Rift
         [235964] = "melee",  -- Sever
@@ -1958,6 +2007,7 @@ SpellDB.RegisterArchetypes({
         [236282] = "melee",  -- Devastator
         [236615] = "ranged",  -- Bane of Shadows
         [240281] = "ranged",  -- Frost Breath
+        [240711] = "ranged",  -- Sidewinders (via 214581)
         [241644] = "melee",  -- Mangle
         [241934] = "ranged",  -- Mind Flay
         [242390] = "melee",  -- Thunderfist
@@ -1980,6 +2030,7 @@ SpellDB.RegisterArchetypes({
         [246497] = "ranged",  -- Shoot
         [247012] = "ranged",  -- Lacerate
         [247587] = "ranged",  -- Holy Word: Chastise
+        [247676] = "ranged",  -- Reckoning (via 343724)
         [248349] = "ranged",  -- Corruption
         [248397] = "ranged",  -- Cold Heart
         [248919] = "ranged",  -- Silencing Shot
@@ -1997,7 +2048,9 @@ SpellDB.RegisterArchetypes({
         [254424] = "ranged",  -- Lava Burst
         [255043] = "ranged",  -- Flame Shock
         [256561] = "ranged",  -- Frost Shock Overload
+        [257044] = "ranged",  -- Rapid Fire (via 257045)
         [257045] = "ranged",  -- Rapid Fire
+        [257537] = "ranged",  -- Ebonbolt (via 228599)
         [257538] = "ranged",  -- Ebonbolt
         [257938] = "ranged",  -- Hungering Glaive
         [258883] = "ranged",  -- Trail of Ruin
@@ -2072,6 +2125,7 @@ SpellDB.RegisterArchetypes({
         [274074] = "ranged",  -- Glacial Contagion
         [274281] = "ranged",  -- New Moon
         [274282] = "ranged",  -- Half Moon
+        [274837] = "melee",  -- Feral Frenzy (via 274838)
         [274838] = "melee",  -- Feral Frenzy
         [275382] = "ranged",  -- Ember Blast
         [275384] = "ranged",  -- Shocking Blast
@@ -2084,6 +2138,7 @@ SpellDB.RegisterArchetypes({
         [275931] = "ranged",  -- Harrowing Decay
         [277703] = "ranged",  -- Trailing Embers
         [278145] = "ranged",  -- Radiant Incandescence
+        [278350] = "ranged",  -- Vile Taint (via 386931)
         [279043] = "ranged",  -- Shadow Blades
         [279142] = "ranged",  -- Iron Fortress
         [279303] = "ranged",  -- Frostwyrm's Fury
@@ -2123,8 +2178,12 @@ SpellDB.RegisterArchetypes({
         [291351] = "ranged",  -- Holy Fire
         [291354] = "melee",  -- Mutilate
         [292275] = "ranged",  -- Frost Bolt - Sound Test - (TEMP) (via 228597)
+        [300613] = "ranged",  -- Fire Blast (via 13341)
+        [300615] = "ranged",  -- Fire Blast (via 13341)
         [304537] = "ranged",  -- Shoot
         [304539] = "ranged",  -- Shoot
+        [305392] = "ranged",  -- Chill Streak (via 204167)
+        [305483] = "ranged",  -- Lightning Lasso (via 305484)
         [305484] = "ranged",  -- Lightning Lasso
         [305485] = "ranged",  -- Lightning Lasso
         [306391] = "ranged",  -- Mind Flay
@@ -2152,8 +2211,10 @@ SpellDB.RegisterArchetypes({
         [317792] = "ranged",  -- Frostbolt
         [319836] = "ranged",  -- Fire Blast
         [320334] = "ranged",  -- Infernal Armor
+        [320674] = "ranged",  -- Chain Harvest (via 320752)
         [320752] = "ranged",  -- Chain Harvest
         [320976] = "ranged",  -- Kill Shot
+        [321530] = "ranged",  -- Bloodshed (via 321538)
         [321538] = "ranged",  -- Bloodshed
         [321712] = "ranged",  -- Pyroblast
         [322109] = "melee",  -- Touch of Death
@@ -2171,6 +2232,7 @@ SpellDB.RegisterArchetypes({
         [324149] = "ranged",  -- Flayed Shot
         [324540] = "ranged",  -- Malefic Rapture
         [325037] = "ranged",  -- Death Chakram
+        [325216] = "ranged",  -- Bonedust Brew (via 325217)
         [325217] = "ranged",  -- Bonedust Brew
         [325283] = "ranged",  -- Ascended Blast
         [325461] = "ranged",  -- Obliterate
@@ -2178,6 +2240,7 @@ SpellDB.RegisterArchetypes({
         [325984] = "ranged",  -- Glimmer of Light
         [327059] = "ranged",  -- Decimating Bolt
         [327093] = "ranged",  -- Pestilence
+        [327104] = "ranged",  -- Faeline Stomp (via 327264)
         [327264] = "ranged",  -- Faeline Stomp
         [328082] = "ranged",  -- Eviscerate
         [328123] = "ranged",  -- Blessing of Summer
@@ -2195,6 +2258,7 @@ SpellDB.RegisterArchetypes({
         [331433] = "melee",  -- Tiger Palm
         [332223] = "ranged",  -- Chains of Anguish
         [333107] = "ranged",  -- Coldheart Plume
+        [333470] = "ranged",  -- Death Coil (via 47632)
         [333764] = "ranged",  -- Vial of Unseen Poison
         [333767] = "ranged",  -- Distracting Charges
         [333846] = "ranged",  -- Red Ink
@@ -2221,6 +2285,7 @@ SpellDB.RegisterArchetypes({
         [341277] = "ranged",  -- Serrated Bone Spike
         [341541] = "ranged",  -- Sinister Strike
         [341864] = "ranged",  -- Dread Slug
+        [342049] = "ranged",  -- Chimaera Shot (via 171454)
         [342240] = "ranged",  -- Ice Strike
         [342445] = "ranged",  -- Corrosive Carbonation
         [343142] = "melee",  -- Dreadblades
@@ -2238,6 +2303,7 @@ SpellDB.RegisterArchetypes({
         [344485] = "ranged",  -- Unholy Nova
         [344572] = "ranged",  -- Bestial Wrath
         [344859] = "melee",  -- Demon's Bite (via 162243)
+        [344862] = "melee",  -- Chaos Strike (via 199547)
         [345121] = "ranged",  -- Shadowstrike
         [345122] = "ranged",  -- Reflective Shield
         [345316] = "ranged",  -- Flagellation
@@ -2249,6 +2315,7 @@ SpellDB.RegisterArchetypes({
         [346665] = "ranged",  -- Throw Glaive
         [350133] = "ranged",  -- Dark Technique
         [353084] = "ranged",  -- Ring of Fire
+        [353128] = "ranged",  -- Arcanosphere (via 353132)
         [353132] = "ranged",  -- Arcanosphere
         [354163] = "ranged",  -- Nature's Fury
         [356719] = "ranged",  -- Chimaeral Sting
@@ -2259,6 +2326,7 @@ SpellDB.RegisterArchetypes({
         [360826] = "ranged",  -- Rupture
         [360830] = "ranged",  -- Garrote
         [360872] = "ranged",  -- Wand of Frost
+        [360966] = "ranged",  -- Spearhead (via 378957)
         [360969] = "ranged",  -- Coordinated Assault
         [361049] = "ranged",  -- Bleeding Gash
         [361056] = "ranged",  -- Aimed Shot
@@ -2306,6 +2374,7 @@ SpellDB.RegisterArchetypes({
         [375901] = "ranged",  -- Mindgames
         [375912] = "melee",  -- Echoing Reprimand
         [375984] = "ranged",  -- Primordial Wave
+        [376034] = "ranged",  -- Chain Harvest (via 320752)
         [376039] = "ranged",  -- Chain Harvest
         [376103] = "ranged",  -- Radiant Spark
         [376420] = "ranged",  -- Sulfuras, Hand of Ragnaros
@@ -2318,6 +2387,7 @@ SpellDB.RegisterArchetypes({
         [381628] = "ranged",  -- Internal Bleeding
         [381672] = "ranged",  -- Mutilated Flesh
         [381725] = "ranged",  -- Earth Shock Overload
+        [383185] = "ranged",  -- Exorcism (via 383208)
         [383208] = "ranged",  -- Exorcism
         [383302] = "ranged",  -- Templar's Verdict
         [383305] = "melee",  -- Virtuous Command
@@ -2348,6 +2418,7 @@ SpellDB.RegisterArchetypes({
         [385897] = "ranged",  -- Ambush
         [386081] = "ranged",  -- Lingering Shadow
         [386275] = "ranged",  -- Bonedust Brew
+        [386276] = "ranged",  -- Bonedust Brew (via 325217)
         [386401] = "ranged",  -- Inquisitor's Gaze
         [386402] = "ranged",  -- Inquisitor's Gaze
         [386448] = "ranged",  -- Inquisitor's Gaze
@@ -2427,6 +2498,7 @@ SpellDB.RegisterArchetypes({
         [397693] = "ranged",  -- Arcanosphere
         [397697] = "ranged",  -- Arcanosphere
         [400069] = "ranged",  -- Arcane Shot
+        [400169] = "ranged",  -- Dark Reprimand (via 1232592)
         [400202] = "ranged",  -- Protector of the Pack
         [400206] = "melee",  -- Thrashing Blades
         [400360] = "ranged",  -- Moonless Night
@@ -2483,7 +2555,9 @@ SpellDB.RegisterArchetypes({
         [427688] = "ranged",  -- Felseeker
         [427729] = "ranged",  -- Molten Slag
         [428078] = "ranged",  -- Tempest Strikes
+        [428332] = "ranged",  -- Primordial Wave (via 375984)
         [428493] = "ranged",  -- Chaotic Disposition
+        [428545] = "ranged",  -- Moonfire (via 21669)
         [430023] = "melee",  -- Ambush
         [431044] = "ranged",  -- Frostfire Bolt (via 468655)
         [431171] = "ranged",  -- Frostfire Infusion
@@ -2509,6 +2583,7 @@ SpellDB.RegisterArchetypes({
         [439843] = "melee",  -- Reaper's Mark
         [440005] = "ranged",  -- Blood Fever
         [440097] = "ranged",  -- Runic Overflow
+        [440169] = "ranged",  -- Faeline Stomp (via 327264)
         [440884] = "ranged",  -- Demolish
         [440886] = "ranged",  -- Demolish
         [441144] = "ranged",  -- Unseen Blade
@@ -2656,6 +2731,7 @@ SpellDB.RegisterArchetypes({
         [1223917] = "melee",  -- Stormstrike (via 32175)
         [1223950] = "ranged",  -- Windstrike (via 115357)
         [1225823] = "ranged",  -- Reap
+        [1226339] = "ranged",  -- Spinning Death (via 1226587)
         [1226587] = "ranged",  -- Spinning Death
         [1228443] = "ranged",  -- Frostbane
         [1231082] = "ranged",  -- Howling Blades
@@ -2665,8 +2741,10 @@ SpellDB.RegisterArchetypes({
         [1232922] = "ranged",  -- Kill Command
         [1233619] = "ranged",  -- Frostreaper
         [1234897] = "ranged",  -- Holy Ray
+        [1235552] = "ranged",  -- Sunder (via 1235554)
         [1235554] = "ranged",  -- Sunder
         [1236160] = "ranged",  -- Ignite
+        [1236209] = "ranged",  -- Glacial Spike (via 228600)
         [1236211] = "ranged",  -- Glacial Spike
         [1236212] = "ranged",  -- Pyroblast
         [1236613] = "ranged",  -- Starfall
@@ -2695,6 +2773,7 @@ SpellDB.RegisterArchetypes({
         [1244890] = "ranged",  -- Lake of Fire
         [1245365] = "melee",  -- Retaliation
         [1245405] = "ranged",  -- Shadowburn
+        [1245412] = "ranged",  -- Voidblade (via 1245414)
         [1245414] = "ranged",  -- Voidblade
         [1245455] = "ranged",  -- Cull
         [1245654] = "ranged",  -- Burning Blades

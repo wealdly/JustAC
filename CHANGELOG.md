@@ -3,6 +3,32 @@
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-09-20
+
+### Added
+- With SimC priority ordering, the queue now adds abilities the game's own rotation list leaves out, when JustAC can tell when to use them. Hide any you don't want from Ability Overrides. Fixes Devourer Demon Hunters never being offered Voidblade.
+- Custom Priority: a transformed ability can be its own entry. Search for Coup de Grace (shown as a form of Eviscerate), add it, and place it where you like. It is used only while the button is transformed; the plain ability keeps its own position otherwise.
+- The interrupt reminder now knows Disrupting Shout, Sigil of Silence, Sigil of Misery, Void Nova, the instant Wailing Arrow, Shadow Lock and Monstrous Blow.
+
+### Changed
+- If you use a Custom Priority list, expect a one-time "the rotation has changed" notice: the ability pool now includes the additions above. Merge Changes adds them to your list.
+- "Ready" now means ready by the time your global cooldown ends, so the queue shows what you can press next instead of briefly dropping in a filler.
+- My List Leads: abilities whose timing only the game knows lead only when the game is picking them. Fixes a builder leading at full combo points while the game called for a finisher.
+- My List Leads: when you are out of range and the game is picking a gap closer, that one is shown (Shadowstrike from stealth rather than spending Shadowstep).
+- "Match Blizzard's pick" ordering settles ties using the game's own priority order for your spec.
+- Multi-target context is remembered while the game is recommending a cooldown or buff, instead of fading after a few seconds.
+- Priorities understand "while stealthed": Subtlety's Backstab and Vanish step aside while you are stealthed.
+- Priority tab tidied: the three ordering controls are always shown (the preset dropdown and "Customize..." are gone), and your Custom Priority list shows greyed with a hint while it is switched off instead of vanishing.
+
+### Fixed
+- Short self-buffs cast in combat were treated as active for the rest of the fight and hidden from the queue (Shadow Dance could vanish after its first use while the game kept recommending it).
+- Abilities that temporarily transform (Eviscerate becoming Coup de Grace) dropped out of the queue while transformed.
+- Abilities the game says you cannot cast right now (wrong form, or barred in stealth such as Shadow Dance) were moved to the front of the queue or called for by the burst cue.
+- Abilities whose reach is extended (a stealth teleport, a range talent, a form) were treated as out of range. Shadowstrike was never offered as a gap closer from stealth.
+- Self-centred crowd control (War Stomp, Arcane Torrent, Psychic Scream, Howl of Terror) never appeared on the interrupt reminder for casters. It now shows, dimmed when range can't be confirmed.
+- Racial crowd control (Arcane Torrent, War Stomp, Quaking Palm, Bull Rush, Haymaker) and a few pet stuns turned up as damage suggestions in the DPS queue.
+- Emergency Potion auto-pick preferred a percentage potion over a stronger fixed-amount one. Potions that heal a percent of your health "up to" a limit are now ranked by that limit.
+
 ## [5.4.2] - 2026-09-15
 
 - Updated rotation priorities: Devastation Evoker's Eternity Surge and Fire Breath are no longer pushed forward the moment they are ready; they now follow Blizzard's suggestion, since the latest priorities pick them by target count.

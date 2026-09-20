@@ -313,12 +313,21 @@ end
 --- trains exactly that impulse press. Better to miss a reminder than to bait one.
 --- The gap-closer system owns the approach; the moment a charge lands, the melee
 --- probes prove "within" and the suggestion appears.
+--- Three-state: true reachable, false proven out of reach, NIL unanswerable. Nil only
+--- happens for a self-centered CC this character can never prove (the probes short enough
+--- to answer an 8yd radius are melee attacks, so every caster reads nil forever - which
+--- silently hid War Stomp, Psychic Scream, Howl of Terror and Arcane Torrent from them).
+--- The caller keeps a nil as a dimmed last resort instead of dropping it.
 local function IsReachable(entry)
     if entry.reach == "pbaoe" then
         -- Self-centered AoE: reach = radius, and IsSpellInRange is nil for it. Use the
         -- range-probe bracket instead (baseline taunt probes in Data/RangeReferences
         -- give Druid/Monk their mid-range beyond-proof).
-        return (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(entry.radius or 8)) == true
+        local radius = entry.radius or 8
+        local within = SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(radius)
+        if within ~= nil then return within end
+        -- Unproven: "too far" (keep failing closed) vs "no probe can ever say".
+        return (SpellDB.CanProveWithin and SpellDB.CanProveWithin(radius)) and false or nil
     end
     -- Tri-state read (BlizzardAPI.SpellInRange owns the required-unit-arg finding that
     -- was first measured here). Fail OPEN: nil (unknown) → assume reachable.
@@ -410,13 +419,18 @@ function CastInterruptTracker.EvaluateInterrupt(resolvedInts, interruptMode, cur
                     -- failOpen=true for kicks (short CD, always useful to remind);
                     -- failOpen=false for CCs so we never recommend one we can't confirm is castable.
                     elseif BlizzardAPI.IsSpellUsable(sid, stype ~= "cc") and not SpellDB.IsInterruptOnCooldown(sid) then
-                        if not IsReachable(entry) then
+                        local reach = IsReachable(entry)
+                        if not reach then
                             -- Usable but can't hit the target now (e.g. a ranged CC out of range).
                             -- TARGETED spells stay as a dimmed last resort - an out-of-range
                             -- press costs nothing. A self-centered CC does NOT: it would fire
                             -- in place and burn the cooldown, so it drops out entirely rather
-                            -- than baiting the impulse press.
-                            if entry.reach ~= "pbaoe" and not outOfRangeFallbackID then outOfRangeFallbackID = sid end
+                            -- than baiting the impulse press - UNLESS its radius is unprovable
+                            -- for this character (reach == nil), where dropping it means the
+                            -- cue never exists at all. Then it takes the dimmed slot too.
+                            if (entry.reach ~= "pbaoe" or reach == nil) and not outOfRangeFallbackID then
+                                outOfRangeFallbackID = sid
+                            end
                         elseif (preferCC or ccOnly) and stype == "cc" then
                             if ccOnly and entry.mech == 9 then
                                 -- A silence only stops magic casts; an uninterruptible cast

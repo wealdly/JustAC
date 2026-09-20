@@ -554,6 +554,22 @@ function RedundancyFilter.PruneExpiredActivations()
     end
 end
 
+-- The game's pick as the expiry oracle for an in-combat activation. An activation recorded
+-- on cast is only ever cleared by seeing its aura REMOVED - and since 12.1.0 the UNIT_AURA
+-- payload lists are secret, so in combat that never happens and the prune above keeps every
+-- activation "conservatively" until the fight ends. A short buff cast once therefore read as
+-- active for the rest of combat (measured: Shadow Dance, an 8s buff, filtered as "already
+-- active" for 45s straight while the game asked for it). The game never recommends
+-- re-applying a self-buff that is still up, so its picking the spell proves the buff is gone.
+-- The grace covers the beat after a cast where the pick has not moved on yet.
+local ACTIVATION_PICK_GRACE = 2
+function RedundancyFilter.NoteSpellRecommended(spellID)
+    local at = spellID and inCombatActivations[spellID]
+    if at and (GetTime() - at) > ACTIVATION_PICK_GRACE then
+        inCombatActivations[spellID] = nil
+    end
+end
+
 -- Record spell activation during combat (called from UNIT_SPELLCAST_SUCCEEDED)
 -- Mirrors proc detection system - reliable even with combat log restrictions
 -- Also queues a pending activation so addedAuras can map the auraInstanceID

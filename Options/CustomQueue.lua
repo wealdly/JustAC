@@ -46,94 +46,12 @@ local function GetSpecKey()
 end
 
 --- Shared hidden check: true when custom queue is NOT enabled for current spec.
-local function IsCustomQueueHidden(addon)
+local function IsCustomQueueOff(addon)
     local profile = addon:GetProfile()
     local specKey = GetSpecKey()
     return not (profile and profile.customQueue
         and specKey and profile.customQueue[specKey]
         and profile.customQueue[specKey].enabled)
-end
-
---- Ordering presets over the three profile keys (orderProcsFirst / contextOrder /
---- orderSinkCooldowns). The preset is DERIVED, never stored - any other mix of
---- the three reads as "custom". No migration needed and DebugHUD/SpellQueue keep
---- reading the raw keys.
-local ORDERING_PRESETS = {
-    smart = { procs = true,  context = "simc", sink = true  },
-    ac    = { procs = true,  context = "ac",   sink = true  },
-    fixed = { procs = false, context = "off",  sink = false },
-}
-
-local function CurrentOrderingPreset(addon)
-    local profile = addon:GetProfile()
-    if not profile then return "smart" end
-    local procs   = profile.orderProcsFirst ~= false
-    local context = profile.contextOrder or "simc"
-    local sink    = profile.orderSinkCooldowns ~= false
-    for key, p in pairs(ORDERING_PRESETS) do
-        if p.procs == procs and p.context == context and p.sink == sink then
-            return key
-        end
-    end
-    return "custom"
-end
-
--- Write one preset's three keys (shared by the preset select and the Customize
--- snap-back). Returns true when applied.
-local function ApplyOrderingPreset(addon, key)
-    local p = ORDERING_PRESETS[key]
-    if not p then return false end
-    local profile = addon:GetProfile()
-    if not profile then return false end
-    profile.orderProcsFirst    = p.procs
-    profile.contextOrder       = p.context
-    profile.orderSinkCooldowns = p.sink
-    addon:ForceUpdateAll()
-    return true
-end
-
--- Session-only: the player opened the individual ordering controls. A profile
--- already in a mixed state shows them regardless.
-local orderingAdvanced = false
-
-local function OrderingAdvancedShown(addon)
-    return orderingAdvanced or CurrentOrderingPreset(addon) == "custom"
-end
-
-local function MakeOrderingPresetSelect(addon, order)
-    return {
-        type = "select",
-        name = L["Ordering Preset"],
-        desc = L["Ordering Preset desc"],
-        order = order,
-        width = "double",
-        values = function()
-            local v = {
-                smart = L["Ordering Smart"],
-                ac    = L["Ordering Match"],
-                fixed = L["Ordering Fixed"],
-            }
-            -- "Custom" is a state reached through the individual controls below,
-            -- not a preset to pick - listed only while it is the current state.
-            if CurrentOrderingPreset(addon) == "custom" then
-                v.custom = L["Ordering Custom"]
-            end
-            return v
-        end,
-        sorting = function()
-            if CurrentOrderingPreset(addon) == "custom" then
-                return { "smart", "ac", "fixed", "custom" }
-            end
-            return { "smart", "ac", "fixed" }
-        end,
-        get = function() return CurrentOrderingPreset(addon) end,
-        set = function(_, val)
-            if ApplyOrderingPreset(addon, val) then
-                -- Refresh so the per-ability pin toggles re-evaluate their greyed state.
-                if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-            end
-        end,
-    }
 end
 
 --- Build a master ordering toggle. `field` is a profile-level key; the toggle
@@ -173,21 +91,13 @@ local function MakeContextOrderSelect(addon, order)
     end
     return {
         type = "select",
-        name = "Context ordering",
-        desc = "How the abilities after the first are ordered.\n\n"
-            .. "|cffffd100Off|r - source order.\n"
-            .. "|cffffd100Match Blizzard's pick|r - reorder to match what Assisted "
-            .. "Combat is recommending now (target pattern + builder/spender role).\n"
-            .. "|cffffd100SimC priority|r - order by SimulationCraft's theorycraft "
-            .. "priority for your spec and target count. The default where data "
-            .. "exists for your spec.\n\n"
-            .. "SimC priority is tuned for end-game; below max level use Match Blizzard's "
-            .. "pick. (Orderings from SimulationCraft, GPL-3.0.)",
+        name = L["Context Ordering"],
+        desc = L["Context Ordering desc"],
         order = order,
-        width = "normal",
+        width = "double",
         values = function()
-            local v = { off = "Off", ac = "Match Blizzard's pick" }
-            if hasSimc() then v.simc = "SimC priority" end
+            local v = { off = L["Off"], ac = L["Context Match"] }
+            if hasSimc() then v.simc = L["Context SimC"] end
             return v
         end,
         sorting = function()
@@ -206,6 +116,8 @@ local function MakeContextOrderSelect(addon, order)
             local profile = addon:GetProfile()
             if not profile then return end
             profile.contextOrder = val
+            -- SimC priority also adds its missing abilities to the pool.
+            InvalidateRotationCache()
             addon:ForceUpdateAll()
             if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
         end,
@@ -351,79 +263,20 @@ function CustomQueue.CreateTabArgs(addon)
                     addon:ForceUpdateAll()
                 end,
             },
-            myListLeads = {
-                type = "toggle",
-                name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
-                desc = L["My List Leads desc"],
-                order = 0.45,
-                width = "full",
-                disabled = function()
-                    local profile = addon:GetProfile()
-                    local specKey = GetSpecKey()
-                    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
-                    return not (cq and cq.enabled)
-                end,
-                get = function()
-                    local profile = addon:GetProfile()
-                    local specKey = GetSpecKey()
-                    local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
-                    return (cq and cq.myListLeads == true) or false
-                end,
-                set = function(_, val)
-                    local profile = addon:GetProfile()
-                    local specKey = GetSpecKey()
-                    if not profile or not specKey then return end
-                    local cq = profile.customQueue and profile.customQueue[specKey]
-                    if not cq then return end
-                    cq.myListLeads = val or nil
-                    addon:ForceUpdateAll()
-                end,
-            },
             ordering = {
                 type = "group",
                 inline = true,
                 name = L["Custom Queue Ordering"],
                 order = 0.5,
-                args = (function()
-                    local function advancedHidden()
-                        return not OrderingAdvancedShown(addon)
-                    end
-                    local procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 2)
-                    local contextOrder  = MakeContextOrderSelect(addon, 3)
-                    local sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
-                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4)  -- Execute
-                    procsFirst.hidden, contextOrder.hidden, sinkCooldowns.hidden =
-                        advancedHidden, advancedHidden, advancedHidden
-                    return {
-                        note = {
-                            type = "description",
-                            name = "|cFF999999" .. L["Custom Queue Ordering Note"] .. "|r",
-                            order = 1,
-                            fontSize = "small",
-                        },
-                        preset = MakeOrderingPresetSelect(addon, 1.2),
-                        customize = {
-                            type = "toggle",
-                            name = L["Ordering Customize"],
-                            desc = L["Ordering Customize desc"],
-                            order = 1.4,
-                            width = "normal",
-                            get = function() return OrderingAdvancedShown(addon) end,
-                            set = function(_, v)
-                                orderingAdvanced = v
-                                -- Collapsing out of a mixed state snaps back to Smart,
-                                -- so the toggle never reads off while controls show.
-                                if not v and CurrentOrderingPreset(addon) == "custom" then
-                                    ApplyOrderingPreset(addon, "smart")
-                                end
-                                if AceConfigRegistry then AceConfigRegistry:NotifyChange("JustAssistedCombat") end
-                            end,
-                        },
-                        procsFirst    = procsFirst,
-                        contextOrder  = contextOrder,
-                        sinkCooldowns = sinkCooldowns,
-                    }
-                end)(),
+                -- Dropdown on its own row, then the two checkboxes side by side: a select
+                -- is taller than a toggle, so mixing them in one row misaligns all three.
+                args = {
+                    contextOrder  = MakeContextOrderSelect(addon, 1),
+                    rowBreak      = { type = "description", name = "", order = 2, width = "full" },
+                    procsFirst    = MakeOrderingToggle(addon, "orderProcsFirst", L["Custom Queue Procs First"], L["Custom Queue Procs First desc"], 3),
+                    sinkCooldowns = MakeOrderingToggle(addon, "orderSinkCooldowns", L["Custom Queue Sink Cooldowns"],
+                        W.spellDesc("Custom Queue Sink Cooldowns desc", 163201), 4),  -- Execute
+                },
             },
             staleWarning = {
                 type = "description",
@@ -508,14 +361,44 @@ function CustomQueue.CreateTabArgs(addon)
                 inline = true,
                 name = SpellSearch.SpecHeader(L["Custom Queue Spells"]),
                 order = 10,
-                hidden = function() return IsCustomQueueHidden(addon) end,
+                disabled = function() return IsCustomQueueOff(addon) end,
                 args = {
                     spellListInfo = {
                         type = "description",
-                        name = L["Custom Queue Spells desc"],
+                        name = function()
+                            return IsCustomQueueOff(addon) and L["Custom Queue Off Hint"] or L["Custom Queue Spells desc"]
+                        end,
                         order = 11,
                         fontSize = "small",
                     },
+                myListLeads = {
+                    type = "toggle",
+                    name = L["My List Leads"] .. " |cffff7f00(" .. L["Experimental"] .. ")|r",
+                    desc = L["My List Leads desc"],
+                    order = 11.5,
+                    width = "full",
+                    disabled = function()
+                        local profile = addon:GetProfile()
+                        local specKey = GetSpecKey()
+                        local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+                        return not (cq and cq.enabled)
+                    end,
+                    get = function()
+                        local profile = addon:GetProfile()
+                        local specKey = GetSpecKey()
+                        local cq = profile and specKey and profile.customQueue and profile.customQueue[specKey]
+                        return (cq and cq.myListLeads == true) or false
+                    end,
+                    set = function(_, val)
+                        local profile = addon:GetProfile()
+                        local specKey = GetSpecKey()
+                        if not profile or not specKey then return end
+                        local cq = profile.customQueue and profile.customQueue[specKey]
+                        if not cq then return end
+                        cq.myListLeads = val or nil
+                        addon:ForceUpdateAll()
+                    end,
+                },
                     -- Dynamic spell entries added by UpdateCustomQueueOptions
                 },
             },
@@ -524,7 +407,6 @@ function CustomQueue.CreateTabArgs(addon)
                 type = "header",
                 name = "",
                 order = 990,
-                hidden = function() return IsCustomQueueHidden(addon) end,
             },
             refreshFromRotation = {
                 type = "execute",
@@ -532,7 +414,7 @@ function CustomQueue.CreateTabArgs(addon)
                 desc = L["Refresh from Rotation desc"],
                 order = 991,
                 width = "normal",
-                hidden = function() return IsCustomQueueHidden(addon) end,
+                disabled = function() return IsCustomQueueOff(addon) end,
                 confirm = true,
                 confirmText = L["Refresh from Rotation confirm"],
                 func = function()
@@ -562,7 +444,7 @@ function CustomQueue.UpdateCustomQueueOptions(addon)
     if not spellListGroup then return end
 
     local spellListArgs = spellListGroup.args
-    local staticKeys = { spellListInfo = true }
+    local staticKeys = { spellListInfo = true, myListLeads = true }
     SpellSearch.ClearDynamicArgs(spellListArgs, staticKeys)
 
     local specKey = GetSpecKey()

@@ -219,6 +219,27 @@ _CONT_RESOURCE_ATOM = re.compile(
     r'(\.pct|\.deficit)?\s*(>=|<=|>|<)\s*(\d+)')
 
 
+# STEALTH. The game answers "am I stealthed" plainly (IsStealthed: Stealth, Vanish, Shadow
+# Dance, Subterfuge, Prowl, Shadowmeld), so SimC's stealth conditions are evaluable instead of
+# delegated. They reach the lists two ways: the `stealthed.rogue` family directly, and a
+# spec-defined VARIABLE that is nothing but a disjunction of stealth states (Subtlety:
+# `variable.stealth = buff.shadow_dance.up|buff.stealth.up|buff.vanish.up`), which the lines
+# then reference. Set per spec by main() before classification; a variable with ANY
+# non-stealth leaf is not in it and keeps delegating.
+_STEALTH_LEAF = re.compile(
+    r'!?(?:stealthed\.\w+|buff\.(?:stealth|vanish|shadow_dance|subterfuge|prowl|shadowmeld)\.up)')
+STEALTH_VARS = set()
+
+
+def stealth_vars(varmap):
+    out = set()
+    for name, value in varmap.items():
+        leaves = [l.strip().strip("()") for l in value.split("|")]
+        if leaves and all(_STEALTH_LEAF.fullmatch(l) and not l.startswith("!") for l in leaves):
+            out.add(name)
+    return out
+
+
 def classify_atom(atom, resolve):
     """(gate|None, delegated_bool). Target-count atoms are handled by the tier split,
     so they neither gate nor delegate here."""
@@ -232,6 +253,9 @@ def classify_atom(atom, resolve):
     # carrying a tail falls through to delegation - the fail-safe direction. The newer
     # handlers below already do this (stack anchors with $, the resource pair uses
     # fullmatch); these three predate that and were missed.
+    m = re.fullmatch(r'stealthed\.\w+|variable\.(\w+)', a)
+    if m and (m.group(1) is None or m.group(1) in STEALTH_VARS):
+        return {"t": "stealth", "neg": neg}, False
     if re.fullmatch(r'cooldown\.\w+\.(ready|up|remains)', a):
         return {"t": "cd"}, False
     m = re.fullmatch(r'dot\.(\w+)\.(refreshable|ticking|remains)', a)
@@ -480,7 +504,15 @@ def flatten(lists, k, resolve, unresolved, varmap):
         if kept is None:
             seen[e["id"]] = e
             out.append(e)
-        elif kept.get("empower") != e.get("empower"):
+            continue
+        # A stealth gate SINKS the entry at runtime, so first-wins is not good enough for it:
+        # Assassination lists Ambush once under `stealthed.rogue` and again, lower down, with
+        # no stealth condition at all (the Blindside proc). Keep the gate only while EVERY line
+        # for the spell agrees on it.
+        stealth = [g for g in kept["gates"] if g["t"] == "stealth"]
+        if stealth and not any(g in e["gates"] for g in stealth):
+            kept["gates"] = [g for g in kept["gates"] if g["t"] != "stealth"]
+        if kept.get("empower") != e.get("empower"):
             # Same spell, DIFFERENT release tier. SimC chooses between those lines on
             # conditions this generator could not classify - Eternity Surge picks its tier by
             # target count against TALENT-dependent thresholds (`active_enemies<=2+2*talent.
@@ -730,6 +762,16 @@ def _selftest():
                  ("x" if k in ("res", "op") else True)}
         assert k + "=" in gate_lua(probe), "gate_lua drops gate key %r" % k
     assert classify_atom("!combo_points>=5", lambda t: None) == (None, True)    # negated -> delegate
+    # Stealth: direct atoms, and a variable only when it is PURELY stealth states.
+    assert stealth_vars({"stealth": "buff.shadow_dance.up|buff.stealth.up|buff.vanish.up",
+                         "mixed": "buff.stealth.up|energy>60", "neg": "!buff.stealth.up"}) == {"stealth"}
+    assert classify_atom("stealthed.rogue", lambda t: None) == ({"t": "stealth", "neg": False}, False)
+    assert classify_atom("!stealthed.all", lambda t: None) == ({"t": "stealth", "neg": True}, False)
+    assert classify_atom("variable.unknown_thing", lambda t: None) == (None, True)
+    STEALTH_VARS.add("stealth")
+    assert classify_atom("!variable.stealth", lambda t: None) == ({"t": "stealth", "neg": True}, False)
+    STEALTH_VARS.clear()
+    assert gate_lua({"t": "stealth", "neg": True}) == '{t="stealth",neg=true}'
     # Continuous resources become THRESHOLD gates (were delegated before threshold
     # gates existed). Absolute values stay absolute here - the runtime converts to a
     # percentage with UnitPowerMax, which only it can read.
@@ -835,6 +877,8 @@ def main():
         text = open(f, encoding="utf-8").read()
         lists = parse_apl(text)
         varmap = build_varmap(lists)
+        STEALTH_VARS.clear()
+        STEALTH_VARS.update(stealth_vars(varmap))
 
         tier_lists = {ctx: flatten(lists, k, resolve, unresolved, varmap) for ctx, k in TIERS}
         # dedup: keep st; keep aoe if != st; keep cleave only if distinct from both
