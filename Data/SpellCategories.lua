@@ -315,11 +315,14 @@ local CROWD_CONTROL_SPELLS = {
     [108194] = true,  -- Asphyxiate
     [207167] = true,  -- Blinding Sleet
     [221562] = true,  -- Asphyxiate (Blood)
+    [47481] = true,   -- Gnaw (ghoul pet stun)
+    [91797] = true,   -- Monstrous Blow (transformed ghoul)
     
     -- Demon Hunter
     [179057] = true,  -- Chaos Nova
     [183752] = true,  -- Disrupt (interrupt)
     [211881] = true,  -- Fel Eruption
+    [1234195] = true, -- Void Nova (hero talent stun)
     [217832] = true,  -- Imprison
     [207684] = true,  -- Sigil of Misery
     [202137] = true,  -- Sigil of Silence
@@ -356,6 +359,9 @@ local CROWD_CONTROL_SPELLS = {
     [186387] = true,  -- Bursting Shot (disorient knockback)
     [187707] = true,  -- Muzzle (interrupt)
     [213691] = true,  -- Scatter Shot
+    [355589] = true,  -- Wailing Arrow (silence)
+    [355596] = true,  -- Wailing Arrow (silence, instant)
+    [392060] = true,  -- Wailing Arrow (silence)
     [236776] = true,  -- Hi-Explosive Trap (knockback)
     
     -- Mage
@@ -449,6 +455,8 @@ local CROWD_CONTROL_SPELLS = {
     [710] = true,     -- Banish
     [118699] = true,  -- Fear
     [171017] = true,  -- Meteor Strike (Infernal stun)
+    [115268] = true,  -- Mesmerize (Incubus)
+    [171138] = true,  -- Shadow Lock (Doomguard/Terrorguard interrupt)
     [212619] = true,  -- Call Felhunter (interrupt)
     
     -- Warrior
@@ -458,6 +466,24 @@ local CROWD_CONTROL_SPELLS = {
     [107570] = true,  -- Storm Bolt
     [132168] = true,  -- Shockwave (stun)
     [132169] = true,  -- Storm Bolt
+    [386071] = true,  -- Disrupting Shout (interrupt)
+
+    -- Racials (cross-class; race-gated). Here for the same reason as the class CCs:
+    -- keep them out of the DPS queue. Arcane Torrent is the one that matters - every
+    -- Blood Elf has it on the bar, one variant per resource type.
+    [20549] = true,   -- War Stomp (Tauren)
+    [107079] = true,  -- Quaking Palm (Pandaren)
+    [255654] = true,  -- Bull Rush (Highmountain)
+    [287712] = true,  -- Haymaker (Kul Tiran)
+    [28730] = true,   -- Arcane Torrent (mana)
+    [25046] = true,   -- Arcane Torrent (energy)
+    [50613] = true,   -- Arcane Torrent (runic power)
+    [69179] = true,   -- Arcane Torrent (rage)
+    [80483] = true,   -- Arcane Torrent (focus)
+    [129597] = true,  -- Arcane Torrent (chi)
+    [155145] = true,  -- Arcane Torrent (holy power)
+    [202719] = true,  -- Arcane Torrent (fury)
+    [232633] = true,  -- Arcane Torrent (insanity)
 }
 
 --------------------------------------------------------------------------------

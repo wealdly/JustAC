@@ -94,6 +94,56 @@ are correct there: SimC names the button you actually press, so override forms
 (`death_sweep`, `swipe_cat`, `templar_slash`) are what match Assisted Combat's live
 pick. Rewriting those to base ids would break the matching.
 
+### Auditing against Blizzard's own rotation data
+
+Blizzard's assisted-combat rotation ships in the client data: `AssistedCombat` (one row per
+spec), `AssistedCombatStep` (spell + `OrderIndex` = their priority order) and
+`AssistedCombatRule` (the conditions on each step). All three are tracked in the CSV folder,
+so `update_data.py` refreshes them with everything else.
+
+```
+python tools/audit_assisted_combat.py                  # what SimC pool insertion adds, per spec
+python tools/audit_assisted_combat.py --diff OLD NEW   # which specs' rotations changed
+python tools/audit_assisted_combat.py --cooldowns      # Blizzard's cooldown/movement class vs burst anchors + NEVER_INSERT
+python tools/audit_assisted_combat.py --dots           # DoTs Blizzard refreshes when missing vs Data/TargetDots.lua
+python tools/audit_assisted_combat.py --healers        # local healer pins vs Blizzard's order
+python tools/audit_assisted_combat.py --procs          # ability <- gating aura pairs (reference)
+python tools/audit_assisted_combat.py --decode [FILE]  # join an in-game pick log with the rules
+```
+
+**Insertion audit.** With SimC priority ordering, the queue adds SimC abilities the game's
+rotation list leaves out (`BlizzardAPI.GetRotationSpells` -> `RotationImport.GetInsertable`).
+That moves the pool for every spec at once, and the only other way to see it is to log in on
+each one. Run this after any change to `Data/SimcRotations.lua`, `NEVER_INSERT`, the gap-closer
+defaults or `SpellCategories`, and read the list: anything that moves the player, or that a
+player presses for a reason other than damage, belongs in `NEVER_INSERT` (`RotationImport.lua`).
+
+**Rotation diff.** `update_data.py` runs this automatically while both builds are on disk. A
+spec listed there is one whose SimC pin (or local healer list in `tools/simc-apl/`) needs a
+second look, and is release-note material.
+
+**Classification audits** (`--cooldowns`, `--dots`, `--healers`, `--procs`) diff Blizzard's data
+against hand-curated tables. Report-only, and every line is a candidate to look at, not a defect:
+a movement ability under `--cooldowns` belongs in `NEVER_INSERT`; most `--dots` misses are aura ids
+or stacking DoTs excluded on purpose.
+
+**Blizzard's order ships as data.** `tools/gen_assisted_combat_order.py` writes
+`Data/AssistedCombatOrder.lua` (spec -> spell -> rank), the tiebreaker for the "Match Blizzard's
+pick" ordering. A spell's rank is its LAST step, its unconditional position: first-step order put
+situational multi-target steps at the very top. `update_data.py` regenerates it with the rest.
+
+**The pick recorder** is a diagnostic, not a feature (the plan demoted reading state from the pick: the addon already detects that state directly). `/jac inspect picklog on` records the game's
+pick next to the facts the addon can read (enemy count, resource points, power and target-health
+bands); `/reload` flushes it; `--decode` joins it to the rules offline and reports how often a
+pick pins down one step, plus which facts held each time a numeric condition fired. No rule data
+ships in the addon for this.
+
+Two measured limits, both in the script header: the DB2 step list is a **superset** of the live
+`C_AssistedCombat.GetRotationSpells()` (live drops talent-gated steps, and every spell whose
+steps all carry `ConditionType 70` - which is exactly the major cooldowns and movement
+abilities), and talents are ignored, so counts are an upper bound. Where this data goes next:
+`Documentation/ASSISTED_COMBAT_DATA_PLAN.md`.
+
 ### CSV source tables (which generator reads what)
 
 Most generators share a resolution **spine**: `SpellName` (id -> name),

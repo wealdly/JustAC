@@ -162,6 +162,44 @@ function BlizzardAPI.GetAnyNextCastSpell()
     return QueryNextCastSpell(false)
 end
 
+-- Blizzard's rotation list can omit core abilities (field report: the Devourer list is five
+-- spells, with no Voidblade). Part of what SimC ordering means: append every SimC ability the addon can time by itself
+-- (RotationImport.GetInsertable) that the character knows. Everything downstream - cooldown
+-- and usability filters, SimC ranking and gates - treats them like any other pool spell.
+local function WithAdditions(list)
+    local profile = BlizzardAPI.GetProfile()
+    if not profile or (profile.contextOrder or "simc") ~= "simc" then
+        return list
+    end
+    local RI = LibStub("JustAC-RotationImport", true)
+    local simc = RI and RI.GetInsertable and RI.GetInsertable()
+    if not simc then return list end
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+
+    -- Same BUTTON, not same id: the SimC data and Blizzard's list can name one ability
+    -- by different ids across an override chain.
+    local have = {}
+    for i = 1, #list do
+        have[list[i]] = true
+        have[BlizzardAPI.ResolveSpellID(list[i]) or list[i]] = true
+    end
+    local out
+    for i = 1, #simc do
+        local raw = simc[i]
+        local id = BlizzardAPI.ResolveKnownSpellID(raw)
+        if id and not have[id] and not have[raw]
+           and not (SpellDB and SpellDB.IsOffensiveSpell and not SpellDB.IsOffensiveSpell(id)) then
+            if not out then
+                out = {}
+                for j = 1, #list do out[j] = list[j] end   -- never grow Blizzard's own table
+            end
+            out[#out + 1] = id
+            have[id], have[raw] = true, true
+        end
+    end
+    return out or list
+end
+
 function BlizzardAPI.GetRotationSpells()
     if not C_AssistedCombat or not C_AssistedCombat.GetRotationSpells then return nil end
 
@@ -182,9 +220,9 @@ function BlizzardAPI.GetRotationSpells()
                 if not IsPassiveID(result[i]) then filtered[#filtered + 1] = result[i] end
             end
             if #filtered == 0 then return nil end
-            return filtered
+            return WithAdditions(filtered)
         end
-        return result
+        return WithAdditions(result)
     end
     return nil
 end

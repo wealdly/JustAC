@@ -373,6 +373,26 @@ function BlizzardAPI.SpellInRange(spellID, unit)
     return r
 end
 
+--- Can this ability reach the target, as the GAME sees it? Same tri-state as SpellInRange.
+--- The spell-range read tests the spell's BASE range and misses anything that extends it -
+--- a stealth teleport, a range talent, a form. The ability's own action button does not:
+--- it is what the game lights or reddens, modifiers included. So a "no" from the spell read
+--- is only believed when the button does not say otherwise. Field report: Shadowstrike reads
+--- 5yd by spell at every distance its 25yd stealth teleport covers, which made the gap-closer
+--- engine reject it always. The button is consulted second, and only to overturn a "no":
+--- bars page with form and stance, so an absent or unreadable slot must not REJECT anything.
+function BlizzardAPI.AbilityInRange(spellID, unit)
+    local r = BlizzardAPI.SpellInRange(spellID, unit)
+    if r ~= false then return r end
+    local ABS = LibStub("JustAC-ActionBarScanner", true)
+    local slot = ABS and ABS.GetDirectSlotForSpell and ABS.GetDirectSlotForSpell(spellID)
+    if slot and C_ActionBar and C_ActionBar.IsActionInRange then
+        local s = C_ActionBar.IsActionInRange(slot, unit or "target")
+        if s ~= nil and not (IsSecretValue and IsSecretValue(s)) and s == true then return true end
+    end
+    return false
+end
+
 --------------------------------------------------------------------------------
 -- Low Health Detection via LowHealthFrame (works when UnitHealth() is secret)
 --------------------------------------------------------------------------------

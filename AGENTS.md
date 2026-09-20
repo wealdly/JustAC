@@ -234,6 +234,7 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 - **Refresh flow:** `python tools/update_data.py [--product wow|wowt]` pulls the latest build for every tracked table, prints a per-table row diff, swaps the folder atomically, reruns all generators, and shows `git diff --stat Data/`. It is rate-limited - be gentle with wago.tools; never script tight request loops against it.
 - **One generator per Data file** (`tools/gen_*.py`, plus `gen_archetypes.sh`). Arg-free default reads `Documentation/wow_spell_csv`.
 - **Audits are report-only** (`tools/audit_*.py|sh`): candidate diffs vs curated lists (`audit_topoff_heals.py`, `audit_cooldownset.py` for the client's own per-spec cooldown lists). Human judgment decides what enters curated files.
+- **Blizzard's rotation is in the data** (`AssistedCombat` / `AssistedCombatStep` / `AssistedCombatRule`): per-spec steps in priority order, with conditions. `tools/audit_assisted_combat.py` uses it to show what SimC pool insertion adds per spec (run after touching `SimcRotations.lua` or `NEVER_INSERT`) and, via `update_data.py`, which specs' rotations changed between builds. It is a SUPERSET of the live `GetRotationSpells()` list - see `Documentation/DEV_TOOLING.md`.
 - Curated files (`SpellCategories`, `InterruptAbilities`, `RangeReferences`) have no generator - edit by hand, re-run audits per patch.
 
 **Data file → source map** (which generator owns which table - skip the grep):
@@ -250,6 +251,8 @@ Static `Data/*.lua` tables are generated from wago.tools DB2 CSV exports in `Doc
 | `HealingItems.lua` | `gen_healing_items.py` | Usable heal/potion items |
 | `PrecombatBuffs.lua` | `gen_precombat_buffs.py` | Flask/food/rune/imbue + Well Fed families |
 | `SpellCooldowns.lua` | `gen_spell_cooldowns.py` | Per-spec cooldown-set reference |
+| `SpellTransforms.lua` | `gen_spell_transforms.py` | Action-bar transforms from the override-action-bar auras (332/333): `[form id] = { original button ids }` (Eviscerate -> Coup de Grace). Forms are not in the spellbook and are never "known", so this feeds the options search and list-row labels, and lets a form be its own custom-priority entry that is live only while its button shows it (`SpellDB.GetTransformBase` / `GetTransformForms`) |
+| `AssistedCombatOrder.lua` | `gen_assisted_combat_order.py` | Blizzard's own per-spec priority order from the client's assisted-combat tables (rank = a spell's last, unconditional step). Tiebreaker for the "Match Blizzard's pick" ordering; `RotationImport.GetBlizzardRank` answers nil when there is no data and the queue keeps its old order |
 | `SimcRotations.lua` | `gen_simc_rotations.py` | SimC-derived priority tails (40 specs: 34 upstream lists + 6 local-only pins in `tools/simc-apl/` for the healer specs upstream ships no list for - Mistweaver plus five plain damage-filler pins) + per-spec `burst` anchor lists (mined from potion/trinket/PI sync conditions; feed the burst-ready cue). Pinned source APLs in `tools/simc-apl/`; refresh via `tools/update_simc_apl.py` (syncs from the `00-SOURCE/simc` sparse mirror, branch `midnight`, then regenerates) - standard pre-release step |
 | *(not shipped)* | `gen_aura_durations.py` | Retained only - durations are secret in combat, superseded by the readiness probe |
 

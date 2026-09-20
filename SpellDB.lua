@@ -74,7 +74,8 @@ end
 -- Reads a healing item's heal from its ITEM tooltip's "Use:" line. Returns the effective
 -- heal (for ranking owned pots), whether it is percentage-based, and the raw number
 -- behind it (the percent, or the fixed amount). A percentage pot ("Restores 50% ...")
--- scales with max health; a fixed pot uses its largest heal number. The '%' symbol and
+-- scales with max health, clamped to its stated ceiling ("... up to 175,000"); a fixed
+-- pot uses its largest heal number. The '%' symbol and
 -- the digits are locale-independent; all-zero if the tooltip can't be read yet (item data
 -- loads async), which keeps the scan dirty rather than ranking the pot at zero.
 --
@@ -95,15 +96,19 @@ local function HealInfo(itemID)
         end
     end
     if not desc or desc == "" then return 0, false, 0 end
+    local best = 0
+    for n in desc:gsub("%d+%s*%%", ""):gmatch("%d[%d,]*") do
+        local num = tonumber((n:gsub(",", "")))
+        if num and num > best then best = num end
+    end
     local pct = desc:match("(%d+)%s*%%")
     if pct then
         pct = tonumber(pct)
-        return (pct / 100) * (UnitHealthMax("player") or 0), true, pct
-    end
-    local best = 0
-    for n in desc:gmatch("%d[%d,]*") do
-        local num = tonumber((n:gsub(",", "")))
-        if num and num > best then best = num end
+        local heal = (pct / 100) * (UnitHealthMax("player") or 0)
+        -- ponytail: any non-percent number >= 1000 on the line is the ceiling; durations
+        -- and cooldowns stay far below that. Parse "up to" if a pot ever breaks this.
+        if best >= 1000 and best < heal then heal = best end
+        return heal, true, pct
     end
     return best, false, best
 end
@@ -229,6 +234,42 @@ end
 local C_Spell_IsSelfBuff = C_Spell and C_Spell.IsSelfBuff
 local selfAuras
 function SpellDB.RegisterSelfAuras(t) selfAuras = t end
+
+-- Action-bar transforms (Data/SpellTransforms.lua): [form id] = { original button ids }.
+-- A form is what a button temporarily becomes (Eviscerate -> Coup de Grace). The player never
+-- learns a form's id and it is not in the spellbook.
+local transformBases, transformForms = {}, nil
+function SpellDB.RegisterTransforms(t)
+    if type(t) == "table" then transformBases, transformForms = t, nil end
+end
+
+--- The button this FORM belongs to, for this character: the first original they know. nil
+--- when the id is not a form, or is a form of something this character cannot cast.
+function SpellDB.GetTransformBase(formID)
+    local bases = formID and transformBases[formID]
+    if not bases then return nil end
+    -- LibStub directly: the file's GetBlizzardAPI helper is defined further down.
+    local api = LibStub("JustAC-BlizzardAPI", true)
+    for i = 1, #bases do
+        if api and api.IsSpellAvailable and api.IsSpellAvailable(bases[i]) then return bases[i] end
+    end
+    return nil
+end
+
+--- Every form a button can take (array), or nil. Reverse index, built on first use.
+function SpellDB.GetTransformForms(baseID)
+    if not transformForms then
+        transformForms = {}
+        for form, bases in pairs(transformBases) do
+            for i = 1, #bases do
+                local list = transformForms[bases[i]]
+                if not list then list = {}; transformForms[bases[i]] = list end
+                list[#list + 1] = form
+            end
+        end
+    end
+    return baseID and transformForms[baseID]
+end
 function SpellDB.IsPureSelfAura(spellID)
     if C_Spell_IsSelfBuff and spellID then
         local ok, v = pcall(C_Spell_IsSelfBuff, spellID)
@@ -712,6 +753,18 @@ function SpellDB.IsTargetWithin(yards)
     if within then verdict = true elseif beyond then verdict = false end
     withinVerdicts[yards] = (verdict == nil) and WITHIN_UNKNOWN or verdict
     return verdict
+end
+
+--- Could a "within N yards" verdict ever be PROVEN for this character? True when some
+--- known probe reaches no further than N - only such a probe can answer "within". Callers
+--- use it to tell "the target is too far" apart from "this character owns no probe short
+--- enough to say", which are the same nil from IsTargetWithin but want opposite handling.
+--- Short probes are melee attacks, so casters cannot prove the ~8yd radii at all.
+function SpellDB.CanProveWithin(yards)
+    for i = 2, #knownRangeProbes, 2 do
+        if knownRangeProbes[i] <= yards then return true end
+    end
+    return false
 end
 
 --- Diagnostic only (/jac inspect range): every KNOWN range reference with its

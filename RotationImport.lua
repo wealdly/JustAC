@@ -4,9 +4,9 @@
 --
 -- Consumes imported action priority lists (flattened, per context) and hands the
 -- queue a spell list for positions 2+. Each entry may carry secret-safe GATES
--- (buff-window / cooldown / dot / execute / health / power / resource / stack) classified
+-- (buff-window / cooldown / dot / execute / health / power / resource / stack / stealth) classified
 -- offline by tools/gen_simc_rotations.py; SpellQueue evaluates the buff, resource, power,
--- health, stack and execute kinds (cd/dot are informational, read by the diagnostics).
+-- health, stack, stealth and execute kinds (cd/dot are informational, read by the diagnostics).
 -- This module reads no combat state, so it is safe under 12.0 secret values.
 --
 -- Data is registered by Data/SimcRotations.lua (from SimulationCraft's GPL-3.0
@@ -18,7 +18,7 @@ if not RotationImport then return end
 -- specKey (e.g. "DRUID_2") -> { st = {entry,...}, aoe = {...}, burst = {id,...} }
 -- entry = { id = <spellID>, gates = { {t="buff",id=..,neg=bool}, {t="cd"}, {t="dot",id=..},
 --           {t="execute",pct=..}, {t="health",pct=..}, {t="power",..}, {t="resource",..},
---           {t="stack",id=..,op=..,n=..} }, delegated = bool,
+--           {t="stack",id=..,op=..,n=..}, {t="stealth",neg=bool} }, delegated = bool,
 --           empower = <release stage for an empowered cast, absent for everything else> }
 -- burst = plain spell ids: the APL's sync anchors (what SimC pots/trinkets
 -- into), consumed by SpellQueue's burst-ready cue.
@@ -26,6 +26,24 @@ local rotations = RotationImport._rotations or {}
 RotationImport._rotations = rotations
 local lookupCache = {}  -- specKey -> ctx -> (id|baseID) -> { rank, gates, delegated }
 local empowerCache = {} -- specKey -> (id|baseID) -> tier | false (contexts disagree)
+local insertableCache = {} -- specKey -> ids the pool may gain (see GetInsertable)
+-- SimC lines the addon could time but should still never ADD: abilities the theorycraft
+-- weaves for damage that a player presses for another reason. Blizzard's list leaves these
+-- out on purpose. Movement is covered separately by the spec's gap-closer list.
+local NEVER_INSERT = {
+    [46585]  = true,  -- Raise Dead (pet summon)
+    [122470] = true,  -- Touch of Karma (defensive)
+    [322101] = true,  -- Expel Harm (self-heal)
+    [1160]   = true,  -- Demoralizing Shout (mitigation)
+    [384110] = true,  -- Wrecking Throw (situational: absorb shields)
+    [64382]  = true,  -- Shattering Throw (situational: absorb shields)
+    [385952] = true,  -- Shield Charge (moves you)
+    [198793] = true,  -- Vengeful Retreat (leaps you backward)
+    [189110] = true,  -- Infernal Strike (leaps you)
+    [1271985]= true,  -- Champion's Leap (leaps you)
+    [357210] = true,  -- Deep Breath (flies you forward)
+    [443454] = true,  -- Ancestral Swiftness (utility)
+}
 local cachedSpellDB     -- lazy module ref (see GetEntry)
 
 --- Register GATED rotation tables (the generated format above).
@@ -36,6 +54,7 @@ function RotationImport.RegisterGated(data)
         lookupCache[specKey] = nil
         empowerCache[specKey] = nil
     end
+    wipe(insertableCache)
 end
 
 local function EntriesFor(context)
@@ -75,6 +94,43 @@ function RotationImport.GetRotation(context)
     return out
 end
 
+--- Spell ids the SimC data could ADD to the pool for the current spec: every line for the
+--- spell, in every context, is one the addon can evaluate itself (not delegated). A
+--- delegated line means "only Blizzard's pick knows when", and inserting that would be
+--- suggesting an ability with no idea whether this is its moment - which is also what keeps
+--- out the movement abilities SimC weaves for damage. Static per spec, so built once.
+function RotationImport.GetInsertable()
+    local SpellDB = LibStub("JustAC-SpellDB", true)
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local rot = specKey and rotations[specKey]
+    if not rot then return nil end
+    local cached = insertableCache[specKey]
+    if cached then return cached end
+    local ok, order = {}, {}
+    for ctx, list in pairs(rot) do
+        if ctx ~= "burst" and type(list) == "table" then
+            for i = 1, #list do
+                local e = list[i]
+                if e and e.id then
+                    if ok[e.id] == nil then order[#order + 1] = e.id end
+                    ok[e.id] = (ok[e.id] ~= false) and not e.delegated
+                end
+            end
+        end
+    end
+    local moves = {}
+    for _, id in ipairs(SpellDB.CLASS_GAPCLOSER_DEFAULTS and SpellDB.CLASS_GAPCLOSER_DEFAULTS[specKey] or {}) do
+        moves[id] = true
+    end
+    local out = {}
+    for i = 1, #order do
+        local id = order[i]
+        if ok[id] and not NEVER_INSERT[id] and not moves[id] then out[#out + 1] = id end
+    end
+    insertableCache[specKey] = out
+    return out
+end
+
 --- True when this module has data for the current spec.
 function RotationImport.HasRotation()
     local SpellDB = LibStub("JustAC-SpellDB", true)
@@ -104,6 +160,28 @@ local BlizzardAPI
 local function baseID(id)
     if not BlizzardAPI then BlizzardAPI = LibStub("JustAC-BlizzardAPI", true) end
     return (BlizzardAPI and BlizzardAPI.ResolveSpellID and BlizzardAPI.ResolveSpellID(id)) or id
+end
+
+--------------------------------------------------------------------------------
+-- Blizzard's own priority order (Data/AssistedCombatOrder.lua, from the client's
+-- assisted-combat tables): spec -> spell id -> rank, a spell's unconditional position.
+-- The tiebreaker for "Match Blizzard's pick", whose context rank leaves most of the
+-- tail tied. No data, or an unlisted spell, answers nil and the caller keeps today's
+-- behaviour - Blizzard can reshape these tables in any patch.
+--------------------------------------------------------------------------------
+local blizzardOrder = {}
+function RotationImport.RegisterBlizzardOrder(data)
+    if type(data) == "table" then blizzardOrder = data end
+end
+
+--- Blizzard's rank for spellID in the current spec (lower = earlier), or nil.
+function RotationImport.GetBlizzardRank(spellID)
+    local SpellDB = cachedSpellDB or LibStub("JustAC-SpellDB", true)
+    cachedSpellDB = SpellDB
+    local specKey = SpellDB and SpellDB.GetSpecKey and SpellDB.GetSpecKey()
+    local order = specKey and blizzardOrder[specKey]
+    if not order or not spellID then return nil end
+    return order[spellID] or order[baseID(spellID)]
 end
 
 local function BuildLookup(specKey)

@@ -172,6 +172,8 @@ local INSPECT_TOPICS = {
     { "glows",       "GlowInventory",            nil,  "Inventory frames overlapping the queue (orphan-glow reports)" },
     { "maintenance", "MaintenanceProbe",         nil,  "Can the tank maintenance slot bind its aura exactly? (in combat)" },
     { "maintlog",    "MaintenanceLog",           "[on|off|clear]", "Record maintenance state 1/s to SavedVariables" },
+    { "enemies",     "EnemyCountProbe",          nil,  "Why the direct enemy count reads what it reads (run in combat with a pack)" },
+    { "picklog",     "PickLog",                  "[on|off|clear]", "Record the game's pick + readable facts to SavedVariables (rule decoding)" },
     { "topoff",      "TopoffWatch",              "[off]", "Watch the between-pulls heal reminder decide (transitions only)" },
     { "ccdb",        "CCImmunityDB",             "[clear]", "Mob types learned to be CC-immune (persists across sessions)" },
     { "timeline",    "EncounterTimelineProbe",   nil,  "Can we see a big hit coming? Boss-mechanic timeline read" },
@@ -2004,6 +2006,8 @@ function DebugCommands.GateDiagnostics(addon)
                 parts[#parts + 1] = "|cff888888targets|r"
             elseif g.t == "execute" then
                 parts[#parts + 1] = "|cff888888execute|r"
+            elseif g.t == "stealth" then
+                parts[#parts + 1] = (g.neg and "!" or "") .. "stealthed"
             end
         end
         local s = table.concat(parts, " ")
@@ -4294,6 +4298,149 @@ function DebugCommands.MaintenanceLog(addon, arg)
     maintLogTicker = C_Timer.NewTicker(0.1, function() pcall(MaintLogSample) end)
     addon:Print("maintlog: |cff00ff00ON|r - sampling 10/s, transitions only. Press the buff a few")
     addon:Print("times (first application AND refreshes), then |cffffff00/jac inspect maintlog off|r and |cffffff00/reload|r.")
+end
+
+--- /jac inspect enemies - why does the direct enemy count read what it reads?
+--- GetEngagedEnemyCount skips a nameplate unit when ANY of three reads comes back secret,
+--- which turns a hidden read into a silent, permanent zero. This prints each read per
+--- plate with its secrecy, so the one that fails is visible. Run it IN COMBAT with a pack.
+function DebugCommands.EnemyCountProbe(addon)
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local function tag(v)
+        if v == nil then return "nil" end
+        if issecretvalue and issecretvalue(v) then return "|cffff6600SECRET|r" end
+        return tostring(v)
+    end
+    addon:Print(string.format("|cff00ccff== enemy count ==|r  GetEngagedEnemyCount=%s  combat=%s",
+        tostring(BAPI and BAPI.GetEngagedEnemyCount and BAPI.GetEngagedEnemyCount()),
+        tostring(UnitAffectingCombat("player"))))
+    local plates = C_NamePlate and C_NamePlate.GetNamePlates and C_NamePlate.GetNamePlates() or {}
+    addon:Print(string.format("  nameplates on screen: %d   (nameplateShowEnemies=%s)",
+        #plates, tostring(GetCVar and GetCVar("nameplateShowEnemies"))))
+    -- Shortest range probe this character knows (melee attacks are 5yd).
+    local SDB = LibStub("JustAC-SpellDB", true)
+    local probeID, probeYards
+    for _, pr in ipairs(SDB and SDB.DebugRangeProbes and SDB.DebugRangeProbes() or {}) do
+        if not probeYards or pr.ref < probeYards then probeID, probeYards = pr.id, pr.ref end
+    end
+    local shown = 0
+    for i = 1, 40 do
+        local u = "nameplate" .. i
+        local ex = UnitExists(u)
+        if ex == nil or (issecretvalue and issecretvalue(ex)) or ex then
+            shown = shown + 1
+            if shown <= 8 then
+                -- Candidate replacement for the threat test: "in combat" + "close enough".
+                -- near = the player's shortest known range probe, asked of THIS unit.
+                local near = "?"
+                if probeID and C_Spell and C_Spell.IsSpellInRange then
+                    near = tag(C_Spell.IsSpellInRange(probeID, u))
+                end
+                addon:Print(string.format("  %-12s exists=%s canAttack=%s threat=%s inCombat=%s near(%s)=%s",
+                    u, tag(ex), tag(UnitCanAttack("player", u)),
+                    tag(UnitThreatSituation and UnitThreatSituation("player", u)),
+                    tag(UnitAffectingCombat(u)), tostring(probeYards), near))
+            end
+        end
+    end
+    if shown == 0 then
+        addon:Print("  |cffff6600no nameplate units at all|r - enemy nameplates are off, or none are in view")
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Assisted-combat pick recorder (/jac inspect picklog)
+--------------------------------------------------------------------------------
+-- Research probe for Documentation/ASSISTED_COMBAT_DATA_PLAN.md step 5. Blizzard's rotation
+-- steps and their conditions are known offline, but the NUMERIC condition types are not
+-- decoded. This records the game's pick next to every fact the addon can read, so
+-- tools/audit_assisted_combat.py --decode can line the two up: a step that fired tells us
+-- its conditions held, and the facts here say what was true at that moment.
+-- Ships no rule data - the join happens offline. Same recorder shape as maintlog: plain
+-- values only, change-only, ring-bounded, flushed by /reload.
+local PICKLOG_MAX = 3000
+local pickLogTicker = nil
+local lastPickPayload = nil
+local POWER_BANDS  = { 25, 50, 75 }
+local HEALTH_BANDS = { 20, 35, 80 }
+
+local function PickLogSample()
+    local BAPI = LibStub("JustAC-BlizzardAPI", true)
+    local SDB = LibStub("JustAC-SpellDB", true)
+    if not (BAPI and SDB) then return end
+    local pick = BAPI.GetAnyNextCastSpell and BAPI.GetAnyNextCastSpell()
+    if not pick then return end
+    local cur, max = nil, nil
+    if BAPI.GetClassResourcePoints then cur, max = BAPI.GetClassResourcePoints() end
+    local function n(v) return (type(v) == "number" and not issecretvalue(v)) and tostring(v) or "-" end
+    -- What JustAC itself is leading with, and whether that entry is one only the game can
+    -- time (delegated). With My List Leads on, lead ~= pick is normal; a DELEGATED lead that
+    -- is not the pick is the queue promoting something it cannot know the moment for.
+    local SQ = LibStub("JustAC-SpellQueue", true)
+    local RI = LibStub("JustAC-RotationImport", true)
+    local queue = SQ and SQ.GetCurrentSpellQueue and SQ.GetCurrentSpellQueue()
+    local lead = type(queue) == "table" and queue[1] or nil
+    if type(lead) ~= "number" or issecretvalue(lead) then lead = nil end
+    local rec = lead and RI and RI.GetEntry and RI.GetEntry(lead)
+    -- When the game's pick is NOT what we lead with, say why the pick lost its place:
+    -- R not ready, S cannot afford, H held by a user dial, T its DoT is already up,
+    -- B blacklisted, "-" none of these (it was simply outranked or is not in the pool).
+    local why = ""
+    if lead and lead ~= pick then
+        local shown = BAPI.GetDisplaySpellID and BAPI.GetDisplaySpellID(pick) or pick
+        if lead ~= shown then
+            local DT = LibStub("JustAC-DotTracker", true)
+            local _, notEnough = BAPI.IsSpellUsable(shown, true)
+            why = ((BAPI.IsSpellReady and not BAPI.IsSpellReady(shown)) and "R" or "")
+                .. (notEnough and "S" or "")
+                .. ((SQ.IsHeldByHold and SQ.IsHeldByHold(shown)) and "H" or "")
+                .. ((DT and DT.IsDotActiveOnCurrentTarget and DT.IsDotActiveOnCurrentTarget(shown)) and "T" or "")
+                .. ((SQ.IsSpellBlacklisted and SQ.IsSpellBlacklisted(pick)) and "B" or "")
+            why = " why=" .. (why ~= "" and why or "-")
+        end
+    end
+    local payload = string.format("%s pick=%d combat=%s enemies=%s pts=%s/%s pow=%s thp=%s lead=%s%s%s arch=%s",
+        tostring(SDB.GetSpecKey and SDB.GetSpecKey() or "?"),
+        pick,
+        (UnitAffectingCombat and UnitAffectingCombat("player")) and "1" or "0",
+        n(BAPI.GetEngagedEnemyCount and BAPI.GetEngagedEnemyCount()),
+        n(cur), n(max),
+        n(BAPI.GetPowerBand and BAPI.GetPowerBand("player", POWER_BANDS)),
+        n(UnitExists("target") and BAPI.GetHealthBand and BAPI.GetHealthBand("target", HEALTH_BANDS) or nil),
+        n(lead), (rec and rec.delegated) and "D" or (rec and "" or "?"), why,
+        tostring(lead and SDB.GetArch and SDB.GetArch(lead) or "-"))
+    if payload == lastPickPayload then return end
+    lastPickPayload = payload
+    _G.JustACGlobal = _G.JustACGlobal or {}
+    local log = _G.JustACGlobal.pickLog or {}
+    _G.JustACGlobal.pickLog = log
+    log[#log + 1] = string.format("%.2f %s", GetTime(), payload)
+    if #log > PICKLOG_MAX then
+        local keep, half = {}, math.floor(PICKLOG_MAX / 2)
+        for i = #log - half + 1, #log do keep[#keep + 1] = log[i] end
+        _G.JustACGlobal.pickLog = keep
+    end
+end
+
+--- /jac inspect picklog [on|off|clear] - record the game's pick + readable facts, 5/s.
+function DebugCommands.PickLog(addon, arg)
+    arg = arg and arg:lower() or nil
+    if arg == "clear" then
+        if _G.JustACGlobal then _G.JustACGlobal.pickLog = nil end
+        addon:Print("picklog: |cffffff00cleared|r")
+        return
+    end
+    if arg == "off" or (not arg and pickLogTicker) then
+        if pickLogTicker then pickLogTicker:Cancel() end
+        pickLogTicker = nil
+        local n = (_G.JustACGlobal and _G.JustACGlobal.pickLog and #_G.JustACGlobal.pickLog) or 0
+        addon:Print(string.format("picklog: |cffff6600OFF|r - %d samples held. |cff888888/reload to flush them to SavedVariables.|r", n))
+        return
+    end
+    lastPickPayload = nil
+    pickLogTicker = C_Timer.NewTicker(0.2, function() pcall(PickLogSample) end)
+    addon:Print("picklog: |cff00ff00ON|r - fight normally (single target AND packs), then")
+    addon:Print("|cffffff00/jac inspect picklog off|r, |cffffff00/reload|r, and run tools/audit_assisted_combat.py --decode")
 end
 
 --- /jac inspect maintenance - can the tank maintenance slot bind its aura EXACTLY in combat,
@@ -8578,6 +8725,9 @@ function DebugCommands.SimcGateProbe(addon, arg)
                 elseif g.t == "health" and g.pct then
                     parts[#parts + 1] = string.format("my.hp%s%d below=%s", g.op, g.pct,
                         tostring(BAPI.IsUnitHealthBelow and BAPI.IsUnitHealthBelow("player", g.pct)))
+                elseif g.t == "stealth" then
+                    parts[#parts + 1] = string.format("%sstealthed [now %s]", g.neg and "!" or "",
+                        tostring(IsStealthed and IsStealthed() or false))
                 elseif g.t == "stack" and g.id and g.n then
                     -- Ask the runtime's own verdict, then show the raw ">= n" read
                     -- beside it: the two disagree exactly when the operator logic is

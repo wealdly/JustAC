@@ -166,6 +166,12 @@ def main():
 
     # 2. Diff old vs new while both are present
     diff_tables(csv_dir, tables, current, target)
+    # Blizzard's own rotations, read as rotations rather than rows: a spec whose list moved
+    # is the cue to re-check its SimC pin / local healer list. Needs both builds on disk.
+    if "AssistedCombatStep" in tables and csv_dir == DEFAULT_CSV_DIR:
+        print("\n== assisted-combat rotations")
+        subprocess.run([sys.executable, str(REPO / "tools" / "audit_assisted_combat.py"),
+                        "--diff", current, target], cwd=REPO)
 
     # 3. Swap: drop the old build so every generator resolves the same build
     if not args.keep_old:
@@ -196,6 +202,11 @@ def main():
         subprocess.run([bash, "tools/gen_archetypes.sh"], check=True, cwd=REPO)
     else:
         print("-- gen_archetypes.sh SKIPPED (no bash on PATH - run it from Git Bash)")
+
+    # What SimC pool insertion adds per spec on the new data - review before releasing.
+    if "AssistedCombatStep" in tables and csv_dir == DEFAULT_CSV_DIR:
+        print("\n== SimC pool insertion audit")
+        subprocess.run([sys.executable, str(REPO / "tools" / "audit_assisted_combat.py")], cwd=REPO)
 
     # 5. Show what actually changed in the shipped data
     print("\n== Data/ impact")

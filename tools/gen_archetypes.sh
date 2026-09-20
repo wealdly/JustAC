@@ -12,6 +12,13 @@
 # (triggers/clones, e.g. Secret Technique) have no direct/periodic damage target, so they're
 # left UNTAGGED -> neutral at runtime (never a wrong boost). Refine those by hand later.
 #
+# Two inheritance routes give a damage-less BUTTON the shape of the spell that actually hits:
+#   1. trigger link  - the button's EffectTriggerSpell child (Whirlwind, Frostbolt, Blizzard).
+#   2. name family   - no link at all: the server script fires the payload. Bridged only when
+#      the button is castable (starts a GCD, not passive), is INERT (every effect a dummy),
+#      and every background damage spell sharing its SpellName + SpellClassSet agrees on the
+#      shape (Voidblade, Hungering Slash, Penance, Kill Command). Any disagreement -> untagged.
+#
 # Re-run per patch after dropping fresh CSVs in Documentation/wow_spell_csv/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -23,8 +30,8 @@ mkdir -p Data
 pick() { ls "$CSV/$1".*.csv 2>/dev/null | head -1; }
 SR=$(pick SpellRange); SM=$(pick SpellMisc); SCO=$(pick SpellClassOptions)
 STR=$(pick SpellTargetRestrictions); SN=$(pick SpellName); SE=$(pick SpellEffect)
-SP=$(pick SpellPower)
-for v in "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP"; do
+SP=$(pick SpellPower); SCAT=$(pick SpellCategories)
+for v in "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" "$SCAT"; do
     [ -n "$v" ] || { echo "ERROR: a required CSV is missing in $CSV/" >&2; exit 1; }
 done
 
@@ -34,7 +41,7 @@ done
 IDSFILE="tools/rotation_spell_ids.txt"
 [ -f "$IDSFILE" ] || { echo "ERROR: $IDSFILE not found" >&2; exit 1; }
 IDS=$(grep -vE '^\s*#' "$IDSFILE" | grep -oE '[0-9]+' | sort -un | tr '\n' ' ')
-echo "Using:"; printf '  %s\n' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" "$IDSFILE"
+echo "Using:"; printf '  %s\n' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" "$SCAT" "$IDSFILE"
 
 BUILD=$(basename "$SE" | sed -E 's/^SpellEffect\.(.*)\.csv$/\1/')
 
@@ -64,8 +71,14 @@ BEGIN{
 }
 FNR==1 { file=basef(FILENAME); next }                                # skip header rows
 file ~ /^SpellRange\./        { m=($NF+0>$(NF-1)+0)?$NF+0:$(NF-1)+0; RANGE[$1+0]=m; next }
-file ~ /^SpellClassOptions\./ { if(($4+0)!=0) PLAYER[$2+0]=1; next }  # SpellClassSet!=0 = class spell
-file ~ /^SpellMisc\./         { MRANGE[$NF+0]=$23+0; next }           # SpellID -> RangeIndex
+file ~ /^SpellClassOptions\./ { if(($4+0)!=0){ PLAYER[$2+0]=1; CSET[$2+0]=$4+0 } next }  # SpellClassSet!=0 = class spell
+file ~ /^SpellMisc\./ {
+    MRANGE[$NF+0]=$23+0                                              # SpellID -> RangeIndex
+    a=$2+0; if(a<0) a+=4294967296
+    if(int(a/64)%2==1) PASSIVE[$NF+0]=1                              # Attributes_0 0x40
+    next
+}
+file ~ /^SpellCategories\./   { if(($9+0)!=0) GCD[$NF+0]=1; next }    # StartRecoveryCategory = castable button
 file ~ /^SpellTargetRestrictions\./ { MAXT[$NF+0]=$4+0; CONE[$NF+0]=$3+0; next }
 file ~ /^SpellName\./        { nm=$0; sub(/^[0-9]*,/,"",nm); NAME[$1+0]=nm; next }
 file ~ /^SpellPower\./ {                                             # point-resource cost = spender
@@ -84,6 +97,14 @@ file ~ /^SpellEffect\./ {
         ch=$17+0                                                     # EffectTriggerSpell
         if(ch>0) TRIG[sid]=TRIG[sid] " " ch
     }
+    # Inert = every effect is a dummy (Effect 3, or an aura of type DUMMY 4 / PERIODIC_DUMMY 226)
+    # with no trigger: the button does nothing in DB2 terms, so a server script fires the payload.
+    # A button with any real effect (a buff, a shield, a proc aura) documents its own purpose and
+    # must never borrow a damage shape from a same-named proc.
+    if(sid in PLAYER){
+        HASEFF[sid]=1
+        if(!((e==3 || (e==6 && ($2+0==4 || $2+0==226))) && $17+0==0)) ACTIVE[sid]=1
+    }
     # Damage targets are recorded for EVERY spell, not just player ones. A triggered child is
     # usually not a class-family spell, so the old `if(!(sid in PLAYER)) next` gate here threw
     # away precisely the rows a parent needs to inherit from. Emission is still player-only.
@@ -98,8 +119,24 @@ file ~ /^SpellEffect\./ {
     next
 }
 END{
+    # Name families: damage spells keyed by SpellClassSet + SpellName. Every member votes on the
+    # shape; only background (no-GCD) members can be the payload (via) or lend their range.
+    # "!" marks a family whose members disagree - on shape, or on melee/ranged among the members
+    # that carry a real target range (the 0 / >=100 sentinels say nothing either way).
+    for(sid in CSET){
+        a=classify(sid); if(a=="") continue
+        k=CSET[sid] SUBSEP NAME[sid]
+        if(!(k in FARCH)) FARCH[k]=a; else if(FARCH[k]!=a) FARCH[k]="!"
+        if(sid in GCD) continue                                      # castable variants vote on shape only
+        if(!(k in FVIA) || sid+0<FVIA[k]) FVIA[k]=sid+0
+        r=RANGE[MRANGE[sid]]
+        if(r>0 && r<100){
+            r=(r<=8)?"melee":"ranged"
+            if(!(k in FRNG)) FRNG[k]=r; else if(FRNG[k]!=r) FRNG[k]="!"
+        }
+    }
     for(sid in PLAYER){
-        arch=classify(sid); via=""
+        arch=classify(sid); via=""; fam=""
         if(arch==""){
             # No damage row of its own - inherit from whatever it triggers. The CHILD is what
             # actually hits, so it decides st/cleave/aoe; the PARENT is what the player presses,
@@ -113,8 +150,18 @@ END{
                 }
             }
         }
+        if(arch=="" && (sid in GCD) && !(sid in PASSIVE) && (sid in HASEFF) && !(sid in ACTIVE)){
+            fam=CSET[sid] SUBSEP NAME[sid]                           # no link - try the name family
+            if((fam in FVIA) && FARCH[fam]!="!"){ arch=FARCH[fam]; via=FVIA[fam] } else fam=""
+        }
         if(arch=="") continue                                       # ambiguous -> untagged
         rmax=RANGE[MRANGE[sid]]
+        # A family button with no target range of its own (self-cast dash/slash) takes the range of
+        # the payload, when the payload has a real one; otherwise the sentinel rule applies.
+        if(fam!="" && (rmax<=0 || rmax>=100)){
+            if(!(fam in FRNG) || FRNG[fam]=="!") continue
+            rmax=(FRNG[fam]=="melee")?8:40
+        }
         # RangeMax 100 is the "no target-range check" sentinel, not a 100-yard spell, and it
         # does NOT imply either answer: it covers self-centered melee AoE (Whirlwind,
         # Consecration) and ground-targeted ranged AoE (Earthquake, Frozen Orb) alike. For an
@@ -137,7 +184,7 @@ END{
         print "role_" role "\t" sid "\t-\t" nm
     }
 }
-' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SE" "$SP" > /tmp/_arch_raw.txt
+' "$SR" "$SM" "$SCO" "$STR" "$SN" "$SCAT" "$SE" "$SP" > /tmp/_arch_raw.txt
 
 # Emit one archetype group: "[id] = "range",  -- Spell Name" lines, sorted by id.
 emit_group() {
@@ -182,5 +229,8 @@ TOTAL=$(awk -F'\t' '$1=="aoe"||$1=="cleave"||$1=="st"' /tmp/_arch_raw.txt | wc -
     echo "})"
 } > "$OUT"
 rm -f /tmp/_arch_raw.txt
+
+# Self-check: the name-family bridge must tag the Voidblade BUTTON, not only its payload.
+grep -q '^        \[1245412\] = ' "$OUT" || echo "WARNING: name-family bridge lost 1245412 (Voidblade)" >&2
 
 echo "Wrote $OUT ($TOTAL spells, build $BUILD)."

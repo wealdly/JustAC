@@ -878,6 +878,80 @@ end
 --- Returns true when the spell is ready (no real cooldown running).
 --- Second return (diagnostics only, e.g. /jac why): a short string naming which
 --- signal decided the verdict. Callers on hot paths ignore it (no allocation).
+--------------------------------------------------------------------------------
+-- GCD lookahead. "Ready" has to mean "pressable when the global cooldown ends", because
+-- that is the next moment anything can be pressed. Without it, an ability with half a
+-- second of its own cooldown left reads NOT ready for the whole GCD, sinks, and a filler
+-- takes its place - then the real ability snaps back the instant the GCD ends. Blizzard's
+-- own pick looks ahead like this, which is why the flicker only showed with My List Leads,
+-- where slot 1 is ours (field report: single-target filler flashing between attacks in a
+-- pack).
+--
+-- Both durations are secret in combat, so neither is read. The GCD is bracketed with the
+-- seconds-threshold gate ("below 0.3s? 0.6s? ..."), then the ability's own cooldown is
+-- asked the same question at that bracket. The bracket rounds UP, so an ability can show
+-- ready up to 0.4s early - inside the game's own spell-queue window, where the press is
+-- accepted anyway. Off-GCD abilities are excluded: they can be pressed NOW, so for them
+-- "ready" must stay literal.
+--------------------------------------------------------------------------------
+local GCD_DUMMY_SPELL = 61304
+-- 0.4s steps / 0.1s memo: every step is a threshold-gate evaluation (curve + widget round
+-- trip), so this costs at most 4 per 0.1s plus one per ability on cooldown - and 0.4s is the
+-- game's default spell-queue window, so rounding up by a step never shows a press that fails.
+local LOOKAHEAD_STEPS = { 0.4, 0.8, 1.2, 1.6 }
+local LOOKAHEAD_MEMO = 0.1
+local lookaheadAt, lookaheadSecs = -1, nil
+local readyByGcdMemo, readyByGcdAt = {}, -1
+
+--- Seconds of GCD left, rounded up to a step; nil when no GCD is running or the gate
+--- cannot answer (then there is no lookahead and readiness stays literal).
+local function GCDLookahead()
+    local now = GetTime()
+    if now - lookaheadAt < LOOKAHEAD_MEMO then return lookaheadSecs end
+    lookaheadAt, lookaheadSecs = now, nil
+    if not (C_Spell and C_Spell.GetSpellCooldownDuration and BlizzardAPI.IsDurationBelowSeconds) then return nil end
+    local ok, gcd = pcall(C_Spell.GetSpellCooldownDuration, GCD_DUMMY_SPELL)
+    if not ok or not DurationObjectActive(gcd) then return nil end
+    for i = 1, #LOOKAHEAD_STEPS do
+        local below = BlizzardAPI.IsDurationBelowSeconds(gcd, LOOKAHEAD_STEPS[i])
+        if below == nil then return nil end
+        if below then
+            lookaheadSecs = LOOKAHEAD_STEPS[i]
+            return lookaheadSecs
+        end
+    end
+    lookaheadSecs = LOOKAHEAD_STEPS[#LOOKAHEAD_STEPS]
+    return lookaheadSecs
+end
+
+local function IsOffGCD(spellID)
+    local CD = LibStub("JustAC-CooldownData", true)
+    if not (CD and CD.IsOffGCD) then return false end
+    if CD.IsOffGCD(spellID) then return true end
+    local base = BlizzardAPI.ResolveBaseSpellID and BlizzardAPI.ResolveBaseSpellID(spellID)
+    return (base and base ~= spellID and CD.IsOffGCD(base)) or false
+end
+
+--- Will this ability's own cooldown be over by the time the GCD ends?
+local function ReadyByGCDEnd(spellID)
+    local secs = GCDLookahead()
+    if not secs then return false end
+    local now = GetTime()
+    if now - readyByGcdAt >= LOOKAHEAD_MEMO then
+        wipe(readyByGcdMemo)
+        readyByGcdAt = now
+    end
+    local hit = readyByGcdMemo[spellID]
+    if hit ~= nil then return hit end
+    local result = false
+    if not IsOffGCD(spellID) then
+        local ok, own = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
+        result = ok and own ~= nil and BlizzardAPI.IsDurationBelowSeconds(own, secs) == true
+    end
+    readyByGcdMemo[spellID] = result
+    return result
+end
+
 function BlizzardAPI.IsSpellReady(spellID)
     if not spellID or not C_Spell_GetSpellCooldown then return true, "no cooldown API" end
 
@@ -891,7 +965,13 @@ function BlizzardAPI.IsSpellReady(spellID)
         local cdata = localCharges[spellID]
         if cdata then
             ProcessChargeRecovery(cdata)
-            return cdata.current >= 1, "local charge tracking"
+            if cdata.current >= 1 then return true, "local charge tracking" end
+            -- Out of charges, but one lands before the GCD ends (local timer, plain).
+            local secs = (cdata.rechargeEndTime or 0) > 0 and not IsOffGCD(spellID) and GCDLookahead()
+            if secs and (cdata.rechargeEndTime - GetTime()) <= secs then
+                return true, "charge lands by GCD end"
+            end
+            return false, "local charge tracking"
         end
     end
 
@@ -909,11 +989,15 @@ function BlizzardAPI.IsSpellReady(spellID)
         if not BlizzardAPI.IsSpellOnCooldown(spellID) then
             return true, "isOnGCD (GCD only)"
         end
-        -- Real CD ticking under the GCD - fall through (not ready).
+        -- Real CD ticking under the GCD: ready only if it ends by the time the GCD does.
+        if ReadyByGCDEnd(spellID) then return true, "cooldown ends by GCD end" end
     end
 
     -- isOnGCD == false → real cooldown running (definitive for flagged spells)
-    if cd.isOnGCD == false then return false, "isOnGCD flag (real cooldown)" end
+    if cd.isOnGCD == false then
+        if ReadyByGCDEnd(spellID) then return true, "cooldown ends by GCD end" end
+        return false, "isOnGCD flag (real cooldown)"
+    end
 
     -- Out of combat: duration/startTime are readable. Unsecret both together -
     -- the secret system is volatile enough that one field can read plain while

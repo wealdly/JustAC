@@ -798,7 +798,7 @@ RotationImport.RegisterGated({
       {id=426591,gates={},delegated=true},  -- goremaws_bite
       {id=121471,gates={},delegated=true},  -- shadow_blades
       {id=185313,gates={},delegated=true},  -- shadow_dance
-      {id=1856,gates={{t="power",res="energy",op=">=",n=50},{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- vanish
+      {id=1856,gates={{t="stealth",neg=true},{t="power",res="energy",op=">=",n=50},{t="resource",res="combo_points",op="<=",n=2}},delegated=true},  -- vanish
       {id=197835,gates={},delegated=true},  -- shuriken_storm
       {id=200758,gates={},delegated=true},  -- gloomblade
       {id=185438,gates={},delegated=true},  -- shadowstrike
@@ -806,7 +806,7 @@ RotationImport.RegisterGated({
       {id=280719,gates={{t="buff",id=185313}}},  -- secret_technique
       {id=441776,gates={},delegated=true},  -- coup_de_grace
       {id=319175,gates={},delegated=true},  -- black_powder
-      {id=53,gates={},delegated=true},  -- backstab
+      {id=53,gates={{t="stealth",neg=true}},delegated=true},  -- backstab
     },
   },
   ["SHAMAN_1"] = {

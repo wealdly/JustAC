@@ -117,12 +117,13 @@ local function TryGapCloserCandidate(spellID, addedSpellIDs)
     end
     if not BlizzardAPI.IsSpellReady(resolvedID) then return nil end
 
-    -- Range check: reject only if the spell is confirmed OUT of its OWN range (e.g. target
-    -- beyond Wild Charge's max range). Spellbook range read (non-secret in combat, reliable
-    -- in any form) - the action-slot check proved unreliable. Self-targeted spells (Sprint)
-    -- and unknowns read nil from the tri-state → pass (fail-safe); only a confirmed false rejects.
-    if BlizzardAPI.SpellInRange
-       and BlizzardAPI.SpellInRange(spellID) == false then
+    -- Range check: reject only if the ability is confirmed OUT of reach (e.g. target beyond
+    -- Wild Charge's max range). AbilityInRange rather than the bare spell read: that one tests
+    -- the BASE range, so it rejected a stealth teleport (5yd by spell, 25yd in stealth) at
+    -- every distance a gap closer is for, and the stealth path below never returned it.
+    -- Self-targeted spells (Sprint) and unknowns read nil -> pass; only a confirmed false rejects.
+    local inRange = BlizzardAPI.AbilityInRange or BlizzardAPI.SpellInRange
+    if inRange and inRange(spellID) == false then
         return nil
     end
 
@@ -259,7 +260,11 @@ function GapCloserEngine.GetGapCloserSpell(addon, addedSpellIDs)
     -- probe needed. Dedup via addedSpellIDs prevents showing them when Blizzard's
     -- assisted combat already suggests them at position 1.
     ----------------------------------------------------------------------------
-    if stealthed then
+    -- Not while PROVEN in melee: there the spell is ordinary rotation, and offering it as a
+    -- gap closer (with that glow) would be wrong. Deliberately ahead of the near-band
+    -- suppression below - that exists to save a cooldown on a short gap, and a stealth
+    -- teleport costs none.
+    if stealthed and not (SpellDB.IsTargetWithin and SpellDB.IsTargetWithin(5) == true) then
         for _, spellID in ipairs(spellList) do
             if spellID and spellID > 0 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH
                 and SpellDB.GAP_CLOSER_REQUIRES_STEALTH[spellID] then

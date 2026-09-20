@@ -27,10 +27,17 @@ SpellDB.RegisterInterruptAbilities({
     [47476]  = { kind="cc", mech=9,  reach="ranged", pri=5 },           -- Strangulate
     [47481]  = { kind="cc", mech=12, reach="ranged", pri=8 },           -- Gnaw (ghoul pet stun)
     [91800]  = { kind="cc", mech=12, reach="ranged", pri=8 },           -- Gnaw (Dark Transformation)
+    [91797]  = { kind="cc", mech=12, reach="ranged", pri=8 },           -- Monstrous Blow (transformed ghoul)
     -- Demon Hunter
     [183752] = { kind="interrupt", reach="ranged", pri=1 },             -- Disrupt
     [179057] = { kind="cc", mech=12, reach="pbaoe", radius=8, pri=2 },  -- Chaos Nova
     [211881] = { kind="cc", mech=12, reach="ranged", pri=3 },           -- Fel Eruption
+    [1234195]= { kind="cc", mech=12, reach="ranged", pri=4 },           -- Void Nova (hero talent)
+    -- Sigils land after an arm delay (~2s, less with Quickened Sigils), so they only beat a
+    -- long cast. pbaoe/8: the sigil drops at your feet without Precise Sigils, and this fails
+    -- CLOSED, which is the right way round for a 90s/120s cooldown.
+    [202137] = { kind="cc", mech=9,  reach="pbaoe", radius=8, pri=5 },  -- Sigil of Silence
+    [207684] = { kind="cc", mech=2,  reach="pbaoe", radius=8, pri=6 },  -- Sigil of Misery
     -- Druid
     [106839] = { kind="interrupt", reach="ranged", pri=1 },             -- Skull Bash
     [78675]  = { kind="interrupt", reach="ranged", pri=2 },             -- Solar Beam
@@ -44,6 +51,7 @@ SpellDB.RegisterInterruptAbilities({
     [24394]  = { kind="cc", mech=12, reach="ranged", pri=3 },           -- Intimidation
     [355589] = { kind="cc", mech=9,  reach="ranged", pri=4 },           -- Wailing Arrow (silence hybrid; cast-variant)
     [392060] = { kind="cc", mech=9,  reach="ranged", pri=4 },           -- Wailing Arrow (silence hybrid; cast-variant)
+    [355596] = { kind="cc", mech=9,  reach="ranged", pri=3 },           -- Wailing Arrow (instant variant)
     -- Mage
     [2139]   = { kind="interrupt", reach="ranged", pri=1 },             -- Counterspell
     [31661]  = { kind="cc", mech=2,  reach="pbaoe", radius=12, pri=2 }, -- Dragon's Breath
@@ -72,6 +80,7 @@ SpellDB.RegisterInterruptAbilities({
     -- Warlock
     [19647]  = { kind="interrupt", reach="ranged", pri=1 },             -- Spell Lock
     [212619] = { kind="interrupt", reach="ranged", pri=2 },             -- Call Felhunter
+    [171138] = { kind="interrupt", reach="ranged", pri=3 },             -- Shadow Lock (Doomguard/Terrorguard)
     [89766]  = { kind="cc", mech=12, reach="ranged", pri=3 },           -- Axe Toss
     [30283]  = { kind="cc", mech=12, reach="ranged", pri=4 },           -- Shadowfury
     [5484]   = { kind="cc", mech=5,  reach="pbaoe", radius=8, pri=5 },  -- Howl of Terror (fear)
@@ -79,6 +88,7 @@ SpellDB.RegisterInterruptAbilities({
     [115268] = { kind="cc", mech=10, reach="ranged", pri=8 },           -- Mesmerize (Incubus pet)
     -- Warrior
     [6552]   = { kind="interrupt", reach="ranged", pri=1 },             -- Pummel
+    [386071] = { kind="interrupt", reach="pbaoe", radius=14, pri=2 },   -- Disrupting Shout (talent)
     [107570] = { kind="cc", mech=12, reach="ranged", pri=2 },           -- Storm Bolt
     [46968]  = { kind="cc", mech=12, reach="pbaoe", radius=10, pri=3 }, -- Shockwave
     [5246]   = { kind="cc", mech=5,  reach="ranged", pri=4 },           -- Intimidating Shout (fear)
